@@ -299,17 +299,52 @@ fn axum_real_target_self_field_size_hint_is_external_frontier() -> Result<(), Db
 }
 
 #[test]
-fn axum_real_target_turbofish_local_receiver_is_documented_gap() -> Result<(), DbError> {
+fn axum_real_target_turbofish_method_receiver_rows_preserve_current_shapes() -> Result<(), DbError>
+{
     let db = setup_axum_call_graph_db()?;
 
     // Matrix: turbofish method call receiver row.
     // Source chain:
     //   axum-core/src/ext_traits/request_parts.rs:164 calls
     //   `parts.extract_with_state::<State<String>, String>(&state)`.
-    // Current model gap: that turbofish row is absent in the current DB
-    // fixture. The one projected targetless `parts.extract_with_state` row is
-    // the blanket-helper call at request_parts.rs:186, and it does not resolve
-    // back to the `RequestPartsExt::extract_with_state` impl.
+    // Current model: the turbofish row is projected and preserves the two
+    // explicit method generic arguments, but its method-chain receiver remains
+    // unsupported and targetless.
+    let generic_owner = function_id_by_name_in_module(
+        &db,
+        &["crate", "ext_traits", "request_parts", "tests"],
+        "extract_with_state",
+    )?;
+    let generic_context = db.call_context_for_owner(generic_owner)?;
+    let generic_row = row_by_method_receiver(
+        &generic_context,
+        "extract_with_state",
+        &CallReceiver::Unsupported,
+    );
+    assert_targetless_status(generic_row, CallStatusKind::Unsupported);
+    assert_eq!(
+        generic_row.site.generic_arg_count,
+        Some(2),
+        "request_parts.rs:164 should preserve `<State<String>, String>`"
+    );
+    assert!(
+        relations_for_site(&db, generic_row.site.id)?
+            .rows
+            .is_empty(),
+        "request_parts.rs:164 unsupported receiver should not have raw call_relation targets"
+    );
+    assert_no_traversal_candidates_for_site(
+        &db,
+        generic_owner,
+        generic_row.site.id,
+        "axum-core/src/ext_traits/request_parts.rs:164 parts.extract_with_state::<State<String>, String>",
+    )?;
+
+    // Source chain:
+    //   axum-core/src/ext_traits/request_parts.rs:186 calls
+    //   `parts.extract_with_state(state)`.
+    // The blanket-helper row still projects as an unresolved local binding and
+    // does not resolve back to the `RequestPartsExt::extract_with_state` impl.
     let _target_owner = method_id_by_name_and_body_substring(
         &db,
         "extract_with_state",
@@ -369,7 +404,7 @@ fn axum_real_target_turbofish_local_receiver_is_documented_gap() -> Result<(), D
     assert_eq!(
         rows.rows.len(),
         1,
-        "request_parts.rs:186 should project exactly one targetless local receiver row; the request_parts.rs:164 turbofish source row remains absent"
+        "request_parts.rs:186 should project exactly one targetless local receiver row"
     );
     assert_eq!(
         rows.rows[0][0],

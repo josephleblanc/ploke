@@ -448,7 +448,7 @@ fn axum_real_target_take_route_helper_is_documented_gap() -> Result<(), DbError>
 }
 
 #[test]
-fn axum_real_target_turbofish_calls_are_documented_gaps() -> Result<(), DbError> {
+fn axum_real_target_turbofish_calls_preserve_generic_counts() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
     // Matrix: external turbofish path calls.
@@ -487,17 +487,83 @@ fn axum_real_target_turbofish_calls_are_documented_gaps() -> Result<(), DbError>
     // Source chain:
     //   axum-macros/src/attr_parsing.rs:66 calls
     //   `attr.parse_args::<T>()` inside an iterator closure.
-    // Current model gap: closure bodies do not yet receive nested call owners,
-    // so the `parse_args::<T>()` method call is not projected under
-    // `parse_attrs`; no traversal edge should be invented.
+    // Expected traversal: zero local call edges. The row is projected on the
+    // nested closure owner, preserves one generic argument, and remains
+    // unsupported because the receiver is a local binding to external `syn`.
     let owner = function_id_by_name_in_module(&db, &["crate", "attr_parsing"], "parse_attrs")?;
     let context = db.call_context_for_owner(owner)?;
     assert!(
         context
             .iter()
             .all(|row| row.site.method.as_deref() != Some("parse_args")),
-        "closure-body parse_args::<T>() should remain absent until closure owners are modeled: {context:#?}"
+        "closure-body parse_args::<T>() should remain owned by the nested closure, not by parse_attrs: {context:#?}"
     );
+
+    assert_targetless_method_owner_kind_line_fanout(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        "parse_args",
+        "LocalBinding",
+        Some(&["attr"]),
+        CallStatusKind::Unsupported,
+        "Closure",
+        &[SourceLineFanout {
+            file_suffix: "axum-macros/src/attr_parsing.rs",
+            lines: &[66],
+        }],
+    )?;
+
+    let mut params = std::collections::BTreeMap::new();
+    params.insert("method".to_string(), cozo::DataValue::from("parse_args"));
+    params.insert(
+        "receiver_path".to_string(),
+        cozo::DataValue::List(vec![cozo::DataValue::from("attr")]),
+    );
+    let rows = db.raw_query_params(
+        r#"?[site_id, owner_id, generic_arg_count] :=
+            *call_site {
+                id: site_id,
+                owner_id,
+                call_kind: "Method",
+                method_name: $method,
+                receiver_kind: "LocalBinding",
+                receiver_path: $receiver_path,
+                generic_arg_count @ 'NOW'
+            },
+            *call_resolution_status {
+                source_id: site_id,
+                source_kind: "Method",
+                status_kind: "Unsupported",
+                resolution_kind @ 'NOW'
+            },
+            *call_body_owner {
+                id: owner_id,
+                owner_kind: "Closure" @ 'NOW'
+            }"#,
+        params,
+    )?;
+    assert_eq!(
+        rows.rows.len(),
+        1,
+        "attr_parsing.rs:66 should project one closure-owned parse_args::<T>() row"
+    );
+    assert_eq!(
+        rows.rows[0][2],
+        cozo::DataValue::Num(cozo::Num::Int(1)),
+        "attr_parsing.rs:66 should preserve the `<T>` method generic arity"
+    );
+    let site_id = to_uuid(&rows.rows[0][0])?;
+    let closure_owner = to_uuid(&rows.rows[0][1])?;
+    assert!(
+        relations_for_site(&db, site_id)?.rows.is_empty(),
+        "attr_parsing.rs:66 parse_args::<T>() should not have raw call_relation targets"
+    );
+    assert_no_traversal_candidates_for_site(
+        &db,
+        closure_owner,
+        site_id,
+        "axum-macros/src/attr_parsing.rs:66 attr.parse_args::<T>",
+    )?;
 
     Ok(())
 }

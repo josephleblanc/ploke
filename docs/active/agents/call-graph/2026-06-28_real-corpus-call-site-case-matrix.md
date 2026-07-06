@@ -51,7 +51,7 @@ Status values:
 | External std path call | `axum-fixture` | axum | `axum/src/error_handling/mod.rs:138` | `std::mem::replace(&mut self.inner, clone)` | Status should classify as external/std-root. |
 | Local generic function turbofish | `axum-fixture` | axum-core | `axum-core/src/body.rs:251` | `try_downcast::<i32, _>(5_u32)` | Path call should preserve generic argument count and resolve to local helper where selected by fixture scope. |
 | External turbofish path call | `axum-fixture` | axum-macros | `axum-macros/src/attr_parsing.rs:22` | `std::any::type_name::<K>()` | Status should classify external and preserve generic args. |
-| Turbofish method call | `axum-fixture` | axum-macros | `axum-macros/src/attr_parsing.rs:66` | `attr.parse_args::<T>()` | Method call should preserve generic args; target may remain external to `syn`. |
+| Turbofish method call | `axum-fixture` | axum-macros | `axum-macros/src/attr_parsing.rs:66` | `attr.parse_args::<T>()` | Covered in `paths.rs`: closure-owned method row preserves one generic arg and remains unsupported/targetless for the external `syn::Attribute` receiver. |
 | Tuple struct constructor | `axum-fixture` | axum | `axum/src/boxed.rs:38` | `BoxedIntoRoute(Box::new(Map { ... }))` | Constructor edge should target tuple struct `BoxedIntoRoute` if constructor resolution is enabled for the fixture. |
 | Enum variant constructor | `axum-fixture` | axum-macros | `axum-macros/src/with_position.rs:92` | `Some(Position::First(item))` | Enum variant constructor edge should target local `Position::First`; `Some` remains std/prelude external. |
 | `Self::associated_function()` | `axum-fixture` | axum | `axum/src/json.rs:112` | `Self::from_bytes(&bytes)` | Associated-function edge should target `Json<T>::from_bytes`. |
@@ -74,7 +74,7 @@ Status values:
 | Method-call result receiver | `axum-fixture` | axum | `axum/src/routing/route.rs:51` | `self.0.clone().oneshot(req)` | Query should traverse nested receiver expression and classify the outer method site. |
 | Await result receiver | `axum-fixture` | axum | `axum/src/test_helpers/test_client.rs:134` | `self.builder.send().await.unwrap()` | Query should preserve method site after `.await` receiver shape. |
 | Try result receiver | `fallback-source` | chrono | `src/format/parsed.rs:836` | `DateTime::from_timestamp_secs(ts).ok_or(OUT_OF_RANGE)?.naive_utc()` | Covered in `fallback.rs`: chrono try-result receiver rows are visible, unsupported, targetless, and non-traversable. |
-| Generic turbofish method call | `axum-fixture` | axum-core | `axum-core/src/ext_traits/request_parts.rs:164` | `.extract_with_state::<State<String>, String>(&state)` | Method site should preserve generic argument count. |
+| Generic turbofish method call | `axum-fixture` | axum-core | `axum-core/src/ext_traits/request_parts.rs:164` | `.extract_with_state::<State<String>, String>(&state)` | Covered in `receivers.rs`: method site preserves two generic args and remains unsupported/targetless until method-chain receiver classification is implemented. |
 | Local shadowed callable value | `axum-fixture` | axum | `axum/src/routing/tests/mod.rs:423` | local `get` closure is later called as `get("/").await` | This is a real local callable shadowing case; query should not emit a fake edge to `routing::get`. |
 
 ## Trait And Body-Owner Cases
