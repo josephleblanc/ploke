@@ -1518,3 +1518,11 @@ where
 pub fn call_single_generic_fn_once_param_with_local_target() -> i32 {
     call_single_generic_fn_once_param(local_target)
 }
+
+fn call_single_parenthesized_function_pointer_param(f: fn() -> i32) -> i32 {
+    (f)()
+}
+
+pub fn call_single_parenthesized_function_pointer_param_with_local_target() -> i32 {
+    call_single_parenthesized_function_pointer_param(local_target)
+}

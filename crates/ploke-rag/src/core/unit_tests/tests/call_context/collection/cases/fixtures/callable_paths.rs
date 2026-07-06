@@ -43,6 +43,13 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
         &db,
         &function_in_module_query(&["crate"], "call_single_function_pointer_param"),
     )?;
+    let single_parenthesized_param_owner = one_uuid(
+        &db,
+        &function_in_module_query(
+            &["crate"],
+            "call_single_parenthesized_function_pointer_param",
+        ),
+    )?;
     let generic_owner = one_uuid(
         &db,
         &function_in_module_query(&["crate"], "call_generic_fn_once_value_binding"),
@@ -70,6 +77,7 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
         (block_owner, 1.0),
         (fn_param_owner, 1.0),
         (single_param_owner, 1.0),
+        (single_parenthesized_param_owner, 1.0),
         (generic_owner, 1.0),
         (boxed_owner, 1.0),
         (vec_owner, 1.0),
@@ -277,6 +285,42 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
     assert_eq!(
         single_param_call.targets[0].relation,
         CallTargetKind::Function
+    );
+
+    let single_parenthesized_param_context = call_context
+        .get(&single_parenthesized_param_owner)
+        .expect("single-caller parenthesized function-pointer param owner should receive outgoing call context");
+    let single_parenthesized_param_call = single_parenthesized_param_context
+        .iter()
+        .find(|call| {
+            call.kind == CallSiteKind::Dynamic
+                && call.callee == CallCalleeInfo::Dynamic
+                && call
+                    .targets
+                    .iter()
+                    .any(|target| target.target_id == local_target)
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "single-caller parenthesized function-pointer param context should include resolved (f)() -> local_target: {single_parenthesized_param_context:#?}"
+            )
+        });
+    assert_eq!(
+        single_parenthesized_param_call.status,
+        CallStatusKind::Resolved
+    );
+    assert_eq!(
+        single_parenthesized_param_call.resolution,
+        Some(CallResolutionKind::LocalExact)
+    );
+    assert_eq!(single_parenthesized_param_call.targets.len(), 1);
+    assert_eq!(
+        single_parenthesized_param_call.targets[0].target_id,
+        local_target
+    );
+    assert_eq!(
+        single_parenthesized_param_call.targets[0].relation,
+        CallTargetKind::DynamicFunction
     );
 
     let generic_context = call_context

@@ -17,7 +17,7 @@ use super::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum ParameterCallTarget {
+pub(super) enum ParameterCallTarget {
     Function(FunctionNodeId),
     Closure(ExecutableBodyId),
 }
@@ -35,7 +35,7 @@ impl CallRelationResolver<'_> {
         match &call.callee {
             PathCallCallee::ItemPath => {}
             PathCallCallee::ValueBinding { path } => {
-                if let Some(target) = self.resolve_parameter_value_call(call, path)? {
+                if let Some(target) = self.resolve_parameter_value_call(call.owner, path)? {
                     match target {
                         ParameterCallTarget::Function(target) => {
                             relations.push(CallRelation::Function {
@@ -250,22 +250,22 @@ impl CallRelationResolver<'_> {
         Ok(())
     }
 
-    fn resolve_parameter_value_call(
+    pub(super) fn resolve_parameter_value_call(
         &self,
-        call: &PathCallNode,
+        owner: CallBodyOwnerId,
         path: &[String],
     ) -> Result<Option<ParameterCallTarget>, SynParserError> {
         let [name] = path else {
             return Ok(None);
         };
 
-        let Some(parameter_owner) = self.parameter_function_owner(call.owner)? else {
+        let Some(parameter_owner) = self.parameter_function_owner(owner)? else {
             return Ok(None);
         };
         if !self.function_allows_local_parameter_proof(parameter_owner)? {
             return Ok(None);
         }
-        let Some(params) = self.owner_parameters(call.owner)? else {
+        let Some(params) = self.owner_parameters(owner)? else {
             return Ok(None);
         };
         let Some(index) = params

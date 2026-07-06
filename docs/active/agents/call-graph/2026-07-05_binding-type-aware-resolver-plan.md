@@ -71,14 +71,19 @@ should prevent future resumes from reselecting already-covered shapes.
      set supplies exactly one proven callable target,
      for example `call_single_function_pointer_param(f: fn() -> i32) { f() }`
      called only as `call_single_function_pointer_param(local_target)`.
+     The same proof is reused for the parenthesized dynamic form
+     `call_single_parenthesized_function_pointer_param(f: fn() -> i32) { (f)() }`,
+     which resolves to a `DynamicFunction` edge only under the same private,
+     bare-function-pointer, complete-single-caller constraints.
    - Public helpers, generic callable-trait parameters such as `F: FnOnce`,
      unproven argument expressions, missing arguments, and multi-target caller
      sets remain targetless; do not broaden this through API entrypoints,
      callable-trait dispatch, or arbitrary interprocedural value flow.
    - DB, RAG, and tool assertions now preserve the resolved private
-     function-pointer single-caller edge to `local_target`, while public,
-     generic callable-trait, opaque, missing-argument, and multi-target shapes
-     remain explicit blockers.
+     function-pointer single-caller edges to `local_target` for both path
+     `f()` and dynamic `(f)()` call forms, while public, generic
+     callable-trait, opaque, missing-argument, and multi-target shapes remain
+     explicit blockers.
 
 2. Direct typed local receiver alias - completed:
    - Extend one exact local alias propagation case for method receivers only if it reuses existing initializer proof.

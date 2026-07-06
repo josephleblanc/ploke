@@ -52,6 +52,14 @@ async fn request_code_context_returns_function_and_dynamic_owner_call_context()
             callee: CallCalleeInfo::Dynamic,
             relation: CallTargetKind::DynamicFunction,
         },
+        Case {
+            label: "single-caller parenthesized function-pointer parameter",
+            search_term: "call_single_parenthesized_function_pointer_param f fn i32",
+            owner: "call_single_parenthesized_function_pointer_param",
+            call_kind: CallSiteKind::Dynamic,
+            callee: CallCalleeInfo::Dynamic,
+            relation: CallTargetKind::DynamicFunction,
+        },
     ];
 
     for case in cases {

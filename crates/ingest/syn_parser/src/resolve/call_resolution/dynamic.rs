@@ -10,7 +10,7 @@ use crate::{
     },
 };
 
-use super::{CallRelationResolver, LocalFunctionPathResolution};
+use super::{CallRelationResolver, LocalFunctionPathResolution, path::ParameterCallTarget};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DynamicPathResolution {
@@ -50,6 +50,30 @@ impl CallRelationResolver<'_> {
 
         if let DynamicCallCallee::ReturnedPathCall { path } = &call.callee {
             self.resolve_returned_path_call(call, path, relations, statuses)?;
+            return Ok(());
+        }
+
+        if let DynamicCallCallee::LocalBinding { path } = &call.callee
+            && let Some(target) = self.resolve_parameter_value_call(call.owner, path)?
+        {
+            match target {
+                ParameterCallTarget::Function(target) => {
+                    relations.push(CallRelation::DynamicFunction {
+                        source: call.id,
+                        target,
+                    });
+                }
+                ParameterCallTarget::Closure(target) => {
+                    relations.push(CallRelation::DynamicClosure {
+                        source: call.id,
+                        target,
+                    });
+                }
+            }
+            statuses.push(CallResolutionStatus::Resolved {
+                source,
+                kind: CallResolutionKind::LocalExact,
+            });
             return Ok(());
         }
 
