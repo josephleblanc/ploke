@@ -404,6 +404,7 @@ pub(super) struct ContextCarriers {
 pub(super) struct CallPathCarriers {
     pub(super) from_owner: Vec<CallPathInfo>,
     pub(super) to_target: Vec<CallPathInfo>,
+    pub(super) cycles_from_owner: Vec<CallPathInfo>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -498,10 +499,21 @@ pub(super) fn call_path_carriers_for_node(
             })?,
         _ => Vec::new(),
     };
+    let cycles_from_owner = match ctx.state.rag.as_ref() {
+        Some(rag) if !rag.call_context_degraded() => rag
+            .exact_call_cycles_from_owner(node_id, path_options)
+            .map_err(|err| {
+                ploke_error::Error::Internal(InternalError::CompilerError(format!(
+                    "failed to collect recursive call paths for code item {node_id}: {err}"
+                )))
+            })?,
+        _ => Vec::new(),
+    };
 
     Ok(CallPathCarriers {
         from_owner,
         to_target,
+        cycles_from_owner,
     })
 }
 

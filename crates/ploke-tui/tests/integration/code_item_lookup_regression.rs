@@ -89,6 +89,64 @@ async fn code_item_lookup_returns_call_and_proof_context_for_call_graph_item() {
 }
 
 #[tokio::test]
+async fn code_item_lookup_returns_recursive_cycle_paths() {
+    let fixture = CallGraphToolFixture::new().await;
+    let params = LookupParams {
+        item_name: Cow::Borrowed("recursive_fixture_call"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("function"),
+        module_path: Cow::Borrowed("crate"),
+        owner_trait: None,
+        owner_type: None,
+        parent_name: None,
+    };
+
+    let result = CodeItemLookup::execute(params, fixture.ctx("recursive-lookup-cycles"))
+        .await
+        .expect("recursive_fixture_call lookup");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize ConciseContext");
+    let owner = payload
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .expect("resolved item id");
+    let cycles = payload
+        .get("call_cycles_from_owner")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_cycles_from_owner array");
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:
+    // `recursive_fixture_call(depth - 1)` is a resolved direct self-call.
+    // Exact lookup should expose the DB/RAG cycle helper so tool callers can
+    // answer "does this item recursively reach itself?" without recomputing
+    // traversal from generic outgoing and incoming path arrays.
+    assert_eq!(cycles.len(), 1, "recursive cycle paths: {cycles:#?}");
+    let cycle = &cycles[0];
+    assert_eq!(
+        cycle.get("start_id").and_then(serde_json::Value::as_str),
+        Some(owner)
+    );
+    assert_eq!(
+        cycle.get("end_id").and_then(serde_json::Value::as_str),
+        Some(owner)
+    );
+    assert_eq!(
+        cycle.get("depth").and_then(serde_json::Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        cycle
+            .get("edges")
+            .and_then(serde_json::Value::as_array)
+            .map(Vec::len),
+        Some(1)
+    );
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert_eq!(ui_field(ui, "call_cycles_from_owner"), "1");
+}
+
+#[tokio::test]
 async fn code_item_lookup_returns_resolved_dynamic_callable_context() {
     // Fixture source:
     //   tests/fixture_crates/fixture_call_graph/src/lib.rs:269

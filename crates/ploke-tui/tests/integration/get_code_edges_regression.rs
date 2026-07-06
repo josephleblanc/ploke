@@ -283,6 +283,64 @@ async fn code_item_edges_returns_edges_for_ploke_db_primary_node() {
 }
 
 #[tokio::test]
+async fn code_item_edges_returns_recursive_cycle_paths() {
+    let fixture = CallGraphToolFixture::new().await;
+    let params = EdgesParams {
+        item_name: Cow::Borrowed("recursive_fixture_call"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("function"),
+        module_path: Cow::Borrowed("crate"),
+        owner_trait: None,
+        owner_type: None,
+        parent_name: None,
+    };
+
+    let result = CodeItemEdges::execute(params, fixture.ctx("recursive-edges-cycles"))
+        .await
+        .expect("recursive_fixture_call edges");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
+    let owner = payload
+        .get("node_info")
+        .and_then(|node| node.get("id"))
+        .and_then(serde_json::Value::as_str)
+        .expect("resolved item id");
+    let cycles = payload
+        .get("call_cycles_from_owner")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_cycles_from_owner array");
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:
+    // `recursive_fixture_call(depth - 1)` is a resolved direct self-call.
+    // Edge lookup should expose the same DB/RAG cycle helper as exact lookup,
+    // while leaving generic path traversal semantics unchanged.
+    assert_eq!(cycles.len(), 1, "recursive cycle paths: {cycles:#?}");
+    let cycle = &cycles[0];
+    assert_eq!(
+        cycle.get("start_id").and_then(serde_json::Value::as_str),
+        Some(owner)
+    );
+    assert_eq!(
+        cycle.get("end_id").and_then(serde_json::Value::as_str),
+        Some(owner)
+    );
+    assert_eq!(
+        cycle.get("depth").and_then(serde_json::Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        cycle
+            .get("edges")
+            .and_then(serde_json::Value::as_array)
+            .map(Vec::len),
+        Some(1)
+    );
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert_eq!(ui_field(ui, "call_cycles_from_owner"), "1");
+}
+
+#[tokio::test]
 async fn code_item_edges_returns_edges_for_database_struct_in_ploke_db() {
     // Shared fixture DB with parsed nodes/edges from tests/fixture_crates/fixture_nodes.
     let db = ploke_tui::test_utils::new_test_harness::TEST_DB_NODES

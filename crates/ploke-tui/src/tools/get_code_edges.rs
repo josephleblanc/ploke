@@ -366,6 +366,7 @@ for a more fuzzy search."#
             call_context: carriers.call_context,
             call_paths_from_owner: Vec::new(),
             call_paths_to_target: Vec::new(),
+            call_cycles_from_owner: Vec::new(),
             call_impact,
             call_reach,
             proof_context: carriers.proof_context,
@@ -376,6 +377,7 @@ for a more fuzzy search."#
             edge_info: resolved_edges,
             call_paths_from_owner: call_paths.from_owner,
             call_paths_to_target: call_paths.to_target,
+            call_cycles_from_owner: call_paths.cycles_from_owner,
             call_path_nodes,
             call_graph_summary,
         };
@@ -411,6 +413,10 @@ for a more fuzzy search."#
             .with_field(
                 "call_paths_to_target",
                 node_edge_info.call_paths_to_target.len().to_string(),
+            )
+            .with_field(
+                "call_cycles_from_owner",
+                node_edge_info.call_cycles_from_owner.len().to_string(),
             );
         let ui_payload = lookup_support::with_call_usage_fields(
             ui_payload,
@@ -440,6 +446,7 @@ pub struct NodeEdgeInfo {
     edge_info: Vec<ResolvedEdgeData>,
     call_paths_from_owner: Vec<CallPathInfo>,
     call_paths_to_target: Vec<CallPathInfo>,
+    call_cycles_from_owner: Vec<CallPathInfo>,
     call_path_nodes: Vec<CallPathNodeInfo>,
     call_graph_summary: CallGraphSummary,
 }

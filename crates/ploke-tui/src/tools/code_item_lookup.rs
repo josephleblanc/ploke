@@ -333,6 +333,7 @@ for a more fuzzy search."#
             call_context: carriers.call_context,
             call_paths_from_owner: call_paths.from_owner,
             call_paths_to_target: call_paths.to_target,
+            call_cycles_from_owner: call_paths.cycles_from_owner,
             call_impact,
             call_reach,
             proof_context: carriers.proof_context,
@@ -354,6 +355,10 @@ for a more fuzzy search."#
             .with_field(
                 "call_paths_to_target",
                 concise_context.call_paths_to_target.len().to_string(),
+            )
+            .with_field(
+                "call_cycles_from_owner",
+                concise_context.call_cycles_from_owner.len().to_string(),
             );
         let ui_payload = lookup_support::with_call_usage_fields(
             ui_payload,
