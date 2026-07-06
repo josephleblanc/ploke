@@ -292,7 +292,7 @@ async fn call_context_collection_reads_axum_route_oneshot_receiver_gaps() -> Res
                     method_name: "clone".to_string(),
                 }),
             },
-            status: CallStatusKind::Unsupported,
+            status: CallStatusKind::External,
         },
         MethodCase {
             label: "axum/src/routing/route.rs:57 Route::oneshot_inner_owned",
@@ -304,7 +304,7 @@ async fn call_context_collection_reads_axum_route_oneshot_receiver_gaps() -> Res
                     path: vec!["0".to_string()],
                 }),
             },
-            status: CallStatusKind::Unsupported,
+            status: CallStatusKind::External,
         },
     ];
 
@@ -334,8 +334,8 @@ async fn call_context_collection_reads_axum_route_oneshot_receiver_gaps() -> Res
         //   `self.0.clone().oneshot(req)`.
         //   axum/src/routing/route.rs:57 calls `self.0.oneshot(req)`.
         // Expected traversal: both receiver shapes are structurally visible
-        // method callsites, but have zero traversable targets until external
-        // tower receiver dispatch and tuple-field receiver proof are modeled.
+        // external method frontiers, but have zero traversable targets until
+        // external tower receiver dispatch is modeled.
         let call = matching[0];
         assert_eq!(call.owner_id, owner);
         assert_eq!(call.status, case.status);

@@ -1127,12 +1127,14 @@ fn axum_real_target_result_receiver_chains_are_documented_gaps() -> Result<(), D
     //   `Request::builder().uri(\"/\").body(Body::empty()).unwrap()`.
     //   axum/src/routing/route.rs:51 calls
     //   `self.0.clone().oneshot(req)`.
-    // Current model gap: path-call and method-call result receivers are
+    // Current model split: path-call and method-call result receivers are
     // structurally projected but remain targetless unless the nested local
     // associated function is already in the resolved subset. `Request::builder`
     // rows whose `Request` segment resolves to the axum-core
     // `Request = http::Request` alias are external frontiers with no local
-    // traversal target.
+    // traversal target. Route `oneshot` receiver rows are also external
+    // frontiers because the receiver type and `tower::ServiceExt` import are
+    // source-visible, but concrete tower dispatch is still not traversed.
     let route_owner = method_id_by_name_body_and_file_suffix(
         &db,
         "oneshot_inner",
@@ -1146,7 +1148,7 @@ fn axum_real_target_result_receiver_chains_are_documented_gaps() -> Result<(), D
         &CallReceiver::MethodCallResult {
             method_name: "clone".to_string(),
         },
-        CallStatusKind::Unsupported,
+        CallStatusKind::External,
         "axum/src/routing/route.rs:51",
     )?;
     let route_owned_owner = method_id_by_name_body_and_file_suffix(
@@ -1162,7 +1164,7 @@ fn axum_real_target_result_receiver_chains_are_documented_gaps() -> Result<(), D
         &CallReceiver::SelfField {
             path: vec!["0".to_string()],
         },
-        CallStatusKind::Unsupported,
+        CallStatusKind::External,
         // axum/src/routing/route.rs:57
         "axum/src/routing/route.rs:57",
     )?;
@@ -1357,7 +1359,7 @@ fn axum_real_target_result_receiver_chains_are_documented_gaps() -> Result<(), D
         "oneshot",
         "MethodCallResult",
         Some(&["clone"]),
-        CallStatusKind::Unsupported,
+        CallStatusKind::External,
         1,
     )?;
     assert_targetless_method_line_fanout(
@@ -1366,7 +1368,7 @@ fn axum_real_target_result_receiver_chains_are_documented_gaps() -> Result<(), D
         "oneshot",
         "MethodCallResult",
         Some(&["clone"]),
-        CallStatusKind::Unsupported,
+        CallStatusKind::External,
         &[SourceLineFanout {
             file_suffix: "axum/src/routing/route.rs",
             lines: &[51],
@@ -1377,7 +1379,7 @@ fn axum_real_target_result_receiver_chains_are_documented_gaps() -> Result<(), D
         "oneshot",
         "SelfField",
         Some(&["0"]),
-        CallStatusKind::Unsupported,
+        CallStatusKind::External,
         1,
     )?;
     assert_targetless_method_line_fanout(
@@ -1386,7 +1388,7 @@ fn axum_real_target_result_receiver_chains_are_documented_gaps() -> Result<(), D
         "oneshot",
         "SelfField",
         Some(&["0"]),
-        CallStatusKind::Unsupported,
+        CallStatusKind::External,
         &[SourceLineFanout {
             file_suffix: "axum/src/routing/route.rs",
             lines: &[57],

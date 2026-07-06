@@ -89,7 +89,7 @@ async fn proof_context_collection_preserves_axum_route_oneshot_blockers() -> Res
                     method_name: "clone".to_string(),
                 }),
             },
-            status: CallStatusKind::Unsupported,
+            status: CallStatusKind::External,
         },
         MethodCase {
             label: "Route::oneshot_inner_owned tuple-field receiver",
@@ -101,7 +101,7 @@ async fn proof_context_collection_preserves_axum_route_oneshot_blockers() -> Res
                     path: vec!["0".to_string()],
                 }),
             },
-            status: CallStatusKind::Unsupported,
+            status: CallStatusKind::External,
         },
     ];
 
@@ -128,7 +128,8 @@ async fn proof_context_collection_preserves_axum_route_oneshot_blockers() -> Res
         let calls = call_context
             .get(&owner)
             .unwrap_or_else(|| panic!("{} should receive outgoing call context", case.label));
-        let site_id = targetless_method_site(calls, owner, &case.callee, case.label);
+        let site_id =
+            targetless_method_site_with_status(calls, owner, &case.callee, case.status, case.label);
 
         let proof_context = rag.collect_proof_context(&[(owner, 1.0)])?;
         let rows = proof_context
@@ -142,12 +143,17 @@ async fn proof_context_collection_preserves_axum_route_oneshot_blockers() -> Res
         //   `self.0.clone().oneshot(req)`.
         //   axum/src/routing/route.rs:57 calls `self.0.oneshot(req)`.
         // Expected proof traversal: owner-seeded proof context must include the
-        // call_site plus blocked call_resolution facts for both unsupported,
+        // call_site plus blocked call_resolution facts for both external,
         // targetless Route::oneshot receiver shapes. There are zero callee
-        // edges until external tower receiver dispatch and tuple-field receiver
-        // proof are modeled.
-        assert_blocked_resolution(rows, owner, "type_resolution_missing");
-        assert_site_blocker(rows, owner, site_id, "type_resolution_missing", case.label);
+        // edges until external tower receiver dispatch is modeled.
+        assert_blocked_resolution(rows, owner, "external_dependency_summary_missing");
+        assert_site_blocker(
+            rows,
+            owner,
+            site_id,
+            "external_dependency_summary_missing",
+            case.label,
+        );
     }
 
     Ok(())

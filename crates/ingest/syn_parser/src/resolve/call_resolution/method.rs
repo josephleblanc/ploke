@@ -51,6 +51,12 @@ impl CallRelationResolver<'_> {
             statuses.push(CallResolutionStatus::External { source });
             return Ok(());
         }
+        if let MethodCallReceiver::MethodCallResult { method_name } = &call.receiver
+            && self.is_external_method_result_method(call.owner, method_name, &call.method_name)?
+        {
+            statuses.push(CallResolutionStatus::External { source });
+            return Ok(());
+        }
         if let MethodCallReceiver::TypedLocalBinding { type_path, .. }
         | MethodCallReceiver::BorrowedTypedLocalBinding { type_path, .. } = &call.receiver
             && self.is_external_type_path_method(call.owner, type_path, &call.method_name)?
@@ -357,8 +363,12 @@ impl CallRelationResolver<'_> {
 
         if !matches!(
             method_name,
-            "extensions_mut" | "len" | "poll_ready" | "size_hint"
+            "extensions_mut" | "len" | "poll_ready" | "size_hint" | "oneshot"
         ) {
+            return Ok(false);
+        }
+
+        if method_name == "oneshot" && !self.has_external_service_ext_import(owner)? {
             return Ok(false);
         }
 
@@ -404,6 +414,13 @@ impl CallRelationResolver<'_> {
         }
 
         Ok(false)
+    }
+
+    fn has_external_service_ext_import(
+        &self,
+        owner: CallBodyOwnerId,
+    ) -> Result<bool, SynParserError> {
+        self.is_external_import_path(owner, &["ServiceExt".to_string()])
     }
 
     fn is_external_service_trait_bound(
@@ -616,6 +633,19 @@ impl CallRelationResolver<'_> {
         }
 
         Ok(false)
+    }
+
+    fn is_external_method_result_method(
+        &self,
+        owner: CallBodyOwnerId,
+        result_method: &str,
+        method_name: &str,
+    ) -> Result<bool, SynParserError> {
+        if result_method != "clone" || method_name != "oneshot" {
+            return Ok(false);
+        }
+
+        self.has_external_service_ext_import(owner)
     }
 
     fn is_external_path_result_method(

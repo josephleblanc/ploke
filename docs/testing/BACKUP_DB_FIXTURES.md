@@ -317,6 +317,21 @@ Post-regeneration verification:
 - Shared call-graph corpus snapshots were refreshed under the configured DB
   snapshot fixture directory.
 
+## 2026-07-06 Axum Route Oneshot Frontier Refresh
+
+The `corpus_axum_call_graph` fixture was recreated with
+`cargo run -p xtask --features call_graph -- recreate-backup-db --fixture corpus_axum_call_graph`
+after call graph resolution began classifying the two Route `oneshot` receiver
+rows in `axum/src/routing/route.rs` as external targetless frontiers when
+`tower::ServiceExt` import evidence is visible.
+
+Post-regeneration verification:
+
+- `cargo run -p xtask --features call_graph -- verify-backup-dbs --fixture corpus_axum_call_graph`
+  passed with `roundtrip=ok`.
+- The regenerated `corpus_axum_call_graph_2026-07-06.sqlite` shared snapshot
+  was copied into `tests/backup_dbs/` as the committed seed artifact.
+
 ## `fixture_nodes_canonical_2026-05-17.sqlite`
 
 - File: `tests/backup_dbs/fixture_nodes_canonical_2026-05-17.sqlite`

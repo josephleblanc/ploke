@@ -132,8 +132,8 @@ async fn code_item_lookup_returns_route_oneshot_targetless_real_corpus_rows() {
         //   `self.0.clone().oneshot(req)`.
         //   axum/src/routing/route.rs:57 calls `self.0.oneshot(req)`.
         // Expected traversal: exact owner lookup exposes both structural
-        // Route::oneshot receiver rows, with zero callee targets until external
-        // tower receiver dispatch and tuple-field receiver proof are modeled.
+        // Route::oneshot receiver rows as external frontiers, with zero callee
+        // targets until external tower receiver dispatch is modeled.
         let callee = fixture.case.callee();
         let site_id = assert_method_context(
             call_context,
