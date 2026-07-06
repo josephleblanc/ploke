@@ -15,7 +15,7 @@ Root plan: `.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md`
 
 Current phase: binding/type-aware semantic resolution.
 
-Current completed bucket: local callable parameter proof.
+Current completed bucket: direct tuple-pattern local receiver proof.
 
 Exit criteria for the first implementation slice:
 
@@ -145,7 +145,20 @@ should prevent future resumes from reselecting already-covered shapes.
    - Parser and DB tests assert the typed callee, non-flattened body owner, and
      two-hop outer function -> async-closure owner -> `local_target` traversal.
 
-8. Next adjacent candidate:
+8. Direct tuple-pattern local receiver proof - completed:
+   - `call_tuple_pattern_local_instance_method` now records
+     `let (value, _) = (LocalAssoc, 0); value.instance_value()` as an
+     `InitializedLocalBinding` receiver by reusing existing per-element local
+     binding proof for direct same-arity tuple expressions.
+   - Parser, DB receiver decode, DB proof projection, and RAG call-context
+     assertions preserve the exact `LocalAssoc` initializer evidence and the
+     local method target edge.
+   - Arbitrary destructuring, method-result tuple destructuring such as
+     `let (parts, body) = Request::new(()).into_parts();`, nested value-flow,
+     and tuple patterns without direct tuple-expression initializers remain
+     out of scope rather than inferred.
+
+9. Next adjacent candidate:
    - Select from the coverage matrix parking lot rather than adding more
      import breadth by default.
    - Likely options are a broader async poll/resume proof carrier, an explicit
