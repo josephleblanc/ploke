@@ -59,6 +59,12 @@ impl CallRelationResolver<'_> {
             statuses.push(CallResolutionStatus::External { source });
             return Ok(());
         }
+        if let MethodCallReceiver::LocalBinding { name } = &call.receiver
+            && self.is_external_param_method_call(call, name, type_relations)?
+        {
+            statuses.push(CallResolutionStatus::External { source });
+            return Ok(());
+        }
 
         let resolution = match &call.receiver {
             MethodCallReceiver::SelfValue => self.resolve_self_method_call(call)?,
@@ -345,6 +351,33 @@ impl CallRelationResolver<'_> {
             }
             _ => Ok(false),
         }
+    }
+
+    fn is_external_param_method_call(
+        &self,
+        call: &MethodCallNode,
+        name: &str,
+        type_relations: &[TypeRelation],
+    ) -> Result<bool, SynParserError> {
+        let Some(parameters) = self.owner_parameters(call.owner)? else {
+            return Ok(false);
+        };
+
+        for param in parameters
+            .iter()
+            .filter(|param| !param.is_self && param.name.as_deref() == Some(name))
+        {
+            if self.is_external_type_method(
+                call.owner,
+                param.type_id,
+                &call.method_name,
+                type_relations,
+            )? {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
     }
 
     fn is_external_path_result_method(

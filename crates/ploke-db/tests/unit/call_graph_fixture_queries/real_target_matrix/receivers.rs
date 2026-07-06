@@ -81,7 +81,8 @@ fn axum_core_extract_self_methods_reach_same_impl_methods() -> Result<(), DbErro
 }
 
 #[test]
-fn axum_real_target_request_extensions_mut_receivers_are_documented_gaps() -> Result<(), DbError> {
+fn axum_real_target_request_extensions_mut_receiver_statuses_are_proof_backed()
+-> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
     // Matrix: local and parameter `req.extensions_mut` receiver rows.
@@ -91,8 +92,9 @@ fn axum_real_target_request_extensions_mut_receivers_are_documented_gaps() -> Re
     //   axum-core/src/ext_traits/request.rs:302 calls `req.extensions_mut()`.
     //   axum/src/extension.rs:184 calls `req.extensions_mut()`.
     // The initializer path is an imported alias to external `http::Request`
-    // and remains targetless. The receiver calls are projected on a local
-    // binding named `req`, but they remain unresolved external receiver calls.
+    // and remains targetless. Parameter receiver calls with direct external
+    // type proof are now classified as external; the borrowed/generic receiver
+    // rows without that proof remain targetless unresolved rows.
     let owner =
         method_id_by_name_and_body_substring(&db, "extract_parts_with_state", "Request::new(())")?;
     let context = db.call_context_for_owner(owner)?;
@@ -126,41 +128,17 @@ fn axum_real_target_request_extensions_mut_receivers_are_documented_gaps() -> Re
     let req_receiver = CallReceiver::LocalBinding {
         name: "req".to_string(),
     };
-    let cases = [
+    let unresolved_cases = [
         (
             // axum-core/src/extract/default_body_limit.rs:183
-            // `DefaultBodyLimit::apply` calls `req.extensions_mut().insert(...)`.
+            // `DefaultBodyLimit::apply` has `req: &mut Request<B>`, which is
+            // still a borrowed-parameter proof gap for external classification.
             "axum-core/src/extract/default_body_limit.rs:183",
             method_id_by_name_body_and_file_suffix(
                 &db,
                 "apply",
                 "req.extensions_mut().insert(self.kind)",
                 "axum-core/src/extract/default_body_limit.rs",
-            )?,
-            1,
-        ),
-        (
-            // axum-core/src/extract/default_body_limit.rs:225
-            // `DefaultBodyLimitService::call` calls the same external receiver.
-            "axum-core/src/extract/default_body_limit.rs:225",
-            method_id_by_name_body_and_file_suffix(
-                &db,
-                "call",
-                "req.extensions_mut().insert(self.kind)",
-                "axum-core/src/extract/default_body_limit.rs",
-            )?,
-            1,
-        ),
-        (
-            // axum/src/extension.rs:184
-            // `AddExtension::call` uses the parameter receiver from
-            // `mut req: Request<ResBody>` at axum/src/extension.rs:183.
-            "axum/src/extension.rs:184",
-            method_id_by_name_body_and_file_suffix(
-                &db,
-                "call",
-                "req.extensions_mut().insert(self.value.clone())",
-                "axum/src/extension.rs",
             )?,
             1,
         ),
@@ -191,7 +169,7 @@ fn axum_real_target_request_extensions_mut_receivers_are_documented_gaps() -> Re
             1,
         ),
     ];
-    for (label, owner, count) in cases {
+    for (label, owner, count) in unresolved_cases {
         assert_owner_method_targetless_count(
             &db,
             owner,
@@ -203,13 +181,48 @@ fn axum_real_target_request_extensions_mut_receivers_are_documented_gaps() -> Re
         )?;
     }
 
+    let external_cases = [
+        (
+            // axum-core/src/extract/default_body_limit.rs:225
+            // `DefaultBodyLimitService::call` uses `mut req: Request<B>`.
+            "axum-core/src/extract/default_body_limit.rs:225",
+            method_id_by_name_body_and_file_suffix(
+                &db,
+                "call",
+                "req.extensions_mut().insert(self.kind)",
+                "axum-core/src/extract/default_body_limit.rs",
+            )?,
+        ),
+        (
+            // axum/src/extension.rs:184
+            // `AddExtension::call` uses `mut req: Request<ResBody>`.
+            "axum/src/extension.rs:184",
+            method_id_by_name_body_and_file_suffix(
+                &db,
+                "call",
+                "req.extensions_mut().insert(self.value.clone())",
+                "axum/src/extension.rs",
+            )?,
+        ),
+    ];
+    for (label, owner) in external_cases {
+        assert_owner_method_targetless(
+            &db,
+            owner,
+            "extensions_mut",
+            &req_receiver,
+            CallStatusKind::External,
+            label,
+        )?;
+    }
+
     assert_targetless_method_rows(
         &db,
         "extensions_mut",
         "LocalBinding",
         Some(&["req"]),
         CallStatusKind::Unresolved,
-        6,
+        4,
     )?;
     assert_targetless_method_line_fanout(
         &db,
@@ -221,11 +234,7 @@ fn axum_real_target_request_extensions_mut_receivers_are_documented_gaps() -> Re
         &[
             SourceLineFanout {
                 file_suffix: "axum-core/src/extract/default_body_limit.rs",
-                lines: &[183, 225],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/extension.rs",
-                lines: &[184],
+                lines: &[183],
             },
             SourceLineFanout {
                 file_suffix: "axum/src/extract/nested_path.rs",
@@ -234,6 +243,32 @@ fn axum_real_target_request_extensions_mut_receivers_are_documented_gaps() -> Re
             SourceLineFanout {
                 file_suffix: "axum/src/routing/path_router.rs",
                 lines: &[336],
+            },
+        ],
+    )?;
+    assert_targetless_method_rows(
+        &db,
+        "extensions_mut",
+        "LocalBinding",
+        Some(&["req"]),
+        CallStatusKind::External,
+        2,
+    )?;
+    assert_targetless_method_line_fanout(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        "extensions_mut",
+        "LocalBinding",
+        Some(&["req"]),
+        CallStatusKind::External,
+        &[
+            SourceLineFanout {
+                file_suffix: "axum-core/src/extract/default_body_limit.rs",
+                lines: &[225],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/extension.rs",
+                lines: &[184],
             },
         ],
     )?;

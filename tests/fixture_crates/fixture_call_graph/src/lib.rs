@@ -1481,3 +1481,7 @@ pub fn call_local_impl_where_bound_trait_associated_function() -> i32 {
     let value = LocalImpl;
     value.value()
 }
+
+pub fn call_external_param_vec_len(value: Vec<i32>) -> usize {
+    value.len()
+}

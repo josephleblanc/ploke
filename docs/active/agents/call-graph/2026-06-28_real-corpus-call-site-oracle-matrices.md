@@ -215,7 +215,7 @@ shape and target-centered proof rows.
 | `self.inner.poll_ready` | `axum/src/extension.rs:180` | `AddExtension::poll_ready` | field `inner: S` at `extension.rs:164-166`; impl bound `S: Service<Request<ResBody>>` at `:171`; imported `tower_service::Service` at `:12`; external trait method. |
 | `Router::new` / `Router::clone` | `Router::new` at `axum/src/serve/mod.rs:756`; `crate::Router::new` at `axum/src/routing/method_routing.rs:1494`; `router.clone` in `serve/mod.rs`, `app.clone` at `routing/tests/mod.rs:804`, and `self.router.clone` at `boxed.rs:134` / `routing/mod.rs:673` | `if_it_compiles_it_works`; `building_complex_router`; serve local address tests; wrapper clone impls | typed local `let router: Router = Router::new()` -> `Router` import/re-export -> struct `routing/mod.rs:86` -> `Router::new` `:162`; explicit `crate::Router::new()` also targets the same inherent method; exact local external-trait impl receiver proof now resolves 13 `Router::clone` rows to `impl<S> Clone for Router<S>::clone` at `routing/mod.rs:90`. |
 | local `req.extensions_mut` | `axum-core/src/ext_traits/request.rs:302` | `RequestExt::extract_parts_with_state` | `let mut req = Request::new(())` at `:297`; `Request` alias to `http::Request` at `extract/mod.rs:29`; `Request::new` is an external targetless alias frontier; external `http::Request::extensions_mut`. |
-| parameter `req.extensions_mut` | `axum/src/extension.rs:184` | `AddExtension::call` | parameter `mut req: Request<ResBody>` at `:183`; `Request` imported from `http` at `:7`; external method. |
+| parameter `req.extensions_mut` | `axum-core/src/extract/default_body_limit.rs:225`; `axum/src/extension.rs:184` | `DefaultBodyLimitService::call`; `AddExtension::call` | direct parameters `mut req: Request<B>` / `mut req: Request<ResBody>`; `Request` imported from `http`; current DB projection classifies these rows as external targetless frontiers. Borrowed `req: &mut Request<B>` and generic/request-routing rows remain unresolved targetless rows. |
 | `self.0.size_hint` | `axum-core/src/body.rs:127` | `impl http_body::Body for Body::size_hint` | tuple field `Body(BoxBody)` at `:39`; `BoxBody` alias at `:13`; external `http_body::Body` trait method. |
 | path-call result receiver chain | `axum/src/middleware/from_fn.rs:411` | test `basic` | `Request` alias from `axum_core::extract` at `:1` -> external `http::Request::builder` / builder chain; nested `Body::empty` is local at `axum-core/src/body.rs:52`. |
 | method-call result receiver | `axum/src/routing/route.rs:51` | `Route::oneshot_inner` | `Route<E>(BoxCloneSyncService<...>)` at `:31`; imports `BoxCloneSyncService`, `Oneshot`, `ServiceExt` at `:20-22`; external tower trait methods. |
@@ -256,8 +256,9 @@ row now traverse to the axum-core trait method binding. Exact TUI lookup/edges
 tests assert the enclosing `test_from_extractor` item does not flatten that
 nested row.
 Receiver tests now assert exact owner-count buckets and source-line
-fanout for the six projected `req.extensions_mut()` local-binding rows plus
-the initialized external `Request::new` receiver row, the seven projected
+fanout for the projected `req.extensions_mut()` local-binding rows, split into
+direct external parameter receivers and still-unresolved borrowed/generic
+receiver rows, plus the initialized external `Request::new` receiver row, the seven projected
 `self.inner.poll_ready(cx)` forwarding rows, and the three projected
 `self.0.poll_ready(cx)` tuple-field rows. The tuple-field coverage splits the
 item-level method row from the two nested local `impl Service` rows now owned

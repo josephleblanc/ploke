@@ -1,7 +1,7 @@
 # Backup DB Fixtures
 
 Last reviewed: 2026-07-05
-Last updated: 2026-07-05
+Last updated: 2026-07-06
 
 This document is the current inventory for backup database fixtures under
 the shared DB snapshot fixture directory. It records which source targets
@@ -213,7 +213,7 @@ impl Drop for FixtureRestoreGuard {
 | `corpus_chrono_call_graph_2026-07-01.sqlite` | `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be` | plain corpus backup for real-target call graph query contracts | 2026-07-01 |
 | `corpus_chrono_openrouter_embeddings_2026-05-17.sqlite` | `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be` | OpenRouter-searchable corpus backup for type-context matrix tests | 2026-05-17 |
 | `corpus_axum_type_graph_2026-05-17.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | typed graphRAG workspace-member corpus backup for type-context matrix tests | 2026-05-17 |
-| `corpus_axum_call_graph_2026-07-05.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | plain workspace-member corpus backup for real-target call graph query contracts | 2026-07-05 |
+| `corpus_axum_call_graph_2026-07-06.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | plain workspace-member corpus backup for real-target call graph query contracts | 2026-07-06 |
 | `corpus_axum_openrouter_embeddings_2026-05-17.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | OpenRouter-searchable workspace-member corpus backup for type-context matrix tests | 2026-05-17 |
 | `ploke-db_af8e3a20-728d-5967-8523-da8a5ccdae45` | `crates/ploke-db` | currently orphaned snapshot | 2026-03-20 |
 
@@ -279,6 +279,25 @@ Post-regeneration verification:
   snapshot fixture directory.
 - The regenerated `corpus_axum_call_graph_2026-07-05.sqlite` shared snapshot
   was copied into `tests/backup_dbs/` as the committed seed artifact.
+
+## 2026-07-06 Axum Call Graph Fixture Refresh
+
+The `corpus_axum_call_graph` fixture was recreated with
+`cargo run -p xtask --features call_graph -- recreate-backup-db --fixture corpus_axum_call_graph`
+after call graph resolution began classifying direct external parameter
+receiver method calls such as `req.extensions_mut()` when owner parameter type
+proof identifies `http::Request`.
+
+Post-regeneration verification:
+
+- `cargo run -p xtask --features call_graph -- fixtures regenerate --active`
+  roundtripped all active checkout-local fixtures and shared call-graph corpus
+  snapshots successfully.
+- The regenerated `corpus_axum_call_graph_2026-07-06.sqlite` shared snapshot
+  was copied into `tests/backup_dbs/` as the committed seed artifact.
+- Real-target query tests now assert the split between external
+  `mut req: Request<_>` parameter receivers and still-unresolved borrowed or
+  generic receiver rows.
 
 ## `fixture_nodes_canonical_2026-05-17.sqlite`
 
@@ -650,10 +669,10 @@ Expected searchable corpus embedding config:
   - `Token![,]` under `Punctuated<syn::Variant, Token![,]>` retains a nested
     macro type without fabricating a terminal target
 
-### `corpus_axum_call_graph_2026-07-05.sqlite`
+### `corpus_axum_call_graph_2026-07-06.sqlite`
 
 - Status: active
-- File: `tests/backup_dbs/corpus_axum_call_graph_2026-07-05.sqlite`
+- File: `tests/backup_dbs/corpus_axum_call_graph_2026-07-06.sqlite`
 - Parsed target: `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1`
 - Checkout slug: `tests/fixture_github_clones/corpus/tokio-rs__axum`
 - Selected workspace members:
