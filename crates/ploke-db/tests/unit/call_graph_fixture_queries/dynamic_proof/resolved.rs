@@ -83,6 +83,11 @@ fn fixture_projection_stores_real_callable_expression_dynamic_call_proof_facts()
             expected_rows: 1,
         },
         ResolvedDynamicContextCase {
+            owner: "call_single_function_pointer_param_cast",
+            path: &["f"],
+            expected_rows: 1,
+        },
+        ResolvedDynamicContextCase {
             owner: "call_parenthesized_block_initialized_function_item_binding",
             path: &["f"],
             expected_rows: 1,
