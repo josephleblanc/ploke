@@ -351,6 +351,27 @@ Post-regeneration verification:
   visible, external, targetless path calls rather than treating the
   UnixListener impl as a body-owner gap.
 
+## 2026-07-06 Active Corpus Seed Promotion
+
+The active fixture set was regenerated with
+`cargo run -p xtask --features call_graph -- fixtures regenerate --active`
+before continuing the call-graph matrix work.
+
+Post-regeneration verification:
+
+- The regeneration command roundtripped all active checkout-local fixtures and
+  shared call-graph corpus snapshots successfully.
+- Registry-backed verification passed for each shared call-graph corpus
+  fixture:
+  - `corpus_memchr_call_graph`
+  - `corpus_generic_array_call_graph`
+  - `corpus_chrono_call_graph`
+  - `corpus_axum_call_graph`
+- The regenerated `corpus_chrono_call_graph_2026-07-06.sqlite` and
+  `corpus_axum_call_graph_2026-07-06.sqlite` shared snapshots were copied into
+  `tests/backup_dbs/` as committed seed artifacts. The memchr and
+  generic-array regenerated snapshots matched their existing committed seeds.
+
 ## `fixture_nodes_canonical_2026-05-17.sqlite`
 
 - File: `tests/backup_dbs/fixture_nodes_canonical_2026-05-17.sqlite`
