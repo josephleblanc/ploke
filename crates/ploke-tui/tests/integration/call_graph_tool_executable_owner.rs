@@ -5,6 +5,7 @@ use ploke_core::rag_types::{
 };
 use ploke_tui::tools::{
     Tool,
+    code_item_call_path::{CodeItemCallPath, CodeItemCallPathEndpoint, CodeItemCallPathParams},
     code_item_lookup::{CodeItemLookup, LookupParams},
     get_code_edges::{CodeItemEdges, EdgesParams},
 };
@@ -118,6 +119,65 @@ async fn code_item_edges_accepts_local_item_body_owner() {
     assert_eq!(ui_field(ui, "edges"), "0");
     assert_eq!(ui_field(ui, "call_context_outgoing"), "4");
     assert_eq!(ui_field(ui, "call_paths_from_owner"), "0");
+}
+
+#[tokio::test]
+async fn code_item_call_path_accepts_local_item_body_owner_endpoint() {
+    let fixture = LocalItemToolFixture::axum_path_deserialize_local_impl_method().await;
+    let endpoint = CodeItemCallPathEndpoint {
+        item_name: Cow::Borrowed("local_impl_method:deserialize"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("local_item"),
+        module_path: Cow::Owned(fixture.module_path_arg()),
+        owner_trait: None,
+        owner_type: None,
+    };
+    let params = CodeItemCallPathParams {
+        source: endpoint.clone(),
+        target: endpoint,
+        max_depth: Some(1),
+        max_paths: Some(4),
+    };
+
+    let result = CodeItemCallPath::execute(params, fixture.ctx("local-item-call-path"))
+        .await
+        .expect("code_item_call_path should accept local_item executable owner endpoints");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize CodeItemCallPathResult");
+    let owner_id = fixture.owner.to_string();
+
+    assert_eq!(
+        payload.get("source_id").and_then(serde_json::Value::as_str),
+        Some(owner_id.as_str())
+    );
+    assert_eq!(
+        payload.get("target_id").and_then(serde_json::Value::as_str),
+        Some(owner_id.as_str())
+    );
+    assert_eq!(
+        payload
+            .get("reachable")
+            .and_then(serde_json::Value::as_bool),
+        Some(false),
+        "an exact local_item endpoint must not fabricate a zero-length traversal path"
+    );
+    let paths = payload
+        .get("paths")
+        .and_then(serde_json::Value::as_array)
+        .expect("paths array");
+    assert!(paths.is_empty());
+    let proof_context = payload
+        .get("proof_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("proof_context array");
+    assert!(
+        proof_context.len() >= 2,
+        "local_item endpoint should still carry projected proof rows"
+    );
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert_eq!(ui_field(ui, "reachable"), "false");
+    assert_eq!(ui_field(ui, "paths"), "0");
 }
 
 fn local_item_serde_deserialize_call<'a>(
