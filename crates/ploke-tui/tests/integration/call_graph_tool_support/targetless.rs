@@ -246,6 +246,20 @@ impl PathToolCase {
         },
     }];
 
+    pub(crate) const STD_MEM_REPLACE: [Self; 1] = [Self {
+        label: "axum/src/response/sse.rs:449 std::mem::replace external frontier",
+        item: "write_buf",
+        path: &["std", "mem", "replace"],
+        status: CallStatusKind::External,
+        owner: PathOwner::Method {
+            trait_name: "",
+            type_name: "EventDataWriter",
+            module_path: &["crate", "response", "sse"],
+            file_suffix: "axum/src/response/sse.rs",
+            body: "std::mem::replace(&mut self.data_written, true)",
+        },
+    }];
+
     pub(crate) const INTO_SERVICE_FUTURE_NEW: [Self; 1] = [Self {
         label: "axum/src/handler/service.rs:174 IntoServiceFuture::new generated frontier",
         item: "call",
@@ -276,6 +290,7 @@ impl PathToolCase {
     pub(crate) fn owner_trait(&self) -> Option<&'static str> {
         match self.owner {
             PathOwner::Function { .. } => None,
+            PathOwner::Method { trait_name, .. } if trait_name.is_empty() => None,
             PathOwner::Method { trait_name, .. } => Some(trait_name),
         }
     }

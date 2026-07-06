@@ -455,6 +455,55 @@ async fn call_context_collection_reads_axum_request_builder_alias_frontier() -> 
 }
 
 #[tokio::test]
+async fn call_context_collection_reads_axum_std_mem_replace_frontier() -> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    let owner = method_id_by_name_and_body_substring(
+        &db,
+        "write_buf",
+        "std::mem::replace(&mut self.data_written, true)",
+    )?;
+    let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+    let context = call_context
+        .get(&owner)
+        .expect("EventDataWriter::write_buf should receive outgoing call context");
+    let callee = CallCalleeInfo::Path {
+        path: path(&["std", "mem", "replace"]),
+    };
+    let matching = context
+        .iter()
+        .filter(|call| call.kind == CallSiteKind::Path && call.callee == callee)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching.len(),
+        1,
+        "EventDataWriter::write_buf should expose one std::mem::replace frontier row: {context:#?}"
+    );
+
+    // Matrix:
+    //   docs/active/agents/call-graph/
+    //   2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //
+    // Source chain:
+    //   axum/src/response/sse.rs:449 calls
+    //   `std::mem::replace(&mut self.data_written, true)`.
+    // Expected traversal: std-root path calls are structurally visible
+    // external frontiers, but have zero traversable local targets.
+    let call = matching[0];
+    assert_eq!(call.owner_id, owner);
+    assert_eq!(call.arg_count, Some(2));
+    assert_eq!(call.status, CallStatusKind::External);
+    assert_eq!(call.resolution, None);
+    assert!(
+        call.targets.is_empty(),
+        "std::mem::replace frontier should remain targetless in RAG call context: {call:#?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn call_context_collection_reads_axum_handler_async_block_owner_gap() -> Result<(), Error> {
     init_tracing_once();
     let (db, rag) = setup_axum_call_graph_rag()?;
