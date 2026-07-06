@@ -126,6 +126,11 @@ are not acceptable as a continuing implementation style.
 - Recent coverage inventory cleanup:
   - Added `2026-06-25_call-graph-coverage-inventory.md` as the compact layer inventory.
 - Recent production pattern cleanup:
+  - `call_resolution/owners.rs` now owns resolver metadata lookups for
+    method owners, return types, owner parameters, and executable parent
+    owners. This keeps the root call-resolution module closer to the existing
+    concern-split pattern used by `method`, `path`, `dynamic`, `associated`,
+    `constructors`, `scope`, and `traits` without changing resolver semantics.
   - DB target-centered call queries now expose a full `CallContextRow` helper,
     so proof projection and future consumers can preserve every target/candidate
     for a matched call site without bespoke rehydration.
