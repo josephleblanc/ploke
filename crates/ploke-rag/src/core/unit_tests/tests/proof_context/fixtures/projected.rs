@@ -1,5 +1,6 @@
 use super::super::super::*;
 use super::super::helpers::{assert_projected_owner_rows, assert_resolved_call};
+use ploke_db::{CallRelationKind as DbCallRelationKind, CallSiteKind as DbCallSiteKind};
 
 #[tokio::test]
 async fn proof_context_sparse_get_context_attaches_projected_owner_facts() -> Result<(), Error> {
@@ -110,6 +111,52 @@ async fn proof_context_collection_preserves_node_projected_target_rows() -> Resu
         .get(&target)
         .expect("target seed should receive node-projected proof rows");
     assert_resolved_call(rows, owner, target);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn proof_context_collection_preserves_dereferenced_closure_binding_rows() -> Result<(), Error>
+{
+    init_tracing_once();
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_dereferenced_closure_binding"),
+    )?;
+    let context = db.call_context_for_owner(owner)?;
+    let row = context
+        .iter()
+        .find(|row| {
+            row.site.kind == DbCallSiteKind::Dynamic
+                && row
+                    .targets
+                    .iter()
+                    .any(|target| target.relation == DbCallRelationKind::DynamicClosure)
+        })
+        .unwrap_or_else(|| {
+            panic!("dereferenced closure binding should have a resolved DynamicClosure row: {context:#?}")
+        });
+    let target = row.targets[0].target_id;
+    let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
+    assert_eq!(
+        count, 3,
+        "dereferenced closure binding should project call_site, call_edge, and call_resolution facts"
+    );
+
+    let rag = init_test_rag_mock(Arc::clone(&db));
+    assert!(
+        !rag.proof_context_degraded(),
+        "projected dereferenced closure proof facts should enable RAG proof context"
+    );
+
+    let proof_context = rag.collect_proof_context(&[(owner, 1.0)])?;
+    let rows = proof_context
+        .get(&owner)
+        .expect("dereferenced closure owner seed should receive proof rows");
+    assert_projected_owner_rows(rows, owner, target);
 
     Ok(())
 }
