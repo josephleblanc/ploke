@@ -242,6 +242,53 @@ async fn call_context_collection_reads_async_closure_owner_rows() -> Result<(), 
 }
 
 #[tokio::test]
+async fn call_context_collection_reads_local_fn_item_target_rows() -> Result<(), Error> {
+    init_tracing_once();
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let outer = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "local_fn_body_call_is_not_outer_call_site"),
+    )?;
+    let local_fn = local_item_owner_for_parent_with_label(&db, outer, "local_fn:inner")?;
+
+    let rag = init_test_rag_mock(Arc::clone(&db));
+    assert!(
+        !rag.call_context_degraded(),
+        "fresh fixture call_graph schema should enable local function item context"
+    );
+
+    let call_context = rag.collect_call_context(&[(outer, 1.0), (local_fn, 1.0)])?;
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:
+    // the outer function calls block-local `inner()`, and `inner` is stored as
+    // an executable local-item body. RAG should expose that target edge.
+    let outer_context = call_context
+        .get(&outer)
+        .expect("outer function should keep outgoing inner() context");
+    let call = outer_context
+        .iter()
+        .find(|call| {
+            call.owner_id == outer
+                && call.callee
+                    == CallCalleeInfo::Path {
+                        path: vec!["inner".to_string()],
+                    }
+        })
+        .expect("outer function should expose inner() call context");
+    assert_eq!(call.owner_id, outer);
+    assert_eq!(call.kind, CallSiteKind::Path);
+    assert_eq!(call.status, CallStatusKind::Resolved);
+    assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+    assert_eq!(call.targets.len(), 1);
+    assert_eq!(call.targets[0].target_id, local_fn);
+    assert_eq!(call.targets[0].relation, CallTargetKind::LocalFunction);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn call_context_collection_reads_local_item_owner_rows() -> Result<(), Error> {
     init_tracing_once();
     let db = Arc::new(Database::new(setup_db_full_multi_embedding(
@@ -263,7 +310,7 @@ async fn call_context_collection_reads_local_item_owner_rows() -> Result<(), Err
         ),
         // tests/fixture_crates/fixture_call_graph/src/lib.rs:1441
         (
-            "local_fn",
+            "local_fn:inner",
             1441,
             one_uuid(
                 &db,

@@ -36,6 +36,7 @@ pub enum CallRelationKind {
     Function,
     DynamicFunction,
     Closure,
+    LocalFunction,
     DynamicClosure,
     Method,
     AssociatedFunction,
@@ -49,6 +50,7 @@ impl CallRelationKind {
             Self::Function => "Function",
             Self::DynamicFunction => "DynamicFunction",
             Self::Closure => "Closure",
+            Self::LocalFunction => "LocalFunction",
             Self::DynamicClosure => "DynamicClosure",
             Self::Method => "Method",
             Self::AssociatedFunction => "AssociatedFunction",
@@ -62,6 +64,7 @@ impl CallRelationKind {
             "Function" => Ok(Self::Function),
             "DynamicFunction" => Ok(Self::DynamicFunction),
             "Closure" => Ok(Self::Closure),
+            "LocalFunction" => Ok(Self::LocalFunction),
             "DynamicClosure" => Ok(Self::DynamicClosure),
             "Method" => Ok(Self::Method),
             "AssociatedFunction" => Ok(Self::AssociatedFunction),
@@ -78,6 +81,7 @@ impl CallRelationKind {
 pub enum CallTargetKind {
     Function,
     Closure,
+    LocalItem,
     Method,
     Struct,
     Variant,
@@ -88,6 +92,7 @@ impl CallTargetKind {
         match self {
             Self::Function => "Function",
             Self::Closure => "Closure",
+            Self::LocalItem => "LocalItem",
             Self::Method => "Method",
             Self::Struct => "Struct",
             Self::Variant => "Variant",
@@ -98,6 +103,7 @@ impl CallTargetKind {
         match value {
             "Function" => Ok(Self::Function),
             "Closure" => Ok(Self::Closure),
+            "LocalItem" => Ok(Self::LocalItem),
             "Method" => Ok(Self::Method),
             "Struct" => Ok(Self::Struct),
             "Variant" => Ok(Self::Variant),

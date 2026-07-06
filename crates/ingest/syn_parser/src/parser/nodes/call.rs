@@ -139,6 +139,12 @@ pub enum PathCallCallee {
         path: Vec<String>,
         closure_id: ExecutableBodyId,
     },
+    /// The callee path names a visible block-local function item with a known
+    /// executable body owner.
+    LocalFunctionBinding {
+        path: Vec<String>,
+        body_id: ExecutableBodyId,
+    },
     /// The callee path names a visible local binding initialized from a path.
     InitializedValueBinding {
         path: Vec<String>,

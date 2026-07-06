@@ -193,7 +193,7 @@ async fn request_code_context_returns_local_item_owner_call_context_for_assoc_co
         &db,
         &function_in_module_query(&["crate"], "local_fn_body_call_is_not_outer_call_site"),
     )?;
-    let local_fn = local_item_owner_for_parent_with_label(&db, local_fn_outer, "local_fn")?;
+    let local_fn = local_item_owner_for_parent_with_label(&db, local_fn_outer, "local_fn:inner")?;
     let local_impl_outer = one_uuid(
         &db,
         &function_in_module_query(
@@ -223,17 +223,52 @@ async fn request_code_context_returns_local_item_owner_call_context_for_assoc_co
         "request_code_context should preserve the assoc_const_value seed part: {result:#?}"
     );
     assert!(
-        result.context.iter().all(|part| part.id != outer
-            && part.id != local_fn_outer
-            && part.id != local_impl_outer),
-        "local item body calls must not expand to their enclosing outer functions: {result:#?}"
+        result
+            .context
+            .iter()
+            .all(|part| part.id != outer && part.id != local_impl_outer),
+        "local item body calls must not expand to enclosing functions that do not call the local item: {result:#?}"
     );
+
+    // The local function item is now a callable target. The enclosing function
+    // legitimately appears because it calls `inner()`, which targets
+    // `local_fn:inner`.
+    let local_fn_outer_part = result
+        .context
+        .iter()
+        .find(|part| part.id == local_fn_outer)
+        .expect("request_code_context should materialize the outer caller of local_fn:inner");
+    let inner_call = local_fn_outer_part
+        .call_context
+        .iter()
+        .find(|call| {
+            call.owner_id == local_fn_outer
+                && call.kind == CallSiteKind::Path
+                && call.callee
+                    == CallCalleeInfo::Path {
+                        path: path(&["inner"]),
+                    }
+                && call
+                    .targets
+                    .iter()
+                    .any(|target_info| target_info.target_id == local_fn)
+        })
+        .expect("outer local-fn owner should retain outgoing inner() call context");
+    assert_resolved_target(inner_call, local_fn, CallTargetKind::LocalFunction);
+    let expansion = local_fn_outer_part
+        .call_expansion
+        .expect("local function outer caller should carry call-expansion provenance");
+    assert_eq!(expansion.seed_id, target);
+    assert_eq!(expansion.relation, CallExpansionKind::IncomingCaller);
+    assert_eq!(expansion.call_site_id, inner_call.site_id);
+    assert_eq!(expansion.target_id, target);
+    assert_eq!(expansion.distance, 2);
 
     for (label, source_line, local_item) in [
         // tests/fixture_crates/fixture_call_graph/src/lib.rs:1372
         ("local_const", 1372, local_item),
         // tests/fixture_crates/fixture_call_graph/src/lib.rs:1441
-        ("local_fn", 1441, local_fn),
+        ("local_fn:inner", 1441, local_fn),
         // tests/fixture_crates/fixture_call_graph/src/lib.rs:1461
         ("local_impl_method:value", 1461, local_impl),
     ] {

@@ -89,7 +89,7 @@ async fn proof_context_collection_preserves_local_item_owner_projected_rows() ->
             )?,
         ),
         (
-            "local_fn",
+            "local_fn:inner",
             one_uuid(
                 &db,
                 &function_in_module_query(&["crate"], "local_fn_body_call_is_not_outer_call_site"),

@@ -51,6 +51,84 @@ fn test_call_graph_projection_for_local_const_initializer_owner()
     })
 }
 
+#[test]
+fn test_call_graph_projection_for_local_function_item_target()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = Db::new(MemStorage::default()).expect("Failed to create database");
+    db.initialize().expect("Failed to initialize database");
+    create_schema_all(&db)?;
+
+    let successful_graphs = test_run_phases_and_collect("fixture_call_graph");
+    let mut merged = ParsedCodeGraph::merge_new(successful_graphs).expect("Failed to merge graph");
+    let tree = merged.build_tree_and_prune().unwrap_or_else(|e| {
+        tracing::error!(target: "transform_function", "Error building tree: {}", e);
+        panic!()
+    });
+
+    let outer = merged
+        .functions()
+        .iter()
+        .find(|function| function.name == "local_fn_body_call_is_not_outer_call_site")
+        .map(|function| function.id)
+        .expect("fixture_call_graph should define local_fn_body_call_is_not_outer_call_site");
+    let body = merged
+        .executable_bodies()
+        .iter()
+        .find(|body| {
+            body.parent == CallBodyOwnerId::Function(outer)
+                && body.kind == ExecutableBodyKind::LocalItem
+                && body.label.as_deref() == Some("local_fn:inner")
+        })
+        .expect("outer function should own local_fn:inner body")
+        .clone();
+
+    let call_report = resolve_call_relations_after_tree(&merged, &tree)?;
+    let call_site_id = call_report
+        .relations
+        .iter()
+        .copied()
+        .find_map(|relation| match relation {
+            CallRelation::LocalFunction { source, target } if target == body.id => {
+                let call = merged
+                    .call_sites()
+                    .iter()
+                    .find(|call| call.id() == AnyCallSiteId::Path(source))?;
+                let CallNode::PathCall(path_call) = call else {
+                    return None;
+                };
+                (path_call.owner == CallBodyOwnerId::Function(outer)
+                    && path_call.path.iter().map(String::as_str).eq(["inner"]))
+                .then_some(source)
+            }
+            _ => None,
+        })
+        .expect("outer inner() call should resolve to local_fn:inner body");
+
+    transform_parsed_graph(&db, merged, &tree)?;
+
+    let mut params = BTreeMap::new();
+    params.insert("call_site_id".to_string(), call_site_id.to_cozo_uuid());
+    params.insert("target_id".to_string(), body.id.to_cozo_uuid());
+    let relation_rows = db.run_script(
+        r#"?[source_id, target_id, relation_kind, source_kind, target_kind] :=
+            source_id = $call_site_id,
+            target_id = $target_id,
+            *call_relation { source_id, target_id, relation_kind, source_kind, target_kind @ 'NOW' }"#,
+        params,
+        ScriptMutability::Immutable,
+    )?;
+    assert_eq!(
+        relation_rows.rows.len(),
+        1,
+        "expected one persisted outer inner() LocalFunction call_relation row"
+    );
+    assert_eq!(&relation_rows.rows[0][2], &DataValue::from("LocalFunction"));
+    assert_eq!(&relation_rows.rows[0][3], &DataValue::from("Path"));
+    assert_eq!(&relation_rows.rows[0][4], &DataValue::from("LocalItem"));
+
+    Ok(())
+}
+
 struct ExecutableProjectionCase {
     owner_name: &'static str,
     kind: ExecutableBodyKind,
@@ -119,6 +197,7 @@ fn assert_executable_body_projection(
             CallRelation::DynamicFunction { .. }
             | CallRelation::DynamicClosure { .. }
             | CallRelation::Closure { .. }
+            | CallRelation::LocalFunction { .. }
             | CallRelation::Method { .. }
             | CallRelation::AssociatedFunction { .. }
             | CallRelation::TupleStructConstructor { .. }

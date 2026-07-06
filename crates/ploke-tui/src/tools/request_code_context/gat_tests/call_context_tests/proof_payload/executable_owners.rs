@@ -107,7 +107,7 @@ async fn request_code_context_returns_local_item_owner_projected_proof_context()
         &db,
         &function_in_module_query(&["crate"], "local_fn_body_call_is_not_outer_call_site"),
     )?;
-    let local_fn = local_item_owner_for_parent_with_label(&db, local_fn_outer, "local_fn")?;
+    let local_fn = local_item_owner_for_parent_with_label(&db, local_fn_outer, "local_fn:inner")?;
     assert_owner_projected_proof_context(
         &db,
         target,

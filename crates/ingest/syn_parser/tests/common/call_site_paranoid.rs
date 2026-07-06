@@ -220,6 +220,11 @@ pub enum ExpectedPathCallee<'a> {
         path: &'a [&'a str],
         closure_id: ExecutableBodyId,
     },
+    /// The path call is shadowed by a visible block-local function item.
+    LocalFunctionBinding {
+        path: &'a [&'a str],
+        body_id: ExecutableBodyId,
+    },
     /// The path call is a visible local binding initialized by another path.
     InitializedValueBinding {
         path: &'a [&'a str],
@@ -237,6 +242,10 @@ impl ExpectedPathCallee<'_> {
             Self::ClosureBinding { path, closure_id } => PathCallCallee::ClosureBinding {
                 path: path.iter().copied().map(String::from).collect(),
                 closure_id,
+            },
+            Self::LocalFunctionBinding { path, body_id } => PathCallCallee::LocalFunctionBinding {
+                path: path.iter().copied().map(String::from).collect(),
+                body_id,
             },
             Self::InitializedValueBinding { path, init_path } => {
                 PathCallCallee::InitializedValueBinding {
@@ -458,6 +467,8 @@ pub enum ExpectedCallOutcome {
     ResolvedDynamicClosureLocalExact { target: ExecutableBodyId },
     /// Resolver should produce a local exact closure edge from a path call site.
     ResolvedClosureLocalExact { target: ExecutableBodyId },
+    /// Resolver should produce a local exact block-local function item edge.
+    ResolvedLocalFunctionLocalExact { target: ExecutableBodyId },
     /// Resolver should produce a local exact associated-function edge.
     ResolvedAssociatedFunctionLocalExact { target: MethodNodeId },
     /// Resolver should produce a local exact tuple struct constructor edge.
@@ -538,6 +549,29 @@ impl<'a> ExpectedCallSite<'a> {
             kind: ExpectedCallKind::Path {
                 path,
                 callee: ExpectedPathCallee::ClosureBinding { path, closure_id },
+                arg_count,
+                generic_arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a path-call expectation shadowed by a local function item.
+    pub const fn path_local_function_binding(
+        path: &'a [&'a str],
+        body_id: ExecutableBodyId,
+        span: (usize, usize),
+        arg_count: usize,
+        generic_arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Path {
+                path,
+                callee: ExpectedPathCallee::LocalFunctionBinding { path, body_id },
                 arg_count,
                 generic_arg_count,
             },
@@ -1520,6 +1554,7 @@ fn assert_resolution_outcome(
         | ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { .. }
         | ExpectedCallOutcome::ResolvedDynamicClosureLocalExact { .. }
         | ExpectedCallOutcome::ResolvedClosureLocalExact { .. }
+        | ExpectedCallOutcome::ResolvedLocalFunctionLocalExact { .. }
         | ExpectedCallOutcome::ResolvedAssociatedFunctionLocalExact { .. }
         | ExpectedCallOutcome::ResolvedTupleStructConstructorLocalExact { .. }
         | ExpectedCallOutcome::ResolvedEnumVariantConstructorLocalExact { .. } => assert!(
@@ -1672,6 +1707,25 @@ fn assert_resolution_outcome(
                 relations[0]
             );
         }
+        ExpectedCallOutcome::ResolvedLocalFunctionLocalExact { target } => {
+            let source = match expected_id {
+                AnyCallSiteId::Path(source) => source,
+                other => {
+                    panic!("local-function relation expected a path call-site ID, got {other:?}")
+                }
+            };
+            assert_eq!(
+                relations.len(),
+                1,
+                "resolved local-function call site {expected_id:?} should emit exactly one semantic edge; got {relations:#?}"
+            );
+            assert!(
+                matches!(relations[0], CallRelation::LocalFunction { source: actual_source, target: actual_target }
+                    if actual_source == source && actual_target == target),
+                "expected LocalFunction edge {source:?} -> {target:?}, got {:?}",
+                relations[0]
+            );
+        }
         ExpectedCallOutcome::ResolvedAssociatedFunctionLocalExact { target } => {
             let source = match expected_id {
                 AnyCallSiteId::Path(source) => source,
@@ -1738,6 +1792,7 @@ fn relation_source(relation: CallRelation) -> AnyCallSiteId {
         CallRelation::DynamicFunction { source, .. } => source.into(),
         CallRelation::DynamicClosure { source, .. } => source.into(),
         CallRelation::Closure { source, .. } => source.into(),
+        CallRelation::LocalFunction { source, .. } => source.into(),
         CallRelation::Method { source, .. } => source.into(),
         CallRelation::AssociatedFunction { source, .. } => source.into(),
         CallRelation::TupleStructConstructor { source, .. } => source.into(),

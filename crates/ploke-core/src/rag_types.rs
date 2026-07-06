@@ -264,6 +264,7 @@ pub enum CallTargetKind {
     Function,
     DynamicFunction,
     Closure,
+    LocalFunction,
     DynamicClosure,
     Method,
     AssociatedFunction,
@@ -277,6 +278,7 @@ impl CallTargetKind {
             Self::Function => "Function",
             Self::DynamicFunction => "DynamicFunction",
             Self::Closure => "Closure",
+            Self::LocalFunction => "LocalFunction",
             Self::DynamicClosure => "DynamicClosure",
             Self::Method => "Method",
             Self::AssociatedFunction => "AssociatedFunction",
@@ -304,6 +306,7 @@ pub struct CallSiteBucketInfo {
 pub enum CallEndpointKind {
     Function,
     Closure,
+    LocalItem,
     Method,
     Struct,
     Variant,

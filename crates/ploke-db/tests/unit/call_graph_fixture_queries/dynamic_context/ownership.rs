@@ -55,7 +55,7 @@ const LOCAL_ITEM_CASES: &[LocalItemCase] = &[
     },
     LocalItemCase {
         owner_name: "local_fn_body_call_is_not_outer_call_site",
-        label: "local_fn",
+        label: "local_fn:inner",
         source_line: 1441,
     },
     LocalItemCase {
@@ -103,6 +103,56 @@ fn fixture_context_projects_local_item_initializer_calls_to_executable_owner() -
     for case in LOCAL_ITEM_CASES {
         assert_local_item_initializer_owner(&db, case, target)?;
     }
+
+    Ok(())
+}
+
+#[test]
+fn fixture_context_projects_outer_local_fn_call_to_local_item_target() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let outer = function_id_by_name(&db, "local_fn_body_call_is_not_outer_call_site")?;
+    let local_fn = local_item_owner_for_parent_with_label(&db, outer, "local_fn:inner")?;
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:
+    // local_fn_body_call_is_not_outer_call_site defines block-local `fn inner()`
+    // and the outer function calls it as `inner()`. The target should be the
+    // executable local-item body, not a top-level FunctionNode.
+    let outer_context = db.call_context_for_owner(outer)?;
+    let row = row_by_path(&outer_context, &["inner"]);
+    assert_eq!(row.site.owner_id, outer);
+    assert_resolved_target(
+        row,
+        local_fn,
+        CallRelationKind::LocalFunction,
+        CallSiteKind::Path,
+        CallTargetKind::LocalItem,
+    );
+
+    let callers = db.callers_for_target(local_fn)?;
+    let caller = caller_by_owner_kind_path(&callers, outer, CallSiteKind::Path, &["inner"]);
+    assert_eq!(caller.status.status, CallStatusKind::Resolved);
+    assert_eq!(
+        caller.status.resolution,
+        Some(CallResolutionKind::LocalExact)
+    );
+    assert_eq!(caller.target.relation, CallRelationKind::LocalFunction);
+    assert_eq!(caller.target.target_kind, CallTargetKind::LocalItem);
+
+    let paths = db.call_paths_from_owner(
+        outer,
+        CallPathOptions {
+            max_depth: 1,
+            max_paths: 8,
+        },
+    )?;
+    let path = paths
+        .iter()
+        .find(|path| path.start_id == outer && path.end_id == local_fn && path.depth == 1)
+        .unwrap_or_else(|| panic!("outer owner should have a one-hop path to local_fn:inner"));
+    assert_eq!(path.edges[0].caller_id, outer);
+    assert_eq!(path.edges[0].callee_id, local_fn);
+    assert_eq!(path.edges[0].relation, CallRelationKind::LocalFunction);
+    assert_eq!(path.edges[0].target_kind, CallTargetKind::LocalItem);
 
     Ok(())
 }

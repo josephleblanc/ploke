@@ -100,6 +100,10 @@ enum LocalBindingProof {
         name: String,
         closure_id: ExecutableBodyId,
     },
+    LocalFunction {
+        name: String,
+        body_id: ExecutableBodyId,
+    },
     Constructed {
         name: String,
         type_path: Vec<String>,
@@ -137,6 +141,7 @@ impl LocalBindingProof {
             | Self::TraitObject { name, .. }
             | Self::Initialized { name, .. }
             | Self::Closure { name, .. }
+            | Self::LocalFunction { name, .. }
             | Self::Constructed { name, .. }
             | Self::Array { name, .. }
             | Self::Referenced { name, .. }
@@ -356,14 +361,26 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
     fn visit_item_fn(&mut self, item_fn: &'ast syn::ItemFn) {
         let byte_range = item_fn.span().byte_range();
         let span = (byte_range.start, byte_range.end);
-        let owner = self.record_local_item_owner(span, "local_fn");
+        let name = item_fn.sig.ident.to_string();
+        let label = format!("local_fn:{name}");
+        let owner = self.record_local_item_owner(span, &label);
+        let CallBodyOwnerId::Executable(body_id @ ExecutableBodyId::LocalItem(_)) = owner else {
+            unreachable!("record_local_item_owner must return a local-item executable owner")
+        };
+
+        if let Some(scope) = self.local_scopes.last_mut() {
+            scope.push(LocalBindingProof::LocalFunction {
+                name: name.clone(),
+                body_id,
+            });
+        }
 
         let params = local_fn_param_names(item_fn);
         let mut visitor = BodyCallVisitor {
             owner,
             cfgs: self.cfgs,
             param_names: &params,
-            local_scopes: Vec::new(),
+            local_scopes: vec![vec![LocalBindingProof::LocalFunction { name, body_id }]],
             calls: Vec::new(),
             relations: Vec::new(),
             executable_bodies: Vec::new(),
@@ -712,6 +729,7 @@ fn classify_method_receiver(
                         }
                     }
                     LocalBindingProof::Closure { .. } => MethodCallReceiver::Unsupported,
+                    LocalBindingProof::LocalFunction { .. } => MethodCallReceiver::Unsupported,
                     LocalBindingProof::Untyped { .. } => MethodCallReceiver::Unsupported,
                 };
             }
@@ -900,6 +918,9 @@ fn local_field_receiver(
             LocalBindingProof::Closure { .. } => {
                 Some(MethodCallReceiver::FieldLocalBinding { name, field_path })
             }
+            LocalBindingProof::LocalFunction { .. } => {
+                Some(MethodCallReceiver::FieldLocalBinding { name, field_path })
+            }
             LocalBindingProof::Untyped { .. } => {
                 Some(MethodCallReceiver::FieldLocalBinding { name, field_path })
             }
@@ -974,6 +995,12 @@ fn classify_path_callee(
                 path: path.to_vec(),
                 closure_id: *closure_id,
             },
+            LocalBindingProof::LocalFunction { body_id, .. } => {
+                PathCallCallee::LocalFunctionBinding {
+                    path: path.to_vec(),
+                    body_id: *body_id,
+                }
+            }
             LocalBindingProof::Typed {
                 init_path: None, ..
             }
@@ -1053,6 +1080,7 @@ fn classify_dynamic_callee(
                     | LocalBindingProof::Constructed { .. }
                     | LocalBindingProof::Array { .. }
                     | LocalBindingProof::Referenced { .. }
+                    | LocalBindingProof::LocalFunction { .. }
                     | LocalBindingProof::Untyped { .. } => DynamicCallCallee::Other,
                     LocalBindingProof::Closure { closure_id, .. } => {
                         DynamicCallCallee::FnPointerCastClosureBinding {
@@ -1174,6 +1202,7 @@ fn classify_dynamic_path_expr(
                 | LocalBindingProof::Constructed { .. }
                 | LocalBindingProof::Array { .. }
                 | LocalBindingProof::Referenced { .. }
+                | LocalBindingProof::LocalFunction { .. }
                 | LocalBindingProof::Untyped { .. } => DynamicCallCallee::LocalBinding { path },
             };
         }
@@ -1389,6 +1418,7 @@ fn dereferenced_local_binding_callee(
         | LocalBindingProof::Constructed { .. }
         | LocalBindingProof::Array { .. }
         | LocalBindingProof::Referenced { .. }
+        | LocalBindingProof::LocalFunction { .. }
         | LocalBindingProof::Untyped { .. } => None,
     }
 }
@@ -2115,6 +2145,7 @@ fn init_target_path(
                 init_path: None, ..
             }
             | LocalBindingProof::Closure { .. }
+            | LocalBindingProof::LocalFunction { .. }
             | LocalBindingProof::Constructed { .. }
             | LocalBindingProof::Array { .. }
             | LocalBindingProof::Referenced { .. }

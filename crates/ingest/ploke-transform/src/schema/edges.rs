@@ -1051,6 +1051,10 @@ impl CallRelationSchema {
                 let target_id = target.to_cozo_uuid();
                 (source.to_cozo_uuid(), target_id)
             }
+            CallRelation::LocalFunction { source, target } => {
+                let target_id = target.to_cozo_uuid();
+                (source.to_cozo_uuid(), target_id)
+            }
             CallRelation::DynamicClosure { source, target } => {
                 let target_id = target.to_cozo_uuid();
                 (source.to_cozo_uuid(), target_id)

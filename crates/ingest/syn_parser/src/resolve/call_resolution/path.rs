@@ -76,6 +76,17 @@ impl CallRelationResolver<'_> {
                 });
                 return Ok(());
             }
+            PathCallCallee::LocalFunctionBinding { body_id, .. } => {
+                relations.push(CallRelation::LocalFunction {
+                    source: call.id,
+                    target: *body_id,
+                });
+                statuses.push(CallResolutionStatus::Resolved {
+                    source,
+                    kind: CallResolutionKind::LocalExact,
+                });
+                return Ok(());
+            }
             PathCallCallee::InitializedValueBinding { init_path, .. } => {
                 self.resolve_initialized_value_binding_call(call, init_path, relations, statuses)?;
                 return Ok(());

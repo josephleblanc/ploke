@@ -356,11 +356,12 @@ fn relation_kind_rank(kind: CallRelationKind) -> u8 {
         CallRelationKind::Function => 0,
         CallRelationKind::DynamicFunction => 1,
         CallRelationKind::Closure => 2,
-        CallRelationKind::DynamicClosure => 3,
-        CallRelationKind::Method => 4,
-        CallRelationKind::AssociatedFunction => 5,
-        CallRelationKind::TupleStructConstructor => 6,
-        CallRelationKind::EnumVariantConstructor => 7,
+        CallRelationKind::LocalFunction => 3,
+        CallRelationKind::DynamicClosure => 4,
+        CallRelationKind::Method => 5,
+        CallRelationKind::AssociatedFunction => 6,
+        CallRelationKind::TupleStructConstructor => 7,
+        CallRelationKind::EnumVariantConstructor => 8,
     }
 }
 

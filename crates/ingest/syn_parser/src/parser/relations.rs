@@ -192,6 +192,15 @@ pub enum CallRelation {
         source: PathCallSiteId,
         target: ExecutableBodyId,
     },
+    /// A path-style call site resolved to a block-local function item body owner.
+    ///
+    /// ```text
+    /// LocalFunction ⊆ PathCallSiteId × ExecutableBodyId
+    /// ```
+    LocalFunction {
+        source: PathCallSiteId,
+        target: ExecutableBodyId,
+    },
     /// A dynamically shaped call site resolved to a local closure body owner.
     ///
     /// ```text
@@ -247,6 +256,7 @@ impl CallRelation {
             Self::Function { .. } => "Function",
             Self::DynamicFunction { .. } => "DynamicFunction",
             Self::Closure { .. } => "Closure",
+            Self::LocalFunction { .. } => "LocalFunction",
             Self::DynamicClosure { .. } => "DynamicClosure",
             Self::Method { .. } => "Method",
             Self::AssociatedFunction { .. } => "AssociatedFunction",
@@ -260,6 +270,7 @@ impl CallRelation {
         match self {
             Self::Function { .. }
             | Self::Closure { .. }
+            | Self::LocalFunction { .. }
             | Self::AssociatedFunction { .. }
             | Self::TupleStructConstructor { .. }
             | Self::EnumVariantConstructor { .. } => "Path",
@@ -273,6 +284,7 @@ impl CallRelation {
         match self {
             Self::Function { .. } | Self::DynamicFunction { .. } => "Function",
             Self::Closure { .. } | Self::DynamicClosure { .. } => "Closure",
+            Self::LocalFunction { .. } => "LocalItem",
             Self::Method { .. } | Self::AssociatedFunction { .. } => "Method",
             Self::TupleStructConstructor { .. } => "Struct",
             Self::EnumVariantConstructor { .. } => "Variant",

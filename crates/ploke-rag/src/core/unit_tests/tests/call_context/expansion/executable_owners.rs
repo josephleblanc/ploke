@@ -148,7 +148,7 @@ async fn call_context_expansion_adds_local_item_owner_for_assoc_const_value() ->
             )?,
         ),
         (
-            "local_fn",
+            "local_fn:inner",
             one_uuid(
                 &db,
                 &function_in_module_query(&["crate"], "local_fn_body_call_is_not_outer_call_site"),
@@ -182,10 +182,6 @@ async fn call_context_expansion_adds_local_item_owner_for_assoc_const_value() ->
             expanded_ids.contains(&local_item),
             "assoc_const_value incoming expansion should include the {label} owner: expanded={expanded:#?}; expansion_info={expansion_info:#?}"
         );
-        assert!(
-            !expanded_ids.contains(&outer),
-            "assoc_const_value incoming expansion must not flatten the {label} call into the outer function: expanded={expanded:#?}; expansion_info={expansion_info:#?}"
-        );
 
         let info = expansion_info.get(&local_item).unwrap_or_else(|| {
             panic!("{label} owner should carry CallExpansionInfo: {expansion_info:#?}")
@@ -194,6 +190,25 @@ async fn call_context_expansion_adds_local_item_owner_for_assoc_const_value() ->
         assert_eq!(info.relation, CallExpansionKind::IncomingCaller);
         assert_eq!(info.target_id, target);
         assert_eq!(info.distance, 1);
+
+        if label == "local_fn:inner" {
+            assert!(
+                expanded_ids.contains(&outer),
+                "assoc_const_value incoming expansion should include the outer caller through local_fn:inner: expanded={expanded:#?}; expansion_info={expansion_info:#?}"
+            );
+            let outer_info = expansion_info.get(&outer).unwrap_or_else(|| {
+                panic!("outer local-fn caller should carry CallExpansionInfo: {expansion_info:#?}")
+            });
+            assert_eq!(outer_info.seed_id, target);
+            assert_eq!(outer_info.relation, CallExpansionKind::IncomingCaller);
+            assert_eq!(outer_info.target_id, target);
+            assert_eq!(outer_info.distance, 2);
+        } else {
+            assert!(
+                !expanded_ids.contains(&outer),
+                "assoc_const_value incoming expansion must not flatten the {label} call into the outer function: expanded={expanded:#?}; expansion_info={expansion_info:#?}"
+            );
+        }
     }
 
     Ok(())

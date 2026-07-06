@@ -53,6 +53,7 @@ fn test_call_graph_projection_for_const_initializer_call() -> Result<(), Box<dyn
             CallRelation::DynamicFunction { .. }
             | CallRelation::DynamicClosure { .. }
             | CallRelation::Closure { .. }
+            | CallRelation::LocalFunction { .. }
             | CallRelation::Method { .. }
             | CallRelation::AssociatedFunction { .. }
             | CallRelation::TupleStructConstructor { .. }
@@ -170,6 +171,7 @@ fn test_call_graph_projection_for_resolved_path_call() -> Result<(), Box<dyn std
             CallRelation::DynamicFunction { .. }
             | CallRelation::DynamicClosure { .. }
             | CallRelation::Closure { .. }
+            | CallRelation::LocalFunction { .. }
             | CallRelation::Method { .. }
             | CallRelation::AssociatedFunction { .. }
             | CallRelation::TupleStructConstructor { .. }
@@ -337,6 +339,7 @@ fn test_call_graph_projection_for_method_edge_and_external_path_call()
             | CallRelation::DynamicFunction { .. }
             | CallRelation::DynamicClosure { .. }
             | CallRelation::Closure { .. }
+            | CallRelation::LocalFunction { .. }
             | CallRelation::AssociatedFunction { .. }
             | CallRelation::TupleStructConstructor { .. }
             | CallRelation::EnumVariantConstructor { .. } => None,
@@ -376,6 +379,7 @@ fn test_call_graph_projection_for_method_edge_and_external_path_call()
         call_report.relations.iter().all(|relation| match relation {
             CallRelation::Function { source, .. }
             | CallRelation::Closure { source, .. }
+            | CallRelation::LocalFunction { source, .. }
             | CallRelation::AssociatedFunction { source, .. } => *source != pathbuf_call_id,
             CallRelation::DynamicFunction { .. } | CallRelation::DynamicClosure { .. } => true,
             CallRelation::TupleStructConstructor { source, .. }

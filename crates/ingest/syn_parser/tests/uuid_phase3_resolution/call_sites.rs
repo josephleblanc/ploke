@@ -4912,7 +4912,7 @@ fn fixture_call_graph_local_fn_body_call_is_not_recorded_as_outer_call_site() {
         &owner,
         ExecutableBodyKind::LocalItem,
         LOCAL_FN_BODY_ASSOC_CONST_VALUE_CALL_SPAN,
-        Some("local_fn"),
+        Some("local_fn:inner"),
     );
 }
 
@@ -4947,20 +4947,31 @@ fn fixture_call_graph_local_impl_method_body_call_is_not_recorded_as_outer_call_
 }
 
 paranoid_call_site_test!(
-    fixture_call_graph_local_fn_body_outer_inner_call_remains_targetless_path_call_site,
+    fixture_call_graph_local_fn_body_outer_inner_call_resolves_local_function_path_call_site,
     fixture: "fixture_call_graph",
     owner: function {
         module_path: &["crate"],
         name: "local_fn_body_call_is_not_outer_call_site"
     },
-    expected: ExpectedCallSite::path(
-        &["inner"],
-        LOCAL_FN_OUTER_INNER_CALL_SPAN,
-        0,
-        0,
-        &[],
-        ExpectedCallOutcome::Unsupported,
-    ),
+    expected: {
+        let (graph, _tree) = crate::common::build_tree_for_tests("fixture_call_graph");
+        let owner = crate::common::call_site_paranoid::function_owner_context(
+            &graph,
+            &["crate"],
+            "local_fn_body_call_is_not_outer_call_site",
+        );
+        let local_fn =
+            local_item_body_containing_span(&graph, &owner, LOCAL_FN_BODY_ASSOC_CONST_VALUE_CALL_SPAN);
+        ExpectedCallSite::path_local_function_binding(
+            &["inner"],
+            local_fn,
+            LOCAL_FN_OUTER_INNER_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedLocalFunctionLocalExact { target: local_fn },
+        )
+    },
 );
 
 fn assert_no_call_site_owned_at_span(
@@ -5107,6 +5118,30 @@ fn closure_body_inside_span(
         bodies.len(),
         1,
         "expected one closure body owned by {} inside {span:?}, found {bodies:#?}",
+        owner.label
+    );
+    bodies[0].id
+}
+
+fn local_item_body_containing_span(
+    graph: &impl GraphAccess,
+    owner: &CallOwnerContext,
+    span: (usize, usize),
+) -> ExecutableBodyId {
+    let bodies = graph
+        .executable_bodies()
+        .iter()
+        .filter(|body| {
+            body.parent == owner.id
+                && body.kind == ExecutableBodyKind::LocalItem
+                && body.span.0 <= span.0
+                && span.1 <= body.span.1
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        bodies.len(),
+        1,
+        "expected one local-item body owned by {} containing {span:?}, found {bodies:#?}",
         owner.label
     );
     bodies[0].id
