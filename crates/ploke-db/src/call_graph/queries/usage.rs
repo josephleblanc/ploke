@@ -11,7 +11,8 @@ use crate::{
 
 use super::super::{
     CallContextRow, CallImpactReport, CallNodeInfo, CallPath, CallPathEdge, CallPathOptions,
-    CallReachReport, CallRelationKind, CallSiteBucket, CallSiteKind, CallStatusKind,
+    CallReachReport, CallRelationKind, CallSiteBucket, CallSiteKind, CallSiteRow, CallStatusKind,
+    ModuleBoundaryEdge,
 };
 use super::metadata::{call_node_info_rank, decode_call_node_info};
 
@@ -238,6 +239,93 @@ incoming[id] := *call_relation {{ target_id: id @ 'NOW' }}
         });
         Ok(nodes)
     }
+
+    /// Lists resolved call path edges from `owner_id` that cross module boundaries.
+    ///
+    /// This is a bounded architecture-review helper. It uses the same
+    /// resolved-only path traversal as [`Self::call_paths_from_owner`] and
+    /// does not promote targetless frontier rows into edges.
+    pub fn module_boundary_edges_from_owner(
+        &self,
+        owner_id: Uuid,
+        options: CallPathOptions,
+    ) -> Result<Vec<ModuleBoundaryEdge>, DbError> {
+        let mut out = BTreeMap::new();
+        let mut node_cache = BTreeMap::new();
+        let mut site_cache = BTreeMap::new();
+        for path in self.call_paths_from_owner(owner_id, options)? {
+            for edge in path.edges {
+                let caller =
+                    cached_node_info(self, &mut node_cache, edge.caller_id, "boundary caller")?;
+                let callee =
+                    cached_node_info(self, &mut node_cache, edge.callee_id, "boundary callee")?;
+                if caller.module_path == callee.module_path {
+                    continue;
+                }
+                let site = cached_call_site(self, &mut site_cache, &edge)?;
+                out.entry((edge.caller_id, edge.callee_id, edge.call_site_id))
+                    .or_insert_with(|| ModuleBoundaryEdge {
+                        edge,
+                        caller,
+                        callee,
+                        site,
+                    });
+            }
+        }
+
+        let mut edges = out.into_values().collect::<Vec<_>>();
+        edges.sort_by_key(|edge| {
+            (
+                edge.caller.module_path.clone(),
+                edge.callee.module_path.clone(),
+                edge.caller.name.clone(),
+                edge.callee.name.clone(),
+                edge.edge.call_site_id.as_u128(),
+            )
+        });
+        Ok(edges)
+    }
+}
+
+fn cached_node_info(
+    db: &Database,
+    cache: &mut BTreeMap<Uuid, CallNodeInfo>,
+    node_id: Uuid,
+    label: &str,
+) -> Result<CallNodeInfo, DbError> {
+    if let Some(info) = cache.get(&node_id) {
+        return Ok(info.clone());
+    }
+    let info = db.call_node_info(node_id)?.ok_or_else(|| {
+        DbError::Cozo(format!(
+            "missing call graph node metadata for {label} {node_id}"
+        ))
+    })?;
+    cache.insert(node_id, info.clone());
+    Ok(info)
+}
+
+fn cached_call_site(
+    db: &Database,
+    cache: &mut BTreeMap<Uuid, CallSiteRow>,
+    edge: &CallPathEdge,
+) -> Result<CallSiteRow, DbError> {
+    if let Some(site) = cache.get(&edge.call_site_id) {
+        return Ok(site.clone());
+    }
+    let context = db.call_context_for_owner(edge.caller_id)?;
+    let site = context
+        .iter()
+        .find(|row| row.site.id == edge.call_site_id)
+        .map(|row| row.site.clone())
+        .ok_or_else(|| {
+            DbError::Cozo(format!(
+                "missing callsite {} while collecting module boundary edge",
+                edge.call_site_id
+            ))
+        })?;
+    cache.insert(edge.call_site_id, site.clone());
+    Ok(site)
 }
 
 fn is_test_node(db: &Database, node_id: Uuid) -> Result<bool, DbError> {

@@ -145,6 +145,15 @@ pub struct CallPath {
     pub edges: Vec<CallPathEdge>,
 }
 
+/// Resolved direct call edge whose caller and callee live in different modules.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ModuleBoundaryEdge {
+    pub edge: CallPathEdge,
+    pub caller: CallNodeInfo,
+    pub callee: CallNodeInfo,
+    pub site: CallSiteRow,
+}
+
 /// Stable source metadata for a node that participates in call-graph queries.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CallNodeInfo {

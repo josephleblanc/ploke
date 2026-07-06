@@ -345,6 +345,91 @@ fn axum_usage_questions_summarize_owner_reach_for_navigation() -> Result<(), DbE
 }
 
 #[test]
+fn axum_usage_questions_list_module_boundary_edges_for_architecture_review() -> Result<(), DbError>
+{
+    let db = setup_axum_call_graph_db()?;
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Architecture review:
+    //   "Which modules call across a boundary that should be one-way?"
+    //   "Do any call chains bypass the intended abstraction layer?"
+    //
+    // Source-oracle chain:
+    //   axum-core/src/ext_traits/request.rs:268
+    //     `RequestExt::extract` calls `self.extract_with_state(&())` inside
+    //     the same `crate::ext_traits::request` module.
+    //   axum-core/src/ext_traits/request.rs:279
+    //     `RequestExt::extract_with_state` calls `E::from_request(self, state)`.
+    //   axum-core/src/extract/mod.rs:85
+    //     defines the `FromRequest::from_request` trait method binding in the
+    //     separate `crate::extract` module.
+    let start = method_id_by_name_body_and_file_suffix(
+        &db,
+        "extract",
+        "self.extract_with_state(&())",
+        "axum-core/src/ext_traits/request.rs",
+    )?;
+    let intermediate = method_id_by_name_body_and_file_suffix(
+        &db,
+        "extract_with_state",
+        "E::from_request(self, state)",
+        "axum-core/src/ext_traits/request.rs",
+    )?;
+    let target = method_id_by_trait_name(&db, "FromRequest", "from_request")?;
+
+    let options = CallPathOptions {
+        max_depth: 2,
+        max_paths: 16,
+    };
+    let boundaries = db.module_boundary_edges_from_owner(start, options)?;
+    assert!(
+        boundaries
+            .iter()
+            .all(|edge| edge.caller.module_path != edge.callee.module_path),
+        "module_boundary_edges should only report resolved cross-module edges: {boundaries:#?}"
+    );
+    let boundary = boundaries
+        .iter()
+        .find(|edge| edge.edge.caller_id == intermediate && edge.edge.callee_id == target)
+        .unwrap_or_else(|| {
+            panic!(
+                "architecture boundary query should expose RequestExt::extract_with_state -> FromRequest::from_request: {boundaries:#?}"
+            )
+        });
+    assert_eq!(
+        boundary.caller.module_path,
+        path(&["crate", "ext_traits", "request"])
+    );
+    assert_eq!(boundary.callee.module_path, path(&["crate", "extract"]));
+    assert_eq!(boundary.edge.relation, CallRelationKind::AssociatedFunction);
+    assert_eq!(boundary.edge.source_kind, CallSiteKind::Path);
+    assert_eq!(
+        boundary.site.path.as_ref(),
+        Some(&path(&["E", "from_request"]))
+    );
+    assert_eq!(boundary.site.arg_count, Some(2));
+    assert!(
+        !boundaries
+            .iter()
+            .any(|edge| edge.edge.caller_id == start && edge.edge.callee_id == intermediate),
+        "same-module RequestExt::extract -> extract_with_state should not be a module-boundary edge"
+    );
+
+    let reach = db.call_reach_for_owner(start, options)?;
+    assert!(
+        reach
+            .boundary_edges
+            .iter()
+            .any(|edge| edge.call_site_id == boundary.edge.call_site_id),
+        "owner-centered reach boundary edges should agree with the owner-scoped module-boundary helper: {reach:#?}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn axum_usage_questions_surface_external_frontier_for_dependency_calls() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
