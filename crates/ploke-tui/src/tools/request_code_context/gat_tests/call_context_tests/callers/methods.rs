@@ -10,6 +10,7 @@ async fn request_code_context_returns_method_target_callers_with_call_context()
         kind: CallSiteKind,
         callee: CallCalleeInfo,
         relation: CallTargetKind,
+        assert_expansion: bool,
     }
 
     let db = Arc::new(Database::new(setup_db_full_multi_embedding(
@@ -41,6 +42,10 @@ async fn request_code_context_returns_method_target_callers_with_call_context()
         &db,
         &function_in_module_query(&["crate"], "call_tuple_pattern_local_instance_method"),
     )?;
+    let typed_tuple_pattern_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_typed_tuple_pattern_local_instance_method"),
+    )?;
     let assoc_owner = one_uuid(
         &db,
         &function_in_module_query(&["crate"], "call_method_as_associated_function"),
@@ -62,6 +67,7 @@ async fn request_code_context_returns_method_target_callers_with_call_context()
                 }),
             },
             relation: CallTargetKind::Method,
+            assert_expansion: true,
         },
         Case {
             owner: nested_ref_owner,
@@ -75,6 +81,7 @@ async fn request_code_context_returns_method_target_callers_with_call_context()
                 }),
             },
             relation: CallTargetKind::Method,
+            assert_expansion: true,
         },
         Case {
             owner: borrowed_init_owner,
@@ -88,6 +95,7 @@ async fn request_code_context_returns_method_target_callers_with_call_context()
                 }),
             },
             relation: CallTargetKind::Method,
+            assert_expansion: true,
         },
         Case {
             owner: tuple_pattern_owner,
@@ -101,6 +109,24 @@ async fn request_code_context_returns_method_target_callers_with_call_context()
                 }),
             },
             relation: CallTargetKind::Method,
+            assert_expansion: true,
+        },
+        Case {
+            owner: typed_tuple_pattern_owner,
+            label: "typed tuple-pattern method owner",
+            kind: CallSiteKind::Method,
+            callee: CallCalleeInfo::Method {
+                name: "instance_value".to_string(),
+                receiver: Some(CallReceiverInfo::TypedLocalBinding {
+                    name: "value".to_string(),
+                    type_path: vec!["LocalAssoc".to_string()],
+                }),
+            },
+            relation: CallTargetKind::Method,
+            // This owner also resolves the tuple initializer helper path; the
+            // part has one expansion carrier, so assert the method edge without
+            // requiring that carrier to point at this selected callsite.
+            assert_expansion: false,
         },
         Case {
             owner: self_field_owner,
@@ -113,6 +139,7 @@ async fn request_code_context_returns_method_target_callers_with_call_context()
                 }),
             },
             relation: CallTargetKind::Method,
+            assert_expansion: true,
         },
         Case {
             owner: assoc_owner,
@@ -122,6 +149,7 @@ async fn request_code_context_returns_method_target_callers_with_call_context()
                 path: vec!["LocalAssoc".to_string(), "instance_value".to_string()],
             },
             relation: CallTargetKind::AssociatedFunction,
+            assert_expansion: true,
         },
     ];
 
@@ -154,7 +182,9 @@ async fn request_code_context_returns_method_target_callers_with_call_context()
                 )
             });
         assert_resolved_target(call, target, case.relation);
-        assert_incoming_expansion(part, call, target);
+        if case.assert_expansion {
+            assert_incoming_expansion(part, call, target);
+        }
     }
 
     Ok(())

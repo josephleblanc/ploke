@@ -178,6 +178,79 @@ async fn call_context_collection_reads_tuple_pattern_receiver_rows() -> Result<(
 }
 
 #[tokio::test]
+async fn call_context_collection_reads_typed_tuple_pattern_receiver_rows() -> Result<(), Error> {
+    init_tracing_once();
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_typed_tuple_pattern_local_instance_method"),
+    )?;
+    let pair_target = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "make_local_assoc_pair"),
+    )?;
+    let method_target = one_uuid(
+        &db,
+        &method_by_impl_self_query("LocalAssoc", "instance_value"),
+    )?;
+    let rag = init_test_rag_mock(Arc::clone(&db));
+    assert!(
+        !rag.call_context_degraded(),
+        "fresh fixture call_graph schema should enable call context collection"
+    );
+
+    let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+    let owner_context = call_context
+        .get(&owner)
+        .expect("typed tuple-pattern receiver owner should receive outgoing call context");
+    assert_eq!(owner_context.len(), 2, "owner context: {owner_context:#?}");
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:
+    // `let (value, _): (LocalAssoc, i32) = make_local_assoc_pair();
+    // value.instance_value()` should preserve the initializer path call and use
+    // the explicit tuple annotation as the receiver's local type proof.
+    let path_call = owner_context
+        .iter()
+        .find(|call| {
+            call.kind == CallSiteKind::Path
+                && call.callee
+                    == CallCalleeInfo::Path {
+                        path: vec!["make_local_assoc_pair".to_string()],
+                    }
+        })
+        .expect("typed tuple-pattern initializer path call should be present");
+    assert_eq!(path_call.status, CallStatusKind::Resolved);
+    assert_eq!(path_call.resolution, Some(CallResolutionKind::LocalExact));
+    assert_eq!(path_call.targets.len(), 1);
+    assert_eq!(path_call.targets[0].target_id, pair_target);
+    assert_eq!(path_call.targets[0].relation, CallTargetKind::Function);
+
+    let method_call = owner_context
+        .iter()
+        .find(|call| {
+            call.kind == CallSiteKind::Method
+                && call.callee
+                    == CallCalleeInfo::Method {
+                        name: "instance_value".to_string(),
+                        receiver: Some(CallReceiverInfo::TypedLocalBinding {
+                            name: "value".to_string(),
+                            type_path: vec!["LocalAssoc".to_string()],
+                        }),
+                    }
+        })
+        .expect("typed tuple-pattern receiver method call should be present");
+    assert_eq!(method_call.status, CallStatusKind::Resolved);
+    assert_eq!(method_call.resolution, Some(CallResolutionKind::LocalExact));
+    assert_eq!(method_call.targets.len(), 1);
+    assert_eq!(method_call.targets[0].target_id, method_target);
+    assert_eq!(method_call.targets[0].relation, CallTargetKind::Method);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn call_context_collection_reads_incoming_rows_for_target_seed() -> Result<(), Error> {
     init_tracing_once();
     let db = Arc::new(Database::new(setup_db_full_multi_embedding(
