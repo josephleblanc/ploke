@@ -71,6 +71,28 @@ fn fixture_context_reads_projected_external_and_shadowed_method_calls() -> Resul
         ),
     );
 
+    let owner = function_id_by_name(&db, "call_external_borrowed_param_vec_len")?;
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(
+        context.len(),
+        1,
+        "external borrowed parameter Vec context rows: {context:#?}"
+    );
+
+    let receiver = CallReceiver::LocalBinding {
+        name: "value".to_string(),
+    };
+    assert_targetless_method_row(
+        &context,
+        owner,
+        TargetlessMethodCase::method(
+            "len",
+            &receiver,
+            CallStatusKind::External,
+            "borrowed parameter Vec::len",
+        ),
+    );
+
     let owner = function_id_by_name(&db, "call_imported_external_type_alias_initialized_method")?;
     let context = db.call_context_for_owner(owner)?;
     assert_eq!(

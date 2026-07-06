@@ -93,8 +93,9 @@ fn axum_real_target_request_extensions_mut_receiver_statuses_are_proof_backed()
     //   axum/src/extension.rs:184 calls `req.extensions_mut()`.
     // The initializer path is an imported alias to external `http::Request`
     // and remains targetless. Parameter receiver calls with direct external
-    // type proof are now classified as external; the borrowed/generic receiver
-    // rows without that proof remain targetless unresolved rows.
+    // type proof, including a single-reference parameter, are now classified
+    // as external; the remaining generic receiver rows without that proof stay
+    // targetless unresolved rows.
     let owner =
         method_id_by_name_and_body_substring(&db, "extract_parts_with_state", "Request::new(())")?;
     let context = db.call_context_for_owner(owner)?;
@@ -129,19 +130,6 @@ fn axum_real_target_request_extensions_mut_receiver_statuses_are_proof_backed()
         name: "req".to_string(),
     };
     let unresolved_cases = [
-        (
-            // axum-core/src/extract/default_body_limit.rs:183
-            // `DefaultBodyLimit::apply` has `req: &mut Request<B>`, which is
-            // still a borrowed-parameter proof gap for external classification.
-            "axum-core/src/extract/default_body_limit.rs:183",
-            method_id_by_name_body_and_file_suffix(
-                &db,
-                "apply",
-                "req.extensions_mut().insert(self.kind)",
-                "axum-core/src/extract/default_body_limit.rs",
-            )?,
-            1,
-        ),
         (
             // axum/src/extract/nested_path.rs:95 and :103
             // `SetNestedPath::call` has two `req.extensions_mut()` callsites
@@ -183,6 +171,17 @@ fn axum_real_target_request_extensions_mut_receiver_statuses_are_proof_backed()
 
     let external_cases = [
         (
+            // axum-core/src/extract/default_body_limit.rs:183
+            // `DefaultBodyLimit::apply` has `req: &mut Request<B>`.
+            "axum-core/src/extract/default_body_limit.rs:183",
+            method_id_by_name_body_and_file_suffix(
+                &db,
+                "apply",
+                "req.extensions_mut().insert(self.kind)",
+                "axum-core/src/extract/default_body_limit.rs",
+            )?,
+        ),
+        (
             // axum-core/src/extract/default_body_limit.rs:225
             // `DefaultBodyLimitService::call` uses `mut req: Request<B>`.
             "axum-core/src/extract/default_body_limit.rs:225",
@@ -222,7 +221,7 @@ fn axum_real_target_request_extensions_mut_receiver_statuses_are_proof_backed()
         "LocalBinding",
         Some(&["req"]),
         CallStatusKind::Unresolved,
-        4,
+        3,
     )?;
     assert_targetless_method_line_fanout(
         &db,
@@ -232,10 +231,6 @@ fn axum_real_target_request_extensions_mut_receiver_statuses_are_proof_backed()
         Some(&["req"]),
         CallStatusKind::Unresolved,
         &[
-            SourceLineFanout {
-                file_suffix: "axum-core/src/extract/default_body_limit.rs",
-                lines: &[183],
-            },
             SourceLineFanout {
                 file_suffix: "axum/src/extract/nested_path.rs",
                 lines: &[95, 103],
@@ -252,7 +247,7 @@ fn axum_real_target_request_extensions_mut_receiver_statuses_are_proof_backed()
         "LocalBinding",
         Some(&["req"]),
         CallStatusKind::External,
-        2,
+        3,
     )?;
     assert_targetless_method_line_fanout(
         &db,
@@ -264,7 +259,7 @@ fn axum_real_target_request_extensions_mut_receiver_statuses_are_proof_backed()
         &[
             SourceLineFanout {
                 file_suffix: "axum-core/src/extract/default_body_limit.rs",
-                lines: &[225],
+                lines: &[183, 225],
             },
             SourceLineFanout {
                 file_suffix: "axum/src/extension.rs",

@@ -367,12 +367,24 @@ impl CallRelationResolver<'_> {
             .iter()
             .filter(|param| !param.is_self && param.name.as_deref() == Some(name))
         {
-            if self.is_external_type_method(
+            let direct_external = self.is_external_type_method(
                 call.owner,
                 param.type_id,
                 &call.method_name,
                 type_relations,
-            )? {
+            )?;
+            let dereferenced_external =
+                if let Some(type_id) = self.dereferenced_type_use(param.type_id)? {
+                    self.is_external_type_method(
+                        call.owner,
+                        type_id,
+                        &call.method_name,
+                        type_relations,
+                    )?
+                } else {
+                    false
+                };
+            if direct_external || dereferenced_external {
                 return Ok(true);
             }
         }
