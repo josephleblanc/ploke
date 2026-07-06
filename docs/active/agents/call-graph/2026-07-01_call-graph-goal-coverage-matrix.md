@@ -49,31 +49,31 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current Bucket
 
-Current bucket: block-local `fn` item call targets.
+Current bucket: cfg-gated real-corpus body visibility.
 
 Exit criteria:
 
-- Use existing lexical `LocalBindingProof` evidence; do not scan local item
-  bodies by label or fabricate out-of-scope local item edges.
-- Keep the target endpoint typed as an executable `LocalItem`, not as a
-  top-level `FunctionNode`.
-- Prove parser, transform, DB, RAG, and TUI surfaces can traverse the outer
-  function `inner()` call to the local `fn inner` body owner while preserving
-  nested body calls under the local-item owner.
+- Reuse existing `ActiveCfg` evidence; do not include inactive cfg branches by
+  ignoring cfg expressions.
+- Add only cfg atoms the evaluator already stores (`target_family` and
+  `target_arch`) plus the Rust shorthand family atoms `unix` / `windows`.
+- Prove the real-corpus source oracle through a DB assertion without changing
+  the external targetless contract for the `Self::accept(self).await` rows.
 
 Completed evidence:
 
-- Parser extraction records block-local `fn inner` as `local_fn:inner` and
-  classifies outer `inner()` path calls as visible local function bindings,
-  including the Rust-valid call-before-local-item-declaration shape.
-- Transform/DB projection persists `LocalFunction ⊆ Path × LocalItem` and
-  validates the target through `call_body_owner(owner_kind = "LocalItem")`.
-- DB, RAG, and TUI tests now prove the enclosing fixture function can traverse
-  to `local_fn:inner`, and that `local_fn:inner` remains the owner for its body
-  call to `assoc_const_value()`.
+- Parser cfg parsing now treats bare `#[cfg(unix)]` and `#[cfg(windows)]` as
+  target-family atoms and supports `target_family = ...` plus
+  `target_arch = ...` name-value atoms.
+- Regenerated axum fixture data now projects both
+  `axum/src/serve/listener.rs:41` and `:61`
+  `Self::accept(self).await` rows.
+- The DB real-corpus assertion keeps both rows external and targetless, so the
+  UnixListener impl is source-visible without being treated as recursive trait
+  dispatch.
 
 Reason to stay in this bucket: none after focused verification. Switch buckets
-unless the focused DB/RAG/TUI tests reveal a regression.
+unless the focused cfg/DB tests reveal a regression.
 
 ## Coverage Matrix
 

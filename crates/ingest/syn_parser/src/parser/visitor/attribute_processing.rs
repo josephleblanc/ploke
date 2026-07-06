@@ -180,9 +180,14 @@ fn parse_cfg_attribute(attr: &syn::Attribute) -> Option<CfgExpr> {
 #[cfg(feature = "cfg_eval")]
 fn parse_single_meta(meta: syn::Meta) -> Option<CfgExpr> {
     match meta {
-        syn::Meta::Path(path) => Some(CfgExpr::Atom(CfgAtom::Feature(
-            path.get_ident()?.to_string(),
-        ))),
+        syn::Meta::Path(path) => {
+            let ident = path.get_ident()?.to_string();
+            match ident.as_str() {
+                "unix" => Some(CfgExpr::Atom(CfgAtom::TargetFamily("unix".to_string()))),
+                "windows" => Some(CfgExpr::Atom(CfgAtom::TargetFamily("windows".to_string()))),
+                _ => Some(CfgExpr::Atom(CfgAtom::Feature(ident))),
+            }
+        }
         syn::Meta::NameValue(nv) => {
             let key = nv.path.get_ident()?.to_string();
             let value = match nv.value {
@@ -195,6 +200,8 @@ fn parse_single_meta(meta: syn::Meta) -> Option<CfgExpr> {
             match key.as_str() {
                 "feature" => Some(CfgExpr::Atom(CfgAtom::Feature(value))),
                 "target_os" => Some(CfgExpr::Atom(CfgAtom::TargetOs(value))),
+                "target_arch" => Some(CfgExpr::Atom(CfgAtom::TargetArch(value))),
+                "target_family" => Some(CfgExpr::Atom(CfgAtom::TargetFamily(value))),
                 _ => None,
             }
         }
@@ -342,5 +349,33 @@ mod tests {
         let attrs = vec![syn::parse_quote!(#[cfg(not(test))])];
 
         assert!(!should_include_item(&attrs, &active_cfg(&[])));
+    }
+
+    #[test]
+    fn should_include_item_treats_unix_as_target_family() {
+        let attrs = vec![syn::parse_quote!(#[cfg(unix)])];
+
+        assert!(should_include_item(&attrs, &active_cfg(&[])));
+    }
+
+    #[test]
+    fn should_include_item_treats_windows_as_target_family() {
+        let attrs = vec![syn::parse_quote!(#[cfg(windows)])];
+
+        assert!(!should_include_item(&attrs, &active_cfg(&[])));
+    }
+
+    #[test]
+    fn should_include_item_supports_target_family_name_value() {
+        let attrs = vec![syn::parse_quote!(#[cfg(target_family = "unix")])];
+
+        assert!(should_include_item(&attrs, &active_cfg(&[])));
+    }
+
+    #[test]
+    fn should_include_item_supports_target_arch_name_value() {
+        let attrs = vec![syn::parse_quote!(#[cfg(target_arch = "x86_64")])];
+
+        assert!(should_include_item(&attrs, &active_cfg(&[])));
     }
 }

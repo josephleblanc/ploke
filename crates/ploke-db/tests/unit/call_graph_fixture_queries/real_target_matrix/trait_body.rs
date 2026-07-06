@@ -301,30 +301,35 @@ fn axum_real_target_from_ref_dependency_root_bound_reaches_workspace_trait_metho
 }
 
 #[test]
-fn axum_real_target_self_accept_is_documented_gap() -> Result<(), DbError> {
+fn axum_real_target_self_accept_rows_are_external_frontiers() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
     // Matrix: `Self::accept(self).await` listener row.
     // Source chain:
     //   axum/src/serve/listener.rs:41 and :61 use `Self::accept`.
-    // Contract: the visible `Self::accept` path row is external and targetless;
+    // Contract: both visible `Self::accept` path rows are external and targetless;
     // it should not be treated as recursive trait dispatch.
-    // The current fixture projects the line-41 owner only; line 61 remains part
-    // of the same body-owner completeness gap.
-    let owner = method_id_by_name_body_and_file_suffix(
+    let owners = method_ids_by_name_body_and_file_suffix(
         &db,
         "accept",
         "Self::accept(self).await",
         "axum/src/serve/listener.rs",
     )?;
-    assert_owner_path_targetless(
-        &db,
-        owner,
-        &["Self", "accept"],
-        CallStatusKind::External,
-        "axum/src/serve/listener.rs:41",
-    )?;
-    assert_targetless_path_rows(&db, &["Self", "accept"], CallStatusKind::External, 1)?;
+    assert_eq!(
+        owners.len(),
+        2,
+        "expected TcpListener and UnixListener accept method bodies to be visible under linux cfg"
+    );
+    for owner in owners {
+        assert_owner_path_targetless(
+            &db,
+            owner,
+            &["Self", "accept"],
+            CallStatusKind::External,
+            "axum/src/serve/listener.rs Self::accept",
+        )?;
+    }
+    assert_targetless_path_rows(&db, &["Self", "accept"], CallStatusKind::External, 2)?;
     assert_targetless_path_line_fanout(
         &db,
         &CORPUS_AXUM_CALL_GRAPH,
@@ -332,7 +337,7 @@ fn axum_real_target_self_accept_is_documented_gap() -> Result<(), DbError> {
         CallStatusKind::External,
         &[SourceLineFanout {
             file_suffix: "axum/src/serve/listener.rs",
-            lines: &[41],
+            lines: &[41, 61],
         }],
     )
 }

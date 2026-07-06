@@ -332,6 +332,25 @@ Post-regeneration verification:
 - The regenerated `corpus_axum_call_graph_2026-07-06.sqlite` shared snapshot
   was copied into `tests/backup_dbs/` as the committed seed artifact.
 
+## 2026-07-06 Axum cfg-unix Body Visibility Refresh
+
+The active fixture set was regenerated with
+`cargo run -p xtask --features call_graph -- fixtures regenerate --active`
+after cfg parsing began treating bare `#[cfg(unix)]` / `#[cfg(windows)]` as
+target-family atoms and accepting `target_family = ...` plus
+`target_arch = ...` name-value atoms.
+
+Post-regeneration verification:
+
+- The regeneration command roundtripped all active checkout-local fixtures and
+  shared call-graph corpus snapshots successfully.
+- The regenerated `corpus_axum_call_graph_2026-07-06.sqlite` shared snapshot
+  was copied into `tests/backup_dbs/` as the committed seed artifact.
+- The axum real-corpus query matrix now asserts both
+  `axum/src/serve/listener.rs:41` and `:61` `Self::accept(self).await` rows as
+  visible, external, targetless path calls rather than treating the
+  UnixListener impl as a body-owner gap.
+
 ## `fixture_nodes_canonical_2026-05-17.sqlite`
 
 - File: `tests/backup_dbs/fixture_nodes_canonical_2026-05-17.sqlite`

@@ -40,6 +40,17 @@ future work can choose the next batch without rereading the diary-style notes.
 
 ## Recent downstream slice
 
+- 2026-07-06: cfg parsing now treats bare `#[cfg(unix)]` and
+  `#[cfg(windows)]` as target-family atoms and supports
+  `target_family = ...` plus `target_arch = ...` name-value atoms. The
+  regenerated axum call-graph fixture now projects both
+  `axum/src/serve/listener.rs:41` and `:61`
+  `Self::accept(self).await` rows. The real-corpus DB assertion keeps both
+  rows external and targetless, so the UnixListener impl is source-visible
+  without being confused for recursive trait dispatch. Focused verification:
+  `cargo test -p syn_parser --features cfg_eval should_include_item_ -- --nocapture`
+  and
+  `cargo test -p ploke-db axum_real_target_self_accept_rows_are_external_frontiers -- --nocapture`.
 - 2026-07-06: Self-field receiver forwarding through external `Service` bounds
   now classifies as targetless `External` frontier rows instead of
   `Unsupported` when the receiver field type is a generic parameter with a
