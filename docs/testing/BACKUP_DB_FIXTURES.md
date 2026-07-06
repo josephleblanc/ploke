@@ -689,6 +689,9 @@ Expected searchable corpus embedding config:
     owner-centered and target-centered call context
   - `RequestExt::extract` and `RequestPartsExt::extract` reach
     `extract_with_state` through same-impl self-method call resolution
+  - axum-core `parts.extract_with_state(state)` reaches the local
+    `RequestPartsExt for Parts::extract_with_state` impl method through exact
+    imported external receiver type proof
   - `Body` conversion impl `Self::empty()` rows reach the inherent
     `Body::empty` associated function through local-exact call resolution
   - `Position::First(item)` reaches the local `Position::First` enum variant

@@ -19,6 +19,15 @@ async fn code_item_lookup_returns_remaining_real_corpus_supported_callers() {
 }
 
 #[tokio::test]
+async fn code_item_lookup_returns_request_parts_ext_local_receiver_caller() {
+    assert_lookup_case(
+        AxumRemainingTarget::RequestPartsExtExtract,
+        "axum-request-parts-ext-lookup",
+    )
+    .await;
+}
+
+#[tokio::test]
 async fn code_item_lookup_returns_trait_bound_remaining_real_corpus_callers() {
     for case in [
         AxumRemainingTarget::FromRequestParts,
@@ -47,6 +56,15 @@ async fn code_item_edges_returns_remaining_real_corpus_supported_callers() {
     for case in AxumRemainingTarget::TOOL_REACHABLE_CASES {
         assert_edges_case(case, "axum-remaining-edges").await;
     }
+}
+
+#[tokio::test]
+async fn code_item_edges_returns_request_parts_ext_local_receiver_caller() {
+    assert_edges_case(
+        AxumRemainingTarget::RequestPartsExtExtract,
+        "axum-request-parts-ext-edges",
+    )
+    .await;
 }
 
 #[tokio::test]

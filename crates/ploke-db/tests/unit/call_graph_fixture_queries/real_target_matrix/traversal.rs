@@ -162,14 +162,17 @@ fn axum_real_target_supported_callers_are_one_hop_traversable() -> Result<(), Db
             // axum-core/src/ext_traits/request_parts.rs:122 calls
             // `self.extract_with_state(&())`. Callee is the same impl method
             // with body `E::from_request_parts(self, state)`.
+            // axum-core/src/ext_traits/request_parts.rs:186 also calls
+            // `parts.extract_with_state(state)` through the local extension
+            // trait impl `RequestPartsExt for Parts`.
             label: "axum-core RequestPartsExt extract self-call",
             target: method_id_by_name_and_body_substring(
                 &db,
                 "extract_with_state",
                 "E::from_request_parts(self, state)",
             )?,
-            expected_call_edges: 1,
-            expected_traversal_candidates: 1,
+            expected_call_edges: 2,
+            expected_traversal_candidates: 2,
         },
         ResolvedTraversalCase {
             // axum-core/src/ext_traits/request.rs:279 calls
@@ -374,6 +377,8 @@ fn axum_real_target_supported_callers_match_oracle_shape_counts() -> Result<(), 
         ResolvedShapeCase {
             // Caller: axum-core/src/ext_traits/request_parts.rs:122
             // self.extract_with_state(&()).
+            // Caller: axum-core/src/ext_traits/request_parts.rs:186
+            // parts.extract_with_state(state).
             // Callee: same impl method body containing E::from_request_parts(...).
             label: "axum-core RequestPartsExt extract self-call",
             target: method_id_by_name_and_body_substring(
@@ -381,7 +386,13 @@ fn axum_real_target_supported_callers_match_oracle_shape_counts() -> Result<(), 
                 "extract_with_state",
                 "E::from_request_parts(self, state)",
             )?,
-            expected: vec![("method:self.extract_with_state", 1)],
+            expected: vec![
+                ("method:self.extract_with_state", 1),
+                (
+                    "method:LocalBinding { name: \"parts\" }.extract_with_state",
+                    1,
+                ),
+            ],
         },
         ResolvedShapeCase {
             // Callers:

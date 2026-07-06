@@ -126,13 +126,16 @@ async fn proof_context_exact_preserves_axum_supported_target_rows() -> Result<()
             // axum-core/src/ext_traits/request_parts.rs:122 calls
             // `self.extract_with_state(&())`; the target body calls
             // `E::from_request_parts(self, state)`.
+            // axum-core/src/ext_traits/request_parts.rs:186 calls
+            // `parts.extract_with_state(state)` through `RequestPartsExt for
+            // Parts`.
             label: "axum-core RequestPartsExt extract self-call",
             target: method_id_by_name_and_body(
                 &db,
                 "extract_with_state",
                 "E::from_request_parts(self, state)",
             )?,
-            edges: 1,
+            edges: 2,
         },
         ProofCase {
             // axum-core/src/extract/mod.rs:85 declares FromRequest.

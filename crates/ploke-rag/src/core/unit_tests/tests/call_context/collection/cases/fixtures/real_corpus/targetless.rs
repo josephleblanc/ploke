@@ -455,65 +455,6 @@ async fn call_context_collection_reads_axum_request_builder_alias_frontier() -> 
 }
 
 #[tokio::test]
-async fn call_context_collection_reads_axum_request_parts_local_receiver_gap() -> Result<(), Error>
-{
-    init_tracing_once();
-    let (db, rag) = setup_axum_call_graph_rag()?;
-
-    let case = MethodCase {
-        label: "axum-core/src/ext_traits/request_parts.rs:186 parts.extract_with_state",
-        method: "from_request_parts",
-        body: "parts.extract_with_state(state)",
-        callee: CallCalleeInfo::Method {
-            name: "extract_with_state".to_string(),
-            receiver: Some(CallReceiverInfo::LocalBinding {
-                name: "parts".to_string(),
-            }),
-        },
-        status: CallStatusKind::Unresolved,
-    };
-
-    let owner = method_id_by_name_and_body_substring(&db, case.method, case.body)?;
-    let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
-    let context = call_context
-        .get(&owner)
-        .unwrap_or_else(|| panic!("{} should receive outgoing call context", case.label));
-    let matching = context
-        .iter()
-        .filter(|call| call.kind == CallSiteKind::Method && call.callee == case.callee)
-        .collect::<Vec<_>>();
-    assert_eq!(
-        matching.len(),
-        1,
-        "{} should expose one targetless local receiver row: {context:#?}",
-        case.label
-    );
-
-    // Matrix:
-    //   docs/active/agents/call-graph/
-    //   2026-06-28_real-corpus-call-site-oracle-matrices.md
-    //
-    // Source chain:
-    //   axum-core/src/ext_traits/request_parts.rs:186 calls
-    //   `parts.extract_with_state(state)`.
-    // Expected traversal: the local-binding receiver is structurally visible,
-    // but has zero traversable targets until local receiver type proof can
-    // connect `parts: &mut Parts` to RequestPartsExt::extract_with_state.
-    // The source-oracle turbofish row at :164 remains absent in this fixture.
-    let call = matching[0];
-    assert_eq!(call.owner_id, owner);
-    assert_eq!(call.status, case.status);
-    assert_eq!(call.resolution, None);
-    assert!(
-        call.targets.is_empty(),
-        "{} should remain targetless in RAG call context: {call:#?}",
-        case.label
-    );
-
-    Ok(())
-}
-
-#[tokio::test]
 async fn call_context_collection_reads_axum_handler_async_block_owner_gap() -> Result<(), Error> {
     init_tracing_once();
     let (db, rag) = setup_axum_call_graph_rag()?;

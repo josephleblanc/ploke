@@ -62,7 +62,9 @@ Current matrix posture:
   chrono `MappedLocalTime::Single -> LocalResult::Single` alias-constructor
   path across parser, DB, RAG, and TUI.
 - Exact local external-trait impl receiver methods: met for axum
-  `Router::clone` rows across DB, RAG, and TUI.
+  `Router::clone` rows and axum-core
+  `parts.extract_with_state(state)` imported external receiver proof across DB,
+  RAG, and TUI.
 - Borrowed initialized local receiver methods: fixture-backed
   `let value = LocalAssoc; (&value).instance_value()` now carries initializer
   proof through parser, DB/proof projection, RAG, and TUI formatting.
@@ -110,7 +112,7 @@ The current larger implementation phase is:
 binding/type-aware semantic resolution
 ```
 
-This phase should connect existing syntax-body ownership, local binding evidence, and typed type graph facts so the resolver can prove more receiver and callable-value cases without weakening fail-closed semantics. Completed slices include exact local external-trait impl receiver methods such as axum `Router::clone` and fixture-backed borrowed initialized local receivers such as `(&value).instance_value()` where `value` is initialized from a local type path. Broader dispatch remains out of scope until the required binding/type evidence is explicit.
+This phase should connect existing syntax-body ownership, local binding evidence, and typed type graph facts so the resolver can prove more receiver and callable-value cases without weakening fail-closed semantics. Completed slices include exact local external-trait impl receiver methods such as axum `Router::clone`, axum-core `parts.extract_with_state(state)` where `parts: &mut http::request::Parts`, and fixture-backed borrowed initialized local receivers such as `(&value).instance_value()` where `value` is initialized from a local type path. Broader dispatch remains out of scope until the required binding/type evidence is explicit.
 
 ## Next Larger Phase
 

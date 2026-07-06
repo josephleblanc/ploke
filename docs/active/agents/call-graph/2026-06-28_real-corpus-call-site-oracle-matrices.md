@@ -206,6 +206,10 @@ The same table-driven TUI matrix now also preserves the two DB/RAG-supported
 same-impl `self.extract_with_state(&())` method-call rows through
 `code_item_lookup` and `code_item_edges`, including their `self` receiver callee
 shape and target-centered proof rows.
+The axum-core `request_parts.rs:186` local receiver row
+`parts.extract_with_state(state)` also traverses to the local
+`RequestPartsExt for Parts::extract_with_state` impl method through imported
+external receiver type proof.
 
 ## Receiver And Method Oracles
 
@@ -222,6 +226,7 @@ shape and target-centered proof rows.
 | await result receiver | `axum/src/test_helpers/test_client.rs:134` | `RequestBuilder::into_future` | field `builder: reqwest::RequestBuilder` at `:90-92`; `.send()` external reqwest method; `.await.unwrap()` external result handling. |
 | await result receiver helpers | `axum/src/test_helpers/test_client.rs:156,160,168,172` | `TestResponse::{bytes,text,json,chunk}` | response helper awaited `unwrap()` rows are visible and targetless; they should not resolve to concrete callee edges. |
 | turbofish method call | `axum-core/src/ext_traits/request_parts.rs:164` | test `extract_with_state` | `parts: http::request::Parts` from `Request::new(()).into_parts()` at `:159`; impl `RequestPartsExt for Parts` at `:117`; method impl at `:125`; trait decl `:108`; current DB projection preserves the two explicit method generic arguments, but the method-chain receiver remains unsupported and targetless. |
+| local `Parts` extension-trait receiver | `axum-core/src/ext_traits/request_parts.rs:186` | `WorksForCustomExtractor::from_request_parts` | parameter `parts: &mut Parts` at `:184`; `Parts` imported from `http::request` at `:2`; impl `RequestPartsExt for Parts` at `:117`; method impl at `:125`; trait decl `:108`; exact imported external receiver type proof resolves the row to the local impl method. |
 | shadowed callable `get` | `axum/src/routing/tests/mod.rs:423,424,425,426,427,429,430,431,432,433,434` | test `what_matches_wildcard` | module imports routing `get` at `:8-10`, but local `let get = |path| ...` at `:418` shadows it; calls target local closure, not `routing::get`. |
 
 ## Trait And Body-Owner Oracles
@@ -281,13 +286,14 @@ the 43 module-anchored rows while the additional row is owned by a nested async
 block.
 The targetless receiver rows for `self.0.size_hint()`, the turbofish
 `parts.extract_with_state::<State<String>, String>(&state)` test call at
-`request_parts.rs:164`, the non-turbofish
-`parts.extract_with_state(state)` blanket-helper call at `request_parts.rs:186`,
-and `Route::oneshot` are also pinned. The request-parts turbofish row is
+`request_parts.rs:164`, and `Route::oneshot` are also pinned. The
+request-parts turbofish row is
 projected on the test function owner, preserves two method generic arguments,
 and remains `Unsupported`/targetless because the method-chain receiver is not
-classified yet. The non-turbofish request-parts row remains `Unresolved` with a
-`type_resolution_missing` proof reason. RAG call-context and proof-context tests
+classified yet. The non-turbofish
+`parts.extract_with_state(state)` blanket-helper call at `request_parts.rs:186`
+now resolves to the local `RequestPartsExt for Parts` impl method through exact
+imported external receiver type proof. RAG call-context and proof-context tests
 now preserve the `axum-core/src/body.rs:127` `self.0.size_hint()` row as an
 `External` tuple-field frontier with an `external_dependency_summary_missing`
 proof reason. Exact TUI `code_item_lookup` and `code_item_edges` tests assert

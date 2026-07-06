@@ -3,7 +3,7 @@ use crate::{
     parser::{
         graph::GraphAccess,
         nodes::{
-            AnyCallSiteId, CallBodyOwnerId, CallNode, FieldNode, MethodCallNode,
+            AnyCallSiteId, AsAnyNodeId, CallBodyOwnerId, CallNode, FieldNode, MethodCallNode,
             MethodCallReceiver, OrdinaryTypeSourceId, OrdinaryTypeTargetId, OrdinaryTypeUseId,
             StructNodeId, TypeAliasNodeId,
         },
@@ -14,7 +14,7 @@ use crate::{
 
 use super::{
     AssocPathResolution, CallRelationResolver, LocalFunctionPathResolution, LocalTraitResolution,
-    LocalTypeResolution,
+    LocalTypeResolution, trait_declares_instance_method,
 };
 
 impl CallRelationResolver<'_> {
@@ -450,7 +450,27 @@ impl CallRelationResolver<'_> {
         if let Some(resolution) =
             self.resolve_type_use_method(call.owner, &type_ids, &call.method_name, type_relations)?
         {
+            if !matches!(resolution, AssocPathResolution::Unsupported) {
+                return Ok(resolution);
+            }
+            if let Some(external_resolution) = self.resolve_external_trait_method_from_types(
+                call.owner,
+                &type_ids,
+                &call.method_name,
+                type_relations,
+            )? {
+                return Ok(external_resolution);
+            }
             return Ok(resolution);
+        }
+
+        if let Some(external_resolution) = self.resolve_external_trait_method_from_types(
+            call.owner,
+            &type_ids,
+            &call.method_name,
+            type_relations,
+        )? {
+            return Ok(external_resolution);
         }
 
         let mut dereferenced_ids = Vec::new();
@@ -467,7 +487,27 @@ impl CallRelationResolver<'_> {
             &call.method_name,
             type_relations,
         )? {
+            if !matches!(resolution, AssocPathResolution::Unsupported) {
+                return Ok(resolution);
+            }
+            if let Some(external_resolution) = self.resolve_external_trait_method_from_types(
+                call.owner,
+                &dereferenced_ids,
+                &call.method_name,
+                type_relations,
+            )? {
+                return Ok(external_resolution);
+            }
             return Ok(resolution);
+        }
+
+        if let Some(external_resolution) = self.resolve_external_trait_method_from_types(
+            call.owner,
+            &dereferenced_ids,
+            &call.method_name,
+            type_relations,
+        )? {
+            return Ok(external_resolution);
         }
 
         self.resolve_bound_method_from_types(&type_ids, &call.method_name, type_relations)?
@@ -530,6 +570,86 @@ impl CallRelationResolver<'_> {
             TypeNode::Paren(node) => self.dereferenced_type_use(node.inner),
             _ => Ok(None),
         }
+    }
+
+    fn resolve_external_trait_method_from_types(
+        &self,
+        owner: CallBodyOwnerId,
+        type_ids: &[OrdinaryTypeUseId],
+        method_name: &str,
+        type_relations: &[TypeRelation],
+    ) -> Result<Option<AssocPathResolution>, SynParserError> {
+        let Some(receiver_path) = self.external_receiver_path(owner, type_ids)? else {
+            return Ok(None);
+        };
+
+        let mut candidates = Vec::new();
+        let mut matched = false;
+        for impl_node in self
+            .graph
+            .impls()
+            .iter()
+            .filter(|impl_node| impl_node.trait_type.is_some())
+        {
+            let Some(module_id) = self.module_for_node(impl_node.id.as_any()) else {
+                continue;
+            };
+            let Some(self_path) = self.external_type_path(module_id, impl_node.self_type)? else {
+                continue;
+            };
+            if self_path != receiver_path {
+                continue;
+            }
+
+            let Some(trait_node) = self.local_trait_node_for_impl(impl_node, type_relations)?
+            else {
+                continue;
+            };
+            if !trait_declares_instance_method(trait_node, method_name) {
+                continue;
+            }
+            if !self.trait_is_visible_from_owner(owner, trait_node.id)? {
+                continue;
+            }
+
+            matched = true;
+            candidates.extend(
+                impl_node
+                    .methods
+                    .iter()
+                    .filter(|method| {
+                        method.name == method_name
+                            && method.parameters.iter().any(|param| param.is_self)
+                    })
+                    .map(|method| method.id),
+            );
+        }
+
+        Ok(matched.then(|| Self::method_resolution(candidates)))
+    }
+
+    fn external_receiver_path(
+        &self,
+        owner: CallBodyOwnerId,
+        type_ids: &[OrdinaryTypeUseId],
+    ) -> Result<Option<Vec<String>>, SynParserError> {
+        let Some(module_id) = self.containing_module_for_owner(owner) else {
+            return Ok(None);
+        };
+
+        let mut paths = Vec::new();
+        for type_id in type_ids {
+            if let Some(path) = self.external_type_path(module_id, *type_id)? {
+                paths.push(path);
+            }
+        }
+        paths.sort();
+        paths.dedup();
+
+        Ok(match paths.as_slice() {
+            [path] => Some(path.clone()),
+            [] | [_, ..] => None,
+        })
     }
 
     fn resolve_typed_local_method_call(

@@ -101,18 +101,31 @@ async fn call_context_exact_reads_remaining_axum_supported_matrix_targets() -> R
             // axum-core/src/ext_traits/request_parts.rs:122 calls
             // `self.extract_with_state(&())`; the callee is the same impl
             // method whose body calls `E::from_request_parts(self, state)`.
+            // axum-core/src/ext_traits/request_parts.rs:186 calls
+            // `parts.extract_with_state(state)` through the local extension
+            // trait impl `RequestPartsExt for Parts`.
             label: "axum-core RequestPartsExt extract self-call",
             target: method_id_by_name_and_body_substring(
                 &db,
                 "extract_with_state",
                 "E::from_request_parts(self, state)",
             )?,
-            expected: vec![method_shape(
-                "extract_with_state",
-                Some(CallReceiverInfo::SelfValue),
-                CallTargetKind::Method,
-                1,
-            )],
+            expected: vec![
+                method_shape(
+                    "extract_with_state",
+                    Some(CallReceiverInfo::SelfValue),
+                    CallTargetKind::Method,
+                    1,
+                ),
+                method_shape(
+                    "extract_with_state",
+                    Some(CallReceiverInfo::LocalBinding {
+                        name: "parts".to_string(),
+                    }),
+                    CallTargetKind::Method,
+                    1,
+                ),
+            ],
         },
         ExactShapeCase {
             // axum-core/src/extract/mod.rs:85 declares

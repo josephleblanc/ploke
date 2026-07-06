@@ -42,7 +42,6 @@ pub(crate) struct ReceiverToolCase {
 enum ReceiverShape {
     MethodResult { method: &'static str },
     SelfField { path: &'static [&'static str] },
-    LocalBinding { name: &'static str },
 }
 
 pub(crate) struct ReceiverToolFixture {
@@ -206,18 +205,6 @@ impl ReceiverToolCase {
         receiver: ReceiverShape::SelfField { path: &["0"] },
     }];
 
-    pub(crate) const REQUEST_PARTS: [Self; 1] = [Self {
-        label: "axum-core/src/ext_traits/request_parts.rs:186 parts.extract_with_state",
-        method: "from_request_parts",
-        callee: "extract_with_state",
-        status: CallStatusKind::Unresolved,
-        owner_type: "WorksForCustomExtractor",
-        module_path: Some(&["crate", "ext_traits", "request_parts", "tests"]),
-        file_suffix: "axum-core/src/ext_traits/request_parts.rs",
-        body: "parts.extract_with_state(state)",
-        receiver: ReceiverShape::LocalBinding { name: "parts" },
-    }];
-
     pub(crate) fn callee(&self) -> CallCalleeInfo {
         let receiver = match self.receiver {
             ReceiverShape::MethodResult { method } => Some(CallReceiverInfo::MethodCallResult {
@@ -225,9 +212,6 @@ impl ReceiverToolCase {
             }),
             ReceiverShape::SelfField { path } => Some(CallReceiverInfo::SelfField {
                 path: path.iter().map(|segment| (*segment).to_string()).collect(),
-            }),
-            ReceiverShape::LocalBinding { name } => Some(CallReceiverInfo::LocalBinding {
-                name: name.to_string(),
             }),
         };
         CallCalleeInfo::Method {

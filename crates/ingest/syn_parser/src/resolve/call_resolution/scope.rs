@@ -267,6 +267,163 @@ impl<'a> CallRelationResolver<'a> {
         Ok(false)
     }
 
+    pub(super) fn external_type_path(
+        &self,
+        module_id: ModuleNodeId,
+        type_id: OrdinaryTypeUseId,
+    ) -> Result<Option<Vec<String>>, SynParserError> {
+        let module_id = self.import_scope_module(module_id)?;
+        self.external_path_at(module_id, type_id, 0)
+    }
+
+    fn external_path_at(
+        &self,
+        module_id: ModuleNodeId,
+        type_id: OrdinaryTypeUseId,
+        depth: usize,
+    ) -> Result<Option<Vec<String>>, SynParserError> {
+        if depth > MAX_IMPORT_CHAIN_DEPTH {
+            return Err(SynParserError::InternalState(format!(
+                "call resolution exceeded import chain depth limit of {MAX_IMPORT_CHAIN_DEPTH} while resolving external type path for {type_id:?}"
+            )));
+        }
+
+        match self.type_node(type_id)? {
+            TypeNode::Named(node) => self.external_named_path(module_id, &node.path, depth + 1),
+            TypeNode::Reference(node) => {
+                self.external_path_at(module_id, node.referenced, depth + 1)
+            }
+            TypeNode::Paren(node) => self.external_path_at(module_id, node.inner, depth + 1),
+            _ => Ok(None),
+        }
+    }
+
+    fn external_named_path(
+        &self,
+        module_id: ModuleNodeId,
+        path: &[String],
+        depth: usize,
+    ) -> Result<Option<Vec<String>>, SynParserError> {
+        if path.is_empty() || self.is_workspace_dependency_path(path) {
+            return Ok(None);
+        }
+        if self.is_external_path(path) {
+            return Ok(Some(path.to_vec()));
+        }
+
+        let [segment] = path else {
+            return Ok(None);
+        };
+        let mut paths = self.segment_external_paths(module_id, segment, depth + 1)?;
+        paths.sort();
+        paths.dedup();
+
+        Ok(match paths.as_slice() {
+            [path] => Some(path.clone()),
+            [] | [_, ..] => None,
+        })
+    }
+
+    fn segment_external_paths(
+        &self,
+        module_id: ModuleNodeId,
+        segment: &str,
+        depth: usize,
+    ) -> Result<Vec<Vec<String>>, SynParserError> {
+        if depth > MAX_IMPORT_CHAIN_DEPTH {
+            return Err(SynParserError::InternalState(format!(
+                "call resolution exceeded import chain depth limit of {MAX_IMPORT_CHAIN_DEPTH} while resolving external import `{segment}`"
+            )));
+        }
+
+        let Some(module_node) = self
+            .graph
+            .modules()
+            .iter()
+            .find(|module| module.id == module_id)
+        else {
+            return Ok(Vec::new());
+        };
+
+        let mut paths = Vec::new();
+        for import_node in &module_node.imports {
+            if import_node.is_glob {
+                paths.extend(self.ancestor_external_paths(import_node, segment, depth + 1)?);
+            } else if import_node.visible_name == segment {
+                paths.extend(self.import_external_paths(import_node.id, depth + 1)?);
+            }
+        }
+        paths.sort();
+        paths.dedup();
+        Ok(paths)
+    }
+
+    fn ancestor_external_paths(
+        &self,
+        import_node: &ImportNode,
+        segment: &str,
+        depth: usize,
+    ) -> Result<Vec<Vec<String>>, SynParserError> {
+        let Some(module_id) =
+            self.ancestor_glob_module(import_node, "resolving external glob import")?
+        else {
+            return Ok(Vec::new());
+        };
+
+        let module_id = self.import_scope_module(module_id)?;
+        self.segment_external_paths(module_id, segment, depth + 1)
+    }
+
+    fn import_external_paths(
+        &self,
+        import_id: ImportNodeId,
+        depth: usize,
+    ) -> Result<Vec<Vec<String>>, SynParserError> {
+        if depth > MAX_IMPORT_CHAIN_DEPTH {
+            return Err(SynParserError::InternalState(format!(
+                "call resolution exceeded import chain depth limit of {MAX_IMPORT_CHAIN_DEPTH} at {}",
+                import_id.as_any()
+            )));
+        }
+
+        let import_node = self.graph.get_import_checked(import_id)?;
+        if !self.is_workspace_dependency_path(import_node.source_path())
+            && self.is_external_path(import_node.source_path())
+        {
+            return Ok(vec![import_node.source_path().to_vec()]);
+        }
+
+        let mut paths = Vec::new();
+        for relation in self.tree.get_iter_relations_to(&import_id.as_any()) {
+            let SyntacticRelation::ImportedBy { source, target } = relation.rel() else {
+                continue;
+            };
+            if *target != import_id {
+                continue;
+            }
+
+            if let Ok(source_import) = ImportNodeId::try_from(source.as_any()) {
+                paths.extend(self.import_external_paths(source_import, depth + 1)?);
+                continue;
+            }
+
+            let Ok(source_alias) = TypeAliasNodeId::try_from(source.as_any()) else {
+                continue;
+            };
+            let alias_node = self.graph.get_type_alias_checked(source_alias)?;
+            let Some(module_id) = self.containing_module(source_alias.as_any()) else {
+                continue;
+            };
+            if let Some(path) = self.external_type_path(module_id, alias_node.type_id)? {
+                paths.push(path);
+            }
+        }
+
+        paths.sort();
+        paths.dedup();
+        Ok(paths)
+    }
+
     pub(super) fn resolve_unqualified_local_function_path(
         &self,
         owner: CallBodyOwnerId,
@@ -496,18 +653,11 @@ impl<'a> CallRelationResolver<'a> {
             return Ok(false);
         }
 
-        let Some(mut module_id) = self.containing_module(import_node.id.as_any()) else {
+        let Some(module_id) =
+            self.ancestor_glob_module(import_node, "resolving workspace glob import")?
+        else {
             return Ok(true);
         };
-
-        for _ in import_node.source_path() {
-            module_id = self.tree.get_parent_module_id(module_id).ok_or_else(|| {
-                SynParserError::InternalState(format!(
-                    "call resolution could not find parent module for {module_id} while resolving workspace glob import {}",
-                    import_node.source_path().join("::")
-                ))
-            })?;
-        }
 
         let module_id = self.import_scope_module(module_id)?;
         self.collect_workspace_type_candidates_in_module(
@@ -741,24 +891,10 @@ impl<'a> CallRelationResolver<'a> {
         sink: &mut impl FnMut(AnyNodeId) -> Result<(), SynParserError>,
     ) -> Result<(), SynParserError> {
         let import_node = self.graph.get_import_checked(import_id)?;
-        if import_node.source_path().is_empty()
-            || !import_node.source_path().iter().all(|part| part == "super")
-        {
-            return Ok(());
-        }
-
-        let Some(mut module_id) = self.containing_module(import_id.as_any()) else {
+        let Some(module_id) = self.ancestor_glob_module(import_node, "resolving glob import")?
+        else {
             return Ok(());
         };
-
-        for _ in import_node.source_path() {
-            module_id = self.tree.get_parent_module_id(module_id).ok_or_else(|| {
-                SynParserError::InternalState(format!(
-                    "call resolution could not find parent module for {module_id} while resolving glob import {}",
-                    import_node.source_path().join("::")
-                ))
-            })?;
-        }
 
         let module_id = self.import_scope_module(module_id)?;
         self.visit_scope_candidates(module_id, segment, sink)
@@ -868,6 +1004,36 @@ impl<'a> CallRelationResolver<'a> {
                 .find(|body| body.id == id)
                 .and_then(|body| self.containing_module_for_owner(body.parent)),
         }
+    }
+
+    pub(super) fn module_for_node(&self, owner: AnyNodeId) -> Option<ModuleNodeId> {
+        self.containing_module(owner)
+    }
+
+    fn ancestor_glob_module(
+        &self,
+        import_node: &ImportNode,
+        context: &str,
+    ) -> Result<Option<ModuleNodeId>, SynParserError> {
+        if import_node.source_path().is_empty()
+            || !import_node.source_path().iter().all(|part| part == "super")
+        {
+            return Ok(None);
+        }
+
+        let Some(mut module_id) = self.containing_module(import_node.id.as_any()) else {
+            return Ok(None);
+        };
+        for _ in import_node.source_path() {
+            module_id = self.tree.get_parent_module_id(module_id).ok_or_else(|| {
+                SynParserError::InternalState(format!(
+                    "call resolution could not find parent module for {module_id} while {context} {}",
+                    import_node.source_path().join("::")
+                ))
+            })?;
+        }
+
+        Ok(Some(module_id))
     }
 
     fn containing_module(&self, owner: AnyNodeId) -> Option<ModuleNodeId> {

@@ -373,32 +373,44 @@ fn axum_real_target_turbofish_method_receiver_rows_preserve_current_shapes() -> 
     // Source chain:
     //   axum-core/src/ext_traits/request_parts.rs:186 calls
     //   `parts.extract_with_state(state)`.
-    // The blanket-helper row still projects as an unresolved local binding and
-    // does not resolve back to the `RequestPartsExt::extract_with_state` impl.
-    let _target_owner = method_id_by_name_and_body_substring(
+    // The local-binding receiver has parameter type `&mut Parts`; the resolver
+    // now matches that imported external receiver type to the local extension
+    // trait impl `impl RequestPartsExt for Parts`.
+    let target_owner = method_id_by_name_and_body_substring(
         &db,
         "extract_with_state",
         "E::from_request_parts(self, state)",
     )?;
-    assert_targetless_method_rows(
+    let owner = method_id_by_name_body_and_file_suffix(
         &db,
-        "extract_with_state",
-        "LocalBinding",
-        Some(&["parts"]),
-        CallStatusKind::Unresolved,
-        1,
+        "from_request_parts",
+        "parts.extract_with_state(state)",
+        "axum-core/src/ext_traits/request_parts.rs",
     )?;
-    assert_targetless_method_line_fanout(
-        &db,
-        &CORPUS_AXUM_CALL_GRAPH,
+    let context = db.call_context_for_owner(owner)?;
+    let row = row_by_method_receiver(
+        &context,
         "extract_with_state",
-        "LocalBinding",
-        Some(&["parts"]),
-        CallStatusKind::Unresolved,
-        &[SourceLineFanout {
-            file_suffix: "axum-core/src/ext_traits/request_parts.rs",
-            lines: &[186],
-        }],
+        &CallReceiver::LocalBinding {
+            name: "parts".to_string(),
+        },
+    );
+    assert_eq!(row.status.status, CallStatusKind::Resolved);
+    assert_eq!(row.status.resolution, Some(CallResolutionKind::LocalExact));
+    assert_eq!(row.targets.len(), 1);
+    assert_eq!(row.targets[0].target_id, target_owner);
+    assert_eq!(row.targets[0].relation, CallRelationKind::Method);
+    assert_eq!(row.targets[0].source_kind, CallSiteKind::Method);
+    assert_eq!(row.targets[0].target_kind, CallTargetKind::Method);
+    assert_one_edge_traversal(
+        &db,
+        TraversalExpectation {
+            label: "request_parts.rs:186 parts.extract_with_state local receiver",
+            owner,
+            target: target_owner,
+            site_id: row.site.id,
+            expected_edge_count: 1,
+        },
     )?;
 
     let mut params = std::collections::BTreeMap::new();
@@ -427,14 +439,14 @@ fn axum_real_target_turbofish_method_receiver_rows_preserve_current_shapes() -> 
             *call_resolution_status {
                 source_id: site_id,
                 source_kind: "Method",
-                status_kind: "Unresolved" @ 'NOW'
+                status_kind: "Resolved" @ 'NOW'
             }"#,
         params,
     )?;
     assert_eq!(
         rows.rows.len(),
         1,
-        "request_parts.rs:186 should project exactly one targetless local receiver row"
+        "request_parts.rs:186 should project exactly one resolved local receiver row"
     );
     assert_eq!(
         rows.rows[0][0],
