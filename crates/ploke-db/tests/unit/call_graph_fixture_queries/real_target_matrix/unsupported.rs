@@ -199,9 +199,10 @@ fn axum_macro_callback_rows_are_visible_or_explicitly_absent() -> Result<(), DbE
     //   IIFE closure while deriving enum state.
     // Current model contract: the `syn::parse` path and `and_then(f)` receiver
     // are projected in `expand_with`; `expand_attr_with` projects its IIFE
-    // dynamic call as a closure target, and `from_request::expand` projects
-    // its enum-state IIFE as a closure target. The callable-parameter body
-    // call `f(attr, input)` remains absent because its callee is opaque.
+    // dynamic call as a closure target, and the closure-owned callable-parameter
+    // call `f(attr, input)` is visible but remains targetless. The
+    // `from_request::expand` enum-state IIFE also resolves to its closure
+    // target.
     let expand_with = function_id_by_name_in_module(&db, &["crate"], "expand_with")?;
     let expand_with_context = db.call_context_for_owner(expand_with)?;
 
@@ -254,12 +255,25 @@ fn axum_macro_callback_rows_are_visible_or_explicitly_absent() -> Result<(), DbE
             expected_edge_count: 1,
         },
     )?;
-    assert!(
-        expand_attr_context
-            .iter()
-            .all(|row| row.site.kind != CallSiteKind::Dynamic || row.site.arg_count != Some(2)),
-        "inner closure-body f(attr, input) should remain absent because the callable parameter remains opaque: {expand_attr_context:#?}"
+    let iife_context = db.call_context_for_owner(iife_target)?;
+    let callback = row_by_path(&iife_context, &["f"]);
+    assert_eq!(
+        owner_kind_for_call_body_owner(&db, callback.site.owner_id)?,
+        "Closure"
     );
+    assert_eq!(callback.site.kind, CallSiteKind::Path);
+    assert_eq!(callback.site.arg_count, Some(2));
+    assert_targetless_status(callback, CallStatusKind::Unsupported);
+    assert!(
+        relations_for_site(&db, callback.site.id)?.rows.is_empty(),
+        "axum-macros/src/lib.rs:737 f(attr, input) should have zero persisted call edges"
+    );
+    assert_no_traversal_candidates_for_site(
+        &db,
+        iife_target,
+        callback.site.id,
+        "axum-macros/src/lib.rs:737 f(attr, input)",
+    )?;
 
     let from_request_expand =
         function_id_by_name_in_module(&db, &["crate", "from_request"], "expand")?;

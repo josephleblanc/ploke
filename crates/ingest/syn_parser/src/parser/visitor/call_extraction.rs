@@ -392,7 +392,7 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
             ),
         ));
 
-        let params = closure_param_names(closure);
+        let params = closure_visible_param_names(self.param_names, closure);
         let mut visitor = BodyCallVisitor {
             owner,
             cfgs: self.cfgs,
@@ -1883,6 +1883,12 @@ fn pat_ident_name(pat: &syn::Pat) -> Option<String> {
 
 fn closure_param_names(closure: &syn::ExprClosure) -> Vec<String> {
     closure.inputs.iter().filter_map(pat_ident_name).collect()
+}
+
+fn closure_visible_param_names(parent: &[String], closure: &syn::ExprClosure) -> Vec<String> {
+    let mut params = parent.to_vec();
+    params.extend(closure_param_names(closure));
+    params
 }
 
 fn local_fn_param_names(item_fn: &syn::ItemFn) -> Vec<String> {

@@ -317,16 +317,17 @@ assert the same two owner-seeded Route receiver rows and blocked proof facts.
 | `and_then(f)` | `axum-macros/src/lib.rs:724` | `expand_with` | parameter `f: F` at `:718`; bound `F: FnOnce(I) -> syn::Result<K>` at `:720`; callback passed into external `and_then`, no concrete callee in this owner. |
 | `expand_with(item, from_ref::expand)` | `axum-macros/src/lib.rs:715` | `derive_from_ref` | proc-macro owner now resolves the direct `expand_with(...)` helper edge; function item `from_ref::expand` at `from_ref.rs:11` still requires interprocedural callback proof before resolving `and_then(f)`. |
 | other `expand_with(...)` callers | `axum-macros/src/lib.rs:377,426,665` | derive macro entrypoints | proc-macro owners now resolve direct `expand_with(...)` helper edges; closure bodies passed to `expand_with` remain unsupported as callback bodies. |
-| direct callable parameter `f(attr,input)` | `axum-macros/src/lib.rs:737` | `expand_attr_with` | parameter `f: F` at `:727`; bound `F: FnOnce(A, I) -> K` at `:729`; structural dynamic call, target intentionally unknown. |
+| direct callable parameter `f(attr,input)` | `axum-macros/src/lib.rs:737` | closure owner under `expand_attr_with` | parameter `f: F` at `:727`; bound `F: FnOnce(A, I) -> K` at `:729`; closure body captures `f`, so the persisted row is a path call to an opaque value binding with no traversal target. |
 | `expand_attr_with(...)` callers | `axum-macros/src/lib.rs:581,637,655` | `debug_handler`; `debug_middleware`; `__private_axum_test` | active proc-macro owners at `:581` and `:637` now resolve direct `expand_attr_with(...)` helper edges; `:655` is cfg-inactive in the current fixture profile; resolving `f(...)` still requires interprocedural callback proof. |
 | `debug_handler::expand(...)` callback rows | `axum-macros/src/lib.rs:581,637` | closure callbacks passed to `expand_attr_with` | regenerated fixture owns both callback body path calls under closure executable owners; they traverse to `debug_handler::expand` without making the enclosing macro owners direct callers. |
 | IIFE closure expression | `axum-macros/src/lib.rs:734-738`; `from_request/mod.rs:200-203` | `expand_attr_with`; `from_request::expand` | closure literal immediately invoked; regenerated fixture resolves the outer dynamic call to its closure owner without inventing a named function target. |
 
 Current executable coverage: the real-target DB matrix asserts the visible
 dynamic callable-field rows, the `expand_with` callback setup, the
-`expand_attr_with` IIFE row, and the `from_request::expand` enum-state IIFE row.
-The regenerated axum fixture resolves the IIFE dynamic rows to their closure
-owners with `DynamicClosure` edges while leaving callable-parameter calls such as
+`expand_attr_with` IIFE row, the closure-owned `f(attr, input)` opaque callback
+row, and the `from_request::expand` enum-state IIFE row. The regenerated axum
+fixture resolves the IIFE dynamic rows to their closure owners with
+`DynamicClosure` edges while leaving callable-parameter calls such as
 `f(attr, input)` opaque and targetless.
 It also asserts that proc-macro callback arguments such as `from_ref::expand` and
 `axum_test::expand` are not fabricated as ordinary path-call edges before
