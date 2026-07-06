@@ -1551,3 +1551,12 @@ pub fn call_tuple_pattern_local_instance_method() -> i32 {
     let (value, _) = (LocalAssoc, 0);
     value.instance_value()
 }
+
+pub fn make_local_assoc_pair() -> (LocalAssoc, i32) {
+    (LocalAssoc, 0)
+}
+
+pub fn call_typed_tuple_pattern_local_instance_method() -> i32 {
+    let (value, _): (LocalAssoc, i32) = make_local_assoc_pair();
+    value.instance_value()
+}

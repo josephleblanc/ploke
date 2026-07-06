@@ -1659,25 +1659,71 @@ fn tuple_binding_proofs(
     param_names: &[String],
     local_scopes: &[Vec<LocalBindingProof>],
 ) -> Vec<LocalBindingProof> {
+    if let Some(proofs) =
+        direct_tuple_binding_proofs(pat, init_expr, owner, cfgs, param_names, local_scopes)
+    {
+        return proofs;
+    }
+
+    typed_tuple_binding_proofs(pat)
+}
+
+fn direct_tuple_binding_proofs(
+    pat: &syn::Pat,
+    init_expr: Option<&syn::Expr>,
+    owner: CallBodyOwnerId,
+    cfgs: &[String],
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<Vec<LocalBindingProof>> {
     let syn::Pat::Tuple(pattern) = pat else {
-        return Vec::new();
+        return None;
     };
-    let Some(init_expr) = init_expr else {
-        return Vec::new();
-    };
+    let init_expr = init_expr?;
     let syn::Expr::Tuple(init) = unparen_expr(init_expr) else {
-        return Vec::new();
+        return None;
     };
     if pattern.elems.len() != init.elems.len() {
+        return None;
+    }
+
+    Some(
+        pattern
+            .elems
+            .iter()
+            .zip(init.elems.iter())
+            .filter_map(|(pat, expr)| {
+                local_binding_proof(pat, Some(expr), owner, cfgs, param_names, local_scopes)
+            })
+            .collect(),
+    )
+}
+
+fn typed_tuple_binding_proofs(pat: &syn::Pat) -> Vec<LocalBindingProof> {
+    let syn::Pat::Type(typed) = pat else {
+        return Vec::new();
+    };
+    let syn::Pat::Tuple(pattern) = typed.pat.as_ref() else {
+        return Vec::new();
+    };
+    let syn::Type::Tuple(tuple) = unparen_type(typed.ty.as_ref()) else {
+        return Vec::new();
+    };
+    if pattern.elems.len() != tuple.elems.len() {
         return Vec::new();
     }
 
     pattern
         .elems
         .iter()
-        .zip(init.elems.iter())
-        .filter_map(|(pat, expr)| {
-            local_binding_proof(pat, Some(expr), owner, cfgs, param_names, local_scopes)
+        .zip(tuple.elems.iter())
+        .filter_map(|(pat, ty)| {
+            let name = pat_ident_name(pat)?;
+            typed_local_type_path_segments(ty).map(|type_path| LocalBindingProof::Typed {
+                name,
+                type_path,
+                init_path: None,
+            })
         })
         .collect()
 }

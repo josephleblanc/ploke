@@ -15,7 +15,7 @@ Root plan: `.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md`
 
 Current phase: binding/type-aware semantic resolution.
 
-Current completed bucket: direct tuple-pattern local receiver proof.
+Current completed bucket: direct and typed tuple-pattern local receiver proof.
 
 Exit criteria for the first implementation slice:
 
@@ -145,18 +145,24 @@ should prevent future resumes from reselecting already-covered shapes.
    - Parser and DB tests assert the typed callee, non-flattened body owner, and
      two-hop outer function -> async-closure owner -> `local_target` traversal.
 
-8. Direct tuple-pattern local receiver proof - completed:
+8. Direct and typed tuple-pattern local receiver proof - completed:
    - `call_tuple_pattern_local_instance_method` now records
      `let (value, _) = (LocalAssoc, 0); value.instance_value()` as an
      `InitializedLocalBinding` receiver by reusing existing per-element local
      binding proof for direct same-arity tuple expressions.
+   - `call_typed_tuple_pattern_local_instance_method` now records
+     `let (value, _): (LocalAssoc, i32) = make_local_assoc_pair();
+     value.instance_value()` as a `TypedLocalBinding` receiver by using the
+     explicit tuple type annotation for the destructured element. The helper
+     initializer call is preserved as a separate resolved path edge.
    - Parser, DB receiver decode, DB proof projection, and RAG call-context
-     assertions preserve the exact `LocalAssoc` initializer evidence and the
-     local method target edge.
+     assertions preserve the exact `LocalAssoc` initializer/type evidence and
+     the local method target edge.
    - Arbitrary destructuring, method-result tuple destructuring such as
      `let (parts, body) = Request::new(()).into_parts();`, nested value-flow,
      and tuple patterns without direct tuple-expression initializers remain
-     out of scope rather than inferred.
+     out of scope unless an explicit local type annotation supplies a
+     per-element type proof.
 
 9. Next adjacent candidate:
    - Select from the coverage matrix parking lot rather than adding more
