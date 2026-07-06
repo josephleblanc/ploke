@@ -171,6 +171,9 @@ Completed evidence:
   in `call_paths_from_owner`, `call_paths_to_target`, `call_paths_between`,
   `call_reach_for_owner`, and `call_impact_for_target`, and does not expand
   beyond the direct cycle edge.
+- RAG exact path collection preserves the same one-edge recursive path through
+  `exact_call_paths_from_owner`, `exact_call_paths_to_target`, and
+  `exact_call_paths_between` without adding its own traversal semantics.
 - The traversal remains resolved-edge-only; targetless frontier rows are not
   promoted into cycle paths.
 

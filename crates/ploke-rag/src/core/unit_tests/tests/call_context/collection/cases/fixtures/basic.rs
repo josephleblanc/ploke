@@ -1,5 +1,48 @@
 use super::super::super::super::super::*;
 use super::super::super::helpers::*;
+
+#[tokio::test]
+async fn call_paths_exact_preserves_direct_recursive_self_edge() -> Result<(), Error> {
+    init_tracing_once();
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "recursive_fixture_call"),
+    )?;
+    let rag = init_test_rag_mock(Arc::clone(&db));
+    assert!(
+        !rag.call_context_degraded(),
+        "fresh fixture call_graph schema should enable exact call path collection"
+    );
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:
+    // `recursive_fixture_call(depth - 1)` is a resolved direct self-call.
+    // RAG exact paths should expose the DB's one-edge path in every exact path
+    // direction without expanding the cycle beyond that real edge.
+    let options = ploke_db::CallPathOptions {
+        max_depth: 4,
+        max_paths: 16,
+    };
+    let outgoing = rag.exact_call_paths_from_owner(owner, options)?;
+    assert_direct_recursive_path(&outgoing, owner, "RAG outgoing recursive path");
+
+    let incoming = rag.exact_call_paths_to_target(owner, options)?;
+    assert_eq!(
+        incoming, outgoing,
+        "RAG target-centered recursive path lookup should preserve the same one-edge path"
+    );
+
+    let direct = rag.exact_call_paths_between(owner, owner, options)?;
+    assert_eq!(
+        direct, outgoing,
+        "RAG direct recursive reachability should expose the real self-edge"
+    );
+
+    Ok(())
+}
+
 #[tokio::test]
 async fn call_context_collection_reads_real_fixture_rows() -> Result<(), Error> {
     init_tracing_once();
@@ -304,6 +347,38 @@ async fn call_context_collection_reads_incoming_rows_for_target_seed() -> Result
     );
 
     Ok(())
+}
+
+fn assert_direct_recursive_path(
+    paths: &[ploke_core::rag_types::CallPathInfo],
+    owner: Uuid,
+    label: &str,
+) {
+    assert_eq!(
+        paths.len(),
+        1,
+        "{label} should contain exactly one path and stop cycle expansion: {paths:#?}"
+    );
+    let path = &paths[0];
+    assert_eq!(path.start_id, owner);
+    assert_eq!(path.end_id, owner);
+    assert_eq!(path.depth, 1);
+    assert_eq!(path.edges.len(), 1);
+    assert_eq!(path.edges[0].caller_id, owner);
+    assert_eq!(path.edges[0].callee_id, owner);
+    assert_eq!(path.edges[0].relation, CallTargetKind::Function);
+    assert!(
+        path.nodes.iter().any(|node| node.id == owner
+            && node
+                .canon_path
+                .as_ref()
+                .ends_with("::recursive_fixture_call")
+            && node
+                .file_path
+                .as_ref()
+                .ends_with("fixture_call_graph/src/lib.rs")),
+        "{label} should attach recursive_fixture_call node metadata: {path:#?}"
+    );
 }
 
 #[tokio::test]
