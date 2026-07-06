@@ -30,10 +30,6 @@ impl Database {
             }
 
             for edge in self.resolved_outgoing_call_edges(current)? {
-                if seen.contains(&edge.callee_id) {
-                    continue;
-                }
-
                 let mut edges = prefix.clone();
                 edges.push(edge);
                 paths.push(CallPath {
@@ -45,6 +41,10 @@ impl Database {
                 if paths.len() >= options.max_paths {
                     sort_call_paths(&mut paths);
                     return Ok(paths);
+                }
+
+                if seen.contains(&edge.callee_id) {
+                    continue;
                 }
 
                 if edges.len() as u32 >= options.max_depth {
@@ -83,10 +83,6 @@ impl Database {
             }
 
             for edge in self.resolved_incoming_call_edges(current)? {
-                if seen.contains(&edge.caller_id) {
-                    continue;
-                }
-
                 let mut edges = Vec::with_capacity(suffix.len() + 1);
                 edges.push(edge);
                 edges.extend(suffix.iter().copied());
@@ -99,6 +95,10 @@ impl Database {
                 if paths.len() >= options.max_paths {
                     sort_call_paths(&mut paths);
                     return Ok(paths);
+                }
+
+                if seen.contains(&edge.caller_id) {
+                    continue;
                 }
 
                 if edges.len() as u32 >= options.max_depth {

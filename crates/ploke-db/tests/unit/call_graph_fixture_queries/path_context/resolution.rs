@@ -2,6 +2,74 @@ use super::*;
 use ploke_db::CallPathOptions;
 
 #[test]
+fn fixture_call_paths_include_direct_recursive_edges_without_expanding_cycles()
+-> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let owner = function_id_by_name(&db, "recursive_fixture_call")?;
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:
+    // `recursive_fixture_call(depth - 1)` is a resolved direct self-call. Path
+    // traversal should report the real edge once, then stop expanding the
+    // cycle instead of dropping the edge or looping.
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(context.len(), 1, "recursive owner context: {context:#?}");
+    let row = row_by_path(&context, &["recursive_fixture_call"]);
+    assert_eq!(row.site.owner_id, owner);
+    assert_eq!(row.site.kind, CallSiteKind::Path);
+    assert_eq!(row.site.arg_count, Some(1));
+    assert_resolved_target(
+        row,
+        owner,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
+
+    let options = CallPathOptions {
+        max_depth: 4,
+        max_paths: 16,
+    };
+    let outgoing = db.call_paths_from_owner(owner, options)?;
+    assert_eq!(
+        outgoing.len(),
+        1,
+        "recursive outgoing traversal should record one self-edge and stop: {outgoing:#?}"
+    );
+    assert_eq!(outgoing[0].start_id, owner);
+    assert_eq!(outgoing[0].end_id, owner);
+    assert_eq!(outgoing[0].depth, 1);
+    assert_eq!(outgoing[0].edges.len(), 1);
+    assert_eq!(outgoing[0].edges[0].caller_id, owner);
+    assert_eq!(outgoing[0].edges[0].callee_id, owner);
+    assert_eq!(outgoing[0].edges[0].call_site_id, row.site.id);
+
+    let incoming = db.call_paths_to_target(owner, options)?;
+    assert_eq!(
+        incoming, outgoing,
+        "target-centered recursion traversal should preserve the same one-edge path"
+    );
+
+    let between = db.call_paths_between(owner, owner, options)?;
+    assert_eq!(
+        between, outgoing,
+        "direct reachability from a recursive function to itself should expose the real self-edge"
+    );
+
+    let reach = db.call_reach_for_owner(owner, options)?;
+    assert_eq!(
+        reach.paths, outgoing,
+        "owner reach summaries should include direct recursive edges without expanding the cycle"
+    );
+    let impact = db.call_impact_for_target(owner, options)?;
+    assert_eq!(
+        impact.paths, incoming,
+        "target impact summaries should include direct recursive callers without expanding the cycle"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn fixture_context_reads_projected_path_resolution_forms() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let local_target = function_id_by_name(&db, "local_target")?;

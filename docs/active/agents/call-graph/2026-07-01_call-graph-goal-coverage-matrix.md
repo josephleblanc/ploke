@@ -159,6 +159,21 @@ Completed evidence:
 - The same test cross-checks the new owner-scoped helper against the existing
   `call_reach_for_owner(...).boundary_edges` payload.
 
+Additional completed bucket: direct recursion path traversal.
+
+Completed evidence:
+
+- Bounded path traversal now records a resolved edge before applying cycle
+  expansion guards, so direct self-recursive source calls are visible as
+  one-edge paths instead of being dropped.
+- The fixture-backed `recursive_fixture_call(depth)` oracle proves
+  `recursive_fixture_call(depth - 1)` resolves to the same function, appears
+  in `call_paths_from_owner`, `call_paths_to_target`, `call_paths_between`,
+  `call_reach_for_owner`, and `call_impact_for_target`, and does not expand
+  beyond the direct cycle edge.
+- The traversal remains resolved-edge-only; targetless frontier rows are not
+  promoted into cycle paths.
+
 Reason to stay in this bucket: none after focused verification. Switch buckets
 unless the workspace re-export alias proof regresses.
 

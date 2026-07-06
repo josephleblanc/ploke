@@ -541,6 +541,14 @@ pub fn make_local_assoc() -> LocalAssoc {
     LocalAssoc
 }
 
+pub fn recursive_fixture_call(depth: u8) -> u8 {
+    if depth == 0 {
+        0
+    } else {
+        recursive_fixture_call(depth - 1)
+    }
+}
+
 impl LocalAssoc {
     pub fn clone_assoc(&self) -> Self {
         LocalAssoc
