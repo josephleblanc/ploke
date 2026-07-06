@@ -661,6 +661,15 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
         reach_source_crates.len().to_string()
     );
     assert_eq!(
+        ui_field(start_ui, "reach_source_cfgs"),
+        reach
+            .get("source_cfgs")
+            .and_then(serde_json::Value::as_array)
+            .expect("call_reach source_cfgs array")
+            .len()
+            .to_string()
+    );
+    assert_eq!(
         ui_field(start_ui, "reach_source_modules"),
         reach_source_modules.len().to_string()
     );
@@ -1063,6 +1072,15 @@ async fn code_item_lookup_surfaces_proc_macro_impact_callers() {
     assert_eq!(ui_field(ui, "impact_direct_callers"), "4");
     assert_eq!(ui_field(ui, "impact_direct_call_sites"), "4");
     assert_eq!(ui_field(ui, "impact_public_callers"), "4");
+    assert_eq!(
+        ui_field(ui, "impact_source_cfgs"),
+        impact
+            .get("source_cfgs")
+            .and_then(serde_json::Value::as_array)
+            .expect("call_impact source_cfgs array")
+            .len()
+            .to_string()
+    );
 }
 
 #[tokio::test]

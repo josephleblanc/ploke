@@ -423,6 +423,8 @@ pub struct CallImpactInfo {
     #[serde(default)]
     pub source_crates: Vec<String>,
     #[serde(default)]
+    pub source_cfgs: Vec<String>,
+    #[serde(default)]
     pub source_modules: Vec<Vec<String>>,
 }
 
@@ -447,6 +449,8 @@ pub struct CallReachInfo {
     pub source_files: Vec<NodeFilepath>,
     #[serde(default)]
     pub source_crates: Vec<String>,
+    #[serde(default)]
+    pub source_cfgs: Vec<String>,
     #[serde(default)]
     pub source_modules: Vec<Vec<String>>,
 }

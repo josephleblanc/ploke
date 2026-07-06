@@ -377,6 +377,7 @@ fn impact_info(db: &Database, report: DbCallImpactReport) -> Result<CallImpactIn
         .map(NodeFilepath::new)
         .collect();
     let source_crates = report.source_crates;
+    let source_cfgs = report.source_cfgs;
     let source_modules = report.source_modules;
 
     Ok(CallImpactInfo {
@@ -391,6 +392,7 @@ fn impact_info(db: &Database, report: DbCallImpactReport) -> Result<CallImpactIn
         non_test_callers,
         source_files,
         source_crates,
+        source_cfgs,
         source_modules,
     })
 }
@@ -463,6 +465,7 @@ fn reach_info(db: &Database, report: DbCallReachReport) -> Result<CallReachInfo,
         .map(NodeFilepath::new)
         .collect();
     let source_crates = report.source_crates;
+    let source_cfgs = report.source_cfgs;
     let source_modules = report.source_modules;
 
     Ok(CallReachInfo {
@@ -481,6 +484,7 @@ fn reach_info(db: &Database, report: DbCallReachReport) -> Result<CallReachInfo,
         ambiguous_frontier_calls,
         source_files,
         source_crates,
+        source_cfgs,
         source_modules,
     })
 }

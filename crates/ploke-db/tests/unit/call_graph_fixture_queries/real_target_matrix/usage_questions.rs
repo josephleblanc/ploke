@@ -489,6 +489,67 @@ fn axum_usage_questions_preserve_argument_shape_for_external_frontier() -> Resul
 }
 
 #[test]
+fn axum_usage_questions_surface_platform_cfgs_for_listener_reach() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Build or deployment optimization:
+    //   "Are there feature-gated or platform-specific call paths that should
+    //   be checked separately?"
+    //
+    // Source oracle:
+    //   axum/src/serve/listener.rs:40-43 contains the non-gated
+    //   `TcpListener` impl.
+    //   axum/src/serve/listener.rs:55-63 contains the `#[cfg(unix)]`
+    //   `UnixListener` impl.
+    // Current contract: both `Self::accept(self).await` rows remain external
+    // and targetless, but owner reach summaries preserve the cfg metadata for
+    // the platform-gated row.
+    let owners = method_ids_by_name_body_and_file_suffix(
+        &db,
+        "accept",
+        "Self::accept(self).await",
+        "axum/src/serve/listener.rs",
+    )?;
+    assert_eq!(owners.len(), 2, "listener accept owner fanout changed");
+
+    let mut gated_reports = 0;
+    for owner in owners {
+        let report = db.call_reach_for_owner(
+            owner,
+            CallPathOptions {
+                max_depth: 1,
+                max_paths: 16,
+            },
+        )?;
+        let frontier = report
+            .external_frontier_calls
+            .iter()
+            .find(|row| row.site.path.as_ref() == Some(&path(&["Self", "accept"])))
+            .unwrap_or_else(|| {
+                panic!("listener accept reach should expose Self::accept frontier: {report:#?}")
+            });
+        assert_external_targetless(frontier);
+
+        if report.source_cfgs.iter().any(|cfg| cfg == "unix") {
+            gated_reports += 1;
+            assert!(
+                frontier.site.cfgs.iter().any(|cfg| cfg == "unix"),
+                "platform-gated reach summary should be backed by callsite cfg metadata: {frontier:#?}"
+            );
+        }
+    }
+    assert_eq!(
+        gated_reports, 1,
+        "exactly one listener accept reach summary should carry the unix cfg"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn axum_usage_questions_surface_unresolved_frontier_for_generated_constructor()
 -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;

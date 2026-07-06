@@ -1797,6 +1797,42 @@ async fn call_reach_exact_reads_axum_usage_question_summary() -> Result<(), Erro
         "RAG reach source crates",
     );
 
+    let listener_owners = listener_accept_owner_ids(&db)?;
+    assert_eq!(
+        listener_owners.len(),
+        2,
+        "RAG fixture should expose TcpListener and UnixListener accept owners"
+    );
+    let mut cfg_reports = 0;
+    for owner in listener_owners {
+        let listener = rag
+            .exact_call_reach_for_owner(
+                owner,
+                CallPathOptions {
+                    max_depth: 1,
+                    max_paths: 16,
+                },
+            )?
+            .expect("call context enabled");
+        if listener.source_cfgs.iter().any(|cfg| cfg == "unix") {
+            cfg_reports += 1;
+            assert!(
+                listener.external_frontier_calls.iter().any(|call| {
+                    matches!(
+                        &call.callee,
+                        CallCalleeInfo::Path { path: call_path }
+                            if call_path == &path(&["Self", "accept"])
+                    )
+                }),
+                "RAG listener cfg summary should be tied to the external Self::accept frontier: {listener:#?}"
+            );
+        }
+    }
+    assert_eq!(
+        cfg_reports, 1,
+        "RAG reach summaries should preserve the unix cfg for exactly one listener owner"
+    );
+
     let boundary = rag
         .exact_call_reach_for_owner(
             intermediate,
@@ -2300,6 +2336,44 @@ fn method_id_by_name_and_body_substring(
     );
 
     to_uuid(&matching[0]).map_err(Error::from)
+}
+
+fn listener_accept_owner_ids(db: &Database) -> Result<Vec<Uuid>, Error> {
+    let mut params = BTreeMap::new();
+    params.insert("name".to_string(), DataValue::from("accept"));
+    let script = format!(
+        r#"
+ancestor[desc, desc] := *module{{ id: desc @ 'NOW' }}
+{ANCESTOR_RULES_NOW}
+{METHOD_NODE_ANCESTOR_RULE}
+
+module_has_file[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_id] := module_has_file[mod_id], file_id = mod_id
+file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_file[parent], file_id = parent
+
+?[id, body, file_path] :=
+    *method {{ id, name: $name, body @ 'NOW' }},
+    ancestor[id, mod_id],
+    file_owner_for_module[mod_id, file_id],
+    *file_mod{{ owner_id: file_id, file_path @ 'NOW' }}
+"#
+    );
+    let rows = db.raw_query_params(&script, params)?;
+    rows.rows
+        .iter()
+        .filter_map(|row| {
+            let DataValue::Str(body) = &row[1] else {
+                return None;
+            };
+            let DataValue::Str(file_path) = &row[2] else {
+                return None;
+            };
+            (body_key(body).contains(&body_key("Self::accept(self).await"))
+                && file_path.ends_with("axum/src/serve/listener.rs"))
+            .then(|| row[0].clone())
+        })
+        .map(|value| to_uuid(&value).map_err(Error::from))
+        .collect()
 }
 
 fn method_id_by_file(

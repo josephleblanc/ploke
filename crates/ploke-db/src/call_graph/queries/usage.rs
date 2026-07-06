@@ -59,6 +59,7 @@ impl Database {
                 .chain(direct_callers.iter())
                 .chain(public_callers.iter()),
         )?;
+        let source_cfgs = source_cfgs_for_summary(self, &paths, &[direct_call_sites.as_slice()])?;
 
         Ok(CallImpactReport {
             target,
@@ -72,6 +73,7 @@ impl Database {
             non_test_callers,
             source_files: sources.files,
             source_crates: sources.crates,
+            source_cfgs,
             source_modules: sources.modules,
         })
     }
@@ -134,6 +136,11 @@ impl Database {
                 .chain(direct_callees.iter())
                 .chain(public_callees.iter()),
         )?;
+        let source_cfgs = source_cfgs_for_summary(
+            self,
+            &paths,
+            &[direct_call_sites.as_slice(), frontier_calls.as_slice()],
+        )?;
 
         Ok(CallReachReport {
             owner,
@@ -151,6 +158,7 @@ impl Database {
             ambiguous_frontier_calls,
             source_files: sources.files,
             source_crates: sources.crates,
+            source_cfgs,
             source_modules: sources.modules,
         })
     }
@@ -564,4 +572,38 @@ node_anchor[id, mod_id] := *variant{{ id, owner_id: enum_id @ 'NOW' }}, ancestor
         .iter()
         .map(|row| to_string(&row[0]))
         .collect::<Result<Vec<_>, DbError>>()
+}
+
+fn source_cfgs_for_summary(
+    db: &Database,
+    paths: &[CallPath],
+    row_groups: &[&[CallContextRow]],
+) -> Result<Vec<String>, DbError> {
+    let mut cfgs = BTreeSet::new();
+    let mut site_ids = BTreeSet::new();
+    for rows in row_groups {
+        for row in *rows {
+            if site_ids.insert(row.site.id) {
+                cfgs.extend(row.site.cfgs.iter().cloned());
+            }
+        }
+    }
+
+    for path in paths {
+        for edge in &path.edges {
+            if !site_ids.insert(edge.call_site_id) {
+                continue;
+            }
+            let context = db.call_context_for_owner(edge.caller_id)?;
+            let Some(row) = context.iter().find(|row| row.site.id == edge.call_site_id) else {
+                return Err(DbError::Cozo(format!(
+                    "missing callsite {} while collecting summary cfgs",
+                    edge.call_site_id
+                )));
+            };
+            cfgs.extend(row.site.cfgs.iter().cloned());
+        }
+    }
+
+    Ok(cfgs.into_iter().collect())
 }

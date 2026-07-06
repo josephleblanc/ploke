@@ -954,6 +954,15 @@ async fn code_item_edges_returns_real_corpus_two_hop_call_paths() {
         start_reach_source_crates.len().to_string()
     );
     assert_eq!(
+        ui_field(start_ui, "reach_source_cfgs"),
+        start_reach
+            .get("source_cfgs")
+            .and_then(serde_json::Value::as_array)
+            .expect("node_info.call_reach.source_cfgs array")
+            .len()
+            .to_string()
+    );
+    assert_eq!(
         ui_field(start_ui, "reach_source_modules"),
         start_reach_source_modules.len().to_string()
     );
