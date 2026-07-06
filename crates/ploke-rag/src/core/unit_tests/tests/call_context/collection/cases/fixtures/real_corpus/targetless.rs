@@ -167,6 +167,64 @@ async fn call_context_collection_reads_memchr_function_pointer_field_gaps() -> R
 }
 
 #[tokio::test]
+async fn call_context_collection_reads_axum_captured_callback_parameter_gap() -> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    let parent = function_id_by_name_in_module(&db, &["crate"], "expand_attr_with")?;
+    let owner = closure_owner_for_parent(&db, parent)?;
+    let call_context = rag.collect_call_context(&[(parent, 1.0), (owner, 1.0)])?;
+
+    if let Some(parent_context) = call_context.get(&parent) {
+        assert!(
+            parent_context
+                .iter()
+                .all(|call| { call.callee != CallCalleeInfo::Path { path: path(&["f"]) } }),
+            "expand_attr_with must not absorb the closure-owned f(attr, input) row: {parent_context:#?}"
+        );
+    }
+
+    let context = call_context
+        .get(&owner)
+        .expect("expand_attr_with IIFE closure owner should receive outgoing call context");
+    let callback = context
+        .iter()
+        .filter(|call| {
+            call.owner_id == owner
+                && call.kind == CallSiteKind::Path
+                && call.callee == CallCalleeInfo::Path { path: path(&["f"]) }
+        })
+        .collect::<Vec<_>>();
+
+    // Matrix:
+    //   docs/active/agents/call-graph/
+    //   2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //
+    // Source chain:
+    //   axum-macros/src/lib.rs:727 defines `f: F`.
+    //   axum-macros/src/lib.rs:729 bounds `F: FnOnce(A, I) -> K`.
+    //   axum-macros/src/lib.rs:734-738 immediately invokes an IIFE closure.
+    //   axum-macros/src/lib.rs:737 calls `f(attr, input)` inside that closure.
+    // Expected traversal: the closure-owned path call to captured callback
+    // parameter `f` is visible for RAG, but it remains targetless until
+    // interprocedural callable argument proof exists.
+    assert_eq!(
+        callback.len(),
+        1,
+        "expand_attr_with IIFE closure should expose one captured callback parameter row: {context:#?}"
+    );
+    assert_eq!(callback[0].arg_count, Some(2));
+    assert_eq!(callback[0].status, CallStatusKind::Unsupported);
+    assert_eq!(callback[0].resolution, None);
+    assert!(
+        callback[0].targets.is_empty(),
+        "captured callback parameter f(attr, input) should remain targetless: {callback:#?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn call_context_collection_reads_axum_route_oneshot_receiver_gaps() -> Result<(), Error> {
     init_tracing_once();
     let (db, rag) = setup_axum_call_graph_rag()?;
