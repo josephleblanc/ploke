@@ -1578,3 +1578,7 @@ pub fn local_fn_forward_call_resolves_local_item() -> i32 {
 
     value
 }
+
+pub fn call_borrowed_value_param_instance_method(value: LocalAssoc) -> i32 {
+    (&value).instance_value()
+}

@@ -172,6 +172,7 @@ const CRATE_SCOPED_MACRO_CALL_SPAN: (usize, usize) = (10598, 10626);
 const LOCAL_DROP_SHADOW_CALL_SPAN: (usize, usize) = (10772, 10779);
 const BORROWED_LOCAL_INSTANCE_CALL_SPAN: (usize, usize) = (10893, 10918);
 const BORROWED_INIT_SPAN: (usize, usize) = (30382, 30407);
+const BORROWED_VALUE_PARAM_INSTANCE_CALL_SPAN: (usize, usize) = (35063, 35088);
 const QUALIFIED_DYN_ANY_DOWNCAST_MUT_CALL_SPAN: (usize, usize) = (30545, 30601);
 const SELF_TUPLE_CONSTRUCTOR_IMPL_SPAN: (usize, usize) = (30649, 30742);
 const SELF_TUPLE_CONSTRUCTOR_CALL_SPAN: (usize, usize) = (30723, 30734);
@@ -2583,6 +2584,31 @@ paranoid_call_site_test!(
             "instance_value",
             ExpectedMethodReceiver::LocalBinding { name: "value" },
             BORROWED_PARAM_INSTANCE_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedMethodLocalExact {
+                target: target_info.test_method_id(),
+            },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_borrowed_value_param_instance_method_resolves_borrowed_value_param_method_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_borrowed_value_param_instance_method"
+    },
+    expected: {
+        let target_args = fixture_call_graph_instance_method_args("instance_value");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_method_pid(&parsed_graphs)?;
+        ExpectedCallSite::method(
+            "instance_value",
+            ExpectedMethodReceiver::BorrowedLocalBinding { name: "value" },
+            BORROWED_VALUE_PARAM_INSTANCE_CALL_SPAN,
             0,
             0,
             &[],

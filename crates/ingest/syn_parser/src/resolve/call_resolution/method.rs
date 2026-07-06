@@ -71,7 +71,8 @@ impl CallRelationResolver<'_> {
             statuses.push(CallResolutionStatus::External { source });
             return Ok(());
         }
-        if let MethodCallReceiver::LocalBinding { name } = &call.receiver
+        if let MethodCallReceiver::LocalBinding { name }
+        | MethodCallReceiver::BorrowedLocalBinding { name } = &call.receiver
             && self.is_external_param_method_call(call, name, type_relations)?
         {
             statuses.push(CallResolutionStatus::External { source });
@@ -84,6 +85,9 @@ impl CallRelationResolver<'_> {
                 self.resolve_self_field_method_call(call, field_path, type_relations)?
             }
             MethodCallReceiver::LocalBinding { name } => {
+                self.resolve_param_method_call(call, name, type_relations)?
+            }
+            MethodCallReceiver::BorrowedLocalBinding { name } => {
                 self.resolve_param_method_call(call, name, type_relations)?
             }
             MethodCallReceiver::TypedLocalBinding { type_path, .. } => {
@@ -133,8 +137,7 @@ impl CallRelationResolver<'_> {
             MethodCallReceiver::DereferencedLocalBinding { name } => {
                 self.resolve_dereferenced_param_method_call(call, name, type_relations)?
             }
-            MethodCallReceiver::BorrowedLocalBinding { .. }
-            | MethodCallReceiver::FieldLocalBinding { .. }
+            MethodCallReceiver::FieldLocalBinding { .. }
             | MethodCallReceiver::AwaitResult
             | MethodCallReceiver::TryResult
             | MethodCallReceiver::Literal

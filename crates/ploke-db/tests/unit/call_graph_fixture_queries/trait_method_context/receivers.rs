@@ -40,6 +40,12 @@ fn fixture_context_reads_projected_borrowed_and_dereferenced_method_receivers()
             },
         ),
         (
+            "call_borrowed_value_param_instance_method",
+            CallReceiver::BorrowedLocalBinding {
+                name: "value".to_string(),
+            },
+        ),
+        (
             "call_referenced_local_instance_method",
             CallReceiver::InitializedLocalBinding {
                 name: "value".to_string(),
