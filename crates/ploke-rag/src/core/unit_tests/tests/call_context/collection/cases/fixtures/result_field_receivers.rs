@@ -85,6 +85,40 @@ async fn call_context_collection_reads_real_result_field_receiver_rows() -> Resu
             ],
         },
         CallCase {
+            label: "borrowed-parameter method-call result receiver",
+            owner: one_uuid(
+                &db,
+                &function_in_module_query(
+                    &["crate"],
+                    "call_borrowed_value_param_method_result_instance_method",
+                ),
+            )?,
+            calls: vec![
+                ExpectedCall {
+                    kind: CallSiteKind::Method,
+                    callee: method_call(
+                        "clone_assoc",
+                        CallReceiverInfo::BorrowedLocalBinding {
+                            name: "value".to_string(),
+                        },
+                    ),
+                    target: clone_target,
+                    relation: CallTargetKind::Method,
+                },
+                ExpectedCall {
+                    kind: CallSiteKind::Method,
+                    callee: method_call(
+                        "instance_value",
+                        CallReceiverInfo::MethodCallResult {
+                            method_name: "clone_assoc".to_string(),
+                        },
+                    ),
+                    target: method_target,
+                    relation: CallTargetKind::Method,
+                },
+            ],
+        },
+        CallCase {
             label: "self-field method-call result receiver",
             owner: one_uuid(
                 &db,

@@ -53,6 +53,30 @@ fn fixture_projection_stores_real_result_and_field_receiver_method_call_proof_fa
             ],
         },
         ResolvedProofCase {
+            label: "call_borrowed_value_param_method_result_instance_method",
+            owner: function_id_by_name(
+                &db,
+                "call_borrowed_value_param_method_result_instance_method",
+            )?,
+            rows: 2,
+            calls: vec![
+                ResolvedProofCall::method(
+                    "clone_assoc",
+                    CallReceiver::BorrowedLocalBinding {
+                        name: "value".to_string(),
+                    },
+                    clone_target,
+                ),
+                ResolvedProofCall::method(
+                    "instance_value",
+                    CallReceiver::MethodCallResult {
+                        method_name: "clone_assoc".to_string(),
+                    },
+                    method_target,
+                ),
+            ],
+        },
+        ResolvedProofCase {
             label: "call_self_field_method_result_instance_method",
             owner: method_id_by_impl_self_type_name(
                 &db,

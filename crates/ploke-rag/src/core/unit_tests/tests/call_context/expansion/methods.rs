@@ -37,6 +37,13 @@ async fn call_context_expansion_adds_incoming_fixture_method_callers() -> Result
         &db,
         &function_in_module_query(&["crate"], "call_borrowed_value_param_instance_method"),
     )?;
+    let borrowed_result_owner = one_uuid(
+        &db,
+        &function_in_module_query(
+            &["crate"],
+            "call_borrowed_value_param_method_result_instance_method",
+        ),
+    )?;
     let assoc_owner = one_uuid(
         &db,
         &function_in_module_query(&["crate"], "call_method_as_associated_function"),
@@ -86,6 +93,16 @@ async fn call_context_expansion_adds_incoming_fixture_method_callers() -> Result
                 name: "instance_value".to_string(),
                 receiver: Some(CallReceiverInfo::BorrowedLocalBinding {
                     name: "value".to_string(),
+                }),
+            },
+        },
+        Case {
+            owner: borrowed_result_owner,
+            label: "borrowed value-parameter method-result owner",
+            callee: CallCalleeInfo::Method {
+                name: "instance_value".to_string(),
+                receiver: Some(CallReceiverInfo::MethodCallResult {
+                    method_name: "clone_assoc".to_string(),
                 }),
             },
         },

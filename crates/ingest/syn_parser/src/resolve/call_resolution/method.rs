@@ -1144,6 +1144,9 @@ impl CallRelationResolver<'_> {
             MethodCallReceiver::LocalBinding { name } => {
                 self.resolve_param_method_call(call, name, type_relations)
             }
+            MethodCallReceiver::BorrowedLocalBinding { name } => {
+                self.resolve_param_method_call(call, name, type_relations)
+            }
             MethodCallReceiver::TypedLocalBinding { type_path, .. } => {
                 self.resolve_typed_local_method_call(call, type_path, type_relations)
             }
@@ -1187,8 +1190,7 @@ impl CallRelationResolver<'_> {
             MethodCallReceiver::DereferencedLocalBinding { name } => {
                 self.resolve_dereferenced_param_method_call(call, name, type_relations)
             }
-            MethodCallReceiver::BorrowedLocalBinding { .. }
-            | MethodCallReceiver::FieldLocalBinding { .. }
+            MethodCallReceiver::FieldLocalBinding { .. }
             | MethodCallReceiver::AwaitResult
             | MethodCallReceiver::TryResult
             | MethodCallReceiver::Literal

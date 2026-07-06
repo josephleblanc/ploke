@@ -190,7 +190,20 @@ should prevent future resumes from reselecting already-covered shapes.
    - Broader external trait methods, dynamic dispatch, and async poll/resume
      effect edges remain out of scope.
 
-10. Next adjacent candidate:
+10. Borrowed value-parameter receiver and method-result proof - completed:
+   - `call_borrowed_value_param_instance_method(value: LocalAssoc) {
+     (&value).instance_value() }` reuses exact parameter receiver proof for a
+     borrowed by-value parameter.
+   - `call_borrowed_value_param_method_result_instance_method(value:
+     LocalAssoc) { (&value).clone_assoc().instance_value() }` now uses the same
+     borrowed parameter proof for the inner method and existing return-type
+     proof for the outer `MethodCallResult` receiver.
+   - Parser, DB owner/target-centered receiver/proof rows, and RAG
+     call/proof-context assertions cover the exact fixture-backed shape.
+   - Broader borrowed receiver chains without exact parameter type proof remain
+     unsupported.
+
+11. Next adjacent candidate:
    - Select from the coverage matrix parking lot rather than adding more
      import breadth by default.
    - Likely options are a broader async poll/resume proof carrier, an explicit

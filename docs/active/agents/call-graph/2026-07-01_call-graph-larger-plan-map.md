@@ -45,7 +45,7 @@ The larger implementation has been progressing through these phases:
 | Real-corpus proof | Prove query behavior against real Rust targets, especially axum | Active and partially covered |
 | RAG/TUI/tool surfaces | Expose exact call context, paths, impact, reach, and proof blockers downstream | Strong current surface |
 | Proof/authority integration | Explain trusted edges and fail-closed blockers | Partial but substantial |
-| Semantic expansion | Add binding/type-aware capabilities for remaining gaps | Started with exact local external-trait impl receiver methods, fixture-backed borrowed initialized local receivers, and borrowed value-parameter receivers |
+| Semantic expansion | Add binding/type-aware capabilities for remaining gaps | Started with exact local external-trait impl receiver methods, fixture-backed borrowed initialized local receivers, borrowed value-parameter receivers, and borrowed value-parameter method-result chains |
 
 ## Where The Coverage Matrix Fits
 
@@ -73,6 +73,12 @@ Current matrix posture:
   `(&value).instance_value()` through the same exact parameter receiver proof
   used by direct parameter method calls across parser, DB/proof projection, and
   RAG call-context expansion.
+- Borrowed value-parameter method-result chains: fixture-backed
+  `call_borrowed_value_param_method_result_instance_method(value: LocalAssoc)`
+  now resolves `(&value).clone_assoc().instance_value()` by reusing exact
+  borrowed parameter proof for the inner method and return-type proof for the
+  outer method across parser, DB/proof projection, and RAG call-context
+  expansion.
 - Dynamic callable bindings: exact local function-item bindings now cover
   direct, alias, branch/match including guarded same-target match arms, and
   single-expression block initializers through parser, DB, RAG, and TUI proof
@@ -119,7 +125,7 @@ The current larger implementation phase is:
 binding/type-aware semantic resolution
 ```
 
-This phase should connect existing syntax-body ownership, local binding evidence, and typed type graph facts so the resolver can prove more receiver and callable-value cases without weakening fail-closed semantics. Completed slices include exact local external-trait impl receiver methods such as axum `Router::clone`, axum-core `parts.extract_with_state(state)` where `parts: &mut http::request::Parts`, fixture-backed borrowed initialized local receivers such as `(&value).instance_value()` where `value` is initialized from a local type path, and borrowed value-parameter receivers where `(&value).instance_value()` reuses exact parameter receiver proof. Broader dispatch remains out of scope until the required binding/type evidence is explicit.
+This phase should connect existing syntax-body ownership, local binding evidence, and typed type graph facts so the resolver can prove more receiver and callable-value cases without weakening fail-closed semantics. Completed slices include exact local external-trait impl receiver methods such as axum `Router::clone`, axum-core `parts.extract_with_state(state)` where `parts: &mut http::request::Parts`, fixture-backed borrowed initialized local receivers such as `(&value).instance_value()` where `value` is initialized from a local type path, borrowed value-parameter receivers where `(&value).instance_value()` reuses exact parameter receiver proof, and borrowed value-parameter method-result chains where `(&value).clone_assoc().instance_value()` reuses exact parameter proof plus return-type proof. Broader dispatch remains out of scope until the required binding/type evidence is explicit.
 
 ## Next Larger Phase
 
@@ -168,7 +174,7 @@ For the current state, that should be:
 ```text
 Root plan: .hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md
 Current phase: binding/type-aware semantic resolution
-Current completed bucket: borrowed value-parameter receiver proof plus regenerated chrono alias-constructor oracle
-Completed proof: fixture-backed `call_borrowed_value_param_instance_method(value: LocalAssoc)` resolves `(&value).instance_value()` through parser, DB receiver/proof rows, target-centered caller traversal, and RAG call-context expansion; regenerated chrono fixture data now includes the cfg-unix `src/offset/local/unix.rs:159` `MappedLocalTime::Single(offset)` row, so the chrono alias-constructor oracle expects 12 DB/RAG/TUI incoming caller rows to `LocalResult::Single`
+Current completed bucket: borrowed value-parameter method-result receiver proof
+Completed proof: fixture-backed `call_borrowed_value_param_method_result_instance_method(value: LocalAssoc)` resolves `(&value).clone_assoc().instance_value()` through parser, DB owner/target-centered receiver and proof rows, and RAG call/proof-context propagation by reusing exact borrowed parameter proof for the inner method and return-type proof for the outer method
 Next phase if this bucket is done: choose the next unresolved coverage-matrix bucket from the binding/type-aware semantic expansion plan; do not add more import breadth unless there is an explicit workspace proof carrier and source oracle
 ```
