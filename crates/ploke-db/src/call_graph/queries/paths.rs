@@ -130,6 +130,22 @@ impl Database {
         Ok(paths)
     }
 
+    /// Returns bounded resolved call paths that start at `owner_id` and return
+    /// to that same owner.
+    ///
+    /// This is a recursion/cycle helper over [`Self::call_paths_from_owner`].
+    /// It keeps the same resolved-only traversal semantics and does not promote
+    /// targetless frontier rows into cycle evidence.
+    pub fn call_cycles_from_owner(
+        &self,
+        owner_id: Uuid,
+        options: CallPathOptions,
+    ) -> Result<Vec<CallPath>, DbError> {
+        let mut paths = self.call_paths_from_owner(owner_id, options)?;
+        paths.retain(|path| path.end_id == owner_id && !path.edges.is_empty());
+        Ok(paths)
+    }
+
     fn resolved_outgoing_call_edges(&self, owner_id: Uuid) -> Result<Vec<CallPathEdge>, DbError> {
         let mut edges = Vec::new();
         for row in self.call_context_for_owner(owner_id)? {

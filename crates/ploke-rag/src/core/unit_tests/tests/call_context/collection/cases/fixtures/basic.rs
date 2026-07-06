@@ -40,6 +40,12 @@ async fn call_paths_exact_preserves_direct_recursive_self_edge() -> Result<(), E
         "RAG direct recursive reachability should expose the real self-edge"
     );
 
+    let cycles = rag.exact_call_cycles_from_owner(owner, options)?;
+    assert_eq!(
+        cycles, outgoing,
+        "RAG cycle query should preserve the DB path that starts and ends at the owner"
+    );
+
     Ok(())
 }
 

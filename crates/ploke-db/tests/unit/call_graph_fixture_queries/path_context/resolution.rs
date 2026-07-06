@@ -55,6 +55,12 @@ fn fixture_call_paths_include_direct_recursive_edges_without_expanding_cycles()
         "direct reachability from a recursive function to itself should expose the real self-edge"
     );
 
+    let cycles = db.call_cycles_from_owner(owner, options)?;
+    assert_eq!(
+        cycles, outgoing,
+        "cycle query should return only the resolved path that starts and ends at the owner"
+    );
+
     let reach = db.call_reach_for_owner(owner, options)?;
     assert_eq!(
         reach.paths, outgoing,

@@ -810,6 +810,23 @@ impl RagService {
             .collect::<Result<Vec<_>, RagError>>()?)
     }
 
+    pub fn exact_call_cycles_from_owner(
+        &self,
+        owner_id: Uuid,
+        options: CallPathOptions,
+    ) -> Result<Vec<CallPathInfo>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(Vec::new());
+        }
+
+        Ok(self
+            .db
+            .call_cycles_from_owner(owner_id, options)?
+            .into_iter()
+            .map(|path| path_info(self.db.as_ref(), path))
+            .collect::<Result<Vec<_>, RagError>>()?)
+    }
+
     pub fn exact_call_impact_for_target(
         &self,
         target_id: Uuid,
