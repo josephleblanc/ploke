@@ -2,7 +2,10 @@ use std::{borrow::Cow, collections::HashMap, sync::Arc};
 
 use ploke_core::{
     ArcStr,
-    rag_types::{CallCalleeInfo, CallStatusKind},
+    rag_types::{
+        CallCalleeInfo, CallContextInfo, CallResolutionKind, CallSiteKind, CallStatusKind,
+        CallTargetKind, ProofContextInfo,
+    },
 };
 use ploke_db::helpers::{graph_resolve_edges, graph_resolve_exact, list_primary_nodes};
 use ploke_embed::runtime::EmbeddingRuntime;
@@ -30,10 +33,10 @@ use crate::call_graph_tool_support::{
     AxumAwaitReceiverToolFixture, AxumBodyEmptyToolFixture, AxumBoxedIntoRouteToolFixture,
     AxumHandlerCallToolFixture, AxumJsonFromBytesToolFixture, AxumParseAttrsToolFixture,
     AxumRequestExtractPathToolFixture, AxumRunUiTestsToolFixture, CallGraphToolFixture,
-    CallableBlockerFixture, assert_await_result_unwrap_context, assert_await_result_unwrap_proof,
-    assert_body_empty_impact_summary, assert_body_empty_incoming_context,
-    assert_boxed_into_route_incoming_context, assert_call_path_node,
-    assert_handler_call_incoming_context, assert_incoming_context,
+    CallableBlockerFixture, FixtureDynamicCallableToolFixture, assert_await_result_unwrap_context,
+    assert_await_result_unwrap_proof, assert_body_empty_impact_summary,
+    assert_body_empty_incoming_context, assert_boxed_into_route_incoming_context,
+    assert_call_path_node, assert_handler_call_incoming_context, assert_incoming_context,
     assert_json_from_bytes_incoming_context, assert_parse_attrs_incoming_context,
     assert_path_blocker_proof, assert_path_context, assert_run_ui_tests_incoming_context,
     assert_target_proof, assert_two_hop_call_path, ui_field,
@@ -459,6 +462,125 @@ async fn code_item_edges_returns_call_context_for_call_graph_item() {
             .expect("outgoing count")
             >= 1,
         "code_item_edges should surface outgoing call-context count for owner lookups"
+    );
+}
+
+#[tokio::test]
+async fn code_item_edges_returns_resolved_dynamic_callable_field_index_context() {
+    let fixture = FixtureDynamicCallableToolFixture::new_for_owner(
+        "call_aliased_indexed_named_field_function_binding",
+    )
+    .await;
+    let params = EdgesParams {
+        item_name: Cow::Borrowed(fixture.owner_name),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("function"),
+        module_path: Cow::Borrowed("crate"),
+        owner_trait: None,
+        owner_type: None,
+        parent_name: None,
+    };
+
+    let result = CodeItemEdges::execute(params, fixture.ctx("dynamic-callable-edges"))
+        .await
+        .expect("dynamic callable edges");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
+    let call_context = payload
+        .get("node_info")
+        .and_then(|node| node.get("call_context"))
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.call_context array");
+    let proof_context = payload
+        .get("node_info")
+        .and_then(|node| node.get("proof_context"))
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.proof_context array");
+
+    // Fixture source:
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:894-899
+    //     `call_aliased_indexed_named_field_function_binding` constructs
+    //     `CallbackArrayHolder { callbacks: [local_target] }`, aliases the
+    //     holder, and calls `alias.callbacks[0]()`.
+    // Parser/DB/RAG already prove this as an exact DynamicFunction edge; this
+    // pins the same field/index proof at the code_item_edges tool boundary.
+    let calls = call_context
+        .iter()
+        .filter_map(|call| serde_json::from_value::<CallContextInfo>(call.clone()).ok())
+        .filter(|call| {
+            call.owner_id == fixture.owner
+                && call.kind == CallSiteKind::Dynamic
+                && call.callee == CallCalleeInfo::Dynamic
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        calls.len(),
+        1,
+        "code_item_edges should expose exactly one resolved field/index dynamic row for {}: {call_context:#?}",
+        fixture.owner_name
+    );
+    let call = calls[0].clone();
+    assert_eq!(call.status, CallStatusKind::Resolved);
+    assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+    assert_eq!(call.targets.len(), 1, "{call:#?}");
+    assert_eq!(call.targets[0].target_id, fixture.target);
+    assert_eq!(call.targets[0].relation, CallTargetKind::DynamicFunction);
+
+    let owner = fixture.owner.to_string();
+    let site = call.site_id.to_string();
+    let target = fixture.target.to_string();
+    let proof_rows = proof_context
+        .iter()
+        .filter_map(|proof| serde_json::from_value::<ProofContextInfo>(proof.clone()).ok())
+        .collect::<Vec<_>>();
+    assert!(
+        proof_rows.iter().any(|proof| {
+            proof.kind == "call_site"
+                && proof.caller_def_id.as_deref() == Some(owner.as_str())
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.build_domain_id.as_deref() == Some("bd:fixture-call-graph")
+        }),
+        "code_item_edges should return the dynamic call_site proof row for {}: {proof_context:#?}",
+        fixture.owner_name
+    );
+    assert!(
+        proof_rows.iter().any(|proof| {
+            proof.kind == "call_edge"
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.caller_def_id.as_deref() == Some(owner.as_str())
+                && proof.callee_def_id.as_deref() == Some(target.as_str())
+                && proof.resolution_state.as_deref() == Some("resolved")
+        }),
+        "code_item_edges should return the resolved dynamic call_edge proof row for {}: {proof_context:#?}",
+        fixture.owner_name
+    );
+    assert!(
+        proof_rows.iter().any(|proof| {
+            proof.kind == "call_resolution"
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.resolution_state.as_deref() == Some("resolved")
+                && proof.resolved_def_id.as_deref() == Some(target.as_str())
+        }),
+        "code_item_edges should return the resolved dynamic call_resolution proof row for {}: {proof_context:#?}",
+        fixture.owner_name
+    );
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert!(
+        ui_field(ui, "call_context_outgoing")
+            .parse::<usize>()
+            .expect("outgoing count")
+            >= 1,
+        "code_item_edges should surface outgoing dynamic callable call context for {}",
+        fixture.owner_name
+    );
+    assert!(
+        ui_field(ui, "proof_context")
+            .parse::<usize>()
+            .expect("proof count")
+            >= 3,
+        "code_item_edges should surface resolved dynamic callable proof rows for {}",
+        fixture.owner_name
     );
 }
 
@@ -1201,7 +1323,10 @@ async fn code_item_edges_returns_real_corpus_parse_attrs_callers() {
     }
 
     let ui = result.ui_payload.as_ref().expect("ui payload");
-    assert_eq!(ui_field(ui, "call_context_incoming"), "8");
+    assert_eq!(
+        ui_field(ui, "call_context_incoming"),
+        fixture.callers.len().to_string().as_str()
+    );
     assert!(
         ui_field(ui, "proof_context")
             .parse::<usize>()
@@ -1309,29 +1434,35 @@ async fn code_item_edges_returns_real_corpus_boxed_into_route_constructor_caller
     // Real-corpus oracle matrix:
     //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
     //   axum/src/boxed.rs:12 defines `BoxedIntoRoute<S, E>(...)`.
-    //   axum/src/boxed.rs:38 calls `BoxedIntoRoute(Box::new(...))`.
+    //   axum/src/boxed.rs:{23,38,51} call `Self(...)`,
+    //   `BoxedIntoRoute(...)`, and `Self(...)`.
     // Expected tool traversal: exact edge lookup of the tuple-struct target
-    // exposes the one incoming constructor edge and its projected proof row.
+    // exposes the incoming constructor edges and their projected proof rows.
     assert_boxed_into_route_incoming_context(
         call_context,
-        &fixture.caller,
+        &fixture.callers,
         fixture.target,
         "code_item_edges",
     );
-    assert_target_proof(
-        proof_context,
-        fixture.caller.owner,
-        fixture.target,
-        "code_item_edges",
-    );
+    for caller in &fixture.callers {
+        assert_target_proof(
+            proof_context,
+            caller.owner,
+            fixture.target,
+            "code_item_edges",
+        );
+    }
 
     let ui = result.ui_payload.as_ref().expect("ui payload");
-    assert_eq!(ui_field(ui, "call_context_incoming"), "1");
+    assert_eq!(
+        ui_field(ui, "call_context_incoming"),
+        fixture.callers.len().to_string().as_str()
+    );
     assert!(
         ui_field(ui, "proof_context")
             .parse::<usize>()
             .expect("proof count")
-            >= 1,
+            >= fixture.callers.len(),
         "code_item_edges should surface real-corpus BoxedIntoRoute proof rows"
     );
 }

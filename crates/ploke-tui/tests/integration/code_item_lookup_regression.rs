@@ -1351,7 +1351,10 @@ async fn code_item_lookup_returns_real_corpus_parse_attrs_callers() {
     }
 
     let ui = result.ui_payload.as_ref().expect("ui payload");
-    assert_eq!(ui_field(ui, "call_context_incoming"), "8");
+    assert_eq!(
+        ui_field(ui, "call_context_incoming"),
+        fixture.callers.len().to_string().as_str()
+    );
     assert!(
         ui_field(ui, "proof_context")
             .parse::<usize>()
@@ -1609,29 +1612,35 @@ async fn code_item_lookup_returns_real_corpus_boxed_into_route_constructor_calle
     // Real-corpus oracle matrix:
     //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
     //   axum/src/boxed.rs:12 defines `BoxedIntoRoute<S, E>(...)`.
-    //   axum/src/boxed.rs:38 calls `BoxedIntoRoute(Box::new(...))`.
+    //   axum/src/boxed.rs:{23,38,51} call `Self(...)`,
+    //   `BoxedIntoRoute(...)`, and `Self(...)`.
     // Expected tool traversal: exact lookup of the tuple-struct target exposes
-    // the one incoming constructor edge and its projected proof row.
+    // the incoming constructor edges and their projected proof rows.
     assert_boxed_into_route_incoming_context(
         call_context,
-        &fixture.caller,
+        &fixture.callers,
         fixture.target,
         "code_item_lookup",
     );
-    assert_target_proof(
-        proof_context,
-        fixture.caller.owner,
-        fixture.target,
-        "code_item_lookup",
-    );
+    for caller in &fixture.callers {
+        assert_target_proof(
+            proof_context,
+            caller.owner,
+            fixture.target,
+            "code_item_lookup",
+        );
+    }
 
     let ui = result.ui_payload.as_ref().expect("ui payload");
-    assert_eq!(ui_field(ui, "call_context_incoming"), "1");
+    assert_eq!(
+        ui_field(ui, "call_context_incoming"),
+        fixture.callers.len().to_string().as_str()
+    );
     assert!(
         ui_field(ui, "proof_context")
             .parse::<usize>()
             .expect("proof count")
-            >= 1,
+            >= fixture.callers.len(),
         "code_item_lookup should surface real-corpus BoxedIntoRoute proof rows"
     );
 }

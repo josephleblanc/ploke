@@ -110,7 +110,7 @@ pub(crate) struct AxumBoxedIntoRouteToolFixture {
     pub(crate) file_path: PathBuf,
     pub(crate) module_path: Vec<String>,
     pub(crate) target: Uuid,
-    pub(crate) caller: ExpectedCallSite,
+    pub(crate) callers: Vec<ExpectedCallSite>,
 }
 
 pub(crate) struct AxumRunUiTestsToolFixture {
@@ -513,8 +513,8 @@ impl AxumParseAttrsToolFixture {
             .collect::<Vec<_>>();
         assert_eq!(
             callers.len(),
-            8,
-            "current axum fixture should resolve the eight parse_attrs caller sites"
+            11,
+            "current axum fixture should resolve the eleven parse_attrs caller sites"
         );
         assert!(
             db.project_call_proof_facts_for_node(target.id, "bd:corpus-axum-call-graph")
@@ -594,7 +594,7 @@ impl AxumBoxedIntoRouteToolFixture {
     pub(crate) async fn new() -> Self {
         let db = axum_call_graph_db();
         let target = axum_boxed_into_route_target(&db);
-        let mut callers = db
+        let callers = db
             .callers_for_target(target.id)
             .expect("BoxedIntoRoute incoming caller")
             .into_iter()
@@ -609,14 +609,14 @@ impl AxumBoxedIntoRouteToolFixture {
             .collect::<Vec<_>>();
         assert_eq!(
             callers.len(),
-            1,
-            "current axum fixture should resolve one explicit BoxedIntoRoute constructor caller"
+            3,
+            "current axum fixture should resolve the three BoxedIntoRoute constructor callers"
         );
         assert!(
             db.project_call_proof_facts_for_node(target.id, "bd:corpus-axum-call-graph")
                 .expect("project axum BoxedIntoRoute proof facts")
                 >= callers.len(),
-            "BoxedIntoRoute should project target-scoped proof rows for its real-corpus caller"
+            "BoxedIntoRoute should project target-scoped proof rows for its real-corpus callers"
         );
         let state = axum_state_for_target(Arc::clone(&db), &target, "BoxedIntoRoute").await;
 
@@ -625,7 +625,7 @@ impl AxumBoxedIntoRouteToolFixture {
             file_path: target.file_path,
             module_path: target.module_path,
             target: target.id,
-            caller: callers.pop().expect("one BoxedIntoRoute caller"),
+            callers,
         }
     }
 
@@ -2071,46 +2071,49 @@ pub(crate) fn assert_expected_path_incoming_context(
 
 pub(crate) fn assert_boxed_into_route_incoming_context(
     calls: &[serde_json::Value],
-    caller: &ExpectedCallSite,
+    callers: &[ExpectedCallSite],
     target: Uuid,
     label: &str,
 ) {
     let target = target.to_string();
-    let owner = caller.owner.to_string();
-    let site = caller.site.to_string();
-    let matching = calls
-        .iter()
-        .filter(|call| {
-            call.get("owner_id").and_then(serde_json::Value::as_str) == Some(owner.as_str())
-                && call.get("site_id").and_then(serde_json::Value::as_str) == Some(site.as_str())
-                && call.get("kind").and_then(serde_json::Value::as_str) == Some("path")
-                && call
-                    .get("callee")
-                    .and_then(|callee| callee.get("path"))
-                    .and_then(|path_variant| path_variant.get("path"))
-                    .and_then(serde_json::Value::as_array)
-                    .is_some_and(|path| {
-                        path.iter()
-                            .filter_map(serde_json::Value::as_str)
-                            .eq(caller.path.iter().map(String::as_str))
-                    })
-                && call
-                    .get("targets")
-                    .and_then(serde_json::Value::as_array)
-                    .is_some_and(|targets| {
-                        targets.iter().any(|candidate| {
-                            candidate
-                                .get("target_id")
-                                .and_then(serde_json::Value::as_str)
-                                == Some(target.as_str())
+    for caller in callers {
+        let owner = caller.owner.to_string();
+        let site = caller.site.to_string();
+        let matching = calls
+            .iter()
+            .filter(|call| {
+                call.get("owner_id").and_then(serde_json::Value::as_str) == Some(owner.as_str())
+                    && call.get("site_id").and_then(serde_json::Value::as_str)
+                        == Some(site.as_str())
+                    && call.get("kind").and_then(serde_json::Value::as_str) == Some("path")
+                    && call
+                        .get("callee")
+                        .and_then(|callee| callee.get("path"))
+                        .and_then(|path_variant| path_variant.get("path"))
+                        .and_then(serde_json::Value::as_array)
+                        .is_some_and(|path| {
+                            path.iter()
+                                .filter_map(serde_json::Value::as_str)
+                                .eq(caller.path.iter().map(String::as_str))
                         })
-                    })
-        })
-        .count();
-    assert_eq!(
-        matching, 1,
-        "{label} should return the BoxedIntoRoute constructor incoming caller site {site}: {calls:#?}"
-    );
+                    && call
+                        .get("targets")
+                        .and_then(serde_json::Value::as_array)
+                        .is_some_and(|targets| {
+                            targets.iter().any(|candidate| {
+                                candidate
+                                    .get("target_id")
+                                    .and_then(serde_json::Value::as_str)
+                                    == Some(target.as_str())
+                            })
+                        })
+            })
+            .count();
+        assert_eq!(
+            matching, 1,
+            "{label} should return the BoxedIntoRoute constructor incoming caller site {site}: {calls:#?}"
+        );
+    }
 }
 
 pub(crate) fn assert_run_ui_tests_incoming_context(
