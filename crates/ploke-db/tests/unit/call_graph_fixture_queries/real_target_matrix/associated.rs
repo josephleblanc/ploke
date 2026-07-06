@@ -1,5 +1,7 @@
 use super::super::*;
 use super::common::*;
+use super::source_lines::{SourceLineFanout, assert_resolved_path_line_fanout};
+use ploke_test_utils::CORPUS_AXUM_CALL_GRAPH;
 
 #[test]
 fn axum_real_target_into_service_future_new_is_documented_gap() -> Result<(), DbError> {
@@ -230,6 +232,116 @@ fn axum_real_target_test_client_new_high_fanout_is_documented_gap() -> Result<()
     // resolve to the gated local test helper target.
     let target =
         assert_resolved_path_target_count(&db, &["TestClient", "new"], 168, "TestClient::new")?;
+    let line_target = assert_resolved_path_line_fanout(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        &["TestClient", "new"],
+        CallRelationKind::AssociatedFunction,
+        CallTargetKind::Method,
+        &[
+            SourceLineFanout {
+                file_suffix: "axum-core/src/extract/request_parts.rs",
+                lines: &[193],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/extension.rs",
+                lines: &[228],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/extract/connect_info.rs",
+                lines: &[386],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/extract/matched_path.rs",
+                lines: &[
+                    162, 178, 197, 217, 237, 254, 271, 291, 312, 326, 346, 361, 374, 394,
+                ],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/extract/mod.rs",
+                lines: &[103],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/extract/nested_path.rs",
+                lines: &[136, 154, 172, 190, 205, 224],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/extract/path/mod.rs",
+                lines: &[
+                    619, 632, 645, 664, 687, 700, 716, 732, 751, 784, 798, 822, 854, 912, 946, 974,
+                    989, 1010, 1034,
+                ],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/extract/query.rs",
+                lines: &[158],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/form.rs",
+                lines: &[262],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/handler/mod.rs",
+                lines: &[418, 443],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/json.rs",
+                lines: &[250, 266, 301, 320, 355],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/middleware/from_extractor.rs",
+                lines: &[351],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/middleware/map_request.rs",
+                lines: &[412, 432],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/middleware/map_response.rs",
+                lines: &[357],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/response/mod.rs",
+                lines: &[529],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/response/sse.rs",
+                lines: &[714, 756, 793],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/routing/tests/fallback.rs",
+                lines: &[
+                    10, 25, 40, 53, 69, 89, 101, 118, 134, 150, 171, 190, 207, 221, 241, 261, 280,
+                    299, 314, 325, 338, 359, 377, 389, 402,
+                ],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/routing/tests/handle_error.rs",
+                lines: &[25, 42, 60, 76, 90],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/routing/tests/merge.rs",
+                lines: &[
+                    14, 81, 85, 96, 116, 136, 150, 162, 179, 208, 234, 267, 301, 345, 379,
+                ],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/routing/tests/mod.rs",
+                lines: &[
+                    90, 118, 150, 188, 217, 233, 242, 282, 307, 323, 339, 352, 365, 377, 396, 416,
+                    454, 472, 489, 506, 527, 540, 572, 589, 599, 626, 643, 668, 685, 700, 717, 738,
+                    748, 775, 798, 815, 846, 905, 952, 967, 984, 1027, 1047, 1164, 1201,
+                ],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/routing/tests/nest.rs",
+                lines: &[
+                    41, 65, 135, 159, 182, 193, 210, 229, 280, 298, 309, 328, 408, 431, 489,
+                ],
+            },
+        ],
+    )?;
+    assert_eq!(line_target, target);
     let callers = db.callers_for_target(target)?;
     assert_eq!(
         callers.len(),

@@ -140,6 +140,14 @@ preserve the 168 resolved target-centered caller rows and their
 frontiers remain around multipart, closure-body, and macro-template
 projection gaps.
 
+The strict DB source-line fanout is now table-driven in
+`ploke-db`'s real-target matrix. It pins the 168 resolved projected rows by
+file/line and keeps the current exclusions explicit: the three multipart
+callsites, the three `routing/route.rs` route-construction callsites,
+`json.rs:281`, `routing/tests/merge.rs:63`, and the remaining
+assertion/macro-template or nested-body text callsites are not counted as
+resolved `TestClient::new` traversal rows in the current backup fixture.
+
 ## Constructors And Associated Calls
 
 | Target | Callsites | Owner(s) | Evidence chain |

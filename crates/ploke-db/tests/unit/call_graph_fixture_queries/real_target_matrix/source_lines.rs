@@ -73,6 +73,105 @@ file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_f
     )
 }
 
+pub(super) fn assert_resolved_path_line_fanout(
+    db: &Database,
+    fixture: &FixtureDb,
+    path_parts: &[&str],
+    relation: CallRelationKind,
+    target_kind: CallTargetKind,
+    expected: &[SourceLineFanout],
+) -> Result<Uuid, DbError> {
+    let mut params = BTreeMap::new();
+    params.insert("path".to_string(), path_value(path_parts));
+    params.insert(
+        "relation".to_string(),
+        DataValue::from(format!("{relation:?}")),
+    );
+    params.insert(
+        "target_kind".to_string(),
+        DataValue::from(format!("{target_kind:?}")),
+    );
+
+    let script = format!(
+        r#"
+{ANCESTOR_RULES_NOW}
+{METHOD_NODE_ANCESTOR_RULE}
+
+module_has_file[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_id] := module_has_file[mod_id], file_id = mod_id
+file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_file[parent], file_id = parent
+
+?[file_path, site_id, owner_id, span, resolution_kind, target_id] :=
+    *call_site {{
+        id: site_id,
+        owner_id,
+        call_kind: "Path",
+        path: $path,
+        span @ 'NOW'
+    }},
+    *call_resolution_status {{
+        source_id: site_id,
+        source_kind: "Path",
+        status_kind: "Resolved",
+        resolution_kind @ 'NOW'
+    }},
+    *call_relation {{
+        source_id: site_id,
+        source_kind: "Path",
+        relation_kind: $relation,
+        target_kind: $target_kind,
+        target_id @ 'NOW'
+    }},
+    ancestor[owner_id, module_id],
+    *module {{ id: module_id @ 'NOW' }},
+    file_owner_for_module[module_id, file_id],
+    *file_mod {{ owner_id: file_id, file_path @ 'NOW' }}
+:sort file_path, span, site_id
+"#
+    );
+
+    let rows = db.raw_query_params(&script, params)?;
+    let rows = assert_source_line_rows(
+        fixture,
+        &rows.rows,
+        expected,
+        &path_parts.join("::"),
+        &format!("resolved source-line fanout rows for {path_parts:?}"),
+        SourceLineShape {
+            resolution_col: 4,
+            resolution: Some("LocalExact"),
+            target_col: Some(5),
+        },
+    )?;
+    let targets = rows
+        .iter()
+        .filter_map(|row| row.target)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        targets.len(),
+        1,
+        "resolved {path_parts:?} line fanout should resolve to one target: {targets:#?}"
+    );
+    let target = *targets
+        .iter()
+        .next()
+        .expect("target set length was asserted above");
+
+    for row in rows {
+        let targets = db.call_targets_for_site(row.site)?;
+        assert!(
+            targets.iter().any(|candidate| {
+                candidate.target_id == target
+                    && candidate.relation == relation
+                    && candidate.target_kind == target_kind
+            }),
+            "resolved {path_parts:?} row should expose the expected target through call_targets_for_site: {targets:#?}"
+        );
+    }
+
+    Ok(target)
+}
+
 pub(super) fn assert_targetless_path_owner_kind_line_fanout(
     db: &Database,
     fixture: &FixtureDb,
@@ -395,13 +494,61 @@ fn assert_targetless_line_rows(
     needle: &str,
     label: &str,
 ) -> Result<(), DbError> {
+    let rows = assert_source_line_rows(
+        fixture,
+        rows,
+        expected,
+        needle,
+        label,
+        SourceLineShape {
+            resolution_col: 4,
+            resolution: None,
+            target_col: None,
+        },
+    )?;
+    let sites = rows
+        .iter()
+        .map(|row| (row.owner, row.site))
+        .collect::<Vec<_>>();
+    for row in &rows {
+        assert!(
+            relations_for_site(db, row.site)?.rows.is_empty(),
+            "{label} row should not have call_relation targets"
+        );
+    }
+    assert_no_traversal_candidates_for_sites(db, &sites, label)?;
+
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+struct SourceLineShape {
+    resolution_col: usize,
+    resolution: Option<&'static str>,
+    target_col: Option<usize>,
+}
+
+struct SourceLineRow {
+    owner: Uuid,
+    site: Uuid,
+    target: Option<Uuid>,
+}
+
+fn assert_source_line_rows(
+    fixture: &FixtureDb,
+    rows: &[Vec<DataValue>],
+    expected: &[SourceLineFanout],
+    needle: &str,
+    label: &str,
+    shape: SourceLineShape,
+) -> Result<Vec<SourceLineRow>, DbError> {
     let suffixes = expected
         .iter()
         .map(|case| case.file_suffix)
         .collect::<BTreeSet<_>>();
     let mut sources = BTreeMap::<String, String>::new();
     let mut actual = BTreeMap::<String, Vec<u32>>::new();
-    let mut sites = Vec::new();
+    let mut out = Vec::new();
 
     for row in rows {
         let file_path = data_str(&row[0], "file_path");
@@ -411,15 +558,17 @@ fn assert_targetless_line_rows(
                 rows
             );
         };
-        assert_eq!(row[4], DataValue::Null);
+        let resolution = shape.resolution.map_or(DataValue::Null, DataValue::from);
+        assert_eq!(row[shape.resolution_col], resolution);
 
         let site_id = to_uuid(&row[1])?;
         let owner_id = to_uuid(&row[2])?;
-        assert!(
-            relations_for_site(db, site_id)?.rows.is_empty(),
-            "{label} row in {suffix} should not have call_relation targets"
-        );
-        sites.push((owner_id, site_id));
+        let target_id = shape.target_col.map(|col| to_uuid(&row[col])).transpose()?;
+        out.push(SourceLineRow {
+            owner: owner_id,
+            site: site_id,
+            target: target_id,
+        });
 
         let source = sources.entry((*suffix).to_string()).or_insert_with(|| {
             let source_file = source_file_for_suffix(fixture, file_path, suffix);
@@ -455,9 +604,8 @@ fn assert_targetless_line_rows(
         actual, expected,
         "unexpected source-line fanout for {label}"
     );
-    assert_no_traversal_candidates_for_sites(db, &sites, label)?;
 
-    Ok(())
+    Ok(out)
 }
 
 fn path_value(path_parts: &[&str]) -> DataValue {
