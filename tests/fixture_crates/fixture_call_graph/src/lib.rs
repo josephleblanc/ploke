@@ -1560,3 +1560,11 @@ pub fn call_typed_tuple_pattern_local_instance_method() -> i32 {
     let (value, _): (LocalAssoc, i32) = make_local_assoc_pair();
     value.instance_value()
 }
+
+fn call_single_function_pointer_param_cast(f: fn() -> i32) -> i32 {
+    (f as fn() -> i32)()
+}
+
+pub fn call_single_function_pointer_param_cast_with_local_target() -> i32 {
+    call_single_function_pointer_param_cast(local_target)
+}

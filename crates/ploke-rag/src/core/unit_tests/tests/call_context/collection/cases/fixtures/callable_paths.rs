@@ -454,3 +454,49 @@ async fn call_context_collection_resolves_private_single_caller_generic_fn_once_
 
     Ok(())
 }
+
+#[tokio::test]
+async fn call_context_collection_resolves_private_single_caller_function_pointer_cast_parameter()
+-> Result<(), Error> {
+    init_tracing_once();
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_single_function_pointer_param_cast"),
+    )?;
+    let local_target = unique_id_by_name(&db, "function", "local_target")?;
+    let rag = init_test_rag_mock(Arc::clone(&db));
+
+    let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+    let context = call_context
+        .get(&owner)
+        .expect("single-caller function-pointer cast owner should receive outgoing call context");
+    let call = context
+        .iter()
+        .find(|call| {
+            call.kind == CallSiteKind::Dynamic
+                && call.callee == CallCalleeInfo::Dynamic
+                && call
+                    .targets
+                    .iter()
+                    .any(|target| target.target_id == local_target)
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "single-caller function-pointer cast context should include resolved (f as fn() -> i32)() -> local_target: {context:#?}"
+            )
+        });
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:1564-1569:
+    // the helper is private and every local caller supplies `local_target`,
+    // so this cast form reuses the existing exact parameter proof boundary.
+    assert_eq!(call.status, CallStatusKind::Resolved);
+    assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+    assert_eq!(call.targets.len(), 1);
+    assert_eq!(call.targets[0].target_id, local_target);
+    assert_eq!(call.targets[0].relation, CallTargetKind::DynamicFunction);
+
+    Ok(())
+}

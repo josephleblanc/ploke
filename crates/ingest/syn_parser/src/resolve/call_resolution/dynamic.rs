@@ -53,7 +53,8 @@ impl CallRelationResolver<'_> {
             return Ok(());
         }
 
-        if let DynamicCallCallee::LocalBinding { path } = &call.callee
+        if let DynamicCallCallee::LocalBinding { path }
+        | DynamicCallCallee::FnPointerCastLocalBinding { path } = &call.callee
             && let Some(target) = self.resolve_parameter_value_call(call.owner, path)?
         {
             match target {
