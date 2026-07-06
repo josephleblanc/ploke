@@ -625,6 +625,14 @@ pub(super) fn with_call_usage_fields(
             count(reach.map(|info| info.unsupported_frontier_calls.len())),
         )
         .with_field(
+            "reach_unresolved_frontier_calls",
+            count(reach.map(|info| info.unresolved_frontier_calls.len())),
+        )
+        .with_field(
+            "reach_ambiguous_frontier_calls",
+            count(reach.map(|info| info.ambiguous_frontier_calls.len())),
+        )
+        .with_field(
             "reach_source_files",
             count(reach.map(|info| info.source_files.len())),
         )

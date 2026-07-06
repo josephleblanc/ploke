@@ -445,6 +445,16 @@ fn reach_info(db: &Database, report: DbCallReachReport) -> Result<CallReachInfo,
         .into_iter()
         .map(|row| row_to_call_context(row, usize::MAX))
         .collect::<Result<Vec<_>, RagError>>()?;
+    let unresolved_frontier_calls = report
+        .unresolved_frontier_calls
+        .into_iter()
+        .map(|row| row_to_call_context(row, usize::MAX))
+        .collect::<Result<Vec<_>, RagError>>()?;
+    let ambiguous_frontier_calls = report
+        .ambiguous_frontier_calls
+        .into_iter()
+        .map(|row| row_to_call_context(row, usize::MAX))
+        .collect::<Result<Vec<_>, RagError>>()?;
     let source_files = report
         .source_files
         .into_iter()
@@ -464,6 +474,8 @@ fn reach_info(db: &Database, report: DbCallReachReport) -> Result<CallReachInfo,
         frontier_calls,
         external_frontier_calls,
         unsupported_frontier_calls,
+        unresolved_frontier_calls,
+        ambiguous_frontier_calls,
         source_files,
         source_modules,
     })

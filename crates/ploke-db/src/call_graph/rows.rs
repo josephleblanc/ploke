@@ -187,6 +187,10 @@ pub struct CallReachReport {
     pub frontier_calls: Vec<CallContextRow>,
     pub external_frontier_calls: Vec<CallContextRow>,
     pub unsupported_frontier_calls: Vec<CallContextRow>,
+    #[serde(default)]
+    pub unresolved_frontier_calls: Vec<CallContextRow>,
+    #[serde(default)]
+    pub ambiguous_frontier_calls: Vec<CallContextRow>,
     pub source_files: Vec<String>,
     pub source_modules: Vec<Vec<String>>,
 }

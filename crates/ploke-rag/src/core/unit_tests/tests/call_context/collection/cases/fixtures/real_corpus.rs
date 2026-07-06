@@ -1848,6 +1848,50 @@ async fn call_reach_exact_reads_axum_usage_question_summary() -> Result<(), Erro
         "RAG external-frontier reach source files",
     );
 
+    // Source oracle:
+    //   axum/src/handler/service.rs:155 binds
+    //   `type Future = super::future::IntoServiceFuture<H::Future>`.
+    //   axum/src/handler/service.rs:174 calls
+    //   `super::future::IntoServiceFuture::new(future)`.
+    // Current contract: generated constructor calls remain visible as
+    // unresolved frontier rows until macro-expanded inherent items are modeled.
+    let service_owner =
+        method_id_by_name_and_body_substring(&db, "call", "IntoServiceFuture::new(future)")?;
+    let service_report = rag
+        .exact_call_reach_for_owner(
+            service_owner,
+            CallPathOptions {
+                max_depth: 2,
+                max_paths: 128,
+            },
+        )?
+        .expect("call context enabled");
+    let unresolved = service_report
+        .unresolved_frontier_calls
+        .iter()
+        .find(|call| {
+            matches!(
+                &call.callee,
+                CallCalleeInfo::Path { path: call_path }
+                    if call_path == &path(&["super", "future", "IntoServiceFuture", "new"])
+            )
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "RAG reach should include IntoServiceFuture::new in unresolved frontier rows: {service_report:#?}"
+            )
+        });
+    assert_eq!(unresolved.owner_id, service_owner);
+    assert_eq!(unresolved.status, CallStatusKind::Unresolved);
+    assert!(
+        unresolved.targets.is_empty(),
+        "unresolved generated constructor row should remain targetless: {unresolved:#?}"
+    );
+    assert!(
+        service_report.ambiguous_frontier_calls.is_empty(),
+        "this axum owner should not report ambiguous frontier rows: {service_report:#?}"
+    );
+
     Ok(())
 }
 

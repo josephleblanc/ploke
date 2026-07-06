@@ -115,6 +115,16 @@ impl Database {
             .filter(|row| row.status.status == CallStatusKind::Unsupported)
             .cloned()
             .collect();
+        let unresolved_frontier_calls = frontier_calls
+            .iter()
+            .filter(|row| row.status.status == CallStatusKind::Unresolved)
+            .cloned()
+            .collect();
+        let ambiguous_frontier_calls = frontier_calls
+            .iter()
+            .filter(|row| row.status.status == CallStatusKind::Ambiguous)
+            .cloned()
+            .collect();
         let sources = sources_for_summary(
             self,
             &paths,
@@ -136,6 +146,8 @@ impl Database {
             frontier_calls,
             external_frontier_calls,
             unsupported_frontier_calls,
+            unresolved_frontier_calls,
+            ambiguous_frontier_calls,
             source_files: sources.files,
             source_modules: sources.modules,
         })

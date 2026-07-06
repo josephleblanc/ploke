@@ -424,6 +424,79 @@ fn axum_usage_questions_surface_external_frontier_for_dependency_calls() -> Resu
 }
 
 #[test]
+fn axum_usage_questions_surface_unresolved_frontier_for_generated_constructor()
+-> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Debugging:
+    //   "What source callsite corresponds to this persisted call edge or proof
+    //   blocker?"
+    // Documentation and RAG:
+    //   "What fail-closed blocker should be shown when a callsite is visible
+    //   but targetless?"
+    //
+    // Source oracle:
+    //   axum/src/handler/future.rs:11-18 defines the generated future type.
+    //   axum/src/macros.rs:19-20 contains the macro template that would
+    //   generate the inherent `new` constructor after expansion.
+    //   axum/src/handler/service.rs:155 binds
+    //     `type Future = super::future::IntoServiceFuture<H::Future>`.
+    //   axum/src/handler/service.rs:174 calls
+    //     `super::future::IntoServiceFuture::new(future)`.
+    // Current contract: the source callsite is visible as an unresolved
+    // frontier row, but it has no fabricated callee and cannot become a local
+    // traversal edge until macro-expanded inherent items are modeled.
+    let owner =
+        method_id_by_name_and_body_substring(&db, "call", "IntoServiceFuture::new(future)")?;
+    let context = db.call_context_for_owner(owner)?;
+    let row = row_by_path(&context, &["super", "future", "IntoServiceFuture", "new"]);
+    assert_targetless_status(row, CallStatusKind::Unresolved);
+
+    let paths = db.call_paths_from_owner(
+        owner,
+        CallPathOptions {
+            max_depth: 2,
+            max_paths: 128,
+        },
+    )?;
+    assert!(
+        paths.iter().all(|path| path
+            .edges
+            .iter()
+            .all(|edge| edge.call_site_id != row.site.id)),
+        "targetless unresolved rows must not appear in call paths: {paths:#?}"
+    );
+
+    let report = db.call_reach_for_owner(
+        owner,
+        CallPathOptions {
+            max_depth: 2,
+            max_paths: 128,
+        },
+    )?;
+    let unresolved = report
+        .unresolved_frontier_calls
+        .iter()
+        .find(|frontier| frontier.site.id == row.site.id)
+        .unwrap_or_else(|| {
+            panic!(
+                "reach report should expose generated constructor in unresolved frontier rows: {report:#?}"
+            )
+        });
+    assert_eq!(unresolved.site.owner_id, owner);
+    assert_targetless_status(unresolved, CallStatusKind::Unresolved);
+    assert!(
+        report.ambiguous_frontier_calls.is_empty(),
+        "this axum owner should not report ambiguous frontier rows: {report:#?}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn axum_usage_questions_summarize_eventual_callers_for_impact() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 

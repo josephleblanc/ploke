@@ -207,6 +207,8 @@ mod tests {
         assert!(description.contains("non_test_callers"));
         assert!(description.contains("external_frontier_calls"));
         assert!(description.contains("unsupported_frontier_calls"));
+        assert!(description.contains("unresolved_frontier_calls"));
+        assert!(description.contains("ambiguous_frontier_calls"));
         assert!(description.contains("source_files"));
         assert!(description.contains("source_modules"));
     }

@@ -40,6 +40,23 @@ future work can choose the next batch without rereading the diary-style notes.
 
 ## Recent downstream slice
 
+- 2026-07-06: Owner reach summaries now split the remaining nonresolved
+  frontier statuses into `unresolved_frontier_calls` and
+  `ambiguous_frontier_calls`, alongside the existing full `frontier_calls`,
+  `external_frontier_calls`, and `unsupported_frontier_calls`. DB derives the
+  subsets from stored `CallStatusKind` rows without changing the resolved-only
+  traversal contract; RAG maps the same typed rows, and exact
+  `code_item_lookup` / `code_item_edges` expose UI counts that match the
+  serialized reach payload. The real-corpus proof case is
+  `axum/src/handler/service.rs:174`, where
+  `super::future::IntoServiceFuture::new(future)` remains unresolved and
+  targetless because the `opaque_future!` macro-generated inherent constructor
+  is not modeled. Focused verification:
+  `cargo test -p ploke-db axum_usage_questions_surface_unresolved_frontier_for_generated_constructor -- --nocapture`,
+  `cargo test -p ploke-rag call_reach_exact_reads_axum_usage_question_summary -- --nocapture`,
+  `cargo test -p ploke-tui --test integration code_item_lookup_returns_generated_constructor_frontier_path_rows -- --nocapture`,
+  and
+  `cargo test -p ploke-tui --test integration code_item_edges_returns_generated_constructor_frontier_path_rows -- --nocapture`.
 - 2026-07-01: Procedural macro item bodies now participate in the typed
   call-body owner family as `CallBodyOwnerId::Macro`. Parser pruning retains
   macro-owned call sites only when the macro node remains live; transform/DB
