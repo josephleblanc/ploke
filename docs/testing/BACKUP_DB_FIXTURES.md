@@ -299,6 +299,24 @@ Post-regeneration verification:
   `mut req: Request<_>` parameter receivers and still-unresolved borrowed or
   generic receiver rows.
 
+## 2026-07-06 Active Call Graph Baseline Refresh
+
+The active fixture set was regenerated again with
+`cargo run -p xtask --features call_graph -- fixtures regenerate --active`
+after the call graph rollout gate had already been removed. The `call_graph`
+feature is now a compatibility alias; current default-profile regeneration also
+includes baseline call graph relations.
+
+Post-regeneration verification:
+
+- The regeneration command roundtripped all active checkout-local fixtures and
+  shared call-graph corpus snapshots successfully.
+- No tracked registry, documentation, or committed seed fixture changed during
+  this refresh.
+- Checkout-local outputs remain under `tests/backup_dbs/local/`.
+- Shared call-graph corpus snapshots were refreshed under the configured DB
+  snapshot fixture directory.
+
 ## `fixture_nodes_canonical_2026-05-17.sqlite`
 
 - File: `tests/backup_dbs/fixture_nodes_canonical_2026-05-17.sqlite`

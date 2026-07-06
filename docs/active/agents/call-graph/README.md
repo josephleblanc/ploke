@@ -1012,10 +1012,11 @@ Post-gate evidence, 2026-06-23:
   passed for the fresh parser -> transform -> DB fixture-backed module in the
   last full fixture-module run before constructor proof assertions were
   consolidated into shared fixture cases.
-- Latest unfiltered `cargo test -p ploke-db --features call_graph -- --nocapture`
-  now passes `src/lib.rs`, `callsite_logging_tests`, and `debug_obsv`, then
-  remains red only in backup-backed type-graph tests under `tests/mod.rs`: 34
-  failures all report `Cannot find requested stored relation 'call_relation'`.
+- This checkpoint's earlier unfiltered `ploke-db --features call_graph` red
+  result was superseded by the call graph baseline rollout and later fixture
+  regeneration. `call_graph` is now only a compatibility alias; current
+  verification should use default-profile commands unless a new, explicitly
+  documented rollout gate is introduced.
 - `cargo test -p ploke-rag --features call_graph call_context -- --nocapture`
   passed for synthetic collection, fresh fixture-backed collection, and
   owner-seeded outgoing callee expansion and target-centered incoming caller
@@ -1037,11 +1038,9 @@ Post-gate evidence, 2026-06-23:
   payloads. `cargo test -p ploke-rag --features call_graph real_fixture_external_rows -- --nocapture`
   passed with `1 passed` for real targetless external path, literal receiver,
   and typed-local receiver payloads.
-- Full `cargo test -p ploke-rag --features call_graph -- --nocapture` remains
-  red with stale backup fixtures missing `call_relation` plus pre-existing
-  search/snippet fixture failures; keep this under
-  `CALL_GRAPH_GATE:fixture-regeneration` / `CALL_GRAPH_GATE:non-callgraph-reds`
-  instead of weakening call-graph relation checks.
+- The former `CALL_GRAPH_GATE:fixture-regeneration` note is closed for the
+  DB-projection gate: active fixtures were reviewed/regenerated again on
+  2026-07-06, and call graph relations are part of the baseline projection.
 - `cargo test -p ploke-tui --features call_graph format_call_context_block_renders_fixture_derived_rows -- --nocapture`
   passed for TUI rendering of the fixture-derived `Ok(...)`,
   `try_local_assoc()`, try-result method receiver payload shape, and
@@ -1062,21 +1061,9 @@ Post-gate evidence, 2026-06-23:
   initialized-local receiver rows, local and imported trait associated-function
   rows, dynamic and constructor call-context rows plus targetless external,
   macro, and ambiguous blocker rows.
-- `cargo test -p ploke-db --features call_graph -- --nocapture` remains red in
-  backup-backed type-graph tests because the registered typed corpus backups
-  still predate `call_relation`; `src/lib.rs` passed with `98 passed`, and the
-  remaining failures were all in `ploke-db --test mod`, with `195 passed`, `34
-  failed`, and all failures reporting `Cannot find requested stored relation
-  'call_relation'`. This is classified under `CALL_GRAPH_GATE:fixture-regeneration`,
-  not as a DB helper or proof projection regression.
-- `docs/testing/BACKUP_DB_FIXTURES.md` was last reviewed on 2026-06-12; as of
-  2026-06-23 the fixture review is overdue before any backup-fixture changes.
-- `cargo test --workspace --no-fail-fast` no longer reports `call_relation`
-  missing from stale backups. Remaining red targets are non-call-graph or typed
-  fixture/context issues: `ploke-eval --lib`, `ploke-rag --lib`,
-  `ploke-test-utils --lib`, `ploke-tree --lib`, `ploke-tui --lib`, and
-  `ploke-tui --test integration`. See
-  `target/test-output/workspace-after-call-graph-gate.log` in the local run.
+- `docs/testing/BACKUP_DB_FIXTURES.md` was reviewed on 2026-07-05 and updated
+  on 2026-07-06; fixture review is current for follow-on call-graph fixture
+  work.
 
 ## Binding design decisions
 
