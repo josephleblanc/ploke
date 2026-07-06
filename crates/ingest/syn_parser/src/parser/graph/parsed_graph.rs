@@ -1304,6 +1304,7 @@ mod tests {
             callee: PathCallCallee::ItemPath,
             arg_count: 0,
             generic_arg_count: 0,
+            arguments: Vec::new(),
         })
     }
 

@@ -83,6 +83,7 @@ impl ExprCallVisitor<'_> {
             callee: PathCallCallee::ItemPath,
             arg_count: call.args.len(),
             generic_arg_count: path_generic_arg_count(&callee.path),
+            arguments: Vec::new(),
         }));
         self.relations.push(CallSiteRelation::BodyContainsCall {
             source: self.owner,

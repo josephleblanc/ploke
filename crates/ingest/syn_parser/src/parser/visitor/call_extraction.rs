@@ -8,7 +8,7 @@ use syn::spanned::Spanned;
 use syn::visit::{self, Visit};
 
 use crate::parser::nodes::{
-    CallBodyOwnerId, CallNode, DynamicCallCallee, DynamicCallNode, ExecutableBodyId,
+    CallArgument, CallBodyOwnerId, CallNode, DynamicCallCallee, DynamicCallNode, ExecutableBodyId,
     ExecutableBodyNode, MacroCallNode, MethodCallNode, MethodCallReceiver, PathCallCallee,
     PathCallNode, generate_async_block_body_id, generate_closure_body_id,
     generate_dynamic_call_site_id, generate_local_item_body_id, generate_macro_call_site_id,
@@ -191,6 +191,7 @@ impl BodyCallVisitor<'_> {
             path,
             arg_count: call.args.len(),
             generic_arg_count: path_generic_arg_count(&callee.path),
+            arguments: call_arguments(&call.args, self.owner, self.cfgs),
         }));
         self.relations.push(CallSiteRelation::BodyContainsCall {
             source: self.owner,
@@ -532,6 +533,37 @@ fn path_generic_arg_count(path: &syn::Path) -> usize {
             syn::PathArguments::Parenthesized(_) | syn::PathArguments::None => 0,
         })
         .sum()
+}
+
+fn call_arguments(
+    args: &syn::punctuated::Punctuated<syn::Expr, syn::Token![,]>,
+    owner: CallBodyOwnerId,
+    cfgs: &[String],
+) -> Vec<CallArgument> {
+    args.iter()
+        .map(|arg| call_argument(arg, owner, cfgs))
+        .collect()
+}
+
+fn call_argument(arg: &syn::Expr, owner: CallBodyOwnerId, cfgs: &[String]) -> CallArgument {
+    match unparen_expr(arg) {
+        syn::Expr::Path(path) if path.qself.is_none() => {
+            let path = path_segments(&path.path);
+            if path.is_empty() {
+                CallArgument::Other
+            } else {
+                CallArgument::Path { path }
+            }
+        }
+        syn::Expr::Closure(closure) if closure.asyncness.is_none() => {
+            let byte_range = closure.span().byte_range();
+            let span = (byte_range.start, byte_range.end);
+            CallArgument::Closure {
+                closure_id: ExecutableBodyId::Closure(generate_closure_body_id(owner, span, cfgs)),
+            }
+        }
+        _ => CallArgument::Other,
+    }
 }
 
 fn classify_method_receiver(

@@ -92,6 +92,24 @@ pub struct PathCallNode {
     /// Number of explicit generic arguments on the callee, if represented by
     /// the syntax class.
     pub generic_arg_count: usize,
+    /// Conservative argument summaries used only for exact local value-flow
+    /// proof. Missing or unsupported argument shapes are represented as
+    /// `Other`; arity remains authoritative in `arg_count`.
+    #[serde(default)]
+    pub arguments: Vec<CallArgument>,
+}
+
+/// Coarse argument categories for path-call sites.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Default)]
+pub enum CallArgument {
+    /// The argument expression is a path such as `local_target`.
+    Path { path: Vec<String> },
+    /// The argument expression is an inline non-async closure literal with a
+    /// known executable body owner.
+    Closure { closure_id: ExecutableBodyId },
+    /// The argument expression is not represented by this conservative slice.
+    #[default]
+    Other,
 }
 
 /// Coarse callee categories for syntactic path-call sites.

@@ -1,8 +1,13 @@
 use crate::{
     error::SynParserError,
     parser::{
-        nodes::{AnyCallSiteId, PathCallCallee, PathCallNode},
+        graph::GraphAccess,
+        nodes::{
+            AnyCallSiteId, CallArgument, CallBodyOwnerId, CallNode, ExecutableBodyId,
+            FunctionNodeId, PathCallCallee, PathCallNode,
+        },
         relations::{CallRelation, CallResolutionKind, CallResolutionStatus, TypeRelation},
+        types::VisibilityKind,
     },
 };
 
@@ -10,6 +15,12 @@ use super::{
     AssocPathResolution, CallRelationResolver, ConstructorPathResolution,
     LocalFunctionPathResolution,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum ParameterCallTarget {
+    Function(FunctionNodeId),
+    Closure(ExecutableBodyId),
+}
 
 impl CallRelationResolver<'_> {
     pub(super) fn resolve_path_call(
@@ -23,7 +34,28 @@ impl CallRelationResolver<'_> {
 
         match &call.callee {
             PathCallCallee::ItemPath => {}
-            PathCallCallee::ValueBinding { .. } => {
+            PathCallCallee::ValueBinding { path } => {
+                if let Some(target) = self.resolve_parameter_value_call(call, path)? {
+                    match target {
+                        ParameterCallTarget::Function(target) => {
+                            relations.push(CallRelation::Function {
+                                source: call.id,
+                                target,
+                            });
+                        }
+                        ParameterCallTarget::Closure(target) => {
+                            relations.push(CallRelation::Closure {
+                                source: call.id,
+                                target,
+                            });
+                        }
+                    }
+                    statuses.push(CallResolutionStatus::Resolved {
+                        source,
+                        kind: CallResolutionKind::LocalExact,
+                    });
+                    return Ok(());
+                }
                 statuses.push(CallResolutionStatus::Unsupported { source });
                 return Ok(());
             }
@@ -211,5 +243,156 @@ impl CallRelationResolver<'_> {
         }
 
         Ok(())
+    }
+
+    fn resolve_parameter_value_call(
+        &self,
+        call: &PathCallNode,
+        path: &[String],
+    ) -> Result<Option<ParameterCallTarget>, SynParserError> {
+        let [name] = path else {
+            return Ok(None);
+        };
+
+        let Some(parameter_owner) = self.parameter_function_owner(call.owner)? else {
+            return Ok(None);
+        };
+        if !self.function_allows_local_parameter_proof(parameter_owner)? {
+            return Ok(None);
+        }
+        let Some(params) = self.owner_parameters(call.owner)? else {
+            return Ok(None);
+        };
+        let Some(index) = params
+            .iter()
+            .position(|param| param.name.as_deref() == Some(name.as_str()))
+        else {
+            return Ok(None);
+        };
+
+        let mut targets = Vec::new();
+        let mut caller_count = 0usize;
+        for site in self.graph.call_sites() {
+            let CallNode::PathCall(site) = site else {
+                continue;
+            };
+            if !self.path_call_targets_function(site, parameter_owner)? {
+                continue;
+            }
+            caller_count += 1;
+            if site.arguments.len() <= index {
+                return Ok(None);
+            }
+            if let Some(target) = self.resolve_call_argument(site, &site.arguments[index])? {
+                targets.push(target);
+            } else {
+                return Ok(None);
+            }
+        }
+
+        if caller_count == 0 {
+            return Ok(None);
+        }
+
+        targets.sort_unstable();
+        targets.dedup();
+
+        Ok(match targets.as_slice() {
+            [target] => Some(*target),
+            _ => None,
+        })
+    }
+
+    fn parameter_function_owner(
+        &self,
+        owner: CallBodyOwnerId,
+    ) -> Result<Option<FunctionNodeId>, SynParserError> {
+        match owner {
+            CallBodyOwnerId::Function(id) => Ok(Some(id)),
+            CallBodyOwnerId::Executable(id) => {
+                match self.executable_parent_owner(id, "parameter call proof")? {
+                    CallBodyOwnerId::Function(id) => Ok(Some(id)),
+                    _ => Ok(None),
+                }
+            }
+            _ => Ok(None),
+        }
+    }
+
+    fn function_allows_local_parameter_proof(
+        &self,
+        function_id: FunctionNodeId,
+    ) -> Result<bool, SynParserError> {
+        let function = self
+            .graph
+            .functions()
+            .iter()
+            .find(|function| function.id == function_id)
+            .ok_or_else(|| {
+                SynParserError::InternalState(format!(
+                    "call resolution found parameter call owned by missing function {function_id}"
+                ))
+            })?;
+        Ok(matches!(function.visibility, VisibilityKind::Inherited))
+    }
+
+    fn path_call_targets_function(
+        &self,
+        site: &PathCallNode,
+        target: FunctionNodeId,
+    ) -> Result<bool, SynParserError> {
+        let resolution = if self.is_unqualified_path(&site.path) {
+            self.resolve_unqualified_local_function_path(site.owner, &site.path)?
+        } else if self.is_explicit_local_path(&site.path) {
+            self.resolve_local_function_path(site.owner, &site.path)?
+        } else {
+            self.resolve_implicit_local_function_path(site.owner, &site.path)?
+        };
+
+        Ok(matches!(
+            resolution,
+            LocalFunctionPathResolution::Resolved(candidate) if candidate == target
+        ))
+    }
+
+    fn resolve_call_argument(
+        &self,
+        site: &PathCallNode,
+        arg: &CallArgument,
+    ) -> Result<Option<ParameterCallTarget>, SynParserError> {
+        match arg {
+            CallArgument::Path { path } => self
+                .resolve_argument_path(site.owner, path)
+                .map(|target| target.map(ParameterCallTarget::Function)),
+            CallArgument::Closure { closure_id } => {
+                Ok(Some(ParameterCallTarget::Closure(*closure_id)))
+            }
+            CallArgument::Other => Ok(None),
+        }
+    }
+
+    fn resolve_argument_path(
+        &self,
+        owner: CallBodyOwnerId,
+        path: &[String],
+    ) -> Result<Option<FunctionNodeId>, SynParserError> {
+        if self.is_external_path(path) || self.is_external_import_path(owner, path)? {
+            return Ok(None);
+        }
+
+        let resolution = if self.is_unqualified_path(path) {
+            self.resolve_unqualified_local_function_path(owner, path)?
+        } else if self.is_explicit_local_path(path) {
+            self.resolve_local_function_path(owner, path)?
+        } else {
+            self.resolve_implicit_local_function_path(owner, path)?
+        };
+
+        match resolution {
+            LocalFunctionPathResolution::Resolved(target) => Ok(Some(target)),
+            LocalFunctionPathResolution::Unresolved
+            | LocalFunctionPathResolution::Ambiguous
+            | LocalFunctionPathResolution::Unsupported => Ok(None),
+        }
     }
 }

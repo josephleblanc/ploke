@@ -1499,3 +1499,11 @@ pub fn make_alias_bound_closure() -> impl Fn() -> i32 {
 pub fn call_returned_alias_bound_closure() -> i32 {
     make_alias_bound_closure()()
 }
+
+fn call_single_function_pointer_param(f: fn() -> i32) -> i32 {
+    f()
+}
+
+pub fn call_single_function_pointer_param_with_local_target() -> i32 {
+    call_single_function_pointer_param(local_target)
+}

@@ -15,7 +15,7 @@ Root plan: `.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md`
 
 Current phase: binding/type-aware semantic resolution.
 
-Current bucket: local binding tracking for callable values and typed receivers.
+Current bucket: local callable parameter proof.
 
 Exit criteria for the first implementation slice:
 
@@ -62,10 +62,19 @@ Current DB/RAG pattern:
 Pick one, not all. Status notes below reflect the current committed matrix and
 should prevent future resumes from reselecting already-covered shapes.
 
-1. Function pointer parameter blockers - completed:
+1. Function pointer parameter blockers and exact private single-caller proof -
+   DB-positive, downstream proof pending:
    - Keep `f()` / `(f)()` where `f: fn(...)` is an owner parameter targetless unless an initializer is available.
    - Add or verify parser/DB/RAG proof that the callable parameter is visible as `ValueBinding` / `LocalBinding` with no edge.
-   - This is a blocker-visibility slice, not a positive edge slice.
+   - A bounded positive subset now resolves private helper parameter calls when
+     the complete local caller set supplies exactly one proven callable target,
+     for example `call_single_function_pointer_param(f: fn() -> i32) { f() }`
+     called only as `call_single_function_pointer_param(local_target)`.
+   - Public helpers, unproven argument expressions, missing arguments, and
+     multi-target caller sets remain targetless; do not broaden this through
+     API entrypoints or arbitrary interprocedural value flow.
+   - Add the matching RAG/tool assertion before treating this bucket as done
+     for now.
 
 2. Direct typed local receiver alias - completed:
    - Extend one exact local alias propagation case for method receivers only if it reuses existing initializer proof.
@@ -93,8 +102,10 @@ should prevent future resumes from reselecting already-covered shapes.
 6. Next adjacent candidate:
    - Select from the coverage matrix parking lot rather than adding more
      import breadth by default.
-   - Likely options are a bounded local binding/type proof shape or an explicit
-     workspace proof carrier for one documented dependency-root source oracle.
+   - Likely options are the downstream proof for the private single-caller
+     parameter case, one bounded adjacent local binding/type proof shape, or an
+     explicit workspace proof carrier for one documented dependency-root source
+     oracle.
 
 ## Implementation Order
 
