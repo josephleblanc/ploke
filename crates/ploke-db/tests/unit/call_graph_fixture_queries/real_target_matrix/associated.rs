@@ -286,7 +286,7 @@ fn axum_real_target_test_client_new_high_fanout_is_documented_gap() -> Result<()
             },
             SourceLineFanout {
                 file_suffix: "axum/src/json.rs",
-                lines: &[250, 266, 301, 320, 355],
+                lines: &[250, 266, 281, 301, 320, 355],
             },
             SourceLineFanout {
                 file_suffix: "axum/src/middleware/from_extractor.rs",
@@ -322,7 +322,7 @@ fn axum_real_target_test_client_new_high_fanout_is_documented_gap() -> Result<()
             SourceLineFanout {
                 file_suffix: "axum/src/routing/tests/merge.rs",
                 lines: &[
-                    14, 81, 85, 96, 116, 136, 150, 162, 179, 208, 234, 267, 301, 345, 379,
+                    14, 63, 81, 85, 96, 116, 136, 150, 162, 179, 208, 234, 267, 301, 345, 379,
                 ],
             },
             SourceLineFanout {
@@ -330,7 +330,7 @@ fn axum_real_target_test_client_new_high_fanout_is_documented_gap() -> Result<()
                 lines: &[
                     90, 118, 150, 188, 217, 233, 242, 282, 307, 323, 339, 352, 365, 377, 396, 416,
                     454, 472, 489, 506, 527, 540, 572, 589, 599, 626, 643, 668, 685, 700, 717, 738,
-                    748, 775, 798, 815, 846, 905, 952, 967, 984, 1027, 1047, 1164, 1201,
+                    748, 775, 798, 815, 846, 905, 952, 967, 984, 1027, 1047, 1073, 1164, 1201,
                 ],
             },
             SourceLineFanout {

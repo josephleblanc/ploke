@@ -102,7 +102,7 @@ Current executable coverage: DB target traversal, proof projection, RAG exact
 call context, `code_item_lookup`, and `code_item_edges` assert twenty-three
 resolved `Body::empty` caller edges: six literal `Body::empty()` rows from
 axum-core `response/into_response.rs` and `ext_traits/request.rs`, the two
-`axum-core/src/body.rs:{110,116}` `Self::empty()` rows, four direct axum
+`axum-core/src/body.rs:{83,89}` `Self::empty()` rows, four direct axum
 parsed-workspace import rows in `extract/query.rs`, `extract/raw_form.rs`,
 `form.rs`, and `serve/mod.rs`, plus eleven local re-exported, inherited,
 closure-owned, and local-item workspace rows in `middleware/from_fn.rs`,
@@ -110,7 +110,10 @@ closure-owned, and local-item workspace rows in `middleware/from_fn.rs`,
 `routing/tests/get_to_head.rs`, `routing/tests/merge.rs`, and
 `routing/tests/mod.rs:{228,1133,1151}`. The source-oracle rows in
 `extract/ws.rs:{394,400,1129,1191}` remain listed above for future tightening
-but are not part of the current resolved target-centered DB contract.
+but are not part of the current resolved target-centered DB contract. The
+strict DB test now pins all twenty-three current resolved rows by source file
+and line, including executable-owner rows that are reached through
+`call_body_owner` parent metadata before file attribution.
 
 The DB matrix also pins eight currently projected external
 `HeaderValue::from_static` rows by exact owner and source line: four `axum-core`

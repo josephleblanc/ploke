@@ -708,6 +708,77 @@ fn axum_real_target_body_empty_reaches_current_resolved_subset() -> Result<(), D
     //   route.rs closure body and routing/tests/mod.rs local handler rows.
     // Expected traversal for the current fixture: twenty-one `Body::empty` rows
     // and two `Self::empty` rows reach the same target in one edge.
+    let body_path_target = assert_resolved_path_line_fanout(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        &["Body", "empty"],
+        CallRelationKind::AssociatedFunction,
+        CallTargetKind::Method,
+        &[
+            SourceLineFanout {
+                file_suffix: "axum-core/src/ext_traits/request.rs",
+                lines: &[346, 364, 377, 390],
+            },
+            SourceLineFanout {
+                file_suffix: "axum-core/src/response/into_response.rs",
+                lines: &[128, 163],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/extract/query.rs",
+                lines: &[106],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/extract/raw_form.rs",
+                lines: &[65],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/form.rs",
+                lines: &[158],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/middleware/from_fn.rs",
+                lines: &[411],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/routing/method_routing.rs",
+                lines: &[1700],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/routing/route.rs",
+                lines: &[161, 174],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/routing/tests/get_to_head.rs",
+                lines: &[25, 59],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/routing/tests/merge.rs",
+                lines: &[198, 204],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/routing/tests/mod.rs",
+                lines: &[228, 1133, 1151],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/serve/mod.rs",
+                lines: &[799],
+            },
+        ],
+    )?;
+    let self_path_target = assert_resolved_path_line_fanout(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        &["Self", "empty"],
+        CallRelationKind::AssociatedFunction,
+        CallTargetKind::Method,
+        &[SourceLineFanout {
+            file_suffix: "axum-core/src/body.rs",
+            lines: &[83, 89],
+        }],
+    )?;
+    assert_eq!(body_path_target, target);
+    assert_eq!(self_path_target, target);
+
     let callers = db.callers_for_target(target)?;
     assert_eq!(
         callers.len(),
