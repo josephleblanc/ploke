@@ -14,7 +14,7 @@ use crate::{
 
 use super::{
     AssocPathResolution, CallRelationResolver, LocalTraitResolution, LocalTypeResolution,
-    WorkspaceTypeResolution,
+    WorkspaceTypeResolution, WorkspaceTypeTarget,
 };
 
 impl CallRelationResolver<'_> {
@@ -41,6 +41,41 @@ impl CallRelationResolver<'_> {
         }
 
         self.type_use_is_external(owner, impl_node.self_type)
+    }
+
+    pub(super) fn is_external_workspace_assoc_path(
+        &self,
+        owner: CallBodyOwnerId,
+        path: &[String],
+    ) -> Result<bool, SynParserError> {
+        let Some((_method_name, type_path)) = path.split_last() else {
+            return Ok(false);
+        };
+        let [type_segment] = type_path else {
+            return Ok(false);
+        };
+        if matches!(type_segment.as_str(), "Self" | "crate" | "self" | "super") {
+            return Ok(false);
+        }
+
+        match self.resolve_workspace_type_import(owner, type_segment)? {
+            WorkspaceTypeResolution::Resolved(candidate) => {
+                Self::workspace_type_target_alias_is_external(candidate)
+            }
+            WorkspaceTypeResolution::Unresolved => Ok(false),
+            WorkspaceTypeResolution::Ambiguous => Ok(false),
+        }
+    }
+
+    fn workspace_type_target_alias_is_external(
+        candidate: WorkspaceTypeTarget<'_>,
+    ) -> Result<bool, SynParserError> {
+        let type_report = type_resolution_v2::resolve_type_relations_after_tree(
+            candidate.krate.graph,
+            candidate.krate.tree,
+        )?;
+        let resolver = CallRelationResolver::new(candidate.krate.graph, candidate.krate.tree);
+        resolver.ordinary_type_target_alias_is_external(candidate.target, &type_report.relations)
     }
 
     fn assoc_owner_method(

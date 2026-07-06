@@ -88,6 +88,11 @@ impl CallRelationResolver<'_> {
             return Ok(());
         }
 
+        if self.is_external_workspace_assoc_path(call.owner, &call.path)? {
+            statuses.push(CallResolutionStatus::External { source });
+            return Ok(());
+        }
+
         let mut constructor_unresolved = false;
         if let Some(resolution) = self.resolve_constructor_path(call, type_relations)? {
             match resolution {

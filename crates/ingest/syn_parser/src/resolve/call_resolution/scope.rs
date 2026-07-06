@@ -4,9 +4,9 @@ use crate::{
         graph::GraphAccess,
         nodes::{
             AnyNodeId, AsAnyNodeId, CallBodyOwnerId, FunctionNodeId, ImportKind, ImportNode,
-            ImportNodeId, ModuleNodeId, OrdinaryTypeUseId, TypeAliasNodeId,
+            ImportNodeId, ModuleNodeId, OrdinaryTypeTargetId, OrdinaryTypeUseId, TypeAliasNodeId,
         },
-        relations::SyntacticRelation,
+        relations::{SyntacticRelation, TypeRelation},
         types::TypeNode,
     },
     resolve::RelationIndexer,
@@ -248,6 +248,23 @@ impl<'a> CallRelationResolver<'a> {
             TypeNode::Paren(node) => self.ordinary_type_binding_is_external(node.inner, depth + 1),
             _ => Ok(false),
         }
+    }
+
+    pub(super) fn ordinary_type_target_alias_is_external(
+        &self,
+        target: OrdinaryTypeTargetId,
+        type_relations: &[TypeRelation],
+    ) -> Result<bool, SynParserError> {
+        for receiver in self.ordinary_receiver_targets(target, type_relations)? {
+            let Ok(alias_id) = TypeAliasNodeId::try_from(receiver) else {
+                continue;
+            };
+            if self.type_alias_binding_is_external(alias_id, 0)? {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
     }
 
     pub(super) fn resolve_unqualified_local_function_path(
