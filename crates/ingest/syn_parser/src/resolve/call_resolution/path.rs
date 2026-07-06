@@ -306,7 +306,7 @@ impl CallRelationResolver<'_> {
         };
 
         let param_type = self.type_node(params[index].type_id)?;
-        if !self.parameter_allows_local_caller_proof(param_type, proof) {
+        if !self.parameter_allows_local_caller_proof(parameter_owner, param_type, proof)? {
             return Ok(None);
         }
         let expected_type = parameter_proof_type_path(param_type, proof);
@@ -381,14 +381,64 @@ impl CallRelationResolver<'_> {
 
     fn parameter_allows_local_caller_proof(
         &self,
+        function_id: FunctionNodeId,
         param_type: &TypeNode,
         proof: ParameterProof<'_>,
-    ) -> bool {
-        matches!(
-            (proof, param_type),
-            (ParameterProof::Value, TypeNode::Function(_))
-                | (ParameterProof::Field(_), TypeNode::Named(_))
-        )
+    ) -> Result<bool, SynParserError> {
+        match (proof, param_type) {
+            (ParameterProof::Value, TypeNode::Function(_)) => Ok(true),
+            (ParameterProof::Value, TypeNode::Named(node)) => {
+                self.type_parameter_has_callable_bound(function_id, &node.path)
+            }
+            (ParameterProof::Field(_), TypeNode::Named(_)) => Ok(true),
+            _ => Ok(false),
+        }
+    }
+
+    fn type_parameter_has_callable_bound(
+        &self,
+        function_id: FunctionNodeId,
+        path: &[String],
+    ) -> Result<bool, SynParserError> {
+        let [type_name] = path else {
+            return Ok(false);
+        };
+
+        for scope in self.generic_bound_scopes(CallBodyOwnerId::Function(function_id))? {
+            for param in scope.params {
+                if param.kind.name() != Some(type_name.as_str()) {
+                    continue;
+                }
+                if let Some(bounds) = param.kind.bounds()
+                    && self.bounds_include_callable_trait(bounds)?
+                {
+                    return Ok(true);
+                }
+            }
+
+            for predicate in scope.predicates {
+                if !self.type_path_matches_segment(predicate.subject, type_name)? {
+                    continue;
+                }
+                if self.bounds_include_callable_trait(&predicate.bounds)? {
+                    return Ok(true);
+                }
+            }
+        }
+
+        Ok(false)
+    }
+
+    fn bounds_include_callable_trait(
+        &self,
+        bounds: &[crate::parser::type_slots::TraitTypeUseId],
+    ) -> Result<bool, SynParserError> {
+        for bound in bounds {
+            if type_node_is_callable_trait_bound(self.type_node(*bound)?) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     fn path_call_targets_function(
@@ -483,4 +533,14 @@ fn parameter_proof_type_path<'a>(
 
 fn path_leaf_matches(path: &[String], expected: &[String]) -> bool {
     path.last().is_some() && path.last() == expected.last()
+}
+
+fn type_node_is_callable_trait_bound(node: &TypeNode) -> bool {
+    let path = match node {
+        TypeNode::TraitBound(node) => &node.path,
+        TypeNode::Named(node) => &node.path,
+        _ => return false,
+    };
+    path.last()
+        .is_some_and(|name| matches!(name.as_str(), "Fn" | "FnMut" | "FnOnce"))
 }

@@ -5577,20 +5577,27 @@ paranoid_call_site_test!(
 );
 
 paranoid_call_site_test!(
-    fixture_call_graph_call_single_generic_fn_once_param_fails_closed_single_caller_argument,
+    fixture_call_graph_call_single_generic_fn_once_param_resolves_single_caller_argument,
     fixture: "fixture_call_graph",
     owner: function {
         module_path: &["crate"],
         name: "call_single_generic_fn_once_param"
     },
-    expected: ExpectedCallSite::path_value_binding(
-        &["generic_f"],
-        SINGLE_GENERIC_FN_ONCE_PARAM_CALL_SPAN,
-        0,
-        0,
-        &[],
-        ExpectedCallOutcome::Unsupported,
-    ),
+    expected: {
+        let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("local_target should regenerate a FunctionNodeId");
+        ExpectedCallSite::path_value_binding(
+            &["generic_f"],
+            SINGLE_GENERIC_FN_ONCE_PARAM_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
+        )
+    },
 );
 
 paranoid_call_site_test!(

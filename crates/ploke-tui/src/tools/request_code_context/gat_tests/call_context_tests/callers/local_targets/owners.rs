@@ -60,6 +60,16 @@ async fn request_code_context_returns_function_and_dynamic_owner_call_context()
             callee: CallCalleeInfo::Dynamic,
             relation: CallTargetKind::DynamicFunction,
         },
+        Case {
+            label: "single-caller generic FnOnce parameter",
+            search_term: "call_single_generic_fn_once_param generic_f FnOnce",
+            owner: "call_single_generic_fn_once_param",
+            call_kind: CallSiteKind::Path,
+            callee: CallCalleeInfo::Path {
+                path: path(&["generic_f"]),
+            },
+            relation: CallTargetKind::Function,
+        },
     ];
 
     for case in cases {

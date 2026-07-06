@@ -353,7 +353,7 @@ fn fixture_context_resolves_single_caller_indexed_field_function_parameters() ->
 }
 
 #[test]
-fn fixture_context_keeps_generic_fn_once_parameter_targetless() -> Result<(), DbError> {
+fn fixture_context_resolves_single_caller_generic_fn_once_parameter() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let owner = function_id_by_name(&db, "call_single_generic_fn_once_param")?;
     let caller = function_id_by_name(&db, "call_single_generic_fn_once_param_with_local_target")?;
@@ -361,9 +361,10 @@ fn fixture_context_keeps_generic_fn_once_parameter_targetless() -> Result<(), Db
     let target = function_id_by_name(&db, "local_target")?;
 
     // tests/fixture_crates/fixture_call_graph/src/lib.rs:1511-1519:
-    // the private single-caller proof is intentionally limited to bare
-    // `fn(...)` parameter types. `F: FnOnce` is callable-trait dispatch, so the
-    // `generic_f()` call stays targetless until binding/type proof can model it.
+    // `call_single_generic_fn_once_param<F>(generic_f: F) where F: FnOnce()`
+    // has one local caller in this fixture. The caller passes `local_target`,
+    // so the parameter call is admitted as exact value-flow proof, while
+    // broader public or multi-target callable-trait dispatch stays targetless.
     let context = db.call_context_for_owner(owner)?;
     assert_eq!(
         context.len(),
@@ -374,12 +375,23 @@ fn fixture_context_keeps_generic_fn_once_parameter_targetless() -> Result<(), Db
     assert_eq!(row.site.owner_id, owner);
     assert_eq!(row.site.arg_count, Some(0));
     assert_eq!(row.site.generic_arg_count, Some(0));
-    assert_eq!(row.status.status, CallStatusKind::Unsupported);
-    assert_eq!(row.status.resolution, None);
-    assert!(
-        row.targets.is_empty(),
-        "generic FnOnce parameter call must not fabricate targets: {row:#?}"
+    assert_resolved_target(
+        row,
+        target,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
     );
+
+    let callers = db.callers_for_target(target)?;
+    let caller_row = caller_by_owner_kind_path(&callers, owner, CallSiteKind::Path, &["generic_f"]);
+    assert_eq!(caller_row.status.status, CallStatusKind::Resolved);
+    assert_eq!(
+        caller_row.status.resolution,
+        Some(CallResolutionKind::LocalExact)
+    );
+    assert_eq!(caller_row.target.target_id, target);
+    assert_eq!(caller_row.target.relation, CallRelationKind::Function);
 
     let paths = db.call_paths_from_owner(
         owner,
@@ -388,13 +400,17 @@ fn fixture_context_keeps_generic_fn_once_parameter_targetless() -> Result<(), Db
             max_paths: 8,
         },
     )?;
-    assert!(
-        paths.iter().all(|path| path.end_id != target),
-        "generic FnOnce parameter owner should not traverse through callable-trait dispatch: {paths:#?}"
-    );
+    let path = paths
+        .iter()
+        .find(|path| path.start_id == owner && path.end_id == target && path.depth == 1)
+        .expect("generic FnOnce parameter owner should have a one-hop path to local_target");
+    assert_eq!(path.edges[0].caller_id, owner);
+    assert_eq!(path.edges[0].callee_id, target);
+    assert_eq!(path.edges[0].relation, CallRelationKind::Function);
 
     // The caller still has a normal direct call edge to the private helper; the
-    // unsupported frontier is inside the helper body.
+    // single-caller argument proof is additional resolver evidence, not a
+    // replacement for the caller's own edge.
     let caller_context = db.call_context_for_owner(caller)?;
     let helper_call = row_by_path(&caller_context, &["call_single_generic_fn_once_param"]);
     assert_eq!(helper_call.site.arg_count, Some(1));

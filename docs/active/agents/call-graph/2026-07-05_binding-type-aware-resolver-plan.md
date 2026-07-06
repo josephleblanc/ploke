@@ -75,15 +75,23 @@ should prevent future resumes from reselecting already-covered shapes.
      `call_single_parenthesized_function_pointer_param(f: fn() -> i32) { (f)() }`,
      which resolves to a `DynamicFunction` edge only under the same private,
      bare-function-pointer, complete-single-caller constraints.
-   - Public helpers, generic callable-trait parameters such as `F: FnOnce`,
-     unproven argument expressions, missing arguments, and multi-target caller
-     sets remain targetless; do not broaden this through API entrypoints,
-     callable-trait dispatch, or arbitrary interprocedural value flow.
+   - The same complete-local-caller boundary now admits one generic callable
+     parameter shape when the private helper's parameter is a type parameter
+     with an explicit callable trait bound and every local caller supplies the
+     same exact function item. The fixture-backed
+     `call_single_generic_fn_once_param<F>(generic_f: F) where F: FnOnce() ->
+     i32 { generic_f() }` resolves to `local_target` only because its complete
+     local caller set passes that function item.
+   - Public helpers, unproven argument expressions, missing arguments,
+     multi-target caller sets, and callable-trait values without complete
+     private caller proof remain targetless; do not broaden this through API
+     entrypoints, callable-trait dispatch, or arbitrary interprocedural value
+     flow.
    - DB, RAG, and tool assertions now preserve the resolved private
      function-pointer single-caller edges to `local_target` for both path
-     `f()` and dynamic `(f)()` call forms, while public, generic
-     callable-trait, opaque, missing-argument, and multi-target shapes remain
-     explicit blockers.
+     `f()` and dynamic `(f)()` call forms, plus the bounded private
+     single-caller generic `FnOnce` path edge. Public callable-trait, opaque,
+     missing-argument, and multi-target shapes remain explicit blockers.
    - The same complete-local-caller boundary now has one adjacent constructed
      argument proof for private indexed field-parameter calls:
      `call_single_indexed_field_function_param(holder: CallbackArrayHolder)
