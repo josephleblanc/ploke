@@ -178,3 +178,59 @@ async fn request_code_context_attaches_incoming_context_to_target_seed() -> colo
 
     Ok(())
 }
+
+#[tokio::test]
+async fn request_code_context_returns_single_caller_function_pointer_parameter_context()
+-> color_eyre::Result<()> {
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_single_function_pointer_param"),
+    )?;
+    let target = one_uuid(&db, &function_in_module_query(&["crate"], "local_target"))?;
+
+    let search_term = "call_single_function_pointer_param f fn i32";
+    let result =
+        execute_fixture_request(&db, search_term, 1, "single_fn_param_call_context").await?;
+    assert_result_ok(&result, search_term, 1, "fixture_call_graph");
+
+    let owner_part = result
+        .context
+        .iter()
+        .find(|part| part.id == owner)
+        .expect("request_code_context should materialize the single-caller parameter owner");
+    let target_part = result
+        .context
+        .iter()
+        .find(|part| part.id == target)
+        .expect("request_code_context should materialize the local_target callee");
+    let call = owner_part
+        .call_context
+        .iter()
+        .find(|call| {
+            call.kind == CallSiteKind::Path
+                && call.callee == CallCalleeInfo::Path { path: path(&["f"]) }
+                && call
+                    .targets
+                    .iter()
+                    .any(|target_info| target_info.target_id == target)
+        })
+        .expect("single-caller parameter owner should retain resolved f() call context");
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:1503-1508:
+    // the private helper's complete local caller set passes `local_target`, so
+    // the tool should expose the resolved `f()` edge instead of the broader
+    // fail-closed function-pointer parameter blocker shape.
+    assert_resolved_target(call, target, CallTargetKind::Function);
+    assert_expansion(
+        target_part,
+        owner,
+        target,
+        call.site_id,
+        CallExpansionKind::OutgoingTarget,
+    );
+
+    Ok(())
+}
