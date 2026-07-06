@@ -458,7 +458,27 @@ fn expr_path_ident(expr: &syn::Expr) -> Option<String> {
 }
 
 fn local_closure_binding_is_closure(block: &syn::Block, name: &str) -> bool {
-    for stmt in block.stmts.iter().rev().skip(1) {
+    local_binding_closure_source(
+        block,
+        name,
+        block.stmts.len().saturating_sub(1),
+        &mut Vec::new(),
+    )
+}
+
+fn local_binding_closure_source(
+    block: &syn::Block,
+    name: &str,
+    end: usize,
+    seen: &mut Vec<String>,
+) -> bool {
+    if seen.iter().any(|candidate| candidate == name) {
+        return false;
+    }
+    seen.push(name.to_string());
+
+    for index in (0..end.min(block.stmts.len())).rev() {
+        let stmt = &block.stmts[index];
         let syn::Stmt::Local(local) = stmt else {
             continue;
         };
@@ -468,10 +488,16 @@ fn local_closure_binding_is_closure(block: &syn::Block, name: &str) -> bool {
         if ident.ident != name {
             continue;
         }
-        return local
-            .init
-            .as_ref()
-            .is_some_and(|init| is_closure_literal(init.expr.as_ref()));
+        let Some(init) = local.init.as_ref() else {
+            return false;
+        };
+        if is_closure_literal(init.expr.as_ref()) {
+            return true;
+        }
+        let Some(alias) = expr_path_ident(init.expr.as_ref()) else {
+            return false;
+        };
+        return local_binding_closure_source(block, &alias, index, seen);
     }
     false
 }

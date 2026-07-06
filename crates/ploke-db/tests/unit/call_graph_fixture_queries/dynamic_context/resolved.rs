@@ -62,6 +62,14 @@ fn fixture_context_reads_projected_returned_closure_nested_calls() -> Result<(),
             maker: "make_bound_closure",
             path: &["make_bound_closure"],
         },
+        // tests/fixture_crates/fixture_call_graph/src/lib.rs:1500:
+        // `make_alias_bound_closure()()` resolves through the maker's returned
+        // local alias of a closure binding from lines 1493-1496.
+        ReturnedClosureCase {
+            owner: "call_returned_alias_bound_closure",
+            maker: "make_alias_bound_closure",
+            path: &["make_alias_bound_closure"],
+        },
     ];
 
     for case in cases {

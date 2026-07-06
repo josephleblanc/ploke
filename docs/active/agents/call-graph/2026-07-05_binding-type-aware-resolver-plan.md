@@ -75,7 +75,8 @@ should prevent future resumes from reselecting already-covered shapes.
 3. Direct closure return proof - completed:
    - Completed for `make_closure()()` when the maker's final expression is directly a closure literal with a single recorded closure executable owner.
    - Completed for `make_bound_closure()()` when the maker's final expression returns a local binding initialized by that single recorded closure executable owner.
-   - Preserve broader returned closure values as targetless unless the returned callable is proven to a function item, direct closure literal, or direct local closure binding.
+   - Completed for `make_alias_bound_closure()()` when the maker's final expression returns a local alias chain that reaches a local binding initialized by that single recorded closure executable owner.
+   - Preserve broader returned closure values as targetless unless the returned callable is proven to a function item, direct closure literal, direct local closure binding, or direct local alias chain to a closure binding.
 
 4. Function pointer field blocker - completed:
    - Use the existing memchr real-corpus fallback as a blocker proof target.

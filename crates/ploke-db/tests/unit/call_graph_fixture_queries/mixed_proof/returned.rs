@@ -93,6 +93,14 @@ fn fixture_projection_stores_returned_closure_dynamic_edge() -> Result<(), DbErr
             maker: "make_bound_closure",
             path: &["make_bound_closure"],
         },
+        // tests/fixture_crates/fixture_call_graph/src/lib.rs:1500:
+        // The outer dynamic call invokes the returned local alias of the
+        // closure binding in `make_alias_bound_closure` at lines 1493-1496.
+        ReturnedClosureProofCase {
+            owner: "call_returned_alias_bound_closure",
+            maker: "make_alias_bound_closure",
+            path: &["make_alias_bound_closure"],
+        },
     ];
 
     let mut expected = Vec::new();

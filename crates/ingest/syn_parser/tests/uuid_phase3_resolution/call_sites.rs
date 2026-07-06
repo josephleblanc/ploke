@@ -96,6 +96,9 @@ const RETURNED_CLOSURE_DYNAMIC_CALL_SPAN: (usize, usize) = (31418, 31434);
 const MAKE_BOUND_CLOSURE_INNER_CALL_SPAN: (usize, usize) = (31867, 31887);
 const MAKE_BOUND_CLOSURE_RETURNED_CLOSURE_SPAN: (usize, usize) = (31795, 31800);
 const RETURNED_BOUND_CLOSURE_DYNAMIC_CALL_SPAN: (usize, usize) = (31867, 31889);
+const MAKE_ALIAS_BOUND_CLOSURE_INNER_CALL_SPAN: (usize, usize) = (32823, 32849);
+const MAKE_ALIAS_BOUND_CLOSURE_RETURNED_CLOSURE_SPAN: (usize, usize) = (32722, 32727);
+const RETURNED_ALIAS_BOUND_CLOSURE_DYNAMIC_CALL_SPAN: (usize, usize) = (32823, 32851);
 const LOCAL_ASSOC_IMPL_SPAN: (usize, usize) = (736, 868);
 const SELF_ASSOC_MAKE_CALL_SPAN: (usize, usize) = (848, 860);
 const LOCAL_ASSOC_MAKE_CALL_SPAN: (usize, usize) = (921, 939);
@@ -3182,6 +3185,59 @@ paranoid_call_site_test!(
         ExpectedCallSite::dynamic_returned_path_call(
             &["make_bound_closure"],
             RETURNED_BOUND_CLOSURE_DYNAMIC_CALL_SPAN,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedDynamicClosureLocalExact { target: closure },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_returned_alias_bound_closure_resolves_inner_make_alias_bound_closure_path_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_returned_alias_bound_closure"
+    },
+    expected: {
+        let target_args = fixture_call_graph_function_args(&["crate"], "make_alias_bound_closure");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("make_alias_bound_closure should regenerate a FunctionNodeId");
+        ExpectedCallSite::path(
+            &["make_alias_bound_closure"],
+            MAKE_ALIAS_BOUND_CLOSURE_INNER_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_returned_alias_bound_closure_resolves_outer_dynamic_closure_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_returned_alias_bound_closure"
+    },
+    expected: {
+        let (graph, _tree) = crate::common::build_tree_for_tests("fixture_call_graph");
+        let owner = crate::common::call_site_paranoid::function_owner_context(
+            &graph,
+            &["crate"],
+            "make_alias_bound_closure",
+        );
+        let closure = closure_body_inside_span(
+            &graph,
+            &owner,
+            MAKE_ALIAS_BOUND_CLOSURE_RETURNED_CLOSURE_SPAN,
+        );
+        ExpectedCallSite::dynamic_returned_path_call(
+            &["make_alias_bound_closure"],
+            RETURNED_ALIAS_BOUND_CLOSURE_DYNAMIC_CALL_SPAN,
             0,
             &[],
             ExpectedCallOutcome::ResolvedDynamicClosureLocalExact { target: closure },

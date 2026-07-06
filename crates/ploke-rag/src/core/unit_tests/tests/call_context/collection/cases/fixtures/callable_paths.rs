@@ -9,6 +9,7 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
     let make_fn = unique_id_by_name(&db, "function", "make_fn")?;
     let make_closure = unique_id_by_name(&db, "function", "make_closure")?;
     let make_bound = unique_id_by_name(&db, "function", "make_bound_closure")?;
+    let make_alias = unique_id_by_name(&db, "function", "make_alias_bound_closure")?;
     let local_target = unique_id_by_name(&db, "function", "local_target")?;
     let returned_owner = one_uuid(
         &db,
@@ -21,6 +22,10 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
     let bound_owner = one_uuid(
         &db,
         &function_in_module_query(&["crate"], "call_returned_bound_closure"),
+    )?;
+    let alias_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_returned_alias_bound_closure"),
     )?;
     let branch_owner = one_uuid(
         &db,
@@ -56,6 +61,7 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
         (returned_owner, 1.0),
         (returned_closure_owner, 1.0),
         (bound_owner, 1.0),
+        (alias_owner, 1.0),
         (branch_owner, 1.0),
         (block_owner, 1.0),
         (fn_param_owner, 1.0),
@@ -114,117 +120,59 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
         CallTargetKind::DynamicFunction
     );
 
-    let returned_closure_context = call_context
-        .get(&returned_closure_owner)
-        .expect("returned-closure owner should receive outgoing call context");
-    assert_eq!(
-        returned_closure_context.len(),
-        2,
-        "returned-closure owner context: {returned_closure_context:#?}"
-    );
-    // tests/fixture_crates/fixture_call_graph/src/lib.rs:1431:
-    // `make_closure()()` keeps both the maker path call and the outer dynamic
-    // returned-closure call visible for RAG call context.
-    let returned_closure_path = returned_closure_context
-        .iter()
-        .find(|call| {
-            call.kind == CallSiteKind::Path
-                && call.callee
-                    == CallCalleeInfo::Path {
-                        path: vec!["make_closure".to_string()],
-                    }
-        })
-        .expect("inner make_closure path call should stay visible");
-    assert_eq!(returned_closure_path.status, CallStatusKind::Resolved);
-    assert_eq!(
-        returned_closure_path.resolution,
-        Some(CallResolutionKind::LocalExact)
-    );
-    assert_eq!(returned_closure_path.targets.len(), 1);
-    assert_eq!(returned_closure_path.targets[0].target_id, make_closure);
-    assert_eq!(
-        returned_closure_path.targets[0].relation,
-        CallTargetKind::Function
-    );
+    let closure_cases = [
+        // tests/fixture_crates/fixture_call_graph/src/lib.rs:1431:
+        // `make_closure()()` returns a direct closure literal.
+        (returned_closure_owner, make_closure, "make_closure"),
+        // tests/fixture_crates/fixture_call_graph/src/lib.rs:1453:
+        // `make_bound_closure()()` returns a local closure binding.
+        (bound_owner, make_bound, "make_bound_closure"),
+        // tests/fixture_crates/fixture_call_graph/src/lib.rs:1500:
+        // `make_alias_bound_closure()()` returns a local alias of a closure binding.
+        (alias_owner, make_alias, "make_alias_bound_closure"),
+    ];
+    for (owner, maker, name) in closure_cases {
+        let context = call_context
+            .get(&owner)
+            .expect("returned closure owner should receive outgoing call context");
+        assert_eq!(context.len(), 2, "returned closure context: {context:#?}");
 
-    let returned_closure_dynamic = returned_closure_context
-        .iter()
-        .find(|call| {
-            call.kind == CallSiteKind::Dynamic
-                && call
-                    .targets
-                    .iter()
-                    .any(|target| target.relation == CallTargetKind::DynamicClosure)
-        })
-        .expect("outer returned-closure dynamic call should stay visible");
-    assert_eq!(returned_closure_dynamic.callee, CallCalleeInfo::Dynamic);
-    assert_eq!(returned_closure_dynamic.status, CallStatusKind::Resolved);
-    assert_eq!(
-        returned_closure_dynamic.resolution,
-        Some(CallResolutionKind::LocalExact)
-    );
-    assert_eq!(returned_closure_dynamic.targets.len(), 1);
-    assert_ne!(
-        returned_closure_dynamic.targets[0].target_id, make_closure,
-        "outer returned-closure dynamic target should be the closure owner, not the maker function"
-    );
-    assert_eq!(
-        returned_closure_dynamic.targets[0].relation,
-        CallTargetKind::DynamicClosure
-    );
+        let path = context
+            .iter()
+            .find(|call| {
+                call.kind == CallSiteKind::Path
+                    && call.callee
+                        == CallCalleeInfo::Path {
+                            path: vec![name.to_string()],
+                        }
+            })
+            .expect("inner returned-closure maker path call should stay visible");
+        assert_eq!(path.status, CallStatusKind::Resolved);
+        assert_eq!(path.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(path.targets.len(), 1);
+        assert_eq!(path.targets[0].target_id, maker);
+        assert_eq!(path.targets[0].relation, CallTargetKind::Function);
 
-    let bound_context = call_context
-        .get(&bound_owner)
-        .expect("returned bound-closure owner should receive outgoing call context");
-    assert_eq!(
-        bound_context.len(),
-        2,
-        "returned bound-closure owner context: {bound_context:#?}"
-    );
-    // tests/fixture_crates/fixture_call_graph/src/lib.rs:1453:
-    // `make_bound_closure()()` keeps both the maker path call and the outer
-    // dynamic call to the closure binding from lines 1447-1449.
-    let bound_path = bound_context
-        .iter()
-        .find(|call| {
-            call.kind == CallSiteKind::Path
-                && call.callee
-                    == CallCalleeInfo::Path {
-                        path: vec!["make_bound_closure".to_string()],
-                    }
-        })
-        .expect("inner make_bound_closure path call should stay visible");
-    assert_eq!(bound_path.status, CallStatusKind::Resolved);
-    assert_eq!(bound_path.resolution, Some(CallResolutionKind::LocalExact));
-    assert_eq!(bound_path.targets.len(), 1);
-    assert_eq!(bound_path.targets[0].target_id, make_bound);
-    assert_eq!(bound_path.targets[0].relation, CallTargetKind::Function);
-
-    let bound_dynamic = bound_context
-        .iter()
-        .find(|call| {
-            call.kind == CallSiteKind::Dynamic
-                && call
-                    .targets
-                    .iter()
-                    .any(|target| target.relation == CallTargetKind::DynamicClosure)
-        })
-        .expect("outer returned bound-closure dynamic call should stay visible");
-    assert_eq!(bound_dynamic.callee, CallCalleeInfo::Dynamic);
-    assert_eq!(bound_dynamic.status, CallStatusKind::Resolved);
-    assert_eq!(
-        bound_dynamic.resolution,
-        Some(CallResolutionKind::LocalExact)
-    );
-    assert_eq!(bound_dynamic.targets.len(), 1);
-    assert_ne!(
-        bound_dynamic.targets[0].target_id, make_bound,
-        "outer returned bound-closure dynamic target should be the closure owner, not the maker function"
-    );
-    assert_eq!(
-        bound_dynamic.targets[0].relation,
-        CallTargetKind::DynamicClosure
-    );
+        let dynamic = context
+            .iter()
+            .find(|call| {
+                call.kind == CallSiteKind::Dynamic
+                    && call
+                        .targets
+                        .iter()
+                        .any(|target| target.relation == CallTargetKind::DynamicClosure)
+            })
+            .expect("outer returned-closure dynamic call should stay visible");
+        assert_eq!(dynamic.callee, CallCalleeInfo::Dynamic);
+        assert_eq!(dynamic.status, CallStatusKind::Resolved);
+        assert_eq!(dynamic.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(dynamic.targets.len(), 1);
+        assert_ne!(
+            dynamic.targets[0].target_id, maker,
+            "outer returned-closure dynamic target should be the closure owner, not the maker function"
+        );
+        assert_eq!(dynamic.targets[0].relation, CallTargetKind::DynamicClosure);
+    }
 
     let branch_context = call_context
         .get(&branch_owner)

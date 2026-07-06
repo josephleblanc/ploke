@@ -1489,3 +1489,13 @@ pub fn call_external_param_vec_len(value: Vec<i32>) -> usize {
 pub fn call_external_borrowed_param_vec_len(value: &Vec<i32>) -> usize {
     value.len()
 }
+
+pub fn make_alias_bound_closure() -> impl Fn() -> i32 {
+    let closure = || 79;
+    let alias = closure;
+    alias
+}
+
+pub fn call_returned_alias_bound_closure() -> i32 {
+    make_alias_bound_closure()()
+}
