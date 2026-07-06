@@ -58,6 +58,7 @@ pub(crate) struct PathToolCase {
     pub(crate) label: &'static str,
     pub(crate) item: &'static str,
     pub(crate) path: &'static [&'static str],
+    pub(crate) status: CallStatusKind,
     owner: PathOwner,
 }
 
@@ -234,10 +235,23 @@ impl PathToolCase {
         label: "axum/src/middleware/from_extractor.rs:328 Secret::from_ref dependency root",
         item: "test_from_extractor",
         path: &["Secret", "from_ref"],
+        status: CallStatusKind::Resolved,
         owner: PathOwner::Function {
             module_path: &["crate", "middleware", "from_extractor", "tests"],
             file_suffix: "axum/src/middleware/from_extractor.rs",
             body: "Secret::from_ref(state)",
+        },
+    }];
+
+    pub(crate) const REQUEST_BUILDER_ALIAS: [Self; 1] = [Self {
+        label: "axum/src/middleware/from_fn.rs:411 Request::builder alias external frontier",
+        item: "basic",
+        path: &["Request", "builder"],
+        status: CallStatusKind::External,
+        owner: PathOwner::Function {
+            module_path: &["crate", "middleware", "from_fn", "tests"],
+            file_suffix: "axum/src/middleware/from_fn.rs",
+            body: "Request::builder().uri(\"/\")",
         },
     }];
 

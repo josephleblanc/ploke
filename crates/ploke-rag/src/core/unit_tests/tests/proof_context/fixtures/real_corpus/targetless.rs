@@ -2,7 +2,7 @@ use super::super::super::super::*;
 use super::super::super::helpers::assert_blocked_resolution;
 use super::helpers::{
     AXUM_DOMAIN, assert_site_blocker, assert_site_resolution_blocker, await_result_unwrap_site,
-    axum_db, conn_limiter_accept_owner, dynamic_site, method_id_by_file,
+    axum_db, conn_limiter_accept_owner, dynamic_site, function_id, method_id_by_file,
     method_id_by_name_and_body, targetless_method_site, targetless_method_site_with_status,
     targetless_path_site,
 };
@@ -213,6 +213,59 @@ async fn proof_context_collection_preserves_axum_size_hint_self_field_frontier()
         site_id,
         "external_dependency_summary_missing",
         case.label,
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn proof_context_collection_preserves_axum_request_builder_alias_frontier()
+-> Result<(), Error> {
+    init_tracing_once();
+    let db = axum_db()?;
+
+    let owner = function_id(&db, &["crate", "middleware", "from_fn", "tests"], "basic")?;
+    let projected = db.project_call_proof_facts_for_owner(owner, AXUM_DOMAIN)?;
+    assert!(
+        projected >= 2,
+        "from_fn::tests::basic should project Request::builder alias-frontier proof rows"
+    );
+
+    let rag = init_test_rag_mock(Arc::clone(&db));
+    assert!(
+        !rag.proof_context_degraded(),
+        "projected axum Request::builder facts should enable RAG proof context"
+    );
+
+    let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+    let calls = call_context
+        .get(&owner)
+        .expect("from_fn::tests::basic should receive outgoing call context");
+    let site_id = targetless_path_site(
+        calls,
+        owner,
+        &["Request", "builder"],
+        CallStatusKind::External,
+        "from_fn::tests::basic Request::builder",
+    );
+
+    let rows = rag.exact_proof_context(owner)?;
+
+    // Matrix: associated path through workspace type alias to external root.
+    // Source chain:
+    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //   axum/src/middleware/from_fn.rs:411 calls
+    //   `Request::builder().uri("/").body(Body::empty()).unwrap()`.
+    // Expected proof traversal: owner-seeded proof context must include the
+    // call_site plus blocked call_resolution facts for the targetless external
+    // frontier row. There are zero local callee edges because
+    // `Request = http::Request` leaves the local workspace.
+    assert_site_blocker(
+        &rows,
+        owner,
+        site_id,
+        "external_dependency_summary_missing",
+        "from_fn::tests::basic Request::builder",
     );
 
     Ok(())

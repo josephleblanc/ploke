@@ -408,6 +408,53 @@ async fn call_context_collection_reads_axum_size_hint_self_field_frontier() -> R
 }
 
 #[tokio::test]
+async fn call_context_collection_reads_axum_request_builder_alias_frontier() -> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    let owner =
+        function_id_by_name_in_module(&db, &["crate", "middleware", "from_fn", "tests"], "basic")?;
+    let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+    let context = call_context
+        .get(&owner)
+        .expect("from_fn::tests::basic should receive outgoing call context");
+    let callee = CallCalleeInfo::Path {
+        path: path(&["Request", "builder"]),
+    };
+    let matching = context
+        .iter()
+        .filter(|call| call.kind == CallSiteKind::Path && call.callee == callee)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching.len(),
+        1,
+        "from_fn::tests::basic should expose one Request::builder alias frontier row: {context:#?}"
+    );
+
+    // Matrix:
+    //   docs/active/agents/call-graph/
+    //   2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //
+    // Source chain:
+    //   axum/src/middleware/from_fn.rs:411 calls
+    //   `Request::builder().uri("/").body(Body::empty()).unwrap()`.
+    // Expected traversal: `Request` resolves through axum-core's
+    // `Request = http::Request` alias, so the path call is an external
+    // frontier with zero local traversal targets.
+    let call = matching[0];
+    assert_eq!(call.owner_id, owner);
+    assert_eq!(call.arg_count, Some(0));
+    assert_eq!(call.status, CallStatusKind::External);
+    assert_eq!(call.resolution, None);
+    assert!(
+        call.targets.is_empty(),
+        "Request::builder alias frontier should remain targetless in RAG call context: {call:#?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn call_context_collection_reads_axum_request_parts_local_receiver_gap() -> Result<(), Error>
 {
     init_tracing_once();
