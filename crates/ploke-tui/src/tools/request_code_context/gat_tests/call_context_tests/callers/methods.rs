@@ -37,6 +37,10 @@ async fn request_code_context_returns_method_target_callers_with_call_context()
             "call_borrowed_initialized_local_instance_method",
         ),
     )?;
+    let tuple_pattern_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_tuple_pattern_local_instance_method"),
+    )?;
     let assoc_owner = one_uuid(
         &db,
         &function_in_module_query(&["crate"], "call_method_as_associated_function"),
@@ -79,6 +83,19 @@ async fn request_code_context_returns_method_target_callers_with_call_context()
             callee: CallCalleeInfo::Method {
                 name: "instance_value".to_string(),
                 receiver: Some(CallReceiverInfo::BorrowedInitializedLocalBinding {
+                    name: "value".to_string(),
+                    init_path: vec!["LocalAssoc".to_string()],
+                }),
+            },
+            relation: CallTargetKind::Method,
+        },
+        Case {
+            owner: tuple_pattern_owner,
+            label: "tuple-pattern initialized method owner",
+            kind: CallSiteKind::Method,
+            callee: CallCalleeInfo::Method {
+                name: "instance_value".to_string(),
+                receiver: Some(CallReceiverInfo::InitializedLocalBinding {
                     name: "value".to_string(),
                     init_path: vec!["LocalAssoc".to_string()],
                 }),
