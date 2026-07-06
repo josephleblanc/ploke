@@ -103,7 +103,18 @@ should prevent future resumes from reselecting already-covered shapes.
      local-item rows.
    - Remaining source-oracle rows stay documented rather than guessed.
 
-6. Next adjacent candidate:
+6. Exact local closure-binding deref proof - completed:
+   - `call_dereferenced_closure_binding` now records `(*closure)()` as a
+     dereferenced local closure binding when the existing local binding proof
+     already carries one closure executable owner.
+   - The resolver reuses the existing `DynamicClosure` relation path for this
+     exact proof shape.
+   - Parser and DB tests assert the resolved closure edge, one-hop traversal,
+     proof projection, and removal from targetless dynamic blocker tables.
+   - Opaque dereferenced callable parameters and broader callable trait-object
+     dispatch remain targetless/unsupported.
+
+7. Next adjacent candidate:
    - Select from the coverage matrix parking lot rather than adding more
      import breadth by default.
    - Likely options are the downstream proof for the private single-caller

@@ -770,6 +770,7 @@ fn call_site_to_params(call_site: &CallNode) -> BTreeMap<String, cozo::DataValue
                 | DynamicCallCallee::FnPointerCastLocalBinding { path }
                 | DynamicCallCallee::FnPointerCastClosureBinding { path, .. }
                 | DynamicCallCallee::DereferencedInitializedLocalBinding { path, .. }
+                | DynamicCallCallee::DereferencedClosureBinding { path, .. }
                 | DynamicCallCallee::FieldLocalBinding { path }
                 | DynamicCallCallee::FieldInitializedLocalBinding { path, .. }
                 | DynamicCallCallee::IndexedInitializedLocalBinding { path, .. } => {

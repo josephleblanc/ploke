@@ -1,5 +1,5 @@
 use super::*;
-use ploke_db::CallPathOptions;
+use ploke_db::{CallContextRow, CallPathOptions};
 
 #[test]
 fn fixture_context_reads_projected_function_item_binding_calls() -> Result<(), DbError> {
@@ -161,45 +161,7 @@ fn fixture_context_reads_projected_dynamic_closure_binding_call() -> Result<(), 
     // tests/fixture_crates/fixture_call_graph/src/lib.rs:5:
     // `(closure)()` calls a named local closure binding and should target the
     // closure executable owner.
-    let row = row_by_kind_path(&context, CallSiteKind::Dynamic, &["closure"]);
-    assert_eq!(row.site.owner_id, owner);
-    assert_eq!(row.site.arg_count, Some(0));
-    assert_eq!(row.site.generic_arg_count, None);
-    assert_eq!(row.targets.len(), 1, "dynamic closure row: {row:#?}");
-    let closure = row.targets[0].target_id;
-    assert_resolved_target(
-        row,
-        closure,
-        CallRelationKind::DynamicClosure,
-        CallSiteKind::Dynamic,
-        CallTargetKind::Closure,
-    );
-
-    let callers = db.callers_for_target(closure)?;
-    let caller = caller_by_owner_kind_path(&callers, owner, CallSiteKind::Dynamic, &["closure"]);
-    assert_eq!(caller.status.status, CallStatusKind::Resolved);
-    assert_eq!(
-        caller.status.resolution,
-        Some(CallResolutionKind::LocalExact)
-    );
-    assert_eq!(caller.target.relation, CallRelationKind::DynamicClosure);
-    assert_eq!(caller.target.target_kind, CallTargetKind::Closure);
-
-    let paths = db.call_paths_from_owner(
-        owner,
-        CallPathOptions {
-            max_depth: 1,
-            max_paths: 8,
-        },
-    )?;
-    let path = paths
-        .iter()
-        .find(|path| path.start_id == owner && path.end_id == closure && path.depth == 1)
-        .expect("dynamic_calls should have a one-hop path to the closure owner");
-    assert_eq!(path.edges[0].caller_id, owner);
-    assert_eq!(path.edges[0].callee_id, closure);
-    assert_eq!(path.edges[0].relation, CallRelationKind::DynamicClosure);
-    assert_eq!(path.edges[0].target_kind, CallTargetKind::Closure);
+    assert_dynamic_closure_call(&db, &context, owner, &["closure"], "dynamic_calls")?;
 
     // tests/fixture_crates/fixture_call_graph/src/lib.rs:6:
     // `(|| 11)()` has no callee path, but it is a non-async closure literal
@@ -245,45 +207,38 @@ fn fixture_context_reads_projected_closure_binding_fn_pointer_cast_call() -> Res
     // tests/fixture_crates/fixture_call_graph/src/lib.rs:687-689:
     // `let closure = || 21; (closure as fn() -> i32)()` should preserve the
     // binding proof and target the closure executable owner.
-    let row = row_by_kind_path(&context, CallSiteKind::Dynamic, &["closure"]);
-    assert_eq!(row.site.owner_id, owner);
-    assert_eq!(row.site.arg_count, Some(0));
-    assert_eq!(row.site.generic_arg_count, None);
-    assert_eq!(row.targets.len(), 1, "closure binding cast row: {row:#?}");
-    let closure = row.targets[0].target_id;
-    assert_resolved_target(
-        row,
-        closure,
-        CallRelationKind::DynamicClosure,
-        CallSiteKind::Dynamic,
-        CallTargetKind::Closure,
-    );
-
-    let callers = db.callers_for_target(closure)?;
-    let caller = caller_by_owner_kind_path(&callers, owner, CallSiteKind::Dynamic, &["closure"]);
-    assert_eq!(caller.status.status, CallStatusKind::Resolved);
-    assert_eq!(
-        caller.status.resolution,
-        Some(CallResolutionKind::LocalExact)
-    );
-    assert_eq!(caller.target.relation, CallRelationKind::DynamicClosure);
-    assert_eq!(caller.target.target_kind, CallTargetKind::Closure);
-
-    let paths = db.call_paths_from_owner(
+    assert_dynamic_closure_call(
+        &db,
+        &context,
         owner,
-        CallPathOptions {
-            max_depth: 1,
-            max_paths: 8,
-        },
+        &["closure"],
+        "call_closure_binding_cast",
     )?;
-    let path = paths
-        .iter()
-        .find(|path| path.start_id == owner && path.end_id == closure && path.depth == 1)
-        .expect("call_closure_binding_cast should have a one-hop path to the closure owner");
-    assert_eq!(path.edges[0].caller_id, owner);
-    assert_eq!(path.edges[0].callee_id, closure);
-    assert_eq!(path.edges[0].relation, CallRelationKind::DynamicClosure);
-    assert_eq!(path.edges[0].target_kind, CallTargetKind::Closure);
+
+    Ok(())
+}
+
+#[test]
+fn fixture_context_reads_projected_dereferenced_closure_binding_call() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let owner = function_id_by_name(&db, "call_dereferenced_closure_binding")?;
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(
+        context.len(),
+        1,
+        "dereferenced closure binding context rows: {context:#?}"
+    );
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:692-694:
+    // `let closure = || 34; (*closure)()` should preserve the binding proof
+    // and target the closure executable owner.
+    assert_dynamic_closure_call(
+        &db,
+        &context,
+        owner,
+        &["closure"],
+        "call_dereferenced_closure_binding",
+    )?;
 
     Ok(())
 }
@@ -339,6 +294,60 @@ fn fixture_context_reads_projected_parenthesized_binding_dynamic_calls() -> Resu
             "parenthesized boxed dyn Fn Box::new setup call",
         ),
     );
+
+    Ok(())
+}
+
+fn assert_dynamic_closure_call(
+    db: &Database,
+    context: &[CallContextRow],
+    owner: Uuid,
+    path: &[&str],
+    label: &str,
+) -> Result<(), DbError> {
+    let row = row_by_kind_path(context, CallSiteKind::Dynamic, path);
+    assert_eq!(row.site.owner_id, owner);
+    assert_eq!(row.site.arg_count, Some(0));
+    assert_eq!(row.site.generic_arg_count, None);
+    assert_eq!(
+        row.targets.len(),
+        1,
+        "{label} dynamic closure row: {row:#?}"
+    );
+    let closure = row.targets[0].target_id;
+    assert_resolved_target(
+        row,
+        closure,
+        CallRelationKind::DynamicClosure,
+        CallSiteKind::Dynamic,
+        CallTargetKind::Closure,
+    );
+
+    let callers = db.callers_for_target(closure)?;
+    let caller = caller_by_owner_kind_path(&callers, owner, CallSiteKind::Dynamic, path);
+    assert_eq!(caller.status.status, CallStatusKind::Resolved);
+    assert_eq!(
+        caller.status.resolution,
+        Some(CallResolutionKind::LocalExact)
+    );
+    assert_eq!(caller.target.relation, CallRelationKind::DynamicClosure);
+    assert_eq!(caller.target.target_kind, CallTargetKind::Closure);
+
+    let paths = db.call_paths_from_owner(
+        owner,
+        CallPathOptions {
+            max_depth: 1,
+            max_paths: 8,
+        },
+    )?;
+    let path = paths
+        .iter()
+        .find(|path| path.start_id == owner && path.end_id == closure && path.depth == 1)
+        .unwrap_or_else(|| panic!("{label} should have a one-hop path to the closure owner"));
+    assert_eq!(path.edges[0].caller_id, owner);
+    assert_eq!(path.edges[0].callee_id, closure);
+    assert_eq!(path.edges[0].relation, CallRelationKind::DynamicClosure);
+    assert_eq!(path.edges[0].target_kind, CallTargetKind::Closure);
 
     Ok(())
 }

@@ -137,6 +137,49 @@ fn fixture_projection_stores_real_callable_expression_dynamic_call_proof_facts()
 }
 
 #[test]
+fn fixture_projection_stores_dereferenced_closure_binding_proof_facts() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let owner = function_id_by_name(&db, "call_dereferenced_closure_binding")?;
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(
+        context.len(),
+        1,
+        "dereferenced closure binding context rows: {context:#?}"
+    );
+
+    let row = row_by_kind_path(&context, CallSiteKind::Dynamic, &["closure"]);
+    assert_eq!(
+        row.targets.len(),
+        1,
+        "dereferenced closure binding should resolve to one closure owner: {row:#?}"
+    );
+    let closure = row.targets[0].target_id;
+    assert_resolved_target(
+        row,
+        closure,
+        CallRelationKind::DynamicClosure,
+        CallSiteKind::Dynamic,
+        CallTargetKind::Closure,
+    );
+    let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
+    assert_eq!(count, 3, "dereferenced closure binding proof fact count");
+
+    assert_owner_proof_edges(
+        &db,
+        "dereferenced closure binding dynamic",
+        &[OwnerProofEdge {
+            owner,
+            site: row.site.id,
+            span: row.site.span,
+            target: closure,
+        }],
+        "fixture_call_graph/src/lib.rs",
+        "dynamic_dispatch_unbounded",
+        ProofEdgeCount::Exact,
+    )
+}
+
+#[test]
 fn fixture_projection_stores_real_field_dynamic_call_proof_facts() -> Result<(), DbError> {
     let cases = [
         ResolvedDynamicContextCase {

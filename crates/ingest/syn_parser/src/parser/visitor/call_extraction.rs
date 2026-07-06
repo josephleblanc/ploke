@@ -926,8 +926,8 @@ fn classify_dynamic_callee(
         return DynamicCallCallee::IndexedInitializedLocalBinding { path, init_path };
     }
 
-    if let Some((path, init_path)) = dereferenced_initialized_path(callee, local_scopes) {
-        return DynamicCallCallee::DereferencedInitializedLocalBinding { path, init_path };
+    if let Some(callee) = dereferenced_local_binding_callee(callee, local_scopes) {
+        return callee;
     }
 
     if let Some(path) = fn_pointer_cast_path(callee) {
@@ -1226,10 +1226,10 @@ fn literal_usize(expr: &syn::Expr) -> Option<usize> {
     int.base10_parse().ok()
 }
 
-fn dereferenced_initialized_path(
+fn dereferenced_local_binding_callee(
     callee: &syn::Expr,
     local_scopes: &[Vec<LocalBindingProof>],
-) -> Option<(Vec<String>, Vec<String>)> {
+) -> Option<DynamicCallCallee> {
     let syn::Expr::Unary(unary) = unparen_expr(callee) else {
         return None;
     };
@@ -1248,24 +1248,32 @@ fn dereferenced_initialized_path(
     let [name] = path.as_slice() else {
         return None;
     };
-    let init_path = match visible_local_binding(name, local_scopes)? {
+    match visible_local_binding(name, local_scopes)? {
         LocalBindingProof::Typed {
             init_path: Some(init_path),
             ..
         }
-        | LocalBindingProof::Initialized { init_path, .. } => init_path.clone(),
+        | LocalBindingProof::Initialized { init_path, .. } => {
+            Some(DynamicCallCallee::DereferencedInitializedLocalBinding {
+                path,
+                init_path: init_path.clone(),
+            })
+        }
+        LocalBindingProof::Closure { closure_id, .. } => {
+            Some(DynamicCallCallee::DereferencedClosureBinding {
+                path,
+                closure_id: *closure_id,
+            })
+        }
         LocalBindingProof::Typed {
             init_path: None, ..
         }
         | LocalBindingProof::TraitObject { .. }
-        | LocalBindingProof::Closure { .. }
         | LocalBindingProof::Constructed { .. }
         | LocalBindingProof::Array { .. }
         | LocalBindingProof::Referenced { .. }
-        | LocalBindingProof::Untyped { .. } => return None,
-    };
-
-    Some((path, init_path))
+        | LocalBindingProof::Untyped { .. } => None,
+    }
 }
 
 fn fn_pointer_cast_path(callee: &syn::Expr) -> Option<Vec<String>> {

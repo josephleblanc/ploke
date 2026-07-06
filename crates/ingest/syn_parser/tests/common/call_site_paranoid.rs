@@ -276,6 +276,11 @@ pub enum ExpectedDynamicCallee<'a> {
         path: &'a [&'a str],
         init_path: &'a [&'a str],
     },
+    /// The callee expression is a dereferenced local closure binding.
+    DereferencedClosureBinding {
+        path: &'a [&'a str],
+        closure_id: ExecutableBodyId,
+    },
     /// The callee expression names a visible local value binding or parameter.
     LocalBinding { path: &'a [&'a str] },
     /// The callee expression names a visible local closure binding with a known executable owner.
@@ -342,6 +347,12 @@ impl ExpectedDynamicCallee<'_> {
                 DynamicCallCallee::DereferencedInitializedLocalBinding {
                     path: path.iter().copied().map(String::from).collect(),
                     init_path: init_path.iter().copied().map(String::from).collect(),
+                }
+            }
+            Self::DereferencedClosureBinding { path, closure_id } => {
+                DynamicCallCallee::DereferencedClosureBinding {
+                    path: path.iter().copied().map(String::from).collect(),
+                    closure_id,
                 }
             }
             Self::LocalBinding { path } => DynamicCallCallee::LocalBinding {
@@ -729,6 +740,26 @@ impl<'a> ExpectedCallSite<'a> {
                     path,
                     init_path,
                 },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a dynamic-call expectation whose callee is a dereferenced local closure binding.
+    pub const fn dynamic_dereferenced_closure_binding(
+        path: &'a [&'a str],
+        closure_id: ExecutableBodyId,
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::DereferencedClosureBinding { path, closure_id },
                 arg_count,
             },
             span,

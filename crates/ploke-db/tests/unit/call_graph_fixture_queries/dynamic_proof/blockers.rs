@@ -1,33 +1,6 @@
 use super::*;
 
 #[test]
-fn fixture_projection_marks_real_unsupported_dynamic_call_without_edges() -> Result<(), DbError> {
-    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
-    let mut expected = Vec::new();
-
-    for owner_name in ["call_dereferenced_closure_binding"] {
-        assert_projected_blockers(
-            &db,
-            &mut expected,
-            owner_name,
-            &[TargetlessBlockerCase {
-                row: TargetlessRowCase::dynamic(None, CallStatusKind::Unsupported, owner_name),
-                blocker_reason: "dynamic_dispatch_unbounded",
-            }],
-        )?;
-    }
-
-    assert_targetless_blocker_proofs(
-        &db,
-        "unsupported dynamic",
-        &expected,
-        "fixture_call_graph/src/lib.rs",
-    )?;
-
-    Ok(())
-}
-
-#[test]
 fn fixture_projection_marks_real_branch_and_match_dynamic_failures_without_edges()
 -> Result<(), DbError> {
     let cases = [
