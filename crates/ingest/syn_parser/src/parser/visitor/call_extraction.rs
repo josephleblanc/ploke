@@ -862,6 +862,12 @@ fn local_field_segments(
             path.push(member_name(&field.member));
             Some(path)
         }
+        syn::Expr::Index(index) => {
+            let index_value = literal_usize(index.index.as_ref())?;
+            let mut path = local_field_segments(index.expr.as_ref(), param_names, local_scopes)?;
+            path.push(index_value.to_string());
+            Some(path)
+        }
         _ => None,
     }
 }
@@ -937,6 +943,10 @@ fn classify_dynamic_callee(
         return DynamicCallCallee::ClosureLiteral { closure_id };
     }
 
+    if let Some((path, init_path)) = indexed_initialized_path(callee, param_names, local_scopes) {
+        return DynamicCallCallee::IndexedInitializedLocalBinding { path, init_path };
+    }
+
     if let Some((name, field_path)) = local_field_path(callee, param_names, local_scopes) {
         let mut path = Vec::with_capacity(field_path.len() + 1);
         path.push(name.clone());
@@ -948,10 +958,6 @@ fn classify_dynamic_callee(
             return DynamicCallCallee::FieldInitializedLocalBinding { path, init_path };
         }
         return DynamicCallCallee::FieldLocalBinding { path };
-    }
-
-    if let Some((path, init_path)) = indexed_initialized_path(callee, param_names, local_scopes) {
-        return DynamicCallCallee::IndexedInitializedLocalBinding { path, init_path };
     }
 
     if let Some(callee) = dereferenced_local_binding_callee(callee, local_scopes) {

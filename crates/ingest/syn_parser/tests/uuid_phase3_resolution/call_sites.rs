@@ -5740,7 +5740,8 @@ paranoid_call_site_test!(
         module_path: &["crate"],
         name: "call_indexed_field_function_param"
     },
-    expected: ExpectedCallSite::dynamic(
+    expected: ExpectedCallSite::dynamic_field_local_binding(
+        &["holder", "callbacks", "0"],
         INDEXED_FIELD_FUNCTION_PARAM_DYNAMIC_CALL_SPAN,
         0,
         &[],
@@ -5827,7 +5828,8 @@ paranoid_call_site_test!(
         module_path: &["crate"],
         name: "call_indexed_tuple_field_function_param"
     },
-    expected: ExpectedCallSite::dynamic(
+    expected: ExpectedCallSite::dynamic_field_local_binding(
+        &["holder", "0", "0"],
         INDEXED_TUPLE_FIELD_FUNCTION_PARAM_DYNAMIC_CALL_SPAN,
         0,
         &[],
@@ -5914,7 +5916,8 @@ paranoid_call_site_test!(
         module_path: &["crate"],
         name: "call_indexed_function_pointer"
     },
-    expected: ExpectedCallSite::dynamic(
+    expected: ExpectedCallSite::dynamic_field_local_binding(
+        &["funcs", "0"],
         INDEXED_FUNCTION_POINTER_DYNAMIC_CALL_SPAN,
         0,
         &[],
