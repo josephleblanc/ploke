@@ -14,7 +14,7 @@ use crate::{
 
 use super::{
     AssocPathResolution, CallRelationResolver, LocalFunctionPathResolution, LocalTraitResolution,
-    LocalTypeResolution, trait_declares_instance_method,
+    LocalTypeResolution, WorkspaceTypeResolution, trait_declares_instance_method,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -587,7 +587,39 @@ impl CallRelationResolver<'_> {
             }
         }
 
+        if self.workspace_type_use_alias_is_external(owner, type_id)? {
+            return Ok(true);
+        }
+
         Ok(false)
+    }
+
+    fn workspace_type_use_alias_is_external(
+        &self,
+        owner: CallBodyOwnerId,
+        type_id: OrdinaryTypeUseId,
+    ) -> Result<bool, SynParserError> {
+        let resolution = match self.type_node(type_id)? {
+            TypeNode::Named(node) => match node.path.as_slice() {
+                [] => WorkspaceTypeResolution::Unresolved,
+                [segment] => self.resolve_workspace_type_import(owner, segment)?,
+                path => self.resolve_workspace_type_path(owner, path)?,
+            },
+            TypeNode::Reference(node) => {
+                return self.workspace_type_use_alias_is_external(owner, node.referenced);
+            }
+            TypeNode::Paren(node) => {
+                return self.workspace_type_use_alias_is_external(owner, node.inner);
+            }
+            _ => return Ok(false),
+        };
+
+        match resolution {
+            WorkspaceTypeResolution::Resolved(candidate) => {
+                Self::workspace_type_target_alias_is_external(candidate)
+            }
+            WorkspaceTypeResolution::Unresolved | WorkspaceTypeResolution::Ambiguous => Ok(false),
+        }
     }
 
     fn is_external_type_path_method(

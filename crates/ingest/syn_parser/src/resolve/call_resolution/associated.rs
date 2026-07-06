@@ -87,7 +87,7 @@ impl CallRelationResolver<'_> {
         }
     }
 
-    fn workspace_type_target_alias_is_external(
+    pub(super) fn workspace_type_target_alias_is_external(
         candidate: WorkspaceTypeTarget<'_>,
     ) -> Result<bool, SynParserError> {
         let type_report = type_resolution_v2::resolve_type_relations_after_tree(

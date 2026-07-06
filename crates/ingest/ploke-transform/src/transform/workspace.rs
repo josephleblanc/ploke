@@ -253,6 +253,7 @@ mod tests {
     use ploke_common::workspace_root;
     use ploke_core::WorkspaceId;
     use std::collections::BTreeMap;
+    use std::fs;
     use std::path::PathBuf;
     use syn_parser::{discovery::workspace::WorkspaceMetadataSection, parse_workspace};
 
@@ -328,6 +329,116 @@ mod tests {
         assert_eq!(row[4], DataValue::List(expected_members));
         assert_eq!(row[5], DataValue::Null);
         assert_eq!(row[6], DataValue::from("0.2.0"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn transform_parsed_workspace_classifies_workspace_reexported_external_receiver_alias()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = tempfile::tempdir()?;
+        let root = workspace.path();
+        let provider = root.join("provider");
+        let consumer = root.join("consumer");
+        fs::create_dir_all(provider.join("src"))?;
+        fs::create_dir_all(consumer.join("src"))?;
+
+        fs::write(
+            root.join("Cargo.toml"),
+            r#"[workspace]
+members = ["provider", "consumer"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[workspace.dependencies]
+provider = { path = "provider" }
+"#,
+        )?;
+        fs::write(
+            provider.join("Cargo.toml"),
+            r#"[package]
+name = "provider"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+http = "1"
+"#,
+        )?;
+        fs::write(
+            provider.join("src/lib.rs"),
+            "pub type Request<T = ()> = http::Request<T>;\n",
+        )?;
+        fs::write(
+            consumer.join("Cargo.toml"),
+            r#"[package]
+name = "consumer"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+provider = { workspace = true }
+"#,
+        )?;
+        fs::write(
+            consumer.join("src/lib.rs"),
+            r#"use provider::Request;
+
+pub fn call_workspace_reexported_external_receiver<B>(mut req: Request<B>) {
+    req.extensions_mut();
+}
+"#,
+        )?;
+
+        let parsed_workspace = parse_workspace(root, None)?;
+        let db = Db::new(MemStorage::default()).expect("Failed to create database");
+        db.initialize().expect("Failed to initialize database");
+        create_schema_all(&db)?;
+
+        transform_parsed_workspace(&db, parsed_workspace)?;
+
+        let rows = db.run_script(
+            r#"?[owner_name, method_name, receiver_kind, receiver_path, status_kind, resolution_kind] :=
+                *function { id: owner_id, name: owner_name @ 'NOW' },
+                owner_name = "call_workspace_reexported_external_receiver",
+                *call_site {
+                    id: site_id,
+                    owner_id,
+                    call_kind: "Method",
+                    method_name,
+                    receiver_kind,
+                    receiver_path @ 'NOW'
+                },
+                method_name = "extensions_mut",
+                *call_resolution_status {
+                    source_id: site_id,
+                    status_kind,
+                    resolution_kind @ 'NOW'
+                }"#,
+            BTreeMap::new(),
+            cozo::ScriptMutability::Immutable,
+        )?;
+
+        assert_eq!(
+            rows.rows.len(),
+            1,
+            "workspace re-exported external receiver alias should project one method row: {rows:#?}"
+        );
+        let row = &rows.rows[0];
+        assert_eq!(&row[1], &DataValue::from("extensions_mut"));
+        assert_eq!(&row[2], &DataValue::from("LocalBinding"));
+        assert_eq!(&row[3], &DataValue::List(vec![DataValue::from("req")]));
+        assert_eq!(&row[4], &DataValue::from("External"));
+        assert_eq!(&row[5], &DataValue::Null);
 
         Ok(())
     }

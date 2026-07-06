@@ -15,7 +15,7 @@ Root plan: `.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md`
 
 Current phase: binding/type-aware semantic resolution.
 
-Current completed bucket: external `Service`-bound self-field receiver frontier.
+Current completed bucket: workspace re-exported external receiver proof.
 
 Exit criteria for the first implementation slice:
 
@@ -203,7 +203,19 @@ should prevent future resumes from reselecting already-covered shapes.
    - Broader borrowed receiver chains without exact parameter type proof remain
      unsupported.
 
-11. Next adjacent candidate:
+11. Workspace re-exported external receiver proof - completed:
+   - A focused transform workspace test builds a temporary two-member
+     workspace where a selected dependency re-exports an external type alias
+     (`pub type Request<T = ()> = http::Request<T>`) and a dependent crate
+     calls `req.extensions_mut()` through `use provider::Request`.
+   - The method resolver follows the existing workspace type proof to the
+     parsed dependency alias and reuses the associated-path alias external
+     predicate to classify the receiver as targetless `External`.
+   - This does not make dependency-root imports traversable and does not guess
+     concrete external targets; unresolved generic receiver rows without exact
+     workspace alias proof remain targetless.
+
+12. Next adjacent candidate:
    - Select from the coverage matrix parking lot rather than adding more
      import breadth by default.
    - Likely options are a broader async poll/resume proof carrier, an explicit
