@@ -291,6 +291,18 @@ future work can choose the next batch without rereading the diary-style notes.
   `cargo test -p ploke-rag --features call_graph real_corpus -- --nocapture`,
   and
   `cargo test -p ploke-tui --features call_graph code_item -- --nocapture`.
+- 2026-07-06: Real-corpus usage-question coverage now pins API argument-shape
+  preservation for external targetless calls. The axum source oracle is
+  `axum-macros/src/attr_parsing.rs:22`, where
+  `parse_parenthesized_attribute<K, T>` calls
+  `std::any::type_name::<K>()`. DB owner context and reach summaries preserve
+  zero value arguments and one turbofish generic argument while keeping the row
+  external and targetless; existing RAG and exact `code_item_lookup` tests
+  assert the same downstream payload shape. Focused verification:
+  `cargo test -p ploke-db axum_usage_questions_preserve_argument_shape_for_external_frontier -- --nocapture`,
+  `cargo test -p ploke-rag call_context_collection_preserves_axum_turbofish_generic_counts -- --nocapture`,
+  and
+  `cargo test -p ploke-tui --test integration code_item_lookup_returns_real_corpus_parse_attrs_callers -- --nocapture`.
 - 2026-07-01: Target-centered impact summaries now include
   `direct_call_sites`, carrying the exact target-centered `CallContextRow` /
   `CallContextInfo` rows for direct callers. This lets DB, RAG, and exact

@@ -424,6 +424,71 @@ fn axum_usage_questions_surface_external_frontier_for_dependency_calls() -> Resu
 }
 
 #[test]
+fn axum_usage_questions_preserve_argument_shape_for_external_frontier() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // API understanding:
+    //   "What argument shapes do existing callers pass?"
+    // Build or deployment optimization:
+    //   "Are there feature-gated or platform-specific call paths that should
+    //   be checked separately?"
+    //
+    // Source oracle:
+    //   axum-macros/src/attr_parsing.rs:7 defines
+    //     `parse_parenthesized_attribute<K, T>(...)`.
+    //   axum-macros/src/attr_parsing.rs:22 calls
+    //     `std::any::type_name::<K>()`.
+    // Current contract: dependency-root calls stay external and targetless,
+    // but DB call context preserves the explicit source argument shape. This
+    // proves the persisted graph can answer the turbofish arity question
+    // without inventing a local traversal edge for `std::any::type_name`.
+    let owner = function_id_by_name_in_module(
+        &db,
+        &["crate", "attr_parsing"],
+        "parse_parenthesized_attribute",
+    )?;
+    let context = db.call_context_for_owner(owner)?;
+    let row = row_by_path(&context, &["std", "any", "type_name"]);
+    assert_external_targetless(row);
+    assert_eq!(row.site.owner_id, owner);
+    assert_eq!(
+        row.site.arg_count,
+        Some(0),
+        "type_name::<K>() should preserve zero value arguments: {row:#?}"
+    );
+    assert_eq!(
+        row.site.generic_arg_count,
+        Some(1),
+        "type_name::<K>() should preserve one turbofish argument: {row:#?}"
+    );
+
+    let report = db.call_reach_for_owner(
+        owner,
+        CallPathOptions {
+            max_depth: 1,
+            max_paths: 16,
+        },
+    )?;
+    let frontier = report
+        .external_frontier_calls
+        .iter()
+        .find(|frontier| frontier.site.id == row.site.id)
+        .unwrap_or_else(|| {
+            panic!(
+                "reach report should retain type_name::<K>() as an external frontier row: {report:#?}"
+            )
+        });
+    assert_external_targetless(frontier);
+    assert_eq!(frontier.site.arg_count, Some(0));
+    assert_eq!(frontier.site.generic_arg_count, Some(1));
+
+    Ok(())
+}
+
+#[test]
 fn axum_usage_questions_surface_unresolved_frontier_for_generated_constructor()
 -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
