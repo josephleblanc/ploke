@@ -223,6 +223,125 @@ impl_self_type[self_type_id] :=
         .map_err(|e| DbError::Cozo(e.to_string()))
 }
 
+/// Resolve a trait impl method by canonical module path, item name, trait name, and self type.
+///
+/// This is the trait-impl counterpart to [`graph_resolve_exact_trait_method`]
+/// and [`graph_resolve_exact_impl_method`]. It is used for real Rust files
+/// where the method owner is an impl block such as
+/// `impl Service for HandlerService`.
+pub fn graph_resolve_exact_trait_impl_method(
+    db: &Database,
+    file_path: &Path,
+    module_path: &[String],
+    item_name: &str,
+    trait_name: &str,
+    type_name: &str,
+    trait_arg: Option<&str>,
+) -> Result<Vec<EmbeddingData>, DbError> {
+    let file_path_lit = serde_json::to_string(&file_path.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "\"\"".to_string());
+    let item_name_lit = serde_json::to_string(&item_name).unwrap_or_else(|_| "\"\"".to_string());
+    let trait_name_lit = serde_json::to_string(&trait_name).unwrap_or_else(|_| "\"\"".to_string());
+    let trait_path_lit =
+        serde_json::to_string(&vec![trait_name]).unwrap_or_else(|_| "[]".to_string());
+    let type_name_lit = serde_json::to_string(&type_name).unwrap_or_else(|_| "\"\"".to_string());
+    let type_path_lit =
+        serde_json::to_string(&vec![type_name]).unwrap_or_else(|_| "[]".to_string());
+    let mod_path_lit = serde_json::to_string(&module_path).unwrap_or_else(|_| "[]".to_string());
+    let trait_arg_filter = trait_arg.map_or_else(String::new, |arg| {
+        let arg_path = arg.split("::").collect::<Vec<_>>();
+        let arg_path_lit = serde_json::to_string(&arg_path).unwrap_or_else(|_| "[]".to_string());
+        let arg_name = arg_path.last().copied().unwrap_or(arg);
+        let arg_name_lit = serde_json::to_string(&arg_name).unwrap_or_else(|_| "\"\"".to_string());
+        format!(
+            r#"
+impl_trait_arg_target[arg_target_id] := *struct{{ id: arg_target_id, name: {arg_name_lit} @ 'NOW' }}
+impl_trait_arg_target[arg_target_id] := *enum{{ id: arg_target_id, name: {arg_name_lit} @ 'NOW' }}
+impl_trait_arg_target[arg_target_id] := *union{{ id: arg_target_id, name: {arg_name_lit} @ 'NOW' }}
+impl_trait_arg_target[arg_target_id] := *type_alias{{ id: arg_target_id, name: {arg_name_lit} @ 'NOW' }}
+impl_trait_arg_type[arg_type_id] :=
+  *named_type{{ type_id: arg_type_id, path @ 'NOW' }},
+  path == {arg_path_lit}
+impl_trait_arg_type[arg_type_id] :=
+  *type_relation{{
+    source_id: arg_type_id,
+    target_id: arg_target_id,
+    relation_kind: "Ordinary" @ 'NOW'
+  }},
+  impl_trait_arg_target[arg_target_id]
+impl_trait_arg_ok[trait_type_id] :=
+  *type_contains{{
+    parent_type_id: trait_type_id,
+    child_type_id: arg_type_id,
+    position: 0 @ 'NOW'
+  }},
+  impl_trait_arg_type[arg_type_id]
+"#
+        )
+    });
+    let trait_arg_condition = trait_arg
+        .map(|_| "  impl_trait_arg_ok[trait_type_id],\n")
+        .unwrap_or_default();
+    let ancestor_rules = lookup_ancestor_rules_now();
+
+    let script = format!(
+        r#"
+{ancestor_rules}
+module_has_file_mod[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_owner_id] := module_has_file_mod[mod_id], file_owner_id = mod_id
+file_owner_for_module[mod_id, file_owner_id] := ancestor[mod_id, parent], module_has_file_mod[parent], file_owner_id = parent
+
+impl_self_target[self_target_id] := *struct{{ id: self_target_id, name: {type_name_lit} @ 'NOW' }}
+impl_self_target[self_target_id] := *enum{{ id: self_target_id, name: {type_name_lit} @ 'NOW' }}
+impl_self_target[self_target_id] := *union{{ id: self_target_id, name: {type_name_lit} @ 'NOW' }}
+impl_self_type[self_type_id] :=
+  *type_relation{{
+    source_id: self_type_id,
+    target_id: self_target_id,
+    relation_kind: "Ordinary" @ 'NOW'
+  }},
+  impl_self_target[self_target_id]
+impl_self_type[self_type_id] :=
+  *named_type{{ type_id: self_type_id, path @ 'NOW' }},
+  path == {type_path_lit}
+
+impl_trait_type[trait_type_id] :=
+  *named_type{{ type_id: trait_type_id, path @ 'NOW' }},
+  path == {trait_path_lit}
+impl_trait_type[trait_type_id] :=
+  *trait_bound_type{{ type_id: trait_type_id, path @ 'NOW' }},
+  path == {trait_path_lit}
+impl_trait_type[trait_type_id] :=
+  *type_relation{{
+    source_id: trait_type_id,
+    target_id: trait_target_id,
+    relation_kind: "Trait" @ 'NOW'
+  }},
+  *trait{{ id: trait_target_id, name: {trait_name_lit} @ 'NOW' }}
+{trait_arg_filter}
+
+?[id, name, file_path, file_hash, hash, span, namespace, mod_path] :=
+  *method{{ id, name, tracking_hash: hash, span, owner_id: impl_id @ 'NOW' }},
+  *impl{{ id: impl_id, self_type: self_type_id, trait_type: trait_type_id @ 'NOW' }},
+  impl_self_type[self_type_id],
+  impl_trait_type[trait_type_id],
+{trait_arg_condition}
+  ancestor[id, mod_id],
+  *module{{ id: mod_id, path: mod_path @ 'NOW' }},
+  file_owner_for_module[mod_id, file_owner_id],
+  *module{{ id: file_owner_id, tracking_hash: file_hash @ 'NOW' }},
+  *file_mod{{ owner_id: file_owner_id, file_path, namespace @ 'NOW' }},
+  name == {item_name_lit},
+  file_path == {file_path_lit},
+  mod_path == {mod_path_lit}
+"#
+    );
+
+    let qr = db.raw_query(&script)?;
+    qr.to_embedding_nodes()
+        .map_err(|e| DbError::Cozo(e.to_string()))
+}
+
 /// This function is intended to be a helper that assists with a tool call to find all the edges
 /// leading to or from a target item, as specified by their node kind, file path, module path, and
 /// item name.

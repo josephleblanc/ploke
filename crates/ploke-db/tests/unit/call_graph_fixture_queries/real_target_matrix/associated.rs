@@ -43,6 +43,65 @@ fn axum_real_target_into_service_future_new_is_documented_gap() -> Result<(), Db
 }
 
 #[test]
+fn axum_exact_trait_impl_lookup_disambiguates_handler_service_call() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+    let service_file = file_path_by_suffix(&db, "axum/src/handler/service.rs")?;
+    let module_path = vec![
+        "crate".to_string(),
+        "handler".to_string(),
+        "service".to_string(),
+    ];
+
+    // Source oracle:
+    //   axum/src/handler/service.rs:146 defines
+    //   `impl Service<Request<B>> for HandlerService`.
+    //   axum/src/handler/service.rs:165 is the request-handling `call`.
+    //   axum/src/handler/service.rs:183 defines another
+    //   `impl Service<serve::IncomingStream<'_, L>> for HandlerService`.
+    // Expected exact lookup behavior: a trait + self-type qualifier alone keeps
+    // both Service impl methods visible, while the `Request` trait-input root
+    // selects the owner that contains the generated `IntoServiceFuture::new`
+    // frontier row.
+    let ambiguous = ploke_db::helpers::graph_resolve_exact_trait_impl_method(
+        &db,
+        &service_file,
+        &module_path,
+        "call",
+        "Service",
+        "HandlerService",
+        None,
+    )?;
+    assert_eq!(
+        ambiguous.len(),
+        2,
+        "plain Service for HandlerService should keep both call overloads visible"
+    );
+
+    let rows = ploke_db::helpers::graph_resolve_exact_trait_impl_method(
+        &db,
+        &service_file,
+        &module_path,
+        "call",
+        "Service",
+        "HandlerService",
+        Some("Request"),
+    )?;
+    assert_eq!(
+        rows.len(),
+        1,
+        "Service<Request> for HandlerService should select the request handler call"
+    );
+    assert_eq!(rows[0].name, "call");
+    assert_eq!(rows[0].file_path, service_file);
+    assert!(
+        rows[0].start_byte < rows[0].end_byte,
+        "trait impl method span should be non-empty"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn axum_real_target_json_from_bytes_self_paths_reach_inherent_method() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
     let target = method_id_by_name_and_body_substring(

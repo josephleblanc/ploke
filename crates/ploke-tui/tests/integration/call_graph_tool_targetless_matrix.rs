@@ -10,7 +10,7 @@ use crate::call_graph_tool_support::{
     DynamicToolCase, DynamicToolFixture, PathToolCase, PathToolFixture, ReceiverToolCase,
     ReceiverToolFixture, assert_dynamic_context, assert_dynamic_proof, assert_method_context,
     assert_method_proof, assert_path_blocker_proof, assert_path_context,
-    assert_path_context_absent, ui_field,
+    assert_path_context_absent, assert_path_resolution_proof, ui_field,
 };
 
 #[tokio::test]
@@ -321,7 +321,7 @@ async fn code_item_lookup_returns_from_ref_dependency_root_path_rows() {
             file_path: Cow::Owned(fixture.file_path.display().to_string()),
             node_kind: Cow::Borrowed(case.node_kind()),
             module_path: Cow::Owned(fixture.module_path_arg()),
-            owner_trait: None,
+            owner_trait: case.owner_trait().map(Cow::Borrowed),
             owner_type: case.owner_type().map(Cow::Borrowed),
         };
 
@@ -375,7 +375,7 @@ async fn code_item_lookup_returns_request_builder_alias_external_path_rows() {
             file_path: Cow::Owned(fixture.file_path.display().to_string()),
             node_kind: Cow::Borrowed(case.node_kind()),
             module_path: Cow::Owned(fixture.module_path_arg()),
-            owner_trait: None,
+            owner_trait: case.owner_trait().map(Cow::Borrowed),
             owner_type: case.owner_type().map(Cow::Borrowed),
         };
 
@@ -436,6 +436,88 @@ async fn code_item_lookup_returns_request_builder_alias_external_path_rows() {
                 .expect("proof count")
                 >= 2,
             "code_item_lookup should surface Request::builder external frontier proof rows"
+        );
+    }
+}
+
+#[tokio::test]
+async fn code_item_lookup_returns_generated_constructor_frontier_path_rows() {
+    for case in PathToolCase::INTO_SERVICE_FUTURE_NEW {
+        let fixture = PathToolFixture::new(case.clone()).await;
+        let params = LookupParams {
+            item_name: Cow::Borrowed(case.item),
+            file_path: Cow::Owned(fixture.file_path.display().to_string()),
+            node_kind: Cow::Borrowed(case.node_kind()),
+            module_path: Cow::Owned(fixture.module_path_arg()),
+            owner_trait: case.owner_trait().map(Cow::Borrowed),
+            owner_type: case.owner_type().map(Cow::Borrowed),
+        };
+
+        let result =
+            CodeItemLookup::execute(params, fixture.ctx("axum-into-service-future-new-lookup"))
+                .await
+                .unwrap_or_else(|err| panic!("{} code_item_lookup: {err}", fixture.case.label));
+        let payload: serde_json::Value =
+            serde_json::from_str(&result.content).expect("deserialize ConciseContext");
+        let call_context = payload
+            .get("call_context")
+            .and_then(serde_json::Value::as_array)
+            .expect("call_context array");
+        let proof_context = payload
+            .get("proof_context")
+            .and_then(serde_json::Value::as_array)
+            .expect("proof_context array");
+
+        // Matrix:
+        //   docs/active/agents/call-graph/
+        //   2026-06-28_real-corpus-call-site-oracle-matrices.md
+        //
+        // Source chain:
+        //   axum/src/handler/service.rs:155 binds
+        //   `type Future = super::future::IntoServiceFuture<H::Future>`.
+        //   axum/src/handler/service.rs:174 calls
+        //   `super::future::IntoServiceFuture::new(future)`.
+        //   axum/src/handler/future.rs:11-18 and axum/src/macros.rs:19-20
+        //   generate the concrete inherent constructor.
+        // Expected traversal: exact tool lookup can target
+        // `impl Service<Request<B>> for HandlerService::call` by both trait
+        // input and self type, but the generated constructor remains an
+        // unresolved targetless frontier until macro-expanded inherent items
+        // are modeled.
+        let callee = fixture.case.callee();
+        let site_id = assert_path_context(
+            call_context,
+            fixture.owner,
+            &callee,
+            &fixture.case.status,
+            fixture.case.label,
+            "lookup",
+        );
+        assert_path_resolution_proof(
+            proof_context,
+            fixture.owner,
+            site_id,
+            "bd:corpus-axum-call-graph",
+            "unresolved",
+            "type_resolution_missing",
+            fixture.case.label,
+            "lookup",
+        );
+
+        let ui = result.ui_payload.as_ref().expect("ui payload");
+        assert!(
+            ui_field(ui, "call_context_outgoing")
+                .parse::<usize>()
+                .expect("outgoing count")
+                >= 1,
+            "code_item_lookup should surface outgoing generated constructor frontier call context"
+        );
+        assert!(
+            ui_field(ui, "proof_context")
+                .parse::<usize>()
+                .expect("proof count")
+                >= 2,
+            "code_item_lookup should surface generated constructor frontier proof rows"
         );
     }
 }
@@ -636,7 +718,7 @@ async fn code_item_edges_returns_from_ref_dependency_root_path_rows() {
             file_path: Cow::Owned(fixture.file_path.display().to_string()),
             node_kind: Cow::Borrowed(case.node_kind()),
             module_path: Cow::Owned(fixture.module_path_arg()),
-            owner_trait: None,
+            owner_trait: case.owner_trait().map(Cow::Borrowed),
             owner_type: case.owner_type().map(Cow::Borrowed),
         };
 
@@ -680,7 +762,7 @@ async fn code_item_edges_returns_request_builder_alias_external_path_rows() {
             file_path: Cow::Owned(fixture.file_path.display().to_string()),
             node_kind: Cow::Borrowed(case.node_kind()),
             module_path: Cow::Owned(fixture.module_path_arg()),
-            owner_trait: None,
+            owner_trait: case.owner_trait().map(Cow::Borrowed),
             owner_type: case.owner_type().map(Cow::Borrowed),
         };
 
@@ -728,6 +810,71 @@ async fn code_item_edges_returns_request_builder_alias_external_path_rows() {
                 .expect("outgoing count")
                 >= 1,
             "code_item_edges should surface outgoing Request::builder external frontier call context"
+        );
+        let proof_count = proof_context.len().to_string();
+        assert_eq!(ui_field(ui, "proof_context"), proof_count.as_str());
+    }
+}
+
+#[tokio::test]
+async fn code_item_edges_returns_generated_constructor_frontier_path_rows() {
+    for case in PathToolCase::INTO_SERVICE_FUTURE_NEW {
+        let fixture = PathToolFixture::new(case.clone()).await;
+        let params = EdgesParams {
+            item_name: Cow::Borrowed(case.item),
+            file_path: Cow::Owned(fixture.file_path.display().to_string()),
+            node_kind: Cow::Borrowed(case.node_kind()),
+            module_path: Cow::Owned(fixture.module_path_arg()),
+            owner_trait: case.owner_trait().map(Cow::Borrowed),
+            owner_type: case.owner_type().map(Cow::Borrowed),
+        };
+
+        let result =
+            CodeItemEdges::execute(params, fixture.ctx("axum-into-service-future-new-edges"))
+                .await
+                .unwrap_or_else(|err| panic!("{} code_item_edges: {err}", fixture.case.label));
+        let payload: serde_json::Value =
+            serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
+        let call_context = payload
+            .get("node_info")
+            .and_then(|node| node.get("call_context"))
+            .and_then(serde_json::Value::as_array)
+            .expect("node_info.call_context array");
+        let proof_context = payload
+            .get("node_info")
+            .and_then(|node| node.get("proof_context"))
+            .and_then(serde_json::Value::as_array)
+            .expect("node_info.proof_context array");
+
+        // Same generated-constructor frontier oracle as the lookup test above,
+        // exercised through the edge-oriented payload.
+        let callee = fixture.case.callee();
+        let site_id = assert_path_context(
+            call_context,
+            fixture.owner,
+            &callee,
+            &fixture.case.status,
+            fixture.case.label,
+            "edges",
+        );
+        assert_path_resolution_proof(
+            proof_context,
+            fixture.owner,
+            site_id,
+            "bd:corpus-axum-call-graph",
+            "unresolved",
+            "type_resolution_missing",
+            fixture.case.label,
+            "edges",
+        );
+
+        let ui = result.ui_payload.as_ref().expect("ui payload");
+        assert!(
+            ui_field(ui, "call_context_outgoing")
+                .parse::<usize>()
+                .expect("outgoing count")
+                >= 1,
+            "code_item_edges should surface outgoing generated constructor frontier call context"
         );
         let proof_count = proof_context.len().to_string();
         assert_eq!(ui_field(ui, "proof_context"), proof_count.as_str());

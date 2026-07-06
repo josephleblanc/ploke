@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::PathBuf,
+};
 
 use cozo::DataValue;
 use ploke_db::multi_embedding::db_ext::{ANCESTOR_RULES_NOW, METHOD_NODE_ANCESTOR_RULE};
@@ -35,6 +38,27 @@ pub(super) fn setup_call_graph_db(fixture: &'static FixtureDb) -> Result<Databas
         fixture.id
     );
     Ok(db)
+}
+
+pub(super) fn file_path_by_suffix(db: &Database, suffix: &str) -> Result<PathBuf, DbError> {
+    let suffix_lit = serde_json::to_string(suffix).unwrap_or_else(|_| "\"\"".to_string());
+    let rows = db.raw_query(&format!(
+        r#"?[file_path] :=
+            *file_mod {{ file_path @ 'NOW' }},
+            ends_with(file_path, {suffix_lit})"#
+    ))?;
+    assert_eq!(
+        rows.rows.len(),
+        1,
+        "expected exactly one file path ending with {suffix}: {:#?}",
+        rows.rows
+    );
+    match &rows.rows[0][0] {
+        DataValue::Str(path) => Ok(PathBuf::from(path.as_str())),
+        other => Err(DbError::Cozo(format!(
+            "expected file_path string for {suffix}, got {other:?}"
+        ))),
+    }
 }
 
 pub(super) fn assert_one_edge_traversal(

@@ -6,7 +6,8 @@ use ploke_core::{
 use ploke_db::{
     CallPathOptions, Database, DbError,
     helpers::{
-        graph_resolve_exact, graph_resolve_exact_impl_method, graph_resolve_exact_trait_method,
+        graph_resolve_exact, graph_resolve_exact_impl_method,
+        graph_resolve_exact_trait_impl_method, graph_resolve_exact_trait_method,
         graph_resolve_exact_variant,
     },
 };
@@ -29,17 +30,23 @@ pub(super) const MODULE_PATH_EXPECTED: &str =
 pub(super) const LOOKUP_RETRY_HINT: &str = "Use a crate-relative module_path that begins with `crate`. If the exact module path is uncertain, call request_code_context with the item name/signature or read_file on the target file before retrying exact lookup.";
 
 pub(super) const OWNER_TRAIT_DESC: &str = r#"Optional trait name that owns a method item.
-Use only with node_kind=method when file_path, module_path, and item_name are ambiguous.
-Example: owner_trait="Handler" for Handler::call."#;
+Use only with node_kind=method. Use alone for trait method declarations, or combine with owner_type for trait impl methods.
+For trait impl methods, include one generic root when needed to disambiguate overloads.
+Examples: owner_trait="Handler" for Handler::call; owner_trait="Service<Request>" with owner_type="HandlerService" for impl Service<Request<B>> for HandlerService::call."#;
 
 pub(super) const OWNER_TYPE_DESC: &str = r#"Optional self type name that owns an inherent method item.
-Use only with node_kind=method when file_path, module_path, and item_name are ambiguous.
-Example: owner_type="HandleError" for HandleError::new."#;
+Use only with node_kind=method. Use alone for inherent methods, or combine with owner_trait for trait impl methods.
+Examples: owner_type="HandleError" for HandleError::new; owner_type="HandlerService" with owner_trait="Service<Request>" for impl Service<Request<B>> for HandlerService::call."#;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum OwnerQualifier {
     Trait(String),
     Type(String),
+    TraitImpl {
+        trait_name: String,
+        type_name: String,
+        trait_arg: Option<String>,
+    },
 }
 
 impl OwnerQualifier {
@@ -47,6 +54,17 @@ impl OwnerQualifier {
         match self {
             Self::Trait(owner) => format!(" and owner_trait {owner}"),
             Self::Type(owner) => format!(" and owner_type {owner}"),
+            Self::TraitImpl {
+                trait_name,
+                type_name,
+                trait_arg,
+            } => {
+                let trait_owner = trait_arg
+                    .as_ref()
+                    .map(|arg| format!("{trait_name}<{arg}>"))
+                    .unwrap_or_else(|| trait_name.clone());
+                format!(" and owner_trait {trait_owner} and owner_type {type_name}")
+            }
         }
     }
 }
@@ -121,26 +139,59 @@ pub(super) fn normalize_owner_qualifier(
     let owner_trait = owner_trait
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(str::to_string);
+        .map(parse_owner_trait_qualifier)
+        .transpose()?;
     let owner_type = owner_type
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string);
 
-    if owner_trait.is_some() && owner_type.is_some() {
-        return Err(ploke_error::Error::Domain(ploke_error::DomainError::Ui {
-            message: "Provide only one owner qualifier: owner_trait or owner_type.".to_string(),
-        }));
-    }
     if (owner_trait.is_some() || owner_type.is_some()) && !matches!(node_kind, NodeKind::Method) {
         return Err(ploke_error::Error::Domain(ploke_error::DomainError::Ui {
             message: "owner qualifiers can only be used when node_kind is `method`.".to_string(),
         }));
     }
 
-    Ok(owner_trait
-        .map(OwnerQualifier::Trait)
-        .or_else(|| owner_type.map(OwnerQualifier::Type)))
+    Ok(match (owner_trait, owner_type) {
+        (Some((trait_name, trait_arg)), Some(type_name)) => Some(OwnerQualifier::TraitImpl {
+            trait_name,
+            type_name,
+            trait_arg,
+        }),
+        (Some((owner, _)), None) => Some(OwnerQualifier::Trait(owner)),
+        (None, Some(owner)) => Some(OwnerQualifier::Type(owner)),
+        (None, None) => None,
+    })
+}
+
+fn parse_owner_trait_qualifier(
+    owner_trait: &str,
+) -> Result<(String, Option<String>), ploke_error::Error> {
+    let Some(open_idx) = owner_trait.find('<') else {
+        return Ok((owner_trait.to_string(), None));
+    };
+    let Some(close_idx) = owner_trait.rfind('>') else {
+        return Err(ploke_error::Error::Domain(ploke_error::DomainError::Ui {
+            message: format!("owner_trait `{owner_trait}` has an unmatched `<`."),
+        }));
+    };
+    if close_idx + 1 != owner_trait.len() {
+        return Err(ploke_error::Error::Domain(ploke_error::DomainError::Ui {
+            message: format!(
+                "owner_trait `{owner_trait}` must use a single trailing generic root, e.g. Service<Request>."
+            ),
+        }));
+    }
+    let trait_name = owner_trait[..open_idx].trim();
+    let trait_arg = owner_trait[open_idx + 1..close_idx].trim();
+    if trait_name.is_empty() || trait_arg.is_empty() || trait_arg.contains(',') {
+        return Err(ploke_error::Error::Domain(ploke_error::DomainError::Ui {
+            message: format!(
+                "owner_trait `{owner_trait}` must use one non-empty generic root, e.g. Service<Request>."
+            ),
+        }));
+    }
+    Ok((trait_name.to_string(), Some(trait_arg.to_string())))
 }
 
 pub(super) fn resolve_exact_item(
@@ -158,6 +209,19 @@ pub(super) fn resolve_exact_item(
         Some(OwnerQualifier::Type(owner)) => {
             graph_resolve_exact_impl_method(db, abs_path, mod_path, item_name, owner)
         }
+        Some(OwnerQualifier::TraitImpl {
+            trait_name,
+            type_name,
+            trait_arg,
+        }) => graph_resolve_exact_trait_impl_method(
+            db,
+            abs_path,
+            mod_path,
+            item_name,
+            trait_name,
+            type_name,
+            trait_arg.as_deref(),
+        ),
         None if matches!(node_kind, NodeKind::Variant) => {
             graph_resolve_exact_variant(db, abs_path, mod_path, item_name)
         }
@@ -582,9 +646,45 @@ mod tests {
     }
 
     #[test]
-    fn owner_qualifier_rejects_conflicts() {
-        let err = normalize_owner_qualifier(Some("Handler"), Some("HandleError"), NodeKind::Method)
-            .expect_err("conflicting owner qualifiers");
-        assert!(err.to_string().contains("owner_trait or owner_type"));
+    fn owner_qualifier_accepts_trait_impl_method_owner() {
+        let owner =
+            normalize_owner_qualifier(Some("Service"), Some("HandlerService"), NodeKind::Method)
+                .expect("trait impl qualifier")
+                .expect("owner qualifier");
+        assert_eq!(
+            owner,
+            OwnerQualifier::TraitImpl {
+                trait_name: "Service".to_string(),
+                type_name: "HandlerService".to_string(),
+                trait_arg: None,
+            }
+        );
+        assert_eq!(
+            owner.message(),
+            " and owner_trait Service and owner_type HandlerService"
+        );
+    }
+
+    #[test]
+    fn owner_qualifier_accepts_trait_impl_generic_root() {
+        let owner = normalize_owner_qualifier(
+            Some("Service<Request>"),
+            Some("HandlerService"),
+            NodeKind::Method,
+        )
+        .expect("trait impl qualifier")
+        .expect("owner qualifier");
+        assert_eq!(
+            owner,
+            OwnerQualifier::TraitImpl {
+                trait_name: "Service".to_string(),
+                type_name: "HandlerService".to_string(),
+                trait_arg: Some("Request".to_string()),
+            }
+        );
+        assert_eq!(
+            owner.message(),
+            " and owner_trait Service<Request> and owner_type HandlerService"
+        );
     }
 }

@@ -64,8 +64,8 @@ fn exact_lookup_tool_schemas_accept_owner_type_disambiguator() {
                 .and_then(serde_json::Value::as_str),
             Some(
                 r#"Optional self type name that owns an inherent method item.
-Use only with node_kind=method when file_path, module_path, and item_name are ambiguous.
-Example: owner_type="HandleError" for HandleError::new."#
+Use only with node_kind=method. Use alone for inherent methods, or combine with owner_trait for trait impl methods.
+Examples: owner_type="HandleError" for HandleError::new; owner_type="HandlerService" with owner_trait="Service<Request>" for impl Service<Request<B>> for HandlerService::call."#
             ),
             "owner_type should be documented from the shared lookup support constant"
         );

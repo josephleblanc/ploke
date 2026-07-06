@@ -69,6 +69,13 @@ enum PathOwner {
         file_suffix: &'static str,
         body: &'static str,
     },
+    Method {
+        trait_name: &'static str,
+        type_name: &'static str,
+        module_path: &'static [&'static str],
+        file_suffix: &'static str,
+        body: &'static str,
+    },
 }
 
 pub(crate) struct PathToolFixture {
@@ -255,6 +262,20 @@ impl PathToolCase {
         },
     }];
 
+    pub(crate) const INTO_SERVICE_FUTURE_NEW: [Self; 1] = [Self {
+        label: "axum/src/handler/service.rs:174 IntoServiceFuture::new generated frontier",
+        item: "call",
+        path: &["super", "future", "IntoServiceFuture", "new"],
+        status: CallStatusKind::Unresolved,
+        owner: PathOwner::Method {
+            trait_name: "Service<Request>",
+            type_name: "HandlerService",
+            module_path: &["crate", "handler", "service"],
+            file_suffix: "axum/src/handler/service.rs",
+            body: "super::future::IntoServiceFuture::new(future)",
+        },
+    }];
+
     pub(crate) fn callee(&self) -> CallCalleeInfo {
         CallCalleeInfo::Path {
             path: self.path.iter().map(|part| (*part).to_string()).collect(),
@@ -264,12 +285,21 @@ impl PathToolCase {
     pub(crate) fn node_kind(&self) -> &'static str {
         match self.owner {
             PathOwner::Function { .. } => "function",
+            PathOwner::Method { .. } => "method",
+        }
+    }
+
+    pub(crate) fn owner_trait(&self) -> Option<&'static str> {
+        match self.owner {
+            PathOwner::Function { .. } => None,
+            PathOwner::Method { trait_name, .. } => Some(trait_name),
         }
     }
 
     pub(crate) fn owner_type(&self) -> Option<&'static str> {
         match self.owner {
             PathOwner::Function { .. } => None,
+            PathOwner::Method { type_name, .. } => Some(type_name),
         }
     }
 }
@@ -361,6 +391,21 @@ impl PathToolFixture {
                 file_suffix,
                 body,
             } => function_owner_by_body(&db, case.item, module_path, file_suffix, body, case.label),
+            PathOwner::Method {
+                type_name,
+                module_path,
+                file_suffix,
+                body,
+                ..
+            } => owner_by_body(
+                &db,
+                case.item,
+                type_name,
+                Some(module_path),
+                file_suffix,
+                body,
+                case.label,
+            ),
         };
         assert!(
             db.project_call_proof_facts_for_node(owner.id, "bd:corpus-axum-call-graph")
@@ -600,6 +645,28 @@ pub(crate) fn assert_path_blocker_proof(
     label: &str,
     tool: &str,
 ) {
+    assert_path_resolution_proof(
+        proofs,
+        owner,
+        site_id,
+        build_domain,
+        "blocked",
+        blocker_reason,
+        label,
+        tool,
+    );
+}
+
+pub(crate) fn assert_path_resolution_proof(
+    proofs: &[serde_json::Value],
+    owner: Uuid,
+    site_id: Uuid,
+    build_domain: &str,
+    resolution_state: &str,
+    blocker_reason: &str,
+    label: &str,
+    tool: &str,
+) {
     let owner = owner.to_string();
     let site_id = site_id.to_string();
     let rows = proofs
@@ -619,10 +686,10 @@ pub(crate) fn assert_path_blocker_proof(
         rows.iter().any(|proof| {
             proof.kind == "call_resolution"
                 && proof.call_site_id.as_deref() == Some(site_id.as_str())
-                && proof.resolution_state.as_deref() == Some("blocked")
+                && proof.resolution_state.as_deref() == Some(resolution_state)
                 && proof.blocker_reason.as_deref() == Some(blocker_reason)
         }),
-        "{tool} should return the {blocker_reason} proof blocker for {label}: {proofs:#?}"
+        "{tool} should return the {resolution_state} {blocker_reason} proof row for {label}: {proofs:#?}"
     );
     assert!(
         rows.iter().all(|proof| {
