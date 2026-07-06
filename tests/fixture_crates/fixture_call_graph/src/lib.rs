@@ -1568,3 +1568,13 @@ fn call_single_function_pointer_param_cast(f: fn() -> i32) -> i32 {
 pub fn call_single_function_pointer_param_cast_with_local_target() -> i32 {
     call_single_function_pointer_param_cast(local_target)
 }
+
+pub fn local_fn_forward_call_resolves_local_item() -> i32 {
+    let value = inner();
+
+    fn inner() -> i32 {
+        assoc_const_value()
+    }
+
+    value
+}

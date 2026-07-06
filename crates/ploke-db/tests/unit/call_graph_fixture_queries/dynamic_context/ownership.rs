@@ -110,13 +110,32 @@ fn fixture_context_projects_local_item_initializer_calls_to_executable_owner() -
 #[test]
 fn fixture_context_projects_outer_local_fn_call_to_local_item_target() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
-    let outer = function_id_by_name(&db, "local_fn_body_call_is_not_outer_call_site")?;
-    let local_fn = local_item_owner_for_parent_with_label(&db, outer, "local_fn:inner")?;
-
     // tests/fixture_crates/fixture_call_graph/src/lib.rs:
     // local_fn_body_call_is_not_outer_call_site defines block-local `fn inner()`
     // and the outer function calls it as `inner()`. The target should be the
     // executable local-item body, not a top-level FunctionNode.
+    assert_outer_local_fn_call_to_local_item(&db, "local_fn_body_call_is_not_outer_call_site")
+}
+
+#[test]
+fn fixture_context_projects_forward_outer_local_fn_call_to_local_item_target() -> Result<(), DbError>
+{
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:
+    // local_fn_forward_call_resolves_local_item calls `inner()` before the
+    // block-local `fn inner()` item is visited. Rust item declarations are
+    // block-scoped, so the persisted call graph should still target the
+    // executable local-item body.
+    assert_outer_local_fn_call_to_local_item(&db, "local_fn_forward_call_resolves_local_item")
+}
+
+fn assert_outer_local_fn_call_to_local_item(
+    db: &Database,
+    owner_name: &str,
+) -> Result<(), DbError> {
+    let outer = function_id_by_name(db, owner_name)?;
+    let local_fn = local_item_owner_for_parent_with_label(db, outer, "local_fn:inner")?;
+
     let outer_context = db.call_context_for_owner(outer)?;
     let row = row_by_path(&outer_context, &["inner"]);
     assert_eq!(row.site.owner_id, outer);

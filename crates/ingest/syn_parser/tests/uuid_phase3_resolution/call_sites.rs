@@ -146,6 +146,8 @@ const LOCAL_STATIC_INITIALIZER_ASSOC_CONST_VALUE_CALL_SPAN: (usize, usize) = (31
 const LOCAL_FN_BODY_ASSOC_CONST_VALUE_CALL_SPAN: (usize, usize) = (31685, 31704);
 const LOCAL_FN_OUTER_INNER_CALL_SPAN: (usize, usize) = (31716, 31723);
 const LOCAL_IMPL_METHOD_BODY_ASSOC_CONST_VALUE_CALL_SPAN: (usize, usize) = (32051, 32070);
+const LOCAL_FN_FORWARD_OUTER_INNER_CALL_SPAN: (usize, usize) = (34900, 34907);
+const LOCAL_FN_FORWARD_BODY_ASSOC_CONST_VALUE_CALL_SPAN: (usize, usize) = (34942, 34961);
 const IF_INITIALIZED_FUNCTION_ITEM_BINDING_CALL_SPAN: (usize, usize) = (28338, 28341);
 const PARENTHESIZED_MATCH_INITIALIZED_FUNCTION_ITEM_BINDING_CALL_SPAN: (usize, usize) =
     (28529, 28534);
@@ -4966,6 +4968,37 @@ paranoid_call_site_test!(
             &["inner"],
             local_fn,
             LOCAL_FN_OUTER_INNER_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedLocalFunctionLocalExact { target: local_fn },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_local_fn_forward_call_resolves_local_function_path_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "local_fn_forward_call_resolves_local_item"
+    },
+    expected: {
+        let (graph, _tree) = crate::common::build_tree_for_tests("fixture_call_graph");
+        let owner = crate::common::call_site_paranoid::function_owner_context(
+            &graph,
+            &["crate"],
+            "local_fn_forward_call_resolves_local_item",
+        );
+        let local_fn = local_item_body_containing_span(
+            &graph,
+            &owner,
+            LOCAL_FN_FORWARD_BODY_ASSOC_CONST_VALUE_CALL_SPAN,
+        );
+        ExpectedCallSite::path_local_function_binding(
+            &["inner"],
+            local_fn,
+            LOCAL_FN_FORWARD_OUTER_INNER_CALL_SPAN,
             0,
             0,
             &[],

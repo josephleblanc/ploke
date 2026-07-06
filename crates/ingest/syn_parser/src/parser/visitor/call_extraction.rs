@@ -273,7 +273,9 @@ impl BodyCallVisitor<'_> {
 
 impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
     fn visit_block(&mut self, block: &'ast syn::Block) {
-        self.local_scopes.push(Vec::new());
+        self.local_scopes.push(local_function_bindings_in_block(
+            block, self.owner, self.cfgs,
+        ));
         for stmt in &block.stmts {
             self.visit_stmt(stmt);
         }
@@ -524,6 +526,30 @@ impl BodyCallVisitor<'_> {
         self.executable_bodies
             .append(&mut visitor.executable_bodies);
     }
+}
+
+fn local_function_bindings_in_block(
+    block: &syn::Block,
+    owner: CallBodyOwnerId,
+    cfgs: &[String],
+) -> Vec<LocalBindingProof> {
+    block
+        .stmts
+        .iter()
+        .filter_map(|stmt| {
+            let syn::Stmt::Item(syn::Item::Fn(item_fn)) = stmt else {
+                return None;
+            };
+            let byte_range = item_fn.span().byte_range();
+            let span = (byte_range.start, byte_range.end);
+            Some(LocalBindingProof::LocalFunction {
+                name: item_fn.sig.ident.to_string(),
+                body_id: ExecutableBodyId::LocalItem(generate_local_item_body_id(
+                    owner, span, cfgs,
+                )),
+            })
+        })
+        .collect()
 }
 
 fn path_segments(path: &syn::Path) -> Vec<String> {
