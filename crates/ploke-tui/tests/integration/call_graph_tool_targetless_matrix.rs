@@ -246,8 +246,11 @@ async fn code_item_lookup_returns_size_hint_external_real_corpus_row() {
 }
 
 #[tokio::test]
-async fn code_item_lookup_returns_request_parts_turbofish_targetless_real_corpus_row() {
-    for case in ReceiverToolCase::REQUEST_PARTS_TURBOFISH {
+async fn code_item_lookup_returns_unsupported_receiver_targetless_real_corpus_rows() {
+    for case in ReceiverToolCase::REQUEST_PARTS_TURBOFISH
+        .into_iter()
+        .chain(ReceiverToolCase::FUTURE_POLL)
+    {
         let fixture = ReceiverToolFixture::new(case.clone()).await;
         let params = LookupParams {
             item_name: Cow::Borrowed(case.item),
@@ -282,10 +285,13 @@ async fn code_item_lookup_returns_request_parts_turbofish_targetless_real_corpus
         //   `parts` from `Request::new(()).into_parts()`.
         //   axum-core/src/ext_traits/request_parts.rs:164 calls
         //   `parts.extract_with_state::<State<String>, String>(&state)`.
+        //   axum/src/error_handling/mod.rs:238 defines `HandleErrorFuture`.
+        //   axum/src/error_handling/mod.rs:251 calls
+        //   `self.project().future.poll(cx)` through a boxed dyn Future.
         // Expected traversal: exact owner lookup exposes the unsupported
-        // method-chain receiver row, preserves the two turbofish arguments,
-        // and leaves the row targetless until method-chain receiver proof is
-        // available.
+        // receiver rows, preserves method-generic arguments where present,
+        // and leaves them targetless until method-chain, async poll/resume, or
+        // runtime trait-object dispatch proof is available.
         let callee = fixture.case.callee();
         let site_id = assert_method_context(
             call_context,
@@ -311,14 +317,14 @@ async fn code_item_lookup_returns_request_parts_turbofish_targetless_real_corpus
                 .parse::<usize>()
                 .expect("outgoing count")
                 >= 1,
-            "code_item_lookup should surface outgoing request-parts turbofish targetless call context"
+            "code_item_lookup should surface outgoing unsupported receiver targetless call context"
         );
         assert!(
             ui_field(ui, "proof_context")
                 .parse::<usize>()
                 .expect("proof count")
                 >= 2,
-            "code_item_lookup should surface request-parts turbofish proof rows"
+            "code_item_lookup should surface unsupported receiver proof rows"
         );
     }
 }
@@ -686,8 +692,11 @@ async fn code_item_edges_returns_size_hint_external_real_corpus_row() {
 }
 
 #[tokio::test]
-async fn code_item_edges_returns_request_parts_turbofish_targetless_real_corpus_row() {
-    for case in ReceiverToolCase::REQUEST_PARTS_TURBOFISH {
+async fn code_item_edges_returns_unsupported_receiver_targetless_real_corpus_rows() {
+    for case in ReceiverToolCase::REQUEST_PARTS_TURBOFISH
+        .into_iter()
+        .chain(ReceiverToolCase::FUTURE_POLL)
+    {
         let fixture = ReceiverToolFixture::new(case.clone()).await;
         let params = EdgesParams {
             item_name: Cow::Borrowed(case.item),
@@ -715,8 +724,8 @@ async fn code_item_edges_returns_request_parts_turbofish_targetless_real_corpus_
             .and_then(serde_json::Value::as_array)
             .expect("node_info.proof_context array");
 
-        // Same request-parts turbofish unsupported-receiver oracle as the
-        // lookup test above, exercised through the edge-oriented payload.
+        // Same unsupported-receiver source oracles as the lookup test above,
+        // exercised through the edge-oriented payload.
         let callee = fixture.case.callee();
         let site_id = assert_method_context(
             call_context,
@@ -742,7 +751,7 @@ async fn code_item_edges_returns_request_parts_turbofish_targetless_real_corpus_
                 .parse::<usize>()
                 .expect("outgoing count")
                 >= 1,
-            "code_item_edges should surface outgoing request-parts turbofish targetless call context"
+            "code_item_edges should surface outgoing unsupported receiver targetless call context"
         );
         let proof_count = proof_context.len().to_string();
         assert_eq!(ui_field(ui, "proof_context"), proof_count.as_str());

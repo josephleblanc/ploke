@@ -160,6 +160,69 @@ async fn proof_context_collection_preserves_axum_route_oneshot_blockers() -> Res
 }
 
 #[tokio::test]
+async fn proof_context_collection_preserves_axum_future_poll_trait_object_blocker()
+-> Result<(), Error> {
+    init_tracing_once();
+    let db = axum_db()?;
+
+    let case = MethodCase {
+        label: "HandleErrorFuture::poll dyn Future dispatch",
+        method: "poll",
+        body: "self.project().future.poll(cx)",
+        callee: CallCalleeInfo::Method {
+            name: "poll".to_string(),
+            receiver: Some(CallReceiverInfo::Unsupported),
+        },
+        status: CallStatusKind::Unsupported,
+    };
+
+    let owner = method_id_by_file(
+        &db,
+        case.method,
+        case.body,
+        "axum/src/error_handling/mod.rs",
+    )?;
+    let projected = db.project_call_proof_facts_for_owner(owner, AXUM_DOMAIN)?;
+    assert!(
+        projected >= 2,
+        "{} should project targetless dyn Future poll proof rows",
+        case.label
+    );
+
+    let rag = init_test_rag_mock(Arc::clone(&db));
+    assert!(
+        !rag.proof_context_degraded(),
+        "projected axum dyn Future poll facts should enable RAG proof context"
+    );
+
+    let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+    let calls = call_context
+        .get(&owner)
+        .unwrap_or_else(|| panic!("{} should receive outgoing call context", case.label));
+    let site_id =
+        targetless_method_site_with_status(calls, owner, &case.callee, case.status, case.label);
+
+    let proof_context = rag.collect_proof_context(&[(owner, 1.0)])?;
+    let rows = proof_context
+        .get(&owner)
+        .unwrap_or_else(|| panic!("{} should receive projected proof rows", case.label));
+
+    // Matrix: dyn Future poll dispatch row.
+    // Source chain:
+    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //   axum/src/error_handling/mod.rs:238 defines `HandleErrorFuture`.
+    //   axum/src/error_handling/mod.rs:251 calls
+    //   `self.project().future.poll(cx)`.
+    // Expected proof traversal: owner-seeded proof context must include the
+    // call_site plus blocked call_resolution fact for the unsupported,
+    // targetless dyn Future dispatch row. There are zero callee edges until
+    // async poll/resume and runtime trait-object dispatch proof are modeled.
+    assert_site_blocker(rows, owner, site_id, "type_resolution_missing", case.label);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn proof_context_collection_preserves_axum_size_hint_self_field_frontier() -> Result<(), Error>
 {
     init_tracing_once();

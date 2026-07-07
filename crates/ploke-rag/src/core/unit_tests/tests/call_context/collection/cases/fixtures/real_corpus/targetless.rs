@@ -351,6 +351,68 @@ async fn call_context_collection_reads_axum_route_oneshot_receiver_gaps() -> Res
 }
 
 #[tokio::test]
+async fn call_context_collection_reads_axum_future_poll_trait_object_gap() -> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    let case = MethodCase {
+        label: "axum/src/error_handling/mod.rs:251 HandleErrorFuture::poll dyn Future",
+        method: "poll",
+        body: "self.project().future.poll(cx)",
+        callee: CallCalleeInfo::Method {
+            name: "poll".to_string(),
+            receiver: Some(CallReceiverInfo::Unsupported),
+        },
+        status: CallStatusKind::Unsupported,
+    };
+
+    let owner = method_id_by_file(
+        &db,
+        case.method,
+        case.body,
+        "axum/src/error_handling/mod.rs",
+    )?;
+    let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+    let context = call_context
+        .get(&owner)
+        .unwrap_or_else(|| panic!("{} should receive outgoing call context", case.label));
+    let matching = context
+        .iter()
+        .filter(|call| call.kind == CallSiteKind::Method && call.callee == case.callee)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching.len(),
+        1,
+        "{} should expose one targetless dyn Future poll row: {context:#?}",
+        case.label
+    );
+
+    // Matrix:
+    //   docs/active/agents/call-graph/
+    //   2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //
+    // Source chain:
+    //   axum/src/error_handling/mod.rs:238 defines `HandleErrorFuture`.
+    //   axum/src/error_handling/mod.rs:251 calls
+    //   `self.project().future.poll(cx)` on
+    //   `Pin<Box<dyn Future<Output = Result<Response, Infallible>>>>`.
+    // Expected traversal: the dyn Future dispatch row is structurally visible,
+    // but remains unsupported and targetless until async poll/resume and
+    // runtime trait-object dispatch proof are modeled.
+    let call = matching[0];
+    assert_eq!(call.owner_id, owner);
+    assert_eq!(call.status, case.status);
+    assert_eq!(call.resolution, None);
+    assert!(
+        call.targets.is_empty(),
+        "{} should remain targetless in RAG call context: {call:#?}",
+        case.label
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn call_context_collection_reads_axum_size_hint_self_field_frontier() -> Result<(), Error> {
     init_tracing_once();
     let (db, rag) = setup_axum_call_graph_rag()?;

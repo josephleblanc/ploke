@@ -223,6 +223,19 @@ impl ReceiverToolCase {
         receiver: ReceiverShape::Unsupported,
     }];
 
+    pub(crate) const FUTURE_POLL: [Self; 1] = [Self {
+        label: "axum/src/error_handling/mod.rs:251 HandleErrorFuture::poll dyn Future",
+        item: "poll",
+        callee: "poll",
+        status: CallStatusKind::Unsupported,
+        owner_type: Some("HandleErrorFuture"),
+        module_path: Some(&["crate", "error_handling", "future"]),
+        file_suffix: "axum/src/error_handling/mod.rs",
+        body: "self.project().future.poll(cx)",
+        generic_arg_count: None,
+        receiver: ReceiverShape::Unsupported,
+    }];
+
     pub(crate) fn callee(&self) -> CallCalleeInfo {
         let receiver = match self.receiver {
             ReceiverShape::MethodResult { method } => Some(CallReceiverInfo::MethodCallResult {
