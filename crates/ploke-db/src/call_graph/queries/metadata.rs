@@ -1,6 +1,6 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use cozo::{DataValue, ScriptMutability, UuidWrapper};
+use cozo::{DataValue, ScriptMutability};
 use uuid::Uuid;
 
 use crate::{
@@ -20,11 +20,32 @@ impl Database {
     /// (`vis_kind == "public"`). It does not infer effective exported API
     /// visibility through public traits, re-exports, or module visibility.
     pub fn call_node_info(&self, node_id: Uuid) -> Result<Option<CallNodeInfo>, DbError> {
-        let mut params = BTreeMap::new();
-        params.insert("node_id".to_string(), DataValue::Uuid(UuidWrapper(node_id)));
+        let mut ids = BTreeSet::new();
+        ids.insert(node_id);
+        Ok(call_node_infos(self, &ids)?.remove(&node_id))
+    }
+}
 
-        let script = format!(
-            r#"
+pub(super) fn call_node_infos(
+    db: &Database,
+    node_ids: &BTreeSet<Uuid>,
+) -> Result<BTreeMap<Uuid, CallNodeInfo>, DbError> {
+    if node_ids.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+
+    let input_rows = node_ids
+        .iter()
+        .map(|id| format!("[to_uuid(\"{id}\")]"))
+        .collect::<Vec<_>>()
+        .join(",\n");
+
+    let script = format!(
+        r#"
+input[id] <- [
+{input_rows}
+]
+
 ancestor[desc, desc] := *module{{ id: desc @ 'NOW' }}
 {ANCESTOR_RULES_NOW}
 {METHOD_NODE_ANCESTOR_RULE}
@@ -35,13 +56,13 @@ file_owner_for_module[mod_id, file_owner_id] := module_has_file_mod[mod_id], fil
 file_owner_for_module[mod_id, file_owner_id] := ancestor[mod_id, parent], module_has_file_mod[parent], file_owner_id = parent
 owner_anchor[id, vis_kind, mod_id] := *function{{ id, vis_kind @ 'NOW' }}, ancestor[id, mod_id]
 owner_anchor[id, vis_kind, mod_id] := *macro{{ id, vis_kind @ 'NOW' }}, ancestor[id, mod_id]
-owner_anchor[id, vis_kind, mod_id] := *method{{ id, vis_kind @ 'NOW' }}, ancestor[id, mod_id]
+owner_anchor[id, vis_kind, mod_id] := *method{{ id, owner_id: method_owner_id, vis_kind @ 'NOW' }}, ancestor[id, mod_id]
 owner_anchor[id, vis_kind, mod_id] := *const{{ id, vis_kind @ 'NOW' }}, ancestor[id, mod_id]
 owner_anchor[id, vis_kind, mod_id] := *static{{ id, vis_kind @ 'NOW' }}, ancestor[id, mod_id]
 owner_anchor[id, vis_kind, mod_id] := *call_body_owner{{ id, parent_id @ 'NOW' }}, owner_anchor[parent_id, vis_kind, mod_id]
 
 node_info[id, kind, name, vis_kind, is_unsafe, module_path, file_path] :=
-  id = $node_id,
+  input[id],
   *function{{ id, name, vis_kind, is_unsafe @ 'NOW' }},
   kind = "Function",
   ancestor[id, mod_id],
@@ -50,7 +71,7 @@ node_info[id, kind, name, vis_kind, is_unsafe, module_path, file_path] :=
   *file_mod{{ owner_id: file_owner_id, file_path @ 'NOW' }}
 
 node_info[id, kind, name, vis_kind, is_unsafe, module_path, file_path] :=
-  id = $node_id,
+  input[id],
   *macro{{ id, name, vis_kind @ 'NOW' }},
   kind = "Macro",
   is_unsafe = false,
@@ -60,8 +81,8 @@ node_info[id, kind, name, vis_kind, is_unsafe, module_path, file_path] :=
   *file_mod{{ owner_id: file_owner_id, file_path @ 'NOW' }}
 
 node_info[id, kind, name, vis_kind, is_unsafe, module_path, file_path] :=
-  id = $node_id,
-  *method{{ id, name, vis_kind, is_unsafe @ 'NOW' }},
+  input[id],
+  *method{{ id, owner_id: method_owner_id, name, vis_kind, is_unsafe @ 'NOW' }},
   kind = "Method",
   ancestor[id, mod_id],
   *module{{ id: mod_id, path: module_path @ 'NOW' }},
@@ -69,7 +90,7 @@ node_info[id, kind, name, vis_kind, is_unsafe, module_path, file_path] :=
   *file_mod{{ owner_id: file_owner_id, file_path @ 'NOW' }}
 
 node_info[id, kind, name, vis_kind, is_unsafe, module_path, file_path] :=
-  id = $node_id,
+  input[id],
   *const{{ id, name, vis_kind @ 'NOW' }},
   kind = "Const",
   is_unsafe = false,
@@ -79,7 +100,7 @@ node_info[id, kind, name, vis_kind, is_unsafe, module_path, file_path] :=
   *file_mod{{ owner_id: file_owner_id, file_path @ 'NOW' }}
 
 node_info[id, kind, name, vis_kind, is_unsafe, module_path, file_path] :=
-  id = $node_id,
+  input[id],
   *static{{ id, name, vis_kind @ 'NOW' }},
   kind = "Static",
   is_unsafe = false,
@@ -89,7 +110,7 @@ node_info[id, kind, name, vis_kind, is_unsafe, module_path, file_path] :=
   *file_mod{{ owner_id: file_owner_id, file_path @ 'NOW' }}
 
 node_info[id, kind, name, vis_kind, is_unsafe, module_path, file_path] :=
-  id = $node_id,
+  input[id],
   *call_body_owner{{ id, owner_kind: kind, label: name @ 'NOW' }},
   is_unsafe = false,
   owner_anchor[id, vis_kind, mod_id],
@@ -98,7 +119,7 @@ node_info[id, kind, name, vis_kind, is_unsafe, module_path, file_path] :=
   *file_mod{{ owner_id: file_owner_id, file_path @ 'NOW' }}
 
 node_info[id, kind, name, vis_kind, is_unsafe, module_path, file_path] :=
-  id = $node_id,
+  input[id],
   *struct{{ id, name, vis_kind @ 'NOW' }},
   kind = "Struct",
   is_unsafe = false,
@@ -108,7 +129,7 @@ node_info[id, kind, name, vis_kind, is_unsafe, module_path, file_path] :=
   *file_mod{{ owner_id: file_owner_id, file_path @ 'NOW' }}
 
 node_info[id, kind, name, vis_kind, is_unsafe, module_path, file_path] :=
-  id = $node_id,
+  input[id],
   *variant{{ id, name, owner_id: enum_id @ 'NOW' }},
   *enum{{ id: enum_id, vis_kind @ 'NOW' }},
   kind = "Variant",
@@ -121,22 +142,25 @@ node_info[id, kind, name, vis_kind, is_unsafe, module_path, file_path] :=
 ?[id, kind, name, vis_kind, is_unsafe, module_path, file_path] :=
   node_info[id, kind, name, vis_kind, is_unsafe, module_path, file_path]
 "#
-        );
+    );
 
-        let rows = self.run_script(&script, params, ScriptMutability::Immutable)?;
-        let mut infos = rows
-            .rows
-            .iter()
-            .map(|row| decode_call_node_info(row))
-            .collect::<Result<Vec<_>, DbError>>()?;
-        // Exact node identity is authoritative here; module/file path are
-        // descriptive metadata. Some associated items can reach nested test
-        // modules through ancestor rules, so choose a stable shortest path
-        // instead of failing an otherwise valid call-graph query.
-        infos.sort_by_key(call_node_info_rank);
-        infos.dedup();
-        Ok(infos.into_iter().next())
+    let rows = db.run_script(&script, BTreeMap::new(), ScriptMutability::Immutable)?;
+    let mut infos = rows
+        .rows
+        .iter()
+        .map(|row| decode_call_node_info(row))
+        .collect::<Result<Vec<_>, DbError>>()?;
+    // Exact node identity is authoritative here; module/file path are
+    // descriptive metadata. Some associated items can reach nested test
+    // modules through ancestor rules, so choose a stable shortest path
+    // instead of failing an otherwise valid call-graph query.
+    infos.sort_by_key(call_node_info_rank);
+
+    let mut by_id = BTreeMap::new();
+    for info in infos {
+        by_id.entry(info.id).or_insert(info);
     }
+    Ok(by_id)
 }
 
 pub(super) fn call_node_info_rank(

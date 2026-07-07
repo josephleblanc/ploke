@@ -41,21 +41,21 @@ file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_f
 ?[file_path, site_id, owner_id, span, resolution_kind] :=
     *call_site {
         id: site_id,
-        owner_id,
+        owner_id: owner_id,
         call_kind: "Path",
         path: $path,
-        span @ 'NOW'
+        span: span @ 'NOW'
     },
     *call_resolution_status {
         source_id: site_id,
         source_kind: "Path",
         status_kind: $status,
-        resolution_kind @ 'NOW'
+        resolution_kind: resolution_kind @ 'NOW'
     },
     ancestor[owner_id, module_id],
     *module { id: module_id @ 'NOW' },
     file_owner_for_module[module_id, file_id],
-    *file_mod { owner_id: file_id, file_path @ 'NOW' }
+    *file_mod { owner_id: file_id, file_path: file_path @ 'NOW' }
 :sort file_path, span, site_id
 "#,
     ]
@@ -100,38 +100,38 @@ pub(super) fn assert_resolved_path_line_fanout(
 module_has_file[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
 file_owner_for_module[mod_id, file_id] := module_has_file[mod_id], file_id = mod_id
 file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_file[parent], file_id = parent
-owner_module[id, mod_id] := *function{{ id @ 'NOW' }}, ancestor[id, mod_id]
-owner_module[id, mod_id] := *macro{{ id @ 'NOW' }}, ancestor[id, mod_id]
-owner_module[id, mod_id] := *method{{ id @ 'NOW' }}, ancestor[id, mod_id]
-owner_module[id, mod_id] := *const{{ id @ 'NOW' }}, ancestor[id, mod_id]
-owner_module[id, mod_id] := *static{{ id @ 'NOW' }}, ancestor[id, mod_id]
-owner_module[id, mod_id] := *call_body_owner{{ id, parent_id @ 'NOW' }}, owner_module[parent_id, mod_id]
+owner_module[id, mod_id] := *function{{ id: id @ 'NOW' }}, ancestor[id, mod_id]
+owner_module[id, mod_id] := *macro{{ id: id @ 'NOW' }}, ancestor[id, mod_id]
+owner_module[id, mod_id] := *method{{ id: id @ 'NOW' }}, ancestor[id, mod_id]
+owner_module[id, mod_id] := *const{{ id: id @ 'NOW' }}, ancestor[id, mod_id]
+owner_module[id, mod_id] := *static{{ id: id @ 'NOW' }}, ancestor[id, mod_id]
+owner_module[id, mod_id] := *call_body_owner{{ id: id, parent_id: parent_id @ 'NOW' }}, owner_module[parent_id, mod_id]
 
 ?[file_path, site_id, owner_id, span, resolution_kind, target_id] :=
     *call_site {{
         id: site_id,
-        owner_id,
+        owner_id: owner_id,
         call_kind: "Path",
         path: $path,
-        span @ 'NOW'
+        span: span @ 'NOW'
     }},
     *call_resolution_status {{
         source_id: site_id,
         source_kind: "Path",
         status_kind: "Resolved",
-        resolution_kind @ 'NOW'
+        resolution_kind: resolution_kind @ 'NOW'
     }},
     *call_relation {{
         source_id: site_id,
         source_kind: "Path",
         relation_kind: $relation,
         target_kind: $target_kind,
-        target_id @ 'NOW'
+        target_id: target_id @ 'NOW'
     }},
     owner_module[owner_id, module_id],
     *module {{ id: module_id @ 'NOW' }},
     file_owner_for_module[module_id, file_id],
-    *file_mod {{ owner_id: file_id, file_path @ 'NOW' }}
+    *file_mod {{ owner_id: file_id, file_path: file_path @ 'NOW' }}
 :sort file_path, span, site_id
 "#
     );
@@ -202,26 +202,26 @@ file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_f
 ?[file_path, site_id, owner_id, span, resolution_kind] :=
     *call_site {
         id: site_id,
-        owner_id,
+        owner_id: owner_id,
         call_kind: "Path",
         path: $path,
-        span @ 'NOW'
+        span: span @ 'NOW'
     },
     *call_resolution_status {
         source_id: site_id,
         source_kind: "Path",
         status_kind: $status,
-        resolution_kind @ 'NOW'
+        resolution_kind: resolution_kind @ 'NOW'
     },
     *call_body_owner {
         id: owner_id,
         owner_kind: $owner_kind,
-        parent_id @ 'NOW'
+        parent_id: parent_id @ 'NOW'
     },
     ancestor[parent_id, module_id],
     *module { id: module_id @ 'NOW' },
     file_owner_for_module[module_id, file_id],
-    *file_mod { owner_id: file_id, file_path @ 'NOW' }
+    *file_mod { owner_id: file_id, file_path: file_path @ 'NOW' }
 :sort file_path, span, site_id
 "#,
     ]
@@ -292,28 +292,28 @@ file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_f
 ?[file_path, site_id, owner_id, span, resolution_kind] :=
     *call_site {{
         id: site_id,
-        owner_id,
+        owner_id: owner_id,
         call_kind: "Method",
         method_name: $method,
         receiver_kind: $receiver_kind,
         receiver_path: $receiver_path,
-        span @ 'NOW'
+        span: span @ 'NOW'
     }},
     *call_resolution_status {{
         source_id: site_id,
         source_kind: "Method",
         status_kind: $status,
-        resolution_kind @ 'NOW'
+        resolution_kind: resolution_kind @ 'NOW'
     }},
     *call_body_owner {{
         id: owner_id,
         owner_kind: $owner_kind,
-        parent_id @ 'NOW'
+        parent_id: parent_id @ 'NOW'
     }},
     ancestor[parent_id, module_id],
     *module {{ id: module_id @ 'NOW' }},
     file_owner_for_module[module_id, file_id],
-    *file_mod {{ owner_id: file_id, file_path @ 'NOW' }}
+    *file_mod {{ owner_id: file_id, file_path: file_path @ 'NOW' }}
 :sort file_path, span, site_id
 "#
     );
@@ -360,23 +360,23 @@ file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_f
 ?[file_path, site_id, owner_id, span, resolution_kind] :=
     *call_site {{
         id: site_id,
-        owner_id,
+        owner_id: owner_id,
         call_kind: "Method",
         method_name: $method,
         receiver_kind: $receiver_kind,
         receiver_path: $receiver_path,
-        span @ 'NOW'
+        span: span @ 'NOW'
     }},
     *call_resolution_status {{
         source_id: site_id,
         source_kind: "Method",
         status_kind: $status,
-        resolution_kind @ 'NOW'
+        resolution_kind: resolution_kind @ 'NOW'
     }},
     ancestor[owner_id, module_id],
     *module {{ id: module_id @ 'NOW' }},
     file_owner_for_module[module_id, file_id],
-    *file_mod {{ owner_id: file_id, file_path @ 'NOW' }}
+    *file_mod {{ owner_id: file_id, file_path: file_path @ 'NOW' }}
 :sort file_path, span, site_id
 "#
     );
@@ -459,24 +459,24 @@ file_owner_for_module[mod_id, file_id] := module_has_file[mod_id], file_id = mod
 file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_file[parent], file_id = parent
 
 ?[file_path, site_id, owner_id, span, resolution_kind] :=
-    *method {{ id: owner_id, name: $method @ 'NOW' }},
+    *method {{ id: owner_id, owner_id: method_owner_id, name: $method @ 'NOW' }},
     *call_site {{
         id: site_id,
-        owner_id,
+        owner_id: owner_id,
         call_kind: "Dynamic",
         {arg_filter}
-        span @ 'NOW'
+        span: span @ 'NOW'
     }},
     *call_resolution_status {{
         source_id: site_id,
         source_kind: "Dynamic",
         status_kind: $status,
-        resolution_kind @ 'NOW'
+        resolution_kind: resolution_kind @ 'NOW'
     }},
     ancestor[owner_id, module_id],
     *module {{ id: module_id @ 'NOW' }},
     file_owner_for_module[module_id, file_id],
-    *file_mod {{ owner_id: file_id, file_path @ 'NOW' }}
+    *file_mod {{ owner_id: file_id, file_path: file_path @ 'NOW' }}
 :sort file_path, span, site_id
 "#
     );

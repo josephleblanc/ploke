@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::{
     Database, DbError,
-    database::{to_string, to_string_list},
+    database::{to_string, to_string_list, to_uuid},
     multi_embedding::db_ext::{ANCESTOR_RULES_NOW, METHOD_NODE_ANCESTOR_RULE},
 };
 
@@ -14,7 +14,7 @@ use super::super::{
     CallReachReport, CallRelationKind, CallSiteBucket, CallSiteKind, CallSiteRow, CallStatusKind,
     ModuleBoundaryEdge,
 };
-use super::metadata::{call_node_info_rank, decode_call_node_info};
+use super::metadata::{call_node_info_rank, call_node_infos, decode_call_node_info};
 
 impl Database {
     /// Summarizes bounded incoming call paths for impact/navigation questions.
@@ -44,9 +44,14 @@ impl Database {
             .filter(|caller| caller.is_public)
             .cloned()
             .collect();
+        let caller_ids = callers
+            .iter()
+            .map(|caller| caller.id)
+            .collect::<BTreeSet<_>>();
+        let test_nodes = test_node_ids(self, &caller_ids)?;
         let (mut test_callers, mut non_test_callers) = (Vec::new(), Vec::new());
         for caller in &callers {
-            if is_test_node(self, caller.id)? {
+            if test_nodes.contains(&caller.id) {
                 test_callers.push(caller.clone());
             } else {
                 non_test_callers.push(caller.clone());
@@ -181,8 +186,8 @@ module_has_file_mod[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
 file_owner_for_module[mod_id, file_owner_id] := module_has_file_mod[mod_id], file_owner_id = mod_id
 file_owner_for_module[mod_id, file_owner_id] := ancestor[mod_id, parent], module_has_file_mod[parent], file_owner_id = parent
 
-private_node[id, kind, name, vis_kind, module_path, file_path] :=
-  *function{{ id, name, vis_kind @ 'NOW' }},
+private_node[id, kind, name, vis_kind, is_unsafe, module_path, file_path] :=
+  *function{{ id, name, vis_kind, is_unsafe @ 'NOW' }},
   vis_kind != "public",
   kind = "Function",
   ancestor[id, mod_id],
@@ -190,17 +195,18 @@ private_node[id, kind, name, vis_kind, module_path, file_path] :=
   file_owner_for_module[mod_id, file_owner_id],
   *file_mod{{ owner_id: file_owner_id, file_path @ 'NOW' }}
 
-private_node[id, kind, name, vis_kind, module_path, file_path] :=
+private_node[id, kind, name, vis_kind, is_unsafe, module_path, file_path] :=
   *macro{{ id, name, vis_kind @ 'NOW' }},
   vis_kind != "public",
   kind = "Macro",
+  is_unsafe = false,
   ancestor[id, mod_id],
   *module{{ id: mod_id, path: module_path @ 'NOW' }},
   file_owner_for_module[mod_id, file_owner_id],
   *file_mod{{ owner_id: file_owner_id, file_path @ 'NOW' }}
 
-private_node[id, kind, name, vis_kind, module_path, file_path] :=
-  *method{{ id, name, vis_kind @ 'NOW' }},
+private_node[id, kind, name, vis_kind, is_unsafe, module_path, file_path] :=
+  *method{{ id, owner_id: method_owner_id, name, vis_kind, is_unsafe @ 'NOW' }},
   vis_kind != "public",
   kind = "Method",
   ancestor[id, mod_id],
@@ -210,8 +216,8 @@ private_node[id, kind, name, vis_kind, module_path, file_path] :=
 
 incoming[id] := *call_relation {{ target_id: id @ 'NOW' }}
 
-?[id, kind, name, vis_kind, module_path, file_path] :=
-  private_node[id, kind, name, vis_kind, module_path, file_path],
+?[id, kind, name, vis_kind, is_unsafe, module_path, file_path] :=
+  private_node[id, kind, name, vis_kind, is_unsafe, module_path, file_path],
   not incoming[id]
 
 :sort kind, file_path, module_path, name, id
@@ -328,12 +334,23 @@ fn cached_call_site(
     Ok(site)
 }
 
-fn is_test_node(db: &Database, node_id: Uuid) -> Result<bool, DbError> {
-    let mut params = BTreeMap::new();
-    params.insert("node_id".to_string(), DataValue::Uuid(UuidWrapper(node_id)));
+fn test_node_ids(db: &Database, node_ids: &BTreeSet<Uuid>) -> Result<BTreeSet<Uuid>, DbError> {
+    if node_ids.is_empty() {
+        return Ok(BTreeSet::new());
+    }
+
+    let input_rows = node_ids
+        .iter()
+        .map(|id| format!("[to_uuid(\"{id}\")]"))
+        .collect::<Vec<_>>()
+        .join(",\n");
 
     let script = format!(
         r#"
+input[id] <- [
+{input_rows}
+]
+
 ancestor[desc, desc] := *module{{ id: desc @ 'NOW' }}
 {ANCESTOR_RULES_NOW}
 {METHOD_NODE_ANCESTOR_RULE}
@@ -342,14 +359,15 @@ module_has_file[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
 file_owner_for_module[mod_id, file_id] := module_has_file[mod_id], file_id = mod_id
 file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_file[parent], file_id = parent
 
-owner_anchor[id, mod_id] := id = $node_id, *function{{ id @ 'NOW' }}, ancestor[id, mod_id]
-owner_anchor[id, mod_id] := id = $node_id, *macro{{ id @ 'NOW' }}, ancestor[id, mod_id]
-owner_anchor[id, mod_id] := id = $node_id, *method{{ id @ 'NOW' }}, ancestor[id, mod_id]
-owner_anchor[id, mod_id] := id = $node_id, *const{{ id @ 'NOW' }}, ancestor[id, mod_id]
-owner_anchor[id, mod_id] := id = $node_id, *static{{ id @ 'NOW' }}, ancestor[id, mod_id]
-owner_anchor[id, mod_id] := id = $node_id, *call_body_owner{{ id, parent_id @ 'NOW' }}, owner_anchor[parent_id, mod_id]
+owner_anchor[id, mod_id] := *function{{ id @ 'NOW' }}, ancestor[id, mod_id]
+owner_anchor[id, mod_id] := *macro{{ id @ 'NOW' }}, ancestor[id, mod_id]
+owner_anchor[id, mod_id] := *method{{ id, owner_id: method_owner_id @ 'NOW' }}, ancestor[id, mod_id]
+owner_anchor[id, mod_id] := *const{{ id @ 'NOW' }}, ancestor[id, mod_id]
+owner_anchor[id, mod_id] := *static{{ id @ 'NOW' }}, ancestor[id, mod_id]
+owner_anchor[id, mod_id] := *call_body_owner{{ id, parent_id @ 'NOW' }}, owner_anchor[parent_id, mod_id]
 
-?[module_path, file_path] :=
+?[id, module_path, file_path] :=
+  input[id],
   owner_anchor[id, mod_id],
   *module{{ id: mod_id, path: module_path @ 'NOW' }},
   file_owner_for_module[mod_id, file_id],
@@ -357,18 +375,19 @@ owner_anchor[id, mod_id] := id = $node_id, *call_body_owner{{ id, parent_id @ 'N
 "#
     );
 
-    let rows = db.run_script(&script, params, ScriptMutability::Immutable)?;
-    for row in rows.rows {
-        let module_path = to_string_list(&row[0])?;
-        let file_path = to_string(&row[1])?;
+    let rows = db.run_script(&script, BTreeMap::new(), ScriptMutability::Immutable)?;
+    let mut tests = BTreeSet::new();
+    for row in &rows.rows {
+        let module_path = to_string_list(&row[1])?;
+        let file_path = to_string(&row[2])?;
         if module_path.iter().any(|segment| segment == "tests")
             || file_path.contains("/tests/")
             || file_path.contains("\\tests\\")
         {
-            return Ok(true);
+            tests.insert(to_uuid(&row[0])?);
         }
     }
-    Ok(false)
+    Ok(tests)
 }
 
 fn boundary_call_sites(
@@ -541,12 +560,11 @@ fn node_info_for_paths(
     label: &str,
     select: impl Fn(&CallPath) -> Option<Uuid>,
 ) -> Result<Vec<CallNodeInfo>, DbError> {
+    let node_ids = paths.iter().filter_map(select).collect::<BTreeSet<_>>();
+    let infos = call_node_infos(db, &node_ids)?;
     let mut nodes = BTreeMap::new();
-    for path in paths {
-        let Some(node_id) = select(path) else {
-            continue;
-        };
-        let info = db.call_node_info(node_id)?.ok_or_else(|| {
+    for node_id in node_ids {
+        let info = infos.get(&node_id).cloned().ok_or_else(|| {
             DbError::Cozo(format!(
                 "missing call graph node metadata for {label} {node_id}"
             ))
@@ -588,16 +606,17 @@ fn sources_for_summary<'a>(
             path_nodes.insert(edge.callee_id);
         }
     }
+    node_ids.extend(path_nodes);
 
-    for node_id in path_nodes {
-        let info = db.call_node_info(node_id)?.ok_or_else(|| {
+    let infos = call_node_infos(db, &node_ids)?;
+    for node_id in &node_ids {
+        let info = infos.get(node_id).ok_or_else(|| {
             DbError::Cozo(format!(
                 "missing call graph node metadata for summary source file {node_id}"
             ))
         })?;
-        node_ids.insert(node_id);
-        files.insert(info.file_path);
-        modules.insert(info.module_path);
+        files.insert(info.file_path.clone());
+        modules.insert(info.module_path.clone());
     }
     let crates = source_crates_for_nodes(db, &node_ids)?;
 
@@ -637,7 +656,7 @@ file_owner_for_module[mod_id, file_owner_id] := ancestor[mod_id, parent], module
 
 node_anchor[id, mod_id] := *function{{ id @ 'NOW' }}, ancestor[id, mod_id]
 node_anchor[id, mod_id] := *macro{{ id @ 'NOW' }}, ancestor[id, mod_id]
-node_anchor[id, mod_id] := *method{{ id @ 'NOW' }}, ancestor[id, mod_id]
+node_anchor[id, mod_id] := *method{{ id, owner_id: method_owner_id @ 'NOW' }}, ancestor[id, mod_id]
 node_anchor[id, mod_id] := *const{{ id @ 'NOW' }}, ancestor[id, mod_id]
 node_anchor[id, mod_id] := *static{{ id @ 'NOW' }}, ancestor[id, mod_id]
 node_anchor[id, mod_id] := *call_body_owner{{ id, parent_id @ 'NOW' }}, node_anchor[parent_id, mod_id]

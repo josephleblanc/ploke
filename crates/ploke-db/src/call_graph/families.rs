@@ -160,6 +160,18 @@ pub(super) fn valid_call_target_rules() -> String {
 "#
             )
             .expect("writing call target rule to String should not fail");
+        } else if target_relation == "method" {
+            writeln!(
+                &mut rules,
+                r#"
+            valid_target[target_id, relation_kind, source_kind, target_kind] :=
+                relation_kind = "{relation}",
+                source_kind = "{source}",
+                target_kind = "{target}",
+                *{target_relation} {{ id: target_id, owner_id: target_owner_id @ 'NOW' }}
+"#
+            )
+            .expect("writing call target rule to String should not fail");
         } else {
             writeln!(
                 &mut rules,
@@ -195,6 +207,16 @@ pub(super) fn valid_call_owner_rules() -> String {
             valid_owner[owner_id, owner_kind] :=
                 owner_kind = "{kind}",
                 *{owner_relation} {{ id: owner_id, owner_kind @ 'NOW' }}
+"#
+            )
+            .expect("writing call owner rule to String should not fail");
+        } else if owner_relation == "method" {
+            writeln!(
+                &mut rules,
+                r#"
+            valid_owner[owner_id, owner_kind] :=
+                owner_kind = "{kind}",
+                *{owner_relation} {{ id: owner_id, owner_id: method_owner_id @ 'NOW' }}
 "#
             )
             .expect("writing call owner rule to String should not fail");

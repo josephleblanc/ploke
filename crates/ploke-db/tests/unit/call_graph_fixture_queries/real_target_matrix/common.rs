@@ -416,7 +416,7 @@ pub(super) fn method_ids_by_name_and_body_substring(
 
     let rows = db.raw_query_params(
         r#"?[id, body] :=
-            *method { id, name: $name, body @ 'NOW' }"#,
+            *method { id: id, owner_id: owner_id, name: $name, body: body @ 'NOW' }"#,
         params,
     )?;
     let normalized_marker = body_key(body_marker);
@@ -489,11 +489,11 @@ file_owner_for_module[mod_id, file_id] := module_has_file[mod_id], file_id = mod
 file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_file[parent], file_id = parent
 
 ?[id, body, file_path] :=
-    *method {{ id, name: $name, body @ 'NOW' }},
+    *method {{ id: id, owner_id: owner_id, name: $name, body: body @ 'NOW' }},
     ancestor[id, mod_id],
     *module{{ id: mod_id @ 'NOW' }},
     file_owner_for_module[mod_id, file_id],
-    *file_mod{{ owner_id: file_id, file_path @ 'NOW' }}
+    *file_mod{{ owner_id: file_id, file_path: file_path @ 'NOW' }}
 "#
     );
     let rows = db.raw_query_params(&script, params)?;
@@ -915,18 +915,18 @@ pub(super) fn assert_targetless_dynamic_rows_by_method_name(
 
     let rows = db.raw_query_params(
         r#"?[site_id, owner_id, arg_count, status_kind, resolution_kind] :=
-            *method { id: owner_id, name: $method @ 'NOW' },
+            *method { id: owner_id, owner_id: method_owner_id, name: $method @ 'NOW' },
             *call_site {
                 id: site_id,
-                owner_id,
+                owner_id: owner_id,
                 call_kind: "Dynamic",
-                arg_count @ 'NOW'
+                arg_count: arg_count @ 'NOW'
             },
             *call_resolution_status {
                 source_id: site_id,
                 source_kind: "Dynamic",
-                status_kind,
-                resolution_kind @ 'NOW'
+                status_kind: status_kind,
+                resolution_kind: resolution_kind @ 'NOW'
             }"#,
         params,
     )?;
@@ -975,8 +975,8 @@ pub(super) fn assert_no_dynamic_rows_by_method_name(
 
     let rows = db.raw_query_params(
         r#"?[site_id] :=
-            *method { id: owner_id, name: $method @ 'NOW' },
-            *call_site { id: site_id, owner_id, call_kind: "Dynamic" }"#,
+            *method { id: owner_id, owner_id: method_owner_id, name: $method @ 'NOW' },
+            *call_site { id: site_id, owner_id: owner_id, call_kind: "Dynamic" }"#,
         params,
     )?;
     assert!(
@@ -999,7 +999,7 @@ pub(super) fn assert_no_dynamic_rows_by_function_names(
         let rows = db.raw_query_params(
             r#"?[site_id] :=
                 *function { id: owner_id, name: $function @ 'NOW' },
-                *call_site { id: site_id, owner_id, call_kind: "Dynamic" }"#,
+                *call_site { id: site_id, owner_id: owner_id, call_kind: "Dynamic" }"#,
             params,
         )?;
         assert!(

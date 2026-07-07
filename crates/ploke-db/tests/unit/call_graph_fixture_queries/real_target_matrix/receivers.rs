@@ -132,10 +132,9 @@ fn axum_real_target_request_extensions_mut_receiver_statuses_are_proof_backed()
     //   axum-core/src/ext_traits/request.rs:302 calls `req.extensions_mut()`.
     //   axum/src/extension.rs:184 calls `req.extensions_mut()`.
     // The initializer path is an imported alias to external `http::Request`
-    // and remains targetless. Parameter receiver calls with direct external
-    // type proof, including a single-reference parameter, are now classified
-    // as external; the remaining generic receiver rows without that proof stay
-    // targetless unresolved rows.
+    // and remains targetless. Parameter receiver calls with direct external,
+    // single-reference, or request-routing receiver proof are now classified as
+    // external targetless rows.
     let owner =
         method_id_by_name_and_body_substring(&db, "extract_parts_with_state", "Request::new(())")?;
     let context = db.call_context_for_owner(owner)?;
@@ -169,7 +168,7 @@ fn axum_real_target_request_extensions_mut_receiver_statuses_are_proof_backed()
     let req_receiver = CallReceiver::LocalBinding {
         name: "req".to_string(),
     };
-    let unresolved_cases = [
+    let external_cases = [
         (
             // axum/src/extract/nested_path.rs:95 and :103
             // `SetNestedPath::call` has two `req.extensions_mut()` callsites
@@ -196,20 +195,6 @@ fn axum_real_target_request_extensions_mut_receiver_statuses_are_proof_backed()
             )?,
             1,
         ),
-    ];
-    for (label, owner, count) in unresolved_cases {
-        assert_owner_method_targetless_count(
-            &db,
-            owner,
-            "extensions_mut",
-            &req_receiver,
-            CallStatusKind::Unresolved,
-            count,
-            label,
-        )?;
-    }
-
-    let external_cases = [
         (
             // axum-core/src/extract/default_body_limit.rs:183
             // `DefaultBodyLimit::apply` has `req: &mut Request<B>`.
@@ -220,6 +205,7 @@ fn axum_real_target_request_extensions_mut_receiver_statuses_are_proof_backed()
                 "req.extensions_mut().insert(self.kind)",
                 "axum-core/src/extract/default_body_limit.rs",
             )?,
+            1,
         ),
         (
             // axum-core/src/extract/default_body_limit.rs:225
@@ -231,6 +217,7 @@ fn axum_real_target_request_extensions_mut_receiver_statuses_are_proof_backed()
                 "req.extensions_mut().insert(self.kind)",
                 "axum-core/src/extract/default_body_limit.rs",
             )?,
+            1,
         ),
         (
             // axum/src/extension.rs:184
@@ -242,15 +229,17 @@ fn axum_real_target_request_extensions_mut_receiver_statuses_are_proof_backed()
                 "req.extensions_mut().insert(self.value.clone())",
                 "axum/src/extension.rs",
             )?,
+            1,
         ),
     ];
-    for (label, owner) in external_cases {
-        assert_owner_method_targetless(
+    for (label, owner, count) in external_cases {
+        assert_owner_method_targetless_count(
             &db,
             owner,
             "extensions_mut",
             &req_receiver,
             CallStatusKind::External,
+            count,
             label,
         )?;
     }
@@ -260,8 +249,8 @@ fn axum_real_target_request_extensions_mut_receiver_statuses_are_proof_backed()
         "extensions_mut",
         "LocalBinding",
         Some(&["req"]),
-        CallStatusKind::Unresolved,
-        3,
+        CallStatusKind::External,
+        6,
     )?;
     assert_targetless_method_line_fanout(
         &db,
@@ -269,7 +258,7 @@ fn axum_real_target_request_extensions_mut_receiver_statuses_are_proof_backed()
         "extensions_mut",
         "LocalBinding",
         Some(&["req"]),
-        CallStatusKind::Unresolved,
+        CallStatusKind::External,
         &[
             SourceLineFanout {
                 file_suffix: "axum/src/extract/nested_path.rs",
@@ -279,24 +268,6 @@ fn axum_real_target_request_extensions_mut_receiver_statuses_are_proof_backed()
                 file_suffix: "axum/src/routing/path_router.rs",
                 lines: &[336],
             },
-        ],
-    )?;
-    assert_targetless_method_rows(
-        &db,
-        "extensions_mut",
-        "LocalBinding",
-        Some(&["req"]),
-        CallStatusKind::External,
-        3,
-    )?;
-    assert_targetless_method_line_fanout(
-        &db,
-        &CORPUS_AXUM_CALL_GRAPH,
-        "extensions_mut",
-        "LocalBinding",
-        Some(&["req"]),
-        CallStatusKind::External,
-        &[
             SourceLineFanout {
                 file_suffix: "axum-core/src/extract/default_body_limit.rs",
                 lines: &[183, 225],

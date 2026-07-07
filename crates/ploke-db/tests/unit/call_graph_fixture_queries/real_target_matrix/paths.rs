@@ -959,7 +959,7 @@ fn axum_real_target_generated_post_function_is_documented_gap() -> Result<(), Db
     // these real callsites yet.
     let rows = db.raw_query(
         r#"?[id] :=
-            *function { id, name: "post" @ 'NOW' }"#,
+            *function { id: id, name: "post" @ 'NOW' }"#,
     )?;
     assert!(
         rows.rows.is_empty(),
@@ -1031,7 +1031,7 @@ fn axum_real_target_generated_post_function_is_documented_gap() -> Result<(), Db
     ] {
         let rows = db.raw_query_params(
             r#"?[id] :=
-                *function { id, name: $name @ 'NOW' }"#,
+                *function { id: id, name: $name @ 'NOW' }"#,
             std::collections::BTreeMap::from([(
                 "name".to_string(),
                 cozo::DataValue::from(owner_name),

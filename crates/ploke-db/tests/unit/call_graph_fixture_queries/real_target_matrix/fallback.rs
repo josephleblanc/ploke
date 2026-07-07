@@ -192,13 +192,14 @@ fn chrono_try_receiver_method_rows_are_targetless_fallback_oracles() -> Result<(
     //   `DateTime::from_timestamp(...).ok_or(...)?.naive_utc()`.
     //
     // Current model gap: the preceding constructor paths resolve separately,
-    // but the `?` receiver is represented as a targetless `TryResult` method
-    // call with no traversal edge to `DateTime::naive_utc`.
+    // but the `?` receiver is represented as a targetless
+    // `TryMethodCallResult(ok_or)` method call with no traversal edge to
+    // `DateTime::naive_utc`.
     assert_targetless_method_rows(
         &db,
         "naive_utc",
-        "TryResult",
-        None,
+        "TryMethodCallResult",
+        Some(&["ok_or"]),
         CallStatusKind::Unsupported,
         2,
     )?;
@@ -206,8 +207,8 @@ fn chrono_try_receiver_method_rows_are_targetless_fallback_oracles() -> Result<(
         &db,
         &CORPUS_CHRONO_CALL_GRAPH,
         "naive_utc",
-        "TryResult",
-        None,
+        "TryMethodCallResult",
+        Some(&["ok_or"]),
         CallStatusKind::Unsupported,
         &[SourceLineFanout {
             file_suffix: "src/format/parsed.rs",
@@ -256,7 +257,9 @@ fn chrono_try_receiver_method_rows_are_targetless_fallback_oracles() -> Result<(
             &db,
             owner,
             "naive_utc",
-            &CallReceiver::TryResult,
+            &CallReceiver::TryMethodCallResult {
+                method_name: "ok_or".to_string(),
+            },
             CallStatusKind::Unsupported,
             &format!(
                 "chrono/src/format/parsed.rs:{} DateTime...?.naive_utc",

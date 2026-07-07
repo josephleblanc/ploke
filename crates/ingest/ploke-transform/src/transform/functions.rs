@@ -161,27 +161,41 @@ fn process_func(
 fn script_put(params: &BTreeMap<String, DataValue>, relation_name: &str) -> String {
     // let entry_names = params.keys().join(", ");
     let id_keywords = &["id", "function_id"];
+    let field_order = match relation_name {
+        "function" => Some(FunctionNodeSchema::SCHEMA_FIELDS),
+        "param" => Some(ParamNodeSchema::SCHEMA_FIELDS),
+        _ => None,
+    };
+    let ordered_fields = field_order
+        .map(|fields| {
+            fields
+                .iter()
+                .copied()
+                .filter(|field| params.contains_key(*field))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_else(|| params.keys().map(String::as_str).collect::<Vec<_>>());
 
-    let key_names = params
-        .keys()
-        .filter(|k| id_keywords.contains(&k.as_str()) && k.as_str() != "at")
+    let key_names = ordered_fields
+        .iter()
+        .filter(|field| id_keywords.contains(field) && **field != "at")
         .join(", ");
-    let entry_names = params
-        .keys()
-        .filter(|k| !id_keywords.contains(&k.as_str()) && k.as_str() != "at")
+    let entry_names = ordered_fields
+        .iter()
+        .filter(|field| !id_keywords.contains(field) && **field != "at")
         .join(", ");
     // let entry_names = params.keys().filter(|k| k.as_str() != "id" && k.as_str() != "at").join(", ");
 
     // let param_names = params.keys().map(|k| format!("${}", k)).join(", ");
 
-    let key_param_names = params
-        .keys()
-        .filter(|k| id_keywords.contains(&k.as_str()) && k.as_str() != "at")
+    let key_param_names = ordered_fields
+        .iter()
+        .filter(|field| id_keywords.contains(field) && **field != "at")
         .map(|k| format!("${}", k))
         .join(", ");
-    let param_names = params
-        .keys()
-        .filter(|k| !id_keywords.contains(&k.as_str()) && k.as_str() != "at")
+    let param_names = ordered_fields
+        .iter()
+        .filter(|field| !id_keywords.contains(field) && **field != "at")
         .map(|k| format!("${}", k))
         .join(", ");
 

@@ -271,18 +271,18 @@ macro_rules! define_schema {
             }
 
             pub fn script_put(&self, params: &BTreeMap<String, cozo::DataValue>) -> String {
-                let lhs_keys = params.keys()
-                        .filter(|k| ID_KEYWORDS.contains(&k.as_str()))
+                let lhs_keys = Self::SCHEMA_FIELDS.iter()
+                        .filter(|k| params.contains_key(**k) && ID_KEYWORDS.contains(k))
                         .join(", ");
-                let lhs_entries = params.keys()
-                        .filter(|k| !ID_KEYWORDS.contains(&k.as_str()))
+                let lhs_entries = Self::SCHEMA_FIELDS.iter()
+                        .filter(|k| params.contains_key(**k) && !ID_KEYWORDS.contains(k))
                         .join(", ");
-                let rhs_keys = params.keys()
-                        .filter(|k| ID_KEYWORDS.contains(&k.as_str()))
+                let rhs_keys = Self::SCHEMA_FIELDS.iter()
+                        .filter(|k| params.contains_key(**k) && ID_KEYWORDS.contains(k))
                         .map(|k| format!("${}", k))
                         .join(", ");
-                let rhs_entries = params.keys()
-                        .filter(|k| !ID_KEYWORDS.contains(&k.as_str()))
+                let rhs_entries = Self::SCHEMA_FIELDS.iter()
+                        .filter(|k| params.contains_key(**k) && !ID_KEYWORDS.contains(k))
                         .map(|k| format!("${}", k))
                         .join(", ");
                 let script = format!(
