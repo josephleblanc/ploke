@@ -369,15 +369,18 @@ future work can choose the next batch without rereading the diary-style notes.
   questions that need to map a path edge back to source.
   It also proves that an unsupported awaited receiver is still query-visible as
   a targetless fail-closed callsite and is excluded from traversal. Broad
-  `request_code_context` coverage now returns outgoing and incoming two-hop
-  call paths for the same axum chain, including expansion provenance. Exact
+  strict real-corpus `request_code_context` path assertions are quarantined
+  because BM25 seed choice is not a stable strict proof for one exact source or
+  target owner and the broad Axum search path is too expensive for default
+  runs. Exact forward and incoming traversal are instead pinned by
+  `code_item_call_path`, `code_item_lookup`, and `get_code_edges`. Exact
   `code_item_lookup` now attaches `ConciseContext.call_paths_from_owner` and
   `ConciseContext.call_paths_to_target`, plus UI path counts, so exact symbol
   lookup can answer direct call-navigation questions without relying on prompt
-  row caps. Exact `code_item_call_path` responses now include proof-context
-  rows for the source, target, and path nodes, and the axum tool regression
-  asserts that every returned path edge has a matching `call_edge` proof row
-  for its persisted callsite ID. DB now also exposes
+  row caps. Exact `code_item_call_path` responses now include proof-context rows
+  for the source, target, and path nodes, and the axum tool regression asserts
+  that every returned path edge has a matching `call_edge` proof row for its
+  persisted callsite ID. DB now also exposes
   `call_impact_for_target(target, options)`, a target-centered usage summary
   that returns the target node metadata, bounded incoming paths, eventual
   callers, direct callers, and directly stored-public callers. RAG exposes the
