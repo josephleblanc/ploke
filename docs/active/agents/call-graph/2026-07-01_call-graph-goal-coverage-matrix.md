@@ -49,11 +49,28 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: none selected after the local try-method result receiver slice.
+Current bucket: none selected after the awaited async-closure TUI surface slice.
 
-Latest completed bucket: bounded local try-method result receiver proof.
+Latest completed bucket: TUI tool surface for immediately awaited async-closure
+literal traversal.
 
 Completed evidence:
+
+- `request_code_context` now asserts
+  `call_awaited_async_closure_literal_with_body_call()` surfaces the outer
+  dynamic call to the `async_closure` executable owner and then the
+  closure-owned `local_target()` body call, matching the existing DB/RAG
+  two-hop traversal contract for `(async || local_target())().await`.
+- This is a downstream propagation proof over existing parser/DB/RAG facts,
+  not a new resolver branch. Non-immediate async-closure futures and broader
+  poll/resume value flow remain targetless/unsupported until there is an
+  explicit future-binding/effect model.
+- Focused TUI verification passed with
+  `cargo test -p ploke-tui request_code_context_returns_awaited_async_closure_literal_owner_call_context -- --nocapture`.
+
+Previously completed bucket: bounded local try-method result receiver proof.
+
+Previous evidence:
 
 - `call_try_method_result_instance_method()` now proves
   `value.try_clone_assoc()?.try_instance_value()` as two local method edges:
