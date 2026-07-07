@@ -1,3 +1,5 @@
+use ploke_db::CallPathOptions;
+
 use super::*;
 
 #[test]
@@ -157,6 +159,68 @@ fn fixture_context_reads_projected_generic_unsafe_extern_and_chained_calls() -> 
     assert!(
         relations_for_site(&db, row.site.id)?.rows.is_empty(),
         "qualified dyn Any downcast_mut must stay an external frontier without local targets"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn fixture_reach_surfaces_extern_c_call_as_external_frontier() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let owner = function_id_by_name(&db, "call_extern_c_function")?;
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Security analysis:
+    //   "Which call paths can reach unsafe blocks or FFI boundaries?"
+    //   "Which external dependency calls are made from this user-facing entrypoint?"
+    //
+    // Source oracle:
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:844 declares
+    //   `abs(value)` inside an `unsafe extern "C"` block and calls it from
+    //   `call_extern_c_function`. The call is visible as an external frontier,
+    //   but no local traversal edge is fabricated for the foreign function.
+    let report = db.call_reach_for_owner(
+        owner,
+        CallPathOptions {
+            max_depth: 2,
+            max_paths: 16,
+        },
+    )?;
+
+    assert_eq!(report.owner.id, owner);
+    assert_eq!(report.owner.name, "call_extern_c_function");
+    assert!(
+        report.paths.is_empty() && report.callees.is_empty(),
+        "extern C calls should not fabricate local reach edges: {report:#?}"
+    );
+    let frontier = assert_targetless_row(
+        &report.frontier_calls,
+        owner,
+        TargetlessRowCase::path(&["abs"], 1, CallStatusKind::External, "extern C abs"),
+    );
+    let external_frontier = assert_targetless_row(
+        &report.external_frontier_calls,
+        owner,
+        TargetlessRowCase::path(&["abs"], 1, CallStatusKind::External, "extern C abs"),
+    );
+    assert_eq!(
+        external_frontier.site.id, frontier.site.id,
+        "external frontier subset should preserve the same extern C callsite"
+    );
+    assert!(
+        report.unsupported_frontier_calls.is_empty()
+            && report.unresolved_frontier_calls.is_empty()
+            && report.ambiguous_frontier_calls.is_empty(),
+        "extern C reach should classify the FFI boundary as external only: {report:#?}"
+    );
+    assert!(
+        report
+            .source_files
+            .iter()
+            .any(|file| file.ends_with("fixture_call_graph/src/lib.rs")),
+        "extern C reach should point back to the fixture source file: {report:#?}"
     );
 
     Ok(())
