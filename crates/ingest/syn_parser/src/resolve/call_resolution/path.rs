@@ -41,25 +41,14 @@ impl CallRelationResolver<'_> {
         match &call.callee {
             PathCallCallee::ItemPath => {}
             PathCallCallee::ValueBinding { path } => {
-                if let Some(target) = self.resolve_parameter_value_call(call.owner, path)? {
-                    match target {
-                        ParameterCallTarget::Function(target) => {
-                            relations.push(CallRelation::Function {
-                                source: call.id,
-                                target,
-                            });
-                        }
-                        ParameterCallTarget::Closure(target) => {
-                            relations.push(CallRelation::Closure {
-                                source: call.id,
-                                target,
-                            });
-                        }
-                    }
-                    statuses.push(CallResolutionStatus::Resolved {
-                        source,
-                        kind: CallResolutionKind::LocalExact,
-                    });
+                if self.resolve_parameter_value_path_call(call, path, relations, statuses)? {
+                    return Ok(());
+                }
+                statuses.push(CallResolutionStatus::Unsupported { source });
+                return Ok(());
+            }
+            PathCallCallee::AliasedValueBinding { source_path, .. } => {
+                if self.resolve_parameter_value_path_call(call, source_path, relations, statuses)? {
                     return Ok(());
                 }
                 statuses.push(CallResolutionStatus::Unsupported { source });
@@ -265,6 +254,38 @@ impl CallRelationResolver<'_> {
         }
 
         Ok(())
+    }
+
+    fn resolve_parameter_value_path_call(
+        &self,
+        call: &PathCallNode,
+        path: &[String],
+        relations: &mut Vec<CallRelation>,
+        statuses: &mut Vec<CallResolutionStatus>,
+    ) -> Result<bool, SynParserError> {
+        let Some(target) = self.resolve_parameter_value_call(call.owner, path)? else {
+            return Ok(false);
+        };
+
+        match target {
+            ParameterCallTarget::Function(target) => {
+                relations.push(CallRelation::Function {
+                    source: call.id,
+                    target,
+                });
+            }
+            ParameterCallTarget::Closure(target) => {
+                relations.push(CallRelation::Closure {
+                    source: call.id,
+                    target,
+                });
+            }
+        }
+        statuses.push(CallResolutionStatus::Resolved {
+            source: AnyCallSiteId::Path(call.id),
+            kind: CallResolutionKind::LocalExact,
+        });
+        Ok(true)
     }
 
     pub(super) fn resolve_parameter_value_call(

@@ -73,6 +73,12 @@ pub(super) fn classify_dynamic_callee(
                     | LocalBindingProof::Referenced { .. }
                     | LocalBindingProof::LocalFunction { .. }
                     | LocalBindingProof::Untyped { .. } => DynamicCallCallee::Other,
+                    LocalBindingProof::ValueAlias { source_path, .. } => {
+                        DynamicCallCallee::FnPointerCastAliasedLocalBinding {
+                            path,
+                            source_path: source_path.clone(),
+                        }
+                    }
                     LocalBindingProof::Closure { closure_id, .. } => {
                         DynamicCallCallee::FnPointerCastClosureBinding {
                             path,
@@ -192,6 +198,12 @@ fn classify_dynamic_path_expr(
                     DynamicCallCallee::ClosureBinding {
                         path,
                         closure_id: *closure_id,
+                    }
+                }
+                LocalBindingProof::ValueAlias { source_path, .. } => {
+                    DynamicCallCallee::AliasedLocalBinding {
+                        path,
+                        source_path: source_path.clone(),
                     }
                 }
                 LocalBindingProof::Typed {
@@ -408,6 +420,7 @@ fn dereferenced_local_binding_callee(
         | LocalBindingProof::Array { .. }
         | LocalBindingProof::Referenced { .. }
         | LocalBindingProof::LocalFunction { .. }
+        | LocalBindingProof::ValueAlias { .. }
         | LocalBindingProof::Untyped { .. } => None,
     }
 }

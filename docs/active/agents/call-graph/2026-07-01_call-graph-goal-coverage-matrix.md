@@ -49,10 +49,30 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: none selected after the real-corpus dyn Future poll downstream
-propagation slice.
+Current bucket: none selected after the local callable-parameter alias proof
+slice.
 
-Latest completed bucket: downstream targetless propagation for a real-corpus
+Latest completed bucket: local callable-parameter alias proof for complete
+private single-caller helpers.
+
+Completed evidence:
+
+- Added fixture-backed parser/resolver proof for
+  `call_single_aliased_function_pointer_param(f: fn() -> i32) { let g = f; g() }`
+  and
+  `call_single_parenthesized_aliased_function_pointer_param(f: fn() -> i32) { let g = f; (g)() }`.
+- The call row preserves the observed callee path `g`, while resolver proof
+  follows the local alias back to parameter `f` and then through the existing
+  complete private single-caller argument proof to `local_target`.
+- DB context, target-centered callers, one-hop traversal, and proof projection
+  now cover both path and dynamic alias forms. RAG call context covers both
+  forms, and TUI lookup/edges cover the dynamic alias form through the existing
+  resolved callable tool matrix.
+- This remains bounded to simple local aliases of visible parameters or prior
+  aliases. Arbitrary callable value flow, callable trait objects, and public or
+  multi-caller parameter dispatch remain fail-closed.
+
+Previously completed bucket: downstream targetless propagation for a real-corpus
 dyn Future poll dispatch row.
 
 Completed evidence:

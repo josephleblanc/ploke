@@ -689,6 +689,12 @@ fn classify_path_callee(
                     body_id: *body_id,
                 }
             }
+            LocalBindingProof::ValueAlias { source_path, .. } => {
+                PathCallCallee::AliasedValueBinding {
+                    path: path.to_vec(),
+                    source_path: source_path.clone(),
+                }
+            }
             LocalBindingProof::Typed {
                 init_path: None, ..
             }
@@ -895,6 +901,14 @@ fn local_binding_proof(
                         LocalBindingProof::Initialized {
                             name: name.clone(),
                             init_path,
+                        }
+                    })
+                })
+                .or_else(|| {
+                    value_alias_path(init_expr, param_names, local_scopes).map(|source_path| {
+                        LocalBindingProof::ValueAlias {
+                            name: name.clone(),
+                            source_path,
                         }
                     })
                 })
@@ -1465,6 +1479,30 @@ fn referenced_alias_path(
     }
 }
 
+fn value_alias_path(
+    expr: Option<&syn::Expr>,
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<Vec<String>> {
+    let syn::Expr::Path(path) = unparen_expr(expr?) else {
+        return None;
+    };
+    if path.qself.is_some() {
+        return None;
+    }
+    let path = path_segments(&path.path);
+    let [name] = path.as_slice() else {
+        return None;
+    };
+    if param_names.iter().any(|candidate| candidate == name) {
+        return Some(path);
+    }
+    match visible_local_binding(name, local_scopes) {
+        Some(LocalBindingProof::ValueAlias { source_path, .. }) => Some(source_path.clone()),
+        _ => None,
+    }
+}
+
 fn init_target_path(
     path: &[String],
     param_names: &[String],
@@ -1500,6 +1538,7 @@ fn init_target_path(
             | LocalBindingProof::TupleReturn { .. }
             | LocalBindingProof::Closure { .. }
             | LocalBindingProof::LocalFunction { .. }
+            | LocalBindingProof::ValueAlias { .. }
             | LocalBindingProof::Constructed { .. }
             | LocalBindingProof::Array { .. }
             | LocalBindingProof::Referenced { .. }

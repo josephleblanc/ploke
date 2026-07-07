@@ -155,6 +155,12 @@ pub enum PathCallCallee {
         path: Vec<String>,
         init_path: Vec<String>,
     },
+    /// The callee path names a visible local binding that aliases another
+    /// visible local value binding or parameter.
+    AliasedValueBinding {
+        path: Vec<String>,
+        source_path: Vec<String>,
+    },
 }
 
 /// Structural record for a method-call-site occurrence.
@@ -221,6 +227,12 @@ pub enum DynamicCallCallee {
     /// cast to a bare function pointer before being called, such as
     /// `(f as fn() -> i32)()` where `f` is a function-pointer parameter.
     FnPointerCastLocalBinding { path: Vec<String> },
+    /// The callee expression is a local alias to another value binding or
+    /// parameter and is cast to a bare function pointer before being called.
+    FnPointerCastAliasedLocalBinding {
+        path: Vec<String>,
+        source_path: Vec<String>,
+    },
     /// The callee expression is a visible local closure binding cast to a
     /// bare function pointer before being called, such as
     /// `let closure = || 1; (closure as fn() -> i32)()`.
@@ -243,6 +255,12 @@ pub enum DynamicCallCallee {
     /// The callee expression is a visible local binding or parameter, such as
     /// `(closure)()` or `(f)()`.
     LocalBinding { path: Vec<String> },
+    /// The callee expression is a local alias to another value binding or
+    /// parameter.
+    AliasedLocalBinding {
+        path: Vec<String>,
+        source_path: Vec<String>,
+    },
     /// The callee expression is a visible local closure binding with a known
     /// executable body owner, such as `(closure)()`.
     ClosureBinding {

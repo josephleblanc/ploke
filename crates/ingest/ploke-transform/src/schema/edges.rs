@@ -778,10 +778,12 @@ fn call_site_to_params(call_site: &CallNode) -> BTreeMap<String, cozo::DataValue
                 | DynamicCallCallee::FnPointerCastPath { path }
                 | DynamicCallCallee::ReturnedPathCall { path }
                 | DynamicCallCallee::LocalBinding { path }
+                | DynamicCallCallee::AliasedLocalBinding { path, .. }
                 | DynamicCallCallee::ClosureBinding { path, .. }
                 | DynamicCallCallee::InitializedLocalBinding { path, .. }
                 | DynamicCallCallee::FnPointerCastInitializedLocalBinding { path, .. }
                 | DynamicCallCallee::FnPointerCastLocalBinding { path }
+                | DynamicCallCallee::FnPointerCastAliasedLocalBinding { path, .. }
                 | DynamicCallCallee::FnPointerCastClosureBinding { path, .. }
                 | DynamicCallCallee::DereferencedInitializedLocalBinding { path, .. }
                 | DynamicCallCallee::DereferencedClosureBinding { path, .. }

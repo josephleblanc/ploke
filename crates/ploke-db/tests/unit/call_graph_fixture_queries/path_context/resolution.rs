@@ -369,6 +369,110 @@ fn fixture_context_resolves_single_caller_dynamic_function_pointer_parameter_for
 }
 
 #[test]
+fn fixture_context_resolves_single_caller_aliased_function_pointer_parameters()
+-> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let target = function_id_by_name(&db, "local_target")?;
+
+    struct Case {
+        owner: &'static str,
+        caller: &'static str,
+        source: &'static str,
+        site_kind: CallSiteKind,
+        relation: CallRelationKind,
+        target_kind: CallTargetKind,
+    }
+
+    let cases = [
+        Case {
+            owner: "call_single_aliased_function_pointer_param",
+            caller: "call_single_aliased_function_pointer_param_with_local_target",
+            source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:1673-1675 `let g = f; g()`",
+            site_kind: CallSiteKind::Path,
+            relation: CallRelationKind::Function,
+            target_kind: CallTargetKind::Function,
+        },
+        Case {
+            owner: "call_single_parenthesized_aliased_function_pointer_param",
+            caller: "call_single_parenthesized_aliased_function_pointer_param_with_local_target",
+            source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:1682-1684 `let g = f; (g)()`",
+            site_kind: CallSiteKind::Dynamic,
+            relation: CallRelationKind::DynamicFunction,
+            target_kind: CallTargetKind::Function,
+        },
+    ];
+
+    for case in cases {
+        let owner = function_id_by_name(&db, case.owner)?;
+        let caller = function_id_by_name(&db, case.caller)?;
+        let helper = function_id_by_name(&db, case.owner)?;
+
+        // These private helpers alias the callable parameter with `let g = f`
+        // before calling through `g`. The persisted call row keeps the
+        // observed callee path as `g`, while resolver proof follows the alias
+        // back to the single caller's `local_target` argument.
+        let context = db.call_context_for_owner(owner)?;
+        assert_eq!(
+            context.len(),
+            1,
+            "{} owner context rows from {}: {context:#?}",
+            case.owner,
+            case.source
+        );
+        let row = row_by_kind_path(&context, case.site_kind, &["g"]);
+        assert_eq!(row.site.owner_id, owner);
+        assert_eq!(row.site.arg_count, Some(0));
+        assert_eq!(
+            row.site.generic_arg_count,
+            match case.site_kind {
+                CallSiteKind::Path => Some(0),
+                CallSiteKind::Dynamic => None,
+                _ => unreachable!("aliased callable case should be path or dynamic"),
+            }
+        );
+        assert_resolved_target(row, target, case.relation, case.site_kind, case.target_kind);
+
+        let callers = db.callers_for_target(target)?;
+        let caller_row = caller_by_owner_kind_path(&callers, owner, case.site_kind, &["g"]);
+        assert_eq!(caller_row.status.status, CallStatusKind::Resolved);
+        assert_eq!(
+            caller_row.status.resolution,
+            Some(CallResolutionKind::LocalExact)
+        );
+        assert_eq!(caller_row.target.target_id, target);
+        assert_eq!(caller_row.target.relation, case.relation);
+
+        let paths = db.call_paths_from_owner(
+            owner,
+            CallPathOptions {
+                max_depth: 1,
+                max_paths: 8,
+            },
+        )?;
+        let path = paths
+            .iter()
+            .find(|path| path.start_id == owner && path.end_id == target && path.depth == 1)
+            .unwrap_or_else(|| panic!("{} should have a one-hop path to local_target", case.owner));
+        assert_eq!(path.edges[0].caller_id, owner);
+        assert_eq!(path.edges[0].callee_id, target);
+        assert_eq!(path.edges[0].relation, case.relation);
+
+        let caller_context = db.call_context_for_owner(caller)?;
+        let helper_call = row_by_path(&caller_context, &[case.owner]);
+        assert_eq!(helper_call.site.arg_count, Some(1));
+        assert_resolved_target(
+            helper_call,
+            helper,
+            CallRelationKind::Function,
+            CallSiteKind::Path,
+            CallTargetKind::Function,
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
 fn fixture_context_resolves_single_caller_indexed_field_function_parameters() -> Result<(), DbError>
 {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;

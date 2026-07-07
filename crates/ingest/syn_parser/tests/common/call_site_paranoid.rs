@@ -248,6 +248,11 @@ pub enum ExpectedPathCallee<'a> {
         path: &'a [&'a str],
         init_path: &'a [&'a str],
     },
+    /// The path call is a visible local binding aliasing another value binding.
+    AliasedValueBinding {
+        path: &'a [&'a str],
+        source_path: &'a [&'a str],
+    },
 }
 
 impl ExpectedPathCallee<'_> {
@@ -269,6 +274,12 @@ impl ExpectedPathCallee<'_> {
                 PathCallCallee::InitializedValueBinding {
                     path: path.iter().copied().map(String::from).collect(),
                     init_path: init_path.iter().copied().map(String::from).collect(),
+                }
+            }
+            Self::AliasedValueBinding { path, source_path } => {
+                PathCallCallee::AliasedValueBinding {
+                    path: path.iter().copied().map(String::from).collect(),
+                    source_path: source_path.iter().copied().map(String::from).collect(),
                 }
             }
         }
@@ -293,6 +304,11 @@ pub enum ExpectedDynamicCallee<'a> {
     },
     /// The callee expression is an opaque local binding or parameter cast to a bare function pointer.
     FnPointerCastLocalBinding { path: &'a [&'a str] },
+    /// The callee expression is an aliased local binding cast to a bare function pointer.
+    FnPointerCastAliasedLocalBinding {
+        path: &'a [&'a str],
+        source_path: &'a [&'a str],
+    },
     /// The callee expression is a local closure binding cast to a bare function pointer.
     FnPointerCastClosureBinding {
         path: &'a [&'a str],
@@ -310,6 +326,11 @@ pub enum ExpectedDynamicCallee<'a> {
     },
     /// The callee expression names a visible local value binding or parameter.
     LocalBinding { path: &'a [&'a str] },
+    /// The callee expression names a local alias to another value binding.
+    AliasedLocalBinding {
+        path: &'a [&'a str],
+        source_path: &'a [&'a str],
+    },
     /// The callee expression names a visible local closure binding with a known executable owner.
     ClosureBinding {
         path: &'a [&'a str],
@@ -370,6 +391,12 @@ impl ExpectedDynamicCallee<'_> {
                     path: path.iter().copied().map(String::from).collect(),
                 }
             }
+            Self::FnPointerCastAliasedLocalBinding { path, source_path } => {
+                DynamicCallCallee::FnPointerCastAliasedLocalBinding {
+                    path: path.iter().copied().map(String::from).collect(),
+                    source_path: source_path.iter().copied().map(String::from).collect(),
+                }
+            }
             Self::FnPointerCastClosureBinding { path, closure_id } => {
                 DynamicCallCallee::FnPointerCastClosureBinding {
                     path: path.iter().copied().map(String::from).collect(),
@@ -391,6 +418,12 @@ impl ExpectedDynamicCallee<'_> {
             Self::LocalBinding { path } => DynamicCallCallee::LocalBinding {
                 path: path.iter().copied().map(String::from).collect(),
             },
+            Self::AliasedLocalBinding { path, source_path } => {
+                DynamicCallCallee::AliasedLocalBinding {
+                    path: path.iter().copied().map(String::from).collect(),
+                    source_path: source_path.iter().copied().map(String::from).collect(),
+                }
+            }
             Self::ClosureBinding { path, closure_id } => DynamicCallCallee::ClosureBinding {
                 path: path.iter().copied().map(String::from).collect(),
                 closure_id,
@@ -554,6 +587,29 @@ impl<'a> ExpectedCallSite<'a> {
             kind: ExpectedCallKind::Path {
                 path,
                 callee: ExpectedPathCallee::ValueBinding { path },
+                arg_count,
+                generic_arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a path-call expectation through a local alias to a value binding.
+    pub const fn path_aliased_value_binding(
+        path: &'a [&'a str],
+        source_path: &'a [&'a str],
+        span: (usize, usize),
+        arg_count: usize,
+        generic_arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Path {
+                path,
+                callee: ExpectedPathCallee::AliasedValueBinding { path, source_path },
                 arg_count,
                 generic_arg_count,
             },
@@ -772,6 +828,29 @@ impl<'a> ExpectedCallSite<'a> {
         }
     }
 
+    /// Constructor for a dynamic-call expectation whose callee is an aliased binding cast to a function pointer.
+    pub const fn dynamic_fn_pointer_cast_aliased_local_binding(
+        path: &'a [&'a str],
+        source_path: &'a [&'a str],
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::FnPointerCastAliasedLocalBinding {
+                    path,
+                    source_path,
+                },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
     /// Constructor for a dynamic-call expectation whose callee is a local closure binding cast to a function pointer.
     pub const fn dynamic_fn_pointer_cast_closure_binding(
         path: &'a [&'a str],
@@ -846,6 +925,26 @@ impl<'a> ExpectedCallSite<'a> {
         Self {
             kind: ExpectedCallKind::Dynamic {
                 callee: ExpectedDynamicCallee::LocalBinding { path },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a dynamic-call expectation through a local alias to a value binding.
+    pub const fn dynamic_aliased_local_binding(
+        path: &'a [&'a str],
+        source_path: &'a [&'a str],
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::AliasedLocalBinding { path, source_path },
                 arg_count,
             },
             span,

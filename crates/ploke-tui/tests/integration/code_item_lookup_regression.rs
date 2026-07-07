@@ -168,6 +168,9 @@ async fn code_item_lookup_returns_resolved_dynamic_callable_context() {
     //   tests/fixture_crates/fixture_call_graph/src/lib.rs:1635-1642
     //     a private helper receives `[local_target]` from its only local caller,
     //     then calls `funcs[0]()`.
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:1682-1684
+    //     a private helper aliases a function-pointer parameter with
+    //     `let g = f`, then calls `(g)()`.
     // Parser/DB/RAG already prove these as resolved dynamic-function edges.
     // This pins the same facts at the TUI tool boundary.
     for owner_name in [
@@ -178,6 +181,7 @@ async fn code_item_lookup_returns_resolved_dynamic_callable_context() {
         "call_single_indexed_function_pointer_param",
         "call_single_indexed_field_function_param",
         "call_single_indexed_tuple_field_function_param",
+        "call_single_parenthesized_aliased_function_pointer_param",
     ] {
         assert_resolved_dynamic_callable_lookup(owner_name).await;
     }

@@ -70,6 +70,7 @@ pub(super) fn classify_method_receiver(
                     }
                     LocalBindingProof::Closure { .. } => MethodCallReceiver::Unsupported,
                     LocalBindingProof::LocalFunction { .. } => MethodCallReceiver::Unsupported,
+                    LocalBindingProof::ValueAlias { .. } => MethodCallReceiver::Unsupported,
                     LocalBindingProof::Untyped { .. } => MethodCallReceiver::Unsupported,
                 };
             }
@@ -270,6 +271,9 @@ fn local_field_receiver(
                 Some(MethodCallReceiver::FieldLocalBinding { name, field_path })
             }
             LocalBindingProof::LocalFunction { .. } => {
+                Some(MethodCallReceiver::FieldLocalBinding { name, field_path })
+            }
+            LocalBindingProof::ValueAlias { .. } => {
                 Some(MethodCallReceiver::FieldLocalBinding { name, field_path })
             }
             LocalBindingProof::Untyped { .. } => {

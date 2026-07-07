@@ -29,6 +29,10 @@ pub(super) enum LocalBindingProof {
         name: String,
         body_id: ExecutableBodyId,
     },
+    ValueAlias {
+        name: String,
+        source_path: Vec<String>,
+    },
     Constructed {
         name: String,
         type_path: Vec<String>,
@@ -68,6 +72,7 @@ impl LocalBindingProof {
             | Self::TupleReturn { name, .. }
             | Self::Closure { name, .. }
             | Self::LocalFunction { name, .. }
+            | Self::ValueAlias { name, .. }
             | Self::Constructed { name, .. }
             | Self::Array { name, .. }
             | Self::Referenced { name, .. }

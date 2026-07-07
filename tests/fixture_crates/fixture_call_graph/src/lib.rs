@@ -1669,3 +1669,21 @@ fn call_single_match_function_pointer_param_arm(flag: bool, f: fn() -> i32) -> i
 pub fn call_single_match_function_pointer_param_arm_with_local_target(flag: bool) -> i32 {
     call_single_match_function_pointer_param_arm(flag, local_target)
 }
+
+fn call_single_aliased_function_pointer_param(f: fn() -> i32) -> i32 {
+    let g = f;
+    g()
+}
+
+pub fn call_single_aliased_function_pointer_param_with_local_target() -> i32 {
+    call_single_aliased_function_pointer_param(local_target)
+}
+
+fn call_single_parenthesized_aliased_function_pointer_param(f: fn() -> i32) -> i32 {
+    let g = f;
+    (g)()
+}
+
+pub fn call_single_parenthesized_aliased_function_pointer_param_with_local_target() -> i32 {
+    call_single_parenthesized_aliased_function_pointer_param(local_target)
+}

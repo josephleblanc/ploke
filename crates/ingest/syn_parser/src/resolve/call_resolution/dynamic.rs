@@ -79,6 +79,18 @@ impl CallRelationResolver<'_> {
             return Ok(());
         }
 
+        if let DynamicCallCallee::AliasedLocalBinding { source_path, .. }
+        | DynamicCallCallee::FnPointerCastAliasedLocalBinding { source_path, .. } = &call.callee
+            && let Some(target) = self.resolve_parameter_value_call(call.owner, source_path)?
+        {
+            push_dynamic_parameter_target(call, target, relations);
+            statuses.push(CallResolutionStatus::Resolved {
+                source,
+                kind: CallResolutionKind::LocalExact,
+            });
+            return Ok(());
+        }
+
         if let DynamicCallCallee::FieldLocalBinding { path } = &call.callee
             && let Some(target) = self.resolve_parameter_field_call(call.owner, path)?
         {
@@ -112,6 +124,7 @@ impl CallRelationResolver<'_> {
                 path
             }
             DynamicCallCallee::LocalBinding { .. }
+            | DynamicCallCallee::AliasedLocalBinding { .. }
             | DynamicCallCallee::ClosureBinding { .. }
             | DynamicCallCallee::ClosureLiteral { .. }
             | DynamicCallCallee::AwaitedAsyncClosureLiteral { .. }
@@ -119,6 +132,7 @@ impl CallRelationResolver<'_> {
             | DynamicCallCallee::ReturnedPathCall { .. }
             | DynamicCallCallee::FnPointerCastInitializedLocalBinding { .. }
             | DynamicCallCallee::FnPointerCastLocalBinding { .. }
+            | DynamicCallCallee::FnPointerCastAliasedLocalBinding { .. }
             | DynamicCallCallee::FnPointerCastClosureBinding { .. }
             | DynamicCallCallee::DereferencedInitializedLocalBinding { .. }
             | DynamicCallCallee::DereferencedClosureBinding { .. }
