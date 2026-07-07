@@ -66,6 +66,9 @@ Completed evidence:
 - Transform/DB projection, raw and structured DB receiver decode, resolved
   proof rows, RAG call-context collection, and TUI call-context formatting
   preserve the tuple-return receiver payload.
+- The existing `request_code_context` method-caller table now includes the
+  tuple-return owner, proving tool payload propagation for the same receiver
+  while preserving the separate initializer helper path row.
 - Focused parser, DB context/proof/decode, RAG, and TUI tests passed, and
   `cargo run -p xtask --features call_graph -- fixtures regenerate --active`
   round-tripped all active registered fixtures with no tracked fixture drift.

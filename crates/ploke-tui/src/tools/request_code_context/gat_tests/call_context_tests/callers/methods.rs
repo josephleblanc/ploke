@@ -46,6 +46,13 @@ async fn request_code_context_returns_method_target_callers_with_call_context()
         &db,
         &function_in_module_query(&["crate"], "call_typed_tuple_pattern_local_instance_method"),
     )?;
+    let tuple_return_pattern_owner = one_uuid(
+        &db,
+        &function_in_module_query(
+            &["crate"],
+            "call_tuple_return_pattern_local_instance_method",
+        ),
+    )?;
     let assoc_owner = one_uuid(
         &db,
         &function_in_module_query(&["crate"], "call_method_as_associated_function"),
@@ -120,6 +127,24 @@ async fn request_code_context_returns_method_target_callers_with_call_context()
                 receiver: Some(CallReceiverInfo::TypedLocalBinding {
                     name: "value".to_string(),
                     type_path: vec!["LocalAssoc".to_string()],
+                }),
+            },
+            relation: CallTargetKind::Method,
+            // This owner also resolves the tuple initializer helper path; the
+            // part has one expansion carrier, so assert the method edge without
+            // requiring that carrier to point at this selected callsite.
+            assert_expansion: false,
+        },
+        Case {
+            owner: tuple_return_pattern_owner,
+            label: "tuple-return method owner",
+            kind: CallSiteKind::Method,
+            callee: CallCalleeInfo::Method {
+                name: "instance_value".to_string(),
+                receiver: Some(CallReceiverInfo::TupleReturnBinding {
+                    name: "value".to_string(),
+                    path: vec!["make_local_assoc_pair".to_string()],
+                    index: 0,
                 }),
             },
             relation: CallTargetKind::Method,
