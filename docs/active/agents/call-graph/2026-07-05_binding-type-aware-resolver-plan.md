@@ -15,7 +15,8 @@ Root plan: `.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md`
 
 Current phase: binding/type-aware semantic resolution.
 
-Current completed bucket: same-block awaited async-closure future alias proof.
+Current completed bucket: private parenthesized generic `FnOnce`
+single-caller proof.
 
 Exit criteria for the first implementation slice:
 
@@ -84,7 +85,11 @@ should prevent future resumes from reselecting already-covered shapes.
      same exact function item. The fixture-backed
      `call_single_generic_fn_once_param<F>(generic_f: F) where F: FnOnce() ->
      i32 { generic_f() }` resolves to `local_target` only because its complete
-     local caller set passes that function item.
+     local caller set passes that function item. The parenthesized dynamic
+     form `call_single_parenthesized_generic_fn_once_param<F>(generic_f: F)
+     where F: FnOnce() -> i32 { (generic_f)() }` reuses the same proof
+     boundary and resolves as a `DynamicFunction` edge, not broad
+     callable-trait dispatch.
    - Public helpers, unproven argument expressions, missing arguments,
      multi-target caller sets, and callable-trait values without complete
      private caller proof remain targetless; do not broaden this through API
@@ -93,9 +98,9 @@ should prevent future resumes from reselecting already-covered shapes.
    - DB, RAG, and tool assertions now preserve the resolved private
      function-pointer single-caller edges to `local_target` for path `f()`,
      dynamic `(f)()`, and dynamic `(f as fn() -> i32)()` call forms, plus the
-     bounded private single-caller generic `FnOnce` path edge. Public
-     callable-trait, opaque, missing-argument, and multi-target shapes remain
-     explicit blockers.
+     bounded private single-caller generic `FnOnce` path and parenthesized
+     dynamic edges. Public callable-trait, opaque, missing-argument, and
+     multi-target shapes remain explicit blockers.
    - The same complete-local-caller boundary now has one adjacent constructed
      argument proof for private indexed field-parameter calls:
      `call_single_indexed_field_function_param(holder: CallbackArrayHolder)
@@ -275,7 +280,20 @@ should prevent future resumes from reselecting already-covered shapes.
    - Parser, DB traversal, RAG call-context collection, and exact
      `request_code_context` tool assertions cover the supported alias shape.
 
-16. Next adjacent candidate:
+16. Private parenthesized generic `FnOnce` single-caller proof - completed:
+   - `call_single_parenthesized_generic_fn_once_param<F>(generic_f: F) where
+     F: FnOnce() -> i32 { (generic_f)() }` reuses the complete private
+     single-caller callable-parameter proof boundary from the regular
+     `generic_f()` form.
+   - The dynamic row resolves to `local_target` only because every local caller
+     supplies that exact function item; public helpers, unproven argument
+     expressions, multi-target caller sets, and broader callable-trait dispatch
+     remain targetless.
+   - Parser, DB traversal/caller queries, RAG call-context collection, and
+     exact `request_code_context` tool assertions batch the regular path and
+     parenthesized dynamic forms under the same fixture-backed proof.
+
+17. Next adjacent candidate:
    - Select from the coverage matrix parking lot rather than adding more
      import breadth by default.
    - Likely options are a broader async poll/resume proof carrier, an explicit

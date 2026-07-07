@@ -102,6 +102,14 @@ async fn request_code_context_returns_function_and_dynamic_owner_call_context()
             },
             relation: CallTargetKind::Function,
         },
+        Case {
+            label: "single-caller parenthesized generic FnOnce parameter",
+            search_term: "call_single_parenthesized_generic_fn_once_param generic_f FnOnce",
+            owner: "call_single_parenthesized_generic_fn_once_param",
+            call_kind: CallSiteKind::Dynamic,
+            callee: CallCalleeInfo::Dynamic,
+            relation: CallTargetKind::DynamicFunction,
+        },
     ];
 
     for case in cases {

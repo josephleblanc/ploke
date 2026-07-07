@@ -585,72 +585,105 @@ fn fixture_context_resolves_single_caller_indexed_field_function_parameters() ->
 #[test]
 fn fixture_context_resolves_single_caller_generic_fn_once_parameter() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
-    let owner = function_id_by_name(&db, "call_single_generic_fn_once_param")?;
-    let caller = function_id_by_name(&db, "call_single_generic_fn_once_param_with_local_target")?;
-    let helper = function_id_by_name(&db, "call_single_generic_fn_once_param")?;
     let target = function_id_by_name(&db, "local_target")?;
 
-    // tests/fixture_crates/fixture_call_graph/src/lib.rs:1511-1519:
-    // `call_single_generic_fn_once_param<F>(generic_f: F) where F: FnOnce()`
-    // has one local caller in this fixture. The caller passes `local_target`,
-    // so the parameter call is admitted as exact value-flow proof, while
-    // broader public or multi-target callable-trait dispatch stays targetless.
-    let context = db.call_context_for_owner(owner)?;
-    assert_eq!(
-        context.len(),
-        1,
-        "generic FnOnce parameter context rows: {context:#?}"
-    );
-    let row = row_by_path(&context, &["generic_f"]);
-    assert_eq!(row.site.owner_id, owner);
-    assert_eq!(row.site.arg_count, Some(0));
-    assert_eq!(row.site.generic_arg_count, Some(0));
-    assert_resolved_target(
-        row,
-        target,
-        CallRelationKind::Function,
-        CallSiteKind::Path,
-        CallTargetKind::Function,
-    );
+    struct Case {
+        owner: &'static str,
+        caller: &'static str,
+        source: &'static str,
+        site_kind: CallSiteKind,
+        relation: CallRelationKind,
+        target_kind: CallTargetKind,
+    }
 
-    let callers = db.callers_for_target(target)?;
-    let caller_row = caller_by_owner_kind_path(&callers, owner, CallSiteKind::Path, &["generic_f"]);
-    assert_eq!(caller_row.status.status, CallStatusKind::Resolved);
-    assert_eq!(
-        caller_row.status.resolution,
-        Some(CallResolutionKind::LocalExact)
-    );
-    assert_eq!(caller_row.target.target_id, target);
-    assert_eq!(caller_row.target.relation, CallRelationKind::Function);
-
-    let paths = db.call_paths_from_owner(
-        owner,
-        CallPathOptions {
-            max_depth: 1,
-            max_paths: 8,
+    let cases = [
+        Case {
+            owner: "call_single_generic_fn_once_param",
+            caller: "call_single_generic_fn_once_param_with_local_target",
+            source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:1519-1524 `generic_f()`",
+            site_kind: CallSiteKind::Path,
+            relation: CallRelationKind::Function,
+            target_kind: CallTargetKind::Function,
         },
-    )?;
-    let path = paths
-        .iter()
-        .find(|path| path.start_id == owner && path.end_id == target && path.depth == 1)
-        .expect("generic FnOnce parameter owner should have a one-hop path to local_target");
-    assert_eq!(path.edges[0].caller_id, owner);
-    assert_eq!(path.edges[0].callee_id, target);
-    assert_eq!(path.edges[0].relation, CallRelationKind::Function);
+        Case {
+            owner: "call_single_parenthesized_generic_fn_once_param",
+            caller: "call_single_parenthesized_generic_fn_once_param_with_local_target",
+            source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:1729-1734 `(generic_f)()`",
+            site_kind: CallSiteKind::Dynamic,
+            relation: CallRelationKind::DynamicFunction,
+            target_kind: CallTargetKind::Function,
+        },
+    ];
 
-    // The caller still has a normal direct call edge to the private helper; the
-    // single-caller argument proof is additional resolver evidence, not a
-    // replacement for the caller's own edge.
-    let caller_context = db.call_context_for_owner(caller)?;
-    let helper_call = row_by_path(&caller_context, &["call_single_generic_fn_once_param"]);
-    assert_eq!(helper_call.site.arg_count, Some(1));
-    assert_resolved_target(
-        helper_call,
-        helper,
-        CallRelationKind::Function,
-        CallSiteKind::Path,
-        CallTargetKind::Function,
-    );
+    for case in cases {
+        let owner = function_id_by_name(&db, case.owner)?;
+        let caller = function_id_by_name(&db, case.caller)?;
+        let helper = function_id_by_name(&db, case.owner)?;
+
+        // These private generic helpers have one local caller in this fixture.
+        // Each caller passes `local_target`, so the parameter call is admitted
+        // as exact value-flow proof, while public or multi-target callable-trait
+        // dispatch stays targetless.
+        let context = db.call_context_for_owner(owner)?;
+        assert_eq!(
+            context.len(),
+            1,
+            "{} generic FnOnce parameter context rows from {}: {context:#?}",
+            case.owner,
+            case.source
+        );
+        let row = row_by_kind_path(&context, case.site_kind, &["generic_f"]);
+        assert_eq!(row.site.owner_id, owner);
+        assert_eq!(row.site.arg_count, Some(0));
+        assert_eq!(
+            row.site.generic_arg_count,
+            match case.site_kind {
+                CallSiteKind::Path => Some(0),
+                CallSiteKind::Dynamic => None,
+                _ => unreachable!("generic callable case should be path or dynamic"),
+            }
+        );
+        assert_resolved_target(row, target, case.relation, case.site_kind, case.target_kind);
+
+        let callers = db.callers_for_target(target)?;
+        let caller_row = caller_by_owner_kind_path(&callers, owner, case.site_kind, &["generic_f"]);
+        assert_eq!(caller_row.status.status, CallStatusKind::Resolved);
+        assert_eq!(
+            caller_row.status.resolution,
+            Some(CallResolutionKind::LocalExact)
+        );
+        assert_eq!(caller_row.target.target_id, target);
+        assert_eq!(caller_row.target.relation, case.relation);
+
+        let paths = db.call_paths_from_owner(
+            owner,
+            CallPathOptions {
+                max_depth: 1,
+                max_paths: 8,
+            },
+        )?;
+        let path = paths
+            .iter()
+            .find(|path| path.start_id == owner && path.end_id == target && path.depth == 1)
+            .unwrap_or_else(|| panic!("{} should have a one-hop path to local_target", case.owner));
+        assert_eq!(path.edges[0].caller_id, owner);
+        assert_eq!(path.edges[0].callee_id, target);
+        assert_eq!(path.edges[0].relation, case.relation);
+
+        // The caller still has a normal direct call edge to the private helper;
+        // single-caller argument proof is additional resolver evidence, not a
+        // replacement for the caller's own edge.
+        let caller_context = db.call_context_for_owner(caller)?;
+        let helper_call = row_by_path(&caller_context, &[case.owner]);
+        assert_eq!(helper_call.site.arg_count, Some(1));
+        assert_resolved_target(
+            helper_call,
+            helper,
+            CallRelationKind::Function,
+            CallSiteKind::Path,
+            CallTargetKind::Function,
+        );
+    }
 
     Ok(())
 }
