@@ -139,6 +139,12 @@ fn trait_dispatch_case(db: &Database) -> color_eyre::Result<Case> {
                 &["crate"],
                 "call_reference_chain_trait_object_binding_method",
             )?,
+            owner(
+                db,
+                "borrowed trait-object caller",
+                &["crate"],
+                "call_borrowed_concrete_trait_object_binding_method",
+            )?,
         ],
     })
 }

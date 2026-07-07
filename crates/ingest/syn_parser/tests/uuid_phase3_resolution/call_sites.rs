@@ -312,6 +312,7 @@ const TRANSITIVE_BOUND_BLANKET_TRAIT_METHOD_CALL_SPAN: (usize, usize) = (23946, 
 const IMPORTED_FUNCTION_ITEM_BINDING_CALL_SPAN: (usize, usize) = (24066, 24069);
 const REFERENCE_ALIAS_TRAIT_OBJECT_BINDING_METHOD_CALL_SPAN: (usize, usize) = (24255, 24274);
 const REFERENCE_CHAIN_TRAIT_OBJECT_BINDING_METHOD_CALL_SPAN: (usize, usize) = (24485, 24504);
+const BORROWED_CONCRETE_TRAIT_OBJECT_BINDING_METHOD_CALL_SPAN: (usize, usize) = (38049, 38071);
 const CONSTRAINED_GENERIC_SELF_TRAIT_IMPL_SPAN: (usize, usize) = (25307, 25461);
 const EDGE_CASES_T_DEFAULT_CALL_SPAN: (usize, usize) = (1073, 1085);
 const EDGE_CASES_FORMAT_MACRO_CALL_SPAN: (usize, usize) = (1447, 1506);
@@ -7264,6 +7265,34 @@ paranoid_call_site_test!(
                 init_path: &["TraitDispatchTarget"],
             },
             REFERENCE_CHAIN_TRAIT_OBJECT_BINDING_METHOD_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedMethodLocalExact {
+                target: target_info.test_method_id(),
+            },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_borrowed_concrete_trait_object_binding_method_resolves_impl_method_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_borrowed_concrete_trait_object_binding_method"
+    },
+    expected: {
+        let target_args = fixture_call_graph_trait_impl_method_args("trait_value");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_method_pid(&parsed_graphs)?;
+        ExpectedCallSite::method(
+            "trait_value",
+            ExpectedMethodReceiver::BorrowedInitializedLocalBinding {
+                name: "value",
+                init_path: &["TraitDispatchTarget"],
+            },
+            BORROWED_CONCRETE_TRAIT_OBJECT_BINDING_METHOD_CALL_SPAN,
             0,
             0,
             &[],

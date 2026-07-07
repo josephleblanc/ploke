@@ -212,9 +212,17 @@ async fn request_code_context_returns_trait_dispatch_proof_context() -> color_ey
             "call_reference_chain_trait_object_binding_method",
         ),
     )?;
+    let borrowed_owner = one_uuid(
+        &db,
+        &function_in_module_query(
+            &["crate"],
+            "call_borrowed_concrete_trait_object_binding_method",
+        ),
+    )?;
     let callers = [
         (initialized_owner, "initialized trait-dispatch caller"),
         (chained_owner, "reference-chain trait-object caller"),
+        (borrowed_owner, "borrowed trait-object caller"),
     ];
     for &(owner, label) in &callers {
         assert_eq!(

@@ -25,6 +25,39 @@ async fn call_context_expansion_adds_incoming_fixture_trait_dispatch_callers() -
             "call_reference_chain_trait_object_binding_method",
         ),
     )?;
+    let borrowed_owner = one_uuid(
+        &db,
+        &function_in_module_query(
+            &["crate"],
+            "call_borrowed_concrete_trait_object_binding_method",
+        ),
+    )?;
+    let cases = [
+        (
+            initialized_owner,
+            "initialized local caller",
+            CallReceiverInfo::InitializedLocalBinding {
+                name: "value".to_string(),
+                init_path: vec!["TraitDispatchTarget".to_string()],
+            },
+        ),
+        (
+            chained_owner,
+            "chained trait-object caller",
+            CallReceiverInfo::InitializedLocalBinding {
+                name: "value".to_string(),
+                init_path: vec!["TraitDispatchTarget".to_string()],
+            },
+        ),
+        (
+            borrowed_owner,
+            "borrowed trait-object caller",
+            CallReceiverInfo::BorrowedInitializedLocalBinding {
+                name: "value".to_string(),
+                init_path: vec!["TraitDispatchTarget".to_string()],
+            },
+        ),
+    ];
 
     let mut rag = init_test_rag_mock(Arc::clone(&db));
     rag.cfg.call_context.max_owner_hits = 64;
@@ -48,9 +81,13 @@ async fn call_context_expansion_adds_incoming_fixture_trait_dispatch_callers() -
         expanded_ids.contains(&chained_owner),
         "trait-dispatch target expansion should materialize the chained trait-object caller; expanded: {expanded:#?}"
     );
+    assert!(
+        expanded_ids.contains(&borrowed_owner),
+        "trait-dispatch target expansion should materialize the borrowed trait-object caller; expanded: {expanded:#?}"
+    );
 
     let call_context = rag.collect_call_context(&expanded)?;
-    for owner in [initialized_owner, chained_owner] {
+    for (owner, label, receiver) in cases {
         let context = call_context
             .get(&owner)
             .expect("trait-dispatch caller should receive outgoing call context");
@@ -61,13 +98,12 @@ async fn call_context_expansion_adds_incoming_fixture_trait_dispatch_callers() -
                     && call.callee
                         == CallCalleeInfo::Method {
                             name: "trait_value".to_string(),
-                            receiver: Some(CallReceiverInfo::InitializedLocalBinding {
-                                name: "value".to_string(),
-                                init_path: vec!["TraitDispatchTarget".to_string()],
-                            }),
+                            receiver: Some(receiver.clone()),
                         }
             })
-            .expect("caller should preserve the trait-dispatch edge to the seed target");
+            .unwrap_or_else(|| {
+                panic!("{label} should preserve the trait-dispatch edge to the seed target")
+            });
         assert_eq!(call.status, CallStatusKind::Resolved);
         assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
         assert_eq!(call.targets.len(), 1);

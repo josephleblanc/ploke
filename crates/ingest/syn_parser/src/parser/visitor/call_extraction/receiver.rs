@@ -165,27 +165,56 @@ fn borrowed_local_receiver(
     }
 
     let name = path.path.get_ident()?.to_string();
-    if let Some(LocalBindingProof::Typed {
-        name, type_path, ..
-    }) = visible_local_binding(&name, local_scopes)
-    {
-        return Some(MethodCallReceiver::BorrowedTypedLocalBinding {
-            name: name.clone(),
-            type_path: type_path.clone(),
-        });
-    }
-    if let Some(LocalBindingProof::Initialized { name, init_path }) =
-        visible_local_binding(&name, local_scopes)
-    {
-        return Some(MethodCallReceiver::BorrowedInitializedLocalBinding {
-            name: name.clone(),
-            init_path: init_path.clone(),
-        });
-    }
+    let is_local_binding = if let Some(binding) = visible_local_binding(&name, local_scopes) {
+        match binding {
+            LocalBindingProof::Typed {
+                name, type_path, ..
+            } => {
+                return Some(MethodCallReceiver::BorrowedTypedLocalBinding {
+                    name: name.clone(),
+                    type_path: type_path.clone(),
+                });
+            }
+            LocalBindingProof::TraitObject {
+                name,
+                init_path: Some(init_path),
+                ..
+            } => {
+                return Some(MethodCallReceiver::BorrowedInitializedLocalBinding {
+                    name: name.clone(),
+                    init_path: init_path.clone(),
+                });
+            }
+            LocalBindingProof::TraitObject {
+                name, trait_path, ..
+            } => {
+                return Some(MethodCallReceiver::BorrowedTypedLocalBinding {
+                    name: name.clone(),
+                    type_path: trait_path.clone(),
+                });
+            }
+            LocalBindingProof::Initialized { name, init_path } => {
+                return Some(MethodCallReceiver::BorrowedInitializedLocalBinding {
+                    name: name.clone(),
+                    init_path: init_path.clone(),
+                });
+            }
+            LocalBindingProof::TupleReturn { .. }
+            | LocalBindingProof::Closure { .. }
+            | LocalBindingProof::LocalFunction { .. }
+            | LocalBindingProof::ValueAlias { .. }
+            | LocalBindingProof::Constructed { .. }
+            | LocalBindingProof::Array { .. }
+            | LocalBindingProof::Referenced { .. }
+            | LocalBindingProof::Untyped { .. } => {}
+        }
+        true
+    } else {
+        false
+    };
 
-    (visible_local_binding(&name, local_scopes).is_some()
-        || param_names.iter().any(|candidate| candidate == &name))
-    .then_some(MethodCallReceiver::BorrowedLocalBinding { name })
+    (is_local_binding || param_names.iter().any(|candidate| candidate == &name))
+        .then_some(MethodCallReceiver::BorrowedLocalBinding { name })
 }
 
 fn dereferenced_local_receiver(

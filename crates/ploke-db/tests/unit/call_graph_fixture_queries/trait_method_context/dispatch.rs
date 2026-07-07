@@ -65,6 +65,13 @@ fn fixture_context_reads_projected_trait_dispatch_method_calls() -> Result<(), D
                 init_path: path(&["TraitDispatchTarget"]),
             },
         ),
+        (
+            "call_borrowed_concrete_trait_object_binding_method",
+            CallReceiver::BorrowedInitializedLocalBinding {
+                name: "value".to_string(),
+                init_path: path(&["TraitDispatchTarget"]),
+            },
+        ),
     ];
 
     for (owner_name, receiver) in cases {

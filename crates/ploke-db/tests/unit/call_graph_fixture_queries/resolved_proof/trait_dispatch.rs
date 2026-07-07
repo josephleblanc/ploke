@@ -10,21 +10,42 @@ fn fixture_projection_stores_real_trait_dispatch_call_proof_facts() -> Result<()
         "trait_value",
     )?;
     let cases = [
-        "call_initialized_local_trait_method",
-        "call_concrete_trait_object_binding_method",
-        "call_reference_chain_trait_object_binding_method",
+        (
+            "call_initialized_local_trait_method",
+            CallReceiver::InitializedLocalBinding {
+                name: "value".to_string(),
+                init_path: path(&["TraitDispatchTarget"]),
+            },
+        ),
+        (
+            "call_concrete_trait_object_binding_method",
+            CallReceiver::InitializedLocalBinding {
+                name: "value".to_string(),
+                init_path: path(&["TraitDispatchTarget"]),
+            },
+        ),
+        (
+            "call_reference_chain_trait_object_binding_method",
+            CallReceiver::InitializedLocalBinding {
+                name: "value".to_string(),
+                init_path: path(&["TraitDispatchTarget"]),
+            },
+        ),
+        (
+            "call_borrowed_concrete_trait_object_binding_method",
+            CallReceiver::BorrowedInitializedLocalBinding {
+                name: "value".to_string(),
+                init_path: path(&["TraitDispatchTarget"]),
+            },
+        ),
     ];
     let mut expected_edges = Vec::new();
 
-    for owner_name in cases {
+    for (owner_name, receiver) in cases {
         let owner = function_id_by_name(&db, owner_name)?;
         let context = db.call_context_for_owner(owner)?;
         assert_eq!(context.len(), 1, "{owner_name} context rows: {context:#?}");
 
-        let receiver = CallReceiver::InitializedLocalBinding {
-            name: "value".to_string(),
-            init_path: path(&["TraitDispatchTarget"]),
-        };
         let row = row_by_method_receiver(&context, "trait_value", &receiver);
         assert_resolved_target(
             row,

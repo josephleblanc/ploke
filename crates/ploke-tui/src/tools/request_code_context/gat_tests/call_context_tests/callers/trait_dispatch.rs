@@ -7,6 +7,7 @@ async fn request_code_context_returns_trait_dispatch_target_callers_with_call_co
     struct Case<'a> {
         label: &'a str,
         owner: &'a str,
+        receiver: CallReceiverInfo,
     }
 
     let db = Arc::new(Database::new(setup_db_full_multi_embedding(
@@ -24,10 +25,26 @@ async fn request_code_context_returns_trait_dispatch_target_callers_with_call_co
         Case {
             label: "initialized trait-dispatch caller",
             owner: "call_initialized_local_trait_method",
+            receiver: CallReceiverInfo::InitializedLocalBinding {
+                name: "value".to_string(),
+                init_path: vec!["TraitDispatchTarget".to_string()],
+            },
         },
         Case {
             label: "reference-chain trait-object caller",
             owner: "call_reference_chain_trait_object_binding_method",
+            receiver: CallReceiverInfo::InitializedLocalBinding {
+                name: "value".to_string(),
+                init_path: vec!["TraitDispatchTarget".to_string()],
+            },
+        },
+        Case {
+            label: "borrowed trait-object caller",
+            owner: "call_borrowed_concrete_trait_object_binding_method",
+            receiver: CallReceiverInfo::BorrowedInitializedLocalBinding {
+                name: "value".to_string(),
+                init_path: vec!["TraitDispatchTarget".to_string()],
+            },
         },
     ];
 
@@ -52,10 +69,7 @@ async fn request_code_context_returns_trait_dispatch_target_callers_with_call_co
                     && call.callee
                         == CallCalleeInfo::Method {
                             name: "trait_value".to_string(),
-                            receiver: Some(CallReceiverInfo::InitializedLocalBinding {
-                                name: "value".to_string(),
-                                init_path: vec!["TraitDispatchTarget".to_string()],
-                            }),
+                            receiver: Some(case.receiver.clone()),
                         }
                     && call
                         .targets

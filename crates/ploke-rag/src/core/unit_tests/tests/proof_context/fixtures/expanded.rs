@@ -124,9 +124,17 @@ async fn proof_context_attaches_rows_to_trait_dispatch_callers() -> Result<(), E
             "call_reference_chain_trait_object_binding_method",
         ),
     )?;
+    let borrowed_owner = one_uuid(
+        &db,
+        &function_in_module_query(
+            &["crate"],
+            "call_borrowed_concrete_trait_object_binding_method",
+        ),
+    )?;
     let callers = [
         (initialized_owner, "initialized trait-dispatch caller"),
         (chained_owner, "reference-chain trait-object caller"),
+        (borrowed_owner, "borrowed trait-object caller"),
     ];
     for &(owner, label) in &callers {
         let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;

@@ -1687,3 +1687,8 @@ fn call_single_parenthesized_aliased_function_pointer_param(f: fn() -> i32) -> i
 pub fn call_single_parenthesized_aliased_function_pointer_param_with_local_target() -> i32 {
     call_single_parenthesized_aliased_function_pointer_param(local_target)
 }
+
+pub fn call_borrowed_concrete_trait_object_binding_method() -> i32 {
+    let value: &dyn LocalDispatchTrait = &TraitDispatchTarget;
+    (&value).trait_value()
+}

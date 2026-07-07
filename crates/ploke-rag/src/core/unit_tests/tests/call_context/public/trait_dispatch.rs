@@ -25,6 +25,39 @@ async fn call_context_sparse_get_context_expands_trait_dispatch_target_hits_to_f
             "call_reference_chain_trait_object_binding_method",
         ),
     )?;
+    let borrowed_owner = one_uuid(
+        &db,
+        &function_in_module_query(
+            &["crate"],
+            "call_borrowed_concrete_trait_object_binding_method",
+        ),
+    )?;
+    let cases = [
+        (
+            initialized_owner,
+            "initialized local caller",
+            CallReceiverInfo::InitializedLocalBinding {
+                name: "value".to_string(),
+                init_path: vec!["TraitDispatchTarget".to_string()],
+            },
+        ),
+        (
+            chained_owner,
+            "chained trait-object caller",
+            CallReceiverInfo::InitializedLocalBinding {
+                name: "value".to_string(),
+                init_path: vec!["TraitDispatchTarget".to_string()],
+            },
+        ),
+        (
+            borrowed_owner,
+            "borrowed trait-object caller",
+            CallReceiverInfo::BorrowedInitializedLocalBinding {
+                name: "value".to_string(),
+                init_path: vec!["TraitDispatchTarget".to_string()],
+            },
+        ),
+    ];
     let query = "144 trait_value";
     let mut cfg = crate::RagConfig::default();
     cfg.type_context.enabled = false;
@@ -64,7 +97,7 @@ async fn call_context_sparse_get_context_expands_trait_dispatch_target_hits_to_f
         )
         .await?;
 
-    for owner in [initialized_owner, chained_owner] {
+    for (owner, label, receiver) in cases {
         let caller_part = assembled
             .parts
             .iter()
@@ -78,13 +111,14 @@ async fn call_context_sparse_get_context_expands_trait_dispatch_target_hits_to_f
                     && call.callee
                         == CallCalleeInfo::Method {
                             name: "trait_value".to_string(),
-                            receiver: Some(CallReceiverInfo::InitializedLocalBinding {
-                                name: "value".to_string(),
-                                init_path: vec!["TraitDispatchTarget".to_string()],
-                            }),
+                            receiver: Some(receiver.clone()),
                         }
             })
-            .expect("caller part should retain outgoing trait-dispatch context to the seed target");
+            .unwrap_or_else(|| {
+                panic!(
+                    "{label} caller part should retain outgoing trait-dispatch context to the seed target"
+                )
+            });
         assert_eq!(call.status, CallStatusKind::Resolved);
         assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
         assert_eq!(call.targets.len(), 1);
