@@ -456,6 +456,63 @@ async fn call_context_collection_resolves_private_single_caller_generic_fn_once_
 }
 
 #[tokio::test]
+async fn call_context_collection_resolves_private_single_caller_branch_parameter_calls()
+-> Result<(), Error> {
+    init_tracing_once();
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let local_target = unique_id_by_name(&db, "function", "local_target")?;
+    let rag = init_test_rag_mock(Arc::clone(&db));
+
+    let cases = [
+        (
+            "call_single_if_function_pointer_param_branch",
+            "tests/fixture_crates/fixture_call_graph/src/lib.rs:1655 `(if flag { f } else { f })()`",
+        ),
+        (
+            "call_single_match_function_pointer_param_arm",
+            "tests/fixture_crates/fixture_call_graph/src/lib.rs:1663-1666 match arms return `f`",
+        ),
+    ];
+    let owners = cases
+        .iter()
+        .map(|(owner, _source)| {
+            one_uuid(&db, &function_in_module_query(&["crate"], owner)).map(|id| (id, 1.0))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let call_context = rag.collect_call_context(&owners)?;
+
+    for ((owner_name, source), (owner, _score)) in cases.iter().zip(owners.iter().copied()) {
+        let context = call_context
+            .get(&owner)
+            .unwrap_or_else(|| panic!("{owner_name} should receive outgoing call context"));
+        let call = context
+            .iter()
+            .find(|call| {
+                call.kind == CallSiteKind::Dynamic
+                    && call.callee == CallCalleeInfo::Dynamic
+                    && call
+                        .targets
+                        .iter()
+                        .any(|target| target.target_id == local_target)
+            })
+            .unwrap_or_else(|| {
+                panic!("{owner_name} should include resolved branch parameter call -> local_target from {source}: {context:#?}")
+            });
+
+        assert_eq!(call.status, CallStatusKind::Resolved);
+        assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(call.targets.len(), 1);
+        assert_eq!(call.targets[0].target_id, local_target);
+        assert_eq!(call.targets[0].relation, CallTargetKind::DynamicFunction);
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn call_context_collection_resolves_private_single_caller_function_pointer_cast_parameter()
 -> Result<(), Error> {
     init_tracing_once();

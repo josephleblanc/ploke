@@ -81,7 +81,7 @@ pub(super) fn dynamic_projection_cases(
         call_report,
         graph,
         |dynamic_call| {
-            dynamic_call.span == (13065, 13085)
+            dynamic_call.span == (13208, 13228)
                 && matches!(
                     &dynamic_call.callee,
                     DynamicCallCallee::Path { path } if path.as_slice() == ["local_target"]
@@ -93,7 +93,7 @@ pub(super) fn dynamic_projection_cases(
         call_report,
         graph,
         |dynamic_call| {
-            dynamic_call.span == (13188, 13238)
+            dynamic_call.span == (13331, 13381)
                 && matches!(
                     &dynamic_call.callee,
                     DynamicCallCallee::IfBranchPaths { paths }
@@ -109,7 +109,7 @@ pub(super) fn dynamic_projection_cases(
     let branch_site = find_dynamic_site(
         graph,
         |dynamic_call| {
-            dynamic_call.span == (13306, 13356)
+            dynamic_call.span == (13449, 13499)
                 && matches!(
                     &dynamic_call.callee,
                     DynamicCallCallee::IfBranchPaths { paths }
@@ -126,7 +126,7 @@ pub(super) fn dynamic_projection_cases(
         call_report,
         graph,
         |dynamic_call| {
-            dynamic_call.span == (13422, 13505)
+            dynamic_call.span == (13565, 13648)
                 && matches!(
                     &dynamic_call.callee,
                     DynamicCallCallee::MatchArmPaths { paths }
@@ -142,7 +142,7 @@ pub(super) fn dynamic_projection_cases(
     let match_site = find_dynamic_site(
         graph,
         |dynamic_call| {
-            dynamic_call.span == (13576, 13659)
+            dynamic_call.span == (13719, 13802)
                 && matches!(
                     &dynamic_call.callee,
                     DynamicCallCallee::MatchArmPaths { paths }
@@ -154,6 +154,28 @@ pub(super) fn dynamic_projection_cases(
                 )
         },
         "fixture_call_graph should record ambiguous match-arm dynamic call site",
+    );
+    let (branch_param_site_id, branch_param_target_id) = find_dynamic_relation(
+        call_report,
+        graph,
+        |dynamic_call| {
+            matches!(
+                &dynamic_call.callee,
+                DynamicCallCallee::IfBranchParameter { path } if path.as_slice() == ["f"]
+            )
+        },
+        "fixture_call_graph should resolve same-parameter if-branch dynamic call as DynamicFunction",
+    );
+    let (match_param_site_id, match_param_target_id) = find_dynamic_relation(
+        call_report,
+        graph,
+        |dynamic_call| {
+            matches!(
+                &dynamic_call.callee,
+                DynamicCallCallee::MatchArmParameter { path } if path.as_slice() == ["f"]
+            )
+        },
+        "fixture_call_graph should resolve same-parameter match-arm dynamic call as DynamicFunction",
     );
 
     DynamicProjectionCases {
@@ -199,6 +221,18 @@ pub(super) fn dynamic_projection_cases(
                 site_id: match_site_id.to_cozo_uuid(),
                 target_id: match_target_id.into(),
                 path: Some(LOCAL_TARGET),
+            },
+            ResolvedProjectionCase {
+                label: "if-branch parameter",
+                site_id: branch_param_site_id.to_cozo_uuid(),
+                target_id: branch_param_target_id.into(),
+                path: Some(F_BINDING),
+            },
+            ResolvedProjectionCase {
+                label: "match-arm parameter",
+                site_id: match_param_site_id.to_cozo_uuid(),
+                target_id: match_param_target_id.into(),
+                path: Some(F_BINDING),
             },
         ],
         ambiguous: vec![

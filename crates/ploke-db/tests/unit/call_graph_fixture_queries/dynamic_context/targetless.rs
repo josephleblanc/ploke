@@ -10,8 +10,14 @@ fn fixture_context_reads_projected_targetless_dynamic_failures() -> Result<(), D
             "call_parenthesized_function_pointer_param",
             &["f"],
         ),
-        TargetlessDynamicContextCase::unsupported("call_if_function_pointer_param_branch"),
-        TargetlessDynamicContextCase::unsupported("call_match_function_pointer_param_arm"),
+        TargetlessDynamicContextCase::unsupported_path(
+            "call_if_function_pointer_param_branch",
+            &["f"],
+        ),
+        TargetlessDynamicContextCase::unsupported_path(
+            "call_match_function_pointer_param_arm",
+            &["f"],
+        ),
         TargetlessDynamicContextCase::unsupported_path(
             "call_field_function_param",
             &["holder", "callback"],

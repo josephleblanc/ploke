@@ -216,6 +216,10 @@ const SINGLE_GENERIC_FN_ONCE_PARAM_CALL_SPAN: (usize, usize) = (33296, 33307);
 const SINGLE_GENERIC_FN_ONCE_CALLER_SPAN: (usize, usize) = (33385, 33432);
 const SINGLE_PARENTHESIZED_FUNCTION_POINTER_PARAM_CALL_SPAN: (usize, usize) = (33517, 33522);
 const SINGLE_PARENTHESIZED_FUNCTION_POINTER_CALLER_SPAN: (usize, usize) = (33615, 33677);
+const SINGLE_IF_FUNCTION_POINTER_PARAM_BRANCH_DYNAMIC_CALL_SPAN: (usize, usize) = (36877, 36905);
+const SINGLE_IF_FUNCTION_POINTER_PARAM_BRANCH_CALLER_SPAN: (usize, usize) = (37004, 37068);
+const SINGLE_MATCH_FUNCTION_POINTER_PARAM_ARM_DYNAMIC_CALL_SPAN: (usize, usize) = (37161, 37222);
+const SINGLE_MATCH_FUNCTION_POINTER_PARAM_ARM_CALLER_SPAN: (usize, usize) = (37321, 37385);
 const SINGLE_FUNCTION_POINTER_PARAM_CAST_CALL_SPAN: (usize, usize) = (34806, 34826);
 const SINGLE_FUNCTION_POINTER_PARAM_CAST_CALLER_SPAN: (usize, usize) = (34910, 34963);
 const SINGLE_NAMED_FIELD_FUNCTION_PARAM_CALL_SPAN: (usize, usize) = (35452, 35471);
@@ -4748,7 +4752,8 @@ paranoid_call_site_test!(
         name: "call_if_function_pointer_param_branch"
     },
     expected: {
-        ExpectedCallSite::dynamic(
+        ExpectedCallSite::dynamic_if_branch_parameter(
+            &["f"],
             IF_FUNCTION_POINTER_PARAM_BRANCH_DYNAMIC_CALL_SPAN,
             0,
             &[],
@@ -4765,7 +4770,8 @@ paranoid_call_site_test!(
         name: "call_match_function_pointer_param_arm"
     },
     expected: {
-        ExpectedCallSite::dynamic(
+        ExpectedCallSite::dynamic_match_arm_parameter(
+            &["f"],
             MATCH_FUNCTION_POINTER_PARAM_ARM_DYNAMIC_CALL_SPAN,
             0,
             &[],
@@ -5966,6 +5972,102 @@ paranoid_call_site_test!(
             &["call_single_parenthesized_function_pointer_param"],
             SINGLE_PARENTHESIZED_FUNCTION_POINTER_CALLER_SPAN,
             1,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_single_if_function_pointer_param_branch_resolves_single_caller_argument,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_single_if_function_pointer_param_branch"
+    },
+    expected: {
+        let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("local_target should regenerate a FunctionNodeId");
+        ExpectedCallSite::dynamic_if_branch_parameter(
+            &["f"],
+            SINGLE_IF_FUNCTION_POINTER_PARAM_BRANCH_DYNAMIC_CALL_SPAN,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_single_if_function_pointer_param_branch_with_local_target_resolves_helper_call,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_single_if_function_pointer_param_branch_with_local_target"
+    },
+    expected: {
+        let target_args =
+            fixture_call_graph_function_args(&["crate"], "call_single_if_function_pointer_param_branch");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("call_single_if_function_pointer_param_branch should regenerate a FunctionNodeId");
+        ExpectedCallSite::path(
+            &["call_single_if_function_pointer_param_branch"],
+            SINGLE_IF_FUNCTION_POINTER_PARAM_BRANCH_CALLER_SPAN,
+            2,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_single_match_function_pointer_param_arm_resolves_single_caller_argument,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_single_match_function_pointer_param_arm"
+    },
+    expected: {
+        let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("local_target should regenerate a FunctionNodeId");
+        ExpectedCallSite::dynamic_match_arm_parameter(
+            &["f"],
+            SINGLE_MATCH_FUNCTION_POINTER_PARAM_ARM_DYNAMIC_CALL_SPAN,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_single_match_function_pointer_param_arm_with_local_target_resolves_helper_call,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_single_match_function_pointer_param_arm_with_local_target"
+    },
+    expected: {
+        let target_args =
+            fixture_call_graph_function_args(&["crate"], "call_single_match_function_pointer_param_arm");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("call_single_match_function_pointer_param_arm should regenerate a FunctionNodeId");
+        ExpectedCallSite::path(
+            &["call_single_match_function_pointer_param_arm"],
+            SINGLE_MATCH_FUNCTION_POINTER_PARAM_ARM_CALLER_SPAN,
+            2,
             0,
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },

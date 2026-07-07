@@ -340,6 +340,10 @@ pub enum ExpectedDynamicCallee<'a> {
     IfBranchPaths { paths: &'a [&'a [&'a str]] },
     /// The callee expression is a match expression with path-valued arms.
     MatchArmPaths { paths: &'a [&'a [&'a str]] },
+    /// The callee expression is an if expression whose branches name the same parameter.
+    IfBranchParameter { path: &'a [&'a str] },
+    /// The callee expression is a match expression whose arms name the same parameter.
+    MatchArmParameter { path: &'a [&'a str] },
 }
 
 impl ExpectedDynamicCallee<'_> {
@@ -427,6 +431,12 @@ impl ExpectedDynamicCallee<'_> {
                     .iter()
                     .map(|path| path.iter().copied().map(String::from).collect())
                     .collect(),
+            },
+            Self::IfBranchParameter { path } => DynamicCallCallee::IfBranchParameter {
+                path: path.iter().copied().map(String::from).collect(),
+            },
+            Self::MatchArmParameter { path } => DynamicCallCallee::MatchArmParameter {
+                path: path.iter().copied().map(String::from).collect(),
             },
         }
     }
@@ -1011,6 +1021,44 @@ impl<'a> ExpectedCallSite<'a> {
         Self {
             kind: ExpectedCallKind::Dynamic {
                 callee: ExpectedDynamicCallee::MatchArmPaths { paths },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a dynamic-call expectation whose callee is an if expression over one parameter.
+    pub const fn dynamic_if_branch_parameter(
+        path: &'a [&'a str],
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::IfBranchParameter { path },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a dynamic-call expectation whose callee is a match expression over one parameter.
+    pub const fn dynamic_match_arm_parameter(
+        path: &'a [&'a str],
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::MatchArmParameter { path },
                 arg_count,
             },
             span,

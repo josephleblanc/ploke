@@ -61,6 +61,22 @@ async fn request_code_context_returns_function_and_dynamic_owner_call_context()
             relation: CallTargetKind::DynamicFunction,
         },
         Case {
+            label: "single-caller if-branch function-pointer parameter",
+            search_term: "call_single_if_function_pointer_param_branch f fn i32",
+            owner: "call_single_if_function_pointer_param_branch",
+            call_kind: CallSiteKind::Dynamic,
+            callee: CallCalleeInfo::Dynamic,
+            relation: CallTargetKind::DynamicFunction,
+        },
+        Case {
+            label: "single-caller match-arm function-pointer parameter",
+            search_term: "call_single_match_function_pointer_param_arm f fn i32",
+            owner: "call_single_match_function_pointer_param_arm",
+            call_kind: CallSiteKind::Dynamic,
+            callee: CallCalleeInfo::Dynamic,
+            relation: CallTargetKind::DynamicFunction,
+        },
+        Case {
             label: "single-caller function-pointer cast parameter",
             search_term: "call_single_function_pointer_param_cast f fn i32",
             owner: "call_single_function_pointer_param_cast",

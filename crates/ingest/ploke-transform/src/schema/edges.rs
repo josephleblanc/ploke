@@ -787,9 +787,9 @@ fn call_site_to_params(call_site: &CallNode) -> BTreeMap<String, cozo::DataValue
                 | DynamicCallCallee::DereferencedClosureBinding { path, .. }
                 | DynamicCallCallee::FieldLocalBinding { path }
                 | DynamicCallCallee::FieldInitializedLocalBinding { path, .. }
-                | DynamicCallCallee::IndexedInitializedLocalBinding { path, .. } => {
-                    string_list(path)
-                }
+                | DynamicCallCallee::IndexedInitializedLocalBinding { path, .. }
+                | DynamicCallCallee::IfBranchParameter { path }
+                | DynamicCallCallee::MatchArmParameter { path } => string_list(path),
                 DynamicCallCallee::IfBranchPaths { paths } => paths
                     .split_first()
                     .filter(|(first, rest)| rest.iter().all(|path| path == *first))

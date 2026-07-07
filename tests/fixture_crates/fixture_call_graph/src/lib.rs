@@ -1650,3 +1650,22 @@ impl NestedSelfFieldAssocOwner {
         self.inner.value.instance_value()
     }
 }
+
+fn call_single_if_function_pointer_param_branch(flag: bool, f: fn() -> i32) -> i32 {
+    (if flag { f } else { f })()
+}
+
+pub fn call_single_if_function_pointer_param_branch_with_local_target(flag: bool) -> i32 {
+    call_single_if_function_pointer_param_branch(flag, local_target)
+}
+
+fn call_single_match_function_pointer_param_arm(flag: bool, f: fn() -> i32) -> i32 {
+    (match flag {
+        true => f,
+        false => f,
+    })()
+}
+
+pub fn call_single_match_function_pointer_param_arm_with_local_target(flag: bool) -> i32 {
+    call_single_match_function_pointer_param_arm(flag, local_target)
+}

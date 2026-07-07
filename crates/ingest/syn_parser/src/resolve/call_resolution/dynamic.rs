@@ -37,6 +37,20 @@ impl CallRelationResolver<'_> {
             self.resolve_if_branch_dynamic_call(call, paths, relations, statuses)?;
             return Ok(());
         }
+        if let DynamicCallCallee::IfBranchParameter { path }
+        | DynamicCallCallee::MatchArmParameter { path } = &call.callee
+        {
+            if let Some(target) = self.resolve_parameter_value_call(call.owner, path)? {
+                push_dynamic_parameter_target(call, target, relations);
+                statuses.push(CallResolutionStatus::Resolved {
+                    source,
+                    kind: CallResolutionKind::LocalExact,
+                });
+            } else {
+                statuses.push(CallResolutionStatus::Unsupported { source });
+            }
+            return Ok(());
+        }
 
         if let DynamicCallCallee::InitializedLocalBinding { init_path, .. }
         | DynamicCallCallee::FnPointerCastInitializedLocalBinding { init_path, .. }
@@ -57,20 +71,7 @@ impl CallRelationResolver<'_> {
         | DynamicCallCallee::FnPointerCastLocalBinding { path } = &call.callee
             && let Some(target) = self.resolve_parameter_value_call(call.owner, path)?
         {
-            match target {
-                ParameterCallTarget::Function(target) => {
-                    relations.push(CallRelation::DynamicFunction {
-                        source: call.id,
-                        target,
-                    });
-                }
-                ParameterCallTarget::Closure(target) => {
-                    relations.push(CallRelation::DynamicClosure {
-                        source: call.id,
-                        target,
-                    });
-                }
-            }
+            push_dynamic_parameter_target(call, target, relations);
             statuses.push(CallResolutionStatus::Resolved {
                 source,
                 kind: CallResolutionKind::LocalExact,
@@ -81,20 +82,7 @@ impl CallRelationResolver<'_> {
         if let DynamicCallCallee::FieldLocalBinding { path } = &call.callee
             && let Some(target) = self.resolve_parameter_field_call(call.owner, path)?
         {
-            match target {
-                ParameterCallTarget::Function(target) => {
-                    relations.push(CallRelation::DynamicFunction {
-                        source: call.id,
-                        target,
-                    });
-                }
-                ParameterCallTarget::Closure(target) => {
-                    relations.push(CallRelation::DynamicClosure {
-                        source: call.id,
-                        target,
-                    });
-                }
-            }
+            push_dynamic_parameter_target(call, target, relations);
             statuses.push(CallResolutionStatus::Resolved {
                 source,
                 kind: CallResolutionKind::LocalExact,
@@ -139,6 +127,8 @@ impl CallRelationResolver<'_> {
             | DynamicCallCallee::IndexedInitializedLocalBinding { .. }
             | DynamicCallCallee::IfBranchPaths { .. }
             | DynamicCallCallee::MatchArmPaths { .. }
+            | DynamicCallCallee::IfBranchParameter { .. }
+            | DynamicCallCallee::MatchArmParameter { .. }
             | DynamicCallCallee::Other => {
                 statuses.push(CallResolutionStatus::Unsupported { source });
                 return Ok(());
@@ -480,6 +470,27 @@ impl CallRelationResolver<'_> {
             LocalFunctionPathResolution::Ambiguous => DynamicPathResolution::Ambiguous,
             LocalFunctionPathResolution::Unsupported => DynamicPathResolution::Unsupported,
         })
+    }
+}
+
+fn push_dynamic_parameter_target(
+    call: &DynamicCallNode,
+    target: ParameterCallTarget,
+    relations: &mut Vec<CallRelation>,
+) {
+    match target {
+        ParameterCallTarget::Function(target) => {
+            relations.push(CallRelation::DynamicFunction {
+                source: call.id,
+                target,
+            });
+        }
+        ParameterCallTarget::Closure(target) => {
+            relations.push(CallRelation::DynamicClosure {
+                source: call.id,
+                target,
+            });
+        }
     }
 }
 

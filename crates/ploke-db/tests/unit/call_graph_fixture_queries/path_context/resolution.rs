@@ -258,6 +258,7 @@ fn fixture_context_resolves_single_caller_dynamic_function_pointer_parameter_for
     struct Case {
         owner: &'static str,
         caller: &'static str,
+        caller_arg_count: u32,
         source: &'static str,
     }
 
@@ -265,11 +266,25 @@ fn fixture_context_resolves_single_caller_dynamic_function_pointer_parameter_for
         Case {
             owner: "call_single_parenthesized_function_pointer_param",
             caller: "call_single_parenthesized_function_pointer_param_with_local_target",
+            caller_arg_count: 1,
             source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:1522-1527 `(f)()`",
+        },
+        Case {
+            owner: "call_single_if_function_pointer_param_branch",
+            caller: "call_single_if_function_pointer_param_branch_with_local_target",
+            caller_arg_count: 2,
+            source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:1654-1659 `(if flag { f } else { f })()`",
+        },
+        Case {
+            owner: "call_single_match_function_pointer_param_arm",
+            caller: "call_single_match_function_pointer_param_arm_with_local_target",
+            caller_arg_count: 2,
+            source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:1662-1670 `match flag { true => f, false => f }`",
         },
         Case {
             owner: "call_single_function_pointer_param_cast",
             caller: "call_single_function_pointer_param_cast_with_local_target",
+            caller_arg_count: 1,
             source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:1564-1569 `(f as fn() -> i32)()`",
         },
     ];
@@ -332,7 +347,7 @@ fn fixture_context_resolves_single_caller_dynamic_function_pointer_parameter_for
 
         let caller_context = db.call_context_for_owner(caller)?;
         let helper_call = row_by_path(&caller_context, &[case.owner]);
-        assert_eq!(helper_call.site.arg_count, Some(1));
+        assert_eq!(helper_call.site.arg_count, Some(case.caller_arg_count));
         assert_resolved_target(
             helper_call,
             helper,

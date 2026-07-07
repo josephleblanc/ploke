@@ -96,8 +96,16 @@ pub(super) fn classify_dynamic_callee(
         return DynamicCallCallee::IfBranchPaths { paths };
     }
 
+    if let Some(path) = if_branch_parameter_path(callee, param_names, local_scopes) {
+        return DynamicCallCallee::IfBranchParameter { path };
+    }
+
     if let Some(paths) = match_arm_paths(callee, param_names, local_scopes) {
         return DynamicCallCallee::MatchArmPaths { paths };
+    }
+
+    if let Some(path) = match_arm_parameter_path(callee, param_names, local_scopes) {
+        return DynamicCallCallee::MatchArmParameter { path };
     }
 
     if let Some(path) = block_path_expr(callee) {
@@ -204,6 +212,106 @@ fn classify_dynamic_path_expr(
     }
 
     DynamicCallCallee::Path { path }
+}
+
+fn if_branch_parameter_path(
+    callee: &syn::Expr,
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<Vec<String>> {
+    let syn::Expr::If(branch) = unparen_expr(callee) else {
+        return None;
+    };
+    let mut paths = block_parameter_paths(&branch.then_branch, param_names, local_scopes)?;
+    let (_else_token, else_expr) = branch.else_branch.as_ref()?;
+    paths.extend(parameter_branch_paths(
+        else_expr.as_ref(),
+        param_names,
+        local_scopes,
+    )?);
+    same_parameter_path(paths)
+}
+
+fn match_arm_parameter_path(
+    callee: &syn::Expr,
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<Vec<String>> {
+    let syn::Expr::Match(expr) = unparen_expr(callee) else {
+        return None;
+    };
+
+    let paths = expr
+        .arms
+        .iter()
+        .map(|arm| parameter_branch_paths(arm.body.as_ref(), param_names, local_scopes))
+        .collect::<Option<Vec<_>>>()?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    same_parameter_path(paths)
+}
+
+fn parameter_branch_paths(
+    expr: &syn::Expr,
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<Vec<Vec<String>>> {
+    match unparen_expr(expr) {
+        syn::Expr::Path(path) => {
+            parameter_path(path, param_names, local_scopes).map(|path| vec![path])
+        }
+        syn::Expr::Block(block) => block_parameter_paths(&block.block, param_names, local_scopes),
+        syn::Expr::If(_) => {
+            if_branch_parameter_path(expr, param_names, local_scopes).map(|path| vec![path])
+        }
+        syn::Expr::Match(_) => {
+            match_arm_parameter_path(expr, param_names, local_scopes).map(|path| vec![path])
+        }
+        _ => None,
+    }
+}
+
+fn block_parameter_paths(
+    block: &syn::Block,
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<Vec<Vec<String>>> {
+    let [syn::Stmt::Expr(expr, None)] = block.stmts.as_slice() else {
+        return None;
+    };
+    parameter_branch_paths(expr, param_names, local_scopes)
+}
+
+fn parameter_path(
+    path: &syn::ExprPath,
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<Vec<String>> {
+    if path.qself.is_some() {
+        return None;
+    }
+
+    let path = path_segments(&path.path);
+    let [name] = path.as_slice() else {
+        return None;
+    };
+
+    if visible_local_binding(name, local_scopes).is_some() {
+        return None;
+    }
+
+    param_names
+        .iter()
+        .any(|candidate| candidate == name)
+        .then_some(path)
+}
+
+fn same_parameter_path(paths: Vec<Vec<String>>) -> Option<Vec<String>> {
+    let (first, rest) = paths.split_first()?;
+    rest.iter()
+        .all(|path| path == first)
+        .then_some(first.clone())
 }
 
 fn indexed_initialized_path(

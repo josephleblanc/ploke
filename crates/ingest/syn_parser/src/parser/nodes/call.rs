@@ -286,6 +286,14 @@ pub enum DynamicCallCallee {
     /// evaluate to a path expression, such as
     /// `(match flag { true => local_target, false => other_target })()`.
     MatchArmPaths { paths: Vec<Vec<String>> },
+    /// The callee expression is an if expression whose supported branches each
+    /// evaluate to the same visible callable parameter, such as
+    /// `(if flag { f } else { f })()`.
+    IfBranchParameter { path: Vec<String> },
+    /// The callee expression is a match expression whose supported arms each
+    /// evaluate to the same visible callable parameter, such as
+    /// `(match flag { true => f, false => f })()`.
+    MatchArmParameter { path: Vec<String> },
     /// The callee expression is not represented by this conservative slice.
     #[default]
     Other,
