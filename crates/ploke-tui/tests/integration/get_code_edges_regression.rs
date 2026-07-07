@@ -33,11 +33,12 @@ use crate::call_graph_tool_support::{
     AxumAwaitReceiverToolFixture, AxumBodyEmptyToolFixture, AxumBoxedIntoRouteToolFixture,
     AxumHandlerCallToolFixture, AxumJsonFromBytesToolFixture, AxumParseAttrsToolFixture,
     AxumRequestExtractPathToolFixture, AxumRunUiTestsToolFixture, CallGraphToolFixture,
-    CallableBlockerFixture, FixtureBranchReceiverToolFixture, FixtureDynamicCallableToolFixture,
-    assert_await_result_unwrap_context, assert_await_result_unwrap_proof,
-    assert_body_empty_impact_summary, assert_body_empty_incoming_context,
-    assert_boxed_into_route_incoming_context, assert_branch_receiver_context,
-    assert_branch_receiver_proof, assert_call_path_node, assert_handler_call_incoming_context,
+    CallableBlockerFixture, ChronoAliasConstructorToolFixture, FixtureBranchReceiverToolFixture,
+    FixtureDynamicCallableToolFixture, assert_await_result_unwrap_context,
+    assert_await_result_unwrap_proof, assert_body_empty_impact_summary,
+    assert_body_empty_incoming_context, assert_boxed_into_route_incoming_context,
+    assert_branch_receiver_context, assert_branch_receiver_proof, assert_call_path_node,
+    assert_expected_path_incoming_context, assert_handler_call_incoming_context,
     assert_incoming_context, assert_json_from_bytes_incoming_context,
     assert_parse_attrs_incoming_context, assert_path_blocker_proof, assert_path_context,
     assert_run_ui_tests_incoming_context, assert_target_proof, assert_two_hop_call_path, ui_field,
@@ -1638,6 +1639,73 @@ async fn code_item_edges_returns_real_corpus_boxed_into_route_constructor_caller
             .expect("proof count")
             >= fixture.callers.len(),
         "code_item_edges should surface real-corpus BoxedIntoRoute proof rows"
+    );
+}
+
+#[tokio::test]
+async fn code_item_edges_returns_real_corpus_chrono_alias_constructor_callers() {
+    let fixture = ChronoAliasConstructorToolFixture::new().await;
+    let module_path = fixture.module_path_arg();
+    let params = EdgesParams {
+        item_name: Cow::Borrowed("Single"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("variant"),
+        module_path: Cow::Owned(module_path),
+        owner_trait: None,
+        owner_type: None,
+        parent_name: None,
+    };
+
+    let result = CodeItemEdges::execute(params, fixture.ctx("chrono-alias-constructor-edges"))
+        .await
+        .expect("tool execution");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
+    let call_context = payload
+        .get("node_info")
+        .and_then(|node| node.get("call_context"))
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.call_context array");
+    let proof_context = payload
+        .get("node_info")
+        .and_then(|node| node.get("proof_context"))
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.proof_context array");
+
+    // Real-corpus oracle matrix:
+    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //   chrono/src/offset/mod.rs:77 aliases
+    //   `MappedLocalTime<T> = LocalResult<T>`.
+    //   chrono/src/offset/mod.rs:81-83 defines `LocalResult::Single(T)`.
+    //   chrono/src/offset/mod.rs:{143,156,468,502,535},
+    //   offset/{fixed.rs:135,138,utc.rs:122,125,local/unix.rs:159}, and
+    //   datetime/tests.rs:{75,79} call `MappedLocalTime::Single(...)`.
+    // Expected tool traversal: exact edge lookup of the underlying enum
+    // variant exposes all 12 incoming alias constructor edges and proof rows.
+    assert_expected_path_incoming_context(
+        call_context,
+        &fixture.callers,
+        fixture.target,
+        "code_item_edges",
+        "MappedLocalTime::Single",
+    );
+    for caller in &fixture.callers {
+        assert_target_proof(
+            proof_context,
+            caller.owner,
+            fixture.target,
+            "code_item_edges",
+        );
+    }
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert_eq!(ui_field(ui, "call_context_incoming"), "12");
+    assert!(
+        ui_field(ui, "proof_context")
+            .parse::<usize>()
+            .expect("proof count")
+            >= fixture.callers.len(),
+        "code_item_edges should surface real-corpus chrono alias constructor proof rows"
     );
 }
 

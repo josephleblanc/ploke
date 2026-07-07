@@ -381,9 +381,10 @@ Current executable coverage: `fallback.rs` now pins the chrono alias rows by
 exact source owner and resolved traversal to `LocalResult::Single`, pins chrono
 try-receiver and guarded-receiver rows by owner and source-line fanout, and
 pins the memchr function-pointer rows by owner and source-line fanout. RAG exact
-call-context and TUI `code_item_lookup` tests also preserve the 12 chrono alias
-constructor caller-site identities. RAG collection now preserves the two memchr
-function-pointer field blockers with argument counts 4 and 2, and TUI
+call-context and TUI `code_item_lookup` plus `code_item_edges` tests also
+preserve the 12 chrono alias constructor caller-site identities. RAG collection
+now preserves the two memchr function-pointer field blockers with argument
+counts 4 and 2, and TUI
 `code_item_lookup` plus `code_item_edges` preserve the same targetless dynamic
 rows and blocked proof facts. It also pins memchr callable trait-object cases by
 explicit owner-scoped absence. The generic-array guarded match-arm case remains
