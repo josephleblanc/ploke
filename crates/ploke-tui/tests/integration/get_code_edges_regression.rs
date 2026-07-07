@@ -1517,14 +1517,26 @@ async fn code_item_edges_returns_real_corpus_json_from_bytes_callers() {
         .and_then(|node| node.get("proof_context"))
         .and_then(serde_json::Value::as_array)
         .expect("node_info.proof_context array");
+    let reach = payload
+        .get("node_info")
+        .and_then(|node| node.get("call_reach"))
+        .and_then(serde_json::Value::as_object)
+        .expect("node_info.call_reach object");
+    let reach_source_cfgs = reach
+        .get("source_cfgs")
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.call_reach source_cfgs array");
 
     // Real-corpus oracle matrix:
     //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
     //   axum/src/json.rs:164 defines `Json::from_bytes`.
     //   axum/src/json.rs:112 and :128 call `Self::from_bytes(&bytes)`.
+    //   axum/src/lib.rs:488-489 gates the file module with
+    //     `#[cfg(feature = "json")] mod json;`.
     // Expected tool traversal: exact edge lookup of the callee method exposes
     // the same two trait-impl caller-site edges and projected proof rows as
-    // the DB target-centered query.
+    // the DB target-centered query, while preserving the inherited feature
+    // gate in the owner reach summary.
     assert_json_from_bytes_incoming_context(
         call_context,
         &fixture.callers,
@@ -1539,9 +1551,20 @@ async fn code_item_edges_returns_real_corpus_json_from_bytes_callers() {
             "code_item_edges",
         );
     }
+    assert!(
+        reach_source_cfgs
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .any(|cfg| cfg == r#"feature = "json""#),
+        "code_item_edges Json::from_bytes reach should preserve the json feature cfg: {reach_source_cfgs:#?}"
+    );
 
     let ui = result.ui_payload.as_ref().expect("ui payload");
     assert_eq!(ui_field(ui, "call_context_incoming"), "2");
+    assert_eq!(
+        ui_field(ui, "reach_source_cfgs"),
+        reach_source_cfgs.len().to_string()
+    );
     assert!(
         ui_field(ui, "proof_context")
             .parse::<usize>()

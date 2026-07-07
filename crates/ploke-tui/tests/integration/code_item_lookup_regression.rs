@@ -1628,6 +1628,10 @@ async fn code_item_lookup_returns_real_corpus_json_from_bytes_callers() {
         .get("source_files")
         .and_then(serde_json::Value::as_array)
         .expect("call_reach source_files array");
+    let reach_source_cfgs = reach
+        .get("source_cfgs")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_reach source_cfgs array");
 
     // Real-corpus oracle matrix:
     //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
@@ -1635,10 +1639,13 @@ async fn code_item_lookup_returns_real_corpus_json_from_bytes_callers() {
     //   axum/src/json.rs:112 and :128 call `Self::from_bytes(&bytes)`.
     //   axum/src/json.rs:184 calls
     //     `serde_json::Deserializer::from_slice(bytes)`.
+    //   axum/src/lib.rs:488-489 gates the file module with
+    //     `#[cfg(feature = "json")] mod json;`.
     // Expected tool traversal: exact lookup of the callee method exposes both
     // trait-impl `Self::from_bytes` caller-site edges and proof rows. Its
     // owner reach summary also surfaces the serde_json dependency-root call as
-    // an external frontier row, not a fabricated local edge.
+    // an external frontier row, not a fabricated local edge, while preserving
+    // the inherited feature gate.
     assert_json_from_bytes_incoming_context(
         call_context,
         &fixture.callers,
@@ -1712,6 +1719,13 @@ async fn code_item_lookup_returns_real_corpus_json_from_bytes_callers() {
         "axum/src/json.rs",
         "code_item_lookup Json::from_bytes reach source files",
     );
+    assert!(
+        reach_source_cfgs
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .any(|cfg| cfg == r#"feature = "json""#),
+        "code_item_lookup Json::from_bytes reach should preserve the json feature cfg: {reach_source_cfgs:#?}"
+    );
 
     let ui = result.ui_payload.as_ref().expect("ui payload");
     assert_eq!(ui_field(ui, "call_context_incoming"), "2");
@@ -1732,6 +1746,10 @@ async fn code_item_lookup_returns_real_corpus_json_from_bytes_callers() {
     assert_eq!(
         ui_field(ui, "reach_source_files"),
         reach_source_files.len().to_string()
+    );
+    assert_eq!(
+        ui_field(ui, "reach_source_cfgs"),
+        reach_source_cfgs.len().to_string()
     );
     assert!(
         ui_field(ui, "proof_context")
