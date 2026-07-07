@@ -113,6 +113,11 @@ pub enum CallArgument {
         type_path: Vec<String>,
         fields: Vec<ArgumentFieldInit>,
     },
+    /// The argument expression is an array with path-valued element
+    /// initializers, such as `[local_target]`.
+    Array {
+        element_init_paths: Vec<Option<Vec<String>>>,
+    },
     /// The argument expression is not represented by this conservative slice.
     #[default]
     Other,

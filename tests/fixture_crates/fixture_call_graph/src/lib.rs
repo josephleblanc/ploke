@@ -1632,3 +1632,11 @@ pub fn call_tuple_return_pattern_local_instance_method() -> i32 {
     let (value, _) = make_local_assoc_pair();
     value.instance_value()
 }
+
+fn call_single_indexed_function_pointer_param(funcs: [fn() -> i32; 1]) -> i32 {
+    funcs[0]()
+}
+
+pub fn call_single_indexed_function_pointer_param_with_local_target() -> i32 {
+    call_single_indexed_function_pointer_param([local_target])
+}

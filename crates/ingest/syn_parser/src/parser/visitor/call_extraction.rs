@@ -580,8 +580,19 @@ fn call_argument(
                 closure_id: ExecutableBodyId::Closure(generate_closure_body_id(owner, span, cfgs)),
             }
         }
-        _ => constructed_argument(arg, param_names, local_scopes).unwrap_or(CallArgument::Other),
+        _ => array_argument(arg, param_names, local_scopes)
+            .or_else(|| constructed_argument(arg, param_names, local_scopes))
+            .unwrap_or(CallArgument::Other),
     }
+}
+
+fn array_argument(
+    arg: &syn::Expr,
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<CallArgument> {
+    array_init(Some(arg), param_names, local_scopes)
+        .map(|element_init_paths| CallArgument::Array { element_init_paths })
 }
 
 fn constructed_argument(

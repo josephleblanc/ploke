@@ -402,6 +402,9 @@ impl CallRelationResolver<'_> {
                 self.type_parameter_has_callable_bound(function_id, &node.path)
             }
             (ParameterProof::Field(_), TypeNode::Named(_)) => Ok(true),
+            (ParameterProof::Field(field_path), TypeNode::Array(_)) => {
+                Ok(field_path_index(field_path).is_some())
+            }
             _ => Ok(false),
         }
     }
@@ -502,6 +505,16 @@ impl CallRelationResolver<'_> {
                 self.resolve_argument_path(site.owner, &field.init_path)
                     .map(|target| target.map(ParameterCallTarget::Function))
             }
+            (ParameterProof::Field(field_path), CallArgument::Array { element_init_paths }) => {
+                let Some(index) = field_path_index(field_path) else {
+                    return Ok(None);
+                };
+                let Some(Some(init_path)) = element_init_paths.get(index) else {
+                    return Ok(None);
+                };
+                self.resolve_argument_path(site.owner, init_path)
+                    .map(|target| target.map(ParameterCallTarget::Function))
+            }
             _ => Ok(None),
         }
     }
@@ -544,6 +557,13 @@ fn parameter_proof_type_path<'a>(
 
 fn path_leaf_matches(path: &[String], expected: &[String]) -> bool {
     path.last().is_some() && path.last() == expected.last()
+}
+
+fn field_path_index(field_path: &[String]) -> Option<usize> {
+    let [index] = field_path else {
+        return None;
+    };
+    index.parse().ok()
 }
 
 fn type_node_is_callable_trait_bound(node: &TypeNode) -> bool {

@@ -55,6 +55,12 @@ async fn proof_context_collection_preserves_projected_field_dynamic_rows() -> Re
             "call_single_named_field_function_param",
             dynamic_target,
         )?,
+        dynamic_case(
+            &db,
+            "single-caller indexed function-pointer parameter",
+            "call_single_indexed_function_pointer_param",
+            dynamic_target,
+        )?,
         tuple_case(
             &db,
             "indexed tuple-field function",

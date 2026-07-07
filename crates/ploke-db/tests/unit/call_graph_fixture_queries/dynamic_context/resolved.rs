@@ -281,6 +281,11 @@ fn fixture_context_reads_projected_resolved_dynamic_function_shapes() -> Result<
             path: &["holder", "callback"],
             expected_rows: 1,
         },
+        ResolvedDynamicContextCase {
+            owner: "call_single_indexed_function_pointer_param",
+            path: &["funcs", "0"],
+            expected_rows: 1,
+        },
     ];
 
     assert_resolved_dynamic_context_cases(&db, target, &cases)

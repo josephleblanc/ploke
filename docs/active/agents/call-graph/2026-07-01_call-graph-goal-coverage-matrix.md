@@ -317,6 +317,18 @@ Completed evidence:
 Reason to stay in this bucket: none after focused verification. Switch buckets
 unless the workspace re-export alias proof regresses.
 
+Completed bucket, 2026-07-07: direct array-parameter callable proof.
+
+- Fixture-backed `call_single_indexed_function_pointer_param(funcs: [fn() -> i32; 1])`
+  now resolves `funcs[0]()` to `local_target` when its only local caller
+  supplies `[local_target]`.
+- Parser extraction records the direct array argument as path-valued element
+  proof, while the existing public `call_indexed_function_pointer(funcs)`
+  remains fail-closed and targetless.
+- DB owner context, DB proof projection, RAG call/proof context, and exact
+  `code_item_lookup` / `code_item_edges` tool tests preserve the same resolved
+  `DynamicFunction` edge.
+
 ## Coverage Matrix
 
 | Bucket | Current status | DB proof | RAG proof | TUI/tool proof | Real-corpus target | Next action |

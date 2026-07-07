@@ -224,6 +224,8 @@ const SINGLE_INDEXED_FIELD_FUNCTION_PARAM_CALL_SPAN: (usize, usize) = (33876, 33
 const SINGLE_INDEXED_FIELD_FUNCTION_CALLER_SPAN: (usize, usize) = (33982, 34073);
 const SINGLE_INDEXED_TUPLE_FIELD_FUNCTION_PARAM_CALL_SPAN: (usize, usize) = (34174, 34187);
 const SINGLE_INDEXED_TUPLE_FIELD_FUNCTION_CALLER_SPAN: (usize, usize) = (34278, 34366);
+const SINGLE_INDEXED_FUNCTION_POINTER_PARAM_CALL_SPAN: (usize, usize) = (36405, 36415);
+const SINGLE_INDEXED_FUNCTION_POINTER_CALLER_SPAN: (usize, usize) = (36502, 36560);
 const PARENTHESIZED_FUNCTION_POINTER_PARAM_DYNAMIC_CALL_SPAN: (usize, usize) = (14347, 14352);
 const FUNCTION_POINTER_PARAM_CAST_DYNAMIC_CALL_SPAN: (usize, usize) = (14425, 14445);
 const CLOSURE_BINDING_CAST_DYNAMIC_CALL_SPAN: (usize, usize) = (14522, 14548);
@@ -6112,6 +6114,56 @@ paranoid_call_site_test!(
         ExpectedCallSite::path(
             &["call_single_indexed_tuple_field_function_param"],
             SINGLE_INDEXED_TUPLE_FIELD_FUNCTION_CALLER_SPAN,
+            1,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_single_indexed_function_pointer_param_resolves_single_caller_array_argument,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_single_indexed_function_pointer_param"
+    },
+    expected: {
+        let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("local_target should regenerate a FunctionNodeId");
+        ExpectedCallSite::dynamic_field_local_binding(
+            &["funcs", "0"],
+            SINGLE_INDEXED_FUNCTION_POINTER_PARAM_CALL_SPAN,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_single_indexed_function_pointer_param_with_local_target_resolves_helper_call,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_single_indexed_function_pointer_param_with_local_target"
+    },
+    expected: {
+        let target_args = fixture_call_graph_function_args(
+            &["crate"],
+            "call_single_indexed_function_pointer_param",
+        );
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("call_single_indexed_function_pointer_param should regenerate a FunctionNodeId");
+        ExpectedCallSite::path(
+            &["call_single_indexed_function_pointer_param"],
+            SINGLE_INDEXED_FUNCTION_POINTER_CALLER_SPAN,
             1,
             0,
             &[],

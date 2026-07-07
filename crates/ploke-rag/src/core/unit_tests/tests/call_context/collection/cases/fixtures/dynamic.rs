@@ -64,6 +64,17 @@ async fn call_context_collection_reads_real_fixture_dynamic_rows() -> Result<(),
             "call_single_named_field_function_param_with_local_target",
         ),
     )?;
+    let array_param_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_single_indexed_function_pointer_param"),
+    )?;
+    let array_param_caller = one_uuid(
+        &db,
+        &function_in_module_query(
+            &["crate"],
+            "call_single_indexed_function_pointer_param_with_local_target",
+        ),
+    )?;
     let tuple_field_param_owner = one_uuid(
         &db,
         &function_in_module_query(&["crate"], "call_single_indexed_tuple_field_function_param"),
@@ -91,6 +102,7 @@ async fn call_context_collection_reads_real_fixture_dynamic_rows() -> Result<(),
         (closure_binding_owner, 1.0),
         (dereferenced_closure_owner, 1.0),
         (named_field_param_owner, 1.0),
+        (array_param_owner, 1.0),
         (field_param_owner, 1.0),
         (tuple_field_param_owner, 1.0),
     ])?;
@@ -256,18 +268,26 @@ async fn call_context_collection_reads_real_fixture_dynamic_rows() -> Result<(),
         CallTargetKind::DynamicClosure
     );
 
-    // tests/fixture_crates/fixture_call_graph/src/lib.rs:1511-1555 and 1598-1606:
-    // private helper parameters receive constructed holder values from a
-    // single local caller, so DB proof resolves `(holder.callback)()`,
-    // `holder.callbacks[0]()` and `holder.0[0]()` to `local_target`. RAG node
-    // context also includes the incoming wrapper helper call, while still
-    // exposing pathless dynamic callees as generic `Dynamic` calls.
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:1511-1555,
+    // 1598-1606, and the final direct array-parameter helper:
+    // private helper parameters receive holder/array values from a single
+    // local caller, so DB proof resolves `(holder.callback)()`,
+    // `holder.callbacks[0]()`, `holder.0[0]()` and `funcs[0]()` to
+    // `local_target`. RAG node context also includes the incoming wrapper
+    // helper call, while still exposing pathless dynamic callees as generic
+    // `Dynamic` calls.
     for (label, owner, caller, helper_path) in [
         (
             "single-caller-named-field-parameter",
             named_field_param_owner,
             named_field_param_caller,
             vec!["call_single_named_field_function_param".to_string()],
+        ),
+        (
+            "single-caller-array-parameter",
+            array_param_owner,
+            array_param_caller,
+            vec!["call_single_indexed_function_pointer_param".to_string()],
         ),
         (
             "single-caller-field-parameter",

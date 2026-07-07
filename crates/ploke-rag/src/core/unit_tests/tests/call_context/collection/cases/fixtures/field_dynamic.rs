@@ -50,6 +50,12 @@ async fn call_context_collection_reads_real_field_dynamic_rows() -> Result<(), E
             "call_single_named_field_function_param",
             dynamic_target,
         )?,
+        private_parameter_case(
+            &db,
+            "single-caller indexed function-pointer parameter",
+            "call_single_indexed_function_pointer_param",
+            dynamic_target,
+        )?,
         tuple_case(
             &db,
             "indexed tuple-field function",
