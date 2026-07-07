@@ -15,7 +15,7 @@ Root plan: `.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md`
 
 Current phase: binding/type-aware semantic resolution.
 
-Current completed bucket: awaited async closure binding proof.
+Current completed bucket: awaited async closure future-binding proof.
 
 Exit criteria for the first implementation slice:
 
@@ -243,11 +243,28 @@ should prevent future resumes from reselecting already-covered shapes.
    - Parser, transform/DB, DB traversal, RAG call-context collection, and
      exact `request_code_context` tool assertions cover the supported and
      fail-closed shapes.
-   - This does not support returned futures stored in locals, arbitrary
-     async-callable values, dereferenced/cast async closures, or general
-     poll/resume semantics.
+   - Direct same-block future bindings are covered by the next completed
+     bucket. Returned futures, arbitrary async-callable values,
+     dereferenced/cast async closures, and general poll/resume semantics remain
+     unsupported.
 
-14. Next adjacent candidate:
+14. Same-block awaited async-closure future binding proof - completed:
+   - `call_async_closure_future_binding_without_await_with_body_call()`
+     records `_future = closure()` as an unsupported targetless async-closure
+     binding path call because constructing the future does not prove that it
+     is polled.
+   - `call_awaited_async_closure_future_binding_with_body_call()` records the
+     earlier `closure()` call as awaited when the same block later executes
+     `future.await`.
+   - Parser extraction uses only direct same-block evidence:
+     `let future = closure(); future.await;`. It does not model nested control
+     flow, arbitrary future value flow, returned futures, async callable trait
+     objects, or general poll/resume semantics.
+   - Parser, transform/DB, DB traversal, RAG call-context collection, and
+     exact `request_code_context` tool assertions cover the supported and
+     fail-closed shapes.
+
+15. Next adjacent candidate:
    - Select from the coverage matrix parking lot rather than adding more
      import breadth by default.
    - Likely options are a broader async poll/resume proof carrier, an explicit

@@ -49,16 +49,44 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: none selected after the awaited async closure binding proof
-slice.
+Current bucket: none selected after the awaited async closure future-binding
+proof slice.
 
-Latest completed bucket: awaited async closure binding proof.
+Latest completed bucket: awaited async closure future-binding proof.
 
 Completed evidence:
 
-- Parser local binding proof now distinguishes async closure bindings from
-  ordinary closure bindings and records `closure()` differently depending on
-  whether the returned future is immediately awaited.
+- Parser extraction now recognizes the bounded same-block proof shape
+  `let future = closure(); future.await;` and marks the original async-closure
+  binding call as awaited.
+- `call_async_closure_future_binding_without_await_with_body_call()` preserves
+  `_future = closure()` as an unsupported targetless path call, while the
+  separately owned async-closure body still owns and resolves its
+  `local_target()` path row.
+- `call_awaited_async_closure_future_binding_with_body_call()` records the
+  earlier `closure()` path call as an awaited async-closure binding call once
+  the same block later executes `future.await`.
+- DB owner context and traversal prove the supported two-hop path
+  outer function -> async-closure owner -> `local_target`, while the
+  non-awaited stored future exposes no path from the outer function to
+  `local_target`.
+- RAG call-context collection and exact `request_code_context` TUI/tool tests
+  preserve both downstream surfaces: unsupported targetless non-awaited stored
+  future rows and resolved awaited future expansion into the async-closure
+  body.
+- Active fixtures were regenerated with `--features call_graph` and
+  round-tripped successfully. This remains bounded to a direct same-block
+  future binding and direct `future.await`; nested control flow, arbitrary
+  future value flow, returned futures, async callable trait objects, and
+  general poll/resume semantics remain future work.
+
+Previously completed bucket: immediate awaited async closure binding proof.
+
+Completed evidence:
+
+- Parser local binding proof distinguishes async closure bindings from ordinary
+  closure bindings and records `closure()` differently depending on whether
+  the returned future is immediately awaited.
 - `call_async_closure_binding_without_await_with_body_call()` preserves the
   local async-closure binding as an unsupported targetless path call, while the
   separately owned async-closure body still owns and resolves its
@@ -75,10 +103,8 @@ Completed evidence:
   preserve both downstream surfaces: unsupported targetless non-awaited
   binding rows and resolved awaited binding expansion into the async-closure
   body.
-- Active fixtures were regenerated with `--features call_graph` and
-  round-tripped successfully. This remains bounded to immediate `.await` on a
-  locally bound async closure; storing the returned future and awaiting it
-  later still needs a separate future-binding proof carrier.
+- This remains bounded to immediate `.await` on a locally bound async closure;
+  broader async callable values and poll/resume semantics remain future work.
 
 Previously completed bucket: dereferenced boxed dyn Fn exact initializer proof.
 
