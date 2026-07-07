@@ -544,6 +544,9 @@ async fn code_item_edges_returns_resolved_dynamic_callable_field_index_context()
     //   tests/fixture_crates/fixture_call_graph/src/lib.rs:1682-1684
     //     a private helper aliases a function-pointer parameter with
     //     `let g = f`, then calls `(g)()`.
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:1696-1699
+    //     a boxed `dyn Fn` binding initialized with `Box::new(local_target)`
+    //     is dereferenced and called as `(*boxed_fn)()`.
     // Parser/DB/RAG already prove these as exact DynamicFunction edges; this
     // pins the same field/index proof at the code_item_edges tool boundary.
     for owner_name in [
@@ -553,6 +556,7 @@ async fn code_item_edges_returns_resolved_dynamic_callable_field_index_context()
         "call_single_indexed_field_function_param",
         "call_single_indexed_tuple_field_function_param",
         "call_single_parenthesized_aliased_function_pointer_param",
+        "call_dereferenced_boxed_dyn_fn_value_binding",
     ] {
         let fixture = FixtureDynamicCallableToolFixture::new_for_owner(owner_name).await;
         let params = EdgesParams {

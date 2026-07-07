@@ -85,6 +85,14 @@ async fn request_code_context_returns_function_and_dynamic_owner_call_context()
             relation: CallTargetKind::DynamicFunction,
         },
         Case {
+            label: "dereferenced boxed dyn Fn exact initializer",
+            search_term: "call_dereferenced_boxed_dyn_fn_value_binding boxed_fn",
+            owner: "call_dereferenced_boxed_dyn_fn_value_binding",
+            call_kind: CallSiteKind::Dynamic,
+            callee: CallCalleeInfo::Dynamic,
+            relation: CallTargetKind::DynamicFunction,
+        },
+        Case {
             label: "single-caller generic FnOnce parameter",
             search_term: "call_single_generic_fn_once_param generic_f FnOnce",
             owner: "call_single_generic_fn_once_param",

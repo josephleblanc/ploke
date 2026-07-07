@@ -68,6 +68,9 @@ Completed evidence:
 - RAG incoming expansion and dynamic call-context collection preserve the same
   owner, the external setup row, and the resolved dynamic edge to
   `local_target`.
+- Exact TUI lookup, edges, and request-code-context matrices preserve the
+  resolved dynamic edge and proof payload for the dereferenced boxed callable
+  owner.
 - Active fixtures were regenerated with `--features call_graph` and
   round-tripped successfully. This remains bounded to exact callable
   trait-object initializers; unproven trait objects and arbitrary callable
