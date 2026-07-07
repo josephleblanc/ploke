@@ -47,9 +47,34 @@ An unsupported bucket is done for now when it has:
 
 No bucket should receive more than four consecutive commits without re-checking this matrix and either switching buckets or recording a concrete reason to stay.
 
-## Current Bucket
+## Current And Recent Buckets
 
-Current bucket: borrowed value-parameter method-result receiver proof.
+Current bucket: none selected after `5c248884f` /
+`c0f38dc01`.
+
+Latest completed bucket: private named-field callable-parameter proof.
+
+Completed evidence:
+
+- `call_single_named_field_function_param(holder: CallbackHolder)` now proves
+  `(holder.callback)()` as a private complete-single-caller parameter field
+  edge to `local_target` when its only local caller constructs
+  `CallbackHolder { callback: local_target }`.
+- Parser, DB dynamic context/proof, DB path traversal, RAG call/proof context,
+  and exact TUI lookup/edges tests cover the shape without adding a parallel
+  resolver branch.
+
+Next candidate bucket: import / re-export / glob completeness only if there is
+a bounded source-oracle proof shape. Current known gaps around
+`TestClient::new` are multipart, closure-body, and macro-template projection
+boundaries, so broad import rewrites should not start without a tighter source
+oracle.
+
+Reason to stay in dynamic callable values: none. Switch buckets unless this
+proof regresses.
+
+Previously completed bucket: borrowed value-parameter method-result receiver
+proof.
 
 Exit criteria:
 
