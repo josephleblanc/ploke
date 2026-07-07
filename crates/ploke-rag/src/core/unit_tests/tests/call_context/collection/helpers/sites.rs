@@ -18,6 +18,7 @@ pub(in super::super) fn insert_call_site(db: &Database, seed: CallSeed<'_>) -> R
     params.insert("call_kind".to_string(), DataValue::from(seed.kind));
     params.insert("span".to_string(), span(seed.span));
     params.insert("cfgs".to_string(), list(&[]));
+    params.insert("unsafe_block".to_string(), DataValue::Bool(false));
     params.insert("path".to_string(), option_list(seed.path));
     params.insert("method_name".to_string(), option_str(seed.method));
     params.insert("macro_name".to_string(), option_str(seed.macro_name));
@@ -34,12 +35,13 @@ pub(in super::super) fn insert_call_site(db: &Database, seed: CallSeed<'_>) -> R
     );
 
     db.raw_query_mut_params(
-            r#"?[id, at, owner_id, call_kind, span, cfgs, path, method_name, macro_name, receiver_kind, receiver_path, arg_count, generic_arg_count] :=
+            r#"?[id, at, owner_id, call_kind, span, cfgs, unsafe_block, path, method_name, macro_name, receiver_kind, receiver_path, arg_count, generic_arg_count] :=
                 id = $id,
                 owner_id = $owner_id,
                 call_kind = $call_kind,
                 span = $span,
                 cfgs = $cfgs,
+                unsafe_block = $unsafe_block,
                 path = $path,
                 method_name = $method_name,
                 macro_name = $macro_name,
@@ -48,7 +50,7 @@ pub(in super::super) fn insert_call_site(db: &Database, seed: CallSeed<'_>) -> R
                 arg_count = $arg_count,
                 generic_arg_count = $generic_arg_count,
                 at = 'ASSERT'
-            :put call_site { id, at => owner_id, call_kind, span, cfgs, path, method_name, macro_name, receiver_kind, receiver_path, arg_count, generic_arg_count }"#,
+            :put call_site { id, at => owner_id, call_kind, span, cfgs, unsafe_block, path, method_name, macro_name, receiver_kind, receiver_path, arg_count, generic_arg_count }"#,
             params,
         )
         .map_err(Error::from)?;

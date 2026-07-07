@@ -266,6 +266,7 @@ fn serde_roundtrip_request_code_context() {
         effect_seed_id: None,
         confidence: None,
         blocker_if_unresolved: None,
+        unsafe_block: None,
         authority_term: None,
         summary_class: None,
         artifact_hash: None,

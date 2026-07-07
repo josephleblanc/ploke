@@ -528,6 +528,8 @@ pub struct ProofContextInfo {
     #[serde(default)]
     pub blocker_if_unresolved: Option<bool>,
     #[serde(default)]
+    pub unsafe_block: Option<bool>,
+    #[serde(default)]
     pub authority_term: Option<String>,
     #[serde(default)]
     pub summary_class: Option<String>,

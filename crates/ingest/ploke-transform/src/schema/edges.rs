@@ -141,6 +141,7 @@ impl CallSiteSchema {
                 call_kind: String,
                 span: [Int; 2],
                 cfgs: [String],
+                unsafe_block: Bool,
                 path: [String]?,
                 method_name: String?,
                 macro_name: String?,
@@ -161,12 +162,13 @@ impl CallSiteSchema {
     ) -> Result<(), TransformError> {
         let params = call_site_to_params(call_site);
         db.run_script(
-            r#"?[id, at, owner_id, call_kind, span, cfgs, path, method_name, macro_name, receiver_kind, receiver_path, arg_count, generic_arg_count] :=
+            r#"?[id, at, owner_id, call_kind, span, cfgs, unsafe_block, path, method_name, macro_name, receiver_kind, receiver_path, arg_count, generic_arg_count] :=
                 id = $id,
                 owner_id = $owner_id,
                 call_kind = $call_kind,
                 span = $span,
                 cfgs = $cfgs,
+                unsafe_block = $unsafe_block,
                 path = $path,
                 method_name = $method_name,
                 macro_name = $macro_name,
@@ -175,7 +177,7 @@ impl CallSiteSchema {
                 arg_count = $arg_count,
                 generic_arg_count = $generic_arg_count,
                 at = 'ASSERT'
-            :put call_site { id, at => owner_id, call_kind, span, cfgs, path, method_name, macro_name, receiver_kind, receiver_path, arg_count, generic_arg_count }"#,
+            :put call_site { id, at => owner_id, call_kind, span, cfgs, unsafe_block, path, method_name, macro_name, receiver_kind, receiver_path, arg_count, generic_arg_count }"#,
             params,
             cozo::ScriptMutability::Mutable,
         )?;
@@ -742,6 +744,10 @@ fn call_site_to_params(call_site: &CallNode) -> BTreeMap<String, cozo::DataValue
     );
     params.insert("span".to_string(), span_to_cozo(call_site.span()));
     params.insert("cfgs".to_string(), string_list(call_site.cfgs()));
+    params.insert(
+        "unsafe_block".to_string(),
+        cozo::DataValue::Bool(call_site.unsafe_block()),
+    );
 
     match call_site {
         CallNode::PathCall(call) => {

@@ -13,6 +13,7 @@ pub struct CallSiteRow {
     pub kind: CallSiteKind,
     pub span: (u32, u32),
     pub cfgs: Vec<String>,
+    pub unsafe_block: bool,
     pub path: Option<Vec<String>>,
     pub method: Option<String>,
     pub macro_name: Option<String>,

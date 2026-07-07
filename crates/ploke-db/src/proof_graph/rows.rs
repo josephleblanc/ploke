@@ -38,6 +38,7 @@ pub(super) struct ProofFactRow {
     pub(super) effect_seed_id: Option<String>,
     pub(super) confidence: Option<String>,
     pub(super) blocker_if_unresolved: Option<bool>,
+    pub(super) unsafe_block: Option<bool>,
     pub(super) authority_term: Option<String>,
     pub(super) summary_class: Option<String>,
     pub(super) artifact_hash: Option<String>,
@@ -98,6 +99,7 @@ impl ProofFactRow {
             confidence: json.and_then(|value| json_string(value, "confidence")),
             blocker_if_unresolved: json
                 .and_then(|value| value.get("blocker_if_unresolved")?.as_bool()),
+            unsafe_block: json.and_then(|value| value.get("unsafe_block")?.as_bool()),
             authority_term: json.and_then(|value| json_string(value, "authority_term")),
             summary_class: json.and_then(|value| json_string(value, "summary_class")),
             artifact_hash: json.and_then(|value| json_string(value, "artifact_hash")),
@@ -225,6 +227,7 @@ impl From<ProofFactRow> for ProofGraphContextRow {
             effect_seed_id: row.effect_seed_id,
             confidence: row.confidence,
             blocker_if_unresolved: row.blocker_if_unresolved,
+            unsafe_block: row.unsafe_block,
             authority_term: row.authority_term,
             summary_class: row.summary_class,
             artifact_hash: row.artifact_hash,

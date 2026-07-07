@@ -66,6 +66,7 @@ impl Database {
                 call_kind,
                 span,
                 cfgs,
+                unsafe_block,
                 path,
                 method_name,
                 macro_name,
@@ -101,6 +102,7 @@ impl Database {
                     call_kind,
                     span,
                     cfgs,
+                    unsafe_block,
                     path,
                     method_name,
                     macro_name,
@@ -121,8 +123,8 @@ impl Database {
             .rows
             .iter()
             .map(|row| {
-                let site = decode_site(&row[..12])?;
-                let target = decode_target(&row[12..])?;
+                let site = decode_site(&row[..13])?;
+                let target = decode_target(&row[13..])?;
                 let status = self.call_resolution_for_site(site.id)?.ok_or_else(|| {
                     DbError::Cozo(format!(
                         "missing call_resolution_status for call site {} targeting {}",

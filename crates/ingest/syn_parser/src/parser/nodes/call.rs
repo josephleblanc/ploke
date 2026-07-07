@@ -68,6 +68,16 @@ impl CallNode {
             CallNode::MacroCall(call) => &call.cfgs,
         }
     }
+
+    /// Returns true when this call occurrence is lexically inside an unsafe block.
+    pub fn unsafe_block(&self) -> bool {
+        match self {
+            CallNode::PathCall(call) => call.unsafe_block,
+            CallNode::MethodCall(call) => call.unsafe_block,
+            CallNode::DynamicCall(call) => call.unsafe_block,
+            CallNode::MacroCall(call) => call.unsafe_block,
+        }
+    }
 }
 
 /// Structural record for a path-style call-site occurrence.
@@ -81,6 +91,9 @@ pub struct PathCallNode {
     pub span: (usize, usize),
     /// Effective cfg strings for this occurrence.
     pub cfgs: Vec<String>,
+    /// Whether this call occurrence is lexically inside an unsafe block.
+    #[serde(default)]
+    pub unsafe_block: bool,
     /// Parsed callee path segments as written/resolved structurally by the
     /// parser pass. This is not a semantic target proof.
     pub path: Vec<String>,
@@ -186,6 +199,9 @@ pub struct MethodCallNode {
     pub span: (usize, usize),
     /// Effective cfg strings for this occurrence.
     pub cfgs: Vec<String>,
+    /// Whether this call occurrence is lexically inside an unsafe block.
+    #[serde(default)]
+    pub unsafe_block: bool,
     /// Method name token from the call syntax.
     pub method_name: String,
     /// Coarse structural receiver classification.
@@ -208,6 +224,9 @@ pub struct DynamicCallNode {
     pub span: (usize, usize),
     /// Effective cfg strings for this occurrence.
     pub cfgs: Vec<String>,
+    /// Whether this call occurrence is lexically inside an unsafe block.
+    #[serde(default)]
+    pub unsafe_block: bool,
     /// Number of value arguments at the call site.
     pub arg_count: usize,
     /// Conservative classification of the callee expression.
@@ -352,6 +371,9 @@ pub struct MacroCallNode {
     pub span: (usize, usize),
     /// Effective cfg strings for this occurrence.
     pub cfgs: Vec<String>,
+    /// Whether this call occurrence is lexically inside an unsafe block.
+    #[serde(default)]
+    pub unsafe_block: bool,
     /// Macro path/name as structurally observed at the invocation site.
     pub macro_name: String,
 }

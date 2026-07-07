@@ -1301,6 +1301,7 @@ mod tests {
             owner,
             span,
             cfgs: Vec::new(),
+            unsafe_block: false,
             path,
             callee: PathCallCallee::ItemPath,
             arg_count: 0,

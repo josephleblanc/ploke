@@ -48,6 +48,7 @@ pub(super) fn extract_body_call_sites(
         relations: Vec::new(),
         executable_bodies: Vec::new(),
         awaited_call_spans: Vec::new(),
+        unsafe_depth: 0,
     };
     visitor.visit_block(block);
     (visitor.calls, visitor.relations, visitor.executable_bodies)
@@ -72,6 +73,7 @@ pub(super) fn extract_expr_call_sites(
         relations: Vec::new(),
         executable_bodies: Vec::new(),
         awaited_call_spans: Vec::new(),
+        unsafe_depth: 0,
     };
     visitor.visit_expr(expr);
     (visitor.calls, visitor.relations, visitor.executable_bodies)
@@ -86,6 +88,7 @@ struct BodyCallVisitor<'a> {
     relations: Vec<CallSiteRelation>,
     executable_bodies: Vec<ExecutableBodyNode>,
     awaited_call_spans: Vec<(usize, usize)>,
+    unsafe_depth: usize,
 }
 
 impl BodyCallVisitor<'_> {
@@ -105,6 +108,7 @@ impl BodyCallVisitor<'_> {
             owner: self.owner,
             span,
             cfgs: self.cfgs.to_vec(),
+            unsafe_block: self.unsafe_depth > 0,
             macro_name,
         }));
         self.relations.push(CallSiteRelation::BodyContainsCall {
@@ -134,6 +138,7 @@ impl BodyCallVisitor<'_> {
             owner: self.owner,
             span,
             cfgs: self.cfgs.to_vec(),
+            unsafe_block: self.unsafe_depth > 0,
             callee: classify_path_callee(
                 &path,
                 callee,
@@ -170,6 +175,7 @@ impl BodyCallVisitor<'_> {
             owner: self.owner,
             span,
             cfgs: self.cfgs.to_vec(),
+            unsafe_block: self.unsafe_depth > 0,
             arg_count: call.args.len(),
             callee: classify_dynamic_callee(
                 &call.func,
@@ -201,6 +207,7 @@ impl BodyCallVisitor<'_> {
             owner: self.owner,
             span,
             cfgs: self.cfgs.to_vec(),
+            unsafe_block: self.unsafe_depth > 0,
             method_name,
             receiver,
             arg_count: call.args.len(),
@@ -289,6 +296,12 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
         visit::visit_expr_method_call(self, call);
     }
 
+    fn visit_expr_unsafe(&mut self, unsafe_expr: &'ast syn::ExprUnsafe) {
+        self.unsafe_depth += 1;
+        visit::visit_expr_unsafe(self, unsafe_expr);
+        self.unsafe_depth -= 1;
+    }
+
     fn visit_item_const(&mut self, item_const: &'ast syn::ItemConst) {
         let byte_range = item_const.span().byte_range();
         let span = (byte_range.start, byte_range.end);
@@ -303,6 +316,7 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
             relations: Vec::new(),
             executable_bodies: Vec::new(),
             awaited_call_spans: Vec::new(),
+            unsafe_depth: 0,
         };
         visitor.visit_expr(item_const.expr.as_ref());
         self.append_child(visitor);
@@ -335,6 +349,7 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
             relations: Vec::new(),
             executable_bodies: Vec::new(),
             awaited_call_spans: Vec::new(),
+            unsafe_depth: 0,
         };
         visitor.visit_block(item_fn.block.as_ref());
         self.append_child(visitor);
@@ -360,6 +375,7 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
                 relations: Vec::new(),
                 executable_bodies: Vec::new(),
                 awaited_call_spans: Vec::new(),
+                unsafe_depth: 0,
             };
             visitor.visit_block(&method.block);
             self.append_child(visitor);
@@ -396,6 +412,7 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
             relations: Vec::new(),
             executable_bodies: Vec::new(),
             awaited_call_spans: Vec::new(),
+            unsafe_depth: self.unsafe_depth,
         };
         visitor.visit_expr(closure.body.as_ref());
         self.calls.append(&mut visitor.calls);
@@ -426,6 +443,7 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
             relations: Vec::new(),
             executable_bodies: Vec::new(),
             awaited_call_spans: Vec::new(),
+            unsafe_depth: self.unsafe_depth,
         };
         visitor.visit_block(&async_block.block);
         self.calls.append(&mut visitor.calls);
@@ -448,6 +466,7 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
             relations: Vec::new(),
             executable_bodies: Vec::new(),
             awaited_call_spans: Vec::new(),
+            unsafe_depth: 0,
         };
         visitor.visit_expr(item_static.expr.as_ref());
         self.append_child(visitor);

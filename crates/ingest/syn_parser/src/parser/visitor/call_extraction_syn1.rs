@@ -21,6 +21,7 @@ pub(super) fn extract_expr_call_sites(
         receiver_names: &[],
         calls: Vec::new(),
         relations: Vec::new(),
+        unsafe_depth: 0,
     };
     visitor.visit_expr(expr);
     (visitor.calls, visitor.relations)
@@ -32,6 +33,7 @@ struct ExprCallVisitor<'a> {
     receiver_names: &'a [String],
     calls: Vec<CallNode>,
     relations: Vec<CallSiteRelation>,
+    unsafe_depth: usize,
 }
 
 impl ExprCallVisitor<'_> {
@@ -51,6 +53,7 @@ impl ExprCallVisitor<'_> {
             owner: self.owner,
             span,
             cfgs: self.cfgs.to_vec(),
+            unsafe_block: self.unsafe_depth > 0,
             macro_name,
         }));
         self.relations.push(CallSiteRelation::BodyContainsCall {
@@ -79,6 +82,7 @@ impl ExprCallVisitor<'_> {
             owner: self.owner,
             span,
             cfgs: self.cfgs.to_vec(),
+            unsafe_block: self.unsafe_depth > 0,
             path,
             callee: PathCallCallee::ItemPath,
             arg_count: call.args.len(),
@@ -102,6 +106,7 @@ impl ExprCallVisitor<'_> {
             owner: self.owner,
             span,
             cfgs: self.cfgs.to_vec(),
+            unsafe_block: self.unsafe_depth > 0,
             arg_count: call.args.len(),
             callee: classify_dynamic_callee(&call.func),
         }));
@@ -127,6 +132,7 @@ impl ExprCallVisitor<'_> {
             owner: self.owner,
             span,
             cfgs: self.cfgs.to_vec(),
+            unsafe_block: self.unsafe_depth > 0,
             method_name,
             receiver,
             arg_count: call.args.len(),
@@ -160,6 +166,12 @@ impl<'ast> Visit<'ast> for ExprCallVisitor<'_> {
     fn visit_expr_method_call(&mut self, call: &'ast syn1::ExprMethodCall) {
         self.record_method_call(call);
         visit::visit_expr_method_call(self, call);
+    }
+
+    fn visit_expr_unsafe(&mut self, unsafe_expr: &'ast syn1::ExprUnsafe) {
+        self.unsafe_depth += 1;
+        visit::visit_expr_unsafe(self, unsafe_expr);
+        self.unsafe_depth -= 1;
     }
 
     fn visit_expr_closure(&mut self, _closure: &'ast syn1::ExprClosure) {}

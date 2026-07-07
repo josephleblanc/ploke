@@ -7,6 +7,7 @@ async fn proof_context_collection_preserves_projected_special_form_rows() -> Res
         label: &'static str,
         owner: Uuid,
         target: Uuid,
+        unsafe_block: bool,
     }
 
     init_tracing_once();
@@ -24,6 +25,7 @@ async fn proof_context_collection_preserves_projected_special_form_rows() -> Res
                 &db,
                 &function_in_module_query(&["crate"], "generic_identity"),
             )?,
+            unsafe_block: false,
         },
         Case {
             label: "generic method turbofish",
@@ -35,6 +37,7 @@ async fn proof_context_collection_preserves_projected_special_form_rows() -> Res
                 &db,
                 &method_by_impl_self_query("GenericMethodTarget", "generic_instance"),
             )?,
+            unsafe_block: false,
         },
         Case {
             label: "unsafe local function",
@@ -43,6 +46,7 @@ async fn proof_context_collection_preserves_projected_special_form_rows() -> Res
                 &function_in_module_query(&["crate"], "call_unsafe_function"),
             )?,
             target: one_uuid(&db, &function_in_module_query(&["crate"], "unsafe_target"))?,
+            unsafe_block: true,
         },
     ];
 
@@ -67,6 +71,16 @@ async fn proof_context_collection_preserves_projected_special_form_rows() -> Res
             .get(&case.owner)
             .unwrap_or_else(|| panic!("{} owner seed should receive proof rows", case.label));
         assert_projected_owner_rows(rows, case.owner, case.target);
+        let site = rows
+            .iter()
+            .find(|row| row.kind == "call_site")
+            .unwrap_or_else(|| panic!("{} should include call_site proof row", case.label));
+        assert_eq!(
+            site.unsafe_block,
+            Some(case.unsafe_block),
+            "{} should preserve unsafe-block occurrence metadata",
+            case.label
+        );
     }
 
     Ok(())

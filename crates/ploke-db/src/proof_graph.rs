@@ -45,6 +45,7 @@ pub struct ProofGraphContextRow {
     pub effect_seed_id: Option<String>,
     pub confidence: Option<String>,
     pub blocker_if_unresolved: Option<bool>,
+    pub unsafe_block: Option<bool>,
     pub authority_term: Option<String>,
     pub summary_class: Option<String>,
     pub artifact_hash: Option<String>,

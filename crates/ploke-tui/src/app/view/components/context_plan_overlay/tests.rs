@@ -224,6 +224,7 @@ fn expanded_rag_part_displays_call_context_details() {
                 effect_seed_id: None,
                 confidence: None,
                 blocker_if_unresolved: None,
+                unsafe_block: None,
                 authority_term: None,
                 summary_class: None,
                 artifact_hash: None,

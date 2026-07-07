@@ -566,6 +566,7 @@ fn row_to_proof_context(row: ProofGraphContextRow) -> ProofContextInfo {
         effect_seed_id: row.effect_seed_id,
         confidence: row.confidence,
         blocker_if_unresolved: row.blocker_if_unresolved,
+        unsafe_block: row.unsafe_block,
         authority_term: row.authority_term,
         summary_class: row.summary_class,
         artifact_hash: row.artifact_hash,

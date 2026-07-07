@@ -15,6 +15,7 @@ pub(super) fn call_site_fact(
         "call_site_id": row.site.id.to_string(),
         "build_domain_id": build_domain_id,
         "caller_def_id": row.site.owner_id.to_string(),
+        "unsafe_block": row.site.unsafe_block,
         "source_span": {
             "file": source_file,
             "start_byte": row.site.span.0,

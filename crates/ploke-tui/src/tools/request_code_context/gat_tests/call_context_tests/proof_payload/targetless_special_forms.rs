@@ -70,6 +70,16 @@ async fn request_code_context_returns_targetless_special_form_proof_context()
         extern_owner,
         "external_dependency_summary_missing",
     );
+    let extern_site = extern_part
+        .proof_context
+        .iter()
+        .find(|row| row.kind == "call_site")
+        .expect("extern C proof context should include a call_site fact");
+    assert_eq!(
+        extern_site.unsafe_block,
+        Some(true),
+        "extern C proof payload should preserve unsafe-block occurrence metadata: {extern_part:#?}"
+    );
     assert_proof_blockers(&extern_result, &extern_payload);
 
     let chained_result = execute_fixture_tool_request(

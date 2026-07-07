@@ -17,12 +17,13 @@ pub(super) fn decode_site(row: &[DataValue]) -> Result<CallSiteRow, DbError> {
         kind: CallSiteKind::from_str(&to_string(&row[2])?)?,
         span: span_pair(&row[3])?,
         cfgs: to_string_list(&row[4])?,
-        path: optional_string_list(&row[5])?,
-        method: optional_string(&row[6])?,
-        macro_name: optional_string(&row[7])?,
-        receiver: CallReceiver::from_parts(&row[8], &row[9])?,
-        arg_count: optional_index(&row[10])?,
-        generic_arg_count: optional_index(&row[11])?,
+        unsafe_block: required_bool(&row[5])?,
+        path: optional_string_list(&row[6])?,
+        method: optional_string(&row[7])?,
+        macro_name: optional_string(&row[8])?,
+        receiver: CallReceiver::from_parts(&row[9], &row[10])?,
+        arg_count: optional_index(&row[11])?,
+        generic_arg_count: optional_index(&row[12])?,
     };
     validate_call_site_shape(&site)?;
     Ok(site)
@@ -84,6 +85,15 @@ fn optional_non_empty_path(path: Option<&[String]>) -> bool {
 
 fn non_empty_string(value: Option<&str>) -> bool {
     value.is_some_and(|value| !value.is_empty())
+}
+
+fn required_bool(value: &DataValue) -> Result<bool, DbError> {
+    match value {
+        DataValue::Bool(value) => Ok(*value),
+        other => Err(DbError::Cozo(format!(
+            "expected call graph bool, found {other:?}"
+        ))),
+    }
 }
 
 pub(super) fn decode_target(row: &[DataValue]) -> Result<CallTargetRow, DbError> {

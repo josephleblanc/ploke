@@ -70,6 +70,10 @@ fn fixture_context_reads_projected_generic_unsafe_extern_and_chained_calls() -> 
     assert_eq!(row.site.owner_id, owner);
     assert_eq!(row.site.kind, CallSiteKind::Path);
     assert_eq!(row.site.path.as_ref(), Some(&path(&["unsafe_target"])));
+    assert!(
+        row.site.unsafe_block,
+        "unsafe_target() call should preserve unsafe-block occurrence metadata: {row:#?}"
+    );
     assert_eq!(row.site.arg_count, Some(0));
     assert_eq!(row.site.generic_arg_count, Some(0));
     assert_resolved_target(
@@ -116,10 +120,14 @@ fn fixture_context_reads_projected_generic_unsafe_extern_and_chained_calls() -> 
     let owner = function_id_by_name(&db, "call_extern_c_function")?;
     let context = db.call_context_for_owner(owner)?;
     assert_eq!(context.len(), 1, "extern C context rows: {context:#?}");
-    assert_targetless_row(
+    let row = assert_targetless_row(
         &context,
         owner,
         TargetlessRowCase::path(&["abs"], 1, CallStatusKind::External, "extern C abs"),
+    );
+    assert!(
+        row.site.unsafe_block,
+        "abs(value) external frontier should preserve unsafe-block occurrence metadata: {row:#?}"
     );
 
     let owner = function_id_by_name(&db, "call_imported_external_type_alias_constructor")?;

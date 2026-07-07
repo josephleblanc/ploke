@@ -3510,6 +3510,31 @@ paranoid_call_site_test!(
     },
 );
 
+#[test]
+fn fixture_call_graph_marks_calls_inside_unsafe_blocks() {
+    let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+    let unsafe_rows = parsed_graphs
+        .iter()
+        .flat_map(|graph| graph.call_sites())
+        .filter(|call| {
+            matches!(
+                call.span(),
+                UNSAFE_TARGET_CALL_SPAN | EXTERN_C_ABS_CALL_SPAN
+            )
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        unsafe_rows.len(),
+        2,
+        "expected unsafe_target() and abs(value) call rows: {unsafe_rows:#?}"
+    );
+    assert!(
+        unsafe_rows.iter().all(|call| call.unsafe_block()),
+        "unsafe block call rows should preserve unsafe-block occurrence metadata: {unsafe_rows:#?}"
+    );
+}
+
 paranoid_call_site_test!(
     fixture_call_graph_call_new_type_constructor_resolves_tuple_struct_constructor_call_site,
     fixture: "fixture_call_graph",
