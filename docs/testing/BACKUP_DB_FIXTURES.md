@@ -317,6 +317,21 @@ Post-regeneration verification:
 - Shared call-graph corpus snapshots were refreshed under the configured DB
   snapshot fixture directory.
 
+2026-07-07 follow-up verification:
+
+- `cargo run -p xtask --features call_graph -- fixtures regenerate --active`
+  roundtripped all active checkout-local fixtures and shared call-graph corpus
+  snapshots again, with no tracked fixture drift.
+- `cargo test -p ploke-db real_target_matrix -- --nocapture` passed in the
+  default profile with `75 passed`.
+- `cargo test -p ploke-rag real_corpus -- --nocapture` was inconclusive under a
+  15 minute verification limit: no failing assertions were emitted before the
+  run was stopped, but several real-corpus tests were still running.
+- `cargo test -p ploke-tui code_item -- --nocapture` was inconclusive under the
+  bounded verification run: no failing assertions were emitted before the run
+  was stopped, and the visible long-running `Json::from_bytes` lookup check had
+  completed successfully.
+
 ## 2026-07-06 Axum Route Oneshot Frontier Refresh
 
 The `corpus_axum_call_graph` fixture was recreated with
