@@ -49,10 +49,30 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: none selected after the downstream edge-tool safety boundary
-proof slice.
+Current bucket: none selected after the same-block awaited async-closure future
+alias proof slice.
 
-Latest completed bucket: downstream edge-tool safety boundary proof.
+Latest completed bucket: same-block awaited async-closure future alias proof.
+
+Completed evidence:
+
+- Parser extraction now recognizes the bounded same-block alias proof shape
+  `let future = closure(); let alias = future; alias.await;` and marks the
+  original async-closure binding call as awaited.
+- `call_awaited_async_closure_future_alias_with_body_call()` records the
+  original `closure()` path call as an awaited async-closure binding call once
+  the same block later awaits the one-step alias.
+- DB owner context and traversal prove the supported two-hop path
+  outer function -> async-closure owner -> `local_target`.
+- RAG call-context collection and exact `request_code_context` TUI/tool tests
+  preserve the resolved awaited future-alias expansion into the async-closure
+  body.
+- This remains bounded to a direct same-block future binding plus one direct
+  alias before `.await`; nested control flow, arbitrary future value flow,
+  returned futures, async callable trait objects, and general poll/resume
+  semantics remain future work.
+
+Previously completed bucket: downstream edge-tool safety boundary proof.
 
 Completed evidence:
 

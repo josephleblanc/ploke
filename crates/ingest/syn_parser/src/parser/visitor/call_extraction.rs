@@ -1170,6 +1170,13 @@ fn awaited_future_spans(block: &syn::Block) -> Vec<(usize, usize)> {
         }
         if let Some(binding) = future_call_binding(stmt) {
             future_bindings.push(binding);
+        } else if let Some((name, source)) = future_alias_binding(stmt)
+            && let Some((_, span)) = future_bindings
+                .iter()
+                .rev()
+                .find(|(candidate, _)| candidate == &source)
+        {
+            future_bindings.push((name, *span));
         }
     }
 
@@ -1196,6 +1203,25 @@ fn future_call_binding(stmt: &syn::Stmt) -> Option<(String, (usize, usize))> {
 
     let byte_range = call.span().byte_range();
     Some((name, (byte_range.start, byte_range.end)))
+}
+
+fn future_alias_binding(stmt: &syn::Stmt) -> Option<(String, String)> {
+    let syn::Stmt::Local(local) = stmt else {
+        return None;
+    };
+    let name = pat_ident_name(&local.pat)?;
+    let init_expr = local.init.as_ref()?.expr.as_ref();
+    let syn::Expr::Path(path) = unparen_expr(init_expr) else {
+        return None;
+    };
+    if path.qself.is_some() {
+        return None;
+    }
+    let segments = path_segments(&path.path);
+    let [source] = segments.as_slice() else {
+        return None;
+    };
+    Some((name, source.clone()))
 }
 
 fn direct_await_name(stmt: &syn::Stmt) -> Option<String> {

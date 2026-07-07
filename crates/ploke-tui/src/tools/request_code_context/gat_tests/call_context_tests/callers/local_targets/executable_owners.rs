@@ -779,3 +779,94 @@ async fn request_code_context_returns_awaited_async_closure_future_binding_owner
 
     Ok(())
 }
+
+#[tokio::test]
+async fn request_code_context_returns_awaited_async_closure_future_alias_owner_call_context()
+-> color_eyre::Result<()> {
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let target = one_uuid(&db, &function_in_module_query(&["crate"], "local_target"))?;
+    let outer = one_uuid(
+        &db,
+        &function_in_module_query(
+            &["crate"],
+            "call_awaited_async_closure_future_alias_with_body_call",
+        ),
+    )?;
+    let async_closure = async_closure_owner_for_parent(&db, outer)?;
+
+    let result = execute_fixture_request(
+        &db,
+        "call_awaited_async_closure_future_alias_with_body_call",
+        1,
+        "awaited_async_closure_future_alias_call_context",
+    )
+    .await?;
+    assert_result_ok(
+        &result,
+        "call_awaited_async_closure_future_alias_with_body_call",
+        1,
+        "fixture_call_graph",
+    );
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:1722-1727:
+    // `future = closure(); alias = future; alias.await;` proves the original
+    // closure() call is polled through a one-step same-block alias. Tool
+    // context should expose that path to the async-closure owner and then the
+    // body call to `local_target()`.
+    let outer_part = result
+        .context
+        .iter()
+        .find(|part| part.id == outer)
+        .expect("request_code_context should preserve the awaited future-alias outer function");
+    let closure_call = outer_part
+        .call_context
+        .iter()
+        .find(|call| {
+            call.owner_id == outer
+                && call.kind == CallSiteKind::Path
+                && call.callee
+                    == CallCalleeInfo::Path {
+                        path: path(&["closure"]),
+                    }
+                && call
+                    .targets
+                    .iter()
+                    .any(|target_info| target_info.target_id == async_closure)
+        })
+        .expect("outer function should retain the awaited closure() future-alias path call");
+    assert_resolved_target(closure_call, async_closure, CallTargetKind::Closure);
+
+    let async_part = result
+        .context
+        .iter()
+        .find(|part| part.id == async_closure)
+        .expect("request_code_context should materialize the awaited future-alias closure owner");
+    assert_expansion(
+        async_part,
+        outer,
+        async_closure,
+        closure_call.site_id,
+        CallExpansionKind::OutgoingTarget,
+    );
+    let body_call = async_part
+        .call_context
+        .iter()
+        .find(|call| {
+            call.owner_id == async_closure
+                && call.kind == CallSiteKind::Path
+                && call.callee
+                    == CallCalleeInfo::Path {
+                        path: path(&["local_target"]),
+                    }
+                && call
+                    .targets
+                    .iter()
+                    .any(|target_info| target_info.target_id == target)
+        })
+        .expect("awaited future-alias async-closure owner should retain local_target() context");
+    assert_resolved_target(body_call, target, CallTargetKind::Function);
+
+    Ok(())
+}

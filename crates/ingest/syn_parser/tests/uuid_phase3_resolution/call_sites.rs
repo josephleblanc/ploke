@@ -276,6 +276,9 @@ const ASYNC_CLOSURE_FUTURE_BINDING_BODY_LOCAL_TARGET_CALL_SPAN: (usize, usize) =
 const AWAITED_ASYNC_CLOSURE_FUTURE_BINDING_CALL_SPAN: (usize, usize) = (38769, 38778);
 const AWAITED_ASYNC_CLOSURE_FUTURE_BINDING_BODY_LOCAL_TARGET_CALL_SPAN: (usize, usize) =
     (38736, 38750);
+const AWAITED_ASYNC_CLOSURE_FUTURE_ALIAS_CALL_SPAN: (usize, usize) = (38933, 38942);
+const AWAITED_ASYNC_CLOSURE_FUTURE_ALIAS_BODY_LOCAL_TARGET_CALL_SPAN: (usize, usize) =
+    (38900, 38914);
 const NAMED_FIELD_FUNCTION_DYNAMIC_CALL_SPAN: (usize, usize) = (17945, 17964);
 const ALIASED_NAMED_FIELD_FUNCTION_DYNAMIC_CALL_SPAN: (usize, usize) = (18134, 18152);
 const INDEXED_FIELD_FUNCTION_PARAM_DYNAMIC_CALL_SPAN: (usize, usize) = (18239, 18260);
@@ -5089,6 +5092,48 @@ fn fixture_call_graph_call_awaited_async_closure_future_binding_resolves_path_ca
         &graph,
         &owner,
         AWAITED_ASYNC_CLOSURE_FUTURE_BINDING_BODY_LOCAL_TARGET_CALL_SPAN,
+        &["local_target"],
+    );
+    Ok(())
+}
+
+#[test]
+fn fixture_call_graph_call_awaited_async_closure_future_alias_resolves_path_call_site()
+-> Result<(), syn_parser::error::SynParserError> {
+    let (graph, tree) = crate::common::build_tree_for_tests("fixture_call_graph");
+    let report = resolve_call_relations_after_tree(&graph, &tree)?;
+    let owner = crate::common::call_site_paranoid::function_owner_context(
+        &graph,
+        &["crate"],
+        "call_awaited_async_closure_future_alias_with_body_call",
+    );
+    let closure = closure_body_containing_span(
+        &graph,
+        &owner,
+        AWAITED_ASYNC_CLOSURE_FUTURE_ALIAS_BODY_LOCAL_TARGET_CALL_SPAN,
+    );
+
+    let expected = ExpectedCallSite::path_awaited_async_closure_binding(
+        &["closure"],
+        closure,
+        AWAITED_ASYNC_CLOSURE_FUTURE_ALIAS_CALL_SPAN,
+        0,
+        0,
+        &[],
+        ExpectedCallOutcome::ResolvedClosureLocalExact { target: closure },
+    );
+    crate::common::call_site_paranoid::assert_paranoid_call_site(
+        &graph, &report, &owner, &expected,
+    );
+    assert_no_call_site_owned_at_span(
+        &graph,
+        &owner,
+        AWAITED_ASYNC_CLOSURE_FUTURE_ALIAS_BODY_LOCAL_TARGET_CALL_SPAN,
+    );
+    assert_closure_body_path_call_owned_at_span(
+        &graph,
+        &owner,
+        AWAITED_ASYNC_CLOSURE_FUTURE_ALIAS_BODY_LOCAL_TARGET_CALL_SPAN,
         &["local_target"],
     );
     Ok(())

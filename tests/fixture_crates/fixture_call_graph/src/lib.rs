@@ -1718,3 +1718,10 @@ pub async fn call_awaited_async_closure_future_binding_with_body_call() {
     let future = closure();
     future.await;
 }
+
+pub async fn call_awaited_async_closure_future_alias_with_body_call() {
+    let closure = async || local_target();
+    let future = closure();
+    let alias = future;
+    alias.await;
+}
