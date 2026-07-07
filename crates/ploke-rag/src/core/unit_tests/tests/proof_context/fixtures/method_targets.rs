@@ -81,6 +81,12 @@ fn method_case(db: &Database) -> Result<Case, Error> {
                 &["crate"],
                 "call_typed_double_reference_local_instance_method",
             )?,
+            owner(
+                db,
+                "match-branch receiver method",
+                &["crate"],
+                "call_match_expression_receiver_method",
+            )?,
             Owner {
                 id: one_uuid(
                     db,

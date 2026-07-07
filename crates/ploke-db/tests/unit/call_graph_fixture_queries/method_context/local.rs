@@ -88,6 +88,12 @@ fn fixture_context_reads_projected_local_and_alias_instance_method_receivers() -
                 paths: vec![path(&["LocalAssoc"]), path(&["LocalAssoc"])],
             },
         ),
+        (
+            "call_match_expression_receiver_method",
+            CallReceiver::IfBranchPaths {
+                paths: vec![path(&["LocalAssoc"]), path(&["LocalAssoc"])],
+            },
+        ),
     ];
 
     for (owner_name, receiver) in cases {

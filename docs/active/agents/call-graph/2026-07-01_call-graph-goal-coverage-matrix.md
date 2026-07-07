@@ -49,14 +49,28 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: none selected after `5c248884f` /
-`c0f38dc01`.
+Current bucket: none selected after the same-target match-expression receiver
+proof slice.
 
-Latest completed bucket: private named-field callable-parameter proof.
+Latest completed bucket: same-target match-expression receiver proof.
 
 Completed evidence:
 
-- `call_single_named_field_function_param(holder: CallbackHolder)` now proves
+- `call_match_expression_receiver_method(flag)` now proves
+  `(match flag { true => LocalAssoc, false => LocalAssoc }).instance_value()`
+  as an exact local method edge to `LocalAssoc::instance_value`.
+- Parser extraction reuses the existing branch-path receiver carrier, DB
+  method context/proof rows preserve the decoded branch paths, and RAG
+  call/proof context exposes the same resolved target-centered method row.
+- No new TUI-specific receiver-shape test was added because there was no
+  existing exact-tool assertion for the analogous if-expression receiver shape;
+  the slice stays at the established parser/DB/RAG boundary.
+
+Previously completed bucket: private named-field callable-parameter proof.
+
+Previous evidence:
+
+- `call_single_named_field_function_param(holder: CallbackHolder)` proves
   `(holder.callback)()` as a private complete-single-caller parameter field
   edge to `local_target` when its only local caller constructs
   `CallbackHolder { callback: local_target }`.
@@ -64,17 +78,12 @@ Completed evidence:
   and exact TUI lookup/edges tests cover the shape without adding a parallel
   resolver branch.
 
-Next candidate bucket: import / re-export / glob completeness only if there is
-a bounded source-oracle proof shape. Current known gaps around
-`TestClient::new` are multipart, closure-body, and macro-template projection
-boundaries, so broad import rewrites should not start without a tighter source
-oracle.
+Next candidate bucket: choose the next bounded semantic-expansion source oracle
+from the matrix. Do not return to dynamic callable values or branch receiver
+polishing unless these proofs regress.
 
-Reason to stay in dynamic callable values: none. Switch buckets unless this
-proof regresses.
-
-Previously completed bucket: borrowed value-parameter method-result receiver
-proof.
+Reason to stay in the current receiver bucket: none after focused parser, DB,
+and RAG verification. Switch buckets.
 
 Exit criteria:
 

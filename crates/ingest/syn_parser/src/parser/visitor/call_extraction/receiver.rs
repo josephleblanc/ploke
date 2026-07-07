@@ -2,8 +2,8 @@ use crate::parser::nodes::MethodCallReceiver;
 
 use super::model::LocalBindingProof;
 use super::{
-    if_branch_paths, literal_usize, member_name, path_call_segments, self_field_path, unparen_expr,
-    visible_local_binding,
+    if_branch_paths, literal_usize, match_arm_paths, member_name, path_call_segments,
+    self_field_path, unparen_expr, visible_local_binding,
 };
 
 pub(super) fn classify_method_receiver(
@@ -99,6 +99,9 @@ pub(super) fn classify_method_receiver(
             receiver_try_path_call(try_expr).unwrap_or(MethodCallReceiver::TryResult)
         }
         syn::Expr::If(_) => if_branch_paths(receiver, param_names, local_scopes)
+            .map(|paths| MethodCallReceiver::IfBranchPaths { paths })
+            .unwrap_or(MethodCallReceiver::Unsupported),
+        syn::Expr::Match(_) => match_arm_paths(receiver, param_names, local_scopes)
             .map(|paths| MethodCallReceiver::IfBranchPaths { paths })
             .unwrap_or(MethodCallReceiver::Unsupported),
         syn::Expr::Lit(_) => MethodCallReceiver::Literal,

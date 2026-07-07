@@ -134,10 +134,6 @@ async fn call_context_collection_reads_if_branch_receiver_rows() -> Result<(), E
     let db = Arc::new(Database::new(setup_db_full_multi_embedding(
         "fixture_call_graph",
     )?));
-    let owner = one_uuid(
-        &db,
-        &function_in_module_query(&["crate"], "call_if_expression_receiver_method"),
-    )?;
     let method_target = one_uuid(
         &db,
         &method_by_impl_self_query("LocalAssoc", "instance_value"),
@@ -148,30 +144,46 @@ async fn call_context_collection_reads_if_branch_receiver_rows() -> Result<(), E
         "fresh fixture call_graph schema should enable call context collection"
     );
 
-    let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
-    let owner_context = call_context
-        .get(&owner)
-        .expect("if-branch receiver owner should receive outgoing call context");
-    assert_eq!(owner_context.len(), 1, "owner context: {owner_context:#?}");
+    let cases = [
+        ("if-branch receiver", "call_if_expression_receiver_method"),
+        (
+            "match-branch receiver",
+            "call_match_expression_receiver_method",
+        ),
+    ];
 
-    let call = &owner_context[0];
-    assert_eq!(
-        call.callee,
-        CallCalleeInfo::Method {
-            name: "instance_value".to_string(),
-            receiver: Some(CallReceiverInfo::IfBranchPaths {
-                paths: vec![
-                    vec!["LocalAssoc".to_string()],
-                    vec!["LocalAssoc".to_string()],
-                ],
-            }),
-        }
-    );
-    assert_eq!(call.status, CallStatusKind::Resolved);
-    assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
-    assert_eq!(call.targets.len(), 1);
-    assert_eq!(call.targets[0].target_id, method_target);
-    assert_eq!(call.targets[0].relation, CallTargetKind::Method);
+    for (label, owner_name) in cases {
+        let owner = one_uuid(&db, &function_in_module_query(&["crate"], owner_name))?;
+        let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+        let owner_context = call_context
+            .get(&owner)
+            .unwrap_or_else(|| panic!("{label} owner should receive outgoing call context"));
+        assert_eq!(
+            owner_context.len(),
+            1,
+            "{label} context: {owner_context:#?}"
+        );
+
+        let call = &owner_context[0];
+        assert_eq!(
+            call.callee,
+            CallCalleeInfo::Method {
+                name: "instance_value".to_string(),
+                receiver: Some(CallReceiverInfo::IfBranchPaths {
+                    paths: vec![
+                        vec!["LocalAssoc".to_string()],
+                        vec!["LocalAssoc".to_string()],
+                    ],
+                }),
+            },
+            "{label} should preserve branch receiver paths"
+        );
+        assert_eq!(call.status, CallStatusKind::Resolved);
+        assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(call.targets.len(), 1);
+        assert_eq!(call.targets[0].target_id, method_target);
+        assert_eq!(call.targets[0].relation, CallTargetKind::Method);
+    }
 
     Ok(())
 }

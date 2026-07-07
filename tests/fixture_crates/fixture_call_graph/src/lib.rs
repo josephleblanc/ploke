@@ -1604,3 +1604,11 @@ pub fn call_single_named_field_function_param_with_local_target() -> i32 {
         callback: local_target,
     })
 }
+
+pub fn call_match_expression_receiver_method(flag: bool) -> i32 {
+    (match flag {
+        true => LocalAssoc,
+        false => LocalAssoc,
+    })
+    .instance_value()
+}

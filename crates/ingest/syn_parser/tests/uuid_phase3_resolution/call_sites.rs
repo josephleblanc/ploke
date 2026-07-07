@@ -191,6 +191,7 @@ const TYPED_VEC_LEN_CALL_SPAN: (usize, usize) = (12577, 12588);
 const PARAM_VEC_LEN_CALL_SPAN: (usize, usize) = (32684, 32695);
 const BORROWED_PARAM_VEC_LEN_CALL_SPAN: (usize, usize) = (32776, 32787);
 const IF_EXPRESSION_RECEIVER_METHOD_CALL_SPAN: (usize, usize) = (29986, 30047);
+const MATCH_EXPRESSION_RECEIVER_METHOD_CALL_SPAN: (usize, usize) = (35722, 35821);
 const LOCAL_VEC_IMPL_SPAN: (usize, usize) = (12648, 12725);
 const SHADOWED_TYPED_VEC_LEN_CALL_SPAN: (usize, usize) = (12817, 12828);
 const FUNCTION_POINTER_CAST_PATH_DYNAMIC_CALL_SPAN: (usize, usize) = (12892, 12923);
@@ -3001,6 +3002,33 @@ paranoid_call_site_test!(
                 paths: &[&["LocalAssoc"], &["LocalAssoc"]],
             },
             IF_EXPRESSION_RECEIVER_METHOD_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedMethodLocalExact {
+                target: target_info.test_method_id(),
+            },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_match_expression_receiver_method_resolves_branch_receiver_method_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_match_expression_receiver_method"
+    },
+    expected: {
+        let target_args = fixture_call_graph_instance_method_args("instance_value");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_method_pid(&parsed_graphs)?;
+        ExpectedCallSite::method(
+            "instance_value",
+            ExpectedMethodReceiver::IfBranchPaths {
+                paths: &[&["LocalAssoc"], &["LocalAssoc"]],
+            },
+            MATCH_EXPRESSION_RECEIVER_METHOD_CALL_SPAN,
             0,
             0,
             &[],

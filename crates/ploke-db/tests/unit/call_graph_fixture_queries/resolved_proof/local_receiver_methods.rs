@@ -111,6 +111,12 @@ fn fixture_projection_stores_real_local_receiver_method_call_proof_facts() -> Re
             },
         )?,
         method_case(
+            "call_match_expression_receiver_method",
+            CallReceiver::IfBranchPaths {
+                paths: vec![path(&["LocalAssoc"]), path(&["LocalAssoc"])],
+            },
+        )?,
+        method_case(
             "call_borrowed_typed_local_instance_method",
             CallReceiver::BorrowedTypedLocalBinding {
                 name: "value".to_string(),
