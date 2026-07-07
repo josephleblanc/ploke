@@ -460,6 +460,78 @@ async fn call_context_exact_reads_chrono_alias_constructor_callers() -> Result<(
 }
 
 #[tokio::test]
+async fn call_context_exact_reads_chrono_option_ok_or_try_receiver_callers() -> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_chrono_call_graph_rag()?;
+
+    let target = method_id_by_name_and_body_substring(&db, "naive_utc", "self.datetime")?;
+    let callers = db.callers_for_target(target)?;
+    assert_eq!(
+        callers.len(),
+        2,
+        "current chrono fixture should resolve the two parsed.rs DateTime...?.naive_utc callers: {callers:#?}"
+    );
+
+    let context = rag.exact_call_context(target)?;
+    let expected_callee = CallCalleeInfo::Method {
+        name: "naive_utc".to_string(),
+        receiver: Some(CallReceiverInfo::TryMethodCallResult {
+            method_name: "ok_or".to_string(),
+        }),
+    };
+    let incoming = context
+        .iter()
+        .filter(|call| {
+            call.kind == CallSiteKind::Method
+                && call.callee == expected_callee
+                && call
+                    .targets
+                    .iter()
+                    .any(|candidate| candidate.target_id == target)
+        })
+        .collect::<Vec<_>>();
+
+    // Matrix: chrono `DateTime...?.naive_utc()` try receiver row.
+    // Source chain:
+    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //   chrono/src/datetime/mod.rs:563 defines `DateTime<Tz>::naive_utc`.
+    //   chrono/src/datetime/mod.rs:768,803 define the associated
+    //   `DateTime::from_timestamp*` constructors returning `Option<Self>`.
+    //   chrono/src/format/parsed.rs:836,953 call
+    //   `DateTime::from_timestamp*(...).ok_or(OUT_OF_RANGE)?.naive_utc()`.
+    // Expected traversal: RAG exact call context preserves both DB-resolved
+    // try-receiver caller-site identities and the method target relation.
+    assert_eq!(
+        incoming.len(),
+        2,
+        "RAG exact call context should expose both chrono naive_utc try-receiver edges: {context:#?}"
+    );
+
+    let expected_site_ids = callers
+        .iter()
+        .map(|caller| caller.site.id)
+        .collect::<BTreeSet<_>>();
+    let incoming_site_ids = incoming
+        .iter()
+        .map(|call| call.site_id)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        incoming_site_ids, expected_site_ids,
+        "RAG call context should preserve the DB chrono naive_utc caller site identities"
+    );
+
+    for call in incoming {
+        assert_eq!(call.status, CallStatusKind::Resolved);
+        assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(call.targets.len(), 1);
+        assert_eq!(call.targets[0].target_id, target);
+        assert_eq!(call.targets[0].relation, CallTargetKind::Method);
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn call_context_collection_reads_chrono_strftime_queue_slice_frontier() -> Result<(), Error> {
     init_tracing_once();
     let (db, rag) = setup_chrono_call_graph_rag()?;

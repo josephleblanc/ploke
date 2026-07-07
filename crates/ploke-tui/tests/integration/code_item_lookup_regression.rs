@@ -14,17 +14,17 @@ use crate::call_graph_tool_support::{
     AxumErrorHandlingTraitsToolFixture, AxumExpandWithToolFixture, AxumHandlerCallToolFixture,
     AxumJsonFromBytesToolFixture, AxumParseAttrsToolFixture, AxumRequestExtractPathToolFixture,
     AxumRunUiTestsToolFixture, CallGraphToolFixture, CallableBlockerFixture,
-    ChronoAliasConstructorToolFixture, FixtureBranchReceiverToolFixture,
+    ChronoAliasConstructorToolFixture, ChronoNaiveUtcToolFixture, FixtureBranchReceiverToolFixture,
     FixtureDynamicCallableToolFixture, FixtureSelfFieldReceiverToolFixture,
     assert_await_result_unwrap_context, assert_await_result_unwrap_proof,
     assert_body_empty_impact_summary, assert_body_empty_incoming_context,
     assert_boxed_into_route_incoming_context, assert_branch_receiver_context,
-    assert_branch_receiver_proof, assert_call_path_node, assert_expected_path_incoming_context,
-    assert_handler_call_incoming_context, assert_incoming_context,
-    assert_json_from_bytes_incoming_context, assert_parse_attrs_incoming_context,
-    assert_path_blocker_proof, assert_path_context, assert_run_ui_tests_incoming_context,
-    assert_self_field_receiver_context, assert_self_field_receiver_proof, assert_target_proof,
-    assert_two_hop_call_path, ui_field,
+    assert_branch_receiver_proof, assert_call_path_node, assert_chrono_naive_utc_incoming_context,
+    assert_expected_path_incoming_context, assert_handler_call_incoming_context,
+    assert_incoming_context, assert_json_from_bytes_incoming_context,
+    assert_parse_attrs_incoming_context, assert_path_blocker_proof, assert_path_context,
+    assert_run_ui_tests_incoming_context, assert_self_field_receiver_context,
+    assert_self_field_receiver_proof, assert_target_proof, assert_two_hop_call_path, ui_field,
 };
 
 #[tokio::test]
@@ -2007,6 +2007,69 @@ async fn code_item_lookup_returns_real_corpus_chrono_alias_constructor_callers()
             .expect("proof count")
             >= fixture.callers.len(),
         "code_item_lookup should surface real-corpus chrono alias constructor proof rows"
+    );
+}
+
+#[tokio::test]
+async fn code_item_lookup_returns_real_corpus_chrono_option_ok_or_try_receiver_callers() {
+    let fixture = ChronoNaiveUtcToolFixture::new().await;
+    let module_path = fixture.module_path_arg();
+    let params = LookupParams {
+        item_name: Cow::Borrowed("naive_utc"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("method"),
+        module_path: Cow::Owned(module_path),
+        owner_trait: None,
+        owner_type: Some(Cow::Borrowed("DateTime")),
+        parent_name: None,
+    };
+
+    let result = CodeItemLookup::execute(params, fixture.ctx("chrono-naive-utc-lookup"))
+        .await
+        .expect("tool execution");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize ConciseContext");
+    let call_context = payload
+        .get("call_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_context array");
+    let proof_context = payload
+        .get("proof_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("proof_context array");
+
+    // Real-corpus oracle matrix:
+    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //   chrono/src/datetime/mod.rs:563 defines `DateTime<Tz>::naive_utc`.
+    //   chrono/src/datetime/mod.rs:768,803 define associated constructors
+    //   returning `Option<Self>`.
+    //   chrono/src/format/parsed.rs:836,953 call
+    //   `DateTime::from_timestamp*(...).ok_or(OUT_OF_RANGE)?.naive_utc()`.
+    // Expected tool traversal: exact lookup of `DateTime::naive_utc` exposes
+    // both incoming try-receiver method edges and their projected proof rows.
+    assert_chrono_naive_utc_incoming_context(
+        call_context,
+        &fixture.callers,
+        fixture.target,
+        "code_item_lookup",
+    );
+    for caller in &fixture.callers {
+        assert_target_proof(
+            proof_context,
+            caller.owner,
+            fixture.target,
+            "code_item_lookup",
+        );
+    }
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert_eq!(ui_field(ui, "call_context_incoming"), "2");
+    assert!(
+        ui_field(ui, "proof_context")
+            .parse::<usize>()
+            .expect("proof count")
+            >= fixture.callers.len(),
+        "code_item_lookup should surface real-corpus chrono naive_utc proof rows"
     );
 }
 

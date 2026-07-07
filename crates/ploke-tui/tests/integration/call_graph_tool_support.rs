@@ -154,6 +154,14 @@ pub(crate) struct ChronoAliasConstructorToolFixture {
     pub(crate) callers: Vec<ExpectedCallSite>,
 }
 
+pub(crate) struct ChronoNaiveUtcToolFixture {
+    pub(crate) state: Arc<AppState>,
+    pub(crate) file_path: PathBuf,
+    pub(crate) module_path: Vec<String>,
+    pub(crate) target: Uuid,
+    pub(crate) callers: Vec<ExpectedMethodCallSite>,
+}
+
 pub(crate) struct AxumExpandWithToolFixture {
     pub(crate) state: Arc<AppState>,
     pub(crate) file_path: PathBuf,
@@ -207,6 +215,13 @@ pub(crate) struct ExpectedCallSite {
     pub(crate) owner: Uuid,
     pub(crate) site: Uuid,
     pub(crate) path: Vec<String>,
+}
+
+#[derive(Clone)]
+pub(crate) struct ExpectedMethodCallSite {
+    pub(crate) owner: Uuid,
+    pub(crate) site: Uuid,
+    pub(crate) callee: CallCalleeInfo,
 }
 
 impl CallGraphToolFixture {
@@ -864,6 +879,73 @@ impl ChronoAliasConstructorToolFixture {
             .parent()
             .and_then(|src_dir| src_dir.parent())
             .unwrap_or_else(|| panic!("chrono LocalResult::Single file should live under src"))
+            .to_path_buf();
+        let state = app_state_with_rag(Arc::clone(&db), crate_root).await;
+
+        Self {
+            state,
+            file_path: target.file_path,
+            module_path: target.module_path,
+            target: target.id,
+            callers,
+        }
+    }
+
+    pub(crate) fn module_path_arg(&self) -> String {
+        self.module_path.join("::")
+    }
+
+    pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
+        ctx_for_state(&self.state, call_id)
+    }
+}
+
+impl ChronoNaiveUtcToolFixture {
+    pub(crate) async fn new() -> Self {
+        let db = chrono_call_graph_db();
+        let target = chrono_naive_utc_target(&db);
+        let callers = db
+            .callers_for_target(target.id)
+            .expect("DateTime::naive_utc incoming callers")
+            .into_iter()
+            .map(|caller| {
+                let receiver = match caller.site.receiver {
+                    Some(ploke_db::CallReceiver::TryMethodCallResult { method_name }) => {
+                        Some(CallReceiverInfo::TryMethodCallResult { method_name })
+                    }
+                    other => panic!(
+                        "DateTime::naive_utc caller should carry TryMethodCallResult(ok_or), got {other:?}"
+                    ),
+                };
+                ExpectedMethodCallSite {
+                    owner: caller.site.owner_id,
+                    site: caller.site.id,
+                    callee: CallCalleeInfo::Method {
+                        name: caller
+                            .site
+                            .method
+                            .expect("DateTime::naive_utc caller should carry a method name"),
+                        receiver,
+                    },
+                }
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            callers.len(),
+            2,
+            "chrono DateTime::naive_utc should expose the two parsed.rs try-receiver caller rows"
+        );
+        assert!(
+            db.project_call_proof_facts_for_node(target.id, "bd:corpus-chrono-call-graph")
+                .expect("project DateTime::naive_utc proof facts")
+                >= callers.len(),
+            "DateTime::naive_utc should project target-scoped proof rows for real-corpus callers"
+        );
+        let crate_root = target
+            .file_path
+            .parent()
+            .and_then(|src_dir| src_dir.parent())
+            .unwrap_or_else(|| panic!("chrono DateTime::naive_utc file should live under src"))
             .to_path_buf();
         let state = app_state_with_rag(Arc::clone(&db), crate_root).await;
 
@@ -1633,6 +1715,10 @@ file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_f
     }
 }
 
+fn chrono_naive_utc_target(db: &Database) -> TargetInfo {
+    method_target_by_body_and_file(db, "naive_utc", "self.datetime", "src/datetime/mod.rs")
+}
+
 fn axum_run_ui_tests_target(db: &Database) -> TargetInfo {
     axum_function_target_by_name_and_file(db, "run_ui_tests", "axum-macros/src/lib.rs")
 }
@@ -1733,6 +1819,15 @@ fn axum_method_target_by_body_and_file(
     body_needle: &str,
     file_suffix: &str,
 ) -> TargetInfo {
+    method_target_by_body_and_file(db, method_name, body_needle, file_suffix)
+}
+
+fn method_target_by_body_and_file(
+    db: &Database,
+    method_name: &str,
+    body_needle: &str,
+    file_suffix: &str,
+) -> TargetInfo {
     let script = format!(
         r#"
 ancestor[desc, desc] := *module{{ id: desc @ 'NOW' }}
@@ -1756,7 +1851,7 @@ file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_f
 
     let rows = db
         .raw_query_params(&script, params)
-        .unwrap_or_else(|err| panic!("query axum method {method_name}: {err}"));
+        .unwrap_or_else(|err| panic!("query method {method_name}: {err}"));
     let matching = rows
         .rows
         .iter()
@@ -1771,13 +1866,13 @@ file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_f
     assert_eq!(
         matching.len(),
         1,
-        "expected exactly one axum method {method_name:?} in {file_suffix:?} containing {body_needle:?}; rows: {:#?}",
+        "expected exactly one method {method_name:?} in {file_suffix:?} containing {body_needle:?}; rows: {:#?}",
         rows.rows
     );
     let row = matching[0];
 
     TargetInfo {
-        id: to_uuid(&row[0]).expect("axum method uuid"),
+        id: to_uuid(&row[0]).expect("method uuid"),
         file_path: PathBuf::from(data_str(&row[2], "file_path")),
         module_path: data_path(&row[3], "module path"),
     }
@@ -2275,6 +2370,61 @@ pub(crate) fn assert_expected_path_incoming_context(
             }),
             "{label} should return {target_label} incoming caller site {site}: {calls:#?}"
         );
+    }
+}
+
+pub(crate) fn assert_chrono_naive_utc_incoming_context(
+    calls: &[serde_json::Value],
+    callers: &[ExpectedMethodCallSite],
+    target: Uuid,
+    label: &str,
+) {
+    assert_expected_method_incoming_context(calls, callers, target, label, "DateTime::naive_utc");
+}
+
+pub(crate) fn assert_expected_method_incoming_context(
+    calls: &[serde_json::Value],
+    callers: &[ExpectedMethodCallSite],
+    target: Uuid,
+    label: &str,
+    target_label: &str,
+) {
+    let matching = calls
+        .iter()
+        .filter_map(|call| serde_json::from_value::<CallContextInfo>(call.clone()).ok())
+        .filter(|call| {
+            call.kind == CallSiteKind::Method
+                && call
+                    .targets
+                    .iter()
+                    .any(|candidate| candidate.target_id == target)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching.len(),
+        callers.len(),
+        "{label} should return all {target_label} incoming caller-site rows: {calls:#?}"
+    );
+
+    for expected in callers {
+        let call = matching
+            .iter()
+            .find(|call| {
+                call.owner_id == expected.owner
+                    && call.site_id == expected.site
+                    && call.callee == expected.callee
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "{label} should return {target_label} incoming caller site {}: {calls:#?}",
+                    expected.site
+                )
+            });
+        assert_eq!(call.status, CallStatusKind::Resolved);
+        assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(call.targets.len(), 1, "{call:#?}");
+        assert_eq!(call.targets[0].target_id, target);
+        assert_eq!(call.targets[0].relation, CallTargetKind::Method);
     }
 }
 
