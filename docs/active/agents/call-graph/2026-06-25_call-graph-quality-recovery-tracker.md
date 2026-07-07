@@ -142,6 +142,18 @@ are not acceptable as a continuing implementation style.
   - `30a9cb2e Expose proof context build domains`
   - `3284dd45 Add proof domain context lookup`
   - `5fad4c98 Remove dormant call graph semantic storage`
+- Recent parser extraction cleanup:
+  - `02222db2d refactor: split call extraction proof model`
+  - `4134a14b0 test: refresh call graph fixture spans`
+  - `6bf3f8232 refactor: split call receiver extraction`
+  - `100e146fd refactor: split dynamic call extraction`
+  - The call extraction visitor now keeps proof-carrier enums, method receiver
+    classification, and dynamic callee classification in focused sibling
+    modules under `parser/visitor/call_extraction/`. The root
+    `call_extraction.rs` dropped from roughly 2.3k lines to roughly 1.6k lines
+    without adding parser breadth. The stale fixture span constants introduced
+    by the recursive fixture insertion were refreshed, and the focused parser
+    call-site suite is green again.
 - Recent proof context test cleanup:
   - Proof-fact admission now requires explicit `evidence_use` for every known
     stored fact kind, and `ProofFactProjection::from_value` no longer
@@ -892,7 +904,7 @@ are not acceptable as a continuing implementation style.
 | CGQ-5 | P1 | Done 2026-06-25 | External proof projection reported `externally_summarized` while also using blocker reason `external_dependency_summary_missing`. | Current parser-projected external rows now emit blocked/missing-summary proof state until a real external summary fact exists. |
 | CGQ-6 | P2 | Done 2026-06-25 | Dynamic branch/match candidate provenance can collapse to `Null` in persisted `call_site` rows. | Ambiguous branch/match dynamic calls now keep proven local function candidates as `DynamicFunction` relations while preserving `Ambiguous` status; proof projection exposes them as `candidate_def_ids` without promoting them to resolved call edges. |
 | CGQ-7 | P2 | Done 2026-06-25 | The "exactly one status per call site" invariant could be hidden by post-hoc sort/dedup. | `CallRelationResolver` now rejects duplicate status sources before dedup, including identical duplicates. |
-| CGQ-8 | P2 | Partial 2026-06-27 | `call_resolution.rs` and `call_extraction.rs` are monolithic. | Dynamic-call resolver logic now lives in `resolve/call_resolution/dynamic.rs`, path-call dispatch remains in the existing thin `path.rs`, and shared path/import/module-scope helpers now live in `resolve/call_resolution/scope.rs` without adding resolver breadth. Remaining work: split method/type/trait/lookup resolver concerns and `call_extraction.rs` before adding breadth there. |
+| CGQ-8 | P2 | Partial 2026-07-06 | `call_resolution.rs` and `call_extraction.rs` are monolithic. | Dynamic-call resolver logic now lives in `resolve/call_resolution/dynamic.rs`, path-call dispatch remains in the existing thin `path.rs`, and shared path/import/module-scope helpers now live in `resolve/call_resolution/scope.rs` without adding resolver breadth. Call extraction now has focused `model`, `receiver`, and `dynamic` sibling modules, reducing the root visitor surface without adding parser breadth. Remaining work: split method/type/trait/lookup resolver concerns and consider extracting the remaining path/binding/helper concerns from `call_extraction.rs` before adding breadth there. |
 | CGQ-9 | P2 | Done 2026-06-25 | Call-graph docs were serving as a long running diary rather than a stable coverage inventory. | Added `2026-06-25_call-graph-coverage-inventory.md` as the compact layer-by-layer restart inventory and linked it from the call-graph restart spine. |
 | CGQ-10 | P3 | Done 2026-06-27 | `call_graph` feature name was broader than the actual gate: parser facts existed baseline while DB projection was gated. | DB projection and downstream consumers are now baseline. The Cargo feature remains only as a no-op compatibility alias for old commands; active gate docs now record that `CALL_GRAPH_GATE:db-projection` is closed. |
 | CGQ-11 | P1 | Done 2026-06-25 | `CodeGraph` carried dormant semantic call-target/status storage even though transform consumes `CallResolutionReport` directly. | `CodeGraph`/`ParsedCodeGraph` now keep only structural call occurrence facts; semantic call relations/statuses are report-owned at the resolver/transform boundary. |
