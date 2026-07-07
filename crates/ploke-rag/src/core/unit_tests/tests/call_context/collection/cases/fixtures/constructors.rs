@@ -78,6 +78,45 @@ async fn call_context_collection_reads_real_fixture_constructor_rows() -> Result
         CallTargetKind::TupleStructConstructor
     );
 
+    let local_variant_cases = [
+        (
+            "enum variant with inherent impl constructor",
+            "call_enum_variant_with_inherent_impl",
+            vec!["EnumWithInherentImpl".to_string(), "Case".to_string()],
+            "EnumWithInherentImpl",
+        ),
+        (
+            "type-alias enum variant constructor",
+            "call_type_alias_enum_variant_constructor",
+            vec!["AliasConstructorType".to_string(), "Case".to_string()],
+            "AliasConstructorEnum",
+        ),
+    ];
+    for (label, owner_name, path, enum_name) in local_variant_cases {
+        let owner = one_uuid(&tuple_db, &function_in_module_query(&["crate"], owner_name))?;
+        let target = one_uuid(&tuple_db, &variant_by_enum_query(enum_name, "Case"))?;
+        let context = tuple_rag.collect_call_context(&[(owner, 1.0)])?;
+        let owner_context = context
+            .get(&owner)
+            .unwrap_or_else(|| panic!("{label} owner should receive outgoing call context"));
+        assert_eq!(
+            owner_context.len(),
+            1,
+            "{label} constructor context: {owner_context:#?}"
+        );
+        let call = &owner_context[0];
+        assert_eq!(call.kind, CallSiteKind::Path);
+        assert_eq!(call.callee, CallCalleeInfo::Path { path });
+        assert_eq!(call.status, CallStatusKind::Resolved);
+        assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(call.targets.len(), 1);
+        assert_eq!(call.targets[0].target_id, target);
+        assert_eq!(
+            call.targets[0].relation,
+            CallTargetKind::EnumVariantConstructor
+        );
+    }
+
     let variant_db = Arc::new(Database::new(setup_db_full_multi_embedding(
         "fixture_nodes",
     )?));

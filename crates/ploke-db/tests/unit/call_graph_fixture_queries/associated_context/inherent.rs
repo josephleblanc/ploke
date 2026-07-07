@@ -29,18 +29,30 @@ fn fixture_context_reads_projected_self_and_qualified_associated_function_calls(
 -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let target = method_id_by_impl_self_type_name(&db, "LocalAssoc", "make")?;
+    let nested_target = method_id_by_impl_self_type_name(&db, "NestedAssoc", "make")?;
     let cases = [
         (
             method_id_by_impl_self_type_name(&db, "LocalAssoc", "call_self_make")?,
             path(&["Self", "make"]),
+            target,
         ),
         (
             function_id_by_name(&db, "call_qualified_local_assoc_make")?,
             path(&["LocalAssoc", "make"]),
+            target,
+        ),
+        (
+            function_id_by_name_in_module(
+                &db,
+                &["crate", "qualified_assoc_callers"],
+                "call_super_qualified_nested_assoc_make",
+            )?,
+            path(&["super", "qualified_assoc_scope", "NestedAssoc", "make"]),
+            nested_target,
         ),
     ];
 
-    for (owner, expected_path) in cases {
+    for (owner, expected_path, expected_target) in cases {
         let context = db.call_context_for_owner(owner)?;
         assert_eq!(context.len(), 1, "context rows: {context:#?}");
 
@@ -52,7 +64,7 @@ fn fixture_context_reads_projected_self_and_qualified_associated_function_calls(
         assert_eq!(row.site.generic_arg_count, Some(0));
         assert_resolved_target(
             row,
-            target,
+            expected_target,
             CallRelationKind::AssociatedFunction,
             CallSiteKind::Path,
             CallTargetKind::Method,

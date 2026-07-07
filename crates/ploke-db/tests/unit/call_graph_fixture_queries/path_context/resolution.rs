@@ -85,7 +85,9 @@ fn fixture_context_reads_projected_path_resolution_forms() -> Result<(), DbError
         function_id_by_name_in_module(&db, &["crate", "import_targets"], "imported_target")?;
     let globbed_target =
         function_id_by_name_in_module(&db, &["crate", "import_targets"], "globbed_target")?;
-    let cases: [(&[&str], &str, Vec<String>, Uuid); 11] = [
+    let file_module_target =
+        function_id_by_name_in_module(&db, &["crate", "file_mod"], "file_module_target")?;
+    let cases: [(&[&str], &str, Vec<String>, Uuid); 12] = [
         (
             &["crate"],
             "call_unqualified_local_target",
@@ -151,6 +153,12 @@ fn fixture_context_reads_projected_path_resolution_forms() -> Result<(), DbError
             "call_grouped_imported_globbed_target",
             path(&["grouped_globbed_alias"]),
             globbed_target,
+        ),
+        (
+            &["crate"],
+            "call_crate_file_module_target",
+            path(&["crate", "file_mod", "file_module_target"]),
+            file_module_target,
         ),
     ];
 

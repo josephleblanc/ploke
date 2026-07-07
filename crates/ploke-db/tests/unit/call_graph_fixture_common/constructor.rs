@@ -95,6 +95,40 @@ const CONSTRUCTOR_CASES: &[ConstructorCase] = &[
         endpoint: CallTargetKind::Variant,
         source_suffix: "fixture_nodes/src/imports.rs",
     },
+    ConstructorCase {
+        label: "enum variant with inherent impl constructor",
+        fixture: "fixture_call_graph",
+        domain: "bd:fixture-call-graph",
+        owner: ConstructorOwner::FunctionInModule {
+            module: &["crate"],
+            name: "call_enum_variant_with_inherent_impl",
+        },
+        path: &["EnumWithInherentImpl", "Case"],
+        target: ConstructorTarget::Variant {
+            enum_name: "EnumWithInherentImpl",
+            variant_name: "Case",
+        },
+        relation: CallRelationKind::EnumVariantConstructor,
+        endpoint: CallTargetKind::Variant,
+        source_suffix: "fixture_call_graph/src/lib.rs",
+    },
+    ConstructorCase {
+        label: "type-alias enum variant constructor",
+        fixture: "fixture_call_graph",
+        domain: "bd:fixture-call-graph",
+        owner: ConstructorOwner::FunctionInModule {
+            module: &["crate"],
+            name: "call_type_alias_enum_variant_constructor",
+        },
+        path: &["AliasConstructorType", "Case"],
+        target: ConstructorTarget::Variant {
+            enum_name: "AliasConstructorEnum",
+            variant_name: "Case",
+        },
+        relation: CallRelationKind::EnumVariantConstructor,
+        endpoint: CallTargetKind::Variant,
+        source_suffix: "fixture_call_graph/src/lib.rs",
+    },
 ];
 
 pub(in crate::unit) fn constructor_cases() -> &'static [ConstructorCase] {

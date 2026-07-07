@@ -9,6 +9,8 @@ fn fixture_projection_stores_real_associated_function_call_proof_facts() -> Resu
     let local_trait_make = method_id_by_trait_name(&db, "LocalAssocFunctionTrait", "trait_make")?;
     let imported_trait_make =
         method_id_by_trait_name(&db, "ImportedAssocFunctionTrait", "imported_trait_make")?;
+    let trait_method_path = method_id_by_trait_name(&db, "TraitMethodPath", "handle")?;
+    let generic_assoc_make = method_id_by_trait_name(&db, "GenericAssocPathTrait", "make")?;
 
     let assoc_case = |label: &'static str,
                       owner: Uuid,
@@ -115,6 +117,16 @@ fn fixture_projection_stores_real_associated_function_call_proof_facts() -> Resu
         local_make,
     ));
     cases.push(assoc_case(
+        "call_super_qualified_nested_assoc_make",
+        function_id_by_name_in_module(
+            &db,
+            &["crate", "qualified_assoc_callers"],
+            "call_super_qualified_nested_assoc_make",
+        )?,
+        &["super", "qualified_assoc_scope", "NestedAssoc", "make"],
+        method_id_by_impl_self_type_name(&db, "NestedAssoc", "make")?,
+    ));
+    cases.push(assoc_case(
         "call_method_as_associated_function",
         function_id_by_name(&db, "call_method_as_associated_function")?,
         &["LocalAssoc", "instance_value"],
@@ -125,6 +137,24 @@ fn fixture_projection_stores_real_associated_function_call_proof_facts() -> Resu
         function_id_by_name(&db, "call_trait_associated_function")?,
         &["LocalAssocFunctionTrait", "trait_make"],
         local_trait_make,
+    ));
+    cases.push(assoc_case(
+        "call_trait_method_as_path",
+        function_id_by_name(&db, "call_trait_method_as_path")?,
+        &["TraitMethodPath", "handle"],
+        trait_method_path,
+    ));
+    cases.push(assoc_case(
+        "call_inline_generic_bound_assoc_path",
+        function_id_by_name(&db, "call_inline_generic_bound_assoc_path")?,
+        &["T", "make"],
+        generic_assoc_make,
+    ));
+    cases.push(assoc_case(
+        "call_where_generic_bound_assoc_path",
+        function_id_by_name(&db, "call_where_generic_bound_assoc_path")?,
+        &["T", "make"],
+        generic_assoc_make,
     ));
 
     for (module_path, owner_name, expected_path) in [

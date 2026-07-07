@@ -49,9 +49,31 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: none selected after the tuple-return receiver proof slice.
+Current bucket: none selected after the downstream parser-supported fixture
+proof coverage slice.
 
-Latest completed bucket: untyped tuple-pattern receiver from local function
+Latest completed bucket: downstream DB/RAG proof coverage for
+parser-supported fixture call shapes.
+
+Completed evidence:
+
+- Added DB context/proof assertions for existing parser-resolved fixture rows
+  that previously had less downstream coverage: `crate::file_mod::file_module_target()`,
+  `super::qualified_assoc_scope::NestedAssoc::make()`,
+  `TraitMethodPath::handle(value)`, and generic-bound associated paths
+  `T::make(...)` in inline and `where`-bound forms.
+- Extended the shared constructor proof table with
+  `EnumWithInherentImpl::Case(value)` and the type-alias variant constructor
+  `AliasConstructorType::Case(value)`, so constructor context, target
+  expansion, target-centered proof, and node proof tests all cover those
+  endpoint shapes without duplicated helper logic.
+- Added RAG call-context coverage for the same two fixture-backed enum
+  variant constructor rows.
+- This chunk did not add parser/resolver breadth. It closes downstream proof
+  gaps for semantics already proven by the parser call-site suite and keeps
+  unsupported rows unchanged.
+
+Previously completed bucket: untyped tuple-pattern receiver from local function
 tuple return.
 
 Completed evidence:
