@@ -1692,3 +1692,8 @@ pub fn call_borrowed_concrete_trait_object_binding_method() -> i32 {
     let value: &dyn LocalDispatchTrait = &TraitDispatchTarget;
     (&value).trait_value()
 }
+
+pub fn call_dereferenced_boxed_dyn_fn_value_binding() -> i32 {
+    let boxed_fn: Box<dyn Fn() -> i32> = Box::new(local_target);
+    (*boxed_fn)()
+}

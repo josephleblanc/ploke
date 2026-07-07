@@ -49,9 +49,31 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: none selected after the borrowed trait-object receiver slice.
+Current bucket: none selected after the dereferenced boxed dyn Fn exact
+initializer slice.
 
-Latest completed bucket: borrowed concrete trait-object receiver proof.
+Latest completed bucket: dereferenced boxed dyn Fn exact initializer proof.
+
+Completed evidence:
+
+- Parser dynamic callee classification now preserves exact callable trait-object
+  initializer proof through `(*boxed_fn)()` when the local binding is
+  `let boxed_fn: Box<dyn Fn() -> i32> = Box::new(local_target)`.
+- The dynamic resolver reuses the existing initialized-local-binding path to
+  resolve the dereferenced call exactly to `local_target`; the `Box::new(...)`
+  setup call remains a targetless external frontier row.
+- DB owner-scoped context, dynamic proof batches, and target-centered caller
+  queries include the dereferenced boxed dynamic caller alongside the existing
+  direct and parenthesized boxed cases.
+- RAG incoming expansion and dynamic call-context collection preserve the same
+  owner, the external setup row, and the resolved dynamic edge to
+  `local_target`.
+- Active fixtures were regenerated with `--features call_graph` and
+  round-tripped successfully. This remains bounded to exact callable
+  trait-object initializers; unproven trait objects and arbitrary callable
+  value flow remain fail-closed.
+
+Previously completed bucket: borrowed concrete trait-object receiver proof.
 
 Completed evidence:
 

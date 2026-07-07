@@ -187,6 +187,11 @@ fn fixture_context_reads_projected_resolved_dynamic_function_shapes() -> Result<
             expected_rows: 1,
         },
         ResolvedDynamicContextCase {
+            owner: "call_dereferenced_boxed_dyn_fn_value_binding",
+            path: &["boxed_fn"],
+            expected_rows: 2,
+        },
+        ResolvedDynamicContextCase {
             owner: "call_block_function_item",
             path: &["local_target"],
             expected_rows: 1,

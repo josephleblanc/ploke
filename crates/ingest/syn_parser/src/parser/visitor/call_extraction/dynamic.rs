@@ -395,6 +395,16 @@ fn dereferenced_local_binding_callee(
         return None;
     };
     match visible_local_binding(name, local_scopes)? {
+        LocalBindingProof::TraitObject {
+            trait_path,
+            init_path: Some(init_path),
+            ..
+        } if is_callable_trait(trait_path) => {
+            Some(DynamicCallCallee::DereferencedInitializedLocalBinding {
+                path,
+                init_path: init_path.clone(),
+            })
+        }
         LocalBindingProof::Typed {
             init_path: Some(init_path),
             ..

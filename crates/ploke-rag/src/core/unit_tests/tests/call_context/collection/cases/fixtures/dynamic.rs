@@ -36,6 +36,10 @@ async fn call_context_collection_reads_real_fixture_dynamic_rows() -> Result<(),
         &db,
         &function_in_module_query(&["crate"], "call_parenthesized_boxed_dyn_fn_value_binding"),
     )?;
+    let dereferenced_boxed_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_dereferenced_boxed_dyn_fn_value_binding"),
+    )?;
     let closure_binding_owner =
         one_uuid(&db, &function_in_module_query(&["crate"], "dynamic_calls"))?;
     let dereferenced_closure_owner = one_uuid(
@@ -99,6 +103,7 @@ async fn call_context_collection_reads_real_fixture_dynamic_rows() -> Result<(),
         (block_owner, 1.0),
         (guarded_owner, 1.0),
         (boxed_owner, 1.0),
+        (dereferenced_boxed_owner, 1.0),
         (closure_binding_owner, 1.0),
         (dereferenced_closure_owner, 1.0),
         (named_field_param_owner, 1.0),
@@ -163,45 +168,57 @@ async fn call_context_collection_reads_real_fixture_dynamic_rows() -> Result<(),
         );
     }
 
-    let boxed_context = call_context
-        .get(&boxed_owner)
-        .expect("boxed dyn Fn dynamic owner should receive outgoing call context");
-    assert_eq!(
-        boxed_context.len(),
-        2,
-        "boxed dyn Fn dynamic owner context: {boxed_context:#?}"
-    );
-    let box_new = boxed_context
-        .iter()
-        .find(|call| {
-            call.kind == CallSiteKind::Path
-                && call.callee
-                    == CallCalleeInfo::Path {
-                        path: vec!["Box".to_string(), "new".to_string()],
-                    }
-        })
-        .expect("Box::new setup call should stay visible for boxed dyn Fn dynamic owner");
-    assert_eq!(box_new.status, CallStatusKind::External);
-    assert!(box_new.resolution.is_none());
-    assert!(box_new.targets.is_empty());
-    let boxed_call = boxed_context
-        .iter()
-        .find(|call| {
-            call.kind == CallSiteKind::Dynamic
-                && call
-                    .targets
-                    .iter()
-                    .any(|target_info| target_info.target_id == target)
-        })
-        .expect("boxed dyn Fn dynamic call should resolve to local_target");
-    assert_eq!(boxed_call.status, CallStatusKind::Resolved);
-    assert_eq!(boxed_call.resolution, Some(CallResolutionKind::LocalExact));
-    assert_eq!(boxed_call.targets.len(), 1);
-    assert_eq!(boxed_call.targets[0].target_id, target);
-    assert_eq!(
-        boxed_call.targets[0].relation,
-        CallTargetKind::DynamicFunction
-    );
+    for (label, owner) in [
+        ("parenthesized boxed dyn Fn", boxed_owner),
+        ("dereferenced boxed dyn Fn", dereferenced_boxed_owner),
+    ] {
+        let context = call_context.get(&owner).unwrap_or_else(|| {
+            panic!("{label} dynamic owner should receive outgoing call context")
+        });
+        assert_eq!(
+            context.len(),
+            2,
+            "{label} dynamic owner context: {context:#?}"
+        );
+        let box_new = context
+            .iter()
+            .find(|call| {
+                call.kind == CallSiteKind::Path
+                    && call.callee
+                        == CallCalleeInfo::Path {
+                            path: vec!["Box".to_string(), "new".to_string()],
+                        }
+            })
+            .unwrap_or_else(|| {
+                panic!("Box::new setup call should stay visible for {label} dynamic owner")
+            });
+        assert_eq!(box_new.status, CallStatusKind::External, "{label}");
+        assert!(box_new.resolution.is_none(), "{label}");
+        assert!(box_new.targets.is_empty(), "{label}");
+        let boxed_call = context
+            .iter()
+            .find(|call| {
+                call.kind == CallSiteKind::Dynamic
+                    && call
+                        .targets
+                        .iter()
+                        .any(|target_info| target_info.target_id == target)
+            })
+            .unwrap_or_else(|| panic!("{label} dynamic call should resolve to local_target"));
+        assert_eq!(boxed_call.status, CallStatusKind::Resolved, "{label}");
+        assert_eq!(
+            boxed_call.resolution,
+            Some(CallResolutionKind::LocalExact),
+            "{label}"
+        );
+        assert_eq!(boxed_call.targets.len(), 1, "{label}");
+        assert_eq!(boxed_call.targets[0].target_id, target, "{label}");
+        assert_eq!(
+            boxed_call.targets[0].relation,
+            CallTargetKind::DynamicFunction,
+            "{label}"
+        );
+    }
 
     let closure_binding_context = call_context
         .get(&closure_binding_owner)

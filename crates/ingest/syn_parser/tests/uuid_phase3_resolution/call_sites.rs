@@ -259,6 +259,8 @@ const ITEM_MACRO_INSIDE_BODY_CALL_SPAN: (usize, usize) = (16918, 16942);
 const PARENTHESIZED_GENERIC_FN_ONCE_DYNAMIC_CALL_SPAN: (usize, usize) = (17069, 17082);
 const PARENTHESIZED_BOXED_DYN_FN_BOX_NEW_CALL_SPAN: (usize, usize) = (17191, 17213);
 const PARENTHESIZED_BOXED_DYN_FN_DYNAMIC_CALL_SPAN: (usize, usize) = (17219, 17231);
+const DEREFERENCED_BOXED_DYN_FN_BOX_NEW_CALL_SPAN: (usize, usize) = (38179, 38201);
+const DEREFERENCED_BOXED_DYN_FN_DYNAMIC_CALL_SPAN: (usize, usize) = (38207, 38220);
 const EXTERN_C_ABS_CALL_SPAN: (usize, usize) = (17373, 17383);
 const TEST_ASSERT_EQ_MACRO_CALL_SPAN: (usize, usize) = (17477, 17497);
 const ASYNC_CLOSURE_LITERAL_DYNAMIC_CALL_SPAN: (usize, usize) = (17579, 17606);
@@ -6951,6 +6953,47 @@ paranoid_call_site_test!(
             &["boxed_fn"],
             &["local_target"],
             PARENTHESIZED_BOXED_DYN_FN_DYNAMIC_CALL_SPAN,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_dereferenced_boxed_dyn_fn_value_binding_records_box_new_external_path_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_dereferenced_boxed_dyn_fn_value_binding"
+    },
+    expected: ExpectedCallSite::path(
+        &["Box", "new"],
+        DEREFERENCED_BOXED_DYN_FN_BOX_NEW_CALL_SPAN,
+        1,
+        0,
+        &[],
+        ExpectedCallOutcome::External,
+    ),
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_dereferenced_boxed_dyn_fn_value_binding_resolves_dynamic_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_dereferenced_boxed_dyn_fn_value_binding"
+    },
+    expected: {
+        let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("local_target should regenerate a FunctionNodeId");
+        ExpectedCallSite::dynamic_dereferenced_initialized_local_binding(
+            &["boxed_fn"],
+            &["local_target"],
+            DEREFERENCED_BOXED_DYN_FN_DYNAMIC_CALL_SPAN,
             0,
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },

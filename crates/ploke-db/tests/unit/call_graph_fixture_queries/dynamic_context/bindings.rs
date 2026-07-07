@@ -278,22 +278,33 @@ fn fixture_context_reads_projected_parenthesized_binding_dynamic_calls() -> Resu
             path: &["boxed_fn"],
             expected_rows: 2,
         },
+        ResolvedDynamicContextCase {
+            owner: "call_dereferenced_boxed_dyn_fn_value_binding",
+            path: &["boxed_fn"],
+            expected_rows: 2,
+        },
     ];
 
     assert_resolved_dynamic_context_cases(&db, target, &cases)?;
 
-    let owner = function_id_by_name(&db, "call_parenthesized_boxed_dyn_fn_value_binding")?;
-    let context = db.call_context_for_owner(owner)?;
-    assert_targetless_row(
-        &context,
-        owner,
-        TargetlessRowCase::path(
-            &["Box", "new"],
-            1,
-            CallStatusKind::External,
+    for (owner_name, label) in [
+        (
+            "call_parenthesized_boxed_dyn_fn_value_binding",
             "parenthesized boxed dyn Fn Box::new setup call",
         ),
-    );
+        (
+            "call_dereferenced_boxed_dyn_fn_value_binding",
+            "dereferenced boxed dyn Fn Box::new setup call",
+        ),
+    ] {
+        let owner = function_id_by_name(&db, owner_name)?;
+        let context = db.call_context_for_owner(owner)?;
+        assert_targetless_row(
+            &context,
+            owner,
+            TargetlessRowCase::path(&["Box", "new"], 1, CallStatusKind::External, label),
+        );
+    }
 
     Ok(())
 }
