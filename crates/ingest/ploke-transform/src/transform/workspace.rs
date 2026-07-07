@@ -254,7 +254,7 @@ mod tests {
     use ploke_core::WorkspaceId;
     use std::collections::BTreeMap;
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use syn_parser::{discovery::workspace::WorkspaceMetadataSection, parse_workspace};
 
     use crate::{
@@ -336,6 +336,53 @@ mod tests {
     #[test]
     fn transform_parsed_workspace_classifies_workspace_reexported_external_receiver_alias()
     -> Result<(), Box<dyn std::error::Error>> {
+        assert_external_receiver_case(
+            &[(
+                "src/lib.rs",
+                r#"use provider::Request;
+
+pub fn call_workspace_reexported_external_receiver<B>(mut req: Request<B>) {
+    req.extensions_mut();
+}
+"#,
+            )],
+            "call_workspace_reexported_external_receiver",
+            "workspace re-exported external receiver alias",
+        )
+    }
+
+    #[test]
+    fn transform_parsed_workspace_classifies_same_crate_reexported_workspace_external_receiver_alias()
+    -> Result<(), Box<dyn std::error::Error>> {
+        assert_external_receiver_case(
+            &[
+                (
+                    "src/lib.rs",
+                    r#"pub mod extract;
+pub mod nested;
+"#,
+                ),
+                ("src/extract/mod.rs", "pub use provider::Request;\n"),
+                (
+                    "src/nested.rs",
+                    r#"use crate::extract::Request;
+
+pub fn call_same_crate_reexported_external_receiver<B>(mut req: Request<B>) {
+    req.extensions_mut();
+}
+"#,
+                ),
+            ],
+            "call_same_crate_reexported_external_receiver",
+            "same-crate re-exported workspace external receiver alias",
+        )
+    }
+
+    fn assert_external_receiver_case(
+        files: &[(&str, &str)],
+        owner: &str,
+        label: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let workspace = tempfile::tempdir()?;
         let root = workspace.path();
         let provider = root.join("provider");
@@ -389,15 +436,9 @@ path = "src/lib.rs"
 provider = { workspace = true }
 "#,
         )?;
-        fs::write(
-            consumer.join("src/lib.rs"),
-            r#"use provider::Request;
-
-pub fn call_workspace_reexported_external_receiver<B>(mut req: Request<B>) {
-    req.extensions_mut();
-}
-"#,
-        )?;
+        for (path, content) in files {
+            write_consumer_file(&consumer, path, content)?;
+        }
 
         let parsed_workspace = parse_workspace(root, None)?;
         let db = Db::new(MemStorage::default()).expect("Failed to create database");
@@ -409,7 +450,7 @@ pub fn call_workspace_reexported_external_receiver<B>(mut req: Request<B>) {
         let rows = db.run_script(
             r#"?[owner_name, method_name, receiver_kind, receiver_path, status_kind, resolution_kind] :=
                 *function { id: owner_id, name: owner_name @ 'NOW' },
-                owner_name = "call_workspace_reexported_external_receiver",
+                owner_name = $owner,
                 *call_site {
                     id: site_id,
                     owner_id,
@@ -424,14 +465,14 @@ pub fn call_workspace_reexported_external_receiver<B>(mut req: Request<B>) {
                     status_kind,
                     resolution_kind @ 'NOW'
                 }"#,
-            BTreeMap::new(),
+            BTreeMap::from([("owner".to_string(), DataValue::from(owner))]),
             cozo::ScriptMutability::Immutable,
         )?;
 
         assert_eq!(
             rows.rows.len(),
             1,
-            "workspace re-exported external receiver alias should project one method row: {rows:#?}"
+            "{label} should project one method row: {rows:#?}"
         );
         let row = &rows.rows[0];
         assert_eq!(&row[1], &DataValue::from("extensions_mut"));
@@ -440,6 +481,19 @@ pub fn call_workspace_reexported_external_receiver<B>(mut req: Request<B>) {
         assert_eq!(&row[4], &DataValue::from("External"));
         assert_eq!(&row[5], &DataValue::Null);
 
+        Ok(())
+    }
+
+    fn write_consumer_file(
+        consumer: &Path,
+        path: &str,
+        content: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let path = consumer.join(path);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(path, content)?;
         Ok(())
     }
 }
