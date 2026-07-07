@@ -16,6 +16,11 @@ pub(super) enum LocalBindingProof {
         name: String,
         init_path: Vec<String>,
     },
+    TupleReturn {
+        name: String,
+        path: Vec<String>,
+        index: usize,
+    },
     Closure {
         name: String,
         closure_id: ExecutableBodyId,
@@ -60,6 +65,7 @@ impl LocalBindingProof {
             Self::Typed { name, .. }
             | Self::TraitObject { name, .. }
             | Self::Initialized { name, .. }
+            | Self::TupleReturn { name, .. }
             | Self::Closure { name, .. }
             | Self::LocalFunction { name, .. }
             | Self::Constructed { name, .. }

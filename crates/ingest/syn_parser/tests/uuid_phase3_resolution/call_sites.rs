@@ -124,6 +124,8 @@ const INITIALIZED_LOCAL_ALIAS_INSTANCE_CALL_SPAN: (usize, usize) = (31434, 31456
 const TUPLE_PATTERN_LOCAL_INSTANCE_CALL_SPAN: (usize, usize) = (34471, 34493);
 const TYPED_TUPLE_PATTERN_LOCAL_INIT_CALL_SPAN: (usize, usize) = (34679, 34702);
 const TYPED_TUPLE_PATTERN_LOCAL_INSTANCE_CALL_SPAN: (usize, usize) = (34708, 34730);
+const TUPLE_RETURN_PATTERN_LOCAL_INIT_CALL_SPAN: (usize, usize) = (36266, 36289);
+const TUPLE_RETURN_PATTERN_LOCAL_INSTANCE_CALL_SPAN: (usize, usize) = (36295, 36317);
 const TRY_METHOD_RESULT_LOCAL_ASSOC_IMPL_SPAN: (usize, usize) = (35825, 36015);
 const ASSOC_CONST_CARRIER_IMPL_SPAN: (usize, usize) = (2125, 2210);
 const IMPL_ASSOC_CONST_CALL_SPAN: (usize, usize) = (2188, 2207);
@@ -4117,6 +4119,59 @@ paranoid_call_site_test!(
                 type_path: &["LocalAssoc"],
             },
             TYPED_TUPLE_PATTERN_LOCAL_INSTANCE_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedMethodLocalExact {
+                target: target_info.test_method_id(),
+            },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_tuple_return_pattern_local_instance_method_resolves_initializer_path_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_tuple_return_pattern_local_instance_method"
+    },
+    expected: {
+        let target_args = fixture_call_graph_function_args(&["crate"], "make_local_assoc_pair");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("make_local_assoc_pair should regenerate a FunctionNodeId");
+        ExpectedCallSite::path(
+            &["make_local_assoc_pair"],
+            TUPLE_RETURN_PATTERN_LOCAL_INIT_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_tuple_return_pattern_local_instance_method_resolves_return_tuple_binding_method_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_tuple_return_pattern_local_instance_method"
+    },
+    expected: {
+        let target_args = fixture_call_graph_instance_method_args("instance_value");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_method_pid(&parsed_graphs)?;
+        ExpectedCallSite::method(
+            "instance_value",
+            ExpectedMethodReceiver::TupleReturnBinding {
+                name: "value",
+                path: &["make_local_assoc_pair"],
+                index: 0,
+            },
+            TUPLE_RETURN_PATTERN_LOCAL_INSTANCE_CALL_SPAN,
             0,
             0,
             &[],

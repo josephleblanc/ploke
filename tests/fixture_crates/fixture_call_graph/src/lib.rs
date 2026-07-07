@@ -1627,3 +1627,8 @@ pub fn call_try_method_result_instance_method() -> Result<i32, ()> {
     let value: LocalAssoc = LocalAssoc;
     value.try_clone_assoc()?.try_instance_value()
 }
+
+pub fn call_tuple_return_pattern_local_instance_method() -> i32 {
+    let (value, _) = make_local_assoc_pair();
+    value.instance_value()
+}

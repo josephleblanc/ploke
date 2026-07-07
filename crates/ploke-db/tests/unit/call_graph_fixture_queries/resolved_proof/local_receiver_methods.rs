@@ -68,6 +68,28 @@ fn fixture_projection_stores_real_local_receiver_method_call_proof_facts() -> Re
             ],
         },
         ResolvedProofCase {
+            label: "call_tuple_return_pattern_local_instance_method",
+            owner: function_id_by_name(&db, "call_tuple_return_pattern_local_instance_method")?,
+            rows: 2,
+            calls: vec![
+                ResolvedProofCall::path(
+                    &["make_local_assoc_pair"],
+                    pair_target,
+                    CallRelationKind::Function,
+                    CallTargetKind::Function,
+                ),
+                ResolvedProofCall::method(
+                    "instance_value",
+                    CallReceiver::TupleReturnBinding {
+                        name: "value".to_string(),
+                        path: path(&["make_local_assoc_pair"]),
+                        index: 0,
+                    },
+                    target,
+                ),
+            ],
+        },
+        ResolvedProofCase {
             label: "call_self_field_instance_method",
             owner: method_id_by_impl_self_type_name(
                 &db,

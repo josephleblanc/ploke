@@ -19,6 +19,11 @@ pub enum CallReceiver {
         name: String,
         init_path: Vec<String>,
     },
+    TupleReturnBinding {
+        name: String,
+        path: Vec<String>,
+        index: usize,
+    },
     BorrowedLocalBinding {
         name: String,
     },

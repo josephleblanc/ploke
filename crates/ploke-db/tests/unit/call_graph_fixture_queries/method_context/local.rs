@@ -160,6 +160,53 @@ fn fixture_context_reads_projected_typed_tuple_pattern_receiver() -> Result<(), 
 }
 
 #[test]
+fn fixture_context_reads_projected_tuple_return_pattern_receiver() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let owner = function_id_by_name(&db, "call_tuple_return_pattern_local_instance_method")?;
+    let pair_target = function_id_by_name(&db, "make_local_assoc_pair")?;
+    let method_target = method_id_by_impl_self_type_name(&db, "LocalAssoc", "instance_value")?;
+
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(
+        context.len(),
+        2,
+        "tuple-return owner should expose the tuple initializer and receiver rows: {context:#?}"
+    );
+
+    let path_row = row_by_path(&context, &["make_local_assoc_pair"]);
+    assert_eq!(path_row.site.owner_id, owner);
+    assert_eq!(path_row.site.arg_count, Some(0));
+    assert_resolved_target(
+        path_row,
+        pair_target,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:
+    // `let (value, _) = make_local_assoc_pair(); value.instance_value()`
+    // should use the local function's tuple return type as receiver proof.
+    let receiver = CallReceiver::TupleReturnBinding {
+        name: "value".to_string(),
+        path: path(&["make_local_assoc_pair"]),
+        index: 0,
+    };
+    let method_row = row_by_method_receiver(&context, "instance_value", &receiver);
+    assert_eq!(method_row.site.owner_id, owner);
+    assert_eq!(method_row.site.arg_count, Some(0));
+    assert_resolved_target(
+        method_row,
+        method_target,
+        CallRelationKind::Method,
+        CallSiteKind::Method,
+        CallTargetKind::Method,
+    );
+
+    Ok(())
+}
+
+#[test]
 fn fixture_context_reads_projected_reference_instance_method_receivers() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let target = method_id_by_impl_self_type_name(&db, "LocalAssoc", "instance_value")?;

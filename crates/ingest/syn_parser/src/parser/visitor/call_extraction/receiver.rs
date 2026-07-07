@@ -48,6 +48,13 @@ pub(super) fn classify_method_receiver(
                             init_path: init_path.clone(),
                         }
                     }
+                    LocalBindingProof::TupleReturn { name, path, index } => {
+                        MethodCallReceiver::TupleReturnBinding {
+                            name: name.clone(),
+                            path: path.clone(),
+                            index: *index,
+                        }
+                    }
                     LocalBindingProof::Constructed {
                         name, type_path, ..
                     } => MethodCallReceiver::InitializedLocalBinding {
@@ -242,6 +249,9 @@ fn local_field_receiver(
                     init_path: init_path.clone(),
                     field_path,
                 })
+            }
+            LocalBindingProof::TupleReturn { .. } => {
+                Some(MethodCallReceiver::FieldLocalBinding { name, field_path })
             }
             LocalBindingProof::Constructed {
                 name, type_path, ..

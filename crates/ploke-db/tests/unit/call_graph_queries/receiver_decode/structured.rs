@@ -35,6 +35,15 @@ fn context_for_owner_decodes_structured_method_receivers() -> Result<(), DbError
             },
         ),
         structured_receiver(
+            "TupleReturnBinding",
+            vec!["value", "0", "make_local_assoc_pair"],
+            CallReceiver::TupleReturnBinding {
+                name: "value".to_string(),
+                path: vec!["make_local_assoc_pair".to_string()],
+                index: 0,
+            },
+        ),
+        structured_receiver(
             "BorrowedTypedLocalBinding",
             vec!["borrowed", "LocalAssoc"],
             CallReceiver::BorrowedTypedLocalBinding {

@@ -63,6 +63,26 @@ impl CallReceiver {
                     ))),
                 }
             }
+            "TupleReturnBinding" => {
+                let path = to_string_list(path)?;
+                match path.as_slice() {
+                    [name, index, return_path @ ..] if !return_path.is_empty() => {
+                        let index = index.parse::<usize>().map_err(|err| {
+                            DbError::Cozo(format!(
+                                "tuple return binding receiver should store a usize index, got {index:?}: {err}"
+                            ))
+                        })?;
+                        Ok(Some(Self::TupleReturnBinding {
+                            name: name.clone(),
+                            path: return_path.to_vec(),
+                            index,
+                        }))
+                    }
+                    other => Err(DbError::Cozo(format!(
+                        "tuple return binding receiver should store a name, index, and function path, got {other:?}"
+                    ))),
+                }
+            }
             "BorrowedLocalBinding" => {
                 let path = to_string_list(path)?;
                 match path.as_slice() {

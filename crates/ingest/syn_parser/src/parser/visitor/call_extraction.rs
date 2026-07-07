@@ -682,6 +682,7 @@ fn classify_path_callee(
                 init_path: None, ..
             }
             | LocalBindingProof::TraitObject { .. }
+            | LocalBindingProof::TupleReturn { .. }
             | LocalBindingProof::Constructed { .. }
             | LocalBindingProof::Array { .. }
             | LocalBindingProof::Referenced { .. }
@@ -991,7 +992,12 @@ fn tuple_binding_proofs(
         return proofs;
     }
 
-    typed_tuple_binding_proofs(pat)
+    let typed = typed_tuple_binding_proofs(pat);
+    if !typed.is_empty() {
+        return typed;
+    }
+
+    tuple_return_binding_proofs(pat, init_expr)
 }
 
 fn direct_tuple_binding_proofs(
@@ -1052,6 +1058,46 @@ fn typed_tuple_binding_proofs(pat: &syn::Pat) -> Vec<LocalBindingProof> {
             })
         })
         .collect()
+}
+
+fn tuple_return_binding_proofs(
+    pat: &syn::Pat,
+    init_expr: Option<&syn::Expr>,
+) -> Vec<LocalBindingProof> {
+    let syn::Pat::Tuple(pattern) = pat else {
+        return Vec::new();
+    };
+    let Some(path) = tuple_return_call_path(init_expr) else {
+        return Vec::new();
+    };
+
+    pattern
+        .elems
+        .iter()
+        .enumerate()
+        .filter_map(|(index, pat)| {
+            Some(LocalBindingProof::TupleReturn {
+                name: pat_ident_name(pat)?,
+                path: path.clone(),
+                index,
+            })
+        })
+        .collect()
+}
+
+fn tuple_return_call_path(expr: Option<&syn::Expr>) -> Option<Vec<String>> {
+    let syn::Expr::Call(call) = unparen_expr(expr?) else {
+        return None;
+    };
+    let syn::Expr::Path(path) = unparen_expr(call.func.as_ref()) else {
+        return None;
+    };
+    if path.qself.is_some() {
+        return None;
+    }
+
+    let path = path_segments(&path.path);
+    (!path.is_empty()).then_some(path)
 }
 
 fn closure_binding_id(
@@ -1440,6 +1486,7 @@ fn init_target_path(
             | LocalBindingProof::TraitObject {
                 init_path: None, ..
             }
+            | LocalBindingProof::TupleReturn { .. }
             | LocalBindingProof::Closure { .. }
             | LocalBindingProof::LocalFunction { .. }
             | LocalBindingProof::Constructed { .. }

@@ -1230,6 +1230,40 @@ call_context: 1 call site(s)
 }
 
 #[test]
+fn format_call_context_block_renders_tuple_return_receiver() {
+    let target = Uuid::from_u128(0x906);
+    let calls = vec![CallContextInfo {
+        site_id: Uuid::from_u128(0x706),
+        owner_id: Uuid::from_u128(0x706),
+        kind: CallSiteKind::Method,
+        span: (140, 162),
+        arg_count: Some(0),
+        generic_arg_count: Some(0),
+        callee: CallCalleeInfo::Method {
+            name: "instance_value".to_string(),
+            receiver: Some(CallReceiverInfo::TupleReturnBinding {
+                name: "value".to_string(),
+                path: vec!["make_local_assoc_pair".to_string()],
+                index: 0,
+            }),
+        },
+        status: CallStatusKind::Resolved,
+        resolution: Some(CallResolutionKind::LocalExact),
+        targets: vec![CallTargetInfo {
+            target_id: target,
+            relation: CallTargetKind::Method,
+        }],
+    }];
+
+    let rendered = format_call_context_block(&calls, "  ", 8);
+    let expected = "\
+call_context: 1 call site(s)
+  - Method @ 140..162: method instance_value on value = make_local_assoc_pair().0 => Resolved(LocalExact), targets [Method:00000000-0000-0000-0000-000000000906], owner 00000000-0000-0000-0000-000000000706";
+
+    assert_eq!(rendered, expected);
+}
+
+#[test]
 fn format_call_context_block_renders_trait_dispatch_initialized_local_receiver() {
     let target = Uuid::from_u128(0xa01);
     let calls = vec![CallContextInfo {

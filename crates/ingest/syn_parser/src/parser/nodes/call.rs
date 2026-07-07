@@ -339,6 +339,16 @@ pub enum MethodCallReceiver {
         /// type proof.
         init_path: Vec<String>,
     },
+    /// The receiver is a local binding destructured from one element of a
+    /// local function's tuple return value.
+    TupleReturnBinding {
+        /// Binding identifier used as the receiver expression.
+        name: String,
+        /// Structural path of the tuple-returning function initializer.
+        path: Vec<String>,
+        /// Zero-based tuple element index bound to `name`.
+        index: usize,
+    },
     /// The receiver is a borrowed local binding, such as `&value`.
     BorrowedLocalBinding {
         /// Binding identifier inside the borrow expression.

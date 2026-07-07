@@ -37,6 +37,15 @@ fn context_for_owner_decodes_raw_method_receivers() -> Result<(), DbError> {
             },
         ),
         raw_receiver(
+            "TupleReturnBinding",
+            list(&["value", "0", "make_local_assoc_pair"]),
+            CallReceiver::TupleReturnBinding {
+                name: "value".to_string(),
+                path: vec!["make_local_assoc_pair".to_string()],
+                index: 0,
+            },
+        ),
+        raw_receiver(
             "PathCallResult",
             list(&["make_local_assoc"]),
             CallReceiver::PathCallResult {

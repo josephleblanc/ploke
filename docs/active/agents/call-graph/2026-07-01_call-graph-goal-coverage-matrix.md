@@ -9,7 +9,7 @@ Related planning files:
 - [`2026-06-28_real-corpus-call-site-case-matrix.md`](2026-06-28_real-corpus-call-site-case-matrix.md)
 - [`2026-06-28_real-corpus-call-site-oracle-matrices.md`](2026-06-28_real-corpus-call-site-oracle-matrices.md)
 
-Status date: 2026-07-06
+Status date: 2026-07-07
 Baseline HEAD when created: `19860cc40`
 
 ## Operating Rule
@@ -49,14 +49,37 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: none selected after the awaited async-closure TUI surface slice.
+Current bucket: none selected after the tuple-return receiver proof slice.
 
-Latest completed bucket: TUI tool surface for immediately awaited async-closure
-literal traversal.
+Latest completed bucket: untyped tuple-pattern receiver from local function
+tuple return.
 
 Completed evidence:
 
-- `request_code_context` now asserts
+- `call_tuple_return_pattern_local_instance_method()` now proves
+  `let (value, _) = make_local_assoc_pair(); value.instance_value()` by using
+  the local helper function's tuple return type for element `0`.
+- Parser extraction records the receiver as
+  `TupleReturnBinding { name: "value", path: ["make_local_assoc_pair"], index: 0 }`,
+  while still preserving the initializer `make_local_assoc_pair()` path call
+  as a separate resolved function edge.
+- Transform/DB projection, raw and structured DB receiver decode, resolved
+  proof rows, RAG call-context collection, and TUI call-context formatting
+  preserve the tuple-return receiver payload.
+- Focused parser, DB context/proof/decode, RAG, and TUI tests passed, and
+  `cargo run -p xtask --features call_graph -- fixtures regenerate --active`
+  round-tripped all active registered fixtures with no tracked fixture drift.
+- This remains bounded to local parsed functions with source-visible tuple
+  return types. External function calls, method calls returning tuples, and
+  arbitrary expression-produced tuple destructuring remain unsupported until
+  broader binding/type-flow proof exists.
+
+Previously completed bucket: TUI tool surface for immediately awaited
+async-closure literal traversal.
+
+Previous evidence:
+
+- `request_code_context` asserts
   `call_awaited_async_closure_literal_with_body_call()` surfaces the outer
   dynamic call to the `async_closure` executable owner and then the
   closure-owned `local_target()` body call, matching the existing DB/RAG
