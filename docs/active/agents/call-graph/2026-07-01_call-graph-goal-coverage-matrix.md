@@ -49,10 +49,38 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: none selected after the dereferenced boxed dyn Fn exact
-initializer slice.
+Current bucket: none selected after the awaited async closure binding proof
+slice.
 
-Latest completed bucket: dereferenced boxed dyn Fn exact initializer proof.
+Latest completed bucket: awaited async closure binding proof.
+
+Completed evidence:
+
+- Parser local binding proof now distinguishes async closure bindings from
+  ordinary closure bindings and records `closure()` differently depending on
+  whether the returned future is immediately awaited.
+- `call_async_closure_binding_without_await_with_body_call()` preserves the
+  local async-closure binding as an unsupported targetless path call, while the
+  separately owned async-closure body still owns and resolves its
+  `local_target()` path row.
+- `call_awaited_async_closure_binding_with_body_call()` records
+  `closure().await` as an awaited async-closure binding path call and resolves
+  it to a `Closure` edge from the outer function to the async-closure
+  executable owner.
+- DB owner context and traversal prove the supported two-hop path
+  outer function -> async-closure owner -> `local_target`, while the
+  non-awaited binding exposes no path from the outer function to
+  `local_target`.
+- RAG call-context collection and exact `request_code_context` TUI/tool tests
+  preserve both downstream surfaces: unsupported targetless non-awaited
+  binding rows and resolved awaited binding expansion into the async-closure
+  body.
+- Active fixtures were regenerated with `--features call_graph` and
+  round-tripped successfully. This remains bounded to immediate `.await` on a
+  locally bound async closure; storing the returned future and awaiting it
+  later still needs a separate future-binding proof carrier.
+
+Previously completed bucket: dereferenced boxed dyn Fn exact initializer proof.
 
 Completed evidence:
 

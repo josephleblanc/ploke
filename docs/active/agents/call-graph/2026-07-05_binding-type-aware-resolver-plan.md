@@ -15,7 +15,7 @@ Root plan: `.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md`
 
 Current phase: binding/type-aware semantic resolution.
 
-Current completed bucket: bounded local try-method result receiver proof.
+Current completed bucket: awaited async closure binding proof.
 
 Exit criteria for the first implementation slice:
 
@@ -230,7 +230,24 @@ should prevent future resumes from reselecting already-covered shapes.
    - Opaque external `?` chains and method-result receivers without exact inner
      method return-type proof remain targetless or unsupported.
 
-13. Next adjacent candidate:
+13. Immediate awaited async-closure binding proof - completed:
+   - Parser local binding proof now records whether a visible closure binding
+     is async, so `closure()` can fail closed when the returned future is not
+     immediately awaited.
+   - `call_async_closure_binding_without_await_with_body_call()` remains an
+     unsupported, targetless path call from the outer function while the
+     async-closure executable owner still owns the body `local_target()` call.
+   - `call_awaited_async_closure_binding_with_body_call()` records
+     `closure().await` as an awaited async-closure binding path call and emits
+     a local exact `Closure` relation to the async-closure executable owner.
+   - Parser, transform/DB, DB traversal, RAG call-context collection, and
+     exact `request_code_context` tool assertions cover the supported and
+     fail-closed shapes.
+   - This does not support returned futures stored in locals, arbitrary
+     async-callable values, dereferenced/cast async closures, or general
+     poll/resume semantics.
+
+14. Next adjacent candidate:
    - Select from the coverage matrix parking lot rather than adding more
      import breadth by default.
    - Likely options are a broader async poll/resume proof carrier, an explicit
