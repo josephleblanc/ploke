@@ -17,6 +17,7 @@ define_schema!(FunctionNodeSchema {
     docstring: "String?",
     vis_kind: "String",
     vis_path: "[String]?",
+    is_unsafe: "Bool",
     span: "[Int; 2]",
     tracking_hash: "Uuid",
     cfgs: "[String]",

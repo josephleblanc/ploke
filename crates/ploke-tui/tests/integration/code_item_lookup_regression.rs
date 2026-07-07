@@ -92,6 +92,63 @@ async fn code_item_lookup_returns_call_and_proof_context_for_call_graph_item() {
 }
 
 #[tokio::test]
+async fn code_item_lookup_marks_unsafe_function_targets_in_call_impact() {
+    let fixture = CallGraphToolFixture::new().await;
+    let params = LookupParams {
+        item_name: Cow::Borrowed("unsafe_target"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("function"),
+        module_path: Cow::Borrowed("crate"),
+        owner_trait: None,
+        owner_type: None,
+        parent_name: None,
+    };
+
+    let result = CodeItemLookup::execute(params, fixture.ctx("unsafe-target-lookup"))
+        .await
+        .expect("unsafe_target lookup");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize ConciseContext");
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Security analysis:
+    //   "Which call paths can reach `unsafe` blocks or FFI boundaries?"
+    //
+    // Source oracle:
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:766 defines
+    //   `pub unsafe fn unsafe_target()`.
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:770 calls it from
+    //   the safe wrapper `call_unsafe_function()`.
+    let impact = payload
+        .get("call_impact")
+        .and_then(serde_json::Value::as_object)
+        .expect("call_impact object");
+    let target = impact
+        .get("target")
+        .and_then(serde_json::Value::as_object)
+        .expect("call_impact target object");
+    assert_eq!(
+        target.get("is_unsafe").and_then(serde_json::Value::as_bool),
+        Some(true),
+        "code_item_lookup should serialize unsafe function item metadata: {impact:#?}"
+    );
+
+    let direct_callers = impact
+        .get("direct_callers")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_impact direct_callers array");
+    assert!(
+        direct_callers.iter().any(|caller| {
+            caller.get("name").and_then(serde_json::Value::as_str) == Some("call_unsafe_function")
+                && caller.get("is_unsafe").and_then(serde_json::Value::as_bool) == Some(false)
+        }),
+        "code_item_lookup should preserve the safe direct caller without marking it unsafe: {direct_callers:#?}"
+    );
+}
+
+#[tokio::test]
 async fn code_item_lookup_returns_recursive_cycle_paths() {
     let fixture = CallGraphToolFixture::new().await;
     let params = LookupParams {

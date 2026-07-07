@@ -32,6 +32,7 @@ pub(super) fn ensure_function_owner(db: &Database, owner: Uuid) -> Result<(), Db
     params.insert("docstring".to_string(), DataValue::Null);
     params.insert("vis_kind".to_string(), DataValue::from("Public"));
     params.insert("vis_path".to_string(), DataValue::Null);
+    params.insert("is_unsafe".to_string(), DataValue::Bool(false));
     params.insert("span".to_string(), span((0, 100)));
     params.insert("tracking_hash".to_string(), uuid(Uuid::from_u128(97)));
     params.insert("cfgs".to_string(), list(&[]));
@@ -40,12 +41,13 @@ pub(super) fn ensure_function_owner(db: &Database, owner: Uuid) -> Result<(), Db
     params.insert("module_id".to_string(), uuid(module));
 
     db.raw_query_mut_params(
-        r#"?[id, at, name, docstring, vis_kind, vis_path, span, tracking_hash, cfgs, return_type_id, body, module_id] :=
+        r#"?[id, at, name, docstring, vis_kind, vis_path, is_unsafe, span, tracking_hash, cfgs, return_type_id, body, module_id] :=
             id = $id,
             name = $name,
             docstring = $docstring,
             vis_kind = $vis_kind,
             vis_path = $vis_path,
+            is_unsafe = $is_unsafe,
             span = $span,
             tracking_hash = $tracking_hash,
             cfgs = $cfgs,
@@ -53,7 +55,7 @@ pub(super) fn ensure_function_owner(db: &Database, owner: Uuid) -> Result<(), Db
             body = $body,
             module_id = $module_id,
             at = 'ASSERT'
-        :put function { id, at => name, docstring, vis_kind, vis_path, span, tracking_hash, cfgs, return_type_id, body, module_id }"#,
+        :put function { id, at => name, docstring, vis_kind, vis_path, is_unsafe, span, tracking_hash, cfgs, return_type_id, body, module_id }"#,
         params,
     )?;
     Ok(())
@@ -70,6 +72,7 @@ fn ensure_method_target(db: &Database, target: Uuid) -> Result<(), DbError> {
     params.insert("span".to_string(), span((0, 100)));
     params.insert("vis_kind".to_string(), DataValue::from("Public"));
     params.insert("vis_path".to_string(), DataValue::Null);
+    params.insert("is_unsafe".to_string(), DataValue::Bool(false));
     params.insert("docstring".to_string(), DataValue::Null);
     params.insert("body".to_string(), DataValue::Null);
     params.insert("tracking_hash".to_string(), uuid(Uuid::from_u128(0x101)));
@@ -77,19 +80,20 @@ fn ensure_method_target(db: &Database, target: Uuid) -> Result<(), DbError> {
     params.insert("owner_id".to_string(), uuid(Uuid::from_u128(0x102)));
 
     db.raw_query_mut_params(
-        r#"?[id, at, name, span, vis_kind, vis_path, docstring, body, tracking_hash, cfgs, owner_id] :=
+        r#"?[id, at, name, span, vis_kind, vis_path, is_unsafe, docstring, body, tracking_hash, cfgs, owner_id] :=
             id = $id,
             name = $name,
             span = $span,
             vis_kind = $vis_kind,
             vis_path = $vis_path,
+            is_unsafe = $is_unsafe,
             docstring = $docstring,
             body = $body,
             tracking_hash = $tracking_hash,
             cfgs = $cfgs,
             owner_id = $owner_id,
             at = 'ASSERT'
-        :put method { id, at => name, span, vis_kind, vis_path, docstring, body, tracking_hash, cfgs, owner_id }"#,
+        :put method { id, at => name, span, vis_kind, vis_path, is_unsafe, docstring, body, tracking_hash, cfgs, owner_id }"#,
         params,
     )?;
     Ok(())

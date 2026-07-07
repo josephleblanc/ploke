@@ -114,6 +114,10 @@ pub(super) fn process_methods(
         .map(|s| DataValue::from(s.as_str()))
         .unwrap_or(DataValue::Null);
     params.insert(schema.body().to_string(), cozo_body);
+    params.insert(
+        schema.is_unsafe().to_string(),
+        DataValue::Bool(method.is_unsafe),
+    );
     params.insert(schema.owner_id().to_string(), imple_any_id.to_cozo_uuid());
     params
 }

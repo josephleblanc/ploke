@@ -140,6 +140,10 @@ fn process_func(
         (schema.cfgs().to_string(), DataValue::List(cfgs)),
         (schema.return_type_id().to_string(), return_type_id),
         (schema.body().to_string(), body),
+        (
+            schema.is_unsafe().to_string(),
+            DataValue::Bool(function.is_unsafe),
+        ),
         // Kind of awkward, might want to visibility its own entity. Maybe just visibility
         // path?
         (schema.vis_kind().to_string(), vis_kind),

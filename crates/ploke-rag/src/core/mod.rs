@@ -496,6 +496,7 @@ fn call_node_info(row: DbCallNodeInfo) -> CallNodeInfo {
         name: row.name,
         visibility: row.visibility,
         is_public: row.is_public,
+        is_unsafe: row.is_unsafe,
         module_path: row.module_path.clone(),
         file_path: NodeFilepath::new(row.file_path),
         canon_path: CanonPath::new(row.module_path.join("::")),

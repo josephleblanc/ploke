@@ -101,3 +101,52 @@ async fn call_context_collection_reads_real_special_form_rows() -> Result<(), Er
 
     Ok(())
 }
+
+#[tokio::test]
+async fn call_context_collection_preserves_unsafe_function_node_metadata() -> Result<(), Error> {
+    init_tracing_once();
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_unsafe_function"),
+    )?;
+    let target = one_uuid(&db, &function_in_module_query(&["crate"], "unsafe_target"))?;
+    let rag = init_test_rag_mock(Arc::clone(&db));
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Security analysis:
+    //   "Which call paths can reach `unsafe` blocks or FFI boundaries?"
+    //
+    // Source oracle:
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:766 defines
+    //   `pub unsafe fn unsafe_target()`.
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:770 calls it from
+    //   the safe wrapper `call_unsafe_function()`.
+    let impact = rag
+        .exact_call_impact_for_target(
+            target,
+            ploke_db::CallPathOptions {
+                max_depth: 1,
+                max_paths: 16,
+            },
+        )?
+        .expect("unsafe_target impact should be available");
+
+    assert!(
+        impact.target.is_unsafe,
+        "RAG impact should mark unsafe function item targets: {impact:#?}"
+    );
+    assert!(
+        impact
+            .direct_callers
+            .iter()
+            .any(|caller| caller.id == owner && !caller.is_unsafe),
+        "RAG impact should preserve the safe direct caller without marking it unsafe: {impact:#?}"
+    );
+
+    Ok(())
+}

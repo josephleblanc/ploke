@@ -79,6 +79,39 @@ fn fixture_context_reads_projected_generic_unsafe_extern_and_chained_calls() -> 
         CallSiteKind::Path,
         CallTargetKind::Function,
     );
+    let owner_info = db
+        .call_node_info(owner)?
+        .expect("call_unsafe_function should have call node metadata");
+    let target_info = db
+        .call_node_info(target)?
+        .expect("unsafe_target should have call node metadata");
+    assert!(
+        !owner_info.is_unsafe,
+        "safe wrapper should not inherit unsafe metadata from its callee: {owner_info:#?}"
+    );
+    assert!(
+        target_info.is_unsafe,
+        "unsafe function item metadata should be visible on the call target: {target_info:#?}"
+    );
+
+    let unsafe_impact = db.call_impact_for_target(
+        target,
+        CallPathOptions {
+            max_depth: 1,
+            max_paths: 16,
+        },
+    )?;
+    assert!(
+        unsafe_impact.target.is_unsafe,
+        "impact summaries should mark unsafe function item targets: {unsafe_impact:#?}"
+    );
+    assert!(
+        unsafe_impact
+            .direct_callers
+            .iter()
+            .any(|caller| caller.id == owner && !caller.is_unsafe),
+        "unsafe target impact should preserve the safe direct caller without marking it unsafe: {unsafe_impact:#?}"
+    );
 
     let owner = function_id_by_name(&db, "call_extern_c_function")?;
     let context = db.call_context_for_owner(owner)?;

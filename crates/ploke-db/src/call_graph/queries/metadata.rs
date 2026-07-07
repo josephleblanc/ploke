@@ -40,80 +40,86 @@ owner_anchor[id, vis_kind, mod_id] := *const{{ id, vis_kind @ 'NOW' }}, ancestor
 owner_anchor[id, vis_kind, mod_id] := *static{{ id, vis_kind @ 'NOW' }}, ancestor[id, mod_id]
 owner_anchor[id, vis_kind, mod_id] := *call_body_owner{{ id, parent_id @ 'NOW' }}, owner_anchor[parent_id, vis_kind, mod_id]
 
-node_info[id, kind, name, vis_kind, module_path, file_path] :=
+node_info[id, kind, name, vis_kind, is_unsafe, module_path, file_path] :=
   id = $node_id,
-  *function{{ id, name, vis_kind @ 'NOW' }},
+  *function{{ id, name, vis_kind, is_unsafe @ 'NOW' }},
   kind = "Function",
   ancestor[id, mod_id],
   *module{{ id: mod_id, path: module_path @ 'NOW' }},
   file_owner_for_module[mod_id, file_owner_id],
   *file_mod{{ owner_id: file_owner_id, file_path @ 'NOW' }}
 
-node_info[id, kind, name, vis_kind, module_path, file_path] :=
+node_info[id, kind, name, vis_kind, is_unsafe, module_path, file_path] :=
   id = $node_id,
   *macro{{ id, name, vis_kind @ 'NOW' }},
   kind = "Macro",
+  is_unsafe = false,
   ancestor[id, mod_id],
   *module{{ id: mod_id, path: module_path @ 'NOW' }},
   file_owner_for_module[mod_id, file_owner_id],
   *file_mod{{ owner_id: file_owner_id, file_path @ 'NOW' }}
 
-node_info[id, kind, name, vis_kind, module_path, file_path] :=
+node_info[id, kind, name, vis_kind, is_unsafe, module_path, file_path] :=
   id = $node_id,
-  *method{{ id, name, vis_kind @ 'NOW' }},
+  *method{{ id, name, vis_kind, is_unsafe @ 'NOW' }},
   kind = "Method",
   ancestor[id, mod_id],
   *module{{ id: mod_id, path: module_path @ 'NOW' }},
   file_owner_for_module[mod_id, file_owner_id],
   *file_mod{{ owner_id: file_owner_id, file_path @ 'NOW' }}
 
-node_info[id, kind, name, vis_kind, module_path, file_path] :=
+node_info[id, kind, name, vis_kind, is_unsafe, module_path, file_path] :=
   id = $node_id,
   *const{{ id, name, vis_kind @ 'NOW' }},
   kind = "Const",
+  is_unsafe = false,
   ancestor[id, mod_id],
   *module{{ id: mod_id, path: module_path @ 'NOW' }},
   file_owner_for_module[mod_id, file_owner_id],
   *file_mod{{ owner_id: file_owner_id, file_path @ 'NOW' }}
 
-node_info[id, kind, name, vis_kind, module_path, file_path] :=
+node_info[id, kind, name, vis_kind, is_unsafe, module_path, file_path] :=
   id = $node_id,
   *static{{ id, name, vis_kind @ 'NOW' }},
   kind = "Static",
+  is_unsafe = false,
   ancestor[id, mod_id],
   *module{{ id: mod_id, path: module_path @ 'NOW' }},
   file_owner_for_module[mod_id, file_owner_id],
   *file_mod{{ owner_id: file_owner_id, file_path @ 'NOW' }}
 
-node_info[id, kind, name, vis_kind, module_path, file_path] :=
+node_info[id, kind, name, vis_kind, is_unsafe, module_path, file_path] :=
   id = $node_id,
   *call_body_owner{{ id, owner_kind: kind, label: name @ 'NOW' }},
+  is_unsafe = false,
   owner_anchor[id, vis_kind, mod_id],
   *module{{ id: mod_id, path: module_path @ 'NOW' }},
   file_owner_for_module[mod_id, file_owner_id],
   *file_mod{{ owner_id: file_owner_id, file_path @ 'NOW' }}
 
-node_info[id, kind, name, vis_kind, module_path, file_path] :=
+node_info[id, kind, name, vis_kind, is_unsafe, module_path, file_path] :=
   id = $node_id,
   *struct{{ id, name, vis_kind @ 'NOW' }},
   kind = "Struct",
+  is_unsafe = false,
   ancestor[id, mod_id],
   *module{{ id: mod_id, path: module_path @ 'NOW' }},
   file_owner_for_module[mod_id, file_owner_id],
   *file_mod{{ owner_id: file_owner_id, file_path @ 'NOW' }}
 
-node_info[id, kind, name, vis_kind, module_path, file_path] :=
+node_info[id, kind, name, vis_kind, is_unsafe, module_path, file_path] :=
   id = $node_id,
   *variant{{ id, name, owner_id: enum_id @ 'NOW' }},
   *enum{{ id: enum_id, vis_kind @ 'NOW' }},
   kind = "Variant",
+  is_unsafe = false,
   ancestor[id, mod_id],
   *module{{ id: mod_id, path: module_path @ 'NOW' }},
   file_owner_for_module[mod_id, file_owner_id],
   *file_mod{{ owner_id: file_owner_id, file_path @ 'NOW' }}
 
-?[id, kind, name, vis_kind, module_path, file_path] :=
-  node_info[id, kind, name, vis_kind, module_path, file_path]
+?[id, kind, name, vis_kind, is_unsafe, module_path, file_path] :=
+  node_info[id, kind, name, vis_kind, is_unsafe, module_path, file_path]
 "#
         );
 
@@ -135,13 +141,14 @@ node_info[id, kind, name, vis_kind, module_path, file_path] :=
 
 pub(super) fn call_node_info_rank(
     row: &CallNodeInfo,
-) -> (usize, u128, CallNodeKind, String, String, String) {
+) -> (usize, u128, CallNodeKind, String, String, bool, String) {
     (
         row.module_path.len(),
         row.id.as_u128(),
         row.kind,
         row.name.clone(),
         row.visibility.clone(),
+        row.is_unsafe,
         row.file_path.clone(),
     )
 }
@@ -153,8 +160,14 @@ pub(super) fn decode_call_node_info(row: &[DataValue]) -> Result<CallNodeInfo, D
         kind: CallNodeKind::from_str(&to_string(&row[1])?)?,
         name: to_string(&row[2])?,
         is_public: visibility == "public",
+        is_unsafe: row[4].get_bool().ok_or_else(|| {
+            DbError::Cozo(format!(
+                "expected bool is_unsafe in call node metadata, got {:?}",
+                row[4]
+            ))
+        })?,
         visibility,
-        module_path: to_string_list(&row[4])?,
-        file_path: to_string(&row[5])?,
+        module_path: to_string_list(&row[5])?,
+        file_path: to_string(&row[6])?,
     })
 }

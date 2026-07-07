@@ -14,6 +14,7 @@ define_schema!(MethodNodeSchema {
     span: "[Int; 2]",
     vis_kind: "String",
     vis_path: "[String]?",
+    is_unsafe: "Bool",
     docstring: "String?",
     body: "String?",
     tracking_hash: "Uuid",

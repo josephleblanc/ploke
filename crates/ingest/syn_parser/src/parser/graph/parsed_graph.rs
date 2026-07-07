@@ -1280,6 +1280,7 @@ mod tests {
             name: "root".to_string(),
             span: (0, 1),
             visibility: VisibilityKind::Inherited,
+            is_unsafe: false,
             parameters: Vec::new(),
             return_type: None,
             generic_params: Vec::new(),

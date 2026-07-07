@@ -77,6 +77,7 @@ fn insert_function(db: &Database, owner: Uuid, module: Uuid) -> Result<(), DbErr
     params.insert("docstring".to_string(), DataValue::Null);
     params.insert("vis_kind".to_string(), DataValue::from("Public"));
     params.insert("vis_path".to_string(), DataValue::Null);
+    params.insert("is_unsafe".to_string(), DataValue::Bool(false));
     params.insert("span".to_string(), span((0, 100)));
     params.insert("tracking_hash".to_string(), uuid(Uuid::from_u128(97)));
     params.insert("cfgs".to_string(), list(&[]));
@@ -85,12 +86,13 @@ fn insert_function(db: &Database, owner: Uuid, module: Uuid) -> Result<(), DbErr
     params.insert("module_id".to_string(), uuid(module));
 
     db.raw_query_mut_params(
-        r#"?[id, at, name, docstring, vis_kind, vis_path, span, tracking_hash, cfgs, return_type_id, body, module_id] :=
+        r#"?[id, at, name, docstring, vis_kind, vis_path, is_unsafe, span, tracking_hash, cfgs, return_type_id, body, module_id] :=
             id = $id,
             name = $name,
             docstring = $docstring,
             vis_kind = $vis_kind,
             vis_path = $vis_path,
+            is_unsafe = $is_unsafe,
             span = $span,
             tracking_hash = $tracking_hash,
             cfgs = $cfgs,
@@ -98,7 +100,7 @@ fn insert_function(db: &Database, owner: Uuid, module: Uuid) -> Result<(), DbErr
             body = $body,
             module_id = $module_id,
             at = 'ASSERT'
-        :put function { id, at => name, docstring, vis_kind, vis_path, span, tracking_hash, cfgs, return_type_id, body, module_id }"#,
+        :put function { id, at => name, docstring, vis_kind, vis_path, is_unsafe, span, tracking_hash, cfgs, return_type_id, body, module_id }"#,
         params,
     )?;
     Ok(())

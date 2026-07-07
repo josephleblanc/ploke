@@ -1169,6 +1169,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 name: fn_name.clone(),
                 span,
                 visibility: self.state.convert_visibility(&func.vis),
+                is_unsafe: func.sig.unsafety.is_some(),
                 parameters,
                 return_type,
                 generic_params,
@@ -2176,6 +2177,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                         name: method_name.clone(),
                         span: method.extract_span_bytes(),
                         visibility: self.state.convert_visibility(&method.vis),
+                        is_unsafe: method.sig.unsafety.is_some(),
                         parameters,
                         return_type,
                         generic_params,
@@ -2406,6 +2408,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                         name: method_name,
                         span: method.extract_span_bytes(),
                         visibility: self.state.convert_visibility(&item_trait.vis), // Trait items inherit trait visibility
+                        is_unsafe: method.sig.unsafety.is_some(),
                         parameters,
                         return_type,
                         generic_params,

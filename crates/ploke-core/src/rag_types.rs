@@ -410,6 +410,8 @@ pub struct CallNodeInfo {
     pub visibility: String,
     pub is_public: bool,
     #[serde(default)]
+    pub is_unsafe: bool,
+    #[serde(default)]
     pub module_path: Vec<String>,
     pub file_path: NodeFilepath,
     pub canon_path: CanonPath,
