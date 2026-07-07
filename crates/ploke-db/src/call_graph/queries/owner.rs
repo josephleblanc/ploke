@@ -10,6 +10,7 @@ use super::super::{
     decode::{decode_resolution, decode_site, validate_owner_context_targets},
     families::valid_call_owner_rules,
 };
+use super::effective_cfgs::enrich_call_site_cfgs;
 
 impl Database {
     pub fn call_sites_for_owner(&self, owner_id: Uuid) -> Result<Vec<CallSiteRow>, DbError> {
@@ -63,7 +64,13 @@ impl Database {
         );
         let rows = self.run_script(&script, params, ScriptMutability::Immutable)?;
 
-        rows.rows.iter().map(|row| decode_site(row)).collect()
+        let mut sites = rows
+            .rows
+            .iter()
+            .map(|row| decode_site(row))
+            .collect::<Result<Vec<_>, DbError>>()?;
+        enrich_call_site_cfgs(self, &mut sites)?;
+        Ok(sites)
     }
 
     pub fn call_resolution_for_site(

@@ -10,6 +10,7 @@ use super::super::{
     decode::{decode_site, decode_target, validate_owner_context_targets},
     families::{valid_call_owner_rules, valid_call_target, valid_call_target_rules},
 };
+use super::effective_cfgs::enrich_call_site_cfgs;
 
 impl Database {
     pub fn call_targets_for_site(&self, site_id: Uuid) -> Result<Vec<CallTargetRow>, DbError> {
@@ -116,7 +117,7 @@ impl Database {
 
         let rows = self.run_script(&script, params, ScriptMutability::Immutable)?;
 
-        let callers = rows
+        let mut callers = rows
             .rows
             .iter()
             .map(|row| {
@@ -135,6 +136,14 @@ impl Database {
                 })
             })
             .collect::<Result<Vec<CallCallerRow>, DbError>>()?;
+        let mut sites = callers
+            .iter()
+            .map(|caller| caller.site.clone())
+            .collect::<Vec<_>>();
+        enrich_call_site_cfgs(self, &mut sites)?;
+        for (caller, site) in callers.iter_mut().zip(sites) {
+            caller.site = site;
+        }
 
         let mut valid_callers = Vec::new();
         for caller in callers {

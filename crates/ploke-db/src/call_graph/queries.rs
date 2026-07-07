@@ -1,4 +1,5 @@
 mod availability;
+mod effective_cfgs;
 mod expand;
 mod metadata;
 mod node;

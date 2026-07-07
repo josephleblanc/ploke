@@ -450,8 +450,12 @@ fn axum_usage_questions_surface_external_frontier_for_dependency_calls() -> Resu
     //   axum/src/json.rs:164 defines `Json::from_bytes`.
     //   axum/src/json.rs:184 calls
     //     `serde_json::Deserializer::from_slice(bytes)`.
+    //   axum/src/lib.rs:488-489 gates the file module with
+    //     `#[cfg(feature = "json")] mod json;`.
     // Current contract: dependency-root path calls are visible as external
-    // frontier rows but do not become local traversal edges.
+    // frontier rows but do not become local traversal edges. The owner reach
+    // query must still preserve the feature gate so build/deployment reviews
+    // can separate feature-specific call paths.
     let owner = method_id_by_name_body_and_file_suffix(
         &db,
         "from_bytes",
@@ -472,6 +476,13 @@ fn axum_usage_questions_surface_external_frontier_for_dependency_calls() -> Resu
         report.paths.is_empty() && report.callees.is_empty(),
         "external dependency calls should not fabricate local reach edges: {report:#?}"
     );
+    assert!(
+        report
+            .source_cfgs
+            .iter()
+            .any(|cfg| cfg == r#"feature = "json""#),
+        "Json::from_bytes reach report should preserve the json feature cfg: {report:#?}"
+    );
 
     let frontier = report
         .frontier_calls
@@ -486,6 +497,14 @@ fn axum_usage_questions_surface_external_frontier_for_dependency_calls() -> Resu
         });
     assert_external_targetless(frontier);
     assert_eq!(frontier.site.owner_id, owner);
+    assert!(
+        frontier
+            .site
+            .cfgs
+            .iter()
+            .any(|cfg| cfg == r#"feature = "json""#),
+        "feature-gated reach summary should be backed by callsite cfg metadata: {frontier:#?}"
+    );
     let external_frontier = report
         .external_frontier_calls
         .iter()
@@ -496,9 +515,17 @@ fn axum_usage_questions_surface_external_frontier_for_dependency_calls() -> Resu
             panic!(
                 "Json::from_bytes reach report should include serde_json in external frontier rows: {report:#?}"
             )
-        });
+    });
     assert_external_targetless(external_frontier);
     assert_eq!(external_frontier.site.owner_id, owner);
+    assert!(
+        external_frontier
+            .site
+            .cfgs
+            .iter()
+            .any(|cfg| cfg == r#"feature = "json""#),
+        "external frontier row should preserve the json feature cfg: {external_frontier:#?}"
+    );
     assert_source_file(
         &report.source_files,
         "axum/src/json.rs",

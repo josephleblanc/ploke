@@ -1874,8 +1874,12 @@ async fn call_reach_exact_reads_axum_usage_question_summary() -> Result<(), Erro
     //   axum/src/json.rs:164 defines `Json::from_bytes`.
     //   axum/src/json.rs:184 calls
     //     `serde_json::Deserializer::from_slice(bytes)`.
+    //   axum/src/lib.rs:488-489 gates the file module with
+    //     `#[cfg(feature = "json")] mod json;`.
     // Current contract: dependency-root path calls are visible as external
-    // frontier rows but do not become local traversal edges.
+    // frontier rows but do not become local traversal edges. RAG reach
+    // summaries must still carry the feature gate for build/deployment
+    // questions over feature-specific call paths.
     let json_owner = method_id_by_file(
         &db,
         "from_bytes",
@@ -1894,6 +1898,13 @@ async fn call_reach_exact_reads_axum_usage_question_summary() -> Result<(), Erro
     assert!(
         json_report.paths.is_empty() && json_report.callees.is_empty(),
         "RAG reach should not fabricate local edges for external dependency calls: {json_report:#?}"
+    );
+    assert!(
+        json_report
+            .source_cfgs
+            .iter()
+            .any(|cfg| cfg == r#"feature = "json""#),
+        "RAG Json::from_bytes reach summary should preserve the json feature cfg: {json_report:#?}"
     );
     let frontier = json_report
         .frontier_calls
