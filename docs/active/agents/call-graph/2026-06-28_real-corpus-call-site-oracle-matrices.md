@@ -390,9 +390,9 @@ blockers with argument counts 4 and 2, and TUI
 rows and blocked proof facts. DB, RAG, and exact TUI lookup/edges also pin
 memchr callable trait-object cases as owner-scoped targetless path rows while
 preserving dynamic-row absence and avoiding fabricated call edges. The
-generic-array guarded match-arm case remains
-a fixture-wide absence assertion because the source checkout is not present in
-`tests/fixture_github_clones/corpus`.
+generic-array guarded match-arm case now asserts the two source-line
+`iter.size_hint()` fallback rows from the cached real corpus checkout while
+preserving the unsupported targetless status.
 
 ## Boundary Items
 

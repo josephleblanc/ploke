@@ -479,10 +479,22 @@ fn generic_array_guarded_match_arm_method_guard_is_targetless_fallback_oracle()
     //   generic-array/src/lib.rs:1276 repeats the same guard shape, with arms
     //   at lines 1278 and 1280.
     //
-    // Current model gap: the guarded local-binding receiver rows are visible
-    // but remain targetless because receiver binding tracking does not yet
-    // resolve `iter` back to the iterator type.
-    assert_targetless_method_rows_by_name(&db, "size_hint", CallStatusKind::Unsupported, 2)
+    // Current model gap: the guarded receiver rows are visible but remain
+    // targetless because receiver binding tracking does not yet resolve `iter`
+    // back to the iterator type.
+    assert_targetless_method_rows_by_name(&db, "size_hint", CallStatusKind::Unsupported, 2)?;
+    assert_targetless_method_line_fanout(
+        &db,
+        &CORPUS_GENERIC_ARRAY_CALL_GRAPH,
+        "size_hint",
+        "Unsupported",
+        None,
+        CallStatusKind::Unsupported,
+        &[SourceLineFanout {
+            file_suffix: "src/lib.rs",
+            lines: &[1239, 1276],
+        }],
+    )
 }
 
 fn assert_owner_path_resolved_count(
