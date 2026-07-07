@@ -99,6 +99,13 @@ pub(crate) struct LocalItemToolFixture {
     pub(crate) owner: Uuid,
 }
 
+pub(crate) struct AxumHandlerAsyncBlockToolFixture {
+    pub(crate) state: Arc<AppState>,
+    pub(crate) file_path: PathBuf,
+    pub(crate) module_path: Vec<String>,
+    pub(crate) owner: Uuid,
+}
+
 pub(crate) struct AxumBodyEmptyToolFixture {
     pub(crate) state: Arc<AppState>,
     pub(crate) file_path: PathBuf,
@@ -1183,6 +1190,57 @@ impl AxumFromRequestFreeFunctionPathToolFixture {
             start: start.id,
             intermediate: intermediate.id,
             target: target.id,
+        }
+    }
+
+    pub(crate) fn module_path_arg(&self) -> String {
+        self.module_path.join("::")
+    }
+
+    pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
+        ctx_for_state(&self.state, call_id)
+    }
+}
+
+impl AxumHandlerAsyncBlockToolFixture {
+    pub(crate) async fn new() -> Self {
+        let db = axum_call_graph_db();
+        let target = axum_call_body_owner_target_by_label_and_parent(
+            db.as_ref(),
+            "AsyncBlock",
+            "async_block",
+            "call",
+            &["crate", "handler"],
+            "axum/src/handler/mod.rs",
+        );
+        let exact = graph_resolve_exact_call_body_owner_for_parent(
+            db.as_ref(),
+            target.file_path.as_path(),
+            &target.module_path,
+            "async_block",
+            "AsyncBlock",
+            "call",
+        )
+        .expect("resolve Handler::call async block owner");
+        assert_eq!(
+            exact.len(),
+            1,
+            "parent_name should disambiguate the Handler::call async block"
+        );
+        assert_eq!(exact[0].id, target.id);
+        assert!(
+            db.project_call_proof_facts_for_node(target.id, "bd:corpus-axum-call-graph")
+                .expect("project Handler::call async block proof facts")
+                >= 4,
+            "Handler::call async block should project self()/into_response() proof rows"
+        );
+        let state = axum_state_for_target(Arc::clone(&db), &target, "async_block").await;
+
+        Self {
+            state,
+            file_path: target.file_path,
+            module_path: target.module_path,
+            owner: target.id,
         }
     }
 

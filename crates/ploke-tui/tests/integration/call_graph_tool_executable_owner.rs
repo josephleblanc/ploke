@@ -11,7 +11,12 @@ use ploke_tui::tools::{
     get_code_edges::{CodeItemEdges, EdgesParams},
 };
 
-use crate::call_graph_tool_support::{LocalItemToolFixture, ui_field};
+use crate::call_graph_tool_support::{
+    AxumHandlerAsyncBlockToolFixture, LocalItemToolFixture, assert_method_proof,
+    assert_path_blocker_proof, ui_field,
+};
+
+const AXUM_DOMAIN: &str = "bd:corpus-axum-call-graph";
 
 #[tokio::test]
 async fn code_item_lookup_accepts_local_item_body_owner() {
@@ -265,6 +270,139 @@ async fn code_item_edges_parent_qualifies_repeated_local_item_body_owner() {
 }
 
 #[tokio::test]
+async fn code_item_lookup_accepts_real_corpus_async_block_body_owner() {
+    let fixture = AxumHandlerAsyncBlockToolFixture::new().await;
+    let params = LookupParams {
+        item_name: Cow::Borrowed("async_block"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("async_block"),
+        module_path: Cow::Owned(fixture.module_path_arg()),
+        owner_trait: None,
+        owner_type: None,
+        parent_name: Some(Cow::Borrowed("call")),
+    };
+
+    let result = CodeItemLookup::execute(params, fixture.ctx("async-block-lookup"))
+        .await
+        .expect("code_item_lookup should accept async_block executable owners");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize ConciseContext");
+    let owner_id = fixture.owner.to_string();
+    assert_eq!(
+        payload.get("id").and_then(serde_json::Value::as_str),
+        Some(owner_id.as_str())
+    );
+    let call_context = payload
+        .get("call_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_context array");
+    let proof_context = payload
+        .get("proof_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("proof_context array");
+    let calls = decode_call_context(call_context);
+
+    // Matrix:
+    //   docs/active/agents/call-graph/
+    //   2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //
+    // Source chain:
+    //   axum/src/handler/mod.rs:216 defines the concrete Handler::call method.
+    //   axum/src/handler/mod.rs:217 creates
+    //   `Box::pin(async move { self().await.into_response() })`.
+    // Expected traversal: the exact tool can address the nested async-block
+    // owner, but its `self()` callable and awaited `into_response()` rows
+    // stay unsupported and targetless until broader async poll/resume and
+    // callable binding proof exists.
+    assert_handler_async_block_targetless_rows(&calls, proof_context, &fixture, "code_item_lookup");
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert!(
+        ui_field(ui, "call_context_outgoing")
+            .parse::<usize>()
+            .expect("outgoing count")
+            >= 2,
+        "async_block lookup should surface both targetless async-block rows"
+    );
+    assert!(
+        ui_field(ui, "proof_context")
+            .parse::<usize>()
+            .expect("proof count")
+            >= 4,
+        "async_block lookup should surface projected blocker proof rows"
+    );
+}
+
+#[tokio::test]
+async fn code_item_edges_accepts_real_corpus_async_block_body_owner() {
+    let fixture = AxumHandlerAsyncBlockToolFixture::new().await;
+    let params = EdgesParams {
+        item_name: Cow::Borrowed("async_block"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("async_block"),
+        module_path: Cow::Owned(fixture.module_path_arg()),
+        owner_trait: None,
+        owner_type: None,
+        parent_name: Some(Cow::Borrowed("call")),
+    };
+
+    let result = CodeItemEdges::execute(params, fixture.ctx("async-block-edges"))
+        .await
+        .expect("code_item_edges should accept async_block executable owners");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
+    let node_info = payload.get("node_info").expect("node_info");
+    let call_context = node_info
+        .get("call_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.call_context array");
+    let proof_context = node_info
+        .get("proof_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.proof_context array");
+    let calls = decode_call_context(call_context);
+
+    assert_handler_async_block_targetless_rows(&calls, proof_context, &fixture, "code_item_edges");
+
+    let edges = payload
+        .get("edge_info")
+        .and_then(serde_json::Value::as_array)
+        .expect("edge_info array");
+    assert!(
+        edges.is_empty(),
+        "call_body_owner async blocks do not currently own syntax_edge rows"
+    );
+    let paths = payload
+        .get("call_paths_from_owner")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_paths_from_owner array")
+        .iter()
+        .map(|value| serde_json::from_value::<CallPathInfo>(value.clone()).expect("call path row"))
+        .collect::<Vec<_>>();
+    assert!(
+        paths.is_empty(),
+        "targetless async-block rows must not fabricate traversal paths: {paths:#?}"
+    );
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert_eq!(ui_field(ui, "edges"), "0");
+    assert!(
+        ui_field(ui, "call_context_outgoing")
+            .parse::<usize>()
+            .expect("outgoing count")
+            >= 2,
+        "async_block edges should surface both targetless async-block rows"
+    );
+    assert!(
+        ui_field(ui, "blocked_calls")
+            .parse::<usize>()
+            .expect("blocked call count")
+            >= 2,
+        "async_block edges should count both unsupported async-block rows"
+    );
+}
+
+#[tokio::test]
 async fn code_item_call_path_accepts_local_item_body_owner_endpoint() {
     let fixture = LocalItemToolFixture::axum_path_deserialize_local_impl_method().await;
     let endpoint = CodeItemCallPathEndpoint {
@@ -407,4 +545,99 @@ fn local_item_unsupported_path_call<'a>(
             && call.status == CallStatusKind::Unsupported
             && call.callee == CallCalleeInfo::Path { path: path.clone() }
     })
+}
+
+fn decode_call_context(values: &[serde_json::Value]) -> Vec<CallContextInfo> {
+    values
+        .iter()
+        .map(|value| {
+            serde_json::from_value::<CallContextInfo>(value.clone()).expect("call context row")
+        })
+        .collect()
+}
+
+fn async_block_self_call<'a>(
+    calls: &'a [CallContextInfo],
+    fixture: &AxumHandlerAsyncBlockToolFixture,
+) -> &'a CallContextInfo {
+    calls
+        .iter()
+        .find(|call| {
+            call.owner_id == fixture.owner
+                && call.kind == CallSiteKind::Path
+                && call.callee
+                    == CallCalleeInfo::Path {
+                        path: vec!["self".to_string()],
+                    }
+        })
+        .unwrap_or_else(|| {
+            panic!("expected Handler::call async block to expose self() call: {calls:#?}")
+        })
+}
+
+fn async_block_into_response_call<'a>(
+    calls: &'a [CallContextInfo],
+    fixture: &AxumHandlerAsyncBlockToolFixture,
+) -> &'a CallContextInfo {
+    calls
+        .iter()
+        .find(|call| {
+            call.owner_id == fixture.owner
+                && call.kind == CallSiteKind::Method
+                && call.callee
+                    == CallCalleeInfo::Method {
+                        name: "into_response".to_string(),
+                        receiver: Some(CallReceiverInfo::AwaitPathCallResult {
+                            path: vec!["self".to_string()],
+                        }),
+                    }
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "expected Handler::call async block to expose awaited into_response() call: {calls:#?}"
+            )
+        })
+}
+
+fn assert_handler_async_block_targetless_rows(
+    calls: &[CallContextInfo],
+    proof_context: &[serde_json::Value],
+    fixture: &AxumHandlerAsyncBlockToolFixture,
+    tool: &str,
+) {
+    let self_row = async_block_self_call(calls, fixture);
+    assert_unsupported_targetless(self_row, "Handler::call async-block self()");
+    assert_path_blocker_proof(
+        proof_context,
+        fixture.owner,
+        self_row.site_id,
+        AXUM_DOMAIN,
+        "type_resolution_missing",
+        "Handler::call async-block self()",
+        tool,
+    );
+
+    let into_response = async_block_into_response_call(calls, fixture);
+    assert_unsupported_targetless(into_response, "Handler::call async-block into_response()");
+    assert_method_proof(
+        proof_context,
+        fixture.owner,
+        into_response.site_id,
+        &CallStatusKind::Unsupported,
+        "Handler::call async-block into_response()",
+        tool,
+    );
+}
+
+fn assert_unsupported_targetless(call: &CallContextInfo, label: &str) {
+    assert_eq!(
+        call.status,
+        CallStatusKind::Unsupported,
+        "{label}: {call:#?}"
+    );
+    assert_eq!(call.resolution, None, "{label}: {call:#?}");
+    assert!(
+        call.targets.is_empty(),
+        "{label} should remain targetless: {call:#?}"
+    );
 }
