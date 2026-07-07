@@ -14,10 +14,11 @@ use crate::call_graph_tool_support::{
     AxumErrorHandlingTraitsToolFixture, AxumExpandWithToolFixture, AxumHandlerCallToolFixture,
     AxumJsonFromBytesToolFixture, AxumParseAttrsToolFixture, AxumRequestExtractPathToolFixture,
     AxumRunUiTestsToolFixture, CallGraphToolFixture, CallableBlockerFixture,
-    ChronoAliasConstructorToolFixture, FixtureDynamicCallableToolFixture,
-    assert_await_result_unwrap_context, assert_await_result_unwrap_proof,
-    assert_body_empty_impact_summary, assert_body_empty_incoming_context,
-    assert_boxed_into_route_incoming_context, assert_call_path_node,
+    ChronoAliasConstructorToolFixture, FixtureBranchReceiverToolFixture,
+    FixtureDynamicCallableToolFixture, assert_await_result_unwrap_context,
+    assert_await_result_unwrap_proof, assert_body_empty_impact_summary,
+    assert_body_empty_incoming_context, assert_boxed_into_route_incoming_context,
+    assert_branch_receiver_context, assert_branch_receiver_proof, assert_call_path_node,
     assert_expected_path_incoming_context, assert_handler_call_incoming_context,
     assert_incoming_context, assert_json_from_bytes_incoming_context,
     assert_parse_attrs_incoming_context, assert_path_blocker_proof, assert_path_context,
@@ -173,6 +174,62 @@ async fn code_item_lookup_returns_resolved_dynamic_callable_context() {
         "call_single_indexed_tuple_field_function_param",
     ] {
         assert_resolved_dynamic_callable_lookup(owner_name).await;
+    }
+}
+
+#[tokio::test]
+async fn code_item_lookup_returns_branch_receiver_method_context() {
+    // Fixture source:
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:
+    //     `(if flag { LocalAssoc } else { LocalAssoc }).instance_value()`
+    //     and
+    //     `(match flag { true => LocalAssoc, false => LocalAssoc }).instance_value()`
+    // Parser/DB/RAG prove both as exact local method edges using the branch-path
+    // receiver carrier. This pins the same resolved context at the lookup tool.
+    for owner_name in [
+        "call_if_expression_receiver_method",
+        "call_match_expression_receiver_method",
+    ] {
+        let fixture = FixtureBranchReceiverToolFixture::new_for_owner(owner_name).await;
+        let params = LookupParams {
+            item_name: Cow::Borrowed(fixture.owner_name),
+            file_path: Cow::Owned(fixture.file_path.display().to_string()),
+            node_kind: Cow::Borrowed("function"),
+            module_path: Cow::Borrowed("crate"),
+            owner_trait: None,
+            owner_type: None,
+            parent_name: None,
+        };
+
+        let result = CodeItemLookup::execute(params, fixture.ctx("branch-receiver-lookup"))
+            .await
+            .expect("branch receiver lookup");
+        let payload: serde_json::Value =
+            serde_json::from_str(&result.content).expect("deserialize ConciseContext");
+        let call_context = payload
+            .get("call_context")
+            .and_then(serde_json::Value::as_array)
+            .expect("call_context array");
+        let proof_context = payload
+            .get("proof_context")
+            .and_then(serde_json::Value::as_array)
+            .expect("proof_context array");
+
+        let call = assert_branch_receiver_context(call_context, &fixture, "code_item_lookup");
+        assert_branch_receiver_proof(proof_context, &fixture, call.site_id, "code_item_lookup");
+
+        let ui = result.ui_payload.as_ref().expect("ui payload");
+        assert!(
+            ui_field(ui, "call_context_outgoing")
+                .parse::<usize>()
+                .expect("outgoing count")
+                >= 1,
+            "code_item_lookup should surface outgoing branch receiver call context for {owner_name}"
+        );
+        assert_eq!(
+            ui_field(ui, "proof_context"),
+            proof_context.len().to_string()
+        );
     }
 }
 

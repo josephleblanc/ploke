@@ -33,13 +33,14 @@ use crate::call_graph_tool_support::{
     AxumAwaitReceiverToolFixture, AxumBodyEmptyToolFixture, AxumBoxedIntoRouteToolFixture,
     AxumHandlerCallToolFixture, AxumJsonFromBytesToolFixture, AxumParseAttrsToolFixture,
     AxumRequestExtractPathToolFixture, AxumRunUiTestsToolFixture, CallGraphToolFixture,
-    CallableBlockerFixture, FixtureDynamicCallableToolFixture, assert_await_result_unwrap_context,
-    assert_await_result_unwrap_proof, assert_body_empty_impact_summary,
-    assert_body_empty_incoming_context, assert_boxed_into_route_incoming_context,
-    assert_call_path_node, assert_handler_call_incoming_context, assert_incoming_context,
-    assert_json_from_bytes_incoming_context, assert_parse_attrs_incoming_context,
-    assert_path_blocker_proof, assert_path_context, assert_run_ui_tests_incoming_context,
-    assert_target_proof, assert_two_hop_call_path, ui_field,
+    CallableBlockerFixture, FixtureBranchReceiverToolFixture, FixtureDynamicCallableToolFixture,
+    assert_await_result_unwrap_context, assert_await_result_unwrap_proof,
+    assert_body_empty_impact_summary, assert_body_empty_incoming_context,
+    assert_boxed_into_route_incoming_context, assert_branch_receiver_context,
+    assert_branch_receiver_proof, assert_call_path_node, assert_handler_call_incoming_context,
+    assert_incoming_context, assert_json_from_bytes_incoming_context,
+    assert_parse_attrs_incoming_context, assert_path_blocker_proof, assert_path_context,
+    assert_run_ui_tests_incoming_context, assert_target_proof, assert_two_hop_call_path, ui_field,
 };
 
 #[tokio::test]
@@ -646,6 +647,60 @@ async fn code_item_edges_returns_resolved_dynamic_callable_field_index_context()
                 >= 3,
             "code_item_edges should surface resolved dynamic callable proof rows for {}",
             fixture.owner_name
+        );
+    }
+}
+
+#[tokio::test]
+async fn code_item_edges_returns_branch_receiver_method_context() {
+    // Same fixture source and branch-path receiver proof as the lookup test:
+    // the edge tool should expose the resolved method context/proof under
+    // `node_info` for both if-expression and match-expression receivers.
+    for owner_name in [
+        "call_if_expression_receiver_method",
+        "call_match_expression_receiver_method",
+    ] {
+        let fixture = FixtureBranchReceiverToolFixture::new_for_owner(owner_name).await;
+        let params = EdgesParams {
+            item_name: Cow::Borrowed(fixture.owner_name),
+            file_path: Cow::Owned(fixture.file_path.display().to_string()),
+            node_kind: Cow::Borrowed("function"),
+            module_path: Cow::Borrowed("crate"),
+            owner_trait: None,
+            owner_type: None,
+            parent_name: None,
+        };
+
+        let result = CodeItemEdges::execute(params, fixture.ctx("branch-receiver-edges"))
+            .await
+            .expect("branch receiver edges");
+        let payload: serde_json::Value =
+            serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
+        let call_context = payload
+            .get("node_info")
+            .and_then(|node| node.get("call_context"))
+            .and_then(serde_json::Value::as_array)
+            .expect("node_info.call_context array");
+        let proof_context = payload
+            .get("node_info")
+            .and_then(|node| node.get("proof_context"))
+            .and_then(serde_json::Value::as_array)
+            .expect("node_info.proof_context array");
+
+        let call = assert_branch_receiver_context(call_context, &fixture, "code_item_edges");
+        assert_branch_receiver_proof(proof_context, &fixture, call.site_id, "code_item_edges");
+
+        let ui = result.ui_payload.as_ref().expect("ui payload");
+        assert!(
+            ui_field(ui, "call_context_outgoing")
+                .parse::<usize>()
+                .expect("outgoing count")
+                >= 1,
+            "code_item_edges should surface outgoing branch receiver call context for {owner_name}"
+        );
+        assert_eq!(
+            ui_field(ui, "proof_context"),
+            proof_context.len().to_string()
         );
     }
 }
