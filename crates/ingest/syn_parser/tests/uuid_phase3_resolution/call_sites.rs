@@ -124,6 +124,7 @@ const INITIALIZED_LOCAL_ALIAS_INSTANCE_CALL_SPAN: (usize, usize) = (31434, 31456
 const TUPLE_PATTERN_LOCAL_INSTANCE_CALL_SPAN: (usize, usize) = (34471, 34493);
 const TYPED_TUPLE_PATTERN_LOCAL_INIT_CALL_SPAN: (usize, usize) = (34679, 34702);
 const TYPED_TUPLE_PATTERN_LOCAL_INSTANCE_CALL_SPAN: (usize, usize) = (34708, 34730);
+const TRY_METHOD_RESULT_LOCAL_ASSOC_IMPL_SPAN: (usize, usize) = (35825, 36015);
 const ASSOC_CONST_CARRIER_IMPL_SPAN: (usize, usize) = (2125, 2210);
 const IMPL_ASSOC_CONST_CALL_SPAN: (usize, usize) = (2188, 2207);
 const TRAIT_ASSOC_CONST_CALL_SPAN: (usize, usize) = (2280, 2299);
@@ -186,6 +187,7 @@ const TUPLE_FIELD_INSTANCE_CALL_SPAN: (usize, usize) = (11853, 11877);
 const TUPLE_FIELD_FUNCTION_CALL_SPAN: (usize, usize) = (12028, 12037);
 const AWAIT_RESULT_INSTANCE_CALL_SPAN: (usize, usize) = (12175, 12222);
 const TRY_RESULT_INSTANCE_CALL_SPAN: (usize, usize) = (12370, 12405);
+const TRY_METHOD_RESULT_INSTANCE_CALL_SPAN: (usize, usize) = (36130, 36175);
 const LITERAL_TO_STRING_CALL_SPAN: (usize, usize) = (12462, 12483);
 const TYPED_VEC_LEN_CALL_SPAN: (usize, usize) = (12577, 12588);
 const PARAM_VEC_LEN_CALL_SPAN: (usize, usize) = (32684, 32695);
@@ -773,6 +775,21 @@ fn fixture_call_graph_instance_method_args(ident: &'static str) -> AssocParanoid
         expected_path: &["crate"],
         owner: AssocOwner::Impl {
             span: INSTANCE_IMPL_SPAN,
+        },
+        ident,
+        expected_cfg: None,
+    }
+}
+
+fn fixture_call_graph_try_method_result_method_args(
+    ident: &'static str,
+) -> AssocParanoidArgs<'static> {
+    AssocParanoidArgs {
+        fixture: "fixture_call_graph",
+        relative_file_path: CALL_GRAPH_LIB_RS,
+        expected_path: &["crate"],
+        owner: AssocOwner::Impl {
+            span: TRY_METHOD_RESULT_LOCAL_ASSOC_IMPL_SPAN,
         },
         ident,
         expected_cfg: None,
@@ -2957,6 +2974,33 @@ paranoid_call_site_test!(
                 path: &["try_local_assoc"],
             },
             TRY_RESULT_INSTANCE_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedMethodLocalExact {
+                target: target_info.test_method_id(),
+            },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_try_method_result_instance_method_resolves_result_ok_type_method_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_try_method_result_instance_method"
+    },
+    expected: {
+        let target_args = fixture_call_graph_try_method_result_method_args("try_instance_value");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_method_pid(&parsed_graphs)?;
+        ExpectedCallSite::method(
+            "try_instance_value",
+            ExpectedMethodReceiver::TryMethodCallResult {
+                method_name: "try_clone_assoc",
+            },
+            TRY_METHOD_RESULT_INSTANCE_CALL_SPAN,
             0,
             0,
             &[],

@@ -651,6 +651,9 @@ fn receiver_info(receiver: CallReceiver) -> CallReceiverInfo {
         }
         CallReceiver::TryResult => CallReceiverInfo::TryResult,
         CallReceiver::TryPathCallResult { path } => CallReceiverInfo::TryPathCallResult { path },
+        CallReceiver::TryMethodCallResult { method_name } => {
+            CallReceiverInfo::TryMethodCallResult { method_name }
+        }
         CallReceiver::IfBranchPaths { paths } => CallReceiverInfo::IfBranchPaths { paths },
         CallReceiver::Literal => CallReceiverInfo::Literal,
         CallReceiver::Unsupported => CallReceiverInfo::Unsupported,

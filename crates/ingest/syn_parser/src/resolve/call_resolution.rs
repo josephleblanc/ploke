@@ -1114,6 +1114,45 @@ impl<'a> CallRelationResolver<'a> {
         }
     }
 
+    fn resolve_method_result_ok_return_type_method(
+        &self,
+        owner: CallBodyOwnerId,
+        method_id: MethodNodeId,
+        method_name: &str,
+        type_relations: &[TypeRelation],
+    ) -> Result<AssocPathResolution, SynParserError> {
+        let Some(return_type) = self.method_return_type(method_id)? else {
+            return Ok(AssocPathResolution::Unsupported);
+        };
+        let Some(ok_type) = self.result_ok_type(owner, return_type)? else {
+            return Ok(AssocPathResolution::Unsupported);
+        };
+        let Ok(source) = OrdinaryTypeSourceId::try_from(ok_type) else {
+            return Ok(AssocPathResolution::Unsupported);
+        };
+
+        let mut targets = type_relations
+            .iter()
+            .filter_map(|relation| match relation {
+                TypeRelation::Ordinary {
+                    source: relation_source,
+                    target,
+                } if *relation_source == source => Some(*target),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        targets.sort_unstable();
+        targets.dedup();
+
+        match targets.as_slice() {
+            [target] => self
+                .resolve_type_instance_method(owner, *target, method_name, type_relations)?
+                .map_or(Ok(AssocPathResolution::Unsupported), Ok),
+            [] => Ok(AssocPathResolution::Unsupported),
+            _ => Ok(AssocPathResolution::Ambiguous),
+        }
+    }
+
     fn result_ok_type(
         &self,
         owner: CallBodyOwnerId,

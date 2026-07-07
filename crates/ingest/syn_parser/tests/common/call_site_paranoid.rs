@@ -106,6 +106,8 @@ pub enum ExpectedMethodReceiver<'a> {
     TryResult,
     /// The receiver expression is the try result of a path call.
     TryPathCallResult { path: &'a [&'a str] },
+    /// The receiver expression is the try result of a method call.
+    TryMethodCallResult { method_name: &'a str },
     /// The receiver expression is an if expression with path-valued branches.
     IfBranchPaths { paths: &'a [&'a [&'a str]] },
     /// The receiver expression is a literal.
@@ -195,6 +197,9 @@ impl ExpectedMethodReceiver<'_> {
             Self::TryResult => MethodCallReceiver::TryResult,
             Self::TryPathCallResult { path } => MethodCallReceiver::TryPathCallResult {
                 path: path.iter().copied().map(String::from).collect(),
+            },
+            Self::TryMethodCallResult { method_name } => MethodCallReceiver::TryMethodCallResult {
+                method_name: method_name.to_string(),
             },
             Self::IfBranchPaths { paths } => MethodCallReceiver::IfBranchPaths {
                 paths: paths

@@ -96,7 +96,7 @@ pub(super) fn classify_method_receiver(
             receiver_await_path_call(await_expr).unwrap_or(MethodCallReceiver::AwaitResult)
         }
         syn::Expr::Try(try_expr) => {
-            receiver_try_path_call(try_expr).unwrap_or(MethodCallReceiver::TryResult)
+            receiver_try_call(try_expr).unwrap_or(MethodCallReceiver::TryResult)
         }
         syn::Expr::If(_) => if_branch_paths(receiver, param_names, local_scopes)
             .map(|paths| MethodCallReceiver::IfBranchPaths { paths })
@@ -128,15 +128,20 @@ fn receiver_await_path_call(await_expr: &syn::ExprAwait) -> Option<MethodCallRec
     (!path.is_empty()).then_some(MethodCallReceiver::AwaitPathCallResult { path })
 }
 
-fn receiver_try_path_call(try_expr: &syn::ExprTry) -> Option<MethodCallReceiver> {
-    let syn::Expr::Call(call) = unparen_expr(try_expr.expr.as_ref()) else {
-        return None;
-    };
-    let syn::Expr::Path(path) = call.func.as_ref() else {
-        return None;
-    };
-    let path = path_call_segments(path);
-    (!path.is_empty()).then_some(MethodCallReceiver::TryPathCallResult { path })
+fn receiver_try_call(try_expr: &syn::ExprTry) -> Option<MethodCallReceiver> {
+    match unparen_expr(try_expr.expr.as_ref()) {
+        syn::Expr::Call(call) => {
+            let syn::Expr::Path(path) = call.func.as_ref() else {
+                return None;
+            };
+            let path = path_call_segments(path);
+            (!path.is_empty()).then_some(MethodCallReceiver::TryPathCallResult { path })
+        }
+        syn::Expr::MethodCall(call) => Some(MethodCallReceiver::TryMethodCallResult {
+            method_name: call.method.to_string(),
+        }),
+        _ => None,
+    }
 }
 
 fn borrowed_local_receiver(

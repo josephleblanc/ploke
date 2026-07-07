@@ -15,7 +15,7 @@ Root plan: `.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md`
 
 Current phase: binding/type-aware semantic resolution.
 
-Current completed bucket: workspace re-exported external receiver proof.
+Current completed bucket: bounded local try-method result receiver proof.
 
 Exit criteria for the first implementation slice:
 
@@ -215,7 +215,22 @@ should prevent future resumes from reselecting already-covered shapes.
      concrete external targets; unresolved generic receiver rows without exact
      workspace alias proof remain targetless.
 
-12. Next adjacent candidate:
+12. Bounded local try-method result receiver proof - completed:
+   - `call_try_method_result_instance_method()` records
+     `value.try_clone_assoc()?.try_instance_value()` as a local method-result
+     chain where the outer receiver is
+     `TryMethodCallResult { method_name: "try_clone_assoc" }`.
+   - The resolver first resolves the direct inner `try_clone_assoc` method,
+     reads that method's return type, unwraps its `Result<LocalAssoc, ()>` Ok
+     type through the existing result proof path, and then reuses exact local
+     instance-method lookup for `try_instance_value`.
+   - Parser, transform/DB receiver projection, raw and structured receiver
+     decode, DB proof rows, RAG call-context collection, and
+     `request_code_context` assertions cover the exact fixture-backed shape.
+   - Opaque external `?` chains and method-result receivers without exact inner
+     method return-type proof remain targetless or unsupported.
+
+13. Next adjacent candidate:
    - Select from the coverage matrix parking lot rather than adding more
      import breadth by default.
    - Likely options are a broader async poll/resume proof carrier, an explicit

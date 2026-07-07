@@ -65,6 +65,9 @@ pub enum CallReceiver {
     TryPathCallResult {
         path: Vec<String>,
     },
+    TryMethodCallResult {
+        method_name: String,
+    },
     IfBranchPaths {
         paths: Vec<Vec<String>>,
     },

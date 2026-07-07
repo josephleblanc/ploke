@@ -205,5 +205,41 @@ fn fixture_context_reads_projected_result_receiver_method_chains() -> Result<(),
         CallTargetKind::Method,
     );
 
+    let owner = function_id_by_name(&db, "call_try_method_result_instance_method")?;
+    let try_clone_target = method_id_by_impl_self_type_name(&db, "LocalAssoc", "try_clone_assoc")?;
+    let try_instance_target =
+        method_id_by_impl_self_type_name(&db, "LocalAssoc", "try_instance_value")?;
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(
+        context.len(),
+        2,
+        "try-method-result context rows: {context:#?}"
+    );
+
+    let inner_receiver = CallReceiver::TypedLocalBinding {
+        name: "value".to_string(),
+        type_path: path(&["LocalAssoc"]),
+    };
+    let row = row_by_method_receiver(&context, "try_clone_assoc", &inner_receiver);
+    assert_resolved_target(
+        row,
+        try_clone_target,
+        CallRelationKind::Method,
+        CallSiteKind::Method,
+        CallTargetKind::Method,
+    );
+
+    let try_method_receiver = CallReceiver::TryMethodCallResult {
+        method_name: "try_clone_assoc".to_string(),
+    };
+    let row = row_by_method_receiver(&context, "try_instance_value", &try_method_receiver);
+    assert_resolved_target(
+        row,
+        try_instance_target,
+        CallRelationKind::Method,
+        CallSiteKind::Method,
+        CallTargetKind::Method,
+    );
+
     Ok(())
 }

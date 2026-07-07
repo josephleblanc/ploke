@@ -6,6 +6,9 @@ fn fixture_projection_stores_real_result_and_field_receiver_method_call_proof_fa
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let method_target = method_id_by_impl_self_type_name(&db, "LocalAssoc", "instance_value")?;
     let clone_target = method_id_by_impl_self_type_name(&db, "LocalAssoc", "clone_assoc")?;
+    let try_clone_target = method_id_by_impl_self_type_name(&db, "LocalAssoc", "try_clone_assoc")?;
+    let try_instance_target =
+        method_id_by_impl_self_type_name(&db, "LocalAssoc", "try_instance_value")?;
     let make_target = function_id_by_name(&db, "make_local_assoc")?;
     let ready_target = function_id_by_name(&db, "make_ready_local_assoc")?;
     let tuple_target = struct_id_by_name(&db, "TupleFieldMethodReceiver")?;
@@ -118,6 +121,28 @@ fn fixture_projection_stores_real_result_and_field_receiver_method_call_proof_fa
                         path: path(&["make_ready_local_assoc"]),
                     },
                     method_target,
+                ),
+            ],
+        },
+        ResolvedProofCase {
+            label: "call_try_method_result_instance_method",
+            owner: function_id_by_name(&db, "call_try_method_result_instance_method")?,
+            rows: 2,
+            calls: vec![
+                ResolvedProofCall::method(
+                    "try_clone_assoc",
+                    CallReceiver::TypedLocalBinding {
+                        name: "value".to_string(),
+                        type_path: path(&["LocalAssoc"]),
+                    },
+                    try_clone_target,
+                ),
+                ResolvedProofCall::method(
+                    "try_instance_value",
+                    CallReceiver::TryMethodCallResult {
+                        method_name: "try_clone_assoc".to_string(),
+                    },
+                    try_instance_target,
                 ),
             ],
         },

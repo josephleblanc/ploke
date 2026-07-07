@@ -49,12 +49,32 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: none selected after the branch receiver TUI surface slice.
+Current bucket: none selected after the local try-method result receiver slice.
 
-Latest completed bucket: TUI tool surface for same-target branch receiver
-proof.
+Latest completed bucket: bounded local try-method result receiver proof.
 
 Completed evidence:
+
+- `call_try_method_result_instance_method()` now proves
+  `value.try_clone_assoc()?.try_instance_value()` as two local method edges:
+  the inner `try_clone_assoc` call resolves from the typed local `value:
+  LocalAssoc`, and the outer `try_instance_value` call resolves from the
+  inner method's `Result<LocalAssoc, ()>` Ok return type.
+- Parser extraction records the outer receiver as
+  `TryMethodCallResult { method_name: "try_clone_assoc" }`; transform/DB
+  projection, raw and structured receiver decode, RAG call-context collection,
+  and `request_code_context` all preserve that exact receiver payload.
+- Focused parser, DB proof/query, RAG, and TUI tests passed, and
+  `cargo run -p xtask --features call_graph -- fixtures regenerate --active`
+  round-tripped all active registered fixtures.
+- This remains a local proof shape only. Opaque external `?` chains and
+  method-result receivers without exact inner method return-type proof stay
+  targetless/unsupported rather than being guessed.
+
+Previously completed bucket: TUI tool surface for same-target branch receiver
+proof.
+
+Previous evidence:
 
 - `code_item_lookup` and `code_item_edges` now assert both
   `call_if_expression_receiver_method(flag)` and
@@ -64,9 +84,9 @@ Completed evidence:
 - This closes the previous parser/DB/RAG-only receiver caveat without adding a
   new resolver branch.
 
-Previously completed bucket: same-target match-expression receiver proof.
+Earlier completed bucket: same-target match-expression receiver proof.
 
-Previous evidence:
+Earlier evidence:
 
 - `call_match_expression_receiver_method(flag)` now proves
   `(match flag { true => LocalAssoc, false => LocalAssoc }).instance_value()`

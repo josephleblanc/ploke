@@ -114,6 +114,9 @@ impl CallRelationResolver<'_> {
             MethodCallReceiver::TryPathCallResult { path } => {
                 self.resolve_try_path_result_method_call(call, path, type_relations)?
             }
+            MethodCallReceiver::TryMethodCallResult { method_name } => {
+                self.resolve_try_method_result_method_call(call, method_name, type_relations)?
+            }
             MethodCallReceiver::IfBranchPaths { paths } => {
                 self.resolve_branch_receiver_method_call(call, paths, type_relations)?
             }
@@ -1133,6 +1136,31 @@ impl CallRelationResolver<'_> {
         }
     }
 
+    fn resolve_try_method_result_method_call(
+        &self,
+        call: &MethodCallNode,
+        inner_method_name: &str,
+        type_relations: &[TypeRelation],
+    ) -> Result<AssocPathResolution, SynParserError> {
+        let Some(inner_call) = self.direct_inner_method_call(call, inner_method_name) else {
+            return Ok(AssocPathResolution::Unsupported);
+        };
+
+        let inner_resolution = self.resolve_method_call_target(inner_call, type_relations)?;
+        match inner_resolution {
+            AssocPathResolution::Resolved(method_id) => self
+                .resolve_method_result_ok_return_type_method(
+                    call.owner,
+                    method_id,
+                    &call.method_name,
+                    type_relations,
+                ),
+            AssocPathResolution::Unresolved => Ok(AssocPathResolution::Unresolved),
+            AssocPathResolution::Ambiguous => Ok(AssocPathResolution::Ambiguous),
+            AssocPathResolution::Unsupported => Ok(AssocPathResolution::Unsupported),
+        }
+    }
+
     fn direct_inner_method_call(
         &self,
         call: &MethodCallNode,
@@ -1202,6 +1230,9 @@ impl CallRelationResolver<'_> {
             }
             MethodCallReceiver::TryPathCallResult { path } => {
                 self.resolve_try_path_result_method_call(call, path, type_relations)
+            }
+            MethodCallReceiver::TryMethodCallResult { method_name } => {
+                self.resolve_try_method_result_method_call(call, method_name, type_relations)
             }
             MethodCallReceiver::IfBranchPaths { paths } => {
                 self.resolve_branch_receiver_method_call(call, paths, type_relations)

@@ -51,6 +51,13 @@ fn context_for_owner_decodes_raw_method_receivers() -> Result<(), DbError> {
             },
         ),
         raw_receiver(
+            "TryMethodCallResult",
+            list(&["try_clone_assoc"]),
+            CallReceiver::TryMethodCallResult {
+                method_name: "try_clone_assoc".to_string(),
+            },
+        ),
+        raw_receiver(
             "IfBranchPaths",
             list(&["LocalAssoc", "", "LocalAssoc"]),
             CallReceiver::IfBranchPaths {

@@ -704,6 +704,10 @@ fn method_receiver_to_cozo(receiver: &MethodCallReceiver) -> (cozo::DataValue, c
             cozo::DataValue::from("TryPathCallResult"),
             string_list(path),
         ),
+        MethodCallReceiver::TryMethodCallResult { method_name } => (
+            cozo::DataValue::from("TryMethodCallResult"),
+            string_list(std::slice::from_ref(method_name)),
+        ),
         MethodCallReceiver::IfBranchPaths { paths } => (
             cozo::DataValue::from("IfBranchPaths"),
             string_list(&branch_receiver_path(paths)),

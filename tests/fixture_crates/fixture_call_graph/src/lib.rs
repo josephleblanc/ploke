@@ -1612,3 +1612,18 @@ pub fn call_match_expression_receiver_method(flag: bool) -> i32 {
     })
     .instance_value()
 }
+
+impl LocalAssoc {
+    pub fn try_clone_assoc(&self) -> Result<LocalAssoc, ()> {
+        Ok(LocalAssoc)
+    }
+
+    pub fn try_instance_value(&self) -> Result<i32, ()> {
+        Ok(55)
+    }
+}
+
+pub fn call_try_method_result_instance_method() -> Result<i32, ()> {
+    let value: LocalAssoc = LocalAssoc;
+    value.try_clone_assoc()?.try_instance_value()
+}

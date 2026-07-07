@@ -82,6 +82,13 @@ fn context_for_owner_decodes_structured_method_receivers() -> Result<(), DbError
             },
         ),
         structured_receiver(
+            "TryMethodCallResult",
+            vec!["try_clone_assoc"],
+            CallReceiver::TryMethodCallResult {
+                method_name: "try_clone_assoc".to_string(),
+            },
+        ),
+        structured_receiver(
             "IfBranchPaths",
             vec!["LocalAssoc", "", "LocalAssoc"],
             CallReceiver::IfBranchPaths {

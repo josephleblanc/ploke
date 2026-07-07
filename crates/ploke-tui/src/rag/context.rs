@@ -728,6 +728,7 @@ fn format_receiver(receiver: &CallReceiverInfo) -> String {
         }
         CallReceiverInfo::TryResult => "?".to_string(),
         CallReceiverInfo::TryPathCallResult { path } => format!("{}()?", path.join("::")),
+        CallReceiverInfo::TryMethodCallResult { method_name } => format!("{method_name}()?"),
         CallReceiverInfo::IfBranchPaths { paths } => {
             let branches = paths
                 .iter()

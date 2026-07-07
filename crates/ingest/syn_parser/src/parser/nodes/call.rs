@@ -431,6 +431,12 @@ pub enum MethodCallReceiver {
         /// Path used as the tried receiver call's callee.
         path: Vec<String>,
     },
+    /// The receiver is the try result of a method call, such as
+    /// `value.make_result()?`.
+    TryMethodCallResult {
+        /// Method name used by the tried receiver call.
+        method_name: String,
+    },
     /// The receiver is an if expression with path-valued branches.
     IfBranchPaths {
         /// Structural type paths from each branch expression.

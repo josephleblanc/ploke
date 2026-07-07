@@ -210,6 +210,17 @@ impl CallReceiver {
                     Ok(Some(Self::TryPathCallResult { path }))
                 }
             }
+            "TryMethodCallResult" => {
+                let path = to_string_list(path)?;
+                match path.as_slice() {
+                    [method_name] => Ok(Some(Self::TryMethodCallResult {
+                        method_name: method_name.clone(),
+                    })),
+                    other => Err(DbError::Cozo(format!(
+                        "try method-call result receiver should store exactly one method name, got {other:?}"
+                    ))),
+                }
+            }
             "IfBranchPaths" => {
                 let paths = split_branch_receiver_paths(&to_string_list(path)?)?;
                 Ok(Some(Self::IfBranchPaths { paths }))

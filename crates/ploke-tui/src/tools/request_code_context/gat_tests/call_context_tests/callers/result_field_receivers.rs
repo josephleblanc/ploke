@@ -27,6 +27,14 @@ async fn request_code_context_returns_result_field_receiver_call_context() -> co
         &method_by_impl_self_query("LocalAssoc", "instance_value"),
     )?;
     let clone_target = one_uuid(&db, &method_by_impl_self_query("LocalAssoc", "clone_assoc"))?;
+    let try_clone_target = one_uuid(
+        &db,
+        &method_by_impl_self_query("LocalAssoc", "try_clone_assoc"),
+    )?;
+    let try_instance_target = one_uuid(
+        &db,
+        &method_by_impl_self_query("LocalAssoc", "try_instance_value"),
+    )?;
     let make_target = one_uuid(
         &db,
         &function_in_module_query(&["crate"], "make_local_assoc"),
@@ -162,6 +170,40 @@ async fn request_code_context_returns_result_field_receiver_call_context() -> co
                         },
                     ),
                     target: method_target,
+                    relation: CallTargetKind::Method,
+                },
+            ],
+        },
+        Case {
+            label: "try method-call result receiver",
+            search_term: "call_try_method_result_instance_method",
+            call_id: "try_method_result_receiver_call_context",
+            owner: one_uuid(
+                &db,
+                &function_in_module_query(&["crate"], "call_try_method_result_instance_method"),
+            )?,
+            calls: vec![
+                ExpectedCall {
+                    kind: CallSiteKind::Method,
+                    callee: method_call(
+                        "try_clone_assoc",
+                        CallReceiverInfo::TypedLocalBinding {
+                            name: "value".to_string(),
+                            type_path: path(&["LocalAssoc"]),
+                        },
+                    ),
+                    target: try_clone_target,
+                    relation: CallTargetKind::Method,
+                },
+                ExpectedCall {
+                    kind: CallSiteKind::Method,
+                    callee: method_call(
+                        "try_instance_value",
+                        CallReceiverInfo::TryMethodCallResult {
+                            method_name: "try_clone_assoc".to_string(),
+                        },
+                    ),
+                    target: try_instance_target,
                     relation: CallTargetKind::Method,
                 },
             ],
