@@ -158,15 +158,17 @@ async fn code_item_lookup_returns_resolved_dynamic_callable_context() {
     //   tests/fixture_crates/fixture_call_graph/src/lib.rs:657
     //     `call_match_guarded_function_item` calls
     //     `(match flag { true if flag => local_target, _ => local_target })()`.
-    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:1534-1547
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:1511-1555 and 1598-1606
     //     private helper parameters receive constructed holder values from a
-    //     single local caller, then call `holder.callbacks[0]()` / `holder.0[0]()`.
+    //     single local caller, then call `(holder.callback)()`,
+    //     `holder.callbacks[0]()` / `holder.0[0]()`.
     // Parser/DB/RAG already prove these as resolved dynamic-function edges.
     // This pins the same facts at the TUI tool boundary.
     for owner_name in [
         "call_parenthesized_function_item_binding",
         "call_parenthesized_block_initialized_function_item_binding",
         "call_match_guarded_function_item",
+        "call_single_named_field_function_param",
         "call_single_indexed_field_function_param",
         "call_single_indexed_tuple_field_function_param",
     ] {

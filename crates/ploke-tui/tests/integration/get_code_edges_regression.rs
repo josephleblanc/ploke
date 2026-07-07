@@ -530,13 +530,15 @@ async fn code_item_edges_returns_resolved_dynamic_callable_field_index_context()
     //     `call_aliased_indexed_named_field_function_binding` constructs
     //     `CallbackArrayHolder { callbacks: [local_target] }`, aliases the
     //     holder, and calls `alias.callbacks[0]()`.
-    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:1534-1547
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:1511-1555 and 1598-1606
     //     private helper parameters receive constructed holder values from a
-    //     single local caller, then call `holder.callbacks[0]()` / `holder.0[0]()`.
+    //     single local caller, then call `(holder.callback)()`,
+    //     `holder.callbacks[0]()` / `holder.0[0]()`.
     // Parser/DB/RAG already prove these as exact DynamicFunction edges; this
     // pins the same field/index proof at the code_item_edges tool boundary.
     for owner_name in [
         "call_aliased_indexed_named_field_function_binding",
+        "call_single_named_field_function_param",
         "call_single_indexed_field_function_param",
         "call_single_indexed_tuple_field_function_param",
     ] {

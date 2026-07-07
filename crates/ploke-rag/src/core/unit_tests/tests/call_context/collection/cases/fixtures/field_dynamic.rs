@@ -44,6 +44,12 @@ async fn call_context_collection_reads_real_field_dynamic_rows() -> Result<(), E
             "call_aliased_indexed_named_field_function_binding",
             dynamic_target,
         )?,
+        private_parameter_case(
+            &db,
+            "single-caller named-field function parameter",
+            "call_single_named_field_function_param",
+            dynamic_target,
+        )?,
         tuple_case(
             &db,
             "indexed tuple-field function",
@@ -106,6 +112,28 @@ fn dynamic_case(
         label,
         owner: one_uuid(db, &function_in_module_query(&["crate"], owner))?,
         calls: vec![dynamic_call(target)],
+    })
+}
+
+fn private_parameter_case(
+    db: &Database,
+    label: &'static str,
+    owner: &'static str,
+    dynamic_target: Uuid,
+) -> Result<CallCase, Error> {
+    let owner_id = one_uuid(db, &function_in_module_query(&["crate"], owner))?;
+    Ok(CallCase {
+        label,
+        owner: owner_id,
+        calls: vec![
+            dynamic_call(dynamic_target),
+            ExpectedCall {
+                kind: CallSiteKind::Path,
+                callee: path_call(&[owner]),
+                target: owner_id,
+                relation: CallTargetKind::Function,
+            },
+        ],
     })
 }
 

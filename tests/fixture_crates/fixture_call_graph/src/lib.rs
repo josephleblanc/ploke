@@ -1594,3 +1594,13 @@ pub fn call_borrowed_value_param_instance_method(value: LocalAssoc) -> i32 {
 pub fn call_borrowed_value_param_method_result_instance_method(value: LocalAssoc) -> i32 {
     (&value).clone_assoc().instance_value()
 }
+
+fn call_single_named_field_function_param(holder: CallbackHolder) -> i32 {
+    (holder.callback)()
+}
+
+pub fn call_single_named_field_function_param_with_local_target() -> i32 {
+    call_single_named_field_function_param(CallbackHolder {
+        callback: local_target,
+    })
+}

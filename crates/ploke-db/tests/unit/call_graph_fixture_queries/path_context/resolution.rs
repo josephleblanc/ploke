@@ -359,6 +359,11 @@ fn fixture_context_resolves_single_caller_indexed_field_function_parameters() ->
 
     let cases = [
         Case {
+            owner: "call_single_named_field_function_param",
+            caller: "call_single_named_field_function_param_with_local_target",
+            path: &["holder", "callback"],
+        },
+        Case {
             owner: "call_single_indexed_field_function_param",
             caller: "call_single_indexed_field_function_param_with_local_target",
             path: &["holder", "callbacks", "0"],
@@ -375,11 +380,13 @@ fn fixture_context_resolves_single_caller_indexed_field_function_parameters() ->
         let caller = function_id_by_name(&db, case.caller)?;
         let helper = function_id_by_name(&db, case.owner)?;
 
-        // tests/fixture_crates/fixture_call_graph/src/lib.rs:1532-1547:
-        // These private helpers call through `holder.callbacks[0]()` and
-        // `holder.0[0]()`. Each helper has one local caller that constructs the
-        // holder with `local_target`, so the indexed field parameter call is an
-        // exact DynamicFunction edge instead of an opaque dynamic blocker.
+        // tests/fixture_crates/fixture_call_graph/src/lib.rs:1511-1555 and
+        // 1598-1606:
+        // These private helpers call through `(holder.callback)()`,
+        // `holder.callbacks[0]()` and `holder.0[0]()`. Each helper has one
+        // local caller that constructs the holder with `local_target`, so the
+        // field parameter call is an exact DynamicFunction edge instead of an
+        // opaque dynamic blocker.
         let context = db.call_context_for_owner(owner)?;
         assert_eq!(
             context.len(),
