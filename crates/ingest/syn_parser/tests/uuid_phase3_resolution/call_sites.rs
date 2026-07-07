@@ -271,6 +271,11 @@ const ASYNC_CLOSURE_BINDING_CALL_SPAN: (usize, usize) = (38338, 38347);
 const ASYNC_CLOSURE_BINDING_BODY_LOCAL_TARGET_CALL_SPAN: (usize, usize) = (38318, 38332);
 const AWAITED_ASYNC_CLOSURE_BINDING_CALL_SPAN: (usize, usize) = (38466, 38475);
 const AWAITED_ASYNC_CLOSURE_BINDING_BODY_LOCAL_TARGET_CALL_SPAN: (usize, usize) = (38446, 38460);
+const ASYNC_CLOSURE_FUTURE_BINDING_CALL_SPAN: (usize, usize) = (38621, 38630);
+const ASYNC_CLOSURE_FUTURE_BINDING_BODY_LOCAL_TARGET_CALL_SPAN: (usize, usize) = (38587, 38601);
+const AWAITED_ASYNC_CLOSURE_FUTURE_BINDING_CALL_SPAN: (usize, usize) = (38769, 38778);
+const AWAITED_ASYNC_CLOSURE_FUTURE_BINDING_BODY_LOCAL_TARGET_CALL_SPAN: (usize, usize) =
+    (38736, 38750);
 const NAMED_FIELD_FUNCTION_DYNAMIC_CALL_SPAN: (usize, usize) = (17945, 17964);
 const ALIASED_NAMED_FIELD_FUNCTION_DYNAMIC_CALL_SPAN: (usize, usize) = (18134, 18152);
 const INDEXED_FIELD_FUNCTION_PARAM_DYNAMIC_CALL_SPAN: (usize, usize) = (18239, 18260);
@@ -5001,6 +5006,90 @@ fn fixture_call_graph_call_awaited_async_closure_binding_resolves_path_call_site
         ExecutableBodyKind::Closure,
         AWAITED_ASYNC_CLOSURE_BINDING_BODY_LOCAL_TARGET_CALL_SPAN,
         Some("async_closure"),
+    );
+    Ok(())
+}
+
+#[test]
+fn fixture_call_graph_call_async_closure_future_binding_without_await_fails_closed_path_call_site()
+-> Result<(), syn_parser::error::SynParserError> {
+    let (graph, tree) = crate::common::build_tree_for_tests("fixture_call_graph");
+    let report = resolve_call_relations_after_tree(&graph, &tree)?;
+    let owner = crate::common::call_site_paranoid::function_owner_context(
+        &graph,
+        &["crate"],
+        "call_async_closure_future_binding_without_await_with_body_call",
+    );
+    let closure = closure_body_containing_span(
+        &graph,
+        &owner,
+        ASYNC_CLOSURE_FUTURE_BINDING_BODY_LOCAL_TARGET_CALL_SPAN,
+    );
+
+    let expected = ExpectedCallSite::path_async_closure_binding(
+        &["closure"],
+        closure,
+        ASYNC_CLOSURE_FUTURE_BINDING_CALL_SPAN,
+        0,
+        0,
+        &[],
+        ExpectedCallOutcome::Unsupported,
+    );
+    crate::common::call_site_paranoid::assert_paranoid_call_site(
+        &graph, &report, &owner, &expected,
+    );
+    assert_no_call_site_owned_at_span(
+        &graph,
+        &owner,
+        ASYNC_CLOSURE_FUTURE_BINDING_BODY_LOCAL_TARGET_CALL_SPAN,
+    );
+    assert_closure_body_path_call_owned_at_span(
+        &graph,
+        &owner,
+        ASYNC_CLOSURE_FUTURE_BINDING_BODY_LOCAL_TARGET_CALL_SPAN,
+        &["local_target"],
+    );
+    Ok(())
+}
+
+#[test]
+fn fixture_call_graph_call_awaited_async_closure_future_binding_resolves_path_call_site()
+-> Result<(), syn_parser::error::SynParserError> {
+    let (graph, tree) = crate::common::build_tree_for_tests("fixture_call_graph");
+    let report = resolve_call_relations_after_tree(&graph, &tree)?;
+    let owner = crate::common::call_site_paranoid::function_owner_context(
+        &graph,
+        &["crate"],
+        "call_awaited_async_closure_future_binding_with_body_call",
+    );
+    let closure = closure_body_containing_span(
+        &graph,
+        &owner,
+        AWAITED_ASYNC_CLOSURE_FUTURE_BINDING_BODY_LOCAL_TARGET_CALL_SPAN,
+    );
+
+    let expected = ExpectedCallSite::path_awaited_async_closure_binding(
+        &["closure"],
+        closure,
+        AWAITED_ASYNC_CLOSURE_FUTURE_BINDING_CALL_SPAN,
+        0,
+        0,
+        &[],
+        ExpectedCallOutcome::ResolvedClosureLocalExact { target: closure },
+    );
+    crate::common::call_site_paranoid::assert_paranoid_call_site(
+        &graph, &report, &owner, &expected,
+    );
+    assert_no_call_site_owned_at_span(
+        &graph,
+        &owner,
+        AWAITED_ASYNC_CLOSURE_FUTURE_BINDING_BODY_LOCAL_TARGET_CALL_SPAN,
+    );
+    assert_closure_body_path_call_owned_at_span(
+        &graph,
+        &owner,
+        AWAITED_ASYNC_CLOSURE_FUTURE_BINDING_BODY_LOCAL_TARGET_CALL_SPAN,
+        &["local_target"],
     );
     Ok(())
 }

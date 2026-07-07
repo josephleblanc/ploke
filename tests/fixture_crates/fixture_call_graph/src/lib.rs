@@ -1707,3 +1707,14 @@ pub async fn call_awaited_async_closure_binding_with_body_call() {
     let closure = async || local_target();
     closure().await;
 }
+
+pub fn call_async_closure_future_binding_without_await_with_body_call() {
+    let closure = async || local_target();
+    let _future = closure();
+}
+
+pub async fn call_awaited_async_closure_future_binding_with_body_call() {
+    let closure = async || local_target();
+    let future = closure();
+    future.await;
+}

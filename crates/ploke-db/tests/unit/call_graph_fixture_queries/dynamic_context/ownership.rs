@@ -15,6 +15,8 @@ fn fixture_context_does_not_project_closure_or_async_body_calls_to_outer_owner()
         "call_async_closure_literal_with_body_call",
         "call_async_closure_binding_without_await_with_body_call",
         "call_awaited_async_closure_binding_with_body_call",
+        "call_async_closure_future_binding_without_await_with_body_call",
+        "call_awaited_async_closure_future_binding_with_body_call",
     ];
 
     for owner_name in owners {
@@ -817,6 +819,130 @@ fn fixture_context_resolves_awaited_async_closure_binding_to_executable_owner()
         .iter()
         .find(|path| path.start_id == outer && path.end_id == target && path.depth == 2)
         .expect("awaited async closure binding should expose a two-hop path to local_target");
+    assert_eq!(path.edges[0].caller_id, outer);
+    assert_eq!(path.edges[0].callee_id, async_closure);
+    assert_eq!(path.edges[0].relation, CallRelationKind::Closure);
+    assert_eq!(path.edges[0].target_kind, CallTargetKind::Closure);
+    assert_eq!(path.edges[1].caller_id, async_closure);
+    assert_eq!(path.edges[1].callee_id, target);
+    assert_eq!(path.edges[1].relation, CallRelationKind::Function);
+    assert_eq!(path.edges[1].target_kind, CallTargetKind::Function);
+
+    Ok(())
+}
+
+#[test]
+fn fixture_context_keeps_non_awaited_async_closure_future_binding_targetless() -> Result<(), DbError>
+{
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let target = function_id_by_name(&db, "local_target")?;
+    let outer = function_id_by_name(
+        &db,
+        "call_async_closure_future_binding_without_await_with_body_call",
+    )?;
+    let async_closure = async_closure_owner_for_parent(&db, outer)?;
+
+    let outer_context = db.call_context_for_owner(outer)?;
+    let local_target_path = path(&["local_target"]);
+    assert!(
+        outer_context
+            .iter()
+            .all(|row| row.site.path.as_ref() != Some(&local_target_path)),
+        "outer function should not absorb the async-closure future body call: {outer_context:#?}"
+    );
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:1711-1714:
+    // `_future = closure()` stores the async-closure future but never awaits it.
+    // The original path call remains targetless.
+    let closure_call = row_by_path(&outer_context, &["closure"]);
+    assert_eq!(closure_call.status.status, CallStatusKind::Unsupported);
+    assert!(
+        closure_call.targets.is_empty(),
+        "unawaited async closure future binding must not fabricate a closure edge: {closure_call:#?}"
+    );
+
+    let async_closure_context = db.call_context_for_owner(async_closure)?;
+    let row = row_by_path(&async_closure_context, &["local_target"]);
+    assert_eq!(row.site.owner_id, async_closure);
+    assert_resolved_target(
+        row,
+        target,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
+
+    let outer_paths = db.call_paths_from_owner(
+        outer,
+        CallPathOptions {
+            max_depth: 2,
+            max_paths: 8,
+        },
+    )?;
+    assert!(
+        outer_paths.iter().all(|path| path.end_id != target),
+        "unawaited async closure future binding should not expose a path to local_target: {outer_paths:#?}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn fixture_context_resolves_awaited_async_closure_future_binding_to_executable_owner()
+-> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let target = function_id_by_name(&db, "local_target")?;
+    let outer = function_id_by_name(
+        &db,
+        "call_awaited_async_closure_future_binding_with_body_call",
+    )?;
+    let async_closure = async_closure_owner_for_parent(&db, outer)?;
+
+    let outer_context = db.call_context_for_owner(outer)?;
+    let local_target_path = path(&["local_target"]);
+    assert!(
+        outer_context
+            .iter()
+            .all(|row| row.site.path.as_ref() != Some(&local_target_path)),
+        "outer function should not absorb the awaited async-closure future body call: {outer_context:#?}"
+    );
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:1716-1720:
+    // `future = closure(); future.await;` proves that the earlier async-closure
+    // binding call is polled in the same block.
+    let closure_call = row_by_path(&outer_context, &["closure"]);
+    assert_resolved_target(
+        closure_call,
+        async_closure,
+        CallRelationKind::Closure,
+        CallSiteKind::Path,
+        CallTargetKind::Closure,
+    );
+
+    let async_closure_context = db.call_context_for_owner(async_closure)?;
+    let row = row_by_path(&async_closure_context, &["local_target"]);
+    assert_eq!(row.site.owner_id, async_closure);
+    assert_resolved_target(
+        row,
+        target,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
+
+    let paths = db.call_paths_from_owner(
+        outer,
+        CallPathOptions {
+            max_depth: 2,
+            max_paths: 8,
+        },
+    )?;
+    let path = paths
+        .iter()
+        .find(|path| path.start_id == outer && path.end_id == target && path.depth == 2)
+        .expect(
+            "awaited async closure future binding should expose a two-hop path to local_target",
+        );
     assert_eq!(path.edges[0].caller_id, outer);
     assert_eq!(path.edges[0].callee_id, async_closure);
     assert_eq!(path.edges[0].relation, CallRelationKind::Closure);

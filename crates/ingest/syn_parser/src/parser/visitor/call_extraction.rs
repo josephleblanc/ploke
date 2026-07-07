@@ -221,9 +221,12 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
         self.local_scopes.push(local_function_bindings_in_block(
             block, self.owner, self.cfgs,
         ));
+        let original_awaits = self.awaited_call_spans.len();
+        self.awaited_call_spans.extend(awaited_future_spans(block));
         for stmt in &block.stmts {
             self.visit_stmt(stmt);
         }
+        self.awaited_call_spans.truncate(original_awaits);
         self.local_scopes.pop();
     }
 
@@ -1150,6 +1153,69 @@ fn tuple_return_call_path(expr: Option<&syn::Expr>) -> Option<Vec<String>> {
 
     let path = path_segments(&path.path);
     (!path.is_empty()).then_some(path)
+}
+
+fn awaited_future_spans(block: &syn::Block) -> Vec<(usize, usize)> {
+    let mut future_bindings = Vec::new();
+    let mut awaited_spans = Vec::new();
+
+    for stmt in &block.stmts {
+        if let Some(name) = direct_await_name(stmt)
+            && let Some((_, span)) = future_bindings
+                .iter()
+                .rev()
+                .find(|(candidate, _)| candidate == &name)
+        {
+            awaited_spans.push(*span);
+        }
+        if let Some(binding) = future_call_binding(stmt) {
+            future_bindings.push(binding);
+        }
+    }
+
+    awaited_spans.sort();
+    awaited_spans.dedup();
+    awaited_spans
+}
+
+fn future_call_binding(stmt: &syn::Stmt) -> Option<(String, (usize, usize))> {
+    let syn::Stmt::Local(local) = stmt else {
+        return None;
+    };
+    let name = pat_ident_name(&local.pat)?;
+    let init_expr = local.init.as_ref()?.expr.as_ref();
+    let syn::Expr::Call(call) = unparen_expr(init_expr) else {
+        return None;
+    };
+    let syn::Expr::Path(path) = unparen_expr(call.func.as_ref()) else {
+        return None;
+    };
+    if path.qself.is_some() || path.path.segments.len() != 1 {
+        return None;
+    }
+
+    let byte_range = call.span().byte_range();
+    Some((name, (byte_range.start, byte_range.end)))
+}
+
+fn direct_await_name(stmt: &syn::Stmt) -> Option<String> {
+    let syn::Stmt::Expr(expr, _) = stmt else {
+        return None;
+    };
+    let syn::Expr::Await(await_expr) = unparen_expr(expr) else {
+        return None;
+    };
+    let syn::Expr::Path(path) = unparen_expr(await_expr.base.as_ref()) else {
+        return None;
+    };
+    if path.qself.is_some() {
+        return None;
+    }
+    let segments = path_segments(&path.path);
+    let [name] = segments.as_slice() else {
+        return None;
+    };
+    Some(name.clone())
 }
 
 fn closure_binding_id(
