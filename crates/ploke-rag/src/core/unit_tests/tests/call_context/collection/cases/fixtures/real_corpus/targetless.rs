@@ -13,6 +13,14 @@ struct MemchrDynamicCase {
     expected_arg_count: u32,
 }
 
+struct MemchrPathCase {
+    label: &'static str,
+    method: &'static str,
+    body: &'static str,
+    path: &'static [&'static str],
+    expected_arg_count: u32,
+}
+
 struct MethodCase {
     label: &'static str,
     method: &'static str,
@@ -152,6 +160,80 @@ async fn call_context_collection_reads_memchr_function_pointer_field_gaps() -> R
         );
 
         let call = dynamic[0];
+        assert_eq!(call.owner_id, owner);
+        assert_eq!(call.arg_count, Some(case.expected_arg_count));
+        assert_eq!(call.status, CallStatusKind::Unsupported);
+        assert_eq!(call.resolution, None);
+        assert!(
+            call.targets.is_empty(),
+            "{} should remain targetless in RAG call context: {call:#?}",
+            case.label
+        );
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn call_context_collection_reads_memchr_callable_trait_object_path_gaps() -> Result<(), Error>
+{
+    init_tracing_once();
+    let (db, rag) = setup_memchr_call_graph_rag()?;
+
+    // Matrix:
+    //   docs/active/agents/call-graph/
+    //   2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //
+    // Source chains:
+    //   memchr/src/tests/substring/mod.rs:73-77 defines `Runner` with
+    //   `fwd` and `rev` boxed `dyn FnMut` fields.
+    //   memchr/src/tests/substring/mod.rs:94 calls
+    //   `fwd(t.haystack.as_bytes(), t.needle.as_bytes())`.
+    //   memchr/src/tests/substring/mod.rs:110 calls
+    //   `rev(t.haystack.as_bytes(), t.needle.as_bytes())`.
+    //
+    // Expected traversal: these callable trait-object fields are structurally
+    // visible path callsites in `Runner::run`, but have zero traversable edges
+    // until local binding and callable trait-object dispatch proof is modeled.
+    // RAG must preserve the targetless unsupported rows without guessing.
+    let cases = [
+        MemchrPathCase {
+            label: "memchr/src/tests/substring/mod.rs:94 Runner.fwd boxed dyn FnMut",
+            method: "run",
+            body: "fwd(t.haystack.as_bytes(), t.needle.as_bytes())",
+            path: &["fwd"],
+            expected_arg_count: 2,
+        },
+        MemchrPathCase {
+            label: "memchr/src/tests/substring/mod.rs:110 Runner.rev boxed dyn FnMut",
+            method: "run",
+            body: "rev(t.haystack.as_bytes(), t.needle.as_bytes())",
+            path: &["rev"],
+            expected_arg_count: 2,
+        },
+    ];
+
+    for case in cases {
+        let owner = method_id_by_name_and_body_substring(&db, case.method, case.body)?;
+        let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+        let context = call_context
+            .get(&owner)
+            .unwrap_or_else(|| panic!("{} should receive outgoing call context", case.label));
+        let callee = CallCalleeInfo::Path {
+            path: path(case.path),
+        };
+        let matching = context
+            .iter()
+            .filter(|call| call.kind == CallSiteKind::Path && call.callee == callee)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            matching.len(),
+            1,
+            "{} should expose one callable trait-object path row: {context:#?}",
+            case.label
+        );
+
+        let call = matching[0];
         assert_eq!(call.owner_id, owner);
         assert_eq!(call.arg_count, Some(case.expected_arg_count));
         assert_eq!(call.status, CallStatusKind::Unsupported);

@@ -60,6 +60,7 @@ pub(crate) struct PathToolCase {
     pub(crate) item: &'static str,
     pub(crate) path: &'static [&'static str],
     pub(crate) status: CallStatusKind,
+    corpus: DynamicToolCorpus,
     owner: PathOwner,
 }
 
@@ -271,6 +272,7 @@ impl PathToolCase {
         item: "test_from_extractor",
         path: &["Secret", "from_ref"],
         status: CallStatusKind::Resolved,
+        corpus: DynamicToolCorpus::Axum,
         owner: PathOwner::Function {
             module_path: &["crate", "middleware", "from_extractor", "tests"],
             file_suffix: "axum/src/middleware/from_extractor.rs",
@@ -283,6 +285,7 @@ impl PathToolCase {
         item: "basic",
         path: &["Request", "builder"],
         status: CallStatusKind::External,
+        corpus: DynamicToolCorpus::Axum,
         owner: PathOwner::Function {
             module_path: &["crate", "middleware", "from_fn", "tests"],
             file_suffix: "axum/src/middleware/from_fn.rs",
@@ -295,6 +298,7 @@ impl PathToolCase {
         item: "write_buf",
         path: &["std", "mem", "replace"],
         status: CallStatusKind::External,
+        corpus: DynamicToolCorpus::Axum,
         owner: PathOwner::Method {
             trait_name: "",
             type_name: "EventDataWriter",
@@ -309,6 +313,7 @@ impl PathToolCase {
         item: "call",
         path: &["super", "future", "IntoServiceFuture", "new"],
         status: CallStatusKind::Unresolved,
+        corpus: DynamicToolCorpus::Axum,
         owner: PathOwner::Method {
             trait_name: "Service<Request>",
             type_name: "HandlerService",
@@ -318,10 +323,45 @@ impl PathToolCase {
         },
     }];
 
+    pub(crate) const MEMCHR_CALLABLE_TRAIT_OBJECT: [Self; 2] = [
+        Self {
+            label: "memchr/src/tests/substring/mod.rs:94 Runner.fwd boxed dyn FnMut",
+            item: "run",
+            path: &["fwd"],
+            status: CallStatusKind::Unsupported,
+            corpus: DynamicToolCorpus::Memchr,
+            owner: PathOwner::Method {
+                trait_name: "",
+                type_name: "Runner",
+                module_path: &["crate", "tests", "substring"],
+                file_suffix: "src/tests/substring/mod.rs",
+                body: "fwd(t.haystack.as_bytes(), t.needle.as_bytes())",
+            },
+        },
+        Self {
+            label: "memchr/src/tests/substring/mod.rs:110 Runner.rev boxed dyn FnMut",
+            item: "run",
+            path: &["rev"],
+            status: CallStatusKind::Unsupported,
+            corpus: DynamicToolCorpus::Memchr,
+            owner: PathOwner::Method {
+                trait_name: "",
+                type_name: "Runner",
+                module_path: &["crate", "tests", "substring"],
+                file_suffix: "src/tests/substring/mod.rs",
+                body: "rev(t.haystack.as_bytes(), t.needle.as_bytes())",
+            },
+        },
+    ];
+
     pub(crate) fn callee(&self) -> CallCalleeInfo {
         CallCalleeInfo::Path {
             path: self.path.iter().map(|part| (*part).to_string()).collect(),
         }
+    }
+
+    pub(crate) fn build_domain(&self) -> &'static str {
+        self.corpus.build_domain()
     }
 
     pub(crate) fn node_kind(&self) -> &'static str {
@@ -438,7 +478,7 @@ impl ReceiverToolFixture {
 
 impl PathToolFixture {
     pub(crate) async fn new(case: PathToolCase) -> Self {
-        let db = axum_call_graph_db();
+        let db = case.corpus.db();
         let owner = match case.owner {
             PathOwner::Function {
                 module_path,
@@ -462,7 +502,7 @@ impl PathToolFixture {
             ),
         };
         assert!(
-            db.project_call_proof_facts_for_node(owner.id, "bd:corpus-axum-call-graph")
+            db.project_call_proof_facts_for_node(owner.id, case.build_domain())
                 .unwrap_or_else(|err| panic!("project {} proof facts: {err}", case.label))
                 >= 2,
             "{} should project targetless path proof rows",

@@ -467,6 +467,88 @@ async fn code_item_lookup_returns_request_builder_alias_external_path_rows() {
 }
 
 #[tokio::test]
+async fn code_item_lookup_returns_memchr_callable_trait_object_path_rows() {
+    for case in PathToolCase::MEMCHR_CALLABLE_TRAIT_OBJECT {
+        let fixture = PathToolFixture::new(case.clone()).await;
+        let params = LookupParams {
+            item_name: Cow::Borrowed(case.item),
+            file_path: Cow::Owned(fixture.file_path.display().to_string()),
+            node_kind: Cow::Borrowed(case.node_kind()),
+            module_path: Cow::Owned(fixture.module_path_arg()),
+            owner_trait: case.owner_trait().map(Cow::Borrowed),
+            owner_type: case.owner_type().map(Cow::Borrowed),
+            parent_name: None,
+        };
+
+        let result = CodeItemLookup::execute(params, fixture.ctx("memchr-callable-path-lookup"))
+            .await
+            .unwrap_or_else(|err| panic!("{} code_item_lookup: {err}", fixture.case.label));
+        let payload: serde_json::Value =
+            serde_json::from_str(&result.content).expect("deserialize ConciseContext");
+        let call_context = payload
+            .get("call_context")
+            .and_then(serde_json::Value::as_array)
+            .expect("call_context array");
+        let proof_context = payload
+            .get("proof_context")
+            .and_then(serde_json::Value::as_array)
+            .expect("proof_context array");
+
+        // Matrix:
+        //   docs/active/agents/call-graph/
+        //   2026-06-28_real-corpus-call-site-oracle-matrices.md
+        //
+        // Source chains:
+        //   memchr/src/tests/substring/mod.rs:73-77 defines `Runner` with
+        //   `fwd` and `rev` boxed `dyn FnMut` fields.
+        //   memchr/src/tests/substring/mod.rs:94 calls
+        //   `fwd(t.haystack.as_bytes(), t.needle.as_bytes())`.
+        //   memchr/src/tests/substring/mod.rs:110 calls
+        //   `rev(t.haystack.as_bytes(), t.needle.as_bytes())`.
+        // Expected traversal: exact owner lookup exposes both structural path
+        // rows as unsupported targetless callsites. The rows remain targetless
+        // because local callable binding and trait-object dispatch proof are
+        // not yet modeled.
+        let callee = fixture.case.callee();
+        let site_id = assert_path_context(
+            call_context,
+            fixture.owner,
+            &callee,
+            &fixture.case.status,
+            fixture.case.label,
+            "lookup",
+        );
+        assert_path_blocker_proof(
+            proof_context,
+            fixture.owner,
+            site_id,
+            fixture.case.build_domain(),
+            "type_resolution_missing",
+            fixture.case.label,
+            "lookup",
+        );
+
+        let ui = result.ui_payload.as_ref().expect("ui payload");
+        assert!(
+            ui_field(ui, "call_context_outgoing")
+                .parse::<usize>()
+                .expect("outgoing count")
+                >= 1,
+            "code_item_lookup should surface outgoing callable trait-object path context for {}",
+            fixture.case.label
+        );
+        assert!(
+            ui_field(ui, "proof_context")
+                .parse::<usize>()
+                .expect("proof count")
+                >= 2,
+            "code_item_lookup should surface callable trait-object proof rows for {}",
+            fixture.case.label
+        );
+    }
+}
+
+#[tokio::test]
 async fn code_item_lookup_returns_generated_constructor_frontier_path_rows() {
     for case in PathToolCase::INTO_SERVICE_FUTURE_NEW {
         let fixture = PathToolFixture::new(case.clone()).await;
@@ -911,6 +993,71 @@ async fn code_item_edges_returns_request_builder_alias_external_path_rows() {
                 .expect("outgoing count")
                 >= 1,
             "code_item_edges should surface outgoing external frontier call context for {}",
+            fixture.case.label
+        );
+        let proof_count = proof_context.len().to_string();
+        assert_eq!(ui_field(ui, "proof_context"), proof_count.as_str());
+    }
+}
+
+#[tokio::test]
+async fn code_item_edges_returns_memchr_callable_trait_object_path_rows() {
+    for case in PathToolCase::MEMCHR_CALLABLE_TRAIT_OBJECT {
+        let fixture = PathToolFixture::new(case.clone()).await;
+        let params = EdgesParams {
+            item_name: Cow::Borrowed(case.item),
+            file_path: Cow::Owned(fixture.file_path.display().to_string()),
+            node_kind: Cow::Borrowed(case.node_kind()),
+            module_path: Cow::Owned(fixture.module_path_arg()),
+            owner_trait: case.owner_trait().map(Cow::Borrowed),
+            owner_type: case.owner_type().map(Cow::Borrowed),
+            parent_name: None,
+        };
+
+        let result = CodeItemEdges::execute(params, fixture.ctx("memchr-callable-path-edges"))
+            .await
+            .unwrap_or_else(|err| panic!("{} code_item_edges: {err}", fixture.case.label));
+        let payload: serde_json::Value =
+            serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
+        let call_context = payload
+            .get("node_info")
+            .and_then(|node| node.get("call_context"))
+            .and_then(serde_json::Value::as_array)
+            .expect("node_info.call_context array");
+        let proof_context = payload
+            .get("node_info")
+            .and_then(|node| node.get("proof_context"))
+            .and_then(serde_json::Value::as_array)
+            .expect("node_info.proof_context array");
+
+        // Same real-corpus callable trait-object path oracle as the lookup
+        // test above, exercised through the edge-oriented exact tool payload.
+        let callee = fixture.case.callee();
+        let site_id = assert_path_context(
+            call_context,
+            fixture.owner,
+            &callee,
+            &fixture.case.status,
+            fixture.case.label,
+            "edges",
+        );
+        assert_path_blocker_proof(
+            proof_context,
+            fixture.owner,
+            site_id,
+            fixture.case.build_domain(),
+            "type_resolution_missing",
+            fixture.case.label,
+            "edges",
+        );
+
+        let ui = result.ui_payload.as_ref().expect("ui payload");
+        assert!(
+            ui_field(ui, "call_context_outgoing")
+                .parse::<usize>()
+                .expect("outgoing count")
+                >= 1,
+            "code_item_edges should surface outgoing callable trait-object path context for {}",
             fixture.case.label
         );
         let proof_count = proof_context.len().to_string();
