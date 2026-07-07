@@ -528,6 +528,163 @@ async fn code_item_edges_returns_call_context_for_call_graph_item() {
 }
 
 #[tokio::test]
+async fn code_item_edges_marks_unsafe_targets_in_call_impact() {
+    let fixture = CallGraphToolFixture::new().await;
+    let params = EdgesParams {
+        item_name: Cow::Borrowed("unsafe_target"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("function"),
+        module_path: Cow::Borrowed("crate"),
+        owner_trait: None,
+        owner_type: None,
+        parent_name: None,
+    };
+
+    let result = CodeItemEdges::execute(params, fixture.ctx("unsafe-target-edges"))
+        .await
+        .expect("unsafe_target edge lookup");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
+    let impact = payload
+        .get("node_info")
+        .and_then(|node| node.get("call_impact"))
+        .and_then(serde_json::Value::as_object)
+        .expect("node_info.call_impact object");
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Security analysis:
+    //   "Which call paths can reach `unsafe` blocks or FFI boundaries?"
+    //
+    // Source oracle:
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:766 defines
+    //   `pub unsafe fn unsafe_target()`.
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:770 calls it from
+    //   the safe wrapper `call_unsafe_function()`.
+    // Expected exact-tool behavior: edge lookup on the callee exposes the same
+    // target-centered unsafe metadata and direct-caller distinction as the
+    // DB/RAG/lookup layers.
+    let target = impact
+        .get("target")
+        .and_then(serde_json::Value::as_object)
+        .expect("call_impact target object");
+    assert_eq!(
+        target.get("is_unsafe").and_then(serde_json::Value::as_bool),
+        Some(true),
+        "code_item_edges should serialize unsafe target metadata: {impact:#?}"
+    );
+
+    let direct_callers = impact
+        .get("direct_callers")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_impact direct_callers array");
+    assert!(
+        direct_callers.iter().any(|caller| {
+            caller.get("name").and_then(serde_json::Value::as_str) == Some("call_unsafe_function")
+                && caller.get("is_unsafe").and_then(serde_json::Value::as_bool) == Some(false)
+        }),
+        "code_item_edges should preserve the safe direct caller without marking it unsafe: {direct_callers:#?}"
+    );
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert_eq!(ui_field(ui, "impact_direct_callers"), "1");
+}
+
+#[tokio::test]
+async fn code_item_edges_surfaces_extern_c_calls_as_external_frontier() {
+    let fixture = CallGraphToolFixture::new().await;
+    let params = EdgesParams {
+        item_name: Cow::Borrowed("call_extern_c_function"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("function"),
+        module_path: Cow::Borrowed("crate"),
+        owner_trait: None,
+        owner_type: None,
+        parent_name: None,
+    };
+
+    let result = CodeItemEdges::execute(params, fixture.ctx("extern-c-frontier-edges"))
+        .await
+        .expect("call_extern_c_function edge lookup");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
+    let reach = payload
+        .get("node_info")
+        .and_then(|node| node.get("call_reach"))
+        .and_then(serde_json::Value::as_object)
+        .expect("node_info.call_reach object");
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Security analysis:
+    //   "Which call paths can reach `unsafe` blocks or FFI boundaries?"
+    //   "Which external dependency calls are made from this user-facing entrypoint?"
+    //
+    // Source oracle:
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:839-842 declares
+    //   foreign function `abs(input)` inside an `unsafe extern "C"` block.
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:844 calls
+    //   `abs(value)` from `call_extern_c_function`.
+    // Expected exact-tool behavior: edge lookup on the owner exposes the FFI
+    // call as a targetless external frontier row without fabricating a local
+    // callee path.
+    let paths = reach
+        .get("paths")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_reach paths array");
+    let callees = reach
+        .get("callees")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_reach callees array");
+    assert!(
+        paths.is_empty() && callees.is_empty(),
+        "extern C calls should not fabricate local reach paths or callees: {reach:#?}"
+    );
+
+    let external_frontier = reach
+        .get("external_frontier_calls")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_reach external_frontier_calls array");
+    let external_frontier_calls = external_frontier
+        .iter()
+        .map(|call| serde_json::from_value::<CallContextInfo>(call.clone()))
+        .collect::<Result<Vec<_>, _>>()
+        .expect("typed external frontier call rows");
+    let abs_call = external_frontier_calls
+        .iter()
+        .find(|call| {
+            call.kind == CallSiteKind::Path
+                && call.status == CallStatusKind::External
+                && call.targets.is_empty()
+                && call.callee
+                    == CallCalleeInfo::Path {
+                        path: vec!["abs".to_string()],
+                    }
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "code_item_edges should surface targetless extern C abs frontier row: {external_frontier_calls:#?}"
+            )
+        });
+    assert_eq!(abs_call.arg_count, Some(1));
+
+    let source_files = reach
+        .get("source_files")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_reach source_files array");
+    assert_source_file_json(
+        source_files,
+        "fixture_call_graph/src/lib.rs",
+        "code_item_edges extern C reach source files",
+    );
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert_eq!(ui_field(ui, "reach_external_frontier_calls"), "1");
+}
+
+#[tokio::test]
 async fn code_item_edges_returns_resolved_dynamic_callable_field_index_context() {
     // Fixture source:
     //   tests/fixture_crates/fixture_call_graph/src/lib.rs:894-899
