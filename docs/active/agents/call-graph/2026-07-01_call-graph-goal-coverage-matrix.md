@@ -329,6 +329,20 @@ Completed bucket, 2026-07-07: direct array-parameter callable proof.
   `code_item_lookup` / `code_item_edges` tool tests preserve the same resolved
   `DynamicFunction` edge.
 
+Completed bucket, 2026-07-07: nested self-field receiver proof.
+
+- Fixture-backed
+  `NestedSelfFieldAssocOwner::call_nested_self_field_instance_method(&self)`
+  now resolves `self.inner.value.instance_value()` to
+  `LocalAssoc::instance_value`.
+- The parser already records the full receiver path as
+  `SelfField { ["inner", "value"] }`; the resolver now walks each segment
+  through exact local struct-field type evidence and stays unsupported if any
+  step cannot be proven as a single local struct field.
+- DB owner context, target-centered proof projection, RAG call/proof context,
+  and exact `code_item_lookup` / `code_item_edges` tool tests preserve the same
+  resolved `Method` edge.
+
 ## Coverage Matrix
 
 | Bucket | Current status | DB proof | RAG proof | TUI/tool proof | Real-corpus target | Next action |

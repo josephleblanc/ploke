@@ -482,10 +482,6 @@ async fn call_context_collection_reads_real_self_field_method_owner() -> Result<
     let db = Arc::new(Database::new(setup_db_full_multi_embedding(
         "fixture_call_graph",
     )?));
-    let owner = one_uuid(
-        &db,
-        &method_by_impl_self_query("SelfFieldAssocOwner", "call_self_field_instance_method"),
-    )?;
     let target = one_uuid(
         &db,
         &method_by_impl_self_query("LocalAssoc", "instance_value"),
@@ -496,34 +492,56 @@ async fn call_context_collection_reads_real_self_field_method_owner() -> Result<
         "fresh fixture call_graph schema should enable call context collection"
     );
 
-    let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
-    let owner_context = call_context
-        .get(&owner)
-        .expect("self-field method owner should receive outgoing call context");
-    assert_eq!(
-        owner_context.len(),
-        1,
-        "self-field method owner context: {owner_context:#?}"
-    );
+    let cases = [
+        (
+            "direct self-field method owner",
+            "SelfFieldAssocOwner",
+            "call_self_field_instance_method",
+            vec!["value".to_string()],
+        ),
+        (
+            "nested self-field method owner",
+            "NestedSelfFieldAssocOwner",
+            "call_nested_self_field_instance_method",
+            vec!["inner".to_string(), "value".to_string()],
+        ),
+    ];
 
-    let call = owner_context
-        .iter()
-        .find(|call| {
-            call.kind == CallSiteKind::Method
-                && call.callee
-                    == CallCalleeInfo::Method {
-                        name: "instance_value".to_string(),
-                        receiver: Some(CallReceiverInfo::SelfField {
-                            path: vec!["value".to_string()],
-                        }),
-                    }
-        })
-        .expect("self-field method call should be present");
-    assert_eq!(call.status, CallStatusKind::Resolved);
-    assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
-    assert_eq!(call.targets.len(), 1);
-    assert_eq!(call.targets[0].target_id, target);
-    assert_eq!(call.targets[0].relation, CallTargetKind::Method);
+    for (label, self_type, method, field_path) in cases {
+        let owner = one_uuid(&db, &method_by_impl_self_query(self_type, method))?;
+        let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+        let owner_context = call_context
+            .get(&owner)
+            .unwrap_or_else(|| panic!("{label} should receive outgoing call context"));
+        assert_eq!(
+            owner_context.len(),
+            1,
+            "{label} context: {owner_context:#?}"
+        );
+
+        let call = owner_context
+            .iter()
+            .find(|call| {
+                call.kind == CallSiteKind::Method
+                    && call.callee
+                        == CallCalleeInfo::Method {
+                            name: "instance_value".to_string(),
+                            receiver: Some(CallReceiverInfo::SelfField {
+                                path: field_path.clone(),
+                            }),
+                        }
+            })
+            .unwrap_or_else(|| panic!("{label} method call should be present"));
+        assert_eq!(call.status, CallStatusKind::Resolved, "{label}");
+        assert_eq!(
+            call.resolution,
+            Some(CallResolutionKind::LocalExact),
+            "{label}"
+        );
+        assert_eq!(call.targets.len(), 1, "{label}: {call:#?}");
+        assert_eq!(call.targets[0].target_id, target, "{label}");
+        assert_eq!(call.targets[0].relation, CallTargetKind::Method, "{label}");
+    }
 
     Ok(())
 }

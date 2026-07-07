@@ -1640,3 +1640,13 @@ fn call_single_indexed_function_pointer_param(funcs: [fn() -> i32; 1]) -> i32 {
 pub fn call_single_indexed_function_pointer_param_with_local_target() -> i32 {
     call_single_indexed_function_pointer_param([local_target])
 }
+
+pub struct NestedSelfFieldAssocOwner {
+    inner: SelfFieldAssocOwner,
+}
+
+impl NestedSelfFieldAssocOwner {
+    pub fn call_nested_self_field_instance_method(&self) -> i32 {
+        self.inner.value.instance_value()
+    }
+}

@@ -235,14 +235,58 @@ impl CallRelationResolver<'_> {
         field_path: &[String],
         type_relations: &[TypeRelation],
     ) -> Result<AssocPathResolution, SynParserError> {
-        let [field_name] = field_path else {
-            return Ok(AssocPathResolution::Unsupported);
-        };
-        let Some(field_type) = self.self_field_type(call.owner, field_name, type_relations)? else {
+        let Some(field_type) = self.self_field_path_type(call.owner, field_path, type_relations)?
+        else {
             return Ok(AssocPathResolution::Unsupported);
         };
         self.resolve_type_use_method(call.owner, &[field_type], &call.method_name, type_relations)?
             .map_or(Ok(AssocPathResolution::Unsupported), Ok)
+    }
+
+    fn self_field_path_type(
+        &self,
+        owner: CallBodyOwnerId,
+        field_path: &[String],
+        type_relations: &[TypeRelation],
+    ) -> Result<Option<OrdinaryTypeUseId>, SynParserError> {
+        let Some((first, rest)) = field_path.split_first() else {
+            return Ok(None);
+        };
+        let Some(mut field_type) = self.self_field_type(owner, first, type_relations)? else {
+            return Ok(None);
+        };
+
+        for field_name in rest {
+            let Some(nested) =
+                self.local_struct_field_type(field_type, field_name, type_relations)?
+            else {
+                return Ok(None);
+            };
+            field_type = nested;
+        }
+
+        Ok(Some(field_type))
+    }
+
+    fn local_struct_field_type(
+        &self,
+        type_id: OrdinaryTypeUseId,
+        field_name: &str,
+        type_relations: &[TypeRelation],
+    ) -> Result<Option<OrdinaryTypeUseId>, SynParserError> {
+        let Some(target) = self.single_ordinary_target(type_id, type_relations)? else {
+            return Ok(None);
+        };
+        let Ok(struct_id) = StructNodeId::try_from(target) else {
+            return Ok(None);
+        };
+        let struct_node = self.graph.get_struct_checked(struct_id)?;
+
+        Ok(Self::struct_field_type(
+            &struct_node.fields,
+            field_name,
+            &struct_node.name,
+        ))
     }
 
     fn self_field_type(

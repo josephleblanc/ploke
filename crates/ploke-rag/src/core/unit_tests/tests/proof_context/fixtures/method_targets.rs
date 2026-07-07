@@ -97,6 +97,16 @@ fn method_case(db: &Database) -> Result<Case, Error> {
                 )?,
                 label: "self-field method",
             },
+            Owner {
+                id: one_uuid(
+                    db,
+                    &method_by_impl_self_query(
+                        "NestedSelfFieldAssocOwner",
+                        "call_nested_self_field_instance_method",
+                    ),
+                )?,
+                label: "nested self-field method",
+            },
             owner(
                 db,
                 "method as associated function",
