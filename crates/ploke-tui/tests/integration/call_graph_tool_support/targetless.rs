@@ -28,13 +28,14 @@ enum DynamicToolCorpus {
 #[derive(Clone)]
 pub(crate) struct ReceiverToolCase {
     pub(crate) label: &'static str,
-    pub(crate) method: &'static str,
+    pub(crate) item: &'static str,
     pub(crate) callee: &'static str,
     pub(crate) status: CallStatusKind,
-    pub(crate) owner_type: &'static str,
+    pub(crate) owner_type: Option<&'static str>,
     pub(crate) module_path: Option<&'static [&'static str]>,
     pub(crate) file_suffix: &'static str,
     pub(crate) body: &'static str,
+    pub(crate) generic_arg_count: Option<u32>,
     receiver: ReceiverShape,
 }
 
@@ -42,6 +43,7 @@ pub(crate) struct ReceiverToolCase {
 enum ReceiverShape {
     MethodResult { method: &'static str },
     SelfField { path: &'static [&'static str] },
+    Unsupported,
 }
 
 pub(crate) struct ReceiverToolFixture {
@@ -171,38 +173,54 @@ impl ReceiverToolCase {
     pub(crate) const ROUTE_ONESHOT: [Self; 2] = [
         Self {
             label: "axum/src/routing/route.rs:51 Route::oneshot_inner",
-            method: "oneshot_inner",
+            item: "oneshot_inner",
             callee: "oneshot",
             status: CallStatusKind::External,
-            owner_type: "Route",
+            owner_type: Some("Route"),
             module_path: None,
             file_suffix: "axum/src/routing/route.rs",
             body: "self.0.clone().oneshot(req)",
+            generic_arg_count: None,
             receiver: ReceiverShape::MethodResult { method: "clone" },
         },
         Self {
             label: "axum/src/routing/route.rs:57 Route::oneshot_inner_owned",
-            method: "oneshot_inner_owned",
+            item: "oneshot_inner_owned",
             callee: "oneshot",
             status: CallStatusKind::External,
-            owner_type: "Route",
+            owner_type: Some("Route"),
             module_path: None,
             file_suffix: "axum/src/routing/route.rs",
             body: "self.0.oneshot(req)",
+            generic_arg_count: None,
             receiver: ReceiverShape::SelfField { path: &["0"] },
         },
     ];
 
     pub(crate) const SIZE_HINT: [Self; 1] = [Self {
         label: "axum-core/src/body.rs:127 Body::size_hint self-field external frontier",
-        method: "size_hint",
+        item: "size_hint",
         callee: "size_hint",
         status: CallStatusKind::External,
-        owner_type: "Body",
+        owner_type: Some("Body"),
         module_path: None,
         file_suffix: "axum-core/src/body.rs",
         body: "self.0.size_hint()",
+        generic_arg_count: None,
         receiver: ReceiverShape::SelfField { path: &["0"] },
+    }];
+
+    pub(crate) const REQUEST_PARTS_TURBOFISH: [Self; 1] = [Self {
+        label: "axum-core/src/ext_traits/request_parts.rs:164 extract_with_state turbofish unsupported receiver",
+        item: "extract_with_state",
+        callee: "extract_with_state",
+        status: CallStatusKind::Unsupported,
+        owner_type: None,
+        module_path: Some(&["crate", "ext_traits", "request_parts", "tests"]),
+        file_suffix: "axum-core/src/ext_traits/request_parts.rs",
+        body: "parts.extract_with_state::<State<String>, String>(&state)",
+        generic_arg_count: Some(2),
+        receiver: ReceiverShape::Unsupported,
     }];
 
     pub(crate) fn callee(&self) -> CallCalleeInfo {
@@ -213,11 +231,24 @@ impl ReceiverToolCase {
             ReceiverShape::SelfField { path } => Some(CallReceiverInfo::SelfField {
                 path: path.iter().map(|segment| (*segment).to_string()).collect(),
             }),
+            ReceiverShape::Unsupported => Some(CallReceiverInfo::Unsupported),
         };
         CallCalleeInfo::Method {
             name: self.callee.to_string(),
             receiver,
         }
+    }
+
+    pub(crate) fn node_kind(&self) -> &'static str {
+        if self.owner_type.is_some() {
+            "method"
+        } else {
+            "function"
+        }
+    }
+
+    pub(crate) fn owner_type(&self) -> Option<&'static str> {
+        self.owner_type
     }
 }
 
@@ -345,15 +376,26 @@ impl DynamicToolFixture {
 impl ReceiverToolFixture {
     pub(crate) async fn new(case: ReceiverToolCase) -> Self {
         let db = axum_call_graph_db();
-        let owner = owner_by_body(
-            &db,
-            case.method,
-            case.owner_type,
-            case.module_path,
-            case.file_suffix,
-            case.body,
-            case.label,
-        );
+        let owner = match case.owner_type {
+            Some(owner_type) => owner_by_body(
+                &db,
+                case.item,
+                owner_type,
+                case.module_path,
+                case.file_suffix,
+                case.body,
+                case.label,
+            ),
+            None => function_owner_by_body(
+                &db,
+                case.item,
+                case.module_path
+                    .expect("function-owned receiver cases require module_path"),
+                case.file_suffix,
+                case.body,
+                case.label,
+            ),
+        };
         assert!(
             db.project_call_proof_facts_for_node(owner.id, "bd:corpus-axum-call-graph")
                 .unwrap_or_else(|err| panic!("project {} proof facts: {err}", case.label))
@@ -476,6 +518,7 @@ pub(crate) fn assert_method_context(
     owner: Uuid,
     callee: &CallCalleeInfo,
     status: &CallStatusKind,
+    generic_arg_count: Option<u32>,
     label: &str,
     tool: &str,
 ) -> Uuid {
@@ -493,6 +536,13 @@ pub(crate) fn assert_method_context(
     );
     let call = &matching[0];
     assert_eq!(&call.status, status);
+    if let Some(expected) = generic_arg_count {
+        assert_eq!(
+            call.generic_arg_count,
+            Some(expected),
+            "{tool} should preserve method generic argument count for {label}: {call:#?}"
+        );
+    }
     assert_eq!(call.resolution, None);
     assert!(
         call.targets.is_empty(),

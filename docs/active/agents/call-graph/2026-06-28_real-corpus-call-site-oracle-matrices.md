@@ -305,10 +305,13 @@ classified yet. The non-turbofish
 `parts.extract_with_state(state)` blanket-helper call at `request_parts.rs:186`
 now resolves to the local `RequestPartsExt for Parts` impl method through exact
 imported external receiver type proof. RAG call-context and proof-context tests
-now preserve the `axum-core/src/body.rs:127` `self.0.size_hint()` row as an
-`External` tuple-field frontier with an `external_dependency_summary_missing`
-proof reason. Exact TUI `code_item_lookup` and `code_item_edges` tests assert
-the same owner-seeded rows and targetless proof facts.
+now preserve both the `axum-core/src/body.rs:127` `self.0.size_hint()` row as
+an `External` tuple-field frontier with an
+`external_dependency_summary_missing` proof reason and the `request_parts.rs:164`
+turbofish row as an `Unsupported` frontier with `generic_arg_count = 2`. Exact
+TUI `code_item_lookup` and `code_item_edges` tests assert the same owner-seeded
+rows and targetless proof facts, including the request-parts function-owned
+turbofish row.
 The exact local external-trait impl receiver coverage now pins all 13 projected
 `Router::clone` rows: ten typed-local `router.clone()` rows across
 `serve/mod.rs`, one typed-local `app.clone()` row in `routing/tests/mod.rs`,

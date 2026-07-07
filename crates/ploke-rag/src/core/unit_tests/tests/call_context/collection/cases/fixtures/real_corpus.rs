@@ -2237,6 +2237,86 @@ async fn call_context_collection_preserves_axum_turbofish_generic_counts() -> Re
 }
 
 #[tokio::test]
+async fn call_context_collection_preserves_axum_turbofish_method_receiver_shape()
+-> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    let owner = function_id_by_name_in_module(
+        &db,
+        &["crate", "ext_traits", "request_parts", "tests"],
+        "extract_with_state",
+    )?;
+
+    let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+    let context = call_context.get(&owner).unwrap_or_else(|| {
+        panic!("request_parts::tests::extract_with_state should receive outgoing call context")
+    });
+    let expected_callee = CallCalleeInfo::Method {
+        name: "extract_with_state".to_string(),
+        receiver: Some(CallReceiverInfo::Unsupported),
+    };
+    let turbofish = context
+        .iter()
+        .filter(|call| call.kind == CallSiteKind::Method && call.callee == expected_callee)
+        .collect::<Vec<_>>();
+
+    // Matrix:
+    //   docs/active/agents/call-graph/
+    //   2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //
+    // Source chain:
+    //   axum-core/src/ext_traits/request_parts.rs:159 binds `parts` from
+    //   `Request::new(()).into_parts()`.
+    //   axum-core/src/ext_traits/request_parts.rs:164 calls
+    //   `parts.extract_with_state::<State<String>, String>(&state)`.
+    //
+    // Current contract: the row is visible to RAG, preserves the two explicit
+    // method generic arguments, and remains unsupported/targetless until the
+    // method-chain receiver can be proven.
+    assert_eq!(
+        turbofish.len(),
+        1,
+        "RAG call context should expose exactly the request_parts.rs:164 turbofish row: {context:#?}"
+    );
+
+    let call = turbofish[0];
+    assert_eq!(call.owner_id, owner);
+    assert_eq!(call.status, CallStatusKind::Unsupported);
+    assert_eq!(call.generic_arg_count, Some(2));
+    assert_eq!(call.resolution, None);
+    assert!(
+        call.targets.is_empty(),
+        "request_parts.rs:164 turbofish row should remain targetless: {call:#?}"
+    );
+    let reach = rag
+        .exact_call_reach_for_owner(
+            owner,
+            CallPathOptions {
+                max_depth: 2,
+                max_paths: 128,
+            },
+        )?
+        .expect("call context enabled");
+    let unsupported = reach
+        .unsupported_frontier_calls
+        .iter()
+        .find(|frontier| frontier.site_id == call.site_id)
+        .unwrap_or_else(|| {
+            panic!("RAG reach should expose the turbofish row as unsupported: {reach:#?}")
+        });
+    assert_eq!(unsupported.owner_id, owner);
+    assert_eq!(unsupported.status, CallStatusKind::Unsupported);
+    assert_eq!(unsupported.generic_arg_count, Some(2));
+    assert!(
+        unsupported.targets.is_empty(),
+        "RAG unsupported frontier call should remain targetless: {unsupported:#?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn call_context_collection_reads_axum_await_result_receiver_gap() -> Result<(), Error> {
     init_tracing_once();
     let (db, rag) = setup_axum_call_graph_rag()?;
