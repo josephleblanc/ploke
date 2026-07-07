@@ -1059,10 +1059,7 @@ impl<'a> CallRelationResolver<'a> {
         return_type: OrdinaryTypeUseId,
         type_relations: &[TypeRelation],
     ) -> Result<Option<OrdinaryTypeTargetId>, SynParserError> {
-        let TypeNode::Named(type_node) = self.type_node(return_type)? else {
-            return Ok(None);
-        };
-        if type_node.path.as_slice() != ["Self"] {
+        if !self.type_use_is_self(return_type)? {
             return Ok(None);
         }
 
@@ -1073,6 +1070,14 @@ impl<'a> CallRelationResolver<'a> {
             return Ok(None);
         };
         self.impl_self_target(impl_node, type_relations)
+    }
+
+    fn type_use_is_self(&self, type_id: OrdinaryTypeUseId) -> Result<bool, SynParserError> {
+        match self.type_node(type_id)? {
+            TypeNode::Named(type_node) => Ok(type_node.path.as_slice() == ["Self"]),
+            TypeNode::Paren(node) => self.type_use_is_self(node.inner),
+            _ => Ok(false),
+        }
     }
 
     fn resolve_result_ok_return_type_method(
@@ -1153,6 +1158,62 @@ impl<'a> CallRelationResolver<'a> {
         }
     }
 
+    fn resolve_method_option_some_return_type_method(
+        &self,
+        owner: CallBodyOwnerId,
+        method_id: MethodNodeId,
+        associated_type_target: Option<OrdinaryTypeTargetId>,
+        method_name: &str,
+        type_relations: &[TypeRelation],
+    ) -> Result<AssocPathResolution, SynParserError> {
+        let Some(return_type) = self.method_return_type(method_id)? else {
+            return Ok(AssocPathResolution::Unsupported);
+        };
+        let Some(some_type) = self.option_some_type(owner, return_type)? else {
+            return Ok(AssocPathResolution::Unsupported);
+        };
+
+        if let Some(target) =
+            self.method_self_return_target(method_id, some_type, type_relations)?
+        {
+            return self
+                .resolve_type_instance_method(owner, target, method_name, type_relations)?
+                .map_or(Ok(AssocPathResolution::Unsupported), Ok);
+        }
+        if let Some(target) = associated_type_target
+            && self.type_use_is_self(some_type)?
+        {
+            return self
+                .resolve_type_instance_method(owner, target, method_name, type_relations)?
+                .map_or(Ok(AssocPathResolution::Unsupported), Ok);
+        }
+
+        let Ok(source) = OrdinaryTypeSourceId::try_from(some_type) else {
+            return Ok(AssocPathResolution::Unsupported);
+        };
+
+        let mut targets = type_relations
+            .iter()
+            .filter_map(|relation| match relation {
+                TypeRelation::Ordinary {
+                    source: relation_source,
+                    target,
+                } if *relation_source == source => Some(*target),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        targets.sort_unstable();
+        targets.dedup();
+
+        match targets.as_slice() {
+            [target] => self
+                .resolve_type_instance_method(owner, *target, method_name, type_relations)?
+                .map_or(Ok(AssocPathResolution::Unsupported), Ok),
+            [] => Ok(AssocPathResolution::Unsupported),
+            _ => Ok(AssocPathResolution::Ambiguous),
+        }
+    }
+
     fn result_ok_type(
         &self,
         owner: CallBodyOwnerId,
@@ -1179,6 +1240,36 @@ impl<'a> CallRelationResolver<'a> {
 
         Ok(match type_node.arguments.as_slice() {
             [ok_type, _err_type] => Some(*ok_type),
+            _ => None,
+        })
+    }
+
+    fn option_some_type(
+        &self,
+        owner: CallBodyOwnerId,
+        return_type: OrdinaryTypeUseId,
+    ) -> Result<Option<OrdinaryTypeUseId>, SynParserError> {
+        let TypeNode::Named(type_node) = self.type_node(return_type)? else {
+            return Ok(None);
+        };
+
+        let path = type_node
+            .path
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        match path.as_slice() {
+            ["Option"] => {
+                if self.local_segment_visible(owner, "Option")? {
+                    return Ok(None);
+                }
+            }
+            ["std", "option", "Option"] | ["core", "option", "Option"] => {}
+            _ => return Ok(None),
+        }
+
+        Ok(match type_node.arguments.as_slice() {
+            [some_type] => Some(*some_type),
             _ => None,
         })
     }

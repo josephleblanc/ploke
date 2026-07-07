@@ -5,7 +5,7 @@ use crate::{
         nodes::{
             AnyCallSiteId, AsAnyNodeId, CallBodyOwnerId, CallNode, FieldNode, FunctionNodeId,
             MethodCallNode, MethodCallReceiver, OrdinaryTypeSourceId, OrdinaryTypeTargetId,
-            OrdinaryTypeUseId, StructNodeId, TraitTypeSourceId, TypeAliasNodeId,
+            OrdinaryTypeUseId, PathCallNode, StructNodeId, TraitTypeSourceId, TypeAliasNodeId,
             TypeGenericParamNodeId,
         },
         relations::{CallRelation, CallResolutionKind, CallResolutionStatus, TypeRelation},
@@ -1203,9 +1203,71 @@ impl CallRelationResolver<'_> {
                     &call.method_name,
                     type_relations,
                 ),
+            AssocPathResolution::Unresolved if inner_method_name == "ok_or" => {
+                self.resolve_option_ok_or_result_method_call(call, inner_call, type_relations)
+            }
             AssocPathResolution::Unresolved => Ok(AssocPathResolution::Unresolved),
             AssocPathResolution::Ambiguous => Ok(AssocPathResolution::Ambiguous),
+            AssocPathResolution::Unsupported if inner_method_name == "ok_or" => {
+                self.resolve_option_ok_or_result_method_call(call, inner_call, type_relations)
+            }
             AssocPathResolution::Unsupported => Ok(AssocPathResolution::Unsupported),
+        }
+    }
+
+    fn resolve_option_ok_or_result_method_call(
+        &self,
+        call: &MethodCallNode,
+        ok_or_call: &MethodCallNode,
+        type_relations: &[TypeRelation],
+    ) -> Result<AssocPathResolution, SynParserError> {
+        let MethodCallReceiver::PathCallResult { path } = &ok_or_call.receiver else {
+            return Ok(AssocPathResolution::Unsupported);
+        };
+        let Some(path_call) = self.direct_receiver_path_call(ok_or_call, path) else {
+            return Ok(AssocPathResolution::Unsupported);
+        };
+
+        match self.resolve_associated_function_path(
+            call.owner,
+            path,
+            path_call.arg_count,
+            type_relations,
+        )? {
+            Some(AssocPathResolution::Resolved(method_id)) => {
+                let associated_target = self.associated_path_type_target(call.owner, path)?;
+                self.resolve_method_option_some_return_type_method(
+                    call.owner,
+                    method_id,
+                    associated_target,
+                    &call.method_name,
+                    type_relations,
+                )
+            }
+            Some(AssocPathResolution::Unresolved) => Ok(AssocPathResolution::Unresolved),
+            Some(AssocPathResolution::Ambiguous) => Ok(AssocPathResolution::Ambiguous),
+            Some(AssocPathResolution::Unsupported) | None => Ok(AssocPathResolution::Unsupported),
+        }
+    }
+
+    fn associated_path_type_target(
+        &self,
+        owner: CallBodyOwnerId,
+        path: &[String],
+    ) -> Result<Option<OrdinaryTypeTargetId>, SynParserError> {
+        let Some((_method_name, type_path)) = path.split_last() else {
+            return Ok(None);
+        };
+        if type_path.is_empty() {
+            return Ok(None);
+        }
+        if type_path.len() != 1 && !self.is_explicit_local_path(type_path) {
+            return Ok(None);
+        }
+
+        match self.resolve_local_type_path(owner, type_path)? {
+            LocalTypeResolution::Resolved(target) => Ok(Some(target)),
+            LocalTypeResolution::Unresolved | LocalTypeResolution::Ambiguous => Ok(None),
         }
     }
 
@@ -1222,6 +1284,36 @@ impl CallRelationResolver<'_> {
                 CallNode::MethodCall(inner)
                     if inner.owner == call.owner
                         && inner.method_name == inner_method_name
+                        && inner.span.0 == call.span.0
+                        && inner.span.1 < call.span.1 =>
+                {
+                    Some(inner)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        let max_end = candidates.iter().map(|inner| inner.span.1).max()?;
+        candidates.retain(|inner| inner.span.1 == max_end);
+        match candidates.as_slice() {
+            [inner] => Some(*inner),
+            _ => None,
+        }
+    }
+
+    fn direct_receiver_path_call(
+        &self,
+        call: &MethodCallNode,
+        path: &[String],
+    ) -> Option<&PathCallNode> {
+        let mut candidates = self
+            .graph
+            .call_sites()
+            .iter()
+            .filter_map(|candidate| match candidate {
+                CallNode::PathCall(inner)
+                    if inner.owner == call.owner
+                        && inner.path.as_slice() == path
                         && inner.span.0 == call.span.0
                         && inner.span.1 < call.span.1 =>
                 {

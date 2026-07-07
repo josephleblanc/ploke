@@ -179,7 +179,7 @@ fn chrono_alias_constructor_rows_reach_local_result_single() -> Result<(), DbErr
 }
 
 #[test]
-fn chrono_try_receiver_method_rows_are_targetless_fallback_oracles() -> Result<(), DbError> {
+fn chrono_try_receiver_method_rows_resolve_option_ok_or_oracles() -> Result<(), DbError> {
     let db = setup_call_graph_db(&CORPUS_CHRONO_CALL_GRAPH)?;
 
     // Matrix: `Fallback Source Oracle Matrix`.
@@ -191,60 +191,50 @@ fn chrono_try_receiver_method_rows_are_targetless_fallback_oracles() -> Result<(
     //   chrono/src/format/parsed.rs:953 calls
     //   `DateTime::from_timestamp(...).ok_or(...)?.naive_utc()`.
     //
-    // Current model gap: the preceding constructor paths resolve separately,
-    // but the `?` receiver is represented as a targetless
-    // `TryMethodCallResult(ok_or)` method call with no traversal edge to
-    // `DateTime::naive_utc`.
-    assert_targetless_method_rows(
-        &db,
-        "naive_utc",
-        "TryMethodCallResult",
-        Some(&["ok_or"]),
-        CallStatusKind::Unsupported,
-        2,
-    )?;
-    assert_targetless_method_line_fanout(
-        &db,
-        &CORPUS_CHRONO_CALL_GRAPH,
-        "naive_utc",
-        "TryMethodCallResult",
-        Some(&["ok_or"]),
-        CallStatusKind::Unsupported,
-        &[SourceLineFanout {
-            file_suffix: "src/format/parsed.rs",
-            lines: &[836, 953],
-        }],
-    )?;
+    // Expected traversal: the receiver is a `?` applied after `Option::ok_or`
+    // on a local `DateTime::from_timestamp*` associated function returning
+    // `Option<Self>`, so the outer method call reaches `DateTime::naive_utc`.
     let target = method_id_by_name_body_and_file_suffix(
         &db,
         "naive_utc",
         "self.datetime",
         "src/datetime/mod.rs",
     )?;
-    assert_no_incoming_traversal_to_target(
-        &db,
-        target,
-        "chrono/src/format/parsed.rs try receiver naive_utc rows",
-    )?;
 
     struct TryCase {
         owner: &'static str,
         marker: &'static str,
-        line: u32,
+        label: &'static str,
     }
 
     let cases = [
         TryCase {
             owner: "to_naive_datetime_with_offset",
             marker: "DateTime::from_timestamp_secs(ts).ok_or(OUT_OF_RANGE)?.naive_utc()",
-            line: 836,
+            label: "chrono/src/format/parsed.rs:836 DateTime...?.naive_utc",
         },
         TryCase {
             owner: "to_datetime_with_timezone",
             marker: "DateTime::from_timestamp(timestamp, nanosecond).ok_or(OUT_OF_RANGE)?.naive_utc()",
-            line: 953,
+            label: "chrono/src/format/parsed.rs:953 DateTime...?.naive_utc",
         },
     ];
+
+    let receiver = CallReceiver::TryMethodCallResult {
+        method_name: "ok_or".to_string(),
+    };
+    let callers = db.callers_for_target(target)?;
+    assert_eq!(
+        callers.len(),
+        2,
+        "DateTime::naive_utc should expose the two inspected parsed.rs try-receiver callers: {callers:#?}"
+    );
+    assert_sites_match_callers(
+        &db,
+        target,
+        &callers,
+        "chrono DateTime::naive_utc try callers",
+    )?;
 
     for case in cases {
         let owner = method_id_by_name_body_and_file_suffix(
@@ -253,18 +243,44 @@ fn chrono_try_receiver_method_rows_are_targetless_fallback_oracles() -> Result<(
             case.marker,
             "src/format/parsed.rs",
         )?;
-        assert_owner_method_targetless(
+        let context = db.call_context_for_owner(owner)?;
+        let rows = context
+            .iter()
+            .filter(|row| {
+                row.site.kind == CallSiteKind::Method
+                    && row.site.method.as_deref() == Some("naive_utc")
+                    && row.site.receiver.as_ref() == Some(&receiver)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            rows.len(),
+            1,
+            "{} should expose exactly one resolved try-receiver row: {context:#?}",
+            case.label
+        );
+        let row = rows[0];
+        assert_resolved_target(
+            row,
+            target,
+            CallRelationKind::Method,
+            CallSiteKind::Method,
+            CallTargetKind::Method,
+        );
+        assert_eq!(
+            relations_for_site(&db, row.site.id)?.rows.len(),
+            1,
+            "{} should preserve exactly one raw call_relation edge",
+            case.label
+        );
+        assert_one_edge_traversal(
             &db,
-            owner,
-            "naive_utc",
-            &CallReceiver::TryMethodCallResult {
-                method_name: "ok_or".to_string(),
+            TraversalExpectation {
+                label: case.label,
+                owner,
+                target,
+                site_id: row.site.id,
+                expected_edge_count: 1,
             },
-            CallStatusKind::Unsupported,
-            &format!(
-                "chrono/src/format/parsed.rs:{} DateTime...?.naive_utc",
-                case.line
-            ),
         )?;
     }
 
