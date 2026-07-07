@@ -103,6 +103,7 @@ impl CallRelationResolver<'_> {
         }
 
         if let DynamicCallCallee::ClosureBinding { closure_id, .. }
+        | DynamicCallCallee::AwaitedAsyncClosureBinding { closure_id, .. }
         | DynamicCallCallee::FnPointerCastClosureBinding { closure_id, .. }
         | DynamicCallCallee::DereferencedClosureBinding { closure_id, .. }
         | DynamicCallCallee::ClosureLiteral { closure_id }
@@ -126,6 +127,8 @@ impl CallRelationResolver<'_> {
             DynamicCallCallee::LocalBinding { .. }
             | DynamicCallCallee::AliasedLocalBinding { .. }
             | DynamicCallCallee::ClosureBinding { .. }
+            | DynamicCallCallee::AsyncClosureBinding { .. }
+            | DynamicCallCallee::AwaitedAsyncClosureBinding { .. }
             | DynamicCallCallee::ClosureLiteral { .. }
             | DynamicCallCallee::AwaitedAsyncClosureLiteral { .. }
             | DynamicCallCallee::InitializedLocalBinding { .. }

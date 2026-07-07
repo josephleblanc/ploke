@@ -238,6 +238,16 @@ pub enum ExpectedPathCallee<'a> {
         path: &'a [&'a str],
         closure_id: ExecutableBodyId,
     },
+    /// The path call is shadowed by a visible async closure binding that is not awaited.
+    AsyncClosureBinding {
+        path: &'a [&'a str],
+        closure_id: ExecutableBodyId,
+    },
+    /// The path call is shadowed by a visible async closure binding that is awaited.
+    AwaitedAsyncClosureBinding {
+        path: &'a [&'a str],
+        closure_id: ExecutableBodyId,
+    },
     /// The path call is shadowed by a visible block-local function item.
     LocalFunctionBinding {
         path: &'a [&'a str],
@@ -266,6 +276,16 @@ impl ExpectedPathCallee<'_> {
                 path: path.iter().copied().map(String::from).collect(),
                 closure_id,
             },
+            Self::AsyncClosureBinding { path, closure_id } => PathCallCallee::AsyncClosureBinding {
+                path: path.iter().copied().map(String::from).collect(),
+                closure_id,
+            },
+            Self::AwaitedAsyncClosureBinding { path, closure_id } => {
+                PathCallCallee::AwaitedAsyncClosureBinding {
+                    path: path.iter().copied().map(String::from).collect(),
+                    closure_id,
+                }
+            }
             Self::LocalFunctionBinding { path, body_id } => PathCallCallee::LocalFunctionBinding {
                 path: path.iter().copied().map(String::from).collect(),
                 body_id,
@@ -333,6 +353,16 @@ pub enum ExpectedDynamicCallee<'a> {
     },
     /// The callee expression names a visible local closure binding with a known executable owner.
     ClosureBinding {
+        path: &'a [&'a str],
+        closure_id: ExecutableBodyId,
+    },
+    /// The callee expression names a visible async closure binding that is not awaited.
+    AsyncClosureBinding {
+        path: &'a [&'a str],
+        closure_id: ExecutableBodyId,
+    },
+    /// The callee expression names a visible async closure binding that is awaited.
+    AwaitedAsyncClosureBinding {
         path: &'a [&'a str],
         closure_id: ExecutableBodyId,
     },
@@ -428,6 +458,18 @@ impl ExpectedDynamicCallee<'_> {
                 path: path.iter().copied().map(String::from).collect(),
                 closure_id,
             },
+            Self::AsyncClosureBinding { path, closure_id } => {
+                DynamicCallCallee::AsyncClosureBinding {
+                    path: path.iter().copied().map(String::from).collect(),
+                    closure_id,
+                }
+            }
+            Self::AwaitedAsyncClosureBinding { path, closure_id } => {
+                DynamicCallCallee::AwaitedAsyncClosureBinding {
+                    path: path.iter().copied().map(String::from).collect(),
+                    closure_id,
+                }
+            }
             Self::ClosureLiteral { closure_id } => DynamicCallCallee::ClosureLiteral { closure_id },
             Self::AwaitedAsyncClosureLiteral { closure_id } => {
                 DynamicCallCallee::AwaitedAsyncClosureLiteral { closure_id }
@@ -633,6 +675,52 @@ impl<'a> ExpectedCallSite<'a> {
             kind: ExpectedCallKind::Path {
                 path,
                 callee: ExpectedPathCallee::ClosureBinding { path, closure_id },
+                arg_count,
+                generic_arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a path-call expectation shadowed by a non-awaited async closure binding.
+    pub const fn path_async_closure_binding(
+        path: &'a [&'a str],
+        closure_id: ExecutableBodyId,
+        span: (usize, usize),
+        arg_count: usize,
+        generic_arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Path {
+                path,
+                callee: ExpectedPathCallee::AsyncClosureBinding { path, closure_id },
+                arg_count,
+                generic_arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a path-call expectation shadowed by an awaited async closure binding.
+    pub const fn path_awaited_async_closure_binding(
+        path: &'a [&'a str],
+        closure_id: ExecutableBodyId,
+        span: (usize, usize),
+        arg_count: usize,
+        generic_arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Path {
+                path,
+                callee: ExpectedPathCallee::AwaitedAsyncClosureBinding { path, closure_id },
                 arg_count,
                 generic_arg_count,
             },
@@ -965,6 +1053,46 @@ impl<'a> ExpectedCallSite<'a> {
         Self {
             kind: ExpectedCallKind::Dynamic {
                 callee: ExpectedDynamicCallee::ClosureBinding { path, closure_id },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a dynamic-call expectation whose callee is a non-awaited async closure binding.
+    pub const fn dynamic_async_closure_binding(
+        path: &'a [&'a str],
+        closure_id: ExecutableBodyId,
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::AsyncClosureBinding { path, closure_id },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a dynamic-call expectation whose callee is an awaited async closure binding.
+    pub const fn dynamic_awaited_async_closure_binding(
+        path: &'a [&'a str],
+        closure_id: ExecutableBodyId,
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::AwaitedAsyncClosureBinding { path, closure_id },
                 arg_count,
             },
             span,

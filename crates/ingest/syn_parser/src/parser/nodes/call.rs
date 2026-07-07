@@ -144,6 +144,18 @@ pub enum PathCallCallee {
         path: Vec<String>,
         closure_id: ExecutableBodyId,
     },
+    /// The callee path names a visible local async-closure binding whose
+    /// returned future is not immediately awaited.
+    AsyncClosureBinding {
+        path: Vec<String>,
+        closure_id: ExecutableBodyId,
+    },
+    /// The callee path names a visible local async-closure binding whose
+    /// returned future is immediately awaited.
+    AwaitedAsyncClosureBinding {
+        path: Vec<String>,
+        closure_id: ExecutableBodyId,
+    },
     /// The callee path names a visible block-local function item with a known
     /// executable body owner.
     LocalFunctionBinding {
@@ -264,6 +276,18 @@ pub enum DynamicCallCallee {
     /// The callee expression is a visible local closure binding with a known
     /// executable body owner, such as `(closure)()`.
     ClosureBinding {
+        path: Vec<String>,
+        closure_id: ExecutableBodyId,
+    },
+    /// The callee expression is a visible local async-closure binding whose
+    /// returned future is not immediately awaited, such as `closure()`.
+    AsyncClosureBinding {
+        path: Vec<String>,
+        closure_id: ExecutableBodyId,
+    },
+    /// The callee expression is a visible local async-closure binding whose
+    /// returned future is immediately awaited, such as `closure().await`.
+    AwaitedAsyncClosureBinding {
         path: Vec<String>,
         closure_id: ExecutableBodyId,
     },

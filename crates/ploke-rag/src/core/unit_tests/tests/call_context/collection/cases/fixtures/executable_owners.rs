@@ -242,6 +242,179 @@ async fn call_context_collection_reads_async_closure_owner_rows() -> Result<(), 
 }
 
 #[tokio::test]
+async fn call_context_collection_keeps_non_awaited_async_closure_binding_targetless()
+-> Result<(), Error> {
+    init_tracing_once();
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let target = unique_id_by_name(&db, "function", "local_target")?;
+    let outer = one_uuid(
+        &db,
+        &function_in_module_query(
+            &["crate"],
+            "call_async_closure_binding_without_await_with_body_call",
+        ),
+    )?;
+    let async_closure = async_closure_owner_for_parent(&db, outer)?;
+
+    let rag = init_test_rag_mock(Arc::clone(&db));
+    assert!(
+        !rag.call_context_degraded(),
+        "fresh fixture call_graph schema should enable async closure binding context"
+    );
+
+    let call_context = rag.collect_call_context(&[(outer, 1.0), (async_closure, 1.0)])?;
+
+    let outer_context = call_context
+        .get(&outer)
+        .expect("outer function should keep its unsupported async-closure binding context");
+    assert!(
+        outer_context.iter().all(|call| {
+            call.callee
+                != CallCalleeInfo::Path {
+                    path: vec!["local_target".to_string()],
+                }
+        }),
+        "outer function must not absorb the async-closure binding local_target() row: {outer_context:#?}"
+    );
+    assert!(
+        outer_context
+            .iter()
+            .flat_map(|call| call.targets.iter())
+            .all(|target_info| target_info.target_id != target),
+        "outer function must not expose a fabricated edge to local_target: {outer_context:#?}"
+    );
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:1701-1704:
+    // `closure()` invokes a local async-closure binding without awaiting the
+    // returned future. RAG should surface the path call as unsupported while
+    // still reading the closure owner's body call context.
+    let closure_call = outer_context
+        .iter()
+        .find(|call| {
+            call.owner_id == outer
+                && call.kind == CallSiteKind::Path
+                && call.callee
+                    == CallCalleeInfo::Path {
+                        path: vec!["closure".to_string()],
+                    }
+        })
+        .expect("outer function should expose closure() binding call context");
+    assert_eq!(closure_call.status, CallStatusKind::Unsupported);
+    assert!(
+        closure_call.targets.is_empty(),
+        "non-awaited async closure binding should stay targetless: {closure_call:#?}"
+    );
+
+    let async_context = call_context
+        .get(&async_closure)
+        .expect("async closure owner should receive outgoing call context");
+    let call = async_context
+        .iter()
+        .find(|call| {
+            call.owner_id == async_closure
+                && call.callee
+                    == CallCalleeInfo::Path {
+                        path: vec!["local_target".to_string()],
+                    }
+        })
+        .expect("async closure owner should retain outgoing local_target() call context");
+    assert_eq!(call.kind, CallSiteKind::Path);
+    assert_eq!(call.status, CallStatusKind::Resolved);
+    assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+    assert_eq!(call.targets.len(), 1);
+    assert_eq!(call.targets[0].target_id, target);
+    assert_eq!(call.targets[0].relation, CallTargetKind::Function);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn call_context_collection_resolves_awaited_async_closure_binding_rows() -> Result<(), Error>
+{
+    init_tracing_once();
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let target = unique_id_by_name(&db, "function", "local_target")?;
+    let outer = one_uuid(
+        &db,
+        &function_in_module_query(
+            &["crate"],
+            "call_awaited_async_closure_binding_with_body_call",
+        ),
+    )?;
+    let async_closure = async_closure_owner_for_parent(&db, outer)?;
+
+    let rag = init_test_rag_mock(Arc::clone(&db));
+    assert!(
+        !rag.call_context_degraded(),
+        "fresh fixture call_graph schema should enable awaited async closure binding context"
+    );
+
+    let call_context = rag.collect_call_context(&[(outer, 1.0), (async_closure, 1.0)])?;
+
+    let outer_context = call_context
+        .get(&outer)
+        .expect("outer function should keep its awaited async-closure binding context");
+    assert!(
+        outer_context.iter().all(|call| {
+            call.callee
+                != CallCalleeInfo::Path {
+                    path: vec!["local_target".to_string()],
+                }
+        }),
+        "outer function must not absorb the awaited async-closure binding local_target() row: {outer_context:#?}"
+    );
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:1706-1709:
+    // `closure().await` immediately polls the async-closure binding, so RAG
+    // should expose the path-call target edge to the closure owner.
+    let closure_call = outer_context
+        .iter()
+        .find(|call| {
+            call.owner_id == outer
+                && call.kind == CallSiteKind::Path
+                && call.callee
+                    == CallCalleeInfo::Path {
+                        path: vec!["closure".to_string()],
+                    }
+        })
+        .expect("outer function should expose closure().await binding call context");
+    assert_eq!(closure_call.status, CallStatusKind::Resolved);
+    assert_eq!(
+        closure_call.resolution,
+        Some(CallResolutionKind::LocalExact)
+    );
+    assert_eq!(closure_call.targets.len(), 1);
+    assert_eq!(closure_call.targets[0].target_id, async_closure);
+    assert_eq!(closure_call.targets[0].relation, CallTargetKind::Closure);
+
+    let async_context = call_context
+        .get(&async_closure)
+        .expect("async closure owner should receive outgoing call context");
+    let call = async_context
+        .iter()
+        .find(|call| {
+            call.owner_id == async_closure
+                && call.callee
+                    == CallCalleeInfo::Path {
+                        path: vec!["local_target".to_string()],
+                    }
+        })
+        .expect("async closure owner should retain outgoing local_target() call context");
+    assert_eq!(call.kind, CallSiteKind::Path);
+    assert_eq!(call.status, CallStatusKind::Resolved);
+    assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+    assert_eq!(call.targets.len(), 1);
+    assert_eq!(call.targets[0].target_id, target);
+    assert_eq!(call.targets[0].relation, CallTargetKind::Function);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn call_context_collection_reads_local_fn_item_target_rows() -> Result<(), Error> {
     init_tracing_once();
     let db = Arc::new(Database::new(setup_db_full_multi_embedding(

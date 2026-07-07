@@ -79,10 +79,18 @@ pub(super) fn classify_dynamic_callee(
                             source_path: source_path.clone(),
                         }
                     }
-                    LocalBindingProof::Closure { closure_id, .. } => {
-                        DynamicCallCallee::FnPointerCastClosureBinding {
-                            path,
-                            closure_id: *closure_id,
+                    LocalBindingProof::Closure {
+                        closure_id,
+                        is_async,
+                        ..
+                    } => {
+                        if *is_async {
+                            DynamicCallCallee::Other
+                        } else {
+                            DynamicCallCallee::FnPointerCastClosureBinding {
+                                path,
+                                closure_id: *closure_id,
+                            }
                         }
                     }
                 };
@@ -115,13 +123,28 @@ pub(super) fn classify_dynamic_callee(
     }
 
     if let Some(path) = block_path_expr(callee) {
-        return classify_dynamic_path_expr(path, param_names, local_scopes);
+        return classify_dynamic_path_expr(path, param_names, local_scopes, is_awaited);
     }
 
     let syn::Expr::Path(path) = unparen_expr(callee) else {
         return DynamicCallCallee::Other;
     };
-    classify_dynamic_path_expr(path, param_names, local_scopes)
+    classify_dynamic_path_expr(path, param_names, local_scopes, is_awaited)
+}
+
+fn closure_binding_callee(
+    path: Vec<String>,
+    closure_id: ExecutableBodyId,
+    is_async: bool,
+    is_awaited: bool,
+) -> DynamicCallCallee {
+    if is_async && is_awaited {
+        DynamicCallCallee::AwaitedAsyncClosureBinding { path, closure_id }
+    } else if is_async {
+        DynamicCallCallee::AsyncClosureBinding { path, closure_id }
+    } else {
+        DynamicCallCallee::ClosureBinding { path, closure_id }
+    }
 }
 
 fn closure_literal_callee(
@@ -162,6 +185,7 @@ fn classify_dynamic_path_expr(
     path: &syn::ExprPath,
     param_names: &[String],
     local_scopes: &[Vec<LocalBindingProof>],
+    is_awaited: bool,
 ) -> DynamicCallCallee {
     if path.qself.is_some() {
         return DynamicCallCallee::Other;
@@ -194,12 +218,11 @@ fn classify_dynamic_path_expr(
                     path,
                     init_path: init_path.clone(),
                 },
-                LocalBindingProof::Closure { closure_id, .. } => {
-                    DynamicCallCallee::ClosureBinding {
-                        path,
-                        closure_id: *closure_id,
-                    }
-                }
+                LocalBindingProof::Closure {
+                    closure_id,
+                    is_async,
+                    ..
+                } => closure_binding_callee(path, *closure_id, *is_async, is_awaited),
                 LocalBindingProof::ValueAlias { source_path, .. } => {
                     DynamicCallCallee::AliasedLocalBinding {
                         path,
@@ -415,12 +438,15 @@ fn dereferenced_local_binding_callee(
                 init_path: init_path.clone(),
             })
         }
-        LocalBindingProof::Closure { closure_id, .. } => {
-            Some(DynamicCallCallee::DereferencedClosureBinding {
-                path,
-                closure_id: *closure_id,
-            })
-        }
+        LocalBindingProof::Closure {
+            closure_id,
+            is_async,
+            ..
+        } if !is_async => Some(DynamicCallCallee::DereferencedClosureBinding {
+            path,
+            closure_id: *closure_id,
+        }),
+        LocalBindingProof::Closure { .. } => None,
         LocalBindingProof::Typed {
             init_path: None, ..
         }

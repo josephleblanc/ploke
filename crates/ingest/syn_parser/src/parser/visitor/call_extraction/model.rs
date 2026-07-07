@@ -24,6 +24,7 @@ pub(super) enum LocalBindingProof {
     Closure {
         name: String,
         closure_id: ExecutableBodyId,
+        is_async: bool,
     },
     LocalFunction {
         name: String,

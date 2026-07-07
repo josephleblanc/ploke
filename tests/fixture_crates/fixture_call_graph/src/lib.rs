@@ -1697,3 +1697,13 @@ pub fn call_dereferenced_boxed_dyn_fn_value_binding() -> i32 {
     let boxed_fn: Box<dyn Fn() -> i32> = Box::new(local_target);
     (*boxed_fn)()
 }
+
+pub fn call_async_closure_binding_without_await_with_body_call() {
+    let closure = async || local_target();
+    closure();
+}
+
+pub async fn call_awaited_async_closure_binding_with_body_call() {
+    let closure = async || local_target();
+    closure().await;
+}

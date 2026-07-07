@@ -127,13 +127,20 @@ impl BodyCallVisitor<'_> {
         let span = (byte_range.start, byte_range.end);
         let id = generate_path_call_site_id(self.owner, &path, span, self.cfgs);
         let target = id.into();
+        let is_awaited = self.awaited_call_spans.contains(&span);
 
         self.calls.push(CallNode::PathCall(PathCallNode {
             id,
             owner: self.owner,
             span,
             cfgs: self.cfgs.to_vec(),
-            callee: classify_path_callee(&path, callee, self.param_names, &self.local_scopes),
+            callee: classify_path_callee(
+                &path,
+                callee,
+                self.param_names,
+                &self.local_scopes,
+                is_awaited,
+            ),
             path,
             arg_count: call.args.len(),
             generic_arg_count: path_generic_arg_count(&callee.path),
@@ -653,6 +660,7 @@ fn classify_path_callee(
     expr_path: &syn::ExprPath,
     param_names: &[String],
     local_scopes: &[Vec<LocalBindingProof>],
+    is_awaited: bool,
 ) -> PathCallCallee {
     if expr_path.qself.is_some() || path.len() != 1 {
         return PathCallCallee::ItemPath;
@@ -679,10 +687,28 @@ fn classify_path_callee(
                 path: path.to_vec(),
                 init_path: init_path.clone(),
             },
-            LocalBindingProof::Closure { closure_id, .. } => PathCallCallee::ClosureBinding {
-                path: path.to_vec(),
-                closure_id: *closure_id,
-            },
+            LocalBindingProof::Closure {
+                closure_id,
+                is_async,
+                ..
+            } => {
+                if *is_async && is_awaited {
+                    PathCallCallee::AwaitedAsyncClosureBinding {
+                        path: path.to_vec(),
+                        closure_id: *closure_id,
+                    }
+                } else if *is_async {
+                    PathCallCallee::AsyncClosureBinding {
+                        path: path.to_vec(),
+                        closure_id: *closure_id,
+                    }
+                } else {
+                    PathCallCallee::ClosureBinding {
+                        path: path.to_vec(),
+                        closure_id: *closure_id,
+                    }
+                }
+            }
             LocalBindingProof::LocalFunction { body_id, .. } => {
                 PathCallCallee::LocalFunctionBinding {
                     path: path.to_vec(),
@@ -921,10 +947,11 @@ fn local_binding_proof(
                     })
                 })
                 .or_else(|| {
-                    closure_binding_id(init_expr, owner, cfgs).map(|closure_id| {
+                    closure_binding_id(init_expr, owner, cfgs).map(|(closure_id, is_async)| {
                         LocalBindingProof::Closure {
                             name: name.clone(),
                             closure_id,
+                            is_async,
                         }
                     })
                 });
@@ -1129,15 +1156,14 @@ fn closure_binding_id(
     expr: Option<&syn::Expr>,
     owner: CallBodyOwnerId,
     cfgs: &[String],
-) -> Option<ExecutableBodyId> {
+) -> Option<(ExecutableBodyId, bool)> {
     let syn::Expr::Closure(closure) = unparen_expr(expr?) else {
         return None;
     };
     let byte_range = closure.span().byte_range();
     let span = (byte_range.start, byte_range.end);
-    Some(ExecutableBodyId::Closure(generate_closure_body_id(
-        owner, span, cfgs,
-    )))
+    let closure_id = ExecutableBodyId::Closure(generate_closure_body_id(owner, span, cfgs));
+    Some((closure_id, closure.asyncness.is_some()))
 }
 
 fn inferred_init_path(expr: Option<&syn::Expr>) -> Option<Vec<String>> {

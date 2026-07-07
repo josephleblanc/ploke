@@ -54,7 +54,8 @@ impl CallRelationResolver<'_> {
                 statuses.push(CallResolutionStatus::Unsupported { source });
                 return Ok(());
             }
-            PathCallCallee::ClosureBinding { closure_id, .. } => {
+            PathCallCallee::ClosureBinding { closure_id, .. }
+            | PathCallCallee::AwaitedAsyncClosureBinding { closure_id, .. } => {
                 relations.push(CallRelation::Closure {
                     source: call.id,
                     target: *closure_id,
@@ -63,6 +64,10 @@ impl CallRelationResolver<'_> {
                     source,
                     kind: CallResolutionKind::LocalExact,
                 });
+                return Ok(());
+            }
+            PathCallCallee::AsyncClosureBinding { .. } => {
+                statuses.push(CallResolutionStatus::Unsupported { source });
                 return Ok(());
             }
             PathCallCallee::LocalFunctionBinding { body_id, .. } => {
