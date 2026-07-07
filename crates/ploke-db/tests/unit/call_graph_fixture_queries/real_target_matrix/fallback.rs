@@ -399,7 +399,8 @@ fn memchr_arbitrary_expression_dynamic_callee_is_absent_fallback_gap() -> Result
 }
 
 #[test]
-fn memchr_callable_trait_object_field_calls_are_absent_fallback_gap() -> Result<(), DbError> {
+fn memchr_callable_trait_object_field_calls_are_visible_targetless_path_rows() -> Result<(), DbError>
+{
     let db = setup_call_graph_db(&CORPUS_MEMCHR_CALL_GRAPH)?;
 
     // Matrix: `Fallback Source Oracle Matrix`.
@@ -413,8 +414,9 @@ fn memchr_callable_trait_object_field_calls_are_absent_fallback_gap() -> Result<
     //   `rev(t.haystack.as_bytes(), t.needle.as_bytes())`.
     //   setters at lines 137 and 153 bind the closures into those fields.
     //
-    // Current model gap: callable trait-object local bindings are not projected
-    // as dynamic call rows under `Runner::run`.
+    // Current model gap: callable trait-object local bindings are visible as
+    // targetless path rows, but boxed `dyn FnMut` dispatch is not resolved and
+    // must not fabricate call edges to the setter closures.
     assert_no_dynamic_rows_by_method_name(&db, "run")?;
     let owner = method_id_by_name_body_and_file_suffix(
         &db,
@@ -426,7 +428,23 @@ fn memchr_callable_trait_object_field_calls_are_absent_fallback_gap() -> Result<
         &db,
         owner,
         "memchr/src/tests/substring/mod.rs:94 and :110 boxed dyn FnMut calls",
-    )
+    )?;
+    assert_owner_path_targetless(
+        &db,
+        owner,
+        &["fwd"],
+        CallStatusKind::Unsupported,
+        "memchr/src/tests/substring/mod.rs:94 boxed fwd dyn FnMut local binding",
+    )?;
+    assert_owner_path_targetless(
+        &db,
+        owner,
+        &["rev"],
+        CallStatusKind::Unsupported,
+        "memchr/src/tests/substring/mod.rs:110 boxed rev dyn FnMut local binding",
+    )?;
+
+    Ok(())
 }
 
 #[test]

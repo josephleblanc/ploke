@@ -374,7 +374,7 @@ in `crates/ploke-db/tests/unit/call_graph_fixture_queries/real_target_matrix/fal
 | chrono | guarded match arm method guard | `src/format/strftime.rs:635` | `StrftimeItems.queue: &'static [Item<'static>]` field `src/format/strftime.rs:198` | `corpus_chrono_call_graph` now projects one targetless `SelfField(["queue"]).is_empty()` row with `External` status, using the source-visible slice receiver type without fabricating a local traversal edge. |
 | memchr | arbitrary-expression dynamic callee | macro source `src/arch/x86_64/memchr.rs:153`; macro instantiations at `:180,203,227,252,278,305,326` | macro-local aliases `type Fn = *mut ()`, `type RealFn = $fnty` at `:72-73`; static pointer `FN` at `:74` | `corpus_memchr_call_graph` currently does not project the `core::mem::transmute::<Fn, RealFn>(fun)(...)` path or outer dynamic call, so the test asserts absence rather than guessed callees. |
 | memchr | function-pointer field call | `src/memmem/searcher.rs:222,718` | `Searcher.call` at `:34`; alias `SearcherKindFn` at `:273`; `Prefilter.call` at `:605`; alias `PrefilterKindFn` at `:774` | `corpus_memchr_call_graph` currently projects two targetless dynamic rows owned by methods named `find`, with argument counts 4 and 2. |
-| memchr | callable trait object field | `src/tests/substring/mod.rs:94,110` | `Runner.fwd` at `:67-68`; `Runner.rev` at `:70-71`; setters box closures at `:137,153` | `corpus_memchr_call_graph` currently does not project these boxed `dyn FnMut` local-binding calls as dynamic rows under `Runner::run`. |
+| memchr | callable trait object field | `src/tests/substring/mod.rs:94,110` | `Runner.fwd` at `:67-68`; `Runner.rev` at `:70-71`; setters box closures at `:137,153` | `corpus_memchr_call_graph` projects these boxed `dyn FnMut` local-binding calls as targetless unsupported path rows under `Runner::run`; it does not project them as dynamic rows or fabricate edges to the setter closures. |
 | generic-array | guarded match arm | `src/lib.rs:1241,1243,1278,1280` | `ArrayLength` bound at `src/lib.rs:245`; `LengthError` at `:1197` | `corpus_generic_array_call_graph` now projects two targetless `iter.size_hint()` method rows with `Unsupported` status and no traversal edge. |
 
 Current executable coverage: `fallback.rs` now pins the chrono alias rows by
@@ -386,8 +386,9 @@ preserve the 12 chrono alias constructor caller-site identities. RAG collection
 now preserves the two memchr function-pointer field blockers with argument
 counts 4 and 2, and TUI
 `code_item_lookup` plus `code_item_edges` preserve the same targetless dynamic
-rows and blocked proof facts. It also pins memchr callable trait-object cases by
-explicit owner-scoped absence. The generic-array guarded match-arm case remains
+rows and blocked proof facts. It also pins memchr callable trait-object cases as
+owner-scoped targetless path rows while preserving dynamic-row absence. The
+generic-array guarded match-arm case remains
 a fixture-wide absence assertion because the source checkout is not present in
 `tests/fixture_github_clones/corpus`.
 
