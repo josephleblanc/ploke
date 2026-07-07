@@ -599,6 +599,59 @@ async fn call_context_collection_reads_axum_request_builder_alias_frontier() -> 
 }
 
 #[tokio::test]
+async fn call_context_collection_preserves_axum_shadowed_get_boundary() -> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    let owner = function_id_by_name_in_module(
+        &db,
+        &["crate", "routing", "tests"],
+        "what_matches_wildcard",
+    )?;
+    let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+    let context = call_context
+        .get(&owner)
+        .expect("what_matches_wildcard should receive outgoing call context");
+    let callee = CallCalleeInfo::Path {
+        path: path(&["get"]),
+    };
+    let matching = context
+        .iter()
+        .filter(|call| call.kind == CallSiteKind::Path && call.callee == callee)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching.len(),
+        2,
+        "what_matches_wildcard should expose only the two setup get(...) rows: {context:#?}"
+    );
+
+    // Matrix:
+    //   docs/active/agents/call-graph/
+    //   2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //
+    // Source chain:
+    //   axum/src/routing/tests/mod.rs:412-413 calls imported routing `get`.
+    //   axum/src/routing/tests/mod.rs:418 binds a local closure named `get`.
+    //   axum/src/routing/tests/mod.rs:423-434 calls that local closure inside
+    //   `assert_eq!` macro arguments.
+    // Expected traversal: the current fixture exposes the two setup path rows,
+    // keeps them targetless, and does not fabricate edges from the later
+    // shadowed macro-argument calls to the imported routing helper.
+    for call in matching {
+        assert_eq!(call.owner_id, owner);
+        assert_eq!(call.arg_count, Some(1));
+        assert_eq!(call.status, CallStatusKind::Unsupported);
+        assert_eq!(call.resolution, None);
+        assert!(
+            call.targets.is_empty(),
+            "shadowed get boundary should remain targetless in RAG call context: {call:#?}"
+        );
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn call_context_collection_reads_axum_std_mem_replace_frontier() -> Result<(), Error> {
     init_tracing_once();
     let (db, rag) = setup_axum_call_graph_rag()?;

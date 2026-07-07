@@ -293,6 +293,19 @@ impl PathToolCase {
         },
     }];
 
+    pub(crate) const SHADOWED_GET: [Self; 1] = [Self {
+        label: "axum/src/routing/tests/mod.rs:412-434 shadowed get boundary",
+        item: "what_matches_wildcard",
+        path: &["get"],
+        status: CallStatusKind::Unsupported,
+        corpus: DynamicToolCorpus::Axum,
+        owner: PathOwner::Function {
+            module_path: &["crate", "routing", "tests"],
+            file_suffix: "axum/src/routing/tests/mod.rs",
+            body: "let get = |path|",
+        },
+    }];
+
     pub(crate) const STD_MEM_REPLACE: [Self; 1] = [Self {
         label: "axum/src/response/sse.rs:449 std::mem::replace external frontier",
         item: "write_buf",
@@ -612,13 +625,7 @@ pub(crate) fn assert_path_context(
     label: &str,
     tool: &str,
 ) -> Uuid {
-    let matching = calls
-        .iter()
-        .filter_map(|call| serde_json::from_value::<CallContextInfo>(call.clone()).ok())
-        .filter(|call| {
-            call.owner_id == owner && call.kind == CallSiteKind::Path && &call.callee == callee
-        })
-        .collect::<Vec<_>>();
+    let matching = matching_path_context(calls, owner, callee);
     assert_eq!(
         matching.len(),
         1,
@@ -632,6 +639,32 @@ pub(crate) fn assert_path_context(
         "{tool} should not fabricate traversal targets for {label}: {call:#?}"
     );
     call.site_id
+}
+
+pub(crate) fn assert_path_context_count(
+    calls: &[serde_json::Value],
+    owner: Uuid,
+    callee: &CallCalleeInfo,
+    status: &CallStatusKind,
+    expected_count: usize,
+    label: &str,
+    tool: &str,
+) -> Vec<Uuid> {
+    let matching = matching_path_context(calls, owner, callee);
+    assert_eq!(
+        matching.len(),
+        expected_count,
+        "{tool} should return exactly {expected_count} path targetless rows for {label}: {calls:#?}"
+    );
+    for call in &matching {
+        assert_eq!(&call.status, status);
+        assert_eq!(call.resolution, None);
+        assert!(
+            call.targets.is_empty(),
+            "{tool} should not fabricate traversal targets for {label}: {call:#?}"
+        );
+    }
+    matching.iter().map(|call| call.site_id).collect()
 }
 
 pub(crate) fn assert_path_context_absent(
@@ -652,6 +685,20 @@ pub(crate) fn assert_path_context_absent(
         matching.is_empty(),
         "{tool} should not flatten the nested local-item path row into {label}: {calls:#?}"
     );
+}
+
+fn matching_path_context(
+    calls: &[serde_json::Value],
+    owner: Uuid,
+    callee: &CallCalleeInfo,
+) -> Vec<CallContextInfo> {
+    calls
+        .iter()
+        .filter_map(|call| serde_json::from_value::<CallContextInfo>(call.clone()).ok())
+        .filter(|call| {
+            call.owner_id == owner && call.kind == CallSiteKind::Path && &call.callee == callee
+        })
+        .collect()
 }
 
 pub(crate) fn assert_dynamic_proof(

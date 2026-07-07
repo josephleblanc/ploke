@@ -75,7 +75,7 @@ Status values:
 | Await result receiver | `axum-fixture` | axum | `axum/src/test_helpers/test_client.rs:134` | `self.builder.send().await.unwrap()` | Query should preserve method site after `.await` receiver shape. |
 | Try result receiver | `fallback-source` | chrono | `src/format/parsed.rs:836` | `DateTime::from_timestamp_secs(ts).ok_or(OUT_OF_RANGE)?.naive_utc()` | Covered in `fallback.rs`: chrono try-result receiver rows are visible, unsupported, targetless, and non-traversable. |
 | Generic turbofish method call | `axum-fixture` | axum-core | `axum-core/src/ext_traits/request_parts.rs:164` | `.extract_with_state::<State<String>, String>(&state)` | Covered in `receivers.rs`: method site preserves two generic args and remains unsupported/targetless until method-chain receiver classification is implemented. |
-| Local shadowed callable value | `axum-fixture` | axum | `axum/src/routing/tests/mod.rs:423` | local `get` closure is later called as `get("/").await` | This is a real local callable shadowing case; query should not emit a fake edge to `routing::get`. |
+| Local shadowed callable value | `axum-fixture` | axum | `axum/src/routing/tests/mod.rs:423` | local `get` closure is later called as `get("/").await` | Covered by DB/RAG/TUI targetless tests: the current fixture exposes only the two setup `get(...)` rows and does not emit a fake edge from shadowed closure calls to `routing::get`. |
 
 ## Trait And Body-Owner Cases
 

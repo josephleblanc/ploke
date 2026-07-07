@@ -49,10 +49,28 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: none selected after the memchr callable trait-object
-targetless propagation slice.
+Current bucket: none selected after the axum shadowed `get` targetless
+propagation slice.
 
-Latest completed bucket: downstream targetless propagation for real-corpus
+Latest completed bucket: downstream targetless propagation for a real-corpus
+local shadowing boundary.
+
+Completed evidence:
+
+- DB already pins `axum/src/routing/tests/mod.rs:{412,413}` as the only two
+  projected `get(...)` path rows for `what_matches_wildcard`, while
+  `mod.rs:418` shadows imported routing `get` with a local closure and
+  `mod.rs:423-434` calls that closure inside `assert_eq!` macro arguments.
+- RAG call-context tests now assert exact owner collection preserves exactly
+  those two targetless unsupported path rows, with no fabricated edge to the
+  imported routing helper.
+- Exact `code_item_lookup` and `code_item_edges` now assert the same two-row
+  targetless boundary and blocked `type_resolution_missing` proof rows.
+- This closes downstream visibility for the stored real-corpus shadowing
+  boundary only. Macro-argument body extraction and closure call traversal
+  remain future parser/body-owner work.
+
+Previously completed bucket: downstream targetless propagation for real-corpus
 callable trait-object path rows.
 
 Completed evidence:

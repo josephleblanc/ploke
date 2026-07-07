@@ -11,7 +11,7 @@ use crate::call_graph_tool_support::{
     DynamicToolCase, DynamicToolFixture, PathToolCase, PathToolFixture, ReceiverToolCase,
     ReceiverToolFixture, assert_dynamic_context, assert_dynamic_proof, assert_method_context,
     assert_method_proof, assert_path_blocker_proof, assert_path_context,
-    assert_path_context_absent, assert_path_resolution_proof, ui_field,
+    assert_path_context_absent, assert_path_context_count, assert_path_resolution_proof, ui_field,
 };
 
 #[tokio::test]
@@ -381,6 +381,86 @@ async fn code_item_lookup_returns_from_ref_dependency_root_path_rows() {
         );
 
         let _ui = result.ui_payload.as_ref().expect("ui payload");
+    }
+}
+
+#[tokio::test]
+async fn code_item_lookup_preserves_shadowed_get_targetless_boundary() {
+    for case in PathToolCase::SHADOWED_GET {
+        let fixture = PathToolFixture::new(case.clone()).await;
+        let params = LookupParams {
+            item_name: Cow::Borrowed(case.item),
+            file_path: Cow::Owned(fixture.file_path.display().to_string()),
+            node_kind: Cow::Borrowed(case.node_kind()),
+            module_path: Cow::Owned(fixture.module_path_arg()),
+            owner_trait: case.owner_trait().map(Cow::Borrowed),
+            owner_type: case.owner_type().map(Cow::Borrowed),
+            parent_name: None,
+        };
+
+        let result = CodeItemLookup::execute(params, fixture.ctx("axum-shadowed-get-lookup"))
+            .await
+            .unwrap_or_else(|err| panic!("{} code_item_lookup: {err}", fixture.case.label));
+        let payload: serde_json::Value =
+            serde_json::from_str(&result.content).expect("deserialize ConciseContext");
+        let call_context = payload
+            .get("call_context")
+            .and_then(serde_json::Value::as_array)
+            .expect("call_context array");
+        let proof_context = payload
+            .get("proof_context")
+            .and_then(serde_json::Value::as_array)
+            .expect("proof_context array");
+
+        // Matrix:
+        //   docs/active/agents/call-graph/
+        //   2026-06-28_real-corpus-call-site-oracle-matrices.md
+        //
+        // Source chain:
+        //   axum/src/routing/tests/mod.rs:412-413 calls imported routing `get`.
+        //   axum/src/routing/tests/mod.rs:418 binds a local closure named `get`.
+        //   axum/src/routing/tests/mod.rs:423-434 calls that closure inside
+        //   `assert_eq!` macro arguments.
+        // Expected traversal: exact owner lookup exposes only the two setup
+        // `get(...)` path rows, keeps them targetless, and does not fabricate
+        // edges from the later shadowed macro-argument calls to routing `get`.
+        let callee = fixture.case.callee();
+        let site_ids = assert_path_context_count(
+            call_context,
+            fixture.owner,
+            &callee,
+            &fixture.case.status,
+            2,
+            fixture.case.label,
+            "lookup",
+        );
+        for site_id in site_ids {
+            assert_path_blocker_proof(
+                proof_context,
+                fixture.owner,
+                site_id,
+                fixture.case.build_domain(),
+                "type_resolution_missing",
+                fixture.case.label,
+                "lookup",
+            );
+        }
+
+        let ui = result.ui_payload.as_ref().expect("ui payload");
+        assert!(
+            ui_field(ui, "call_context_outgoing")
+                .parse::<usize>()
+                .expect("outgoing count")
+                >= 2,
+            "code_item_lookup should surface both shadowed get boundary rows"
+        );
+        assert!(
+            ui_field(ui, "proof_context")
+                .parse::<usize>()
+                .expect("proof count")
+                >= 4,
+            "code_item_lookup should surface both shadowed get proof rows"
+        );
     }
 }
 
@@ -929,6 +1009,73 @@ async fn code_item_edges_returns_from_ref_dependency_root_path_rows() {
         );
 
         let _ui = result.ui_payload.as_ref().expect("ui payload");
+    }
+}
+
+#[tokio::test]
+async fn code_item_edges_preserves_shadowed_get_targetless_boundary() {
+    for case in PathToolCase::SHADOWED_GET {
+        let fixture = PathToolFixture::new(case.clone()).await;
+        let params = EdgesParams {
+            item_name: Cow::Borrowed(case.item),
+            file_path: Cow::Owned(fixture.file_path.display().to_string()),
+            node_kind: Cow::Borrowed(case.node_kind()),
+            module_path: Cow::Owned(fixture.module_path_arg()),
+            owner_trait: case.owner_trait().map(Cow::Borrowed),
+            owner_type: case.owner_type().map(Cow::Borrowed),
+            parent_name: None,
+        };
+
+        let result = CodeItemEdges::execute(params, fixture.ctx("axum-shadowed-get-edges"))
+            .await
+            .unwrap_or_else(|err| panic!("{} code_item_edges: {err}", fixture.case.label));
+        let payload: serde_json::Value =
+            serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
+        let call_context = payload
+            .get("node_info")
+            .and_then(|node| node.get("call_context"))
+            .and_then(serde_json::Value::as_array)
+            .expect("node_info.call_context array");
+        let proof_context = payload
+            .get("node_info")
+            .and_then(|node| node.get("proof_context"))
+            .and_then(serde_json::Value::as_array)
+            .expect("node_info.proof_context array");
+
+        // Same real-corpus shadowed get oracle as the lookup test above,
+        // exercised through the edge-oriented exact tool payload.
+        let callee = fixture.case.callee();
+        let site_ids = assert_path_context_count(
+            call_context,
+            fixture.owner,
+            &callee,
+            &fixture.case.status,
+            2,
+            fixture.case.label,
+            "edges",
+        );
+        for site_id in site_ids {
+            assert_path_blocker_proof(
+                proof_context,
+                fixture.owner,
+                site_id,
+                fixture.case.build_domain(),
+                "type_resolution_missing",
+                fixture.case.label,
+                "edges",
+            );
+        }
+
+        let ui = result.ui_payload.as_ref().expect("ui payload");
+        assert!(
+            ui_field(ui, "call_context_outgoing")
+                .parse::<usize>()
+                .expect("outgoing count")
+                >= 2,
+            "code_item_edges should surface both shadowed get boundary rows"
+        );
+        let proof_count = proof_context.len().to_string();
+        assert_eq!(ui_field(ui, "proof_context"), proof_count.as_str());
     }
 }
 
