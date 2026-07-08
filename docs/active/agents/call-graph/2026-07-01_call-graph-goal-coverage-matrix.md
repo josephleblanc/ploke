@@ -8,6 +8,7 @@ Related planning files:
 - [`2026-06-25_call-graph-coverage-inventory.md`](2026-06-25_call-graph-coverage-inventory.md)
 - [`2026-06-28_real-corpus-call-site-case-matrix.md`](2026-06-28_real-corpus-call-site-case-matrix.md)
 - [`2026-06-28_real-corpus-call-site-oracle-matrices.md`](2026-06-28_real-corpus-call-site-oracle-matrices.md)
+- [`2026-07-07_call-graph-usage-question-gap-audit.md`](2026-07-07_call-graph-usage-question-gap-audit.md)
 
 Status date: 2026-07-07
 Baseline HEAD when created: `19860cc40`
@@ -49,23 +50,43 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: usage-question query-surface gap audit after shared matrix
-propagation.
+Current bucket: binding/type-aware proof for unsupported receiver and dynamic
+callable rows.
 
 Exit criteria:
 
-- Map the questions in
-  [`../2026-06-30_call-graph-usage-questions.md`](../2026-06-30_call-graph-usage-questions.md)
-  to existing DB, RAG, and TUI/tool query tests.
-- Identify the next concrete missing query/test contract, if one exists,
-  before adding more parser or resolver breadth.
-- Record the selected next implementation bucket here before editing code.
+- Pick one existing targetless real-corpus or fixture-backed row from this
+  matrix; do not add a new broad case first.
+- Identify the exact missing proof input: local binding, receiver type,
+  callable value flow, external summary, or generated item.
+- Add the smallest typed parser/resolver/transform fact needed to prove that
+  row, or keep it fail-closed with a stronger blocker if proof is still
+  unavailable.
+- Verify DB first, then propagate to RAG and TUI only if the row is exposed
+  there.
 
-Reason to stay in current bucket: the shared DB/RAG matrix propagation is now
-closed for rows currently marked downstream. The next implementation step should
-come from a concrete usage-question gap, not from another nearby parser shape.
+Reason to stay in current bucket: the usage-question audit found broad DB/RAG/TUI
+query surfaces already exist; the remaining actionable gaps are proof inputs
+for targetless receiver/dynamic rows, not another query-helper layer.
 
-Latest completed bucket: downstream propagation for the shared real-target
+Latest completed bucket: usage-question query-surface gap audit after shared
+matrix propagation.
+
+Completed evidence:
+
+- Added
+  [`2026-07-07_call-graph-usage-question-gap-audit.md`](2026-07-07_call-graph-usage-question-gap-audit.md),
+  mapping impact, dead-code, navigation, security, performance, refactoring,
+  test-planning, architecture, debugging, API-understanding, RAG, and
+  build/deployment questions to existing DB/RAG/TUI coverage.
+- The audit found the current query-helper surface is strong enough for the
+  next implementation step; remaining gaps are mostly semantic proof inputs
+  such as binding/value-flow, external summaries, source/sink annotations, and
+  generated harness/build-entrypoint summaries.
+- Selected next implementation bucket:
+  binding/type-aware proof for unsupported receiver and dynamic callable rows.
+
+Previously completed bucket: downstream propagation for the shared real-target
 call-shape matrix.
 
 Completed evidence:
