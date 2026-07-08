@@ -935,6 +935,26 @@ next likely slices are:
 3. Keep splitting/table-driving any large helper or projection test touched by
    that batch before adding cases.
 
+Progress note, 2026-07-08:
+
+- Regenerated active call-graph backup fixtures with
+  `cargo run -p xtask --features call_graph -- fixtures regenerate --active`
+  and verified the active registry with
+  `cargo run -p xtask --features call_graph -- verify-backup-dbs`; no tracked
+  fixture files changed.
+- Added shared TUI tool coverage for the real-corpus call-shape matrix, then
+  split the new helper stack by concern:
+  `call_graph_tool_support/shared_matrix/{db,query,rag}.rs`.
+- Split callable-parameter TUI fixtures into
+  `call_graph_tool_support/fixture_callable.rs`.
+- Split dynamic-callable and receiver TUI fixtures/assertions into
+  `call_graph_tool_support/fixture_receiver.rs`, reducing the root
+  `call_graph_tool_support.rs` helper from 3277 to 2928 lines.
+- The remaining large TUI helper files are now explicit cleanup candidates:
+  `call_graph_tool_support.rs`, `call_graph_tool_support/targetless.rs`, and
+  `call_graph_tool_support/real_corpus_remaining.rs`. Do not add more cases to
+  those roots without first considering the established submodule pattern.
+
 Progress note, 2026-06-28:
 
 - The `ploke-db` real-corpus call-site oracle matrix is covered by the split
