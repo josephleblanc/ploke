@@ -1235,6 +1235,103 @@ fn axum_usage_questions_report_reachable_effect_seed_for_task_spawn() -> Result<
 }
 
 #[test]
+fn axum_usage_questions_report_dyn_future_poll_runtime_dispatch_blocker() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Debugging / Security analysis:
+    //   "Which reachable call frontiers are blocked by runtime dispatch?"
+    //   "Can the call graph distinguish an unsupported frontier from a
+    //   fabricated local edge?"
+    //
+    // Source oracle:
+    //   axum/src/error_handling/mod.rs:240 stores
+    //     `Pin<Box<dyn Future<Output = Result<Response, Infallible>>>>`.
+    //   axum/src/error_handling/mod.rs:251
+    //     `HandleErrorFuture::poll` calls `self.project().future.poll(cx)`.
+    // Expected contract: the dyn `Future::poll` callsite remains unsupported
+    // and targetless, while proof facts can attach the runtime dispatch blocker
+    // to the same callsite identity for fail-closed traversal consumers.
+    let owner = method_id_by_name_body_and_file_suffix(
+        &db,
+        "poll",
+        "self.project().future.poll(cx)",
+        "axum/src/error_handling/mod.rs",
+    )?;
+    let context = db.call_context_for_owner(owner)?;
+    let poll = row_by_method_receiver(&context, "poll", &CallReceiver::Unsupported);
+    assert_targetless_status(poll, CallStatusKind::Unsupported);
+    assert!(
+        relations_for_site(&db, poll.site.id)?.rows.is_empty(),
+        "axum/src/error_handling/mod.rs:251 dyn Future::poll must not fabricate a local edge"
+    );
+    assert_no_traversal_candidates_for_site(
+        &db,
+        owner,
+        poll.site.id,
+        "axum/src/error_handling/mod.rs:251 dyn Future::poll receiver dispatch",
+    )?;
+
+    let report = db.call_reach_for_owner(
+        owner,
+        CallPathOptions {
+            max_depth: 1,
+            max_paths: 16,
+        },
+    )?;
+    let frontier = report
+        .unsupported_frontier_calls
+        .iter()
+        .find(|row| row.site.id == poll.site.id)
+        .unwrap_or_else(|| {
+            panic!(
+                "reach report should expose dyn Future::poll as an unsupported frontier: {report:#?}"
+            )
+        });
+    assert_eq!(frontier.site.owner_id, owner);
+    assert!(
+        frontier.targets.is_empty(),
+        "unsupported dyn Future::poll frontier should remain targetless: {frontier:#?}"
+    );
+
+    let site = poll.site.id.to_string();
+    db.upsert_proof_fact_values(&[json!({
+        "fact_kind": "proof_blocker",
+        "schema_version": "ploke-proof-facts.v1",
+        "blocker_id": "blocker:axum-dyn-future-poll-runtime-dispatch",
+        "reason": "dynamic_dispatch_unbounded",
+        "status": "blocked",
+        "call_site_id": site,
+        "detail": "axum/src/error_handling/mod.rs:251 dyn Future::poll concrete runtime future unresolved",
+        "evidence_use": "proof_only"
+    })])?;
+
+    let blockers = db.proof_blockers()?;
+    assert!(
+        blockers.iter().any(|proof| {
+            proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.reason == "dynamic_dispatch_unbounded"
+                && proof.status == "blocked"
+        }),
+        "dyn Future::poll callsite should expose a runtime dispatch proof blocker: {blockers:#?}"
+    );
+
+    let proof_rows = db.proof_graphrag_context("dyn Future::poll")?;
+    assert!(
+        proof_rows.iter().any(|proof| {
+            proof.kind == "proof_blocker"
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.blocker_reason.as_deref() == Some("dynamic_dispatch_unbounded")
+        }),
+        "RAG proof context lookup should retrieve the dyn Future::poll blocker: {proof_rows:#?}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn axum_usage_questions_report_architecture_boundary_edges() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 

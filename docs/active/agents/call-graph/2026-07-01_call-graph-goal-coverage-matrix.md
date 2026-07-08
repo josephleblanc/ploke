@@ -72,7 +72,35 @@ matrix table marks receiver, dynamic callable, executable-owner, and usage
 summary rows as met for now. Remaining work should switch to one of the
 future-heavy carriers above instead of polishing another nearby local proof.
 
-Latest completed slice in current bucket: reachable source/sink effect
+Latest completed slice in current bucket: runtime trait-object dispatch blocker
+proof over a real axum dyn Future poll frontier.
+
+Completed evidence:
+
+- Regenerated active fixture snapshots and verified the active backup DB
+  registry; no tracked fixture bytes changed.
+- Added a DB real-target usage-question test for
+  `axum/src/error_handling/mod.rs:251`
+  `HandleErrorFuture::poll -> self.project().future.poll(cx)`, whose receiver
+  field type is the `Pin<Box<dyn Future<...>>>` stored at
+  `axum/src/error_handling/mod.rs:240`.
+- The test proves the dyn `Future::poll` row remains `Unsupported`,
+  targetless, and absent from traversal edges, while `call_reach_for_owner`
+  exposes it as an unsupported frontier from the owner.
+- The same test attaches an explicit `dynamic_dispatch_unbounded`
+  `proof_blocker` to the real callsite id and proves both
+  `proof_blockers()` and `proof_graphrag_context(...)` can retrieve the blocker
+  without fabricating a local callee edge.
+- No new `effect_class` enum was added for poll/resume here. GitNexus reported
+  `validate_enum_fields` as CRITICAL blast radius, so async poll/resume effect
+  taxonomy remains a separate schema decision instead of being widened inside a
+  test slice.
+- Verification passed:
+  `cargo xtask fixtures regenerate --active`,
+  `cargo xtask verify-backup-dbs`, and
+  `cargo test -p ploke-db axum_usage_questions_report_dyn_future_poll_runtime_dispatch_blocker -- --nocapture`.
+
+Previously completed slice in current bucket: reachable source/sink effect
 annotation query over a real axum task-spawn frontier.
 
 Completed evidence:
