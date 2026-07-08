@@ -183,7 +183,7 @@ impl Database {
     ) -> Result<Vec<CallReachEffect>, DbError> {
         let paths = self.call_paths_from_owner(owner_id, options)?;
         let context_by_site = reachable_callsite_context_rows(self, owner_id, &paths)?;
-        let blockers_by_site = proof_blockers_by_call_site(self)?;
+        let blockers_by_site = proof_blockers_by_call_site(self, context_by_site.keys())?;
         let mut paths_by_owner = BTreeMap::<Uuid, Vec<CallPath>>::new();
         for path in &paths {
             paths_by_owner
@@ -264,7 +264,7 @@ impl Database {
     ) -> Result<Vec<ExternalSummaryNeed>, DbError> {
         let paths = self.call_paths_from_owner(owner_id, options)?;
         let context_by_site = reachable_callsite_context_rows(self, owner_id, &paths)?;
-        let blockers_by_site = proof_blockers_by_call_site(self)?;
+        let blockers_by_site = proof_blockers_by_call_site(self, context_by_site.keys())?;
         let mut paths_by_owner = BTreeMap::<Uuid, Vec<CallPath>>::new();
         for path in &paths {
             paths_by_owner
@@ -501,9 +501,16 @@ fn reachable_callsite_context_rows(
     Ok(rows)
 }
 
-fn proof_blockers_by_call_site(db: &Database) -> Result<BTreeMap<String, Vec<String>>, DbError> {
+fn proof_blockers_by_call_site<'a>(
+    db: &Database,
+    site_ids: impl IntoIterator<Item = &'a Uuid>,
+) -> Result<BTreeMap<String, Vec<String>>, DbError> {
+    let site_ids = site_ids
+        .into_iter()
+        .map(Uuid::to_string)
+        .collect::<BTreeSet<_>>();
     let mut out = BTreeMap::<String, Vec<String>>::new();
-    for blocker in ProofGraphStore::proof_blockers(db)? {
+    for blocker in ProofGraphStore::proof_blockers_for_call_sites(db, &site_ids)? {
         let Some(call_site_id) = blocker.call_site_id else {
             continue;
         };

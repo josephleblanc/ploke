@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use serde_json::Value;
 
 use crate::{Database, DbError};
@@ -131,6 +133,10 @@ pub trait ProofGraphStore {
     ) -> Result<Vec<ProofGraphContextRow>, DbError>;
     fn proof_checker_edges(&self) -> Result<Vec<ProofCheckerEdgeRow>, DbError>;
     fn proof_blockers(&self) -> Result<Vec<ProofBlockerRow>, DbError>;
+    fn proof_blockers_for_call_sites(
+        &self,
+        call_site_ids: &BTreeSet<String>,
+    ) -> Result<Vec<ProofBlockerRow>, DbError>;
     fn proof_source_provenance(
         &self,
         call_site_id: &str,
@@ -172,6 +178,13 @@ impl ProofGraphStore for Database {
 
     fn proof_blockers(&self) -> Result<Vec<ProofBlockerRow>, DbError> {
         Database::proof_blockers(self)
+    }
+
+    fn proof_blockers_for_call_sites(
+        &self,
+        call_site_ids: &BTreeSet<String>,
+    ) -> Result<Vec<ProofBlockerRow>, DbError> {
+        Database::proof_blockers_for_call_sites(self, call_site_ids)
     }
 
     fn proof_source_provenance(

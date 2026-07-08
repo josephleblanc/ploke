@@ -2225,6 +2225,98 @@ async fn call_effects_exact_reads_axum_task_spawn_seed() -> Result<(), Error> {
 }
 
 #[tokio::test]
+async fn external_summary_needs_exact_reads_axum_request_builder_queue() -> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+    let domain_id = "bd:corpus-axum-call-graph";
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Security/performance:
+    //   "Which reachable external dependency frontiers still need an audited
+    //   summary before their effects can be trusted?"
+    //
+    // Source oracle:
+    //   axum/src/middleware/from_fn.rs:411 calls `Request::builder()`.
+    // Expected contract: RAG exposes the DB owner-scoped external-summary
+    // queue while the proof blocker is active, and the row disappears after
+    // an admitted summary is linked without adding a local call edge.
+    let owner =
+        function_id_by_name_in_module(&db, &["crate", "middleware", "from_fn", "tests"], "basic")?;
+    let context = db.call_context_for_owner(owner)?;
+    let builder = context
+        .iter()
+        .find(|row| {
+            row.site
+                .path
+                .as_ref()
+                .is_some_and(|call_path| call_path == &path(&["Request", "builder"]))
+        })
+        .unwrap_or_else(|| {
+            panic!("from_fn::tests::basic should expose Request::builder: {context:#?}")
+        });
+    assert_eq!(builder.status.status, DbCallStatusKind::External);
+    assert!(
+        builder.targets.is_empty(),
+        "Request::builder should stay targetless before summary admission: {builder:#?}"
+    );
+
+    let projected = db.project_call_proof_facts_for_owner(owner, domain_id)?;
+    assert!(
+        projected >= 2,
+        "owner proof projection should include call_site and call_resolution rows: {projected}"
+    );
+    let options = CallPathOptions {
+        max_depth: 3,
+        max_paths: 64,
+    };
+    let needs = rag
+        .exact_external_summary_needs_for_owner(owner, options)?
+        .expect("call context enabled");
+    let need = needs
+        .iter()
+        .find(|need| need.call_site.site_id == builder.site.id)
+        .unwrap_or_else(|| {
+            panic!("RAG should expose Request::builder as an external-summary need: {needs:#?}")
+        });
+    assert_eq!(need.call_site.owner_id, owner);
+    assert_eq!(need.call_site.status, CallStatusKind::External);
+    assert!(
+        need.paths_to_owner.is_empty(),
+        "direct owner frontier should not carry an intermediate path: {need:#?}"
+    );
+    assert!(
+        need.blocker_reasons
+            .iter()
+            .any(|reason| reason == "external_dependency_summary_missing"),
+        "RAG need should preserve the active missing-summary blocker: {need:#?}"
+    );
+    assert!(
+        matches!(
+            &need.call_site.callee,
+            CallCalleeInfo::Path { path: call_path } if call_path == &path(&["Request", "builder"])
+        ),
+        "RAG need should preserve the original Request::builder path: {need:#?}"
+    );
+
+    db.upsert_proof_fact_values(&ploke_test_utils::axum_request_builder_summary_records(
+        builder.site.id,
+    ))?;
+    let after = rag
+        .exact_external_summary_needs_for_owner(owner, options)?
+        .expect("call context enabled");
+    assert!(
+        after
+            .iter()
+            .all(|need| need.call_site.site_id != builder.site.id),
+        "admitted Request::builder summary should discharge this RAG need: {after:#?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn get_context_attaches_axum_request_extract_two_hop_call_paths() -> Result<(), Error> {
     init_tracing_once();
     let db = Arc::new(fresh_backup_fixture_db(

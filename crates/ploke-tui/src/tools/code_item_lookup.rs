@@ -301,6 +301,8 @@ for a more fuzzy search."#
         let call_reach = lookup_support::call_reach_for_node(&ctx, resolved_item_id)?;
         let call_reach_effects =
             lookup_support::call_reach_effects_for_node(&ctx, resolved_item_id)?;
+        let external_summary_needs =
+            lookup_support::external_summary_needs_for_node(&ctx, resolved_item_id)?;
         let tool_results = ctx
             .state
             .io_handle
@@ -339,6 +341,7 @@ for a more fuzzy search."#
             call_impact,
             call_reach,
             call_reach_effects,
+            external_summary_needs,
             proof_context: carriers.proof_context,
         };
         let call_counts =
@@ -368,6 +371,7 @@ for a more fuzzy search."#
             concise_context.call_impact.as_ref(),
             concise_context.call_reach.as_ref(),
             &concise_context.call_reach_effects,
+            &concise_context.external_summary_needs,
         )
         .with_field(
             "proof_context",

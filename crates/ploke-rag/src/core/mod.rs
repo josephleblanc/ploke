@@ -16,7 +16,7 @@ use ploke_core::rag_types::{
     CallReachEffectInfo, CallReachInfo, CallReceiverInfo,
     CallResolutionKind as RagCallResolutionKind, CallSiteBucketInfo,
     CallSiteKind as RagCallSiteKind, CallStatusKind as RagCallStatusKind, CallTargetInfo,
-    CallTargetKind, CanonPath, NodeFilepath, ProofContextInfo,
+    CallTargetKind, CanonPath, ExternalSummaryNeedInfo, NodeFilepath, ProofContextInfo,
 };
 use ploke_db::{
     CallContextCandidate, CallContextOptions, CallContextRelation, CallContextRow, CallContextSeed,
@@ -24,7 +24,7 @@ use ploke_db::{
     CallPathEdge as DbCallPathEdge, CallPathOptions, CallReachEffect as DbCallReachEffect,
     CallReachReport as DbCallReachReport, CallReceiver, CallRelationKind, CallResolutionKind,
     CallSiteKind, CallStatusKind as DbCallStatusKind, CallTargetKind as DbCallTargetKind,
-    ProofGraphContextRow, ProofGraphStore,
+    ExternalSummaryNeed as DbExternalSummaryNeed, ProofGraphContextRow, ProofGraphStore,
 };
 use ploke_embed::indexer::EmbeddingProcessor;
 use ploke_embed::runtime::EmbeddingRuntime;
@@ -510,6 +510,22 @@ fn reach_effect_info(
     })
 }
 
+fn external_summary_need_info(
+    db: &Database,
+    row: DbExternalSummaryNeed,
+) -> Result<ExternalSummaryNeedInfo, RagError> {
+    let paths_to_owner = row
+        .paths_to_owner
+        .into_iter()
+        .map(|path| path_info(db, path))
+        .collect::<Result<Vec<_>, RagError>>()?;
+    Ok(ExternalSummaryNeedInfo {
+        paths_to_owner,
+        call_site: row_to_call_context(row.call_site, usize::MAX)?,
+        blocker_reasons: row.blocker_reasons,
+    })
+}
+
 fn call_node_info(row: DbCallNodeInfo) -> CallNodeInfo {
     CallNodeInfo {
         id: row.id,
@@ -911,6 +927,24 @@ impl RagService {
                 .call_effects_reachable_from_owner(owner_id, options)?
                 .into_iter()
                 .map(|row| reach_effect_info(self.db.as_ref(), row))
+                .collect::<Result<Vec<_>, RagError>>()?,
+        ))
+    }
+
+    pub fn exact_external_summary_needs_for_owner(
+        &self,
+        owner_id: Uuid,
+        options: CallPathOptions,
+    ) -> Result<Option<Vec<ExternalSummaryNeedInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .external_summary_needs_for_owner(owner_id, options)?
+                .into_iter()
+                .map(|row| external_summary_need_info(self.db.as_ref(), row))
                 .collect::<Result<Vec<_>, RagError>>()?,
         ))
     }

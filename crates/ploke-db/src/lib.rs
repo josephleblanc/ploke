@@ -26,8 +26,8 @@ pub use call_graph::{
     CallContextSeed, CallImpactReport, CallNodeContext, CallNodeInfo, CallNodeKind, CallPath,
     CallPathEdge, CallPathOptions, CallReachEffect, CallReachReport, CallReceiver,
     CallRelationKind, CallResolutionKind, CallResolutionRow, CallSiteBucket, CallSiteKind,
-    CallSiteRow, CallStatusKind, CallTargetKind, CallTargetRow, ModuleBoundaryEdge,
-    call_target_endpoint_relation, valid_call_target_family,
+    CallSiteRow, CallStatusKind, CallTargetKind, CallTargetRow, ExternalSummaryNeed,
+    ModuleBoundaryEdge, call_target_endpoint_relation, valid_call_target_family,
 };
 pub use database::RestoredEmbeddingSet;
 pub use database::{

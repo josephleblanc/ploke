@@ -197,6 +197,7 @@ mod tests {
         assert!(description.contains("call_impact"));
         assert!(description.contains("call_reach"));
         assert!(description.contains("call_reach_effects"));
+        assert!(description.contains("external_summary_needs"));
         assert!(description.contains("direct_call_sites"));
         assert!(description.contains("callsite_buckets"));
         assert!(description.contains("module_path"));

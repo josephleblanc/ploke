@@ -127,6 +127,35 @@ impl Database {
             .collect())
     }
 
+    pub(crate) fn proof_blockers_for_call_sites(
+        &self,
+        call_site_ids: &BTreeSet<String>,
+    ) -> Result<Vec<ProofBlockerRow>, DbError> {
+        if call_site_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let rows = self.fetch_proof_rows()?;
+        let scoped_rows = rows
+            .iter()
+            .filter(|row| {
+                row.call_site_id
+                    .as_deref()
+                    .is_some_and(|id| call_site_ids.contains(id))
+            })
+            .collect::<Vec<_>>();
+
+        Ok(scoped_rows
+            .iter()
+            .filter_map(|row| explicit_blocker_row(row))
+            .chain(
+                scoped_rows
+                    .iter()
+                    .flat_map(|row| derived_blocker_rows(row, &rows)),
+            )
+            .collect())
+    }
+
     pub(super) fn proof_source_provenance(
         &self,
         call_site_id: &str,

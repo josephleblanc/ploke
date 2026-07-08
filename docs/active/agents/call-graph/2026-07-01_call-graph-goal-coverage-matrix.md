@@ -415,9 +415,35 @@ Completed evidence:
   `cargo test -p ploke-db --test proof_graph_store proof_graph_store_accepts_all_stable_effect_class_values -- --nocapture`,
   `cargo fmt --all --check`, and `git diff --check`.
 
-Previous completed slice in current bucket: proof-authoritative external summary
-admission over the real `Request::builder` alias frontier, propagated through
-DB, RAG, and TUI tool payloads.
+Latest completed slice in current bucket: owner-scoped external summary need
+queue exposed through DB, RAG, and exact TUI tools.
+
+Completed evidence:
+
+- Added an owner-scoped `external_summary_needs` query surface that reports
+  active `external_dependency_summary_missing` blockers for reachable
+  targetless frontier callsites, including the original callsite row,
+  blocker reasons, and resolved paths to intermediate owners when present.
+- The query remains proof-authoritative: an admitted linked
+  `external_summary` discharges the need, but no local call edge or target is
+  fabricated for external calls.
+- DB and RAG tests prove the real
+  `axum/src/middleware/from_fn.rs:411` `Request::builder()` frontier appears
+  in the queue before summary admission and disappears after the admitted
+  summary records are inserted.
+- Exact `code_item_lookup` and `code_item_edges` payloads now include
+  `external_summary_needs`, and their UI payloads report the same count.
+  Positive TUI checks cover unresolved real external frontiers; admitted
+  `Request::builder` and `std::mem::replace` checks prove discharged sites do
+  not remain in the queue.
+- The proof-blocker lookup used by owner-scoped call-graph usage queries now
+  derives blockers only for the already-selected reachable callsite ids while
+  preserving all proof rows as discharge context, avoiding a global derived
+  blocker expansion in large fixture-backed tool tests.
+
+Previous completed slice in current bucket: proof-authoritative external
+summary admission over the real `Request::builder` alias frontier, propagated
+through DB, RAG, and TUI tool payloads.
 
 Completed evidence:
 

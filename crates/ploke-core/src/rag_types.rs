@@ -486,6 +486,15 @@ pub struct CallReachEffectInfo {
     pub blocker_reasons: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct ExternalSummaryNeedInfo {
+    #[serde(default)]
+    pub paths_to_owner: Vec<CallPathInfo>,
+    pub call_site: CallContextInfo,
+    #[serde(default)]
+    pub blocker_reasons: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialOrd, Ord, Hash, PartialEq)]
 pub struct ProofContextInfo {
     pub fact_id: String,
@@ -656,6 +665,7 @@ impl From<ContextPart> for ConciseContext {
             call_impact: None,
             call_reach: None,
             call_reach_effects: Vec::new(),
+            external_summary_needs: Vec::new(),
             proof_context: value.proof_context,
         }
     }
@@ -719,6 +729,8 @@ pub struct ConciseContext {
     pub call_reach: Option<CallReachInfo>,
     #[serde(default)]
     pub call_reach_effects: Vec<CallReachEffectInfo>,
+    #[serde(default)]
+    pub external_summary_needs: Vec<ExternalSummaryNeedInfo>,
     #[serde(default)]
     pub proof_context: Vec<ProofContextInfo>,
 }

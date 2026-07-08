@@ -2,7 +2,7 @@ use ploke_core::{
     io_types::EmbeddingData,
     rag_types::{
         CallContextInfo, CallImpactInfo, CallPathInfo, CallReachEffectInfo, CallReachInfo,
-        ProofContextInfo,
+        ExternalSummaryNeedInfo, ProofContextInfo,
     },
     tool_types::ToolName,
 };
@@ -410,6 +410,11 @@ pub(super) struct CallPathCarriers {
     pub(super) cycles_from_owner: Vec<CallPathInfo>,
 }
 
+const TOOL_CALL_PATH_OPTIONS: CallPathOptions = CallPathOptions {
+    max_depth: 2,
+    max_paths: 64,
+};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct CallContextCounts {
     pub(super) total: usize,
@@ -478,13 +483,9 @@ pub(super) fn call_path_carriers_for_node(
 ) -> Result<CallPathCarriers, ploke_error::Error> {
     use ploke_error::InternalError;
 
-    let path_options = CallPathOptions {
-        max_depth: 3,
-        max_paths: 64,
-    };
     let from_owner = match ctx.state.rag.as_ref() {
         Some(rag) if !rag.call_context_degraded() => rag
-            .exact_call_paths_from_owner(node_id, path_options)
+            .exact_call_paths_from_owner(node_id, TOOL_CALL_PATH_OPTIONS)
             .map_err(|err| {
                 ploke_error::Error::Internal(InternalError::CompilerError(format!(
                     "failed to collect outgoing call paths for code item {node_id}: {err}"
@@ -494,7 +495,7 @@ pub(super) fn call_path_carriers_for_node(
     };
     let to_target = match ctx.state.rag.as_ref() {
         Some(rag) if !rag.call_context_degraded() => rag
-            .exact_call_paths_to_target(node_id, path_options)
+            .exact_call_paths_to_target(node_id, TOOL_CALL_PATH_OPTIONS)
             .map_err(|err| {
                 ploke_error::Error::Internal(InternalError::CompilerError(format!(
                     "failed to collect incoming call paths for code item {node_id}: {err}"
@@ -502,16 +503,11 @@ pub(super) fn call_path_carriers_for_node(
             })?,
         _ => Vec::new(),
     };
-    let cycles_from_owner = match ctx.state.rag.as_ref() {
-        Some(rag) if !rag.call_context_degraded() => rag
-            .exact_call_cycles_from_owner(node_id, path_options)
-            .map_err(|err| {
-                ploke_error::Error::Internal(InternalError::CompilerError(format!(
-                    "failed to collect recursive call paths for code item {node_id}: {err}"
-                )))
-            })?,
-        _ => Vec::new(),
-    };
+    let cycles_from_owner = from_owner
+        .iter()
+        .filter(|path| path.end_id == node_id && !path.edges.is_empty())
+        .cloned()
+        .collect();
 
     Ok(CallPathCarriers {
         from_owner,
@@ -526,13 +522,9 @@ pub(super) fn call_impact_for_node(
 ) -> Result<Option<CallImpactInfo>, ploke_error::Error> {
     use ploke_error::InternalError;
 
-    let path_options = CallPathOptions {
-        max_depth: 3,
-        max_paths: 64,
-    };
     match ctx.state.rag.as_ref() {
         Some(rag) if !rag.call_context_degraded() => rag
-            .exact_call_impact_for_target(node_id, path_options)
+            .exact_call_impact_for_target(node_id, TOOL_CALL_PATH_OPTIONS)
             .map_err(|err| {
                 ploke_error::Error::Internal(InternalError::CompilerError(format!(
                     "failed to collect impact summary for code item {node_id}: {err}"
@@ -548,13 +540,9 @@ pub(super) fn call_reach_for_node(
 ) -> Result<Option<CallReachInfo>, ploke_error::Error> {
     use ploke_error::InternalError;
 
-    let path_options = CallPathOptions {
-        max_depth: 3,
-        max_paths: 64,
-    };
     match ctx.state.rag.as_ref() {
         Some(rag) if !rag.call_context_degraded() => rag
-            .exact_call_reach_for_owner(node_id, path_options)
+            .exact_call_reach_for_owner(node_id, TOOL_CALL_PATH_OPTIONS)
             .map_err(|err| {
                 ploke_error::Error::Internal(InternalError::CompilerError(format!(
                     "failed to collect reach summary for code item {node_id}: {err}"
@@ -570,16 +558,31 @@ pub(super) fn call_reach_effects_for_node(
 ) -> Result<Vec<CallReachEffectInfo>, ploke_error::Error> {
     use ploke_error::InternalError;
 
-    let path_options = CallPathOptions {
-        max_depth: 3,
-        max_paths: 64,
-    };
     match ctx.state.rag.as_ref() {
         Some(rag) if !rag.call_context_degraded() => Ok(rag
-            .exact_call_effects_reachable_from_owner(node_id, path_options)
+            .exact_call_effects_reachable_from_owner(node_id, TOOL_CALL_PATH_OPTIONS)
             .map_err(|err| {
                 ploke_error::Error::Internal(InternalError::CompilerError(format!(
                     "failed to collect reachable effects for code item {node_id}: {err}"
+                )))
+            })?
+            .unwrap_or_default()),
+        _ => Ok(Vec::new()),
+    }
+}
+
+pub(super) fn external_summary_needs_for_node(
+    ctx: &super::Ctx,
+    node_id: Uuid,
+) -> Result<Vec<ExternalSummaryNeedInfo>, ploke_error::Error> {
+    use ploke_error::InternalError;
+
+    match ctx.state.rag.as_ref() {
+        Some(rag) if !rag.call_context_degraded() => Ok(rag
+            .exact_external_summary_needs_for_owner(node_id, TOOL_CALL_PATH_OPTIONS)
+            .map_err(|err| {
+                ploke_error::Error::Internal(InternalError::CompilerError(format!(
+                    "failed to collect external summary needs for code item {node_id}: {err}"
                 )))
             })?
             .unwrap_or_default()),
@@ -592,6 +595,7 @@ pub(super) fn with_call_usage_fields(
     impact: Option<&CallImpactInfo>,
     reach: Option<&CallReachInfo>,
     reach_effects: &[CallReachEffectInfo],
+    summary_needs: &[ExternalSummaryNeedInfo],
 ) -> super::ToolUiPayload {
     payload
         .with_field(
@@ -696,6 +700,7 @@ pub(super) fn with_call_usage_fields(
             count(reach.map(|info| info.source_modules.len())),
         )
         .with_field("reach_effects", reach_effects.len().to_string())
+        .with_field("external_summary_needs", summary_needs.len().to_string())
 }
 
 fn count(value: Option<usize>) -> String {

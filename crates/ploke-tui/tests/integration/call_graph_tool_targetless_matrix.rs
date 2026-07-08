@@ -6,6 +6,7 @@ use ploke_tui::tools::{
     code_item_lookup::{CodeItemLookup, LookupParams},
     get_code_edges::{CodeItemEdges, EdgesParams},
 };
+use uuid::Uuid;
 
 use crate::call_graph_tool_support::{
     DynamicToolCase, DynamicToolFixture, PathToolCase, PathToolFixture, ReceiverToolCase,
@@ -124,6 +125,10 @@ async fn code_item_lookup_returns_route_oneshot_targetless_real_corpus_rows() {
             .get("proof_context")
             .and_then(serde_json::Value::as_array)
             .expect("proof_context array");
+        let summary_needs = payload
+            .get("external_summary_needs")
+            .and_then(serde_json::Value::as_array)
+            .expect("external_summary_needs array");
 
         // Matrix:
         //   docs/active/agents/call-graph/
@@ -154,6 +159,7 @@ async fn code_item_lookup_returns_route_oneshot_targetless_real_corpus_rows() {
             fixture.case.label,
             "lookup",
         );
+        assert_external_summary_need(summary_needs, site_id, fixture.case.label, "lookup");
 
         let ui = result.ui_payload.as_ref().expect("ui payload");
         assert!(
@@ -169,6 +175,10 @@ async fn code_item_lookup_returns_route_oneshot_targetless_real_corpus_rows() {
                 .expect("proof count")
                 >= 2,
             "code_item_lookup should surface Route::oneshot targetless proof rows"
+        );
+        assert_eq!(
+            ui_field(ui, "external_summary_needs"),
+            summary_needs.len().to_string()
         );
     }
 }
@@ -502,6 +512,10 @@ async fn code_item_lookup_returns_request_builder_alias_external_path_rows() {
             .get("proof_context")
             .and_then(serde_json::Value::as_array)
             .expect("proof_context array");
+        let summary_needs = payload
+            .get("external_summary_needs")
+            .and_then(serde_json::Value::as_array)
+            .expect("external_summary_needs array");
 
         // Matrix:
         //   docs/active/agents/call-graph/
@@ -533,6 +547,7 @@ async fn code_item_lookup_returns_request_builder_alias_external_path_rows() {
                 fixture.case.label,
                 "lookup",
             );
+            assert_no_external_summary_need(summary_needs, site_id, fixture.case.label, "lookup");
         } else {
             assert_path_blocker_proof(
                 proof_context,
@@ -561,6 +576,10 @@ async fn code_item_lookup_returns_request_builder_alias_external_path_rows() {
                 >= 2,
             "code_item_lookup should surface external frontier proof rows for {}",
             fixture.case.label
+        );
+        assert_eq!(
+            ui_field(ui, "external_summary_needs"),
+            summary_needs.len().to_string()
         );
     }
 }
@@ -852,6 +871,11 @@ async fn code_item_edges_returns_size_hint_external_real_corpus_row() {
             .and_then(|node| node.get("proof_context"))
             .and_then(serde_json::Value::as_array)
             .expect("node_info.proof_context array");
+        let summary_needs = payload
+            .get("node_info")
+            .and_then(|node| node.get("external_summary_needs"))
+            .and_then(serde_json::Value::as_array)
+            .expect("node_info.external_summary_needs array");
 
         // Same real-corpus size_hint external-frontier oracle as the lookup test
         // above, exercised through the edge-oriented exact tool payload.
@@ -873,6 +897,7 @@ async fn code_item_edges_returns_size_hint_external_real_corpus_row() {
             fixture.case.label,
             "edges",
         );
+        assert_external_summary_need(summary_needs, site_id, fixture.case.label, "edges");
 
         let ui = result.ui_payload.as_ref().expect("ui payload");
         assert!(
@@ -884,7 +909,67 @@ async fn code_item_edges_returns_size_hint_external_real_corpus_row() {
         );
         let proof_count = proof_context.len().to_string();
         assert_eq!(ui_field(ui, "proof_context"), proof_count.as_str());
+        assert_eq!(
+            ui_field(ui, "external_summary_needs"),
+            summary_needs.len().to_string()
+        );
     }
+}
+
+fn assert_external_summary_need(
+    needs: &[serde_json::Value],
+    site_id: Uuid,
+    label: &str,
+    tool: &str,
+) {
+    let site = site_id.to_string();
+    let need = needs
+        .iter()
+        .find(|need| {
+            need.get("call_site")
+                .and_then(|call| call.get("site_id"))
+                .and_then(serde_json::Value::as_str)
+                == Some(site.as_str())
+        })
+        .unwrap_or_else(|| {
+            panic!("{tool} should expose an external summary need for {label}: {needs:#?}")
+        });
+    let reasons = need
+        .get("blocker_reasons")
+        .and_then(serde_json::Value::as_array)
+        .unwrap_or_else(|| panic!("{tool} external summary need reasons missing: {need:#?}"));
+    assert!(
+        reasons
+            .iter()
+            .any(|reason| reason.as_str() == Some("external_dependency_summary_missing")),
+        "{tool} external summary need should preserve missing-summary blocker for {label}: {need:#?}"
+    );
+    let paths = need
+        .get("paths_to_owner")
+        .and_then(serde_json::Value::as_array)
+        .unwrap_or_else(|| panic!("{tool} external summary need paths missing: {need:#?}"));
+    assert!(
+        paths.is_empty(),
+        "{tool} direct frontier need should not include intermediate owner paths for {label}: {need:#?}"
+    );
+}
+
+fn assert_no_external_summary_need(
+    needs: &[serde_json::Value],
+    site_id: Uuid,
+    label: &str,
+    tool: &str,
+) {
+    let site = site_id.to_string();
+    assert!(
+        needs.iter().all(|need| {
+            need.get("call_site")
+                .and_then(|call| call.get("site_id"))
+                .and_then(serde_json::Value::as_str)
+                != Some(site.as_str())
+        }),
+        "{tool} should not expose a remaining external summary need for admitted {label}: {needs:#?}"
+    );
 }
 
 #[tokio::test]
@@ -1159,6 +1244,11 @@ async fn code_item_edges_returns_request_builder_alias_external_path_rows() {
             .and_then(|node| node.get("proof_context"))
             .and_then(serde_json::Value::as_array)
             .expect("node_info.proof_context array");
+        let summary_needs = payload
+            .get("node_info")
+            .and_then(|node| node.get("external_summary_needs"))
+            .and_then(serde_json::Value::as_array)
+            .expect("node_info.external_summary_needs array");
 
         // Same real-corpus external-frontier oracles as the lookup test above,
         // exercised through the edge-oriented payload.
@@ -1180,6 +1270,7 @@ async fn code_item_edges_returns_request_builder_alias_external_path_rows() {
                 fixture.case.label,
                 "edges",
             );
+            assert_no_external_summary_need(summary_needs, site_id, fixture.case.label, "edges");
         } else {
             assert_path_blocker_proof(
                 proof_context,
@@ -1203,6 +1294,10 @@ async fn code_item_edges_returns_request_builder_alias_external_path_rows() {
         );
         let proof_count = proof_context.len().to_string();
         assert_eq!(ui_field(ui, "proof_context"), proof_count.as_str());
+        assert_eq!(
+            ui_field(ui, "external_summary_needs"),
+            summary_needs.len().to_string()
+        );
     }
 }
 
