@@ -50,24 +50,27 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: binding/type-aware proof for unsupported receiver and dynamic
-callable rows.
+Current bucket: next semantic-expansion carrier selection after the
+binding/type-aware receiver and dynamic callable rows.
 
 Exit criteria:
 
-- Pick one existing targetless real-corpus or fixture-backed row from this
-  matrix; do not add a new broad case first.
-- Identify the exact missing proof input: local binding, receiver type,
-  callable value flow, external summary, or generated item.
-- Add the smallest typed parser/resolver/transform fact needed to prove that
-  row, or keep it fail-closed with a stronger blocker if proof is still
-  unavailable.
+- Do not add more receiver/dynamic callable breadth unless a regression appears
+  in an already-covered row.
+- Select one remaining source oracle from the matrix whose missing proof input
+  is explicit: macro/generated item modeling, broader async poll/resume
+  effects, runtime trait-object dispatch, workspace dependency-root proof, or
+  proof-authoritative external summaries.
+- Define the typed parser/resolver/proof carrier before changing production
+  semantics. If the carrier cannot be made exact, keep the row fail-closed and
+  strengthen blocker/proof visibility instead.
 - Verify DB first, then propagate to RAG and TUI only if the row is exposed
   there.
 
-Reason to stay in current bucket: the usage-question audit found broad DB/RAG/TUI
-query surfaces already exist; the remaining actionable gaps are proof inputs
-for targetless receiver/dynamic rows, not another query-helper layer.
+Reason to stay in the previous binding/type-aware bucket: none. The current
+matrix table marks receiver, dynamic callable, executable-owner, and usage
+summary rows as met for now. Remaining work should switch to one of the
+future-heavy carriers above instead of polishing another nearby local proof.
 
 Latest completed slice in current bucket: complete private multi-caller callable
 parameter proof and downstream propagation.
