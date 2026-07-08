@@ -27,11 +27,11 @@ use ploke_rag::{RagConfig, RagService, TokenBudget};
 use ploke_test_utils::{
     AXUM_OPAQUE_FUTURE_SUMMARY_ID, AXUM_REQUEST_BUILDER_SUMMARY_ID, AXUM_ROUTING_POST_SUMMARY_ID,
     CORPUS_AXUM_CALL_GRAPH, CORPUS_CHRONO_CALL_GRAPH, CORPUS_MEMCHR_CALL_GRAPH,
-    axum_dependency_record, axum_handler_async_block_poll_resume_blocker,
-    axum_opaque_future_boundary_id, axum_opaque_future_macro_summary_records,
-    axum_request_builder_summary_records, axum_routing_post_boundary_id,
-    axum_routing_post_macro_summary_records, fresh_backup_fixture_db,
-    setup_db_full_multi_embedding, workspace_root,
+    axum_body_empty_dependency_record, axum_dependency_record,
+    axum_handler_async_block_poll_resume_blocker, axum_opaque_future_boundary_id,
+    axum_opaque_future_macro_summary_records, axum_request_builder_summary_records,
+    axum_routing_post_boundary_id, axum_routing_post_macro_summary_records,
+    fresh_backup_fixture_db, setup_db_full_multi_embedding, workspace_root,
 };
 use ploke_tui::{
     EventBus,
@@ -128,6 +128,7 @@ pub(crate) struct AxumBodyEmptyToolFixture {
     pub(crate) module_path: Vec<String>,
     pub(crate) target: Uuid,
     pub(crate) callers: Vec<ExpectedCallSite>,
+    pub(crate) dependency_root_site: Uuid,
 }
 
 pub(crate) struct AxumParseAttrsToolFixture {
@@ -812,6 +813,8 @@ impl AxumBodyEmptyToolFixture {
                 >= callers.len(),
             "Body::empty should project target-scoped proof rows for real-corpus callers"
         );
+        let dependency_root_site =
+            attach_body_empty_dependency_root_proof(&db, target.id, &callers);
         let state = axum_state_for_target(Arc::clone(&db), &target, "Body::empty").await;
 
         Self {
@@ -820,6 +823,7 @@ impl AxumBodyEmptyToolFixture {
             module_path: target.module_path,
             target: target.id,
             callers,
+            dependency_root_site,
         }
     }
 
@@ -2550,6 +2554,70 @@ pub(crate) fn assert_body_empty_impact_summary(
     ] {
         assert_source_module_json(source_modules, module, label);
     }
+}
+
+fn attach_body_empty_dependency_root_proof(
+    db: &Database,
+    target: Uuid,
+    callers: &[ExpectedCallSite],
+) -> Uuid {
+    let mut records = Vec::new();
+    let mut sites = Vec::new();
+    for caller in callers {
+        let site = caller.site.to_string();
+        let source = db
+            .proof_source_provenance(&site)
+            .unwrap_or_else(|err| panic!("Body::empty source provenance: {err}"))
+            .unwrap_or_else(|| panic!("Body::empty should have proof provenance for {site}"));
+        if source.source_file.ends_with("axum/src/form.rs") {
+            sites.push(caller.site);
+            records.push(axum_body_empty_dependency_record(
+                "bd:corpus-axum-call-graph",
+                caller.site,
+                caller.owner,
+                target,
+            ));
+        }
+    }
+    assert_eq!(
+        sites.len(),
+        1,
+        "Body::empty should identify the direct axum/src/form.rs dependency-root caller site"
+    );
+    db.upsert_proof_fact_values(&records)
+        .expect("insert Body::empty dependency-root proof");
+    sites[0]
+}
+
+pub(crate) fn assert_body_empty_dependency_root_proof(
+    proofs: &[serde_json::Value],
+    site: Uuid,
+    target: Uuid,
+    tool: &str,
+) {
+    let site = site.to_string();
+    let target = target.to_string();
+    assert!(
+        proofs.iter().any(|proof| {
+            proof.get("kind").and_then(serde_json::Value::as_str) == Some("dependency_root")
+                && proof
+                    .get("call_site_id")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(site.as_str())
+                && proof
+                    .get("resolved_def_id")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(target.as_str())
+                && proof.get("target_kind").and_then(serde_json::Value::as_str)
+                    == Some("workspace_inherent_method")
+                && proof.get("target_name").and_then(serde_json::Value::as_str)
+                    == Some("axum_core::body::Body::empty")
+                && proof.get("target_root").and_then(serde_json::Value::as_str)
+                    == Some("axum-core/src/body.rs")
+                && proof.get("status").and_then(serde_json::Value::as_str) == Some("admitted")
+        }),
+        "{tool} should expose the axum/src/form.rs Body::empty dependency-root proof row: {proofs:#?}"
+    );
 }
 
 pub(crate) fn assert_parse_attrs_incoming_context(

@@ -1043,7 +1043,67 @@ fn axum_real_target_body_empty_projects_proof_facts() -> Result<(), DbError> {
             ("axum/src/serve/mod.rs", 1),
         ],
         "type_resolution_missing",
-    )
+    )?;
+
+    let mut records = axum_domain_records("bd:corpus-axum-call-graph");
+    let mut form_sites = Vec::new();
+    for caller in &callers {
+        let provenance = db
+            .proof_source_provenance(&caller.site.id.to_string())?
+            .unwrap_or_else(|| panic!("Body::empty caller should have proof provenance"));
+        if provenance.source_file.ends_with("axum/src/form.rs") {
+            form_sites.push(caller);
+            records.push(ploke_test_utils::axum_body_empty_dependency_record(
+                "bd:corpus-axum-call-graph",
+                caller.site.id,
+                caller.site.owner_id,
+                target,
+            ));
+        }
+    }
+    assert_eq!(
+        form_sites.len(),
+        1,
+        "Body::empty dependency-root proof should use the single direct axum/src/form.rs callsite"
+    );
+    db.upsert_proof_fact_values(&records)?;
+
+    let proof_rows = db.proof_symbol_lookup(&target.to_string())?;
+    assert_body_empty_dependency_root_proof(
+        &proof_rows,
+        form_sites[0].site.id,
+        form_sites[0].site.owner_id,
+        target,
+        "axum/src/form.rs:158 direct Body::empty import",
+    );
+
+    Ok(())
+}
+
+fn assert_body_empty_dependency_root_proof(
+    rows: &[ProofGraphContextRow],
+    site_id: Uuid,
+    caller_id: Uuid,
+    target_id: Uuid,
+    label: &str,
+) {
+    let site_id = site_id.to_string();
+    let caller_id = caller_id.to_string();
+    let target_id = target_id.to_string();
+    assert!(
+        rows.iter().any(|row| {
+            row.kind == "dependency_root"
+                && row.call_site_id.as_deref() == Some(site_id.as_str())
+                && row.caller_def_id.as_deref() == Some(caller_id.as_str())
+                && row.resolved_def_id.as_deref() == Some(target_id.as_str())
+                && row.target_kind.as_deref() == Some("workspace_inherent_method")
+                && row.target_name.as_deref() == Some("axum_core::body::Body::empty")
+                && row.target_root.as_deref() == Some("axum-core/src/body.rs")
+                && row.status.as_deref() == Some("admitted")
+                && row.evidence_use.as_deref() == Some("proof_only")
+        }),
+        "{label} should expose an admitted Body::empty dependency-root proof row: {rows:#?}"
+    );
 }
 
 #[test]

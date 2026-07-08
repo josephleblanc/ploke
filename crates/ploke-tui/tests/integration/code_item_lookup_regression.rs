@@ -17,17 +17,17 @@ use crate::call_graph_tool_support::{
     CallableBlockerFixture, CallableParamResolvedFixture, ChronoAliasConstructorToolFixture,
     ChronoNaiveUtcToolFixture, FixtureBranchReceiverToolFixture, FixtureDynamicCallableToolFixture,
     FixtureSelfFieldReceiverToolFixture, assert_await_result_unwrap_context,
-    assert_await_result_unwrap_proof, assert_body_empty_impact_summary,
-    assert_body_empty_incoming_context, assert_boxed_into_route_incoming_context,
-    assert_branch_receiver_context, assert_branch_receiver_proof, assert_call_path_node,
-    assert_chrono_naive_utc_incoming_context, assert_expected_path_incoming_context,
-    assert_fixture_extern_c_abs_effects, assert_handler_call_incoming_context,
-    assert_incoming_context, assert_json_from_bytes_incoming_context,
-    assert_parse_attrs_incoming_context, assert_path_blocker_proof, assert_path_context,
-    assert_resolved_callable_param_proof, assert_resolved_path_context,
-    assert_run_ui_tests_incoming_context, assert_self_field_receiver_context,
-    assert_self_field_receiver_proof, assert_target_proof, assert_task_spawn_effects,
-    assert_two_hop_call_path, ui_field,
+    assert_await_result_unwrap_proof, assert_body_empty_dependency_root_proof,
+    assert_body_empty_impact_summary, assert_body_empty_incoming_context,
+    assert_boxed_into_route_incoming_context, assert_branch_receiver_context,
+    assert_branch_receiver_proof, assert_call_path_node, assert_chrono_naive_utc_incoming_context,
+    assert_expected_path_incoming_context, assert_fixture_extern_c_abs_effects,
+    assert_handler_call_incoming_context, assert_incoming_context,
+    assert_json_from_bytes_incoming_context, assert_parse_attrs_incoming_context,
+    assert_path_blocker_proof, assert_path_context, assert_resolved_callable_param_proof,
+    assert_resolved_path_context, assert_run_ui_tests_incoming_context,
+    assert_self_field_receiver_context, assert_self_field_receiver_proof, assert_target_proof,
+    assert_task_spawn_effects, assert_two_hop_call_path, ui_field,
 };
 
 #[tokio::test]
@@ -1744,6 +1744,12 @@ async fn code_item_lookup_returns_real_corpus_body_empty_callers() {
             "code_item_lookup",
         );
     }
+    assert_body_empty_dependency_root_proof(
+        proof_context,
+        fixture.dependency_root_site,
+        fixture.target,
+        "code_item_lookup",
+    );
     assert_eq!(
         impact_test_callers.len() + impact_non_test_callers.len(),
         impact_callers.len(),
