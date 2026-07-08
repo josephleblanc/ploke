@@ -72,7 +72,28 @@ matrix table marks receiver, dynamic callable, executable-owner, and usage
 summary rows as met for now. Remaining work should switch to one of the
 future-heavy carriers above instead of polishing another nearby local proof.
 
-Latest completed downstream consistency slice: generated test-entrypoint
+Latest completed slice in current bucket: generated `routing::post`
+macro-boundary summary proof over a real axum grouped-import free-function
+frontier.
+
+Completed evidence:
+
+- The axum real-corpus grouped-import source oracle remains
+  `axum/src/json.rs:237` importing `routing::post`, with
+  `axum/src/json.rs:248` calling `post(echo_json)` from `deserialize_body`.
+- The generated function binding is still absent because
+  `axum/src/routing/method_routing.rs:445` expands
+  `top_level_handler_fn!(post, POST)` from the macro template at
+  `method_routing.rs:165`; the call graph keeps the `post` callsite
+  `Unsupported`, targetless, and absent from traversal edges.
+- DB, RAG, `code_item_lookup`, and `code_item_edges` tests now admit and
+  expose a callsite-linked `expansion_boundary` plus admitted
+  `external_summary` artifact for that generated-function boundary while the
+  projected `call_resolution` remains blocked on `type_resolution_missing`.
+- This is proof visibility only. It does not expand the macro, does not create
+  a generated `post` function node, and does not fabricate a local call edge.
+
+Previously completed downstream consistency slice: generated test-entrypoint
 summary through `code_item_edges`.
 
 Completed evidence:
@@ -85,7 +106,7 @@ Completed evidence:
   `node_info.proof_context`, while preserving zero incoming paths and empty
   source-caller impact sets. No generated harness source edge is fabricated.
 
-Latest completed slice in current bucket: fail-closed request-parts external
+Previously completed slice in current bucket: fail-closed request-parts external
 return summary blocker over the real axum-core turbofish receiver row.
 
 Completed evidence:

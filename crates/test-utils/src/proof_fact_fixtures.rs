@@ -2,6 +2,7 @@ use uuid::Uuid;
 
 const AXUM_CALL_GRAPH_DOMAIN_ID: &str = "bd:corpus-axum-call-graph";
 pub const AXUM_OPAQUE_FUTURE_SUMMARY_ID: &str = "external-summary:axum-opaque-future-macro";
+pub const AXUM_ROUTING_POST_SUMMARY_ID: &str = "external-summary:axum-routing-post-macro";
 
 pub fn axum_opaque_future_boundary_id(call_site_id: Uuid) -> String {
     format!("boundary:{call_site_id}:opaque_future")
@@ -38,6 +39,51 @@ pub fn axum_opaque_future_macro_summary_records(call_site_id: Uuid) -> Vec<serde
             "version": "axum-opaque-future-summary-v1",
             "review_method": "source-oracle-review",
             "scope_of_validity": "axum opaque_future macro boundary for IntoServiceFuture",
+            "allowed_effects": ["external_summary_boundary"],
+            "required_containment": "none",
+            "invalidation_conditions": "source oracle, fixture hash, or proof policy changes",
+            "status": "admitted",
+            "evidence_use": "proof_only"
+        }),
+    ]);
+    records
+}
+
+pub fn axum_routing_post_boundary_id(call_site_id: Uuid) -> String {
+    format!("boundary:{call_site_id}:routing_post")
+}
+
+pub fn axum_routing_post_macro_summary_records(call_site_id: Uuid) -> Vec<serde_json::Value> {
+    let site = call_site_id.to_string();
+    let boundary_id = axum_routing_post_boundary_id(call_site_id);
+    let mut records = axum_call_graph_domain_records(AXUM_CALL_GRAPH_DOMAIN_ID);
+    records.extend([
+        serde_json::json!({
+            "fact_kind": "expansion_boundary",
+            "schema_version": "ploke-proof-facts.v1",
+            "boundary_id": boundary_id,
+            "build_domain_id": AXUM_CALL_GRAPH_DOMAIN_ID,
+            "call_site_id": site,
+            "boundary_kind": "macro_rules_invocation",
+            "expansion_state": "externally_summarized",
+            "external_summary_id": AXUM_ROUTING_POST_SUMMARY_ID,
+            "source_span": {
+                "file": "axum/src/routing/method_routing.rs",
+                "start_byte": 12752,
+                "end_byte": 12786
+            },
+            "evidence_use": "proof_only"
+        }),
+        serde_json::json!({
+            "fact_kind": "external_summary",
+            "schema_version": "ploke-proof-facts.v1",
+            "external_summary_id": AXUM_ROUTING_POST_SUMMARY_ID,
+            "build_domain_id": AXUM_CALL_GRAPH_DOMAIN_ID,
+            "summary_class": "audited_no_process_effects",
+            "artifact_hash": "sha256:axum-routing-post-summary",
+            "version": "axum-routing-post-summary-v1",
+            "review_method": "source-oracle-review",
+            "scope_of_validity": "axum routing method macro boundary for generated post function",
             "allowed_effects": ["external_summary_boundary"],
             "required_containment": "none",
             "invalidation_conditions": "source oracle, fixture hash, or proof policy changes",

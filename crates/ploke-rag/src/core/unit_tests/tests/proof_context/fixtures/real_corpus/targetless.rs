@@ -614,6 +614,89 @@ async fn proof_context_collection_preserves_axum_generated_constructor_frontier(
     Ok(())
 }
 
+#[tokio::test]
+async fn proof_context_collection_preserves_axum_generated_post_frontier() -> Result<(), Error> {
+    init_tracing_once();
+    let db = axum_db()?;
+
+    let owner = function_id(&db, &["crate", "json", "tests"], "deserialize_body")?;
+    let projected = db.project_call_proof_facts_for_owner(owner, AXUM_DOMAIN)?;
+    assert!(
+        projected >= 2,
+        "deserialize_body should project generated routing::post proof rows"
+    );
+
+    let rag = init_test_rag_mock(Arc::clone(&db));
+    assert!(
+        !rag.proof_context_degraded(),
+        "projected axum routing::post facts should enable RAG proof context"
+    );
+
+    let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+    let calls = call_context
+        .get(&owner)
+        .expect("deserialize_body should receive outgoing call context");
+    let site_id = targetless_path_site(
+        calls,
+        owner,
+        &["post"],
+        CallStatusKind::Unsupported,
+        "deserialize_body generated routing::post",
+    );
+    db.upsert_proof_fact_values(&ploke_test_utils::axum_routing_post_macro_summary_records(
+        site_id,
+    ))?;
+
+    let rows = rag.exact_proof_context(owner)?;
+
+    // Matrix: macro-generated routing helper row.
+    // Source chain:
+    //   docs/active/agents/call-graph/
+    //   2026-06-28_real-corpus-call-site-case-matrix.md
+    //   axum/src/routing/method_routing.rs:165 is the `post` template.
+    //   axum/src/routing/method_routing.rs:445 invokes the macro for `post`.
+    //   axum/src/json.rs:237 imports `routing::post`.
+    //   axum/src/json.rs:248 calls `post(echo_json)`.
+    // Expected proof traversal: proof context must include the call_site plus
+    // blocked call_resolution fact for this exact targetless path row, plus
+    // the callsite-linked admitted macro-boundary summary. There are zero local
+    // callee edges until generated routing functions are modeled as source
+    // items.
+    assert_site_resolution_blocker(
+        &rows,
+        owner,
+        site_id,
+        "blocked",
+        "type_resolution_missing",
+        "deserialize_body generated routing::post",
+    );
+    let site = site_id.to_string();
+    let boundary_id = ploke_test_utils::axum_routing_post_boundary_id(site_id);
+    let summary_id = ploke_test_utils::AXUM_ROUTING_POST_SUMMARY_ID;
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "expansion_boundary"
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.boundary_id.as_deref() == Some(boundary_id.as_str())
+                && proof.external_summary_id.as_deref() == Some(summary_id)
+                && proof.status.as_deref() == Some("externally_summarized")
+                && proof.blocker_reason.is_none()
+        }),
+        "RAG proof context should expose the admitted routing::post boundary summary linked to the generated function callsite: {rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "external_summary"
+                && proof.external_summary_id.as_deref() == Some(summary_id)
+                && proof.status.as_deref() == Some("admitted")
+                && proof.allowed_effects == ["external_summary_boundary".to_string()]
+        }),
+        "RAG proof context should expose the admitted routing::post summary artifact: {rows:#?}"
+    );
+
+    Ok(())
+}
+
 fn axum_std_mem_replace_summary_records(
     site_id: String,
     summary_id: &str,

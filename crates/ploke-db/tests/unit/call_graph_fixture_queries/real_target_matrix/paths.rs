@@ -1081,6 +1081,55 @@ fn axum_real_target_generated_post_function_is_documented_gap() -> Result<(), Db
         CallStatusKind::Unsupported,
         "axum/src/json.rs:248 grouped-import post",
     )?;
+    let post_context = db.call_context_for_owner(json_owner)?;
+    let post_row = row_by_path(&post_context, &["post"]);
+    assert_targetless_status(post_row, CallStatusKind::Unsupported);
+    assert!(
+        relations_for_site(&db, post_row.site.id)?.rows.is_empty(),
+        "generated routing::post proof must not create a local traversal edge"
+    );
+
+    let domain_id = "bd:corpus-axum-call-graph";
+    let projected = db.project_call_proof_facts_for_owner(json_owner, domain_id)?;
+    assert!(
+        projected >= 2,
+        "deserialize_body should project call_site and call_resolution rows for generated post: {projected}"
+    );
+    let site_id = post_row.site.id.to_string();
+    db.upsert_proof_fact_values(&ploke_test_utils::axum_routing_post_macro_summary_records(
+        post_row.site.id,
+    ))?;
+
+    let summary_id = ploke_test_utils::AXUM_ROUTING_POST_SUMMARY_ID;
+    let boundary_id = ploke_test_utils::axum_routing_post_boundary_id(post_row.site.id);
+    let summary_rows = db.proof_graphrag_context(summary_id)?;
+    assert!(
+        summary_rows.iter().any(|proof| {
+            proof.kind == "external_summary"
+                && proof.external_summary_id.as_deref() == Some(summary_id)
+                && proof.status.as_deref() == Some("admitted")
+                && proof.allowed_effects == ["external_summary_boundary".to_string()]
+        }),
+        "summary-id lookup should expose the admitted routing::post macro-boundary summary: {summary_rows:#?}"
+    );
+    assert!(
+        summary_rows.iter().any(|proof| {
+            proof.kind == "expansion_boundary"
+                && proof.call_site_id.as_deref() == Some(site_id.as_str())
+                && proof.boundary_id.as_deref() == Some(boundary_id.as_str())
+                && proof.external_summary_id.as_deref() == Some(summary_id)
+                && proof.blocker_reason.is_none()
+        }),
+        "summary-id lookup should expose the summarized routing::post macro boundary without a blocker: {summary_rows:#?}"
+    );
+    let context_after = db.call_context_for_owner(json_owner)?;
+    let post_after = row_by_path(&context_after, &["post"]);
+    assert_targetless_status(post_after, CallStatusKind::Unsupported);
+    assert!(
+        relations_for_site(&db, post_after.site.id)?.rows.is_empty(),
+        "routing::post macro boundary summary must not create a generated call edge"
+    );
+
     for (owner_name, label) in [
         (
             "consume_body_to_json_requires_json_content_type",

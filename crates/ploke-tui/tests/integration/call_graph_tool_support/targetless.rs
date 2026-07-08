@@ -272,6 +272,15 @@ impl ReceiverToolCase {
     }
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct MacroBoundaryCase {
+    pub(crate) boundary_id: fn(Uuid) -> String,
+    pub(crate) records: fn(Uuid) -> Vec<serde_json::Value>,
+    pub(crate) summary_id: &'static str,
+    pub(crate) expected_state: &'static str,
+    pub(crate) callsite_label: &'static str,
+}
+
 impl PathToolCase {
     pub(crate) const FROM_REF_DEP_ROOT: [Self; 1] = [Self {
         label: "axum/src/middleware/from_extractor.rs:328 Secret::from_ref dependency root",
@@ -342,6 +351,19 @@ impl PathToolCase {
         },
     }];
 
+    pub(crate) const ROUTING_POST: [Self; 1] = [Self {
+        label: "axum/src/json.rs:248 generated routing::post frontier",
+        item: "deserialize_body",
+        path: &["post"],
+        status: CallStatusKind::Unsupported,
+        corpus: DynamicToolCorpus::Axum,
+        owner: PathOwner::Function {
+            module_path: &["crate", "json", "tests"],
+            file_suffix: "axum/src/json.rs",
+            body: "post(|input: Json<Input>| async { input.0.foo })",
+        },
+    }];
+
     pub(crate) const MEMCHR_CALLABLE_TRAIT_OBJECT: [Self; 2] = [
         Self {
             label: "memchr/src/tests/substring/mod.rs:94 Runner.fwd boxed dyn FnMut",
@@ -390,6 +412,16 @@ impl PathToolCase {
         }
     }
 
+    pub(crate) fn db_status(&self) -> DbCallStatusKind {
+        match &self.status {
+            CallStatusKind::Resolved => DbCallStatusKind::Resolved,
+            CallStatusKind::Unresolved => DbCallStatusKind::Unresolved,
+            CallStatusKind::Ambiguous => DbCallStatusKind::Ambiguous,
+            CallStatusKind::External => DbCallStatusKind::External,
+            CallStatusKind::Unsupported => DbCallStatusKind::Unsupported,
+        }
+    }
+
     pub(crate) fn expects_admitted_external_summary(&self) -> bool {
         self.path == ["std", "mem", "replace"]
             && matches!(
@@ -401,8 +433,8 @@ impl PathToolCase {
             )
     }
 
-    pub(crate) fn expects_admitted_macro_boundary_summary(&self) -> bool {
-        self.path == ["super", "future", "IntoServiceFuture", "new"]
+    pub(crate) fn admitted_macro_boundary_summary(&self) -> Option<MacroBoundaryCase> {
+        if self.path == ["super", "future", "IntoServiceFuture", "new"]
             && matches!(
                 self.owner,
                 PathOwner::Method {
@@ -410,6 +442,35 @@ impl PathToolCase {
                     ..
                 }
             )
+        {
+            return Some(MacroBoundaryCase {
+                boundary_id: axum_opaque_future_boundary_id,
+                records: axum_opaque_future_macro_summary_records,
+                summary_id: AXUM_OPAQUE_FUTURE_SUMMARY_ID,
+                expected_state: "unresolved",
+                callsite_label: "generated constructor",
+            });
+        }
+
+        if self.path == ["post"]
+            && matches!(
+                self.owner,
+                PathOwner::Function {
+                    file_suffix: "axum/src/json.rs",
+                    ..
+                }
+            )
+        {
+            return Some(MacroBoundaryCase {
+                boundary_id: axum_routing_post_boundary_id,
+                records: axum_routing_post_macro_summary_records,
+                summary_id: AXUM_ROUTING_POST_SUMMARY_ID,
+                expected_state: "blocked",
+                callsite_label: "generated routing::post",
+            });
+        }
+
+        None
     }
 
     pub(crate) fn owner_trait(&self) -> Option<&'static str> {
@@ -658,9 +719,9 @@ fn attach_admitted_macro_boundary_summary_if_needed(
     owner: Uuid,
     case: &PathToolCase,
 ) {
-    if !case.expects_admitted_macro_boundary_summary() {
+    let Some(boundary) = case.admitted_macro_boundary_summary() else {
         return;
-    }
+    };
     let site = db
         .call_context_for_owner(owner)
         .unwrap_or_else(|err| panic!("{} call context lookup: {err}", case.label))
@@ -670,18 +731,18 @@ fn attach_admitted_macro_boundary_summary_if_needed(
                 path.iter()
                     .map(String::as_str)
                     .eq(case.path.iter().copied())
-            }) && row.status.status == DbCallStatusKind::Unresolved
+            }) && row.status.status == case.db_status()
         })
         .unwrap_or_else(|| {
             panic!(
-                "{} should expose the IntoServiceFuture::new unresolved callsite before macro summary insertion",
-                case.label
+                "{} should expose the generated macro-boundary callsite before summary insertion",
+                case.label,
             )
         })
         .site
         .id;
 
-    db.upsert_proof_fact_values(&axum_opaque_future_macro_summary_records(site))
+    db.upsert_proof_fact_values(&(boundary.records)(site))
         .unwrap_or_else(|err| panic!("{} admitted macro summary insert: {err}", case.label));
 }
 
@@ -1160,12 +1221,13 @@ pub(crate) fn assert_admitted_macro_boundary_summary_proof(
     proofs: &[serde_json::Value],
     owner: Uuid,
     site_id: Uuid,
+    boundary: MacroBoundaryCase,
     label: &str,
     tool: &str,
 ) {
     let owner = owner.to_string();
     let site = site_id.to_string();
-    let boundary_id = axum_opaque_future_boundary_id(site_id);
+    let boundary_id = (boundary.boundary_id)(site_id);
     let rows = proofs
         .iter()
         .filter_map(|proof| serde_json::from_value::<ProofContextInfo>(proof.clone()).ok())
@@ -1177,37 +1239,39 @@ pub(crate) fn assert_admitted_macro_boundary_summary_proof(
                 && proof.call_site_id.as_deref() == Some(site.as_str())
                 && proof.build_domain_id.as_deref() == Some("bd:corpus-axum-call-graph")
         }),
-        "{tool} should return the generated constructor call_site proof row for {label}: {proofs:#?}"
+        "{tool} should return the {} call_site proof row for {label}: {proofs:#?}",
+        boundary.callsite_label
     );
     assert!(
         rows.iter().any(|proof| {
             proof.kind == "call_resolution"
                 && proof.call_site_id.as_deref() == Some(site.as_str())
-                && proof.resolution_state.as_deref() == Some("unresolved")
+                && proof.resolution_state.as_deref() == Some(boundary.expected_state)
                 && proof.blocker_reason.as_deref() == Some("type_resolution_missing")
         }),
-        "{tool} should keep the generated constructor callsite unresolved for {label}: {proofs:#?}"
+        "{tool} should keep the {} callsite fail-closed for {label}: {proofs:#?}",
+        boundary.callsite_label
     );
     assert!(
         rows.iter().any(|proof| {
             proof.kind == "expansion_boundary"
                 && proof.call_site_id.as_deref() == Some(site.as_str())
                 && proof.boundary_id.as_deref() == Some(boundary_id.as_str())
-                && proof.external_summary_id.as_deref() == Some(AXUM_OPAQUE_FUTURE_SUMMARY_ID)
+                && proof.external_summary_id.as_deref() == Some(boundary.summary_id)
                 && proof.status.as_deref() == Some("externally_summarized")
                 && proof.blocker_reason.is_none()
         }),
-        "{tool} should return the admitted opaque_future expansion boundary for {label}: {proofs:#?}"
+        "{tool} should return the admitted expansion boundary for {label}: {proofs:#?}"
     );
     assert!(
         rows.iter().any(|proof| {
             proof.kind == "external_summary"
-                && proof.external_summary_id.as_deref() == Some(AXUM_OPAQUE_FUTURE_SUMMARY_ID)
+                && proof.external_summary_id.as_deref() == Some(boundary.summary_id)
                 && proof.summary_class.as_deref() == Some("audited_no_process_effects")
                 && proof.status.as_deref() == Some("admitted")
                 && proof.allowed_effects == vec!["external_summary_boundary".to_string()]
         }),
-        "{tool} should return the admitted opaque_future summary artifact for {label}: {proofs:#?}"
+        "{tool} should return the admitted macro-boundary summary artifact for {label}: {proofs:#?}"
     );
 }
 

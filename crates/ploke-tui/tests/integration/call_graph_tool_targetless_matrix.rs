@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use ploke_core::rag_types::{CallCalleeInfo, CallContextInfo};
+use ploke_core::rag_types::{CallCalleeInfo, CallContextInfo, CallStatusKind};
 use ploke_tui::tools::{
     Tool,
     code_item_lookup::{CodeItemLookup, LookupParams},
@@ -648,8 +648,15 @@ async fn code_item_lookup_returns_memchr_callable_trait_object_path_rows() {
 
 #[tokio::test]
 async fn code_item_lookup_returns_generated_constructor_frontier_path_rows() {
-    for case in PathToolCase::INTO_SERVICE_FUTURE_NEW {
+    for case in PathToolCase::INTO_SERVICE_FUTURE_NEW
+        .into_iter()
+        .chain(PathToolCase::ROUTING_POST)
+    {
         let fixture = PathToolFixture::new(case.clone()).await;
+        let boundary = fixture
+            .case
+            .admitted_macro_boundary_summary()
+            .expect("generated-boundary fixture");
         let params = LookupParams {
             item_name: Cow::Borrowed(case.item),
             file_path: Cow::Owned(fixture.file_path.display().to_string()),
@@ -709,7 +716,7 @@ async fn code_item_lookup_returns_generated_constructor_frontier_path_rows() {
             fixture.owner,
             site_id,
             "bd:corpus-axum-call-graph",
-            "unresolved",
+            boundary.expected_state,
             "type_resolution_missing",
             fixture.case.label,
             "lookup",
@@ -718,11 +725,12 @@ async fn code_item_lookup_returns_generated_constructor_frontier_path_rows() {
             proof_context,
             fixture.owner,
             site_id,
+            boundary,
             fixture.case.label,
             "lookup",
         );
-        let (unresolved_count, ambiguous_count) =
-            assert_unresolved_frontier_reach(reach, fixture.owner, &fixture.case, "lookup");
+        let (frontier_ui_field, frontier_count, ambiguous_count) =
+            assert_status_frontier_reach(reach, fixture.owner, &fixture.case, "lookup");
 
         let ui = result.ui_payload.as_ref().expect("ui payload");
         assert!(
@@ -740,8 +748,8 @@ async fn code_item_lookup_returns_generated_constructor_frontier_path_rows() {
             "code_item_lookup should surface generated constructor frontier proof rows"
         );
         assert_eq!(
-            ui_field(ui, "reach_unresolved_frontier_calls"),
-            unresolved_count.to_string()
+            ui_field(ui, frontier_ui_field.as_str()),
+            frontier_count.to_string()
         );
         assert_eq!(
             ui_field(ui, "reach_ambiguous_frontier_calls"),
@@ -951,21 +959,29 @@ async fn code_item_edges_returns_unsupported_receiver_targetless_real_corpus_row
     }
 }
 
-fn assert_unresolved_frontier_reach(
+fn assert_status_frontier_reach(
     reach: &serde_json::Map<String, serde_json::Value>,
     owner: uuid::Uuid,
     case: &PathToolCase,
     tool: &str,
-) -> (usize, usize) {
-    let unresolved = reach
-        .get("unresolved_frontier_calls")
+) -> (String, usize, usize) {
+    let bucket = match &case.status {
+        CallStatusKind::Unsupported => "unsupported_frontier_calls",
+        CallStatusKind::Unresolved => "unresolved_frontier_calls",
+        CallStatusKind::Ambiguous => "ambiguous_frontier_calls",
+        other => panic!(
+            "{tool} generated-boundary reach helper only accepts frontier statuses, got {other:?}"
+        ),
+    };
+    let frontier = reach
+        .get(bucket)
         .and_then(serde_json::Value::as_array)
-        .unwrap_or_else(|| panic!("{tool} call_reach unresolved_frontier_calls array"));
-    let calls = unresolved
+        .unwrap_or_else(|| panic!("{tool} call_reach {bucket} array"));
+    let calls = frontier
         .iter()
         .map(|call| serde_json::from_value::<CallContextInfo>(call.clone()))
         .collect::<Result<Vec<_>, _>>()
-        .unwrap_or_else(|err| panic!("{tool} unresolved frontier rows should deserialize: {err}"));
+        .unwrap_or_else(|err| panic!("{tool} {bucket} rows should deserialize: {err}"));
     let call = calls
         .iter()
         .find(|call| {
@@ -980,8 +996,8 @@ fn assert_unresolved_frontier_reach(
         })
         .unwrap_or_else(|| {
             panic!(
-                "{tool} should expose {} in unresolved frontier rows: {calls:#?}",
-                case.label
+                "{tool} should expose {} in {bucket}: {calls:#?}",
+                case.label,
             )
         });
     assert_eq!(call.owner_id, owner);
@@ -995,7 +1011,7 @@ fn assert_unresolved_frontier_reach(
         "{tool} should not report ambiguous frontier rows for {}: {ambiguous:#?}",
         case.label
     );
-    (calls.len(), ambiguous.len())
+    (format!("reach_{bucket}"), calls.len(), ambiguous.len())
 }
 
 #[tokio::test]
@@ -1255,8 +1271,15 @@ async fn code_item_edges_returns_memchr_callable_trait_object_path_rows() {
 
 #[tokio::test]
 async fn code_item_edges_returns_generated_constructor_frontier_path_rows() {
-    for case in PathToolCase::INTO_SERVICE_FUTURE_NEW {
+    for case in PathToolCase::INTO_SERVICE_FUTURE_NEW
+        .into_iter()
+        .chain(PathToolCase::ROUTING_POST)
+    {
         let fixture = PathToolFixture::new(case.clone()).await;
+        let boundary = fixture
+            .case
+            .admitted_macro_boundary_summary()
+            .expect("generated-boundary fixture");
         let params = EdgesParams {
             item_name: Cow::Borrowed(case.item),
             file_path: Cow::Owned(fixture.file_path.display().to_string()),
@@ -1305,7 +1328,7 @@ async fn code_item_edges_returns_generated_constructor_frontier_path_rows() {
             fixture.owner,
             site_id,
             "bd:corpus-axum-call-graph",
-            "unresolved",
+            boundary.expected_state,
             "type_resolution_missing",
             fixture.case.label,
             "edges",
@@ -1314,11 +1337,12 @@ async fn code_item_edges_returns_generated_constructor_frontier_path_rows() {
             proof_context,
             fixture.owner,
             site_id,
+            boundary,
             fixture.case.label,
             "edges",
         );
-        let (unresolved_count, ambiguous_count) =
-            assert_unresolved_frontier_reach(reach, fixture.owner, &fixture.case, "edges");
+        let (frontier_ui_field, frontier_count, ambiguous_count) =
+            assert_status_frontier_reach(reach, fixture.owner, &fixture.case, "edges");
 
         let ui = result.ui_payload.as_ref().expect("ui payload");
         assert!(
@@ -1331,8 +1355,8 @@ async fn code_item_edges_returns_generated_constructor_frontier_path_rows() {
         let proof_count = proof_context.len().to_string();
         assert_eq!(ui_field(ui, "proof_context"), proof_count.as_str());
         assert_eq!(
-            ui_field(ui, "reach_unresolved_frontier_calls"),
-            unresolved_count.to_string()
+            ui_field(ui, frontier_ui_field.as_str()),
+            frontier_count.to_string()
         );
         assert_eq!(
             ui_field(ui, "reach_ambiguous_frontier_calls"),
