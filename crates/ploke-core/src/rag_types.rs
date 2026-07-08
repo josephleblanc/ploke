@@ -647,6 +647,7 @@ impl From<ContextPart> for ConciseContext {
             call_cycles_from_owner: Vec::new(),
             call_impact: None,
             call_reach: None,
+            call_reach_effects: Vec::new(),
             proof_context: value.proof_context,
         }
     }
@@ -708,6 +709,8 @@ pub struct ConciseContext {
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub call_reach: Option<CallReachInfo>,
+    #[serde(default)]
+    pub call_reach_effects: Vec<CallReachEffectInfo>,
     #[serde(default)]
     pub proof_context: Vec<ProofContextInfo>,
 }

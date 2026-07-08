@@ -96,12 +96,18 @@ Completed evidence:
 - Added a RAG real-target test for the same axum source chain, proving the
   exact RAG API reports the `async_task_spawn` effect from the upstream owner
   without creating a RAG target row for the external `tokio::spawn` frontier.
+- Added `call_reach_effects` to exact `code_item_lookup` and
+  `code_item_edges` payloads, plus tool-description text and real-target TUI
+  tests proving both tools expose the same task-spawn effect seed with the
+  original external targetless callsite payload.
 - This is a query/proof slice only. It does not add source/sink inference, does
   not classify effects automatically, and does not traverse external frontier
   rows as local callees.
 - Verification passed:
   `cargo test -p ploke-db axum_usage_questions_report_reachable_effect_seed_for_task_spawn -- --nocapture`,
   `cargo test -p ploke-rag call_effects_exact_reads_axum_task_spawn_seed -- --nocapture`,
+  `cargo test -p ploke-tui --test integration code_item_lookup_returns_real_corpus_reachable_effects -- --nocapture`,
+  `cargo test -p ploke-tui --test integration code_item_edges_returns_real_corpus_reachable_effects -- --nocapture`,
   `cargo fmt --all --check`, and `git diff --check`.
 
 Previously completed slice in current bucket: generated-item macro boundary

@@ -13,7 +13,7 @@ use ploke_core::{
     },
 };
 use ploke_db::{
-    Database,
+    CallStatusKind as DbCallStatusKind, Database, ProofGraphStore,
     helpers::{
         graph_resolve_exact, graph_resolve_exact_call_body_owner,
         graph_resolve_exact_call_body_owner_for_parent,
@@ -39,6 +39,7 @@ use ploke_tui::{
     tools::{Ctx, ToolUiPayload},
     user_config::UserConfig,
 };
+use serde_json::json;
 use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 
@@ -202,6 +203,15 @@ pub(crate) struct AxumFromRequestFreeFunctionPathToolFixture {
     pub(crate) start: Uuid,
     pub(crate) intermediate: Uuid,
     pub(crate) target: Uuid,
+}
+
+pub(crate) struct AxumTaskSpawnEffectToolFixture {
+    pub(crate) state: Arc<AppState>,
+    pub(crate) file_path: PathBuf,
+    pub(crate) module_path: Vec<String>,
+    pub(crate) owner: Uuid,
+    pub(crate) spawn_owner: Uuid,
+    pub(crate) spawn_site: Uuid,
 }
 
 pub(crate) struct AxumAwaitReceiverToolFixture {
@@ -1347,6 +1357,87 @@ impl AxumHandlerAsyncBlockToolFixture {
     }
 }
 
+impl AxumTaskSpawnEffectToolFixture {
+    pub(crate) async fn new() -> Self {
+        let db = axum_call_graph_db();
+        let start = axum_function_target_by_name_and_file(
+            &db,
+            "deserialize_error_status_codes",
+            "axum/src/form.rs",
+        );
+        let spawn_owner = axum_function_target_by_name_and_file(
+            &db,
+            "spawn_service",
+            "axum/src/test_helpers/test_client.rs",
+        );
+        let spawn_context = db
+            .call_context_for_owner(spawn_owner.id)
+            .expect("spawn_service call context");
+        let spawn_row = spawn_context
+            .iter()
+            .find(|row| {
+                row.site.path.as_ref().is_some_and(|call_path| {
+                    call_path == &["tokio".to_string(), "spawn".to_string()]
+                })
+            })
+            .unwrap_or_else(|| {
+                panic!("spawn_service should expose tokio::spawn frontier: {spawn_context:#?}")
+            });
+        assert_eq!(spawn_row.status.status, DbCallStatusKind::External);
+        assert!(
+            spawn_row.targets.is_empty(),
+            "tokio::spawn should stay targetless before tool execution: {spawn_row:#?}"
+        );
+
+        db.upsert_proof_fact_values(&[json!({
+            "fact_kind": "effect_seed",
+            "schema_version": "ploke-proof-facts.v1",
+            "effect_seed_id": "effect:axum-tui-test-client-task-spawn",
+            "call_site_id": spawn_row.site.id.to_string(),
+            "effect_class": "async_task_spawn",
+            "confidence": "source-oracle",
+            "blocker_if_unresolved": false,
+            "evidence_use": "proof_only"
+        })])
+        .expect("upsert axum task-spawn effect seed");
+        let effects = db
+            .call_effects_reachable_from_owner(
+                start.id,
+                ploke_db::CallPathOptions {
+                    max_depth: 3,
+                    max_paths: 16,
+                },
+            )
+            .expect("reachable task-spawn effect seed");
+        assert!(
+            effects
+                .iter()
+                .any(|effect| effect.effect_seed_id == "effect:axum-tui-test-client-task-spawn"),
+            "fixture should prove the task-spawn effect is reachable before tool execution: {effects:#?}"
+        );
+
+        let state =
+            axum_state_for_target(Arc::clone(&db), &start, "deserialize_error_status_codes").await;
+
+        Self {
+            state,
+            file_path: start.file_path,
+            module_path: start.module_path,
+            owner: start.id,
+            spawn_owner: spawn_owner.id,
+            spawn_site: spawn_row.site.id,
+        }
+    }
+
+    pub(crate) fn module_path_arg(&self) -> String {
+        self.module_path.join("::")
+    }
+
+    pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
+        ctx_for_state(&self.state, call_id)
+    }
+}
+
 impl AxumAwaitReceiverToolFixture {
     pub(crate) async fn new() -> Self {
         let db = axum_call_graph_db();
@@ -2383,6 +2474,87 @@ pub(crate) fn assert_expected_path_incoming_context(
             "{label} should return {target_label} incoming caller site {site}: {calls:#?}"
         );
     }
+}
+
+pub(crate) fn assert_task_spawn_effects(
+    effects: &[serde_json::Value],
+    fixture: &AxumTaskSpawnEffectToolFixture,
+    label: &str,
+) {
+    let spawn_owner = fixture.spawn_owner.to_string();
+    let spawn_site = fixture.spawn_site.to_string();
+    let effect = effects
+        .iter()
+        .find(|effect| {
+            effect
+                .get("effect_seed_id")
+                .and_then(serde_json::Value::as_str)
+                == Some("effect:axum-tui-test-client-task-spawn")
+        })
+        .unwrap_or_else(|| {
+            panic!("{label} should include the axum task-spawn effect seed: {effects:#?}")
+        });
+
+    assert_eq!(
+        effect
+            .get("effect_class")
+            .and_then(serde_json::Value::as_str),
+        Some("async_task_spawn")
+    );
+    assert_eq!(
+        effect.get("confidence").and_then(serde_json::Value::as_str),
+        Some("source-oracle")
+    );
+    assert_eq!(
+        effect
+            .get("blocker_if_unresolved")
+            .and_then(serde_json::Value::as_bool),
+        Some(false)
+    );
+    assert!(
+        effect
+            .get("blocker_reasons")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|blockers| blockers.is_empty()),
+        "{label} non-blocking effect seed should not add blockers: {effect:#?}"
+    );
+    let call_site = effect
+        .get("call_site")
+        .and_then(serde_json::Value::as_object)
+        .unwrap_or_else(|| panic!("{label} effect should include call_site object: {effect:#?}"));
+    assert_eq!(
+        call_site
+            .get("owner_id")
+            .and_then(serde_json::Value::as_str),
+        Some(spawn_owner.as_str())
+    );
+    assert_eq!(
+        call_site.get("site_id").and_then(serde_json::Value::as_str),
+        Some(spawn_site.as_str())
+    );
+    assert_eq!(
+        call_site.get("status").and_then(serde_json::Value::as_str),
+        Some("external")
+    );
+    assert!(
+        call_site
+            .get("targets")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|targets| targets.is_empty()),
+        "{label} effect callsite should remain targetless: {effect:#?}"
+    );
+    assert!(
+        call_site
+            .get("callee")
+            .and_then(|callee| callee.get("path"))
+            .and_then(|path_variant| path_variant.get("path"))
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|path| path
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .eq(["tokio", "spawn"])),
+        "{label} effect callsite should preserve tokio::spawn callee path: {effect:#?}"
+    );
 }
 
 pub(crate) fn assert_chrono_naive_utc_incoming_context(

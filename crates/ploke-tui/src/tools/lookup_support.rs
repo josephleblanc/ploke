@@ -1,6 +1,9 @@
 use ploke_core::{
     io_types::EmbeddingData,
-    rag_types::{CallContextInfo, CallImpactInfo, CallPathInfo, CallReachInfo, ProofContextInfo},
+    rag_types::{
+        CallContextInfo, CallImpactInfo, CallPathInfo, CallReachEffectInfo, CallReachInfo,
+        ProofContextInfo,
+    },
     tool_types::ToolName,
 };
 use ploke_db::{
@@ -561,10 +564,34 @@ pub(super) fn call_reach_for_node(
     }
 }
 
+pub(super) fn call_reach_effects_for_node(
+    ctx: &super::Ctx,
+    node_id: Uuid,
+) -> Result<Vec<CallReachEffectInfo>, ploke_error::Error> {
+    use ploke_error::InternalError;
+
+    let path_options = CallPathOptions {
+        max_depth: 3,
+        max_paths: 64,
+    };
+    match ctx.state.rag.as_ref() {
+        Some(rag) if !rag.call_context_degraded() => Ok(rag
+            .exact_call_effects_reachable_from_owner(node_id, path_options)
+            .map_err(|err| {
+                ploke_error::Error::Internal(InternalError::CompilerError(format!(
+                    "failed to collect reachable effects for code item {node_id}: {err}"
+                )))
+            })?
+            .unwrap_or_default()),
+        _ => Ok(Vec::new()),
+    }
+}
+
 pub(super) fn with_call_usage_fields(
     payload: super::ToolUiPayload,
     impact: Option<&CallImpactInfo>,
     reach: Option<&CallReachInfo>,
+    reach_effects: &[CallReachEffectInfo],
 ) -> super::ToolUiPayload {
     payload
         .with_field(
@@ -668,6 +695,7 @@ pub(super) fn with_call_usage_fields(
             "reach_source_modules",
             count(reach.map(|info| info.source_modules.len())),
         )
+        .with_field("reach_effects", reach_effects.len().to_string())
 }
 
 fn count(value: Option<usize>) -> String {

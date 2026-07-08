@@ -13,18 +13,19 @@ use crate::call_graph_tool_support::{
     AxumAwaitReceiverToolFixture, AxumBodyEmptyToolFixture, AxumBoxedIntoRouteToolFixture,
     AxumErrorHandlingTraitsToolFixture, AxumExpandWithToolFixture, AxumHandlerCallToolFixture,
     AxumJsonFromBytesToolFixture, AxumParseAttrsToolFixture, AxumRequestExtractPathToolFixture,
-    AxumRunUiTestsToolFixture, CallGraphToolFixture, CallableBlockerFixture,
-    ChronoAliasConstructorToolFixture, ChronoNaiveUtcToolFixture, FixtureBranchReceiverToolFixture,
-    FixtureDynamicCallableToolFixture, FixtureSelfFieldReceiverToolFixture,
-    assert_await_result_unwrap_context, assert_await_result_unwrap_proof,
-    assert_body_empty_impact_summary, assert_body_empty_incoming_context,
-    assert_boxed_into_route_incoming_context, assert_branch_receiver_context,
-    assert_branch_receiver_proof, assert_call_path_node, assert_chrono_naive_utc_incoming_context,
-    assert_expected_path_incoming_context, assert_handler_call_incoming_context,
-    assert_incoming_context, assert_json_from_bytes_incoming_context,
-    assert_parse_attrs_incoming_context, assert_path_blocker_proof, assert_path_context,
-    assert_run_ui_tests_incoming_context, assert_self_field_receiver_context,
-    assert_self_field_receiver_proof, assert_target_proof, assert_two_hop_call_path, ui_field,
+    AxumRunUiTestsToolFixture, AxumTaskSpawnEffectToolFixture, CallGraphToolFixture,
+    CallableBlockerFixture, ChronoAliasConstructorToolFixture, ChronoNaiveUtcToolFixture,
+    FixtureBranchReceiverToolFixture, FixtureDynamicCallableToolFixture,
+    FixtureSelfFieldReceiverToolFixture, assert_await_result_unwrap_context,
+    assert_await_result_unwrap_proof, assert_body_empty_impact_summary,
+    assert_body_empty_incoming_context, assert_boxed_into_route_incoming_context,
+    assert_branch_receiver_context, assert_branch_receiver_proof, assert_call_path_node,
+    assert_chrono_naive_utc_incoming_context, assert_expected_path_incoming_context,
+    assert_handler_call_incoming_context, assert_incoming_context,
+    assert_json_from_bytes_incoming_context, assert_parse_attrs_incoming_context,
+    assert_path_blocker_proof, assert_path_context, assert_run_ui_tests_incoming_context,
+    assert_self_field_receiver_context, assert_self_field_receiver_proof, assert_target_proof,
+    assert_task_spawn_effects, assert_two_hop_call_path, ui_field,
 };
 
 #[tokio::test]
@@ -530,6 +531,54 @@ async fn assert_resolved_dynamic_callable_lookup(owner_name: &'static str) {
             >= 3,
         "code_item_lookup should surface resolved dynamic callable proof rows for {owner_name}"
     );
+}
+
+#[tokio::test]
+async fn code_item_lookup_returns_real_corpus_reachable_effects() {
+    let fixture = AxumTaskSpawnEffectToolFixture::new().await;
+    let params = LookupParams {
+        item_name: Cow::Borrowed("deserialize_error_status_codes"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("function"),
+        module_path: Cow::Owned(fixture.module_path_arg()),
+        owner_trait: None,
+        owner_type: None,
+        parent_name: None,
+    };
+
+    let result = CodeItemLookup::execute(params, fixture.ctx("axum-task-spawn-effect-lookup"))
+        .await
+        .expect("deserialize_error_status_codes lookup");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize ConciseContext");
+    let effects = payload
+        .get("call_reach_effects")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_reach_effects array");
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Security/performance:
+    //   "Can this entrypoint reach a sensitive sink?"
+    //   "Which call chain reaches a task-spawn point?"
+    //
+    // Source-oracle chain:
+    //   axum/src/form.rs:262
+    //     `deserialize_error_status_codes` calls `TestClient::new(app)`.
+    //   axum/src/test_helpers/test_client.rs:36
+    //     `TestClient::new` calls `spawn_service(svc)`.
+    //   axum/src/test_helpers/test_client.rs:23
+    //     `spawn_service` calls `tokio::spawn(...)`.
+    assert_task_spawn_effects(effects, &fixture, "code_item_lookup call_reach_effects");
+    let owner = fixture.owner.to_string();
+    assert_eq!(
+        payload.get("id").and_then(serde_json::Value::as_str),
+        Some(owner.as_str()),
+        "code_item_lookup should resolve the upstream axum test owner: {payload:#?}"
+    );
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert_eq!(ui_field(ui, "reach_effects"), effects.len().to_string());
 }
 
 #[tokio::test]
