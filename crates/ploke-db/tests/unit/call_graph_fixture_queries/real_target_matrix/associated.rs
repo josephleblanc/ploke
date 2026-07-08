@@ -2,6 +2,7 @@ use super::super::*;
 use super::common::*;
 use super::source_lines::{SourceLineFanout, assert_resolved_path_line_fanout};
 use ploke_test_utils::CORPUS_AXUM_CALL_GRAPH;
+use serde_json::json;
 
 #[test]
 fn axum_real_target_into_service_future_new_is_documented_gap() -> Result<(), DbError> {
@@ -40,6 +41,143 @@ fn axum_real_target_into_service_future_new_is_documented_gap() -> Result<(), Db
         row.site.id,
         "axum/src/handler/service.rs:174 IntoServiceFuture::new",
     )?;
+
+    Ok(())
+}
+
+#[test]
+fn axum_generated_constructor_macro_boundary_accepts_summary_proof() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+    let domain_id = "bd:corpus-axum-call-graph";
+    let summary_id = "external-summary:axum-opaque-future-macro";
+
+    // Source oracle:
+    //   axum/src/handler/future.rs:11-18 invokes `opaque_future!` for
+    //   `IntoServiceFuture`.
+    //   axum/src/macros.rs:19-20 contains the macro template for generated
+    //   `new`.
+    //   axum/src/handler/service.rs:174 calls
+    //   `super::future::IntoServiceFuture::new(future)`.
+    // Current call-graph contract: the callsite remains unresolved and
+    // targetless because the generated inherent method is not modeled. This
+    // proof-layer check admits a summary for the macro-expansion boundary only;
+    // it must discharge `macro_expansion_not_available` without clearing the
+    // callsite's `type_resolution_missing` blocker or creating a call edge.
+    let owner =
+        method_id_by_name_and_body_substring(&db, "call", "IntoServiceFuture::new(future)")?;
+    let context = db.call_context_for_owner(owner)?;
+    let row = row_by_path(&context, &["super", "future", "IntoServiceFuture", "new"]);
+    assert_targetless_status(row, CallStatusKind::Unresolved);
+    assert!(relations_for_site(&db, row.site.id)?.rows.is_empty());
+
+    let site = row.site.id.to_string();
+    let boundary_id = format!("boundary:{site}:opaque_future");
+
+    let mut records = axum_domain_records(domain_id);
+    db.upsert_proof_fact_values(&records)?;
+    db.project_call_proof_facts_for_owner(owner, domain_id)?;
+
+    db.upsert_proof_fact_values(&[json!({
+        "fact_kind": "expansion_boundary",
+        "schema_version": "ploke-proof-facts.v1",
+        "boundary_id": boundary_id.clone(),
+        "build_domain_id": domain_id,
+        "boundary_kind": "macro_rules_invocation",
+        "expansion_state": "unresolved",
+        "blocking_reason": "macro_expansion_not_available",
+        "source_span": {
+            "file": "axum/src/handler/future.rs",
+            "start_byte": 285,
+            "end_byte": 506
+        },
+        "evidence_use": "proof_only"
+    })])?;
+
+    let blockers = db.proof_blockers()?;
+    assert!(
+        blockers.iter().any(|proof| proof.blocker_id == boundary_id
+            && proof.reason == "macro_expansion_not_available"),
+        "unresolved macro boundary should produce a macro expansion blocker: {blockers:#?}"
+    );
+    assert!(
+        blockers.iter().any(|proof| {
+            proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.reason == "type_resolution_missing"
+        }),
+        "generated constructor callsite should remain blocked until the generated method exists: {blockers:#?}"
+    );
+
+    records = axum_domain_records(domain_id);
+    records.extend([
+        json!({
+            "fact_kind": "expansion_boundary",
+            "schema_version": "ploke-proof-facts.v1",
+            "boundary_id": boundary_id.clone(),
+            "build_domain_id": domain_id,
+            "boundary_kind": "macro_rules_invocation",
+            "expansion_state": "externally_summarized",
+            "external_summary_id": summary_id,
+            "source_span": {
+                "file": "axum/src/handler/future.rs",
+                "start_byte": 285,
+                "end_byte": 506
+            },
+            "evidence_use": "proof_only"
+        }),
+        admitted_summary(AdmittedSummary {
+            id: summary_id,
+            domain_id,
+            artifact_hash: "sha256:axum-opaque-future-summary",
+            version: "axum-opaque-future-summary-v1",
+            scope: "axum opaque_future macro boundary for IntoServiceFuture",
+            effect: "external_summary_boundary",
+        }),
+    ]);
+    db.upsert_proof_fact_values(&records)?;
+
+    let blockers = db.proof_blockers()?;
+    assert!(
+        !blockers.iter().any(|proof| proof.blocker_id == boundary_id
+            && proof.reason == "macro_expansion_not_available"),
+        "admitted macro boundary summary should discharge only the boundary blocker: {blockers:#?}"
+    );
+    assert!(
+        blockers.iter().any(|proof| {
+            proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.reason == "type_resolution_missing"
+        }),
+        "macro boundary summary must not clear the unresolved callsite blocker: {blockers:#?}"
+    );
+
+    let summary_rows = db.proof_graphrag_context(summary_id)?;
+    assert!(
+        summary_rows.iter().any(|proof| {
+            proof.kind == "external_summary"
+                && proof.external_summary_id.as_deref() == Some(summary_id)
+                && proof.status.as_deref() == Some("admitted")
+        }),
+        "summary-id lookup should expose the admitted macro boundary summary: {summary_rows:#?}"
+    );
+    assert!(
+        summary_rows.iter().any(|proof| {
+            proof.kind == "expansion_boundary"
+                && proof.boundary_id.as_deref() == Some(boundary_id.as_str())
+                && proof.external_summary_id.as_deref() == Some(summary_id)
+                && proof.blocker_reason.is_none()
+        }),
+        "summary-id lookup should expose the summarized macro boundary without a blocker: {summary_rows:#?}"
+    );
+
+    let context_after = db.call_context_for_owner(owner)?;
+    let row_after = row_by_path(
+        &context_after,
+        &["super", "future", "IntoServiceFuture", "new"],
+    );
+    assert_targetless_status(row_after, CallStatusKind::Unresolved);
+    assert!(
+        relations_for_site(&db, row_after.site.id)?.rows.is_empty(),
+        "macro boundary summary must not create a generated call edge"
+    );
 
     Ok(())
 }

@@ -72,8 +72,36 @@ matrix table marks receiver, dynamic callable, executable-owner, and usage
 summary rows as met for now. Remaining work should switch to one of the
 future-heavy carriers above instead of polishing another nearby local proof.
 
-Latest completed slice in current bucket: proof-authoritative external summary
-admission over a real external frontier.
+Latest completed slice in current bucket: generated-item macro boundary summary
+proof over a real unresolved constructor frontier.
+
+Completed evidence:
+
+- Added a DB real-target proof test for the axum generated constructor gap:
+  `axum/src/handler/future.rs:11-18` invokes `opaque_future!`,
+  `axum/src/macros.rs:19-20` is the `new` template, and
+  `axum/src/handler/service.rs:174` calls
+  `super::future::IntoServiceFuture::new(future)`.
+- The test proves the call graph keeps the generated constructor callsite
+  unresolved and targetless, with zero local call edges, before and after
+  admitting a summary for the macro-expansion boundary.
+- The test adds an `expansion_boundary` proof row for the real macro invocation,
+  observes the initial `macro_expansion_not_available` blocker, admits a linked
+  summary artifact, and proves only the boundary blocker is discharged. The
+  callsite-level `type_resolution_missing` blocker remains until generated
+  inherent items are actually modeled.
+- Extracted shared real-target axum proof-domain/admitted-summary helpers for
+  the external-frontier and generated-boundary proof tests instead of copying
+  build-domain, cfg-domain, rustc-invocation, and summary JSON records.
+- This is a proof-layer slice only. It does not expand macros, does not create
+  generated method nodes, and does not fabricate a traversal edge.
+- Verification passed:
+  `cargo test -p ploke-db axum_generated_constructor_macro_boundary_accepts_summary_proof -- --nocapture`,
+  `cargo test -p ploke-db axum_external_frontier_accepts_admitted_summary_proof -- --nocapture`,
+  `cargo fmt --all --check`, and `git diff --check`.
+
+Previously completed slice in current bucket: proof-authoritative external
+summary admission over a real external frontier.
 
 Completed evidence:
 
