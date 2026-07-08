@@ -30,7 +30,7 @@ The most useful companion documents are:
 | RAG exact APIs | `crates/ploke-rag/src/core/unit_tests/tests/call_context/` and `proof_context/` | Strong exact coverage | Preserves DB call context, paths, impact, reach, effects, targetless rows, and proof context without search ambiguity. |
 | TUI/tool payloads | `crates/ploke-tui/tests/integration/` call-graph lookup/edges/path tests | Strong exact coverage | `code_item_lookup`, `code_item_edges`, `code_item_call_path`, `code_private_uncalled`, and `request_code_context` cover selected strict rows. |
 | Proof graph | `crates/ploke-db/tests/proof_graph_store*` and proof-context tests | Substantial | Includes resolved call projection, blockers, external summaries, expansion boundaries, reachable effects, entrypoint summaries, and dependency-root proof rows. |
-| Fixture regeneration | `cargo run -p xtask --features call_graph -- fixtures regenerate --active`; `cargo run -p xtask --features call_graph -- verify-backup-dbs` | Recently green with no tracked fixture drift | Backup DBs remain schema-coupled fixtures and should be regenerated instead of loosening imports. |
+| Fixture regeneration | `cargo xtask fixtures regenerate --active`; `cargo xtask verify-backup-dbs` | Recently green with no tracked fixture drift | `call_graph` is only a compatibility feature alias; backup DBs remain schema-coupled fixtures and should be regenerated instead of loosening imports. |
 
 ## Fixture Inventory
 
@@ -112,8 +112,8 @@ These are intentionally not claimed as solved:
 
 Recent focused verification during the active call-graph goal included:
 
-- `cargo run -p xtask --features call_graph -- fixtures regenerate --active`
-- `cargo run -p xtask --features call_graph -- verify-backup-dbs`
+- `cargo xtask fixtures regenerate --active`
+- `cargo xtask verify-backup-dbs`
 - `cargo test -p ploke-db axum_usage_questions_report_reachable_effect_seed_for_task_spawn -- --nocapture`
 - `cargo test -p ploke-rag call_effects_exact_reads_axum_task_spawn_seed -- --nocapture`
 - `cargo test -p ploke-tui --test integration code_item_lookup_returns_real_corpus_reachable_effects -- --nocapture`
