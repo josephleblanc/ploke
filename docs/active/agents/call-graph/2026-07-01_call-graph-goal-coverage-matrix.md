@@ -72,7 +72,32 @@ matrix table marks receiver, dynamic callable, executable-owner, and usage
 summary rows as met for now. Remaining work should switch to one of the
 future-heavy carriers above instead of polishing another nearby local proof.
 
-Latest completed slice in current bucket: workspace dependency-root proof carrier
+Latest completed slice in current bucket: fail-closed request-parts external
+return summary blocker over the real axum-core turbofish receiver row.
+
+Completed evidence:
+
+- The axum-core `request_parts.rs:164`
+  `parts.extract_with_state::<State<String>, String>(&state)` row remains
+  unsupported, targetless, and absent from traversal edges.
+- Added a shared proof fixture for the explicit
+  `external_dependency_summary_missing` blocker naming the exact missing input:
+  an external summary for `http::Request::into_parts` returning
+  `http::request::Parts`.
+- DB, RAG, `code_item_lookup`, and `code_item_edges` tests now show both proof
+  facts for the same site: the projected fail-closed `type_resolution_missing`
+  call-resolution row, plus the explicit proof-only external-return-summary
+  blocker. This explains why the row is unsupported without fabricating a local
+  callee edge.
+- Verification passed:
+  `cargo test -p ploke-db axum_real_target_turbofish_method_receiver_rows_preserve_current_shapes -- --nocapture`,
+  `cargo test -p ploke-rag proof_context_collection_preserves_axum_request_parts_external_return_blocker -- --nocapture`,
+  `cargo test -p ploke-tui --test integration code_item_lookup_returns_unsupported_receiver_targetless_real_corpus_rows -- --nocapture`,
+  `cargo test -p ploke-tui --test integration code_item_edges_returns_unsupported_receiver_targetless_real_corpus_rows -- --nocapture`,
+  `cargo check -p ploke-tui --test integration`,
+  `cargo fmt --all --check`, and `git diff --check`.
+
+Previously completed slice in current bucket: workspace dependency-root proof carrier
 over real axum `FromRef::from_ref` dependency-root rows.
 
 Completed evidence:
