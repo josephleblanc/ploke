@@ -547,29 +547,43 @@ fn proof_invariant_checker_accepts_proof_and_navigation_evidence_for_handoff() {
 }
 
 #[test]
-fn proof_invariant_checker_treats_process_replace_as_detached_process_obligation() {
-    let mut replace_effect = process_effect();
-    replace_effect["effect_class"] = json!("operating_system_process_replace");
-    let db = db_with(vec![
-        build_domain("bd:checker"),
-        admitted_cfg_domain("bd:checker"),
-        admitted_rustc_invocation("bd:checker"),
-        call_site(),
-        call_edge(),
-        replace_effect,
-    ]);
+fn proof_invariant_checker_treats_os_process_effects_as_detached_process_obligations() {
+    for effect_class in [
+        "operating_system_process_create",
+        "operating_system_process_replace",
+        "operating_system_process_configure",
+        "operating_system_process_wait",
+        "operating_system_process_kill",
+        "operating_system_process_reap",
+    ] {
+        let mut effect = process_effect();
+        effect["effect_class"] = json!(effect_class);
+        let db = db_with(vec![
+            build_domain("bd:checker"),
+            admitted_cfg_domain("bd:checker"),
+            admitted_rustc_invocation("bd:checker"),
+            call_site(),
+            call_edge(),
+            effect,
+        ]);
 
-    let findings = db
-        .proof_invariant_findings()
-        .expect("proof invariant findings");
-    let finding = finding_for(&findings, DETACHED_INVARIANT, "call:handoff-spawn");
+        let findings = db
+            .proof_invariant_findings()
+            .expect("proof invariant findings");
+        let finding = finding_for(&findings, DETACHED_INVARIANT, "call:handoff-spawn");
 
-    assert_eq!(finding.status, ProofInvariantStatus::Fail);
-    assert!(
-        finding
-            .reason
-            .contains("detached process create lacks admitted successor handoff")
-    );
+        assert_eq!(
+            finding.status,
+            ProofInvariantStatus::Fail,
+            "{effect_class} should require detached-process handoff evidence"
+        );
+        assert!(
+            finding
+                .reason
+                .contains("detached process create lacks admitted successor handoff"),
+            "{effect_class} should report the detached-process handoff invariant: {finding:#?}"
+        );
+    }
 }
 
 #[test]

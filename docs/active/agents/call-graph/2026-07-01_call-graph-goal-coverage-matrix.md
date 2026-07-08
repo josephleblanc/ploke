@@ -391,7 +391,31 @@ Completed evidence:
   `cargo test -p ploke-tui --test integration code_item_edges_returns_generated_constructor_frontier_path_rows -- --nocapture`,
   `cargo fmt --all --check`, and `git diff --check`.
 
-Latest completed slice in current bucket: proof-authoritative external summary
+Latest completed slice in current bucket: process-effect proof-policy
+consistency for security/performance usage questions.
+
+Completed evidence:
+
+- `effect_seed` storage already accepted all stable
+  `operating_system_process_*` classes, but the proof invariant classifier only
+  treated `create` and `replace` as detached-process effects.
+- The invariant classifier now treats `create`, `replace`, `configure`,
+  `wait`, `kill`, and `reap` as OS process effects for detached-process
+  handoff obligations.
+- The proof-invariant test is table-driven over the same OS process effect
+  subset and proves each class fails closed without admitted successor handoff
+  evidence.
+- This does not change call graph traversal, resolver semantics, or any
+  non-process effect class such as `async_task_spawn`, `ffi_boundary`, or
+  summary-boundary effects.
+- GitNexus impact for `is_process_effect_class` reported LOW risk, exact
+  target, zero indexed upstream dependents, and zero affected processes.
+- Verification passed:
+  `cargo test -p ploke-db --test proof_invariant_checker proof_invariant_checker_treats_os_process_effects_as_detached_process_obligations -- --nocapture`,
+  `cargo test -p ploke-db --test proof_graph_store proof_graph_store_accepts_all_stable_effect_class_values -- --nocapture`,
+  `cargo fmt --all --check`, and `git diff --check`.
+
+Previous completed slice in current bucket: proof-authoritative external summary
 admission over the real `Request::builder` alias frontier, propagated through
 DB, RAG, and TUI tool payloads.
 
