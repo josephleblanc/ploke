@@ -332,6 +332,19 @@ Post-regeneration verification:
   was stopped, and the visible long-running `Json::from_bytes` lookup check had
   completed successfully.
 
+2026-07-08 active refresh:
+
+- `cargo xtask fixtures regenerate --active` roundtripped the nine active
+  fixture registrations with no tracked fixture drift.
+- `cargo xtask verify-backup-dbs` passed for all registered backup DBs.
+- Focused real-corpus effect propagation checks passed through DB, RAG, and
+  exact TUI tool surfaces:
+  `cargo test -p ploke-db axum_usage_questions_report_reachable_effect_seed_for_task_spawn -- --nocapture`,
+  `cargo test -p ploke-rag call_effects_exact_reads_axum_task_spawn_seed -- --nocapture`,
+  `cargo test -p ploke-tui --test integration code_item_lookup_returns_real_corpus_reachable_effects -- --nocapture`,
+  and
+  `cargo test -p ploke-tui --test integration code_item_edges_returns_real_corpus_reachable_effects -- --nocapture`.
+
 ## 2026-07-06 Axum Route Oneshot Frontier Refresh
 
 The `corpus_axum_call_graph` fixture was recreated with

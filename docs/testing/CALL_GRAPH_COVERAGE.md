@@ -127,5 +127,10 @@ Recent focused verification during the active call-graph goal included:
 - `cargo test -p ploke-tui --test integration code_item_lookup_returns_unsupported_receiver_targetless_real_corpus_rows -- --nocapture`
 - `cargo test -p ploke-tui --test integration code_item_edges_returns_unsupported_receiver_targetless_real_corpus_rows -- --nocapture`
 
+On 2026-07-08 the active fixture regeneration and the focused
+`axum_usage_questions_report_reachable_effect_seed_for_task_spawn` DB/RAG/TUI
+effect-propagation commands above were rerun and passed with no tracked fixture
+drift.
+
 Before claiming a wider rollout boundary, rerun the relevant focused suites and
 a workspace checkpoint as described in the root call-graph plan.
