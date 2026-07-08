@@ -5,10 +5,15 @@
     reason = "Stubs for later helper functions."
 )]
 
+pub mod call_shape_matrix;
 pub mod fixture_dbs;
 pub mod nodes;
 pub mod type_shape_matrix;
 
+pub use call_shape_matrix::{
+    CallCorpusFixture, CallExpected, CallOwnerSelector, CallPipelineCoverage, CallShapeCase,
+    CallShapeKind, CallSiteSelector, CallTargetSelector, call_shape_cases,
+};
 pub use fixture_dbs::{
     BACKUP_DB_FIXTURES, CORPUS_AXUM_CALL_GRAPH, CORPUS_AXUM_OPENROUTER_EMBEDDINGS,
     CORPUS_AXUM_TYPE_GRAPH, CORPUS_CHRONO_CALL_GRAPH, CORPUS_CHRONO_OPENROUTER_EMBEDDINGS,

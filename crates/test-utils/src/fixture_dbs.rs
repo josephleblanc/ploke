@@ -611,7 +611,7 @@ pub const CORPUS_MEMCHR_TYPE_GRAPH: FixtureDb = FixtureDb {
 
 pub const CORPUS_MEMCHR_CALL_GRAPH: FixtureDb = FixtureDb {
     id: "corpus_memchr_call_graph",
-    rel_path: "tests/backup_dbs/corpus_memchr_call_graph_2026-06-28.sqlite",
+    rel_path: "tests/backup_dbs/corpus_memchr_call_graph_2026-07-07.sqlite",
     parsed_targets: &["github:BurntSushi/memchr@24f5daa5257e00e87007c936761600e034827905"],
     status: FixtureStatus::Active,
     creation: FixtureCreationStrategy::Automated(FixtureAutomation::GithubCorpusCrate {
@@ -627,7 +627,7 @@ pub const CORPUS_MEMCHR_CALL_GRAPH: FixtureDb = FixtureDb {
     requires_primary_index: false,
     bm25_index_expected: false,
     embedding: None,
-    last_updated: "2026-06-28",
+    last_updated: "2026-07-07",
     notes: "Source-pinned memchr corpus backup for real-target call graph query contracts over arbitrary-expression dynamic callees, function-pointer fields, and callable trait object fields.",
 };
 
@@ -686,7 +686,7 @@ pub const CORPUS_GENERIC_ARRAY_TYPE_GRAPH: FixtureDb = FixtureDb {
 
 pub const CORPUS_GENERIC_ARRAY_CALL_GRAPH: FixtureDb = FixtureDb {
     id: "corpus_generic_array_call_graph",
-    rel_path: "tests/backup_dbs/corpus_generic_array_call_graph_2026-06-28.sqlite",
+    rel_path: "tests/backup_dbs/corpus_generic_array_call_graph_2026-07-07.sqlite",
     parsed_targets: &["github:fizyk20/generic-array@80bab87431c2e29823dc551a3311324812838a23"],
     status: FixtureStatus::Active,
     creation: FixtureCreationStrategy::Automated(FixtureAutomation::GithubCorpusCrate {
@@ -702,7 +702,7 @@ pub const CORPUS_GENERIC_ARRAY_CALL_GRAPH: FixtureDb = FixtureDb {
     requires_primary_index: false,
     bm25_index_expected: false,
     embedding: None,
-    last_updated: "2026-06-28",
+    last_updated: "2026-07-07",
     notes: "Source-pinned generic-array corpus backup for real-target call graph query contracts over guarded match-arm method calls.",
 };
 
@@ -837,7 +837,7 @@ pub const CORPUS_AXUM_TYPE_GRAPH: FixtureDb = FixtureDb {
 
 pub const CORPUS_AXUM_CALL_GRAPH: FixtureDb = FixtureDb {
     id: "corpus_axum_call_graph",
-    rel_path: "tests/backup_dbs/corpus_axum_call_graph_2026-07-06.sqlite",
+    rel_path: "tests/backup_dbs/corpus_axum_call_graph_2026-07-07.sqlite",
     parsed_targets: &["github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1"],
     status: FixtureStatus::Active,
     creation: FixtureCreationStrategy::Automated(FixtureAutomation::GithubCorpusWorkspaceTargets {
@@ -854,7 +854,7 @@ pub const CORPUS_AXUM_CALL_GRAPH: FixtureDb = FixtureDb {
     requires_primary_index: false,
     bm25_index_expected: false,
     embedding: None,
-    last_updated: "2026-07-06",
+    last_updated: "2026-07-07",
     notes: "Source-pinned axum workspace backup for real-target call graph query contracts over helper callers, proc-macro entrypoint body callers, call sites, self-method calls, exact local external-trait impl receiver calls including imported external receiver types, trait method path calls, same-crate and selected workspace dependency-root trait-bound associated paths, and documented unsupported local-impl owner, closure, and dynamic dispatch shapes.",
 };
 

@@ -55,6 +55,7 @@ mod multi_hop;
 mod paths;
 mod proc_macros;
 mod receivers;
+mod shared_matrix;
 mod source_lines;
 mod trait_body;
 mod traversal;
