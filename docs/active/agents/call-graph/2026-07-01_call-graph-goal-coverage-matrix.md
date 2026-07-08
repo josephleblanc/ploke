@@ -392,6 +392,37 @@ Completed evidence:
   `cargo fmt --all --check`, and `git diff --check`.
 
 Latest completed slice in current bucket: proof-authoritative external summary
+admission over the real `Request::builder` alias frontier, propagated through
+DB, RAG, and TUI tool payloads.
+
+Completed evidence:
+
+- Added shared proof-fixture records for the real
+  `axum/src/middleware/from_fn.rs:411` `Request::builder()` callsite, where
+  the `Request = http::Request` alias leaves the selected local workspace.
+- The DB real-target receiver-chain matrix now proves that the row starts as a
+  targetless `External` frontier with an `external_dependency_summary_missing`
+  blocker, accepts a linked admitted `external_summary`, discharges the
+  blocker through `proof_blockers()` and `proof_graphrag_context(...)`, and
+  still has zero local call edges after proof admission.
+- RAG exact proof context for `from_fn::tests::basic` now preserves both the
+  initial blocker and the admitted-summary state for the same real callsite.
+- Exact TUI `code_item_lookup` and `code_item_edges` external path-frontier
+  tests now table-drive both admitted external summaries:
+  `Request::builder` and `std::mem::replace`.
+- This is still a proof-layer slice. It does not add a local traversal target
+  for `http::Request::builder`, and it does not weaken targetless external
+  frontier semantics.
+- Verification passed:
+  `cargo test -p ploke-db axum_real_target_result_receiver_chains_are_documented_gaps -- --nocapture`,
+  `cargo test -p ploke-rag proof_context_collection_preserves_axum_request_builder_alias_frontier -- --nocapture`,
+  `cargo test -p ploke-tui --test integration code_item_lookup_returns_request_builder_alias_external_path_rows -- --nocapture`,
+  `cargo test -p ploke-tui --test integration code_item_edges_returns_request_builder_alias_external_path_rows -- --nocapture`,
+  `cargo run -p xtask --features call_graph -- fixtures regenerate --active`,
+  `cargo run -p xtask --features call_graph -- verify-backup-dbs`,
+  `cargo fmt --all --check`, and `git diff --check`.
+
+Previous completed slice in current bucket: proof-authoritative external summary
 admission over a real external frontier, propagated through DB, RAG, and TUI
 tool payloads.
 

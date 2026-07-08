@@ -423,7 +423,7 @@ async fn proof_context_collection_preserves_axum_request_builder_alias_frontier(
         "from_fn::tests::basic Request::builder",
     );
 
-    let rows = rag.exact_proof_context(owner)?;
+    let initial_rows = rag.exact_proof_context(owner)?;
 
     // Matrix: associated path through workspace type alias to external root.
     // Source chain:
@@ -431,15 +431,50 @@ async fn proof_context_collection_preserves_axum_request_builder_alias_frontier(
     //   axum/src/middleware/from_fn.rs:411 calls
     //   `Request::builder().uri("/").body(Body::empty()).unwrap()`.
     // Expected proof traversal: owner-seeded proof context must include the
-    // call_site plus blocked call_resolution facts for the targetless external
-    // frontier row. There are zero local callee edges because
+    // call_site plus blocked call_resolution facts for the targetless
+    // external frontier row. After admission, the linked external summary
+    // discharges the blocker without creating a local callee edge because
     // `Request = http::Request` leaves the local workspace.
     assert_site_blocker(
-        &rows,
+        &initial_rows,
         owner,
         site_id,
         "external_dependency_summary_missing",
         "from_fn::tests::basic Request::builder",
+    );
+    db.upsert_proof_fact_values(&ploke_test_utils::axum_request_builder_summary_records(
+        site_id,
+    ))?;
+
+    let rows = rag.exact_proof_context(owner)?;
+    let site = site_id.to_string();
+    let summary_id = ploke_test_utils::AXUM_REQUEST_BUILDER_SUMMARY_ID;
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "call_resolution"
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.resolution_state.as_deref() == Some("externally_summarized")
+                && proof.external_summary_id.as_deref() == Some(summary_id)
+                && proof.blocker_reason.is_none()
+        }),
+        "RAG proof context should expose the discharged Request::builder call_resolution: {rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "external_summary"
+                && proof.external_summary_id.as_deref() == Some(summary_id)
+                && proof.summary_class.as_deref() == Some("audited_no_process_effects")
+                && proof.status.as_deref() == Some("admitted")
+                && proof.allowed_effects == ["external_summary_boundary".to_string()]
+        }),
+        "RAG proof context should expose the admitted Request::builder summary artifact: {rows:#?}"
+    );
+    assert!(
+        rows.iter().all(|proof| {
+            proof.call_site_id.as_deref() != Some(site.as_str())
+                || proof.blocker_reason.as_deref() != Some("external_dependency_summary_missing")
+        }),
+        "RAG proof context should not retain the missing-summary blocker after Request::builder admission: {rows:#?}"
     );
 
     Ok(())

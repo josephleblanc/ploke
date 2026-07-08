@@ -281,6 +281,13 @@ pub(crate) struct MacroBoundaryCase {
     pub(crate) callsite_label: &'static str,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct ExternalSummaryCase {
+    pub(crate) path: &'static [&'static str],
+    pub(crate) records: fn(Uuid) -> Vec<serde_json::Value>,
+    pub(crate) summary_id: &'static str,
+}
+
 impl PathToolCase {
     pub(crate) const FROM_REF_DEP_ROOT: [Self; 1] = [Self {
         label: "axum/src/middleware/from_extractor.rs:328 Secret::from_ref dependency root",
@@ -422,8 +429,8 @@ impl PathToolCase {
         }
     }
 
-    pub(crate) fn expects_admitted_external_summary(&self) -> bool {
-        self.path == ["std", "mem", "replace"]
+    pub(crate) fn admitted_external_summary(&self) -> Option<ExternalSummaryCase> {
+        if self.path == ["std", "mem", "replace"]
             && matches!(
                 self.owner,
                 PathOwner::Method {
@@ -431,6 +438,31 @@ impl PathToolCase {
                     ..
                 }
             )
+        {
+            return Some(ExternalSummaryCase {
+                path: &["std", "mem", "replace"],
+                records: axum_std_mem_replace_summary_records,
+                summary_id: "external-summary:axum-std-mem-replace",
+            });
+        }
+
+        if self.path == ["Request", "builder"]
+            && matches!(
+                self.owner,
+                PathOwner::Function {
+                    file_suffix: "axum/src/middleware/from_fn.rs",
+                    ..
+                }
+            )
+        {
+            return Some(ExternalSummaryCase {
+                path: &["Request", "builder"],
+                records: axum_request_builder_summary_records,
+                summary_id: AXUM_REQUEST_BUILDER_SUMMARY_ID,
+            });
+        }
+
+        None
     }
 
     pub(crate) fn admitted_macro_boundary_summary(&self) -> Option<MacroBoundaryCase> {
@@ -686,9 +718,9 @@ impl PathToolFixture {
 }
 
 fn attach_admitted_external_summary_if_needed(db: &Database, owner: Uuid, case: &PathToolCase) {
-    if !case.expects_admitted_external_summary() {
+    let Some(summary) = case.admitted_external_summary() else {
         return;
-    }
+    };
     let site = db
         .call_context_for_owner(owner)
         .unwrap_or_else(|err| panic!("{} call context lookup: {err}", case.label))
@@ -697,20 +729,19 @@ fn attach_admitted_external_summary_if_needed(db: &Database, owner: Uuid, case: 
             row.site.path.as_ref().is_some_and(|path| {
                 path.iter()
                     .map(String::as_str)
-                    .eq(["std", "mem", "replace"])
-            }) && row.status.status == DbCallStatusKind::External
+                    .eq(summary.path.iter().copied())
+            }) && row.status.status == case.db_status()
         })
         .unwrap_or_else(|| {
             panic!(
-                "{} should expose the std::mem::replace external callsite before summary insertion",
-                case.label
+                "{} should expose the external callsite before summary insertion",
+                case.label,
             )
         })
         .site
-        .id
-        .to_string();
+        .id;
 
-    db.upsert_proof_fact_values(&axum_std_mem_replace_summary_records(site))
+    db.upsert_proof_fact_values(&(summary.records)(site))
         .unwrap_or_else(|err| panic!("{} admitted external summary insert: {err}", case.label));
 }
 
@@ -746,8 +777,9 @@ fn attach_admitted_macro_boundary_summary_if_needed(
         .unwrap_or_else(|err| panic!("{} admitted macro summary insert: {err}", case.label));
 }
 
-fn axum_std_mem_replace_summary_records(site_id: String) -> Vec<serde_json::Value> {
+fn axum_std_mem_replace_summary_records(site_id: Uuid) -> Vec<serde_json::Value> {
     const SUMMARY_ID: &str = "external-summary:axum-std-mem-replace";
+    let site_id = site_id.to_string();
     vec![
         json!({
             "fact_kind": "build_domain",
@@ -1168,13 +1200,13 @@ pub(crate) fn assert_admitted_external_summary_proof(
     proofs: &[serde_json::Value],
     owner: Uuid,
     site_id: Uuid,
+    summary: ExternalSummaryCase,
     label: &str,
     tool: &str,
 ) {
     let owner = owner.to_string();
     let site_id = site_id.to_string();
     const BUILD_DOMAIN: &str = "bd:corpus-axum-call-graph";
-    const SUMMARY_ID: &str = "external-summary:axum-std-mem-replace";
     let rows = proofs
         .iter()
         .filter_map(|proof| serde_json::from_value::<ProofContextInfo>(proof.clone()).ok())
@@ -1193,7 +1225,7 @@ pub(crate) fn assert_admitted_external_summary_proof(
             proof.kind == "call_resolution"
                 && proof.call_site_id.as_deref() == Some(site_id.as_str())
                 && proof.resolution_state.as_deref() == Some("externally_summarized")
-                && proof.external_summary_id.as_deref() == Some(SUMMARY_ID)
+                && proof.external_summary_id.as_deref() == Some(summary.summary_id)
                 && proof.blocker_reason.is_none()
         }),
         "{tool} should return the externally summarized call_resolution for {label}: {proofs:#?}"
@@ -1201,7 +1233,7 @@ pub(crate) fn assert_admitted_external_summary_proof(
     assert!(
         rows.iter().any(|proof| {
             proof.kind == "external_summary"
-                && proof.external_summary_id.as_deref() == Some(SUMMARY_ID)
+                && proof.external_summary_id.as_deref() == Some(summary.summary_id)
                 && proof.summary_class.as_deref() == Some("audited_no_process_effects")
                 && proof.status.as_deref() == Some("admitted")
                 && proof.allowed_effects == vec!["external_summary_boundary".to_string()]

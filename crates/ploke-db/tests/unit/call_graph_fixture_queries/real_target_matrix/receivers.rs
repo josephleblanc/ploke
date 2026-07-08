@@ -1286,6 +1286,71 @@ fn axum_real_target_result_receiver_chains_are_documented_gaps() -> Result<(), D
 
     let from_fn_owner =
         function_id_by_name_in_module(&db, &["crate", "middleware", "from_fn", "tests"], "basic")?;
+    let builder_site = assert_owner_path_targetless(
+        &db,
+        from_fn_owner,
+        &["Request", "builder"],
+        CallStatusKind::External,
+        "axum/src/middleware/from_fn.rs:411",
+    )?;
+    let projected =
+        db.project_call_proof_facts_for_owner(from_fn_owner, "bd:corpus-axum-call-graph")?;
+    assert!(
+        projected >= 2,
+        "from_fn::tests::basic should project Request::builder call_site and call_resolution proof rows: {projected}"
+    );
+    let site = builder_site.to_string();
+    let missing_before = db.proof_graphrag_context("external_dependency_summary_missing")?;
+    assert!(
+        missing_before.iter().any(|proof| {
+            proof.kind == "call_resolution"
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.blocker_reason.as_deref() == Some("external_dependency_summary_missing")
+        }),
+        "Request::builder should start as a fail-closed external-summary frontier: {missing_before:#?}"
+    );
+    db.upsert_proof_fact_values(&ploke_test_utils::axum_request_builder_summary_records(
+        builder_site,
+    ))?;
+    let blockers = db.proof_blockers()?;
+    assert!(
+        !blockers.iter().any(|proof| {
+            proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.reason == "external_dependency_summary_missing"
+        }),
+        "linked admitted Request::builder summary should discharge the missing-summary blocker: {blockers:#?}"
+    );
+    let summary_id = ploke_test_utils::AXUM_REQUEST_BUILDER_SUMMARY_ID;
+    let summary_rows = db.proof_graphrag_context(summary_id)?;
+    assert!(
+        summary_rows.iter().any(|proof| {
+            proof.kind == "external_summary"
+                && proof.external_summary_id.as_deref() == Some(summary_id)
+                && proof.summary_class.as_deref() == Some("audited_no_process_effects")
+                && proof.status.as_deref() == Some("admitted")
+                && proof.allowed_effects == ["external_summary_boundary".to_string()]
+        }),
+        "summary-id lookup should expose the admitted Request::builder summary artifact: {summary_rows:#?}"
+    );
+    assert!(
+        summary_rows.iter().any(|proof| {
+            proof.kind == "call_resolution"
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.external_summary_id.as_deref() == Some(summary_id)
+                && proof.resolution_state.as_deref() == Some("externally_summarized")
+                && proof.blocker_reason.is_none()
+        }),
+        "summary-id lookup should expose the externally summarized Request::builder resolution without a blocker: {summary_rows:#?}"
+    );
+    let context_after = db.call_context_for_owner(from_fn_owner)?;
+    let builder_after = row_by_path(&context_after, &["Request", "builder"]);
+    assert_targetless_status(builder_after, CallStatusKind::External);
+    assert!(
+        relations_for_site(&db, builder_after.site.id)?
+            .rows
+            .is_empty(),
+        "proof summary admission must not create a Request::builder call edge"
+    );
     assert_owner_method_targetless(
         &db,
         from_fn_owner,

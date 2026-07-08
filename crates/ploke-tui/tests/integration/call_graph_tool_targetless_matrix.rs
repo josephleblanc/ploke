@@ -524,11 +524,12 @@ async fn code_item_lookup_returns_request_builder_alias_external_path_rows() {
             fixture.case.label,
             "lookup",
         );
-        if fixture.case.expects_admitted_external_summary() {
+        if let Some(summary) = fixture.case.admitted_external_summary() {
             assert_admitted_external_summary_proof(
                 proof_context,
                 fixture.owner,
                 site_id,
+                summary,
                 fixture.case.label,
                 "lookup",
             );
@@ -1170,11 +1171,12 @@ async fn code_item_edges_returns_request_builder_alias_external_path_rows() {
             fixture.case.label,
             "edges",
         );
-        if fixture.case.expects_admitted_external_summary() {
+        if let Some(summary) = fixture.case.admitted_external_summary() {
             assert_admitted_external_summary_proof(
                 proof_context,
                 fixture.owner,
                 site_id,
+                summary,
                 fixture.case.label,
                 "edges",
             );
