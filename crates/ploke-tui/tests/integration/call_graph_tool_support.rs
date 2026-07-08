@@ -2518,6 +2518,39 @@ pub(crate) fn assert_task_spawn_effects(
             .is_some_and(|blockers| blockers.is_empty()),
         "{label} non-blocking effect seed should not add blockers: {effect:#?}"
     );
+    let owner = fixture.owner.to_string();
+    let paths = effect
+        .get("paths_to_owner")
+        .and_then(serde_json::Value::as_array)
+        .unwrap_or_else(|| panic!("{label} effect should include paths_to_owner: {effect:#?}"));
+    let effect_path = paths
+        .iter()
+        .find(|path| {
+            path.get("start_id").and_then(serde_json::Value::as_str) == Some(owner.as_str())
+                && path.get("end_id").and_then(serde_json::Value::as_str)
+                    == Some(spawn_owner.as_str())
+                && path.get("depth").and_then(serde_json::Value::as_u64) == Some(2)
+        })
+        .unwrap_or_else(|| {
+            panic!("{label} effect should include the resolved path to spawn_service: {effect:#?}")
+        });
+    let edges = effect_path
+        .get("edges")
+        .and_then(serde_json::Value::as_array)
+        .unwrap_or_else(|| panic!("{label} effect path should include edges: {effect_path:#?}"));
+    assert_eq!(edges.len(), 2, "{label} task-spawn path should be two hops");
+    assert_eq!(
+        edges[0]
+            .get("caller_id")
+            .and_then(serde_json::Value::as_str),
+        Some(owner.as_str())
+    );
+    assert_eq!(
+        edges[1]
+            .get("callee_id")
+            .and_then(serde_json::Value::as_str),
+        Some(spawn_owner.as_str())
+    );
     let call_site = effect
         .get("call_site")
         .and_then(serde_json::Value::as_object)

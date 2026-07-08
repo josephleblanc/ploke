@@ -490,12 +490,21 @@ fn reach_info(db: &Database, report: DbCallReachReport) -> Result<CallReachInfo,
     })
 }
 
-fn reach_effect_info(row: DbCallReachEffect) -> Result<CallReachEffectInfo, RagError> {
+fn reach_effect_info(
+    db: &Database,
+    row: DbCallReachEffect,
+) -> Result<CallReachEffectInfo, RagError> {
+    let paths_to_owner = row
+        .paths_to_owner
+        .into_iter()
+        .map(|path| path_info(db, path))
+        .collect::<Result<Vec<_>, RagError>>()?;
     Ok(CallReachEffectInfo {
         effect_seed_id: row.effect_seed_id,
         effect_class: row.effect_class,
         confidence: row.confidence,
         blocker_if_unresolved: row.blocker_if_unresolved,
+        paths_to_owner,
         call_site: row_to_call_context(row.call_site, usize::MAX)?,
         blocker_reasons: row.blocker_reasons,
     })
@@ -890,7 +899,7 @@ impl RagService {
             self.db
                 .call_effects_reachable_from_owner(owner_id, options)?
                 .into_iter()
-                .map(reach_effect_info)
+                .map(|row| reach_effect_info(self.db.as_ref(), row))
                 .collect::<Result<Vec<_>, RagError>>()?,
         ))
     }

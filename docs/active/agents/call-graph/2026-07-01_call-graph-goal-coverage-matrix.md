@@ -72,6 +72,31 @@ matrix table marks receiver, dynamic callable, executable-owner, and usage
 summary rows as met for now. Remaining work should switch to one of the
 future-heavy carriers above instead of polishing another nearby local proof.
 
+Latest completed slice in current bucket: source/sink reachable-effect path
+carrier over a real axum task-spawn frontier.
+
+Completed evidence:
+
+- Extended `call_effects_reachable_from_owner(...)` so each reachable
+  `effect_seed` now carries `paths_to_owner`: resolved call paths from the
+  selected owner to the owner that contains the annotated effect callsite.
+- The carrier remains resolved-edge-only. For the axum task-spawn oracle, the
+  path stops at `spawn_service`; the `tokio::spawn(...)` call itself remains an
+  external targetless frontier with no fabricated local edge.
+- DB, RAG, `code_item_lookup`, and `code_item_edges` tests now prove the
+  source-oracle chain
+  `deserialize_error_status_codes -> TestClient::new -> spawn_service ->
+  tokio::spawn` answers both "is the task-spawn sink reachable?" and "which
+  resolved call path reaches the sink owner?"
+- This is a query-carrier slice only. It does not add new effect classes,
+  security policy evaluation, cost modeling, or broader source/sink inference.
+- Verification passed:
+  `cargo test -p ploke-db axum_usage_questions_report_reachable_effect_seed_for_task_spawn -- --nocapture`,
+  `cargo test -p ploke-rag call_effects_exact_reads_axum_task_spawn_seed -- --nocapture`,
+  `cargo test -p ploke-tui --test integration code_item_lookup_returns_real_corpus_reachable_effects -- --nocapture`,
+  and
+  `cargo test -p ploke-tui --test integration code_item_edges_returns_real_corpus_reachable_effects -- --nocapture`.
+
 Previously completed slice in current bucket: runtime trait-object dispatch
 blocker proof over a real axum dyn Future poll frontier.
 

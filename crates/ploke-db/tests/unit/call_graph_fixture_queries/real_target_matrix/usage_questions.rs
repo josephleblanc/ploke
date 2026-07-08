@@ -1224,6 +1224,18 @@ fn axum_usage_questions_report_reachable_effect_seed_for_task_spawn() -> Result<
         effect.blocker_reasons.is_empty(),
         "the effect marker itself should not add a blocker when blocker_if_unresolved=false: {effect:#?}"
     );
+    let effect_path = effect
+        .paths_to_owner
+        .iter()
+        .find(|path| path.start_id == start && path.end_id == spawn_owner && path.depth == 2)
+        .unwrap_or_else(|| {
+            panic!(
+                "reachable effect should include the resolved path to spawn_service: {effect:#?}"
+            )
+        });
+    assert_eq!(effect_path.edges.len(), 2);
+    assert_eq!(effect_path.edges[0].caller_id, start);
+    assert_eq!(effect_path.edges[1].callee_id, spawn_owner);
     assert!(
         relations_for_site(&db, effect.call_site.site.id)?
             .rows

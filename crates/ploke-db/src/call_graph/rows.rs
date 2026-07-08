@@ -219,6 +219,8 @@ pub struct CallReachEffect {
     pub effect_class: String,
     pub confidence: Option<String>,
     pub blocker_if_unresolved: Option<bool>,
+    #[serde(default)]
+    pub paths_to_owner: Vec<CallPath>,
     pub call_site: CallContextRow,
     pub blocker_reasons: Vec<String>,
 }

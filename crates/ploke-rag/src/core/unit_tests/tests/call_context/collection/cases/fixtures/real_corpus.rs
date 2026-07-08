@@ -2177,6 +2177,16 @@ async fn call_effects_exact_reads_axum_task_spawn_seed() -> Result<(), Error> {
     assert_eq!(effect.call_site.site_id, spawn_row.site.id);
     assert_eq!(effect.call_site.owner_id, spawn_owner);
     assert_eq!(effect.call_site.status, CallStatusKind::External);
+    let effect_path = effect
+        .paths_to_owner
+        .iter()
+        .find(|path| path.start_id == start && path.end_id == spawn_owner && path.depth == 2)
+        .unwrap_or_else(|| {
+            panic!("RAG should expose the resolved path to the task-spawn owner: {effect:#?}")
+        });
+    assert_eq!(effect_path.edges.len(), 2);
+    assert_eq!(effect_path.edges[0].caller_id, start);
+    assert_eq!(effect_path.edges[1].callee_id, spawn_owner);
     assert!(
         matches!(
             &effect.call_site.callee,

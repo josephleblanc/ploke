@@ -184,6 +184,13 @@ impl Database {
         let paths = self.call_paths_from_owner(owner_id, options)?;
         let context_by_site = reachable_callsite_context_rows(self, owner_id, &paths)?;
         let blockers_by_site = proof_blockers_by_call_site(self)?;
+        let mut paths_by_owner = BTreeMap::<Uuid, Vec<CallPath>>::new();
+        for path in &paths {
+            paths_by_owner
+                .entry(path.end_id)
+                .or_default()
+                .push(path.clone());
+        }
 
         let mut effects = Vec::new();
         for proof in ProofGraphStore::proof_graphrag_context(self, "")?
@@ -223,6 +230,10 @@ impl Database {
                 effect_class,
                 confidence: proof.confidence,
                 blocker_if_unresolved: proof.blocker_if_unresolved,
+                paths_to_owner: paths_by_owner
+                    .get(&call_site.site.owner_id)
+                    .cloned()
+                    .unwrap_or_default(),
                 call_site: call_site.clone(),
                 blocker_reasons,
             });

@@ -473,6 +473,8 @@ pub struct CallReachEffectInfo {
     pub confidence: Option<String>,
     #[serde(default)]
     pub blocker_if_unresolved: Option<bool>,
+    #[serde(default)]
+    pub paths_to_owner: Vec<CallPathInfo>,
     pub call_site: CallContextInfo,
     #[serde(default)]
     pub blocker_reasons: Vec<String>,
