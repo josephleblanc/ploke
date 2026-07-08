@@ -133,6 +133,7 @@ real-corpus checkpoints passed:
 
 - `cargo test -p ploke-db real_target_matrix -- --nocapture`
 - `cargo test -p ploke-rag real_corpus -- --nocapture`
+- `cargo test -p ploke-tui --test integration real_corpus -- --nocapture`
 
 The focused `axum_usage_questions_report_reachable_effect_seed_for_task_spawn`
 DB/RAG/TUI effect-propagation commands above were also rerun and passed.
