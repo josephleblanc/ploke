@@ -50,24 +50,43 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: workspace dependency-root proof carrier for one real
-`Body::empty` parsed-workspace import row.
+Current bucket: real-corpus targetless fallback proof blocker for one guarded
+receiver row.
 
 Exit criteria:
 
-- Pick one already-resolved real-corpus `Body::empty` caller whose source
-  oracle proves an explicit workspace dependency import.
-- Reuse the existing `dependency_root` proof-fact shape; do not add new
-  resolver behavior, traversal edges, or proof schema.
-- Admit exactly the selected callsite proof row and prove DB/RAG/TUI lookup
-  surfaces it without changing the twenty-three incoming caller rows.
+- Pick one visible real-corpus unsupported receiver row whose source oracle
+  proves the unresolved receiver shape.
+- Reuse the existing `proof_blocker` shape and allowed blocker reason; do not
+  add resolver behavior, traversal edges, or proof schema.
+- Prove the row remains targetless and expose the explicit blocker through DB
+  proof lookup and GraphRAG proof context.
 
-Status: completed for the exact `axum/src/form.rs:158` direct import carrier.
+Status: completed for the generic-array guarded match `iter.size_hint()` rows.
 
-Next bucket: choose the next semantic-expansion carrier. Do not add more
-dependency-root proof breadth unless a matrix source oracle needs it.
+Next bucket: choose the next uncovered matrix bucket. Do not add more
+unsupported receiver blocker breadth unless a source oracle needs it.
 
-Latest completed slice in current bucket: proof-only dependency-root carrier for
+Latest completed slice in current bucket: explicit `type_resolution_missing`
+proof blocker for the real generic-array guarded `size_hint` receiver rows.
+
+Completed evidence:
+
+- The source oracle is
+  `tests/fixture_github_clones/corpus/generic-array/src/lib.rs:1239` and
+  `tests/fixture_github_clones/corpus/generic-array/src/lib.rs:1276`, where
+  guarded match arms call `iter.size_hint()`.
+- The persisted call graph keeps both rows `Unsupported`, with no
+  `call_relation` targets and no traversal candidates.
+- DB proof lookup and GraphRAG proof context expose explicit
+  `type_resolution_missing` blockers for both callsite ids, documenting that
+  exact iterator receiver type proof is required before traversal can be
+  admitted.
+- Verification passed:
+  `cargo test -p ploke-db generic_array_guarded_match_arm_method_guard_is_targetless_fallback_oracle -- --nocapture`,
+  `cargo fmt --all --check`, and `git diff --check`.
+
+Previously completed slice: proof-only dependency-root carrier for
 the real axum `Body::empty` direct workspace import row.
 
 Completed evidence:

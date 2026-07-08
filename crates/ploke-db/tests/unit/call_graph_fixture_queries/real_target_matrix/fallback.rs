@@ -482,7 +482,7 @@ fn generic_array_guarded_match_arm_method_guard_is_targetless_fallback_oracle()
     // Current model gap: the guarded receiver rows are visible but remain
     // targetless because receiver binding tracking does not yet resolve `iter`
     // back to the iterator type.
-    assert_targetless_method_rows_by_name(&db, "size_hint", CallStatusKind::Unsupported, 2)?;
+    let site_ids = generic_array_size_hint_sites(&db)?;
     assert_targetless_method_line_fanout(
         &db,
         &CORPUS_GENERIC_ARRAY_CALL_GRAPH,
@@ -494,7 +494,88 @@ fn generic_array_guarded_match_arm_method_guard_is_targetless_fallback_oracle()
             file_suffix: "src/lib.rs",
             lines: &[1239, 1276],
         }],
-    )
+    )?;
+
+    let records = site_ids
+        .iter()
+        .copied()
+        .map(ploke_test_utils::generic_array_size_hint_guard_blocker)
+        .collect::<Vec<_>>();
+    db.upsert_proof_fact_values(&records)?;
+
+    let blockers = db.proof_blockers()?;
+    for site_id in &site_ids {
+        let site = site_id.to_string();
+        assert!(
+            blockers.iter().any(|proof| {
+                proof.call_site_id.as_deref() == Some(site.as_str())
+                    && proof.reason == "type_resolution_missing"
+                    && proof.status == "blocked"
+            }),
+            "generic-array guarded size_hint site {site} should expose the explicit receiver proof blocker: {blockers:#?}"
+        );
+    }
+
+    let proof_rows = db.proof_graphrag_context("guarded match receiver")?;
+    for site_id in &site_ids {
+        let site = site_id.to_string();
+        assert!(
+            proof_rows.iter().any(|proof| {
+                proof.kind == "proof_blocker"
+                    && proof.call_site_id.as_deref() == Some(site.as_str())
+                    && proof.blocker_reason.as_deref() == Some("type_resolution_missing")
+                    && proof.status.as_deref() == Some("blocked")
+            }),
+            "generic-array guarded size_hint site {site} should be retrievable through proof context: {proof_rows:#?}"
+        );
+    }
+
+    Ok(())
+}
+
+fn generic_array_size_hint_sites(db: &Database) -> Result<Vec<Uuid>, DbError> {
+    let mut params = std::collections::BTreeMap::new();
+    params.insert("method".to_string(), cozo::DataValue::from("size_hint"));
+    params.insert("status".to_string(), cozo::DataValue::from("Unsupported"));
+
+    let rows = db.raw_query_params(
+        r#"?[site_id, owner_id, resolution_kind] :=
+            *call_site {
+                id: site_id,
+                owner_id,
+                call_kind: "Method",
+                method_name: $method @ 'NOW'
+            },
+            *call_resolution_status {
+                source_id: site_id,
+                source_kind: "Method",
+                status_kind: $status,
+                resolution_kind @ 'NOW'
+            }"#,
+        params,
+    )?;
+    assert_eq!(
+        rows.rows.len(),
+        2,
+        "expected two unsupported generic-array size_hint rows: {:#?}",
+        rows.rows
+    );
+
+    let mut sites = Vec::new();
+    let mut blocked = Vec::new();
+    for row in &rows.rows {
+        assert_eq!(row[2], cozo::DataValue::Null);
+        let site_id = to_uuid(&row[0])?;
+        let owner = to_uuid(&row[1])?;
+        assert!(
+            relations_for_site(db, site_id)?.rows.is_empty(),
+            "generic-array size_hint row should not have call_relation targets"
+        );
+        sites.push(site_id);
+        blocked.push((owner, site_id));
+    }
+    assert_no_traversal_candidates_for_sites(db, &blocked, "generic-array size_hint guard rows")?;
+    Ok(sites)
 }
 
 fn assert_owner_path_resolved_count(
