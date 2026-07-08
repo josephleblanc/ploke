@@ -15,8 +15,12 @@ Root plan: `.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md`
 
 Current phase: binding/type-aware semantic resolution.
 
-Current completed bucket: private parenthesized generic `FnOnce`
-single-caller proof.
+Current completed checkpoint: exact binding/type-aware fixture slices through
+struct-pattern receiver bindings, async-closure future alias proof, private
+callable-parameter proof, and parameter-field receiver proof have DB/RAG/TUI
+coverage where exposed. The 2026-07-08 fixture regeneration plus DB
+`real_target_matrix`, RAG `real_corpus`, and TUI integration `real_corpus`
+checkpoints passed.
 
 Exit criteria for the first implementation slice:
 
@@ -26,7 +30,9 @@ Exit criteria for the first implementation slice:
 - unsupported rows remain explicit when proof is missing;
 - no broad trait dispatch, arbitrary dynamic callable execution, or workspace dependency-root import resolution is introduced.
 
-Next phase if this bucket is done: choose the next unresolved coverage-matrix bucket, or expand binding proof by one adjacent shape.
+Next phase if this bucket is done: choose a newly sourced unresolved
+coverage-matrix bucket, or expand binding proof by one adjacent shape only when
+existing parser-owned evidence can prove it without arbitrary value flow.
 
 ## Existing Pattern To Reuse
 
@@ -314,10 +320,15 @@ should prevent future resumes from reselecting already-covered shapes.
 17. Next adjacent candidate:
    - Select from the coverage matrix parking lot rather than adding more
      import breadth by default.
-   - Likely options are a broader async poll/resume proof carrier, an explicit
-     workspace proof carrier for one documented dependency-root source oracle,
-     or another bounded local binding/type proof only if it reuses existing
-     parser-owned evidence without arbitrary interprocedural value flow.
+   - Already audited candidates should not be reselected as simple parser
+     slices: real-corpus routing helper rows require macro/cfg evidence,
+     axum callable fields and proc-macro callback rows require broader
+     interprocedural value flow, and the axum-core request-parts turbofish row
+     is blocked on an external-return summary rather than local receiver proof.
+   - Likely remaining options are a broader async poll/resume proof carrier, a
+     new explicitly reviewed dependency-root source oracle, or another bounded
+     local binding/type proof only if it reuses existing parser-owned evidence
+     without arbitrary interprocedural value flow.
 
 ## Implementation Order
 

@@ -177,7 +177,7 @@ For the current state, that should be:
 ```text
 Root plan: .hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md
 Current phase: binding/type-aware semantic resolution
-Current completed bucket: borrowed value-parameter method-result receiver proof
-Completed proof: fixture-backed `call_borrowed_value_param_method_result_instance_method(value: LocalAssoc)` resolves `(&value).clone_assoc().instance_value()` through parser, DB owner/target-centered receiver and proof rows, and RAG call/proof-context propagation by reusing exact borrowed parameter proof for the inner method and return-type proof for the outer method
+Current completed checkpoint: binding/type-aware fixture slices through struct-pattern receiver bindings, async-closure future alias proof, private callable-parameter proof, and parameter-field receiver proof have parser/DB/RAG/TUI coverage where exposed; 2026-07-08 fixture regeneration plus DB/RAG/TUI real-corpus checkpoints passed
+Completed proof: the current representative buckets are either exact local edges with typed proof or explicit fail-closed frontier rows with blocker/proof payloads; no remaining audited real-corpus candidate is safe to promote without broader macro/cfg, interprocedural value-flow, external-return-summary, or async poll/resume evidence
 Next phase if this bucket is done: choose the next unresolved coverage-matrix bucket from the binding/type-aware semantic expansion plan; do not add more import breadth unless there is an explicit workspace proof carrier and source oracle
 ```
