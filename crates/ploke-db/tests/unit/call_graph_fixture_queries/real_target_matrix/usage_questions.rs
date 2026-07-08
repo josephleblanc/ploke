@@ -538,6 +538,84 @@ fn axum_usage_questions_surface_external_frontier_for_dependency_calls() -> Resu
 }
 
 #[test]
+fn axum_usage_questions_list_external_summary_needs_for_owner() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+    let domain_id = "bd:corpus-axum-call-graph";
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Security analysis:
+    //   "Which external dependency frontiers still need an audited summary?"
+    // Performance work:
+    //   "Which external calls need review before their effects can be trusted?"
+    // Documentation and RAG:
+    //   "What proof input is missing for this targetless frontier?"
+    //
+    // Source oracle:
+    //   axum/src/middleware/from_fn.rs:411 calls `Request::builder()`.
+    // Current contract: this alias leaves the selected local workspace as an
+    // external targetless frontier. The owner-scoped proof queue should list
+    // it while the `external_dependency_summary_missing` blocker is active,
+    // and should drop it once an admitted external summary is linked. The
+    // call graph must not create a local edge in either state.
+    let owner =
+        function_id_by_name_in_module(&db, &["crate", "middleware", "from_fn", "tests"], "basic")?;
+    let site_id = assert_owner_path_targetless(
+        &db,
+        owner,
+        &["Request", "builder"],
+        CallStatusKind::External,
+        "axum/src/middleware/from_fn.rs:411 Request::builder",
+    )?;
+    let projected = db.project_call_proof_facts_for_owner(owner, domain_id)?;
+    assert!(
+        projected >= 2,
+        "from_fn::tests::basic should project call_site and call_resolution facts: {projected}"
+    );
+
+    let options = CallPathOptions {
+        max_depth: 3,
+        max_paths: 64,
+    };
+    let needs = db.external_summary_needs_for_owner(owner, options)?;
+    let need = needs
+        .iter()
+        .find(|need| need.call_site.site.id == site_id)
+        .unwrap_or_else(|| {
+            panic!(
+                "Request::builder should be listed as an external-summary need before admission: {needs:#?}"
+            )
+        });
+    assert_external_targetless(&need.call_site);
+    assert!(
+        need.paths_to_owner.is_empty(),
+        "direct frontier from the selected owner should not need an intermediate path: {need:#?}"
+    );
+    assert!(
+        need.blocker_reasons
+            .iter()
+            .any(|reason| reason == "external_dependency_summary_missing"),
+        "summary need should retain the active missing-summary blocker: {need:#?}"
+    );
+
+    db.upsert_proof_fact_values(&ploke_test_utils::axum_request_builder_summary_records(
+        site_id,
+    ))?;
+    let after = db.external_summary_needs_for_owner(owner, options)?;
+    assert!(
+        after.iter().all(|need| need.call_site.site.id != site_id),
+        "admitted Request::builder summary should discharge this owner-scoped need without adding a local edge: {after:#?}"
+    );
+    assert!(
+        relations_for_site(&db, site_id)?.rows.is_empty(),
+        "summary admission must not fabricate a local Request::builder edge"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn axum_usage_questions_preserve_argument_shape_for_external_frontier() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 

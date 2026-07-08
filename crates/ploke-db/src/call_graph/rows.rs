@@ -224,3 +224,12 @@ pub struct CallReachEffect {
     pub call_site: CallContextRow,
     pub blocker_reasons: Vec<String>,
 }
+
+/// Active external-summary blocker reachable from an owner.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ExternalSummaryNeed {
+    #[serde(default)]
+    pub paths_to_owner: Vec<CallPath>,
+    pub call_site: CallContextRow,
+    pub blocker_reasons: Vec<String>,
+}

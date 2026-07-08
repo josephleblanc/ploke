@@ -15,5 +15,5 @@ pub use rows::{
     CallCallerRow, CallContextCandidate, CallContextOptions, CallContextRelation, CallContextRow,
     CallContextSeed, CallImpactReport, CallNodeContext, CallNodeInfo, CallPath, CallPathEdge,
     CallPathOptions, CallReachEffect, CallReachReport, CallResolutionRow, CallSiteBucket,
-    CallSiteRow, CallTargetRow, ModuleBoundaryEdge,
+    CallSiteRow, CallTargetRow, ExternalSummaryNeed, ModuleBoundaryEdge,
 };

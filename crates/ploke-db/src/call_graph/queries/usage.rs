@@ -13,7 +13,7 @@ use crate::{
 use super::super::{
     CallContextRow, CallImpactReport, CallNodeInfo, CallPath, CallPathEdge, CallPathOptions,
     CallReachEffect, CallReachReport, CallRelationKind, CallSiteBucket, CallSiteKind, CallSiteRow,
-    CallStatusKind, ModuleBoundaryEdge,
+    CallStatusKind, ExternalSummaryNeed, ModuleBoundaryEdge,
 };
 use super::metadata::{call_node_info_rank, call_node_infos, decode_call_node_info};
 
@@ -248,6 +248,64 @@ impl Database {
             )
         });
         Ok(effects)
+    }
+
+    /// Lists active external-summary blockers attached to callsites reachable from `owner_id`.
+    ///
+    /// This is a proof-authoring helper: it reports targetless frontier sites
+    /// whose proof graph still has an `external_dependency_summary_missing`
+    /// blocker. Admitted linked summaries discharge that blocker through the
+    /// proof invariant layer, so discharged sites drop out without gaining a
+    /// local traversal edge.
+    pub fn external_summary_needs_for_owner(
+        &self,
+        owner_id: Uuid,
+        options: CallPathOptions,
+    ) -> Result<Vec<ExternalSummaryNeed>, DbError> {
+        let paths = self.call_paths_from_owner(owner_id, options)?;
+        let context_by_site = reachable_callsite_context_rows(self, owner_id, &paths)?;
+        let blockers_by_site = proof_blockers_by_call_site(self)?;
+        let mut paths_by_owner = BTreeMap::<Uuid, Vec<CallPath>>::new();
+        for path in &paths {
+            paths_by_owner
+                .entry(path.end_id)
+                .or_default()
+                .push(path.clone());
+        }
+
+        let mut needs = Vec::new();
+        for (site, reasons) in blockers_by_site {
+            if !reasons
+                .iter()
+                .any(|reason| reason == "external_dependency_summary_missing")
+            {
+                continue;
+            }
+            let Ok(site_id) = Uuid::parse_str(&site) else {
+                continue;
+            };
+            let Some(call_site) = context_by_site.get(&site_id) else {
+                continue;
+            };
+            let blocker_reasons = reasons.into_iter().collect::<BTreeSet<_>>();
+            needs.push(ExternalSummaryNeed {
+                paths_to_owner: paths_by_owner
+                    .get(&call_site.site.owner_id)
+                    .cloned()
+                    .unwrap_or_default(),
+                call_site: call_site.clone(),
+                blocker_reasons: blocker_reasons.into_iter().collect(),
+            });
+        }
+
+        needs.sort_by_key(|need| {
+            (
+                need.call_site.site.owner_id.as_u128(),
+                need.call_site.site.span,
+                need.call_site.site.id.as_u128(),
+            )
+        });
+        Ok(needs)
     }
 
     /// Lists private executable call-graph nodes with no direct resolved incoming call edge.
