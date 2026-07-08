@@ -12,18 +12,19 @@ use super::*;
 use ploke_core::rag_types::AssembledContext;
 use ploke_core::rag_types::{
     CallCalleeInfo, CallContextInfo, CallEndpointKind, CallExpansionInfo, CallExpansionKind,
-    CallImpactInfo, CallNodeInfo, CallPathEdgeInfo, CallPathInfo, CallPathNodeInfo, CallReachInfo,
-    CallReceiverInfo, CallResolutionKind as RagCallResolutionKind, CallSiteBucketInfo,
+    CallImpactInfo, CallNodeInfo, CallPathEdgeInfo, CallPathInfo, CallPathNodeInfo,
+    CallReachEffectInfo, CallReachInfo, CallReceiverInfo,
+    CallResolutionKind as RagCallResolutionKind, CallSiteBucketInfo,
     CallSiteKind as RagCallSiteKind, CallStatusKind as RagCallStatusKind, CallTargetInfo,
     CallTargetKind, CanonPath, NodeFilepath, ProofContextInfo,
 };
 use ploke_db::{
     CallContextCandidate, CallContextOptions, CallContextRelation, CallContextRow, CallContextSeed,
     CallImpactReport as DbCallImpactReport, CallNodeInfo as DbCallNodeInfo, CallPath as DbCallPath,
-    CallPathEdge as DbCallPathEdge, CallPathOptions, CallReachReport as DbCallReachReport,
-    CallReceiver, CallRelationKind, CallResolutionKind, CallSiteKind,
-    CallStatusKind as DbCallStatusKind, CallTargetKind as DbCallTargetKind, ProofGraphContextRow,
-    ProofGraphStore,
+    CallPathEdge as DbCallPathEdge, CallPathOptions, CallReachEffect as DbCallReachEffect,
+    CallReachReport as DbCallReachReport, CallReceiver, CallRelationKind, CallResolutionKind,
+    CallSiteKind, CallStatusKind as DbCallStatusKind, CallTargetKind as DbCallTargetKind,
+    ProofGraphContextRow, ProofGraphStore,
 };
 use ploke_embed::indexer::EmbeddingProcessor;
 use ploke_embed::runtime::EmbeddingRuntime;
@@ -489,6 +490,17 @@ fn reach_info(db: &Database, report: DbCallReachReport) -> Result<CallReachInfo,
     })
 }
 
+fn reach_effect_info(row: DbCallReachEffect) -> Result<CallReachEffectInfo, RagError> {
+    Ok(CallReachEffectInfo {
+        effect_seed_id: row.effect_seed_id,
+        effect_class: row.effect_class,
+        confidence: row.confidence,
+        blocker_if_unresolved: row.blocker_if_unresolved,
+        call_site: row_to_call_context(row.call_site, usize::MAX)?,
+        blocker_reasons: row.blocker_reasons,
+    })
+}
+
 fn call_node_info(row: DbCallNodeInfo) -> CallNodeInfo {
     CallNodeInfo {
         id: row.id,
@@ -863,6 +875,24 @@ impl RagService {
             self.db.as_ref(),
             self.db.call_reach_for_owner(owner_id, options)?,
         )?))
+    }
+
+    pub fn exact_call_effects_reachable_from_owner(
+        &self,
+        owner_id: Uuid,
+        options: CallPathOptions,
+    ) -> Result<Option<Vec<CallReachEffectInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .call_effects_reachable_from_owner(owner_id, options)?
+                .into_iter()
+                .map(reach_effect_info)
+                .collect::<Result<Vec<_>, RagError>>()?,
+        ))
     }
 
     pub fn exact_private_uncalled_nodes(&self) -> Result<Option<Vec<CallNodeInfo>>, RagError> {

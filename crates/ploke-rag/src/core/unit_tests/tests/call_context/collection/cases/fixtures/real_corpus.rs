@@ -1,7 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use cozo::DataValue;
+use cozo::{DataValue, UuidWrapper};
 use ploke_db::multi_embedding::db_ext::{ANCESTOR_RULES_NOW, METHOD_NODE_ANCESTOR_RULE};
+use ploke_db::{CallStatusKind as DbCallStatusKind, ProofGraphStore};
+use serde_json::json;
 
 use super::super::super::super::super::*;
 use super::expected::path;
@@ -2069,6 +2071,123 @@ async fn call_reach_exact_reads_axum_usage_question_summary() -> Result<(), Erro
     assert!(
         service_report.ambiguous_frontier_calls.is_empty(),
         "this axum owner should not report ambiguous frontier rows: {service_report:#?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn call_effects_exact_reads_axum_task_spawn_seed() -> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Security/performance:
+    //   "Can this entrypoint reach a sensitive sink?"
+    //   "Which call chain reaches a task-spawn point?"
+    //
+    // Source-oracle chain:
+    //   axum/src/form.rs:262
+    //     `deserialize_error_status_codes` calls `TestClient::new(app)`.
+    //   axum/src/test_helpers/test_client.rs:36
+    //     `TestClient::new` calls `spawn_service(svc)`.
+    //   axum/src/test_helpers/test_client.rs:23
+    //     `spawn_service` calls `tokio::spawn(...)`.
+    // Expected contract: RAG exposes the DB reachable-effect query for the
+    // task-spawn sink, while the external `tokio::spawn` frontier remains
+    // targetless and does not become a local call graph edge.
+    let start = function_id_by_name_in_module(
+        &db,
+        &["crate", "form", "tests"],
+        "deserialize_error_status_codes",
+    )?;
+    let spawn_owner = function_id_by_name_in_module(
+        &db,
+        &["crate", "test_helpers", "test_client"],
+        "spawn_service",
+    )?;
+    let spawn_context = db.call_context_for_owner(spawn_owner)?;
+    let spawn_row = spawn_context
+        .iter()
+        .find(|row| {
+            row.site
+                .path
+                .as_ref()
+                .is_some_and(|call_path| call_path == &path(&["tokio", "spawn"]))
+        })
+        .unwrap_or_else(|| {
+            panic!("spawn_service should expose the tokio::spawn frontier: {spawn_context:#?}")
+        });
+    assert_eq!(spawn_row.status.status, DbCallStatusKind::External);
+    assert!(
+        spawn_row.targets.is_empty(),
+        "tokio::spawn should stay targetless in DB call context: {spawn_row:#?}"
+    );
+
+    let mut relation_params = BTreeMap::new();
+    relation_params.insert(
+        "site_id".to_string(),
+        DataValue::Uuid(UuidWrapper(spawn_row.site.id)),
+    );
+    let raw_relations = db.raw_query_params(
+        r#"?[target_id] :=
+            *call_relation { source_id: $site_id, target_id @ 'NOW' }"#,
+        relation_params,
+    )?;
+    assert!(
+        raw_relations.rows.is_empty(),
+        "tokio::spawn should remain an external frontier, not a local edge: {raw_relations:#?}"
+    );
+
+    db.upsert_proof_fact_values(&[json!({
+        "fact_kind": "effect_seed",
+        "schema_version": "ploke-proof-facts.v1",
+        "effect_seed_id": "effect:axum-rag-test-client-task-spawn",
+        "call_site_id": spawn_row.site.id.to_string(),
+        "effect_class": "async_task_spawn",
+        "confidence": "source-oracle",
+        "blocker_if_unresolved": false,
+        "evidence_use": "proof_only"
+    })])?;
+
+    let effects = rag
+        .exact_call_effects_reachable_from_owner(
+            start,
+            CallPathOptions {
+                max_depth: 3,
+                max_paths: 16,
+            },
+        )?
+        .expect("call context enabled");
+    let effect = effects
+        .iter()
+        .find(|effect| effect.effect_seed_id == "effect:axum-rag-test-client-task-spawn")
+        .unwrap_or_else(|| {
+            panic!("RAG should expose the axum tokio::spawn reachable effect: {effects:#?}")
+        });
+    assert_eq!(effect.effect_class, "async_task_spawn");
+    assert_eq!(effect.confidence.as_deref(), Some("source-oracle"));
+    assert_eq!(effect.blocker_if_unresolved, Some(false));
+    assert!(
+        effect.blocker_reasons.is_empty(),
+        "non-blocking effect seed should not add proof blockers: {effect:#?}"
+    );
+    assert_eq!(effect.call_site.site_id, spawn_row.site.id);
+    assert_eq!(effect.call_site.owner_id, spawn_owner);
+    assert_eq!(effect.call_site.status, CallStatusKind::External);
+    assert!(
+        matches!(
+            &effect.call_site.callee,
+            CallCalleeInfo::Path { path: call_path }
+                if call_path == &path(&["tokio", "spawn"])
+        ),
+        "RAG effect payload should preserve the original tokio::spawn callee path: {effect:#?}"
+    );
+    assert!(
+        effect.call_site.targets.is_empty(),
+        "reachable effect annotations must not fabricate RAG target rows: {effect:#?}"
     );
 
     Ok(())

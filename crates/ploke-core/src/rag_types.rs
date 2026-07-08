@@ -465,6 +465,19 @@ pub struct CallReachInfo {
     pub source_modules: Vec<Vec<String>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct CallReachEffectInfo {
+    pub effect_seed_id: String,
+    pub effect_class: String,
+    #[serde(default)]
+    pub confidence: Option<String>,
+    #[serde(default)]
+    pub blocker_if_unresolved: Option<bool>,
+    pub call_site: CallContextInfo,
+    #[serde(default)]
+    pub blocker_reasons: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialOrd, Ord, Hash, PartialEq)]
 pub struct ProofContextInfo {
     pub fact_id: String,

@@ -89,11 +89,19 @@ Completed evidence:
   `effect_class = async_task_spawn`, proves the new query returns that effect
   from the upstream test owner, and reasserts the sink remains an external
   targetless frontier with zero local call edges.
+- Added `CallReachEffectInfo` and
+  `RagService::exact_call_effects_reachable_from_owner`, preserving the same
+  targetless callsite payload and proof blockers through the existing RAG exact
+  wrapper pattern.
+- Added a RAG real-target test for the same axum source chain, proving the
+  exact RAG API reports the `async_task_spawn` effect from the upstream owner
+  without creating a RAG target row for the external `tokio::spawn` frontier.
 - This is a query/proof slice only. It does not add source/sink inference, does
   not classify effects automatically, and does not traverse external frontier
   rows as local callees.
 - Verification passed:
   `cargo test -p ploke-db axum_usage_questions_report_reachable_effect_seed_for_task_spawn -- --nocapture`,
+  `cargo test -p ploke-rag call_effects_exact_reads_axum_task_spawn_seed -- --nocapture`,
   `cargo fmt --all --check`, and `git diff --check`.
 
 Previously completed slice in current bucket: generated-item macro boundary
