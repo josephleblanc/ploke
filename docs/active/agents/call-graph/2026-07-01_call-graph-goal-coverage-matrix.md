@@ -72,7 +72,11 @@ matrix table marks receiver, dynamic callable, executable-owner, and usage
 summary rows as met for now. Remaining work should switch to one of the
 future-heavy carriers above instead of polishing another nearby local proof.
 
-Latest completed slice in current bucket: generated `routing::post`
+Latest completed slice in current bucket: owner-scoped external summary need
+queue exposed through DB, RAG, and exact TUI tools. Detailed evidence is
+recorded below under the same heading.
+
+Previously completed slice in current bucket: generated `routing::post`
 macro-boundary summary proof over a real axum grouped-import free-function
 frontier.
 
@@ -131,7 +135,7 @@ Completed evidence:
   `cargo check -p ploke-tui --test integration`,
   `cargo fmt --all --check`, and `git diff --check`.
 
-Latest completed slice in current bucket: workspace dependency-root proof carrier
+Previously completed slice in current bucket: workspace dependency-root proof carrier
 over real axum `TestClient::new` workspace glob rows.
 
 Completed evidence:
@@ -391,7 +395,7 @@ Completed evidence:
   `cargo test -p ploke-tui --test integration code_item_edges_returns_generated_constructor_frontier_path_rows -- --nocapture`,
   `cargo fmt --all --check`, and `git diff --check`.
 
-Latest completed slice in current bucket: process-effect proof-policy
+Previously completed slice in current bucket: process-effect proof-policy
 consistency for security/performance usage questions.
 
 Completed evidence:
