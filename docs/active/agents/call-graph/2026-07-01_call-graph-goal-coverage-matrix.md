@@ -49,11 +49,48 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: none selected after the private parenthesized generic `FnOnce`
-single-caller proof slice.
+Current bucket: downstream propagation for the shared real-target call-shape
+matrix.
 
-Latest completed bucket: private parenthesized generic `FnOnce` single-caller
-proof.
+Exit criteria:
+
+- RAG call-context collection consumes at least the shared matrix rows marked
+  `RagApi`, preserving resolved target rows and targetless blocker/frontier
+  rows.
+- TUI/tool coverage is either added for rows marked `TuiTool` or the matrix
+  keeps those rows unmarked until a later TUI-specific slice.
+- Verification uses the regenerated 2026-07-07 call-graph corpus fixtures.
+
+Reason to stay in current bucket: the DB side of the shared matrix just landed;
+the matrix rows already carry downstream coverage flags, so the next task is to
+make the downstream consumers prove the same rows instead of adding parser
+breadth.
+
+Latest completed bucket: shared real-target DB call-shape matrix and
+call-graph corpus unsafe-block schema refresh.
+
+Completed evidence:
+
+- Added `ploke_test_utils::call_shape_matrix` as the call-graph counterpart to
+  the existing type-shape matrix. The first shared rows cover an Axum explicit
+  free-function path, a Chrono alias enum-variant constructor, an Axum
+  generated constructor frontier, and an Axum dynamic callable field.
+- Added a DB adapter test under `ploke-db` real-target matrix coverage that
+  table-drives owner selection, callsite selection, target resolution,
+  targetless status assertions, raw edge counts, and one-hop/no-hop traversal
+  checks from the shared matrix.
+- Recreated Axum, Chrono, Generic Array, and Memchr call-graph corpus fixtures
+  from source so registered 2026-07-07 seeds include the strict
+  `call_site.unsafe_block` column rather than stale 12-column roundtripped
+  snapshots.
+- Verification passed:
+  `cargo test -p ploke-db real_target_matrix -- --nocapture`
+  (`76 passed; 0 failed`),
+  `cargo check -p ploke-test-utils`, and focused fixture verification for the
+  four regenerated call-graph corpus fixtures.
+
+Previously completed bucket: private parenthesized generic `FnOnce`
+single-caller proof.
 
 Completed evidence:
 
