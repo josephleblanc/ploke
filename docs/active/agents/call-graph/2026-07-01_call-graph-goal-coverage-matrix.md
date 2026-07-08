@@ -426,6 +426,10 @@ Completed evidence:
   conflicting helper's targetless blocker proof alongside the existing public
   opaque function-pointer parameter blocker and public generic `FnOnce`
   parameter blocker.
+- Exact TUI `code_item_lookup` and `code_item_edges` tests now also preserve
+  the positive same-target helper row: `f()` resolves to `local_target` as a
+  `Function` edge with call-site, call-edge, and resolved call-resolution proof
+  rows.
 - The wrapper functions remain ordinary path calls to their private helpers;
   argument proof is additional resolver evidence and does not replace those
   caller edges.

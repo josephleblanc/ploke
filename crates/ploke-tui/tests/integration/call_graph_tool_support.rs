@@ -95,6 +95,16 @@ pub(crate) struct CallableBlockerFixture {
     pub(crate) build_domain: &'static str,
 }
 
+pub(crate) struct CallableParamResolvedFixture {
+    pub(crate) state: Arc<AppState>,
+    pub(crate) file_path: PathBuf,
+    pub(crate) owner_name: &'static str,
+    pub(crate) owner: Uuid,
+    pub(crate) target: Uuid,
+    pub(crate) path: Vec<String>,
+    pub(crate) build_domain: &'static str,
+}
+
 pub(crate) struct LocalItemToolFixture {
     pub(crate) state: Arc<AppState>,
     pub(crate) file_path: PathBuf,
@@ -594,6 +604,69 @@ impl CallableBlockerFixture {
             file_path,
             owner_name,
             owner,
+            path: path.iter().map(|part| (*part).to_string()).collect(),
+            build_domain: "bd:fixture-call-graph",
+        }
+    }
+
+    pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
+        ctx_for_state(&self.state, call_id)
+    }
+}
+
+impl CallableParamResolvedFixture {
+    pub(crate) async fn multi_function_pointer_param() -> Self {
+        Self::new_for_owner("call_multi_function_pointer_param", &["f"], 9).await
+    }
+
+    async fn new_for_owner(
+        owner_name: &'static str,
+        path: &[&str],
+        expected_projection_count: usize,
+    ) -> Self {
+        let db = Arc::new(Database::new(
+            setup_db_full_multi_embedding("fixture_call_graph").expect("fixture_call_graph db"),
+        ));
+        let crate_root = workspace_root().join("tests/fixture_crates/fixture_call_graph");
+        let module_path = vec!["crate".to_string()];
+        let file_path = crate_root.join("src/lib.rs");
+        let owner = graph_resolve_exact(
+            db.as_ref(),
+            "function",
+            file_path.as_path(),
+            &module_path,
+            owner_name,
+        )
+        .unwrap_or_else(|err| panic!("resolve {owner_name}: {err}"))
+        .pop()
+        .unwrap_or_else(|| panic!("{owner_name} row"))
+        .id;
+        let target = graph_resolve_exact(
+            db.as_ref(),
+            "function",
+            file_path.as_path(),
+            &module_path,
+            "local_target",
+        )
+        .expect("resolve local_target")
+        .pop()
+        .expect("local_target row")
+        .id;
+        assert_eq!(
+            db.project_call_proof_facts_for_node(owner, "bd:fixture-call-graph")
+                .expect("project resolved callable parameter proof facts"),
+            expected_projection_count,
+            "{owner_name} should project the expected resolved call proof rows"
+        );
+
+        let state = app_state_with_rag(db, crate_root).await;
+
+        Self {
+            state,
+            file_path,
+            owner_name,
+            owner,
+            target,
             path: path.iter().map(|part| (*part).to_string()).collect(),
             build_domain: "bd:fixture-call-graph",
         }
@@ -2947,6 +3020,51 @@ pub(crate) fn assert_target_proof(
                     == Some(target.as_str())
         }),
         "{label} should return target-centered proof rows for local_target callers: {proofs:#?}"
+    );
+}
+
+pub(crate) fn assert_resolved_callable_param_proof(
+    proofs: &[serde_json::Value],
+    owner: Uuid,
+    target: Uuid,
+    site: Uuid,
+    build_domain: &str,
+    tool: &str,
+) {
+    let owner = owner.to_string();
+    let target = target.to_string();
+    let site = site.to_string();
+    let rows = proofs
+        .iter()
+        .filter_map(|proof| serde_json::from_value::<ProofContextInfo>(proof.clone()).ok())
+        .collect::<Vec<_>>();
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "call_site"
+                && proof.caller_def_id.as_deref() == Some(owner.as_str())
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.build_domain_id.as_deref() == Some(build_domain)
+        }),
+        "{tool} should return the callable parameter call_site proof row: {proofs:#?}"
+    );
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "call_edge"
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.caller_def_id.as_deref() == Some(owner.as_str())
+                && proof.callee_def_id.as_deref() == Some(target.as_str())
+                && proof.resolution_state.as_deref() == Some("resolved")
+        }),
+        "{tool} should return the resolved callable parameter call_edge proof row: {proofs:#?}"
+    );
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "call_resolution"
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.resolution_state.as_deref() == Some("resolved")
+                && proof.resolved_def_id.as_deref() == Some(target.as_str())
+        }),
+        "{tool} should return the resolved callable parameter call_resolution proof row: {proofs:#?}"
     );
 }
 

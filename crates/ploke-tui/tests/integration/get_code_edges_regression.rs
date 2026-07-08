@@ -33,19 +33,20 @@ use crate::call_graph_tool_support::{
     AxumAwaitReceiverToolFixture, AxumBodyEmptyToolFixture, AxumBoxedIntoRouteToolFixture,
     AxumHandlerCallToolFixture, AxumJsonFromBytesToolFixture, AxumParseAttrsToolFixture,
     AxumRequestExtractPathToolFixture, AxumRunUiTestsToolFixture, AxumTaskSpawnEffectToolFixture,
-    CallGraphToolFixture, CallableBlockerFixture, ChronoAliasConstructorToolFixture,
-    ChronoNaiveUtcToolFixture, FixtureBranchReceiverToolFixture, FixtureDynamicCallableToolFixture,
-    FixtureSelfFieldReceiverToolFixture, assert_await_result_unwrap_context,
-    assert_await_result_unwrap_proof, assert_body_empty_impact_summary,
-    assert_body_empty_incoming_context, assert_boxed_into_route_incoming_context,
-    assert_branch_receiver_context, assert_branch_receiver_proof, assert_call_path_node,
-    assert_chrono_naive_utc_incoming_context, assert_expected_path_incoming_context,
-    assert_fixture_extern_c_abs_effects, assert_handler_call_incoming_context,
-    assert_incoming_context, assert_json_from_bytes_incoming_context,
-    assert_parse_attrs_incoming_context, assert_path_blocker_proof, assert_path_context,
-    assert_run_ui_tests_incoming_context, assert_self_field_receiver_context,
-    assert_self_field_receiver_proof, assert_target_proof, assert_task_spawn_effects,
-    assert_two_hop_call_path, ui_field,
+    CallGraphToolFixture, CallableBlockerFixture, CallableParamResolvedFixture,
+    ChronoAliasConstructorToolFixture, ChronoNaiveUtcToolFixture, FixtureBranchReceiverToolFixture,
+    FixtureDynamicCallableToolFixture, FixtureSelfFieldReceiverToolFixture,
+    assert_await_result_unwrap_context, assert_await_result_unwrap_proof,
+    assert_body_empty_impact_summary, assert_body_empty_incoming_context,
+    assert_boxed_into_route_incoming_context, assert_branch_receiver_context,
+    assert_branch_receiver_proof, assert_call_path_node, assert_chrono_naive_utc_incoming_context,
+    assert_expected_path_incoming_context, assert_fixture_extern_c_abs_effects,
+    assert_handler_call_incoming_context, assert_incoming_context,
+    assert_json_from_bytes_incoming_context, assert_parse_attrs_incoming_context,
+    assert_path_blocker_proof, assert_path_context, assert_resolved_callable_param_proof,
+    assert_resolved_path_context, assert_run_ui_tests_incoming_context,
+    assert_self_field_receiver_context, assert_self_field_receiver_proof, assert_target_proof,
+    assert_task_spawn_effects, assert_two_hop_call_path, ui_field,
 };
 
 #[tokio::test]
@@ -1021,6 +1022,77 @@ async fn code_item_edges_returns_function_pointer_param_blocker() {
             proof_context.len().to_string()
         );
     }
+}
+
+#[tokio::test]
+async fn code_item_edges_returns_multi_caller_function_pointer_param_target() {
+    let fixture = CallableParamResolvedFixture::multi_function_pointer_param().await;
+    let params = EdgesParams {
+        item_name: Cow::Borrowed(fixture.owner_name),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("function"),
+        module_path: Cow::Borrowed("crate"),
+        owner_trait: None,
+        owner_type: None,
+        parent_name: None,
+    };
+
+    let result = CodeItemEdges::execute(params, fixture.ctx("multi-fn-pointer-param-edges"))
+        .await
+        .expect("multi-caller function pointer param edges");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
+    let call_context = payload
+        .get("node_info")
+        .and_then(|node| node.get("call_context"))
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.call_context array");
+    let proof_context = payload
+        .get("node_info")
+        .and_then(|node| node.get("proof_context"))
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.proof_context array");
+
+    // Source oracle:
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:1740-1742
+    //     private `call_multi_function_pointer_param(f)` calls `f()`.
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:1744-1749
+    //     both local callers pass `local_target`.
+    // Edge payloads should preserve the same resolved Function edge that DB/RAG
+    // expose for complete private same-target caller proof.
+    let callee = CallCalleeInfo::Path {
+        path: fixture.path.clone(),
+    };
+    let site_id = assert_resolved_path_context(
+        call_context,
+        fixture.owner,
+        &callee,
+        fixture.target,
+        CallTargetKind::Function,
+        "multi-caller function-pointer parameter f()",
+        "code_item_edges",
+    );
+    assert_resolved_callable_param_proof(
+        proof_context,
+        fixture.owner,
+        fixture.target,
+        site_id,
+        fixture.build_domain,
+        "code_item_edges",
+    );
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert!(
+        ui_field(ui, "call_context_outgoing")
+            .parse::<usize>()
+            .expect("outgoing count")
+            >= 1,
+        "code_item_edges should surface the resolved multi-caller callable parameter row"
+    );
+    assert_eq!(
+        ui_field(ui, "proof_context"),
+        proof_context.len().to_string()
+    );
 }
 
 #[tokio::test]

@@ -857,6 +857,34 @@ pub(crate) fn assert_path_context(
     call.site_id
 }
 
+pub(crate) fn assert_resolved_path_context(
+    calls: &[serde_json::Value],
+    owner: Uuid,
+    callee: &CallCalleeInfo,
+    target: Uuid,
+    relation: CallTargetKind,
+    label: &str,
+    tool: &str,
+) -> Uuid {
+    let matching = matching_path_context(calls, owner, callee);
+    assert_eq!(
+        matching.len(),
+        1,
+        "{tool} should return exactly one resolved path row for {label}: {calls:#?}"
+    );
+    let call = &matching[0];
+    assert_eq!(call.status, CallStatusKind::Resolved);
+    assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+    assert_eq!(
+        call.targets.len(),
+        1,
+        "{tool} target rows for {label}: {call:#?}"
+    );
+    assert_eq!(call.targets[0].target_id, target);
+    assert_eq!(call.targets[0].relation, relation);
+    call.site_id
+}
+
 pub(crate) fn assert_path_context_count(
     calls: &[serde_json::Value],
     owner: Uuid,
