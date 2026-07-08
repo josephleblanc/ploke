@@ -33,7 +33,7 @@ pub use fixture_dbs::{
 };
 pub use proof_fact_fixtures::{
     axum_dependency_record, axum_dyn_future_poll_blocker, axum_entrypoint_record,
-    axum_parts_blocker,
+    axum_parts_blocker, fixture_extern_c_abs_effect_record,
 };
 pub use type_shape_matrix::{
     ContainingOwnerSelector, CoordinateSpec, CorpusFixture, OwnerSelector, ShapePipelineCoverage,

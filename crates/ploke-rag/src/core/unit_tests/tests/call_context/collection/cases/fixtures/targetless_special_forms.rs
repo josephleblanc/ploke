@@ -1,4 +1,4 @@
-use ploke_db::CallPathOptions;
+use ploke_db::{CallPathOptions, ProofGraphStore};
 
 use super::super::super::super::super::*;
 use super::super::super::helpers::*;
@@ -218,6 +218,45 @@ async fn call_reach_exact_preserves_extern_c_external_frontier() -> Result<(), E
             .iter()
             .any(|file| file.as_ref().ends_with("fixture_call_graph/src/lib.rs")),
         "RAG extern C reach should point back to the fixture source file: {report:#?}"
+    );
+
+    assert!(
+        db.project_call_proof_facts_for_owner(extern_owner, "bd:fixture-call-graph")? >= 2,
+        "extern C owner should project targetless proof rows"
+    );
+    db.upsert_proof_fact_values(&[ploke_test_utils::fixture_extern_c_abs_effect_record(
+        external_call.site_id,
+    )])?;
+    let effects = rag
+        .exact_call_effects_reachable_from_owner(
+            extern_owner,
+            CallPathOptions {
+                max_depth: 2,
+                max_paths: 16,
+            },
+        )?
+        .expect("call context enabled");
+    let effect = effects
+        .iter()
+        .find(|effect| effect.effect_seed_id == "effect:fixture-extern-c-abs")
+        .unwrap_or_else(|| {
+            panic!("RAG extern C reach should expose the FFI boundary effect seed: {effects:#?}")
+        });
+    assert_eq!(effect.effect_class, "ffi_boundary");
+    assert_eq!(effect.confidence.as_deref(), Some("fixture-source-oracle"));
+    assert_eq!(effect.blocker_if_unresolved, Some(true));
+    assert_eq!(effect.call_site.site_id, external_call.site_id);
+    assert_eq!(effect.call_site.status, CallStatusKind::External);
+    assert!(
+        effect.paths_to_owner.is_empty(),
+        "direct extern C effect should not invent a self path to the owner: {effect:#?}"
+    );
+    assert!(
+        effect
+            .blocker_reasons
+            .iter()
+            .any(|reason| reason == "external_dependency_summary_missing"),
+        "RAG extern C effect should preserve the external-summary blocker reason: {effect:#?}"
     );
 
     Ok(())

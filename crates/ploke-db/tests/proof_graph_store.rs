@@ -846,6 +846,7 @@ fn proof_graph_store_accepts_all_stable_effect_class_values() {
         "surface_digest_compare",
         "durable_evidence_write",
         "durable_evidence_read",
+        "ffi_boundary",
         "external_summary_boundary",
         "proc_macro_summary_boundary",
         "build_script_summary_boundary",

@@ -290,6 +290,75 @@ impl CallGraphToolFixture {
     pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
         ctx_for_state(&self.state, call_id)
     }
+
+    pub(crate) fn seed_extern_c_abs_effect(&self) -> ExpectedCallSite {
+        let module_path = vec!["crate".to_string()];
+        let owner = graph_resolve_exact(
+            self.state.db.as_ref(),
+            "function",
+            self.file_path.as_path(),
+            &module_path,
+            "call_extern_c_function",
+        )
+        .expect("resolve call_extern_c_function")
+        .pop()
+        .expect("call_extern_c_function row")
+        .id;
+        let context = self
+            .state
+            .db
+            .call_context_for_owner(owner)
+            .expect("call_extern_c_function call context");
+        let row = context
+            .iter()
+            .find(|row| row.site.path.as_ref() == Some(&vec!["abs".to_string()]))
+            .unwrap_or_else(|| {
+                panic!("call_extern_c_function should expose abs(value): {context:#?}")
+            });
+        assert_eq!(row.status.status, DbCallStatusKind::External);
+        assert!(
+            row.targets.is_empty(),
+            "abs(value) should stay targetless before tool execution: {row:#?}"
+        );
+
+        assert!(
+            self.state
+                .db
+                .project_call_proof_facts_for_node(owner, "bd:fixture-call-graph")
+                .expect("project extern C proof facts")
+                >= 2,
+            "call_extern_c_function should project targetless proof rows"
+        );
+        self.state
+            .db
+            .upsert_proof_fact_values(&[ploke_test_utils::fixture_extern_c_abs_effect_record(
+                row.site.id,
+            )])
+            .expect("upsert extern C FFI effect seed");
+        let effects = self
+            .state
+            .db
+            .call_effects_reachable_from_owner(
+                owner,
+                ploke_db::CallPathOptions {
+                    max_depth: 2,
+                    max_paths: 16,
+                },
+            )
+            .expect("reachable extern C FFI effect seed");
+        assert!(
+            effects
+                .iter()
+                .any(|effect| effect.effect_seed_id == "effect:fixture-extern-c-abs"),
+            "fixture should prove the FFI effect is reachable before tool execution: {effects:#?}"
+        );
+
+        ExpectedCallSite {
+            owner,
+            site: row.site.id,
+            path: vec!["abs".to_string()],
+        }
+    }
 }
 
 impl FixtureDynamicCallableToolFixture {
@@ -2601,6 +2670,97 @@ pub(crate) fn assert_task_spawn_effects(
                 .filter_map(serde_json::Value::as_str)
                 .eq(["tokio", "spawn"])),
         "{label} effect callsite should preserve tokio::spawn callee path: {effect:#?}"
+    );
+}
+
+pub(crate) fn assert_fixture_extern_c_abs_effects(
+    effects: &[serde_json::Value],
+    expected: &ExpectedCallSite,
+    label: &str,
+) {
+    let owner = expected.owner.to_string();
+    let site = expected.site.to_string();
+    let effect = effects
+        .iter()
+        .find(|effect| {
+            effect
+                .get("effect_seed_id")
+                .and_then(serde_json::Value::as_str)
+                == Some("effect:fixture-extern-c-abs")
+        })
+        .unwrap_or_else(|| panic!("{label} should include the extern C FFI effect: {effects:#?}"));
+
+    assert_eq!(
+        effect
+            .get("effect_class")
+            .and_then(serde_json::Value::as_str),
+        Some("ffi_boundary")
+    );
+    assert_eq!(
+        effect.get("confidence").and_then(serde_json::Value::as_str),
+        Some("fixture-source-oracle")
+    );
+    assert_eq!(
+        effect
+            .get("blocker_if_unresolved")
+            .and_then(serde_json::Value::as_bool),
+        Some(true)
+    );
+    assert!(
+        effect
+            .get("blocker_reasons")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|blockers| {
+                blockers
+                    .iter()
+                    .any(|reason| reason.as_str() == Some("external_dependency_summary_missing"))
+            }),
+        "{label} should preserve the external-summary blocker on the FFI effect: {effect:#?}"
+    );
+    let paths = effect
+        .get("paths_to_owner")
+        .and_then(serde_json::Value::as_array)
+        .unwrap_or_else(|| panic!("{label} effect should include paths_to_owner: {effect:#?}"));
+    assert!(
+        paths.is_empty(),
+        "{label} direct FFI frontier should not invent a self path: {effect:#?}"
+    );
+    let call_site = effect
+        .get("call_site")
+        .and_then(serde_json::Value::as_object)
+        .unwrap_or_else(|| panic!("{label} effect should include call_site object: {effect:#?}"));
+    assert_eq!(
+        call_site
+            .get("owner_id")
+            .and_then(serde_json::Value::as_str),
+        Some(owner.as_str())
+    );
+    assert_eq!(
+        call_site.get("site_id").and_then(serde_json::Value::as_str),
+        Some(site.as_str())
+    );
+    assert_eq!(
+        call_site.get("status").and_then(serde_json::Value::as_str),
+        Some("external")
+    );
+    assert!(
+        call_site
+            .get("targets")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|targets| targets.is_empty()),
+        "{label} effect callsite should remain targetless: {effect:#?}"
+    );
+    assert!(
+        call_site
+            .get("callee")
+            .and_then(|callee| callee.get("path"))
+            .and_then(|path_variant| path_variant.get("path"))
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|path| path
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .eq(["abs"])),
+        "{label} effect callsite should preserve abs callee path: {effect:#?}"
     );
 }
 

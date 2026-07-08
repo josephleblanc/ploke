@@ -75,3 +75,16 @@ pub fn axum_dyn_future_poll_blocker(call_site_id: Uuid) -> serde_json::Value {
         "evidence_use": "proof_only"
     })
 }
+
+pub fn fixture_extern_c_abs_effect_record(call_site_id: Uuid) -> serde_json::Value {
+    serde_json::json!({
+        "fact_kind": "effect_seed",
+        "schema_version": "ploke-proof-facts.v1",
+        "effect_seed_id": "effect:fixture-extern-c-abs",
+        "call_site_id": call_site_id.to_string(),
+        "effect_class": "ffi_boundary",
+        "confidence": "fixture-source-oracle",
+        "blocker_if_unresolved": true,
+        "evidence_use": "proof_only"
+    })
+}

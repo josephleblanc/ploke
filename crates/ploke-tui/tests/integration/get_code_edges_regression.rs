@@ -40,11 +40,12 @@ use crate::call_graph_tool_support::{
     assert_body_empty_incoming_context, assert_boxed_into_route_incoming_context,
     assert_branch_receiver_context, assert_branch_receiver_proof, assert_call_path_node,
     assert_chrono_naive_utc_incoming_context, assert_expected_path_incoming_context,
-    assert_handler_call_incoming_context, assert_incoming_context,
-    assert_json_from_bytes_incoming_context, assert_parse_attrs_incoming_context,
-    assert_path_blocker_proof, assert_path_context, assert_run_ui_tests_incoming_context,
-    assert_self_field_receiver_context, assert_self_field_receiver_proof, assert_target_proof,
-    assert_task_spawn_effects, assert_two_hop_call_path, ui_field,
+    assert_fixture_extern_c_abs_effects, assert_handler_call_incoming_context,
+    assert_incoming_context, assert_json_from_bytes_incoming_context,
+    assert_parse_attrs_incoming_context, assert_path_blocker_proof, assert_path_context,
+    assert_run_ui_tests_incoming_context, assert_self_field_receiver_context,
+    assert_self_field_receiver_proof, assert_target_proof, assert_task_spawn_effects,
+    assert_two_hop_call_path, ui_field,
 };
 
 #[tokio::test]
@@ -595,6 +596,7 @@ async fn code_item_edges_marks_unsafe_targets_in_call_impact() {
 #[tokio::test]
 async fn code_item_edges_surfaces_extern_c_calls_as_external_frontier() {
     let fixture = CallGraphToolFixture::new().await;
+    let expected = fixture.seed_extern_c_abs_effect();
     let params = EdgesParams {
         item_name: Cow::Borrowed("call_extern_c_function"),
         file_path: Cow::Owned(fixture.file_path.display().to_string()),
@@ -615,6 +617,11 @@ async fn code_item_edges_surfaces_extern_c_calls_as_external_frontier() {
         .and_then(|node| node.get("call_reach"))
         .and_then(serde_json::Value::as_object)
         .expect("node_info.call_reach object");
+    let effects = payload
+        .get("node_info")
+        .and_then(|node| node.get("call_reach_effects"))
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.call_reach_effects array");
 
     // Usage questions:
     //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
@@ -683,6 +690,8 @@ async fn code_item_edges_surfaces_extern_c_calls_as_external_frontier() {
 
     let ui = result.ui_payload.as_ref().expect("ui payload");
     assert_eq!(ui_field(ui, "reach_external_frontier_calls"), "1");
+    assert_fixture_extern_c_abs_effects(effects, &expected, "code_item_edges call_reach_effects");
+    assert_eq!(ui_field(ui, "reach_effects"), effects.len().to_string());
 }
 
 #[tokio::test]

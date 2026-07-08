@@ -21,11 +21,12 @@ use crate::call_graph_tool_support::{
     assert_body_empty_incoming_context, assert_boxed_into_route_incoming_context,
     assert_branch_receiver_context, assert_branch_receiver_proof, assert_call_path_node,
     assert_chrono_naive_utc_incoming_context, assert_expected_path_incoming_context,
-    assert_handler_call_incoming_context, assert_incoming_context,
-    assert_json_from_bytes_incoming_context, assert_parse_attrs_incoming_context,
-    assert_path_blocker_proof, assert_path_context, assert_run_ui_tests_incoming_context,
-    assert_self_field_receiver_context, assert_self_field_receiver_proof, assert_target_proof,
-    assert_task_spawn_effects, assert_two_hop_call_path, ui_field,
+    assert_fixture_extern_c_abs_effects, assert_handler_call_incoming_context,
+    assert_incoming_context, assert_json_from_bytes_incoming_context,
+    assert_parse_attrs_incoming_context, assert_path_blocker_proof, assert_path_context,
+    assert_run_ui_tests_incoming_context, assert_self_field_receiver_context,
+    assert_self_field_receiver_proof, assert_target_proof, assert_task_spawn_effects,
+    assert_two_hop_call_path, ui_field,
 };
 
 #[tokio::test]
@@ -147,6 +148,45 @@ async fn code_item_lookup_marks_unsafe_function_targets_in_call_impact() {
         }),
         "code_item_lookup should preserve the safe direct caller without marking it unsafe: {direct_callers:#?}"
     );
+}
+
+#[tokio::test]
+async fn code_item_lookup_surfaces_extern_c_effect_seed() {
+    let fixture = CallGraphToolFixture::new().await;
+    let expected = fixture.seed_extern_c_abs_effect();
+    let params = LookupParams {
+        item_name: Cow::Borrowed("call_extern_c_function"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("function"),
+        module_path: Cow::Borrowed("crate"),
+        owner_trait: None,
+        owner_type: None,
+        parent_name: None,
+    };
+
+    let result = CodeItemLookup::execute(params, fixture.ctx("extern-c-effect-lookup"))
+        .await
+        .expect("call_extern_c_function lookup");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize ConciseContext");
+    let effects = payload
+        .get("call_reach_effects")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_reach_effects array");
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Security analysis:
+    //   "Which call paths can reach `unsafe` blocks or FFI boundaries?"
+    //
+    // Source oracle:
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:839-844 declares
+    //   foreign function `abs(input)` inside an `unsafe extern "C"` block and
+    //   calls `abs(value)` from `call_extern_c_function`.
+    assert_fixture_extern_c_abs_effects(effects, &expected, "code_item_lookup call_reach_effects");
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert_eq!(ui_field(ui, "reach_effects"), effects.len().to_string());
 }
 
 #[tokio::test]
