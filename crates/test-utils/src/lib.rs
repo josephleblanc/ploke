@@ -32,8 +32,9 @@ pub use fixture_dbs::{
     validate_backup_fixture_contract,
 };
 pub use proof_fact_fixtures::{
-    axum_dependency_record, axum_dyn_future_poll_blocker, axum_entrypoint_record,
-    axum_handler_async_block_poll_resume_blocker, axum_parts_blocker,
+    AXUM_OPAQUE_FUTURE_SUMMARY_ID, axum_dependency_record, axum_dyn_future_poll_blocker,
+    axum_entrypoint_record, axum_handler_async_block_poll_resume_blocker,
+    axum_opaque_future_boundary_id, axum_opaque_future_macro_summary_records, axum_parts_blocker,
     fixture_extern_c_abs_effect_record,
 };
 pub use type_shape_matrix::{

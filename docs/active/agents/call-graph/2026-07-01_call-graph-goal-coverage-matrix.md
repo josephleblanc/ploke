@@ -327,9 +327,18 @@ Completed evidence:
   build-domain, cfg-domain, rustc-invocation, and summary JSON records.
 - This is a proof-layer slice only. It does not expand macros, does not create
   generated method nodes, and does not fabricate a traversal edge.
+- Follow-up propagation now links the admitted `opaque_future!` boundary summary
+  to the unresolved `IntoServiceFuture::new` callsite. RAG exact proof context
+  and exact `code_item_lookup` / `code_item_edges` payloads expose the
+  callsite-linked `expansion_boundary` plus admitted summary artifact while the
+  generated constructor row remains `Unresolved`, targetless, and blocked on
+  `type_resolution_missing`.
 - Verification passed:
   `cargo test -p ploke-db axum_generated_constructor_macro_boundary_accepts_summary_proof -- --nocapture`,
   `cargo test -p ploke-db axum_external_frontier_accepts_admitted_summary_proof -- --nocapture`,
+  `cargo test -p ploke-rag proof_context_collection_preserves_axum_generated_constructor_frontier -- --nocapture`,
+  `cargo test -p ploke-tui --test integration code_item_lookup_returns_generated_constructor_frontier_path_rows -- --nocapture`,
+  `cargo test -p ploke-tui --test integration code_item_edges_returns_generated_constructor_frontier_path_rows -- --nocapture`,
   `cargo fmt --all --check`, and `git diff --check`.
 
 Latest completed slice in current bucket: proof-authoritative external summary

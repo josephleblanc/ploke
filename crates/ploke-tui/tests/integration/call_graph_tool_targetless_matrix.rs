@@ -9,11 +9,11 @@ use ploke_tui::tools::{
 
 use crate::call_graph_tool_support::{
     DynamicToolCase, DynamicToolFixture, PathToolCase, PathToolFixture, ReceiverToolCase,
-    ReceiverToolFixture, assert_admitted_external_summary_proof, assert_dynamic_context,
-    assert_dynamic_proof, assert_method_context, assert_method_proof, assert_parts_blocker,
-    assert_path_blocker_proof, assert_path_context, assert_path_context_absent,
-    assert_path_context_count, assert_path_resolution_proof, assert_runtime_dispatch_blocker,
-    ui_field,
+    ReceiverToolFixture, assert_admitted_external_summary_proof,
+    assert_admitted_macro_boundary_summary_proof, assert_dynamic_context, assert_dynamic_proof,
+    assert_method_context, assert_method_proof, assert_parts_blocker, assert_path_blocker_proof,
+    assert_path_context, assert_path_context_absent, assert_path_context_count,
+    assert_path_resolution_proof, assert_runtime_dispatch_blocker, ui_field,
 };
 
 #[tokio::test]
@@ -714,6 +714,13 @@ async fn code_item_lookup_returns_generated_constructor_frontier_path_rows() {
             fixture.case.label,
             "lookup",
         );
+        assert_admitted_macro_boundary_summary_proof(
+            proof_context,
+            fixture.owner,
+            site_id,
+            fixture.case.label,
+            "lookup",
+        );
         let (unresolved_count, ambiguous_count) =
             assert_unresolved_frontier_reach(reach, fixture.owner, &fixture.case, "lookup");
 
@@ -1300,6 +1307,13 @@ async fn code_item_edges_returns_generated_constructor_frontier_path_rows() {
             "bd:corpus-axum-call-graph",
             "unresolved",
             "type_resolution_missing",
+            fixture.case.label,
+            "edges",
+        );
+        assert_admitted_macro_boundary_summary_proof(
+            proof_context,
+            fixture.owner,
+            site_id,
             fixture.case.label,
             "edges",
         );

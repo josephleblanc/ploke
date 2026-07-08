@@ -1,5 +1,53 @@
 use uuid::Uuid;
 
+const AXUM_CALL_GRAPH_DOMAIN_ID: &str = "bd:corpus-axum-call-graph";
+pub const AXUM_OPAQUE_FUTURE_SUMMARY_ID: &str = "external-summary:axum-opaque-future-macro";
+
+pub fn axum_opaque_future_boundary_id(call_site_id: Uuid) -> String {
+    format!("boundary:{call_site_id}:opaque_future")
+}
+
+pub fn axum_opaque_future_macro_summary_records(call_site_id: Uuid) -> Vec<serde_json::Value> {
+    let site = call_site_id.to_string();
+    let boundary_id = axum_opaque_future_boundary_id(call_site_id);
+    let mut records = axum_call_graph_domain_records(AXUM_CALL_GRAPH_DOMAIN_ID);
+    records.extend([
+        serde_json::json!({
+            "fact_kind": "expansion_boundary",
+            "schema_version": "ploke-proof-facts.v1",
+            "boundary_id": boundary_id,
+            "build_domain_id": AXUM_CALL_GRAPH_DOMAIN_ID,
+            "call_site_id": site,
+            "boundary_kind": "macro_rules_invocation",
+            "expansion_state": "externally_summarized",
+            "external_summary_id": AXUM_OPAQUE_FUTURE_SUMMARY_ID,
+            "source_span": {
+                "file": "axum/src/handler/future.rs",
+                "start_byte": 285,
+                "end_byte": 506
+            },
+            "evidence_use": "proof_only"
+        }),
+        serde_json::json!({
+            "fact_kind": "external_summary",
+            "schema_version": "ploke-proof-facts.v1",
+            "external_summary_id": AXUM_OPAQUE_FUTURE_SUMMARY_ID,
+            "build_domain_id": AXUM_CALL_GRAPH_DOMAIN_ID,
+            "summary_class": "audited_no_process_effects",
+            "artifact_hash": "sha256:axum-opaque-future-summary",
+            "version": "axum-opaque-future-summary-v1",
+            "review_method": "source-oracle-review",
+            "scope_of_validity": "axum opaque_future macro boundary for IntoServiceFuture",
+            "allowed_effects": ["external_summary_boundary"],
+            "required_containment": "none",
+            "invalidation_conditions": "source oracle, fixture hash, or proof policy changes",
+            "status": "admitted",
+            "evidence_use": "proof_only"
+        }),
+    ]);
+    records
+}
+
 pub fn axum_entrypoint_record(domain_id: &str, definition_id: Uuid) -> serde_json::Value {
     serde_json::json!({
         "fact_kind": "entrypoint_summary",
@@ -48,6 +96,53 @@ pub fn axum_dependency_record(
         "status": "admitted",
         "evidence_use": "proof_only"
     })
+}
+
+fn axum_call_graph_domain_records(domain_id: &str) -> Vec<serde_json::Value> {
+    vec![
+        serde_json::json!({
+            "fact_kind": "build_domain",
+            "schema_version": "ploke-proof-facts.v1",
+            "build_domain_id": domain_id,
+            "cargo_metadata_hash": "sha256:axum-metadata",
+            "cargo_lock_hash": "sha256:axum-lock",
+            "package_id": "github:tokio-rs/axum",
+            "target_kind": "library",
+            "target_name": "axum",
+            "target_root": "axum/src/lib.rs",
+            "target_triple": "x86_64-unknown-linux-gnu",
+            "host_triple": "x86_64-unknown-linux-gnu",
+            "profile": "dev",
+            "features_hash": "sha256:axum-features",
+            "active_cfg_hash": "sha256:axum-cfg",
+            "rustc_version": "rustc fixture",
+            "extractor_version": "ploke-test",
+            "proof_policy_version": "proof-policy-test",
+            "evidence_use": "proof_only"
+        }),
+        serde_json::json!({
+            "fact_kind": "cfg_domain",
+            "schema_version": "ploke-proof-facts.v1",
+            "cfg_domain_id": "cfg:corpus-axum-call-graph",
+            "build_domain_id": domain_id,
+            "active_cfg_hash": "sha256:axum-cfg",
+            "status": "admitted",
+            "evidence_use": "proof_only"
+        }),
+        serde_json::json!({
+            "fact_kind": "rustc_invocation",
+            "schema_version": "ploke-proof-facts.v1",
+            "invocation_id": "rustc:corpus-axum-call-graph",
+            "build_domain_id": domain_id,
+            "rustc_program": "rustc",
+            "rustc_version": "rustc fixture",
+            "working_directory": "/workspace/axum",
+            "argument_vector_hash": "sha256:axum-rustc-argv",
+            "environment_hash": "sha256:axum-rustc-env",
+            "status": "admitted",
+            "evidence_use": "proof_only"
+        }),
+    ]
 }
 
 pub fn axum_parts_blocker(call_site_id: Uuid) -> serde_json::Value {

@@ -559,6 +559,9 @@ async fn proof_context_collection_preserves_axum_generated_constructor_frontier(
         CallStatusKind::Unresolved,
         "HandlerService::call IntoServiceFuture::new",
     );
+    db.upsert_proof_fact_values(&ploke_test_utils::axum_opaque_future_macro_summary_records(
+        site_id,
+    ))?;
 
     let rows = rag.exact_proof_context(owner)?;
 
@@ -572,9 +575,10 @@ async fn proof_context_collection_preserves_axum_generated_constructor_frontier(
     //   axum/src/handler/future.rs:11-18 and axum/src/macros.rs:19-20
     //   generate the concrete inherent `new`.
     // Expected proof traversal: proof context must include the call_site plus
-    // unresolved call_resolution fact for this exact targetless path row. There
-    // are zero local callee edges until macro-generated inherent items are
-    // modeled as source items.
+    // unresolved call_resolution fact for this exact targetless path row, plus
+    // the callsite-linked admitted macro-boundary summary. There are zero local
+    // callee edges until macro-generated inherent items are modeled as source
+    // items.
     assert_site_resolution_blocker(
         &rows,
         owner,
@@ -582,6 +586,29 @@ async fn proof_context_collection_preserves_axum_generated_constructor_frontier(
         "unresolved",
         "type_resolution_missing",
         "HandlerService::call IntoServiceFuture::new",
+    );
+    let site = site_id.to_string();
+    let boundary_id = ploke_test_utils::axum_opaque_future_boundary_id(site_id);
+    let summary_id = ploke_test_utils::AXUM_OPAQUE_FUTURE_SUMMARY_ID;
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "expansion_boundary"
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.boundary_id.as_deref() == Some(boundary_id.as_str())
+                && proof.external_summary_id.as_deref() == Some(summary_id)
+                && proof.status.as_deref() == Some("externally_summarized")
+                && proof.blocker_reason.is_none()
+        }),
+        "RAG proof context should expose the admitted opaque_future boundary summary linked to the generated constructor callsite: {rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "external_summary"
+                && proof.external_summary_id.as_deref() == Some(summary_id)
+                && proof.status.as_deref() == Some("admitted")
+                && proof.allowed_effects == ["external_summary_boundary".to_string()]
+        }),
+        "RAG proof context should expose the admitted opaque_future summary artifact: {rows:#?}"
     );
 
     Ok(())

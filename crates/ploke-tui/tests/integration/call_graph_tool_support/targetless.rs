@@ -401,6 +401,17 @@ impl PathToolCase {
             )
     }
 
+    pub(crate) fn expects_admitted_macro_boundary_summary(&self) -> bool {
+        self.path == ["super", "future", "IntoServiceFuture", "new"]
+            && matches!(
+                self.owner,
+                PathOwner::Method {
+                    file_suffix: "axum/src/handler/service.rs",
+                    ..
+                }
+            )
+    }
+
     pub(crate) fn owner_trait(&self) -> Option<&'static str> {
         match self.owner {
             PathOwner::Function { .. } => None,
@@ -592,6 +603,7 @@ impl PathToolFixture {
             case.label
         );
         attach_admitted_external_summary_if_needed(&db, owner.id, &case);
+        attach_admitted_macro_boundary_summary_if_needed(&db, owner.id, &case);
         let state = axum_state_for_target(Arc::clone(&db), &owner, case.label).await;
 
         Self {
@@ -639,6 +651,38 @@ fn attach_admitted_external_summary_if_needed(db: &Database, owner: Uuid, case: 
 
     db.upsert_proof_fact_values(&axum_std_mem_replace_summary_records(site))
         .unwrap_or_else(|err| panic!("{} admitted external summary insert: {err}", case.label));
+}
+
+fn attach_admitted_macro_boundary_summary_if_needed(
+    db: &Database,
+    owner: Uuid,
+    case: &PathToolCase,
+) {
+    if !case.expects_admitted_macro_boundary_summary() {
+        return;
+    }
+    let site = db
+        .call_context_for_owner(owner)
+        .unwrap_or_else(|err| panic!("{} call context lookup: {err}", case.label))
+        .into_iter()
+        .find(|row| {
+            row.site.path.as_ref().is_some_and(|path| {
+                path.iter()
+                    .map(String::as_str)
+                    .eq(case.path.iter().copied())
+            }) && row.status.status == DbCallStatusKind::Unresolved
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "{} should expose the IntoServiceFuture::new unresolved callsite before macro summary insertion",
+                case.label
+            )
+        })
+        .site
+        .id;
+
+    db.upsert_proof_fact_values(&axum_opaque_future_macro_summary_records(site))
+        .unwrap_or_else(|err| panic!("{} admitted macro summary insert: {err}", case.label));
 }
 
 fn axum_std_mem_replace_summary_records(site_id: String) -> Vec<serde_json::Value> {
@@ -1081,6 +1125,61 @@ pub(crate) fn assert_admitted_external_summary_proof(
                 || proof.blocker_reason.as_deref() != Some("external_dependency_summary_missing")
         }),
         "{tool} should not retain the missing-summary blocker after admission for {label}: {proofs:#?}"
+    );
+}
+
+pub(crate) fn assert_admitted_macro_boundary_summary_proof(
+    proofs: &[serde_json::Value],
+    owner: Uuid,
+    site_id: Uuid,
+    label: &str,
+    tool: &str,
+) {
+    let owner = owner.to_string();
+    let site = site_id.to_string();
+    let boundary_id = axum_opaque_future_boundary_id(site_id);
+    let rows = proofs
+        .iter()
+        .filter_map(|proof| serde_json::from_value::<ProofContextInfo>(proof.clone()).ok())
+        .collect::<Vec<_>>();
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "call_site"
+                && proof.caller_def_id.as_deref() == Some(owner.as_str())
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.build_domain_id.as_deref() == Some("bd:corpus-axum-call-graph")
+        }),
+        "{tool} should return the generated constructor call_site proof row for {label}: {proofs:#?}"
+    );
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "call_resolution"
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.resolution_state.as_deref() == Some("unresolved")
+                && proof.blocker_reason.as_deref() == Some("type_resolution_missing")
+        }),
+        "{tool} should keep the generated constructor callsite unresolved for {label}: {proofs:#?}"
+    );
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "expansion_boundary"
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.boundary_id.as_deref() == Some(boundary_id.as_str())
+                && proof.external_summary_id.as_deref() == Some(AXUM_OPAQUE_FUTURE_SUMMARY_ID)
+                && proof.status.as_deref() == Some("externally_summarized")
+                && proof.blocker_reason.is_none()
+        }),
+        "{tool} should return the admitted opaque_future expansion boundary for {label}: {proofs:#?}"
+    );
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "external_summary"
+                && proof.external_summary_id.as_deref() == Some(AXUM_OPAQUE_FUTURE_SUMMARY_ID)
+                && proof.summary_class.as_deref() == Some("audited_no_process_effects")
+                && proof.status.as_deref() == Some("admitted")
+                && proof.allowed_effects == vec!["external_summary_boundary".to_string()]
+        }),
+        "{tool} should return the admitted opaque_future summary artifact for {label}: {proofs:#?}"
     );
 }
 
