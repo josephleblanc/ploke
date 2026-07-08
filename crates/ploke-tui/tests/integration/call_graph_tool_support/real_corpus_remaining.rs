@@ -28,6 +28,7 @@ pub(crate) struct AxumRemainingToolFixture {
     pub(crate) module_path: Vec<String>,
     pub(crate) target: Uuid,
     pub(crate) callers: Vec<ExpectedRemainingCallSite>,
+    pub(crate) dependency_root_sites: Vec<Uuid>,
 }
 
 #[derive(Clone)]
@@ -249,6 +250,7 @@ impl AxumRemainingToolFixture {
             "{} should project target-scoped proof rows for real-corpus callers",
             case.label()
         );
+        let dependency_root_sites = attach_root_proofs(&db, case, target.id, &callers);
         let state = axum_state_for_target(Arc::clone(&db), &target, case.label()).await;
 
         Self {
@@ -262,6 +264,7 @@ impl AxumRemainingToolFixture {
             module_path: target.module_path,
             target: target.id,
             callers,
+            dependency_root_sites,
         }
     }
 
@@ -305,6 +308,79 @@ pub(crate) fn assert_expected_remaining_incoming_context(
             }),
             "{tool} should return incoming caller site {} for {label}: {calls:#?}",
             expected.site
+        );
+    }
+}
+
+fn attach_root_proofs(
+    db: &Database,
+    case: AxumRemainingTarget,
+    target: Uuid,
+    callers: &[ExpectedRemainingCallSite],
+) -> Vec<Uuid> {
+    if !matches!(case, AxumRemainingTarget::FromRef) {
+        return Vec::new();
+    }
+
+    let mut sites = Vec::new();
+    let mut records = Vec::new();
+    for caller in callers {
+        let site = caller.site.to_string();
+        let source = db
+            .proof_source_provenance(&site)
+            .unwrap_or_else(|err| panic!("{} source provenance: {err}", case.label()))
+            .unwrap_or_else(|| panic!("{} should have proof provenance for {site}", case.label()));
+        if source.source_file.ends_with("axum/src/extract/state.rs")
+            || source
+                .source_file
+                .ends_with("axum/src/middleware/from_extractor.rs")
+        {
+            sites.push(caller.site);
+            records.push(axum_dependency_record(
+                "bd:corpus-axum-call-graph",
+                caller.site,
+                caller.owner,
+                target,
+            ));
+        }
+    }
+    assert_eq!(
+        sites.len(),
+        2,
+        "{} should identify both dependency-root caller sites",
+        case.label()
+    );
+    db.upsert_proof_fact_values(&records)
+        .unwrap_or_else(|err| panic!("{} dependency-root proof insert: {err}", case.label()));
+    sites
+}
+
+pub(crate) fn assert_dependency_root_proof(
+    proofs: &[serde_json::Value],
+    sites: &[Uuid],
+    target: Uuid,
+    tool: &str,
+    label: &str,
+) {
+    let target = target.to_string();
+    for site in sites {
+        let site = site.to_string();
+        assert!(
+            proofs.iter().any(|proof| {
+                proof.get("kind").and_then(serde_json::Value::as_str) == Some("dependency_root")
+                    && proof
+                        .get("call_site_id")
+                        .and_then(serde_json::Value::as_str)
+                        == Some(site.as_str())
+                    && proof
+                        .get("resolved_def_id")
+                        .and_then(serde_json::Value::as_str)
+                        == Some(target.as_str())
+                    && proof.get("target_name").and_then(serde_json::Value::as_str)
+                        == Some("axum_core::extract::FromRef::from_ref")
+                    && proof.get("status").and_then(serde_json::Value::as_str) == Some("admitted")
+            }),
+            "{tool} should expose dependency-root proof site {site} for {label}: {proofs:#?}"
         );
     }
 }

@@ -20,3 +20,32 @@ pub fn axum_entrypoint_record(domain_id: &str, definition_id: Uuid) -> serde_jso
         "evidence_use": "proof_only"
     })
 }
+
+pub fn axum_dependency_record(
+    domain_id: &str,
+    call_site_id: Uuid,
+    caller_def_id: Uuid,
+    resolved_def_id: Uuid,
+) -> serde_json::Value {
+    serde_json::json!({
+        "fact_kind": "dependency_root",
+        "schema_version": "ploke-proof-facts.v1",
+        "dependency_root_id": format!("dependency-root:axum-core-from-ref:{call_site_id}"),
+        "build_domain_id": domain_id,
+        "call_site_id": call_site_id.to_string(),
+        "caller_def_id": caller_def_id.to_string(),
+        "resolved_def_id": resolved_def_id.to_string(),
+        "dependency_name": "axum_core",
+        "target_kind": "workspace_trait_method",
+        "target_name": "axum_core::extract::FromRef::from_ref",
+        "target_root": "axum-core/src/extract/from_ref.rs",
+        "import_path": ["axum_core", "extract", "FromRef"],
+        "resolved_path": ["axum_core", "extract", "FromRef", "from_ref"],
+        "artifact_hash": "sha256:axum-core-from-ref-dependency-root",
+        "version": "axum-call-graph-dependency-root-v1",
+        "review_method": "source-oracle-review",
+        "scope_of_validity": "axum dependency-root FromRef::from_ref source oracle in corpus_axum_call_graph",
+        "status": "admitted",
+        "evidence_use": "proof_only"
+    })
+}

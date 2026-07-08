@@ -297,7 +297,63 @@ fn axum_real_target_from_ref_dependency_root_bound_reaches_workspace_trait_metho
         },
     )?;
 
+    let domain_id = "bd:corpus-axum-call-graph";
+    let mut records = axum_domain_records(domain_id);
+    records.extend([
+        ploke_test_utils::axum_dependency_record(domain_id, state_row.site.id, state_owner, target),
+        ploke_test_utils::axum_dependency_record(
+            domain_id,
+            middleware_row.site.id,
+            middleware_owner,
+            target,
+        ),
+    ]);
+    db.upsert_proof_fact_values(&records)?;
+
+    let target_id = target.to_string();
+    let proof_rows = db.proof_symbol_lookup(&target_id)?;
+    assert_root_proof(
+        &proof_rows,
+        state_row.site.id,
+        state_owner,
+        target,
+        "axum/src/extract/state.rs:309 dependency-root proof",
+    );
+    assert_root_proof(
+        &proof_rows,
+        middleware_row.site.id,
+        middleware_owner,
+        target,
+        "axum/src/middleware/from_extractor.rs:328 dependency-root proof",
+    );
+
     Ok(())
+}
+
+fn assert_root_proof(
+    rows: &[ProofGraphContextRow],
+    site_id: Uuid,
+    caller_id: Uuid,
+    target_id: Uuid,
+    label: &str,
+) {
+    let site_id = site_id.to_string();
+    let caller_id = caller_id.to_string();
+    let target_id = target_id.to_string();
+    assert!(
+        rows.iter().any(|row| {
+            row.kind == "dependency_root"
+                && row.call_site_id.as_deref() == Some(site_id.as_str())
+                && row.caller_def_id.as_deref() == Some(caller_id.as_str())
+                && row.resolved_def_id.as_deref() == Some(target_id.as_str())
+                && row.target_kind.as_deref() == Some("workspace_trait_method")
+                && row.target_name.as_deref() == Some("axum_core::extract::FromRef::from_ref")
+                && row.target_root.as_deref() == Some("axum-core/src/extract/from_ref.rs")
+                && row.status.as_deref() == Some("admitted")
+                && row.evidence_use.as_deref() == Some("proof_only")
+        }),
+        "{label} should expose an admitted dependency-root proof row: {rows:#?}"
+    );
 }
 
 #[test]

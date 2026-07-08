@@ -3,6 +3,7 @@ use super::helpers::{
     ProofCase, assert_case_rows, axum_db, function_id, method_id_by_name_and_body, project_case,
     struct_id, trait_method_id, variant_id,
 };
+use ploke_db::ProofGraphStore;
 
 #[tokio::test]
 async fn proof_context_exact_preserves_axum_supported_target_rows() -> Result<(), Error> {
@@ -183,6 +184,7 @@ async fn proof_context_exact_preserves_axum_supported_target_rows() -> Result<()
         .into_iter()
         .map(|case| project_case(&db, case))
         .collect::<Result<Vec<_>, _>>()?;
+    attach_dependency_roots(&db, &projected)?;
 
     let rag = init_test_rag_mock(Arc::clone(&db));
     assert!(
@@ -192,6 +194,85 @@ async fn proof_context_exact_preserves_axum_supported_target_rows() -> Result<()
     for case in &projected {
         assert_case_rows(&rag, case)?;
     }
+    let from_ref = projected
+        .iter()
+        .find(|case| case.case.label == "axum-core FromRef::from_ref bounded paths")
+        .expect("FromRef projected case");
+    let rows = rag.exact_proof_context(from_ref.case.target)?;
+    assert_dependency_roots(&rows, from_ref);
 
     Ok(())
+}
+
+fn attach_dependency_roots(
+    db: &Database,
+    projected: &[super::helpers::ProjectedCase],
+) -> Result<(), Error> {
+    let Some(case) = projected
+        .iter()
+        .find(|case| case.case.label == "axum-core FromRef::from_ref bounded paths")
+    else {
+        return Ok(());
+    };
+
+    let mut records = Vec::new();
+    for caller in &case.callers {
+        let site = caller.site.id.to_string();
+        let source = db
+            .proof_source_provenance(&site)?
+            .unwrap_or_else(|| panic!("FromRef caller site {site} should have proof provenance"));
+        if source.source_file.ends_with("axum/src/extract/state.rs")
+            || source
+                .source_file
+                .ends_with("axum/src/middleware/from_extractor.rs")
+        {
+            records.push(ploke_test_utils::axum_dependency_record(
+                super::helpers::AXUM_DOMAIN,
+                caller.site.id,
+                caller.site.owner_id,
+                case.case.target,
+            ));
+        }
+    }
+    assert_eq!(
+        records.len(),
+        2,
+        "FromRef proof context should admit both axum dependency-root callsites"
+    );
+    db.upsert_proof_fact_values(&records)?;
+
+    Ok(())
+}
+
+fn assert_dependency_roots(rows: &[ProofContextInfo], case: &super::helpers::ProjectedCase) {
+    let target = case.case.target.to_string();
+    let sites = case
+        .callers
+        .iter()
+        .filter(|caller| {
+            let path = caller
+                .site
+                .path
+                .as_ref()
+                .map(|path| path.iter().map(String::as_str).collect::<Vec<_>>());
+            path.as_deref() == Some(&["InnerState", "from_ref"][..])
+                || path.as_deref() == Some(&["Secret", "from_ref"][..])
+        })
+        .filter(|caller| {
+            let site = caller.site.id.to_string();
+            let owner = caller.site.owner_id.to_string();
+            rows.iter().any(|row| {
+                row.kind == "dependency_root"
+                    && row.call_site_id.as_deref() == Some(site.as_str())
+                    && row.caller_def_id.as_deref() == Some(owner.as_str())
+                    && row.resolved_def_id.as_deref() == Some(target.as_str())
+                    && row.target_name.as_deref() == Some("axum_core::extract::FromRef::from_ref")
+                    && row.status.as_deref() == Some("admitted")
+            })
+        })
+        .count();
+    assert_eq!(
+        sites, 2,
+        "RAG exact proof context should expose both FromRef dependency-root proof rows: {rows:#?}"
+    );
 }

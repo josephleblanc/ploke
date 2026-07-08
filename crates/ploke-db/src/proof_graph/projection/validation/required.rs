@@ -141,6 +141,30 @@ pub(in crate::proof_graph::projection) fn validate_required_fields(
                 "evidence_use",
             ],
         ),
+        "dependency_root" => {
+            require_fields(
+                value,
+                &[
+                    "dependency_root_id",
+                    "build_domain_id",
+                    "call_site_id",
+                    "caller_def_id",
+                    "resolved_def_id",
+                    "dependency_name",
+                    "target_kind",
+                    "target_name",
+                    "target_root",
+                    "artifact_hash",
+                    "version",
+                    "review_method",
+                    "scope_of_validity",
+                    "status",
+                    "evidence_use",
+                ],
+            )?;
+            require_json_string_array(value, "import_path")?;
+            require_json_string_array(value, "resolved_path")
+        }
         "effect_seed" => {
             require_fields(
                 value,

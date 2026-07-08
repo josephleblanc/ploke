@@ -7,8 +7,8 @@ use ploke_tui::tools::{
 };
 
 use crate::call_graph_tool_support::{
-    AxumRemainingTarget, AxumRemainingToolFixture, assert_expected_remaining_incoming_context,
-    assert_target_proof, ui_field,
+    AxumRemainingTarget, AxumRemainingToolFixture, assert_dependency_root_proof,
+    assert_expected_remaining_incoming_context, assert_target_proof, ui_field,
 };
 
 #[tokio::test]
@@ -140,6 +140,13 @@ async fn assert_lookup_case(case: AxumRemainingTarget, call_id: &'static str) {
             "code_item_lookup",
         );
     }
+    assert_dependency_root_proof(
+        proof_context,
+        &fixture.dependency_root_sites,
+        fixture.target,
+        "code_item_lookup",
+        fixture.label,
+    );
 
     let ui = result.ui_payload.as_ref().expect("ui payload");
     assert_eq!(
@@ -194,6 +201,13 @@ async fn assert_edges_case(case: AxumRemainingTarget, call_id: &'static str) {
             "code_item_edges",
         );
     }
+    assert_dependency_root_proof(
+        proof_context,
+        &fixture.dependency_root_sites,
+        fixture.target,
+        "code_item_edges",
+        fixture.label,
+    );
 
     let ui = result.ui_payload.as_ref().expect("ui payload");
     assert_eq!(

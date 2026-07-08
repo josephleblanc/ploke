@@ -9,6 +9,7 @@ pub(super) fn fact_id(value: &Value, kind: &str) -> Result<String, DbError> {
         "expanded_item" => "expanded_item_id",
         "external_summary" => "external_summary_id",
         "entrypoint_summary" => "entrypoint_summary_id",
+        "dependency_root" => "dependency_root_id",
         "call_site" => "call_site_id",
         "call_edge" => "call_edge_id",
         "call_resolution" => "call_site_id",
