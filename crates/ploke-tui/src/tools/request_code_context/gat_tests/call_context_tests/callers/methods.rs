@@ -46,6 +46,10 @@ async fn request_code_context_returns_method_target_callers_with_call_context()
         &db,
         &function_in_module_query(&["crate"], "call_typed_tuple_pattern_local_instance_method"),
     )?;
+    let match_arm_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_match_arm_initialized_receiver_method"),
+    )?;
     let tuple_return_pattern_owner = one_uuid(
         &db,
         &function_in_module_query(
@@ -117,6 +121,23 @@ async fn request_code_context_returns_method_target_callers_with_call_context()
             },
             relation: CallTargetKind::Method,
             assert_expansion: true,
+        },
+        Case {
+            owner: match_arm_owner,
+            label: "match-arm initialized method owner",
+            kind: CallSiteKind::Method,
+            callee: CallCalleeInfo::Method {
+                name: "instance_value".to_string(),
+                receiver: Some(CallReceiverInfo::InitializedLocalBinding {
+                    name: "value".to_string(),
+                    init_path: vec!["LocalAssoc".to_string()],
+                }),
+            },
+            relation: CallTargetKind::Method,
+            // This owner has both guard and body callsites with the same
+            // receiver shape; assert the edge without requiring the selected
+            // expansion carrier to identify one unique callsite.
+            assert_expansion: false,
         },
         Case {
             owner: typed_tuple_pattern_owner,

@@ -1,6 +1,8 @@
 use super::*;
 
 const METHOD_TUPLE_RETURN_PATTERN_LOCAL_INIT_CALL_SPAN: (usize, usize) = (40981, 40999);
+const MATCH_ARM_INITIALIZED_RECEIVER_GUARD_CALL_SPAN: (u32, u32) = (41337, 41359);
+const MATCH_ARM_INITIALIZED_RECEIVER_BODY_CALL_SPAN: (u32, u32) = (41367, 41389);
 
 #[test]
 fn fixture_context_reads_projected_typed_local_method_call() -> Result<(), DbError> {
@@ -258,6 +260,59 @@ fn fixture_context_reads_projected_method_tuple_return_pattern_receiver() -> Res
         CallRelationKind::Method,
         CallSiteKind::Method,
         CallTargetKind::Method,
+    );
+
+    Ok(())
+}
+
+#[test]
+fn fixture_context_reads_projected_match_arm_initialized_receiver() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let owner = function_id_by_name(&db, "call_match_arm_initialized_receiver_method")?;
+    let target = method_id_by_impl_self_type_name(&db, "LocalAssoc", "instance_value")?;
+    let receiver = CallReceiver::InitializedLocalBinding {
+        name: "value".to_string(),
+        init_path: path(&["LocalAssoc"]),
+    };
+
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(
+        context.len(),
+        2,
+        "match-arm initialized receiver owner should expose guard and body rows: {context:#?}"
+    );
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:
+    // `value if flag && value.instance_value() > 0 => value.instance_value()`
+    // should use the arm pattern binding as receiver proof in both guard and body.
+    let mut spans = context
+        .iter()
+        .filter(|row| {
+            row.site.kind == CallSiteKind::Method
+                && row.site.method.as_deref() == Some("instance_value")
+                && row.site.receiver.as_ref() == Some(&receiver)
+        })
+        .map(|row| {
+            assert_eq!(row.site.owner_id, owner);
+            assert_eq!(row.site.arg_count, Some(0));
+            assert_resolved_target(
+                row,
+                target,
+                CallRelationKind::Method,
+                CallSiteKind::Method,
+                CallTargetKind::Method,
+            );
+            row.site.span
+        })
+        .collect::<Vec<_>>();
+    spans.sort();
+    assert_eq!(
+        spans,
+        vec![
+            MATCH_ARM_INITIALIZED_RECEIVER_GUARD_CALL_SPAN,
+            MATCH_ARM_INITIALIZED_RECEIVER_BODY_CALL_SPAN
+        ],
+        "match-arm receiver spans"
     );
 
     Ok(())

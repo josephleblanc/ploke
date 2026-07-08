@@ -1154,6 +1154,28 @@ Next candidate bucket: choose the next bounded semantic-expansion source oracle
 from the matrix. Do not return to dynamic callable values or branch receiver
 polishing unless these proofs regress.
 
+Current bucket: match-arm initialized receiver binding proof.
+
+Current evidence:
+
+- `call_match_arm_initialized_receiver_method(flag)` proves
+  `match LocalAssoc { value if flag && value.instance_value() > 0 => value.instance_value(), _ => 0 }`
+  as two exact local method edges to `LocalAssoc::instance_value`.
+- Parser extraction now visits match guards and bodies with a temporary
+  arm-local scope derived from the arm pattern and the scrutinee expression,
+  reusing the existing `InitializedLocalBinding { name: "value", init_path:
+  ["LocalAssoc"] }` receiver carrier rather than adding a new receiver kind.
+- DB owner context and proof projection assert both the guard callsite and the
+  body callsite, including their distinct source spans and resolved method
+  edges.
+- RAG call-context collection and `request_code_context` method/proof payload
+  tests preserve the two resolved rows without requiring the target-centered
+  expansion carrier to collapse them into a single callsite.
+- This remains bounded to simple identifier arm patterns whose scrutinee has
+  exact existing initializer proof. Tuple/struct/enum-pattern destructuring,
+  borrowed pattern bindings, match ergonomics, and real-corpus iterator guard
+  rows remain future proof shapes unless separately modeled.
+
 Reason to stay in the current receiver bucket: none after focused parser, DB,
 RAG, and TUI verification. Switch buckets.
 

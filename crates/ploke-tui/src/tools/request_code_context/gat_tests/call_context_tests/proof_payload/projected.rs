@@ -133,6 +133,10 @@ async fn request_code_context_returns_expanded_method_proof_context() -> color_e
         &db,
         &function_in_module_query(&["crate"], "call_tuple_pattern_local_instance_method"),
     )?;
+    let match_arm_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_match_arm_initialized_receiver_method"),
+    )?;
     let self_field_owner = one_uuid(
         &db,
         &method_by_impl_self_query("SelfFieldAssocOwner", "call_self_field_instance_method"),
@@ -151,6 +155,11 @@ async fn request_code_context_returns_expanded_method_proof_context() -> color_e
             "{label} should project call_site, call_edge, and call_resolution facts"
         );
     }
+    assert_eq!(
+        db.project_call_proof_facts_for_owner(match_arm_owner, "bd:fixture-call-graph")?,
+        6,
+        "match-arm initialized method owner should project guard and body proof facts"
+    );
 
     let tool_result =
         execute_fixture_tool_request(&db, "instance_value", 1, "expanded_method_proof_context")
@@ -166,6 +175,36 @@ async fn request_code_context_returns_expanded_method_proof_context() -> color_e
     );
 
     assert_expanded_proof_parts(&result, &method_callers, target);
+    let match_arm_part = result
+        .context
+        .iter()
+        .find(|part| part.id == match_arm_owner)
+        .expect("request_code_context should materialize the match-arm proof context");
+    assert!(
+        match_arm_part.call_expansion.is_some(),
+        "match-arm owner should be present because call-context expansion required it"
+    );
+    assert_eq!(
+        match_arm_part.proof_context.len(),
+        6,
+        "match-arm proof context should preserve guard and body proof rows: {match_arm_part:#?}"
+    );
+    let match_arm_owner_id = match_arm_owner.to_string();
+    let target_id = target.to_string();
+    let resolved_edges = match_arm_part
+        .proof_context
+        .iter()
+        .filter(|row| {
+            row.kind == "call_edge"
+                && row.caller_def_id.as_deref() == Some(match_arm_owner_id.as_str())
+                && row.callee_def_id.as_deref() == Some(target_id.as_str())
+                && row.resolution_state.as_deref() == Some("resolved")
+        })
+        .count();
+    assert_eq!(
+        resolved_edges, 2,
+        "match-arm proof context should include two resolved call_edge rows: {match_arm_part:#?}"
+    );
 
     let payload = tool_result
         .ui_payload

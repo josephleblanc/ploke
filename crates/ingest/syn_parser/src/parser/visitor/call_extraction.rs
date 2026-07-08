@@ -296,6 +296,27 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
         visit::visit_expr_method_call(self, call);
     }
 
+    fn visit_expr_match(&mut self, expr_match: &'ast syn::ExprMatch) {
+        self.visit_expr(expr_match.expr.as_ref());
+
+        for arm in &expr_match.arms {
+            let bindings = match_arm_binding_proofs(
+                &arm.pat,
+                expr_match.expr.as_ref(),
+                self.owner,
+                self.cfgs,
+                self.param_names,
+                &self.local_scopes,
+            );
+            self.local_scopes.push(bindings);
+            if let Some((_if_token, guard)) = &arm.guard {
+                self.visit_expr(guard.as_ref());
+            }
+            self.visit_expr(arm.body.as_ref());
+            self.local_scopes.pop();
+        }
+    }
+
     fn visit_expr_unsafe(&mut self, unsafe_expr: &'ast syn::ExprUnsafe) {
         self.unsafe_depth += 1;
         visit::visit_expr_unsafe(self, unsafe_expr);
@@ -1051,6 +1072,17 @@ fn local_binding_proofs(
     }
 
     tuple_binding_proofs(pat, init_expr, owner, cfgs, param_names, local_scopes)
+}
+
+fn match_arm_binding_proofs(
+    pat: &syn::Pat,
+    scrutinee: &syn::Expr,
+    owner: CallBodyOwnerId,
+    cfgs: &[String],
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Vec<LocalBindingProof> {
+    local_binding_proofs(pat, Some(scrutinee), owner, cfgs, param_names, local_scopes)
 }
 
 fn tuple_binding_proofs(

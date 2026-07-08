@@ -250,3 +250,63 @@ fn fixture_projection_stores_real_local_receiver_method_call_proof_facts() -> Re
 
     Ok(())
 }
+
+#[test]
+fn fixture_projection_stores_match_arm_initialized_receiver_proof_facts() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let owner = function_id_by_name(&db, "call_match_arm_initialized_receiver_method")?;
+    let target = method_id_by_impl_self_type_name(&db, "LocalAssoc", "instance_value")?;
+    let receiver = CallReceiver::InitializedLocalBinding {
+        name: "value".to_string(),
+        init_path: path(&["LocalAssoc"]),
+    };
+
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(
+        context.len(),
+        2,
+        "match-arm initialized receiver proof owner rows: {context:#?}"
+    );
+    let expected = context
+        .iter()
+        .filter(|row| {
+            row.site.kind == CallSiteKind::Method
+                && row.site.method.as_deref() == Some("instance_value")
+                && row.site.receiver.as_ref() == Some(&receiver)
+        })
+        .map(|row| {
+            assert_resolved_target(
+                row,
+                target,
+                CallRelationKind::Method,
+                CallSiteKind::Method,
+                CallTargetKind::Method,
+            );
+            OwnerProofEdge {
+                owner,
+                site: row.site.id,
+                span: row.site.span,
+                target,
+            }
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        expected.len(),
+        2,
+        "match-arm initialized receiver proof rows: {context:#?}"
+    );
+
+    let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
+    assert_eq!(
+        count, 6,
+        "two resolved method rows should project six proof facts"
+    );
+    assert_owner_proof_edges(
+        &db,
+        "match-arm initialized receiver",
+        &expected,
+        "fixture_call_graph/src/lib.rs",
+        "type_resolution_missing",
+        ProofEdgeCount::Exact,
+    )
+}

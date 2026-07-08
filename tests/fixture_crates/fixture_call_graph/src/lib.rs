@@ -1810,3 +1810,10 @@ pub struct ParamFieldMethodReceiver {
 pub fn call_param_field_instance_method(holder: ParamFieldMethodReceiver) -> i32 {
     holder.value.instance_value()
 }
+
+pub fn call_match_arm_initialized_receiver_method(flag: bool) -> i32 {
+    match LocalAssoc {
+        value if flag && value.instance_value() > 0 => value.instance_value(),
+        _ => 0,
+    }
+}
