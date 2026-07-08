@@ -49,24 +49,39 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: downstream propagation for the shared real-target call-shape
-matrix.
+Current bucket: usage-question query-surface gap audit after shared matrix
+propagation.
 
 Exit criteria:
 
-- RAG call-context collection consumes at least the shared matrix rows marked
-  `RagApi`, preserving resolved target rows and targetless blocker/frontier
-  rows.
-- TUI/tool coverage is either added for rows marked `TuiTool` or the matrix
-  keeps those rows unmarked until a later TUI-specific slice.
-- Verification uses the regenerated 2026-07-07 call-graph corpus fixtures.
+- Map the questions in
+  [`../2026-06-30_call-graph-usage-questions.md`](../2026-06-30_call-graph-usage-questions.md)
+  to existing DB, RAG, and TUI/tool query tests.
+- Identify the next concrete missing query/test contract, if one exists,
+  before adding more parser or resolver breadth.
+- Record the selected next implementation bucket here before editing code.
 
-Reason to stay in current bucket: the DB side of the shared matrix just landed;
-the matrix rows already carry downstream coverage flags, so the next task is to
-make the downstream consumers prove the same rows instead of adding parser
-breadth.
+Reason to stay in current bucket: the shared DB/RAG matrix propagation is now
+closed for rows currently marked downstream. The next implementation step should
+come from a concrete usage-question gap, not from another nearby parser shape.
 
-Latest completed bucket: shared real-target DB call-shape matrix and
+Latest completed bucket: downstream propagation for the shared real-target
+call-shape matrix.
+
+Completed evidence:
+
+- Added a RAG adapter test under real-corpus call-context coverage that consumes
+  every shared matrix row marked `RagApi`, resolves owners and targets against
+  the registered corpus backup fixtures, preserves selected callsite shape and
+  argument counts, asserts resolved target rows and targetless blocker rows, and
+  checks target-centered exact RAG context for resolved rows.
+- Verification passed:
+  `cargo test -p ploke-rag shared_call_shape_matrix_rows_reach_rag_call_context -- --nocapture`
+  (`1 passed; 0 failed`) and `cargo fmt --all --check`.
+- The current shared matrix rows remain unmarked for `TuiTool`, so this bucket
+  does not require a tool-specific adapter yet.
+
+Previously completed bucket: shared real-target DB call-shape matrix and
 call-graph corpus unsafe-block schema refresh.
 
 Completed evidence:
