@@ -190,6 +190,7 @@ const PRELUDE_VEC_NEW_CALL_SPAN: (usize, usize) = (11156, 11166);
 const PATH_RESULT_INSTANCE_CALL_SPAN: (usize, usize) = (11514, 11549);
 const METHOD_RESULT_INSTANCE_CALL_SPAN: (usize, usize) = (11650, 11686);
 const TUPLE_FIELD_INSTANCE_CALL_SPAN: (usize, usize) = (11853, 11877);
+const PARAM_FIELD_INSTANCE_CALL_SPAN: (usize, usize) = (41185, 41214);
 const TUPLE_FIELD_FUNCTION_CALL_SPAN: (usize, usize) = (12028, 12037);
 const AWAIT_RESULT_INSTANCE_CALL_SPAN: (usize, usize) = (12175, 12222);
 const TRY_RESULT_INSTANCE_CALL_SPAN: (usize, usize) = (12370, 12405);
@@ -2972,6 +2973,34 @@ paranoid_call_site_test!(
                 field_path: &["0"],
             },
             TUPLE_FIELD_INSTANCE_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedMethodLocalExact {
+                target: target_info.test_method_id(),
+            },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_param_field_instance_method_resolves_field_type_method_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_param_field_instance_method"
+    },
+    expected: {
+        let target_args = fixture_call_graph_instance_method_args("instance_value");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_method_pid(&parsed_graphs)?;
+        ExpectedCallSite::method(
+            "instance_value",
+            ExpectedMethodReceiver::FieldLocalBinding {
+                name: "holder",
+                field_path: &["value"],
+            },
+            PARAM_FIELD_INSTANCE_CALL_SPAN,
             0,
             0,
             &[],

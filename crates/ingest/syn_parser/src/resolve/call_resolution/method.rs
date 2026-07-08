@@ -156,8 +156,10 @@ impl CallRelationResolver<'_> {
             MethodCallReceiver::DereferencedLocalBinding { name } => {
                 self.resolve_dereferenced_param_method_call(call, name, type_relations)?
             }
-            MethodCallReceiver::FieldLocalBinding { .. }
-            | MethodCallReceiver::AwaitResult
+            MethodCallReceiver::FieldLocalBinding { name, field_path } => {
+                self.resolve_param_field_method_call(call, name, field_path, type_relations)?
+            }
+            MethodCallReceiver::AwaitResult
             | MethodCallReceiver::TryResult
             | MethodCallReceiver::Literal
             | MethodCallReceiver::Unsupported => AssocPathResolution::Unsupported,
@@ -1420,12 +1422,66 @@ impl CallRelationResolver<'_> {
             MethodCallReceiver::DereferencedLocalBinding { name } => {
                 self.resolve_dereferenced_param_method_call(call, name, type_relations)
             }
-            MethodCallReceiver::FieldLocalBinding { .. }
-            | MethodCallReceiver::AwaitResult
+            MethodCallReceiver::FieldLocalBinding { name, field_path } => {
+                self.resolve_param_field_method_call(call, name, field_path, type_relations)
+            }
+            MethodCallReceiver::AwaitResult
             | MethodCallReceiver::TryResult
             | MethodCallReceiver::Literal
             | MethodCallReceiver::Unsupported => Ok(AssocPathResolution::Unsupported),
         }
+    }
+
+    fn resolve_param_field_method_call(
+        &self,
+        call: &MethodCallNode,
+        name: &str,
+        field_path: &[String],
+        type_relations: &[TypeRelation],
+    ) -> Result<AssocPathResolution, SynParserError> {
+        let Some(parameters) = self.owner_parameters(call.owner)? else {
+            return Ok(AssocPathResolution::Unsupported);
+        };
+
+        let params = parameters
+            .iter()
+            .filter(|param| !param.is_self && param.name.as_deref() == Some(name))
+            .collect::<Vec<_>>();
+        if params.is_empty() {
+            return Ok(AssocPathResolution::Unsupported);
+        }
+
+        let mut targets = Vec::new();
+        let mut unsupported = false;
+        for param in params {
+            let Some(root_target) = self.single_ordinary_target(param.type_id, type_relations)?
+            else {
+                unsupported = true;
+                continue;
+            };
+
+            match self.resolve_field_type_method(
+                call.owner,
+                root_target,
+                field_path,
+                &call.method_name,
+                type_relations,
+            )? {
+                AssocPathResolution::Resolved(target) => targets.push(target),
+                AssocPathResolution::Unresolved => return Ok(AssocPathResolution::Unresolved),
+                AssocPathResolution::Ambiguous => return Ok(AssocPathResolution::Ambiguous),
+                AssocPathResolution::Unsupported => unsupported = true,
+            }
+        }
+
+        targets.sort_unstable();
+        targets.dedup();
+
+        Ok(match (targets.as_slice(), unsupported) {
+            ([target], false) => AssocPathResolution::Resolved(*target),
+            ([], _) => AssocPathResolution::Unsupported,
+            _ => AssocPathResolution::Ambiguous,
+        })
     }
 
     fn resolve_field_local_method_call(

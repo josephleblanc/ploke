@@ -246,6 +246,25 @@ async fn call_context_collection_reads_real_result_field_receiver_rows() -> Resu
                 },
             ],
         },
+        CallCase {
+            label: "parameter-field method receiver",
+            owner: one_uuid(
+                &db,
+                &function_in_module_query(&["crate"], "call_param_field_instance_method"),
+            )?,
+            calls: vec![ExpectedCall {
+                kind: CallSiteKind::Method,
+                callee: method_call(
+                    "instance_value",
+                    CallReceiverInfo::FieldLocalBinding {
+                        name: "holder".to_string(),
+                        field_path: path(&["value"]),
+                    },
+                ),
+                target: method_target,
+                relation: CallTargetKind::Method,
+            }],
+        },
     ];
     let rag = init_test_rag_mock(Arc::clone(&db));
     assert!(

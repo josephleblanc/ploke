@@ -20,6 +20,7 @@ fn fixture_projection_stores_real_target_centered_method_call_proof_facts() -> R
         "NestedSelfFieldAssocOwner",
         "call_nested_self_field_instance_method",
     )?;
+    let param_field_owner = function_id_by_name(&db, "call_param_field_instance_method")?;
     let assoc_owner = function_id_by_name(&db, "call_method_as_associated_function")?;
     let method_receiver = CallReceiver::TypedLocalBinding {
         name: "value".to_string(),
@@ -37,8 +38,12 @@ fn fixture_projection_stores_real_target_centered_method_call_proof_facts() -> R
     let nested_self_field_receiver = CallReceiver::SelfField {
         path: path(&["inner", "value"]),
     };
+    let param_field_receiver = CallReceiver::FieldLocalBinding {
+        name: "holder".to_string(),
+        field_path: path(&["value"]),
+    };
     let callers = db.callers_for_target(target)?;
-    assert_resolved_target_callers(&callers, target, 7, "target-centered method")?;
+    assert_resolved_target_callers(&callers, target, 8, "target-centered method")?;
     let mut expected = assert_proof_method_cases(
         &db,
         &callers,
@@ -56,6 +61,7 @@ fn fixture_projection_stores_real_target_centered_method_call_proof_facts() -> R
                 "instance_value",
                 &nested_self_field_receiver,
             ),
+            ProofMethodCase::method(param_field_owner, "instance_value", &param_field_receiver),
         ],
     )?;
     expected.extend(assert_proof_site_cases(

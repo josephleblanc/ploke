@@ -7,6 +7,7 @@ struct Case {
     call_id: &'static str,
     owner: Uuid,
     targets: Vec<Uuid>,
+    fact_count: usize,
 }
 
 #[tokio::test]
@@ -42,6 +43,7 @@ async fn request_code_context_returns_result_field_receiver_proof_context() -> c
                 &function_in_module_query(&["crate"], "call_path_result_instance_method"),
             )?,
             targets: vec![make_target, method_target],
+            fact_count: 6,
         },
         Case {
             label: "method-call result receiver",
@@ -52,6 +54,7 @@ async fn request_code_context_returns_result_field_receiver_proof_context() -> c
                 &function_in_module_query(&["crate"], "call_method_result_instance_method"),
             )?,
             targets: vec![clone_target, method_target],
+            fact_count: 6,
         },
         Case {
             label: "self-field method-call result receiver",
@@ -65,6 +68,7 @@ async fn request_code_context_returns_result_field_receiver_proof_context() -> c
                 ),
             )?,
             targets: vec![clone_target, method_target],
+            fact_count: 6,
         },
         Case {
             label: "await path-call result receiver",
@@ -75,6 +79,7 @@ async fn request_code_context_returns_result_field_receiver_proof_context() -> c
                 &function_in_module_query(&["crate"], "call_await_result_instance_method"),
             )?,
             targets: vec![ready_target, method_target],
+            fact_count: 6,
         },
         Case {
             label: "tuple-field method receiver",
@@ -85,14 +90,26 @@ async fn request_code_context_returns_result_field_receiver_proof_context() -> c
                 &function_in_module_query(&["crate"], "call_tuple_field_instance_method"),
             )?,
             targets: vec![tuple_target, method_target],
+            fact_count: 6,
+        },
+        Case {
+            label: "parameter-field method receiver",
+            search_term: "call_param_field_instance_method",
+            call_id: "param_field_receiver_proof_context",
+            owner: one_uuid(
+                &db,
+                &function_in_module_query(&["crate"], "call_param_field_instance_method"),
+            )?,
+            targets: vec![method_target],
+            fact_count: 3,
         },
     ];
 
     for case in &cases {
         assert_eq!(
             db.project_call_proof_facts_for_owner(case.owner, "bd:fixture-call-graph")?,
-            6,
-            "{} should project call_site, call_edge, and call_resolution facts for two calls",
+            case.fact_count,
+            "{} should project call_site, call_edge, and call_resolution facts for each resolved call",
             case.label
         );
     }
@@ -121,7 +138,7 @@ async fn request_code_context_returns_result_field_receiver_proof_context() -> c
                 )
             });
         assert!(
-            owner_part.proof_context.len() >= 6,
+            owner_part.proof_context.len() >= case.fact_count,
             "{} proof context: {owner_part:#?}",
             case.label
         );

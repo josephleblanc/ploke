@@ -238,6 +238,27 @@ async fn request_code_context_returns_result_field_receiver_call_context() -> co
                 },
             ],
         },
+        Case {
+            label: "parameter-field method receiver",
+            search_term: "call_param_field_instance_method",
+            call_id: "param_field_receiver_call_context",
+            owner: one_uuid(
+                &db,
+                &function_in_module_query(&["crate"], "call_param_field_instance_method"),
+            )?,
+            calls: vec![ExpectedCall {
+                kind: CallSiteKind::Method,
+                callee: method_call(
+                    "instance_value",
+                    CallReceiverInfo::FieldLocalBinding {
+                        name: "holder".to_string(),
+                        field_path: path(&["value"]),
+                    },
+                ),
+                target: method_target,
+                relation: CallTargetKind::Method,
+            }],
+        },
     ];
 
     for case in cases {

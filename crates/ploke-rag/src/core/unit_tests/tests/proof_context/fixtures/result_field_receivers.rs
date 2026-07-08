@@ -5,6 +5,7 @@ struct Case {
     label: &'static str,
     owner: Uuid,
     targets: Vec<Uuid>,
+    fact_count: usize,
 }
 
 #[tokio::test]
@@ -39,6 +40,7 @@ async fn proof_context_collection_preserves_projected_result_field_receiver_rows
                 &function_in_module_query(&["crate"], "call_path_result_instance_method"),
             )?,
             targets: vec![make_target, method_target],
+            fact_count: 6,
         },
         Case {
             label: "method-call result receiver",
@@ -47,6 +49,7 @@ async fn proof_context_collection_preserves_projected_result_field_receiver_rows
                 &function_in_module_query(&["crate"], "call_method_result_instance_method"),
             )?,
             targets: vec![clone_target, method_target],
+            fact_count: 6,
         },
         Case {
             label: "borrowed-parameter method-call result receiver",
@@ -58,6 +61,7 @@ async fn proof_context_collection_preserves_projected_result_field_receiver_rows
                 ),
             )?,
             targets: vec![clone_target, method_target],
+            fact_count: 6,
         },
         Case {
             label: "self-field method-call result receiver",
@@ -69,6 +73,7 @@ async fn proof_context_collection_preserves_projected_result_field_receiver_rows
                 ),
             )?,
             targets: vec![clone_target, method_target],
+            fact_count: 6,
         },
         Case {
             label: "await path-call result receiver",
@@ -77,6 +82,7 @@ async fn proof_context_collection_preserves_projected_result_field_receiver_rows
                 &function_in_module_query(&["crate"], "call_await_result_instance_method"),
             )?,
             targets: vec![ready_target, method_target],
+            fact_count: 6,
         },
         Case {
             label: "tuple-field method receiver",
@@ -85,14 +91,24 @@ async fn proof_context_collection_preserves_projected_result_field_receiver_rows
                 &function_in_module_query(&["crate"], "call_tuple_field_instance_method"),
             )?,
             targets: vec![tuple_target, method_target],
+            fact_count: 6,
+        },
+        Case {
+            label: "parameter-field method receiver",
+            owner: one_uuid(
+                &db,
+                &function_in_module_query(&["crate"], "call_param_field_instance_method"),
+            )?,
+            targets: vec![method_target],
+            fact_count: 3,
         },
     ];
 
     for case in &cases {
         let count = db.project_call_proof_facts_for_owner(case.owner, "bd:fixture-call-graph")?;
         assert_eq!(
-            count, 6,
-            "{} should project call_site, call_edge, and call_resolution facts for two calls",
+            count, case.fact_count,
+            "{} should project call_site, call_edge, and call_resolution facts for each resolved call",
             case.label
         );
     }
@@ -108,7 +124,12 @@ async fn proof_context_collection_preserves_projected_result_field_receiver_rows
         let rows = proof_context
             .get(&case.owner)
             .unwrap_or_else(|| panic!("{} owner seed should receive proof rows", case.label));
-        assert_eq!(rows.len(), 6, "{} proof rows: {rows:#?}", case.label);
+        assert_eq!(
+            rows.len(),
+            case.fact_count,
+            "{} proof rows: {rows:#?}",
+            case.label
+        );
         for target in &case.targets {
             assert_resolved_call(rows, case.owner, *target);
         }

@@ -50,29 +50,51 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: next semantic-expansion carrier selection after the
-binding/type-aware receiver and dynamic callable rows.
+Current bucket: binding/type-aware parameter-field receiver proof as the next
+selected semantic-expansion carrier.
 
 Exit criteria:
 
-- Do not add more receiver/dynamic callable breadth unless a regression appears
-  in an already-covered row.
-- Select one remaining source oracle from the matrix whose missing proof input
-  is explicit: macro/generated item modeling, broader async poll/resume
-  effects, runtime trait-object dispatch, workspace dependency-root proof, or
-  proof-authoritative external summaries.
-- Define the typed parser/resolver/proof carrier before changing production
-  semantics. If the carrier cannot be made exact, keep the row fail-closed and
-  strengthen blocker/proof visibility instead.
-- Verify DB first, then propagate to RAG and TUI only if the row is exposed
+- Pick one existing fixture-backed or real-corpus row whose missing proof input
+  is explicit local binding plus type evidence.
+- Reuse the existing parameter receiver proof and field-receiver proof shapes;
+  do not add broad trait dispatch, autoderef, or arbitrary dynamic callable
+  value flow.
+- Resolve only when the named parameter's type has one local ordinary target
+  and the selected field has one exact local method target.
+- Verify DB first, then propagate to RAG and TUI only because the row is exposed
   there.
 
-Reason to stay in the previous binding/type-aware bucket: none. The current
-matrix table marks receiver, dynamic callable, executable-owner, and usage
-summary rows as met for now. Remaining work should switch to one of the
-future-heavy carriers above instead of polishing another nearby local proof.
+Status: completed for this exact carrier.
 
-Latest completed slice in current bucket: owner-scoped external summary need
+Next bucket: choose the next semantic-expansion carrier. Do not add more
+parameter-field receiver breadth unless this proof regresses.
+
+Latest completed slice in current bucket: exact parameter-field receiver method
+proof for a fixture-backed local struct field.
+
+Completed evidence:
+
+- Added the `fixture_call_graph` oracle
+  `call_param_field_instance_method(holder: ParamFieldMethodReceiver)` with
+  `holder.value.instance_value()`, where `ParamFieldMethodReceiver::value` has
+  the exact local type `LocalAssoc`.
+- The parser already records this shape as
+  `MethodCallReceiver::FieldLocalBinding { name: "holder", field_path:
+  ["value"] }`; the method resolver now reuses owner parameter type evidence
+  plus the existing field-type method resolver to admit only this exact local
+  proof.
+- DB owner context, resolved proof projection, target-centered callers, and
+  caller expansion all preserve the new `Method` edge to
+  `LocalAssoc::instance_value`.
+- RAG call-context collection, RAG proof context, RAG target expansion, and the
+  exact `request_code_context` call/proof payloads preserve the same receiver
+  and proof rows.
+- This does not broaden to external field receivers, autoderef, trait-object
+  dispatch, dynamic callable fields, or multi-field parameter walks without
+  exact local field-type proof.
+
+Previously completed slice in current bucket: owner-scoped external summary need
 queue exposed through DB, RAG, and exact TUI tools. Detailed evidence is
 recorded below under the same heading.
 

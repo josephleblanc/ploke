@@ -168,6 +168,19 @@ fn fixture_projection_stores_real_result_and_field_receiver_method_call_proof_fa
                 ),
             ],
         },
+        ResolvedProofCase {
+            label: "call_param_field_instance_method",
+            owner: function_id_by_name(&db, "call_param_field_instance_method")?,
+            rows: 1,
+            calls: vec![ResolvedProofCall::method(
+                "instance_value",
+                CallReceiver::FieldLocalBinding {
+                    name: "holder".to_string(),
+                    field_path: path(&["value"]),
+                },
+                method_target,
+            )],
+        },
     ];
     assert_fixture_resolved_proofs(&db, "result/field receiver method", &cases)?;
 

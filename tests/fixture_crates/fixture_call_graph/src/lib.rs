@@ -1802,3 +1802,11 @@ pub fn call_method_tuple_return_pattern_local_instance_method() -> i32 {
     let (next, _) = value.tuple_pair();
     next.instance_value()
 }
+
+pub struct ParamFieldMethodReceiver {
+    pub value: LocalAssoc,
+}
+
+pub fn call_param_field_instance_method(holder: ParamFieldMethodReceiver) -> i32 {
+    holder.value.instance_value()
+}

@@ -109,6 +109,12 @@ fn method_case(db: &Database) -> Result<Case, Error> {
             },
             owner(
                 db,
+                "parameter-field method",
+                &["crate"],
+                "call_param_field_instance_method",
+            )?,
+            owner(
+                db,
                 "method as associated function",
                 &["crate"],
                 "call_method_as_associated_function",

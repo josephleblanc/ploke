@@ -79,6 +79,27 @@ fn fixture_context_reads_projected_field_receiver_and_dynamic_field_calls() -> R
         CallTargetKind::Method,
     );
 
+    let owner = function_id_by_name(&db, "call_param_field_instance_method")?;
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(
+        context.len(),
+        1,
+        "parameter-field method context rows: {context:#?}"
+    );
+
+    let receiver = CallReceiver::FieldLocalBinding {
+        name: "holder".to_string(),
+        field_path: path(&["value"]),
+    };
+    let row = row_by_method_receiver(&context, "instance_value", &receiver);
+    assert_resolved_target(
+        row,
+        method_target,
+        CallRelationKind::Method,
+        CallSiteKind::Method,
+        CallTargetKind::Method,
+    );
+
     let owner = function_id_by_name(&db, "call_tuple_field_function")?;
     let struct_target = struct_id_by_name(&db, "TupleFieldFunction")?;
     let function_target = function_id_by_name(&db, "local_target")?;

@@ -52,6 +52,10 @@ async fn call_context_expansion_adds_incoming_fixture_method_callers() -> Result
         &db,
         &method_by_impl_self_query("SelfFieldAssocOwner", "call_self_field_instance_method"),
     )?;
+    let param_field_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_param_field_instance_method"),
+    )?;
     let method_callers = [
         Case {
             owner: method_owner,
@@ -113,6 +117,17 @@ async fn call_context_expansion_adds_incoming_fixture_method_callers() -> Result
                 name: "instance_value".to_string(),
                 receiver: Some(CallReceiverInfo::SelfField {
                     path: vec!["value".to_string()],
+                }),
+            },
+        },
+        Case {
+            owner: param_field_owner,
+            label: "parameter-field method owner",
+            callee: CallCalleeInfo::Method {
+                name: "instance_value".to_string(),
+                receiver: Some(CallReceiverInfo::FieldLocalBinding {
+                    name: "holder".to_string(),
+                    field_path: vec!["value".to_string()],
                 }),
             },
         },
