@@ -44,6 +44,16 @@ fn context_for_owner_decodes_structured_method_receivers() -> Result<(), DbError
             },
         ),
         structured_receiver(
+            "TupleMethodReturn",
+            vec!["next", "0", "tuple_pair", "40981", "40999"],
+            CallReceiver::TupleMethodReturn {
+                name: "next".to_string(),
+                method_name: "tuple_pair".to_string(),
+                method_span: (40981, 40999),
+                index: 0,
+            },
+        ),
+        structured_receiver(
             "BorrowedTypedLocalBinding",
             vec!["borrowed", "LocalAssoc"],
             CallReceiver::BorrowedTypedLocalBinding {

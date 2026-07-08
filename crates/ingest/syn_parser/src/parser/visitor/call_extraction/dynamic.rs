@@ -70,6 +70,7 @@ pub(super) fn classify_dynamic_callee(
                     }
                     | LocalBindingProof::TraitObject { .. }
                     | LocalBindingProof::TupleReturn { .. }
+                    | LocalBindingProof::TupleMethodReturn { .. }
                     | LocalBindingProof::Constructed { .. }
                     | LocalBindingProof::Array { .. }
                     | LocalBindingProof::Referenced { .. }
@@ -244,6 +245,7 @@ fn classify_dynamic_path_expr(
                 }
                 | LocalBindingProof::TraitObject { .. }
                 | LocalBindingProof::TupleReturn { .. }
+                | LocalBindingProof::TupleMethodReturn { .. }
                 | LocalBindingProof::Constructed { .. }
                 | LocalBindingProof::Array { .. }
                 | LocalBindingProof::Referenced { .. }
@@ -553,6 +555,7 @@ fn dereferenced_local_binding_callee(
         }
         | LocalBindingProof::TraitObject { .. }
         | LocalBindingProof::TupleReturn { .. }
+        | LocalBindingProof::TupleMethodReturn { .. }
         | LocalBindingProof::Constructed { .. }
         | LocalBindingProof::Array { .. }
         | LocalBindingProof::Referenced { .. }

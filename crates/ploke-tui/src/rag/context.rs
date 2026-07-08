@@ -699,6 +699,14 @@ fn format_receiver(receiver: &CallReceiverInfo) -> String {
         CallReceiverInfo::TupleReturnBinding { name, path, index } => {
             format!("{name} = {}().{index}", path.join("::"))
         }
+        CallReceiverInfo::TupleMethodReturn {
+            name,
+            method_name,
+            index,
+            ..
+        } => {
+            format!("{name} = {method_name}().{index}")
+        }
         CallReceiverInfo::BorrowedLocalBinding { name } => format!("&{name}"),
         CallReceiverInfo::BorrowedTypedLocalBinding { name, type_path } => {
             format!("&{name}: {}", type_path.join("::"))

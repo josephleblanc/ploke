@@ -83,6 +83,37 @@ impl CallReceiver {
                     ))),
                 }
             }
+            "TupleMethodReturn" => {
+                let path = to_string_list(path)?;
+                match path.as_slice() {
+                    [name, index, method_name, start, end] => {
+                        let index = index.parse::<usize>().map_err(|err| {
+                            DbError::Cozo(format!(
+                                "tuple method return receiver should store a usize index, got {index:?}: {err}"
+                            ))
+                        })?;
+                        let start = start.parse::<usize>().map_err(|err| {
+                            DbError::Cozo(format!(
+                                "tuple method return receiver should store a usize span start, got {start:?}: {err}"
+                            ))
+                        })?;
+                        let end = end.parse::<usize>().map_err(|err| {
+                            DbError::Cozo(format!(
+                                "tuple method return receiver should store a usize span end, got {end:?}: {err}"
+                            ))
+                        })?;
+                        Ok(Some(Self::TupleMethodReturn {
+                            name: name.clone(),
+                            method_name: method_name.clone(),
+                            method_span: (start, end),
+                            index,
+                        }))
+                    }
+                    other => Err(DbError::Cozo(format!(
+                        "tuple method return receiver should store a name, index, method name, and method span, got {other:?}"
+                    ))),
+                }
+            }
             "BorrowedLocalBinding" => {
                 let path = to_string_list(path)?;
                 match path.as_slice() {

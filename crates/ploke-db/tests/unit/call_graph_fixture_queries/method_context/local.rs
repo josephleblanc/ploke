@@ -1,5 +1,7 @@
 use super::*;
 
+const METHOD_TUPLE_RETURN_PATTERN_LOCAL_INIT_CALL_SPAN: (usize, usize) = (40981, 40999);
+
 #[test]
 fn fixture_context_reads_projected_typed_local_method_call() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
@@ -190,6 +192,61 @@ fn fixture_context_reads_projected_tuple_return_pattern_receiver() -> Result<(),
     let receiver = CallReceiver::TupleReturnBinding {
         name: "value".to_string(),
         path: path(&["make_local_assoc_pair"]),
+        index: 0,
+    };
+    let method_row = row_by_method_receiver(&context, "instance_value", &receiver);
+    assert_eq!(method_row.site.owner_id, owner);
+    assert_eq!(method_row.site.arg_count, Some(0));
+    assert_resolved_target(
+        method_row,
+        method_target,
+        CallRelationKind::Method,
+        CallSiteKind::Method,
+        CallTargetKind::Method,
+    );
+
+    Ok(())
+}
+
+#[test]
+fn fixture_context_reads_projected_method_tuple_return_pattern_receiver() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let owner = function_id_by_name(
+        &db,
+        "call_method_tuple_return_pattern_local_instance_method",
+    )?;
+    let pair_target = method_id_by_impl_self_type_name(&db, "LocalAssoc", "tuple_pair")?;
+    let method_target = method_id_by_impl_self_type_name(&db, "LocalAssoc", "instance_value")?;
+
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(
+        context.len(),
+        2,
+        "method tuple-return owner should expose the initializer and receiver rows: {context:#?}"
+    );
+
+    let init_receiver = CallReceiver::InitializedLocalBinding {
+        name: "value".to_string(),
+        init_path: path(&["LocalAssoc"]),
+    };
+    let init_row = row_by_method_receiver(&context, "tuple_pair", &init_receiver);
+    assert_eq!(init_row.site.owner_id, owner);
+    assert_eq!(init_row.site.arg_count, Some(0));
+    assert_resolved_target(
+        init_row,
+        pair_target,
+        CallRelationKind::Method,
+        CallSiteKind::Method,
+        CallTargetKind::Method,
+    );
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:
+    // `let (next, _) = value.tuple_pair(); next.instance_value()`
+    // should use the initializer method's tuple return type as receiver proof.
+    let receiver = CallReceiver::TupleMethodReturn {
+        name: "next".to_string(),
+        method_name: "tuple_pair".to_string(),
+        method_span: METHOD_TUPLE_RETURN_PATTERN_LOCAL_INIT_CALL_SPAN,
         index: 0,
     };
     let method_row = row_by_method_receiver(&context, "instance_value", &receiver);

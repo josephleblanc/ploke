@@ -4,9 +4,9 @@ use crate::{
         graph::GraphAccess,
         nodes::{
             AnyCallSiteId, AsAnyNodeId, CallBodyOwnerId, CallNode, FieldNode, FunctionNodeId,
-            MethodCallNode, MethodCallReceiver, OrdinaryTypeSourceId, OrdinaryTypeTargetId,
-            OrdinaryTypeUseId, PathCallNode, StructNodeId, TraitTypeSourceId, TypeAliasNodeId,
-            TypeGenericParamNodeId,
+            MethodCallNode, MethodCallReceiver, MethodNodeId, OrdinaryTypeSourceId,
+            OrdinaryTypeTargetId, OrdinaryTypeUseId, PathCallNode, StructNodeId, TraitTypeSourceId,
+            TypeAliasNodeId, TypeGenericParamNodeId,
         },
         relations::{CallRelation, CallResolutionKind, CallResolutionStatus, TypeRelation},
         types::TypeNode,
@@ -100,6 +100,18 @@ impl CallRelationResolver<'_> {
             MethodCallReceiver::TupleReturnBinding { path, index, .. } => {
                 self.resolve_tuple_return_method_call(call, path, *index, type_relations)?
             }
+            MethodCallReceiver::TupleMethodReturn {
+                method_name,
+                method_span,
+                index,
+                ..
+            } => self.resolve_tuple_method_return_method_call(
+                call,
+                method_name,
+                *method_span,
+                *index,
+                type_relations,
+            )?,
             MethodCallReceiver::BorrowedInitializedLocalBinding { init_path, .. } => {
                 self.resolve_typed_local_method_call(call, init_path, type_relations)?
             }
@@ -1356,6 +1368,18 @@ impl CallRelationResolver<'_> {
             MethodCallReceiver::TupleReturnBinding { path, index, .. } => {
                 self.resolve_tuple_return_method_call(call, path, *index, type_relations)
             }
+            MethodCallReceiver::TupleMethodReturn {
+                method_name,
+                method_span,
+                index,
+                ..
+            } => self.resolve_tuple_method_return_method_call(
+                call,
+                method_name,
+                *method_span,
+                *index,
+                type_relations,
+            ),
             MethodCallReceiver::BorrowedInitializedLocalBinding { init_path, .. } => {
                 self.resolve_typed_local_method_call(call, init_path, type_relations)
             }
@@ -1474,6 +1498,54 @@ impl CallRelationResolver<'_> {
         }
     }
 
+    fn resolve_tuple_method_return_method_call(
+        &self,
+        call: &MethodCallNode,
+        method_name: &str,
+        method_span: (usize, usize),
+        index: usize,
+        type_relations: &[TypeRelation],
+    ) -> Result<AssocPathResolution, SynParserError> {
+        let Some(inner_call) = self.method_call_at(call.owner, method_name, method_span) else {
+            return Ok(AssocPathResolution::Unsupported);
+        };
+
+        match self.resolve_method_call_target(inner_call, type_relations)? {
+            AssocPathResolution::Resolved(method_id) => self
+                .resolve_tuple_method_return_type_method(
+                    call.owner,
+                    method_id,
+                    index,
+                    &call.method_name,
+                    type_relations,
+                ),
+            AssocPathResolution::Unresolved => Ok(AssocPathResolution::Unresolved),
+            AssocPathResolution::Ambiguous => Ok(AssocPathResolution::Ambiguous),
+            AssocPathResolution::Unsupported => Ok(AssocPathResolution::Unsupported),
+        }
+    }
+
+    fn method_call_at(
+        &self,
+        owner: CallBodyOwnerId,
+        method_name: &str,
+        span: (usize, usize),
+    ) -> Option<&MethodCallNode> {
+        self.graph
+            .call_sites()
+            .iter()
+            .find_map(|candidate| match candidate {
+                CallNode::MethodCall(inner)
+                    if inner.owner == owner
+                        && inner.method_name == method_name
+                        && inner.span == span =>
+                {
+                    Some(inner)
+                }
+                _ => None,
+            })
+    }
+
     fn resolve_tuple_return_type_method(
         &self,
         owner: CallBodyOwnerId,
@@ -1483,6 +1555,25 @@ impl CallRelationResolver<'_> {
         type_relations: &[TypeRelation],
     ) -> Result<AssocPathResolution, SynParserError> {
         let Some(return_type) = self.function_return_type(function_id)? else {
+            return Ok(AssocPathResolution::Unsupported);
+        };
+        let Some(element_type) = self.tuple_element_type(return_type, index)? else {
+            return Ok(AssocPathResolution::Unsupported);
+        };
+
+        self.resolve_type_use_method(owner, &[element_type], method_name, type_relations)?
+            .map_or(Ok(AssocPathResolution::Unsupported), Ok)
+    }
+
+    fn resolve_tuple_method_return_type_method(
+        &self,
+        owner: CallBodyOwnerId,
+        method_id: MethodNodeId,
+        index: usize,
+        method_name: &str,
+        type_relations: &[TypeRelation],
+    ) -> Result<AssocPathResolution, SynParserError> {
+        let Some(return_type) = self.method_return_type(method_id)? else {
             return Ok(AssocPathResolution::Unsupported);
         };
         let Some(element_type) = self.tuple_element_type(return_type, index)? else {

@@ -46,6 +46,16 @@ fn context_for_owner_decodes_raw_method_receivers() -> Result<(), DbError> {
             },
         ),
         raw_receiver(
+            "TupleMethodReturn",
+            list(&["next", "0", "tuple_pair", "40981", "40999"]),
+            CallReceiver::TupleMethodReturn {
+                name: "next".to_string(),
+                method_name: "tuple_pair".to_string(),
+                method_span: (40981, 40999),
+                index: 0,
+            },
+        ),
+        raw_receiver(
             "PathCallResult",
             list(&["make_local_assoc"]),
             CallReceiver::PathCallResult {

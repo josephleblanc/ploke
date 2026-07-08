@@ -441,6 +441,18 @@ pub enum MethodCallReceiver {
         /// Zero-based tuple element index bound to `name`.
         index: usize,
     },
+    /// The receiver is a local binding destructured from one element of a
+    /// local method's tuple return value.
+    TupleMethodReturn {
+        /// Binding identifier used as the receiver expression.
+        name: String,
+        /// Method name used by the tuple-returning initializer call.
+        method_name: String,
+        /// Byte span of the tuple-returning initializer method call.
+        method_span: (usize, usize),
+        /// Zero-based tuple element index bound to `name`.
+        index: usize,
+    },
     /// The receiver is a borrowed local binding, such as `&value`.
     BorrowedLocalBinding {
         /// Binding identifier inside the borrow expression.

@@ -906,9 +906,30 @@ Completed evidence:
   `cargo run -p xtask --features call_graph -- fixtures regenerate --active`
   round-tripped all active registered fixtures with no tracked fixture drift.
 - This remains bounded to local parsed functions with source-visible tuple
-  return types. External function calls, method calls returning tuples, and
-  arbitrary expression-produced tuple destructuring remain unsupported until
-  broader binding/type-flow proof exists.
+  return types. External function calls and arbitrary expression-produced tuple
+  destructuring remain unsupported until broader binding/type-flow proof exists.
+
+Previously completed bucket: untyped tuple-pattern receiver from local method
+tuple return.
+
+Completed evidence:
+
+- `call_method_tuple_return_pattern_local_instance_method()` now proves
+  `let (next, _) = value.tuple_pair(); next.instance_value()` by using the
+  exact initializer method callsite for `tuple_pair`, resolving that method
+  target, and extracting tuple element `0` from the method return type.
+- Parser extraction records the receiver as
+  `TupleMethodReturn { name: "next", method_name: "tuple_pair", method_span: (40981, 40999), index: 0 }`,
+  while still preserving the initializer `value.tuple_pair()` method call as a
+  separate resolved method edge.
+- Transform/DB projection, raw and structured DB receiver decode, resolved
+  proof rows, RAG call-context collection, and TUI call-context formatting
+  preserve the tuple-method-return receiver payload.
+- This remains bounded to local parsed initializer method calls with exact
+  source spans and source-visible tuple return types. External method-result
+  tuple destructuring such as `Request::new(()).into_parts()`, nested
+  value-flow, and arbitrary expression-produced tuple destructuring remain
+  unsupported until broader binding/type-flow or external-summary proof exists.
 
 Previously completed bucket: TUI tool surface for immediately awaited
 async-closure literal traversal.

@@ -1790,3 +1790,15 @@ pub fn call_multi_conflicting_generic_fn_once_param_with_local_target() -> i32 {
 pub fn call_multi_conflicting_generic_fn_once_param_with_other_target() -> i32 {
     call_multi_conflicting_generic_fn_once_param(other_target)
 }
+
+impl LocalAssoc {
+    pub fn tuple_pair(&self) -> (LocalAssoc, i32) {
+        (LocalAssoc, 0)
+    }
+}
+
+pub fn call_method_tuple_return_pattern_local_instance_method() -> i32 {
+    let value = LocalAssoc;
+    let (next, _) = value.tuple_pair();
+    next.instance_value()
+}

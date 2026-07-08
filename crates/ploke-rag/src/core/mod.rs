@@ -631,6 +631,17 @@ fn receiver_info(receiver: CallReceiver) -> CallReceiverInfo {
         CallReceiver::TupleReturnBinding { name, path, index } => {
             CallReceiverInfo::TupleReturnBinding { name, path, index }
         }
+        CallReceiver::TupleMethodReturn {
+            name,
+            method_name,
+            method_span,
+            index,
+        } => CallReceiverInfo::TupleMethodReturn {
+            name,
+            method_name,
+            method_span,
+            index,
+        },
         CallReceiver::BorrowedLocalBinding { name } => {
             CallReceiverInfo::BorrowedLocalBinding { name }
         }

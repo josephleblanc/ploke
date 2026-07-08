@@ -60,9 +60,15 @@ fn fixture_projected_status_rows_match_relation_cardinality() -> Result<(), DbEr
                     let relation_kind = data_str(&relation[1], "call_relation.relation_kind");
                     let source_kind = data_str(&relation[2], "call_relation.source_kind");
                     let target_kind = data_str(&relation[3], "call_relation.target_kind");
-                    assert_eq!(relation_kind, "DynamicFunction");
+                    let expected_target_kind = match relation_kind {
+                        "DynamicFunction" => "Function",
+                        "DynamicClosure" => "Closure",
+                        other => panic!(
+                            "ambiguous dynamic call_site {site_id} should only store dynamic candidate relations, got {other}"
+                        ),
+                    };
                     assert_eq!(source_kind, "Dynamic");
-                    assert_eq!(target_kind, "Function");
+                    assert_eq!(target_kind, expected_target_kind);
                     assert!(
                         call_target_exists(&db, target, target_kind)?,
                         "ambiguous dynamic candidate target {target} should exist in {target_kind} endpoint relation"

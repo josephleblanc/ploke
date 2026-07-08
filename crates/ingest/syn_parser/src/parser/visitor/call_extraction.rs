@@ -748,6 +748,7 @@ fn classify_path_callee(
             }
             | LocalBindingProof::TraitObject { .. }
             | LocalBindingProof::TupleReturn { .. }
+            | LocalBindingProof::TupleMethodReturn { .. }
             | LocalBindingProof::Constructed { .. }
             | LocalBindingProof::Array { .. }
             | LocalBindingProof::Referenced { .. }
@@ -1141,7 +1142,23 @@ fn tuple_return_binding_proofs(
     let syn::Pat::Tuple(pattern) = pat else {
         return Vec::new();
     };
-    let Some(path) = tuple_return_call_path(init_expr) else {
+
+    if let Some(path) = tuple_return_call_path(init_expr) {
+        return pattern
+            .elems
+            .iter()
+            .enumerate()
+            .filter_map(|(index, pat)| {
+                Some(LocalBindingProof::TupleReturn {
+                    name: pat_ident_name(pat)?,
+                    path: path.clone(),
+                    index,
+                })
+            })
+            .collect();
+    }
+
+    let Some((method_name, method_span)) = tuple_return_method_call(init_expr) else {
         return Vec::new();
     };
 
@@ -1150,9 +1167,10 @@ fn tuple_return_binding_proofs(
         .iter()
         .enumerate()
         .filter_map(|(index, pat)| {
-            Some(LocalBindingProof::TupleReturn {
+            Some(LocalBindingProof::TupleMethodReturn {
                 name: pat_ident_name(pat)?,
-                path: path.clone(),
+                method_name: method_name.clone(),
+                method_span,
                 index,
             })
         })
@@ -1172,6 +1190,14 @@ fn tuple_return_call_path(expr: Option<&syn::Expr>) -> Option<Vec<String>> {
 
     let path = path_segments(&path.path);
     (!path.is_empty()).then_some(path)
+}
+
+fn tuple_return_method_call(expr: Option<&syn::Expr>) -> Option<(String, (usize, usize))> {
+    let syn::Expr::MethodCall(call) = unparen_expr(expr?) else {
+        return None;
+    };
+    let byte_range = call.span().byte_range();
+    Some((call.method.to_string(), (byte_range.start, byte_range.end)))
 }
 
 fn awaited_future_spans(block: &syn::Block) -> Vec<(usize, usize)> {
@@ -1673,6 +1699,7 @@ fn init_target_path(
                 init_path: None, ..
             }
             | LocalBindingProof::TupleReturn { .. }
+            | LocalBindingProof::TupleMethodReturn { .. }
             | LocalBindingProof::Closure { .. }
             | LocalBindingProof::LocalFunction { .. }
             | LocalBindingProof::ValueAlias { .. }

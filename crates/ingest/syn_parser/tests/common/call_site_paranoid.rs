@@ -64,6 +64,13 @@ pub enum ExpectedMethodReceiver<'a> {
         path: &'a [&'a str],
         index: usize,
     },
+    /// The receiver expression is a named local binding from a method tuple return.
+    TupleMethodReturn {
+        name: &'a str,
+        method_name: &'a str,
+        method_span: (usize, usize),
+        index: usize,
+    },
     /// The receiver expression is a borrowed named local binding.
     BorrowedLocalBinding { name: &'a str },
     /// The receiver expression is a borrowed named local binding with an explicit type.
@@ -149,6 +156,17 @@ impl ExpectedMethodReceiver<'_> {
                     index,
                 }
             }
+            Self::TupleMethodReturn {
+                name,
+                method_name,
+                method_span,
+                index,
+            } => MethodCallReceiver::TupleMethodReturn {
+                name: name.to_string(),
+                method_name: method_name.to_string(),
+                method_span,
+                index,
+            },
             Self::BorrowedLocalBinding { name } => MethodCallReceiver::BorrowedLocalBinding {
                 name: name.to_string(),
             },

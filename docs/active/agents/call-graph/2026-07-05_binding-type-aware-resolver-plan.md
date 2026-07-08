@@ -175,11 +175,22 @@ should prevent future resumes from reselecting already-covered shapes.
    - Parser, DB receiver decode, DB proof projection, and RAG call-context
      assertions preserve the exact `LocalAssoc` initializer/type evidence and
      the local method target edge.
-   - Arbitrary destructuring, method-result tuple destructuring such as
-     `let (parts, body) = Request::new(()).into_parts();`, nested value-flow,
-     and tuple patterns without direct tuple-expression initializers remain
-     out of scope unless an explicit local type annotation supplies a
-     per-element type proof.
+   - A bounded local method-result tuple destructuring shape is now completed:
+     `call_method_tuple_return_pattern_local_instance_method` records
+     `let (next, _) = value.tuple_pair(); next.instance_value()` as a
+     `TupleMethodReturn` receiver carrying the initializer method name, exact
+     initializer method-call span, and tuple element index. The resolver uses
+     that exact initializer callsite to resolve the initializer method target,
+     extracts the selected tuple element return type, and resolves the outer
+     receiver method from that type.
+   - Parser, transform/DB receiver projection, raw and structured DB receiver
+     decode, DB proof rows, RAG call-context collection, and TUI formatter
+     assertions preserve the exact method tuple-return receiver payload.
+   - Arbitrary destructuring, external method-result tuple destructuring such
+     as `let (parts, body) = Request::new(()).into_parts();`, nested value-flow,
+     and tuple patterns without direct tuple-expression initializers or exact
+     local initializer method proof remain out of scope unless an explicit
+     local type annotation supplies a per-element type proof.
 
 9. External `Service`-bound self-field receiver frontier - completed:
    - Regenerated axum `self.inner.poll_ready(cx)` and `self.0.poll_ready(cx)`
