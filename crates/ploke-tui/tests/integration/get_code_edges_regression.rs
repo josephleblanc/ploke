@@ -31,22 +31,23 @@ use uuid::Uuid;
 
 use crate::call_graph_tool_support::{
     AxumAwaitReceiverToolFixture, AxumBodyEmptyToolFixture, AxumBoxedIntoRouteToolFixture,
-    AxumHandlerCallToolFixture, AxumJsonFromBytesToolFixture, AxumParseAttrsToolFixture,
-    AxumRequestExtractPathToolFixture, AxumRunUiTestsToolFixture, AxumTaskSpawnEffectToolFixture,
-    CallGraphToolFixture, CallableBlockerFixture, CallableParamResolvedFixture,
-    ChronoAliasConstructorToolFixture, ChronoNaiveUtcToolFixture, FixtureBranchReceiverToolFixture,
-    FixtureDynamicCallableToolFixture, FixtureSelfFieldReceiverToolFixture,
-    assert_await_result_unwrap_context, assert_await_result_unwrap_proof,
-    assert_body_empty_impact_summary, assert_body_empty_incoming_context,
-    assert_boxed_into_route_incoming_context, assert_branch_receiver_context,
-    assert_branch_receiver_proof, assert_call_path_node, assert_chrono_naive_utc_incoming_context,
-    assert_expected_path_incoming_context, assert_fixture_extern_c_abs_effects,
-    assert_handler_call_incoming_context, assert_incoming_context,
-    assert_json_from_bytes_incoming_context, assert_parse_attrs_incoming_context,
-    assert_path_blocker_proof, assert_path_context, assert_resolved_callable_param_proof,
-    assert_resolved_path_context, assert_run_ui_tests_incoming_context,
-    assert_self_field_receiver_context, assert_self_field_receiver_proof, assert_target_proof,
-    assert_task_spawn_effects, assert_two_hop_call_path, ui_field,
+    AxumErrorHandlingTraitsToolFixture, AxumHandlerCallToolFixture, AxumJsonFromBytesToolFixture,
+    AxumParseAttrsToolFixture, AxumRequestExtractPathToolFixture, AxumRunUiTestsToolFixture,
+    AxumTaskSpawnEffectToolFixture, CallGraphToolFixture, CallableBlockerFixture,
+    CallableParamResolvedFixture, ChronoAliasConstructorToolFixture, ChronoNaiveUtcToolFixture,
+    FixtureBranchReceiverToolFixture, FixtureDynamicCallableToolFixture,
+    FixtureSelfFieldReceiverToolFixture, assert_await_result_unwrap_context,
+    assert_await_result_unwrap_proof, assert_body_empty_impact_summary,
+    assert_body_empty_incoming_context, assert_boxed_into_route_incoming_context,
+    assert_branch_receiver_context, assert_branch_receiver_proof, assert_call_path_node,
+    assert_chrono_naive_utc_incoming_context, assert_expected_path_incoming_context,
+    assert_fixture_extern_c_abs_effects, assert_handler_call_incoming_context,
+    assert_incoming_context, assert_json_from_bytes_incoming_context,
+    assert_parse_attrs_incoming_context, assert_path_blocker_proof, assert_path_context,
+    assert_resolved_callable_param_proof, assert_resolved_path_context,
+    assert_run_ui_tests_incoming_context, assert_self_field_receiver_context,
+    assert_self_field_receiver_proof, assert_target_proof, assert_task_spawn_effects,
+    assert_two_hop_call_path, ui_field,
 };
 
 #[tokio::test]
@@ -1145,6 +1146,115 @@ async fn code_item_edges_returns_real_corpus_reachable_effects() {
     );
     let ui = result.ui_payload.as_ref().expect("ui payload");
     assert_eq!(ui_field(ui, "reach_effects"), effects.len().to_string());
+}
+
+#[tokio::test]
+async fn code_item_edges_reports_private_target_without_incoming_callers() {
+    let fixture = AxumErrorHandlingTraitsToolFixture::new().await;
+    let params = EdgesParams {
+        item_name: Cow::Borrowed("traits"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("function"),
+        module_path: Cow::Owned(fixture.module_path_arg()),
+        owner_trait: None,
+        owner_type: None,
+        parent_name: None,
+    };
+
+    let result = CodeItemEdges::execute(params, fixture.ctx("axum-traits-zero-impact-edges"))
+        .await
+        .expect("error_handling::traits edge lookup");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Dead code detection:
+    //   "Which private helpers have no incoming callers?"
+    //   "Is this function reachable from any binary, test, macro entrypoint,
+    //   or exported API?"
+    //
+    // Source oracle:
+    //   axum/src/error_handling/mod.rs:257 defines `#[test] fn traits()`.
+    //   No checked-in axum source row calls `traits(...)`; generated test
+    //   harness entrypoints are represented as proof context, not source edges.
+    let incoming_paths = payload
+        .get("call_paths_to_target")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_paths_to_target array");
+    assert!(
+        incoming_paths.is_empty(),
+        "code_item_edges should expose zero incoming call paths: {incoming_paths:#?}"
+    );
+
+    let node_info = payload
+        .get("node_info")
+        .and_then(serde_json::Value::as_object)
+        .expect("node_info object");
+    let target_id = fixture.target.to_string();
+    assert_eq!(
+        node_info.get("id").and_then(serde_json::Value::as_str),
+        Some(target_id.as_str()),
+        "code_item_edges should resolve error_handling::traits: {payload:#?}"
+    );
+
+    let impact = node_info
+        .get("call_impact")
+        .and_then(serde_json::Value::as_object)
+        .expect("node_info.call_impact object");
+    for field in [
+        "paths",
+        "callers",
+        "direct_callers",
+        "direct_call_sites",
+        "callsite_buckets",
+        "public_callers",
+        "test_callers",
+        "non_test_callers",
+    ] {
+        let rows = impact
+            .get(field)
+            .and_then(serde_json::Value::as_array)
+            .unwrap_or_else(|| panic!("call_impact {field} array: {impact:#?}"));
+        assert!(
+            rows.is_empty(),
+            "code_item_edges zero-caller impact {field} should be empty: {rows:#?}"
+        );
+    }
+
+    let proof_context = node_info
+        .get("proof_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.proof_context array");
+    let proof_rows = proof_context
+        .iter()
+        .filter_map(|proof| serde_json::from_value::<ProofContextInfo>(proof.clone()).ok())
+        .collect::<Vec<_>>();
+    assert!(
+        proof_rows.iter().any(|proof| {
+            proof.kind == "entrypoint_summary"
+                && proof.definition_id.as_deref() == Some(target_id.as_str())
+                && proof.target_kind.as_deref() == Some("test")
+                && proof.target_name.as_deref() == Some("generated-test-harness")
+                && proof.summary_class.as_deref() == Some("analyzed_source")
+                && proof.status.as_deref() == Some("admitted")
+        }),
+        "code_item_edges should expose the generated test-harness entrypoint proof summary without source callers: {proof_context:#?}"
+    );
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert_eq!(
+        ui_field(ui, "proof_context"),
+        proof_context.len().to_string()
+    );
+    assert_eq!(ui_field(ui, "call_paths_to_target"), "0");
+    assert_eq!(ui_field(ui, "impact_callers"), "0");
+    assert_eq!(ui_field(ui, "impact_direct_callers"), "0");
+    assert_eq!(ui_field(ui, "impact_direct_call_sites"), "0");
+    assert_eq!(ui_field(ui, "impact_public_callers"), "0");
+    assert_eq!(ui_field(ui, "impact_test_callers"), "0");
+    assert_eq!(ui_field(ui, "impact_non_test_callers"), "0");
 }
 
 #[tokio::test]
