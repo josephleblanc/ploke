@@ -32,9 +32,17 @@ pub(super) fn validate_call_context(row: &CallContextRow) -> Result<(), DbError>
 
 fn is_ambiguous_dynamic_candidate_row(row: &CallContextRow) -> bool {
     row.site.kind == CallSiteKind::Dynamic
-        && row.targets.iter().all(|target| {
-            target.relation == CallRelationKind::DynamicFunction
-                && target.source_kind == CallSiteKind::Dynamic
-                && target.target_kind == CallTargetKind::Function
-        })
+        && row
+            .targets
+            .iter()
+            .all(is_ambiguous_dynamic_candidate_target)
+}
+
+fn is_ambiguous_dynamic_candidate_target(target: &crate::call_graph::CallTargetRow) -> bool {
+    target.source_kind == CallSiteKind::Dynamic
+        && matches!(
+            (target.relation, target.target_kind),
+            (CallRelationKind::DynamicFunction, CallTargetKind::Function)
+                | (CallRelationKind::DynamicClosure, CallTargetKind::Closure)
+        )
 }

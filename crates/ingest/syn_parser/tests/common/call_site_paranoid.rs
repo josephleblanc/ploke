@@ -17,10 +17,10 @@ use syn_parser::parser::ParsedCodeGraph;
 use syn_parser::parser::graph::GraphAccess;
 use syn_parser::parser::nodes::test_ids::{TestCallIds, generate_test_call_id};
 use syn_parser::parser::nodes::{
-    AnyCallSiteId, CallBodyOwnerId, CallNode, CallSiteKind, ConstNodeId, DynamicCallCallee,
-    DynamicCallSiteId, ExecutableBodyId, FunctionNodeId, MacroCallSiteId, MethodCallReceiver,
-    MethodCallSiteId, MethodNodeId, PathCallCallee, PathCallSiteId, StaticNodeId, StructNodeId,
-    VariantNodeId,
+    AnyCallSiteId, CallBodyOwnerId, CallNode, CallSiteKind, ConstNodeId, DynamicBranchTarget,
+    DynamicCallCallee, DynamicCallSiteId, ExecutableBodyId, FunctionNodeId, MacroCallSiteId,
+    MethodCallReceiver, MethodCallSiteId, MethodNodeId, PathCallCallee, PathCallSiteId,
+    StaticNodeId, StructNodeId, VariantNodeId,
 };
 use syn_parser::parser::relations::{
     CallRelation, CallResolutionKind, CallResolutionStatus, CallSiteRelation,
@@ -389,12 +389,37 @@ pub enum ExpectedDynamicCallee<'a> {
     },
     /// The callee expression is an if expression with path-valued branches.
     IfBranchPaths { paths: &'a [&'a [&'a str]] },
+    /// The callee expression is an if expression with mixed path/closure branches.
+    IfBranchTargets {
+        targets: &'a [ExpectedDynamicBranchTarget<'a>],
+    },
     /// The callee expression is a match expression with path-valued arms.
     MatchArmPaths { paths: &'a [&'a [&'a str]] },
+    /// The callee expression is a match expression with mixed path/closure arms.
+    MatchArmTargets {
+        targets: &'a [ExpectedDynamicBranchTarget<'a>],
+    },
     /// The callee expression is an if expression whose branches name the same parameter.
     IfBranchParameter { path: &'a [&'a str] },
     /// The callee expression is a match expression whose arms name the same parameter.
     MatchArmParameter { path: &'a [&'a str] },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExpectedDynamicBranchTarget<'a> {
+    Path { path: &'a [&'a str] },
+    Closure { closure_id: ExecutableBodyId },
+}
+
+impl ExpectedDynamicBranchTarget<'_> {
+    fn to_actual(self) -> DynamicBranchTarget {
+        match self {
+            Self::Path { path } => DynamicBranchTarget::Path {
+                path: path.iter().copied().map(String::from).collect(),
+            },
+            Self::Closure { closure_id } => DynamicBranchTarget::Closure { closure_id },
+        }
+    }
 }
 
 impl ExpectedDynamicCallee<'_> {
@@ -501,10 +526,24 @@ impl ExpectedDynamicCallee<'_> {
                     .map(|path| path.iter().copied().map(String::from).collect())
                     .collect(),
             },
+            Self::IfBranchTargets { targets } => DynamicCallCallee::IfBranchTargets {
+                targets: targets
+                    .iter()
+                    .copied()
+                    .map(|target| target.to_actual())
+                    .collect(),
+            },
             Self::MatchArmPaths { paths } => DynamicCallCallee::MatchArmPaths {
                 paths: paths
                     .iter()
                     .map(|path| path.iter().copied().map(String::from).collect())
+                    .collect(),
+            },
+            Self::MatchArmTargets { targets } => DynamicCallCallee::MatchArmTargets {
+                targets: targets
+                    .iter()
+                    .copied()
+                    .map(|target| target.to_actual())
                     .collect(),
             },
             Self::IfBranchParameter { path } => DynamicCallCallee::IfBranchParameter {
@@ -557,6 +596,12 @@ pub enum ExpectedCallOutcome {
     AmbiguousDynamicFunctionCandidates {
         first: FunctionNodeId,
         second: FunctionNodeId,
+    },
+    /// Resolver should report `Ambiguous` while preserving mixed dynamic
+    /// function/closure candidates.
+    AmbiguousDynamicMixedCandidates {
+        function: FunctionNodeId,
+        closure: ExecutableBodyId,
     },
     /// Resolver should classify the target as external and emit no local edge.
     External,
@@ -1237,6 +1282,25 @@ impl<'a> ExpectedCallSite<'a> {
         }
     }
 
+    /// Constructor for a dynamic-call expectation whose callee is an if expression with mixed path/closure branches.
+    pub const fn dynamic_if_branch_targets(
+        targets: &'a [ExpectedDynamicBranchTarget<'a>],
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::IfBranchTargets { targets },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
     /// Constructor for a dynamic-call expectation whose callee is a match expression with path arms.
     pub const fn dynamic_match_arm_paths(
         paths: &'a [&'a [&'a str]],
@@ -1248,6 +1312,25 @@ impl<'a> ExpectedCallSite<'a> {
         Self {
             kind: ExpectedCallKind::Dynamic {
                 callee: ExpectedDynamicCallee::MatchArmPaths { paths },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a dynamic-call expectation whose callee is a match expression with mixed path/closure arms.
+    pub const fn dynamic_match_arm_targets(
+        targets: &'a [ExpectedDynamicBranchTarget<'a>],
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::MatchArmTargets { targets },
                 arg_count,
             },
             span,
@@ -1838,6 +1921,10 @@ fn assert_resolution_outcome(
             matches!(status, CallResolutionStatus::Ambiguous { source } if source == expected_id),
             "expected Ambiguous status for {expected_id:?}, got {status:?}"
         ),
+        ExpectedCallOutcome::AmbiguousDynamicMixedCandidates { .. } => assert!(
+            matches!(status, CallResolutionStatus::Ambiguous { source } if source == expected_id),
+            "expected Ambiguous status for {expected_id:?}, got {status:?}"
+        ),
         ExpectedCallOutcome::External => assert!(
             matches!(status, CallResolutionStatus::External { source } if source == expected_id),
             "expected External status for {expected_id:?}, got {status:?}"
@@ -1905,6 +1992,37 @@ fn assert_resolution_outcome(
             assert_eq!(
                 actual, expected,
                 "ambiguous dynamic call site {expected_id:?} should preserve proven function candidates"
+            );
+        }
+        ExpectedCallOutcome::AmbiguousDynamicMixedCandidates { function, closure } => {
+            let source = match expected_id {
+                AnyCallSiteId::Dynamic(source) => source,
+                other => {
+                    panic!(
+                        "ambiguous mixed dynamic candidates expected a dynamic call-site ID, got {other:?}"
+                    )
+                }
+            };
+            assert_eq!(
+                relations.len(),
+                2,
+                "ambiguous mixed dynamic call site {expected_id:?} should preserve both candidates; got {relations:#?}"
+            );
+            assert!(
+                relations.iter().any(|relation| matches!(
+                    relation,
+                    CallRelation::DynamicFunction { source: actual_source, target }
+                        if *actual_source == source && *target == function
+                )),
+                "expected DynamicFunction candidate {source:?} -> {function:?}, got {relations:#?}"
+            );
+            assert!(
+                relations.iter().any(|relation| matches!(
+                    relation,
+                    CallRelation::DynamicClosure { source: actual_source, target }
+                        if *actual_source == source && *target == closure
+                )),
+                "expected DynamicClosure candidate {source:?} -> {closure:?}, got {relations:#?}"
             );
         }
         ExpectedCallOutcome::ResolvedMethodLocalExact { target } => {

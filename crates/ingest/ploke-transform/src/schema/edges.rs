@@ -804,10 +804,12 @@ fn call_site_to_params(call_site: &CallNode) -> BTreeMap<String, cozo::DataValue
                     .split_first()
                     .filter(|(first, rest)| rest.iter().all(|path| path == *first))
                     .map_or(cozo::DataValue::Null, |(path, _)| string_list(path)),
+                DynamicCallCallee::IfBranchTargets { .. } => cozo::DataValue::Null,
                 DynamicCallCallee::MatchArmPaths { paths } => paths
                     .split_first()
                     .filter(|(first, rest)| rest.iter().all(|path| path == *first))
                     .map_or(cozo::DataValue::Null, |(path, _)| string_list(path)),
+                DynamicCallCallee::MatchArmTargets { .. } => cozo::DataValue::Null,
                 DynamicCallCallee::ClosureLiteral { .. }
                 | DynamicCallCallee::AwaitedAsyncClosureLiteral { .. }
                 | DynamicCallCallee::Other => cozo::DataValue::Null,

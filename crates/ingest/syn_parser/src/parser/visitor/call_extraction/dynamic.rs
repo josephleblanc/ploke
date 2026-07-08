@@ -1,14 +1,16 @@
 use syn::spanned::Spanned;
 
 use crate::parser::nodes::{
-    CallBodyOwnerId, DynamicCallCallee, ExecutableBodyId, generate_closure_body_id,
+    CallBodyOwnerId, DynamicBranchTarget, DynamicCallCallee, ExecutableBodyId,
+    generate_closure_body_id,
 };
 
 use super::model::{ConstructedFields, FieldInitProof, LocalBindingProof};
 use super::receiver::local_field_path;
 use super::{
-    block_path_expr, if_branch_paths, is_callable_trait, literal_usize, match_arm_paths,
-    path_segments, unparen_expr, visible_local_binding,
+    block_path_expr, expr_path_segments, if_branch_paths, is_callable_trait,
+    is_unshadowed_item_path, literal_usize, match_arm_paths, path_segments, unparen_expr,
+    visible_local_binding,
 };
 
 pub(super) fn classify_dynamic_callee(
@@ -110,12 +112,20 @@ pub(super) fn classify_dynamic_callee(
         return DynamicCallCallee::IfBranchPaths { paths };
     }
 
+    if let Some(targets) = if_branch_targets(callee, owner, cfgs, param_names, local_scopes) {
+        return DynamicCallCallee::IfBranchTargets { targets };
+    }
+
     if let Some(path) = if_branch_parameter_path(callee, param_names, local_scopes) {
         return DynamicCallCallee::IfBranchParameter { path };
     }
 
     if let Some(paths) = match_arm_paths(callee, param_names, local_scopes) {
         return DynamicCallCallee::MatchArmPaths { paths };
+    }
+
+    if let Some(targets) = match_arm_targets(callee, owner, cfgs, param_names, local_scopes) {
+        return DynamicCallCallee::MatchArmTargets { targets };
     }
 
     if let Some(path) = match_arm_parameter_path(callee, param_names, local_scopes) {
@@ -247,6 +257,97 @@ fn classify_dynamic_path_expr(
     }
 
     DynamicCallCallee::Path { path }
+}
+
+fn if_branch_targets(
+    callee: &syn::Expr,
+    owner: CallBodyOwnerId,
+    cfgs: &[String],
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<Vec<DynamicBranchTarget>> {
+    let syn::Expr::If(branch) = unparen_expr(callee) else {
+        return None;
+    };
+    let mut targets =
+        block_branch_targets(&branch.then_branch, owner, cfgs, param_names, local_scopes)?;
+    let (_else_token, else_expr) = branch.else_branch.as_ref()?;
+    targets.extend(branch_targets(
+        else_expr.as_ref(),
+        owner,
+        cfgs,
+        param_names,
+        local_scopes,
+    )?);
+    mixed_branch_targets(targets)
+}
+
+fn match_arm_targets(
+    callee: &syn::Expr,
+    owner: CallBodyOwnerId,
+    cfgs: &[String],
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<Vec<DynamicBranchTarget>> {
+    let syn::Expr::Match(expr) = unparen_expr(callee) else {
+        return None;
+    };
+
+    let targets = expr
+        .arms
+        .iter()
+        .map(|arm| branch_targets(arm.body.as_ref(), owner, cfgs, param_names, local_scopes))
+        .collect::<Option<Vec<_>>>()?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    mixed_branch_targets(targets)
+}
+
+fn branch_targets(
+    expr: &syn::Expr,
+    owner: CallBodyOwnerId,
+    cfgs: &[String],
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<Vec<DynamicBranchTarget>> {
+    match unparen_expr(expr) {
+        syn::Expr::Path(path) => {
+            let path = expr_path_segments(path)?;
+            is_unshadowed_item_path(&path, param_names, local_scopes)
+                .then_some(vec![DynamicBranchTarget::Path { path }])
+        }
+        syn::Expr::Closure(_) => {
+            let closure_id = closure_literal_callee(expr, owner, cfgs)?;
+            Some(vec![DynamicBranchTarget::Closure { closure_id }])
+        }
+        syn::Expr::Block(block) => {
+            block_branch_targets(&block.block, owner, cfgs, param_names, local_scopes)
+        }
+        syn::Expr::If(_) => if_branch_targets(expr, owner, cfgs, param_names, local_scopes),
+        syn::Expr::Match(_) => match_arm_targets(expr, owner, cfgs, param_names, local_scopes),
+        _ => None,
+    }
+}
+
+fn block_branch_targets(
+    block: &syn::Block,
+    owner: CallBodyOwnerId,
+    cfgs: &[String],
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<Vec<DynamicBranchTarget>> {
+    let [syn::Stmt::Expr(expr, None)] = block.stmts.as_slice() else {
+        return None;
+    };
+    branch_targets(expr, owner, cfgs, param_names, local_scopes)
+}
+
+fn mixed_branch_targets(targets: Vec<DynamicBranchTarget>) -> Option<Vec<DynamicBranchTarget>> {
+    let has_closure = targets
+        .iter()
+        .any(|target| matches!(target, DynamicBranchTarget::Closure { .. }));
+    (has_closure && !targets.is_empty()).then_some(targets)
 }
 
 fn if_branch_parameter_path(

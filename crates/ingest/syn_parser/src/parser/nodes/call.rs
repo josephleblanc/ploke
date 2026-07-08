@@ -234,6 +234,15 @@ pub struct DynamicCallNode {
     pub callee: DynamicCallCallee,
 }
 
+/// A branch expression target that can participate in a dynamic call.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub enum DynamicBranchTarget {
+    /// A branch evaluates to an unshadowed item path.
+    Path { path: Vec<String> },
+    /// A branch evaluates to an inline closure literal.
+    Closure { closure_id: ExecutableBodyId },
+}
+
 /// Coarse callee categories for dynamic expression-call sites.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Default)]
 pub enum DynamicCallCallee {
@@ -343,10 +352,16 @@ pub enum DynamicCallCallee {
     /// evaluate to a path expression, such as
     /// `(if flag { local_target } else { other_target })()`.
     IfBranchPaths { paths: Vec<Vec<String>> },
+    /// The callee expression is an if expression whose supported branches
+    /// evaluate to a mix of item paths and inline closure literals.
+    IfBranchTargets { targets: Vec<DynamicBranchTarget> },
     /// The callee expression is a match expression whose supported arms each
     /// evaluate to a path expression, such as
     /// `(match flag { true => local_target, false => other_target })()`.
     MatchArmPaths { paths: Vec<Vec<String>> },
+    /// The callee expression is a match expression whose supported arms
+    /// evaluate to a mix of item paths and inline closure literals.
+    MatchArmTargets { targets: Vec<DynamicBranchTarget> },
     /// The callee expression is an if expression whose supported branches each
     /// evaluate to the same visible callable parameter, such as
     /// `(if flag { f } else { f })()`.

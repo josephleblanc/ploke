@@ -5,18 +5,6 @@ fn fixture_projection_marks_real_branch_and_match_dynamic_failures_without_edges
 -> Result<(), DbError> {
     let cases = [
         (
-            "call_if_closure_branch",
-            None,
-            CallStatusKind::Unsupported,
-            "dynamic_dispatch_unbounded",
-        ),
-        (
-            "call_match_closure_arm",
-            None,
-            CallStatusKind::Unsupported,
-            "dynamic_dispatch_unbounded",
-        ),
-        (
             "call_if_function_pointer_param_branch",
             Some(&["f"][..]),
             CallStatusKind::Unsupported,

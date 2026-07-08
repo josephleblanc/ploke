@@ -4,8 +4,6 @@ use super::*;
 fn fixture_context_reads_projected_targetless_dynamic_failures() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let cases = [
-        TargetlessDynamicContextCase::unsupported("call_if_closure_branch"),
-        TargetlessDynamicContextCase::unsupported("call_match_closure_arm"),
         TargetlessDynamicContextCase::unsupported_path(
             "call_parenthesized_function_pointer_param",
             &["f"],

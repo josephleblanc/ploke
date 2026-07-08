@@ -3,8 +3,8 @@ use crate::{
     parser::{
         graph::GraphAccess,
         nodes::{
-            AnyCallSiteId, CallBodyOwnerId, DynamicCallCallee, DynamicCallNode, ExecutableBodyId,
-            ExecutableBodyKind, FunctionNodeId,
+            AnyCallSiteId, CallBodyOwnerId, DynamicBranchTarget, DynamicCallCallee,
+            DynamicCallNode, ExecutableBodyId, ExecutableBodyKind, FunctionNodeId,
         },
         relations::{CallRelation, CallResolutionKind, CallResolutionStatus},
     },
@@ -33,8 +33,16 @@ impl CallRelationResolver<'_> {
             self.resolve_if_branch_dynamic_call(call, paths, relations, statuses)?;
             return Ok(());
         }
+        if let DynamicCallCallee::IfBranchTargets { targets } = &call.callee {
+            self.resolve_branch_targets(call, targets, relations, statuses)?;
+            return Ok(());
+        }
         if let DynamicCallCallee::MatchArmPaths { paths } = &call.callee {
             self.resolve_if_branch_dynamic_call(call, paths, relations, statuses)?;
+            return Ok(());
+        }
+        if let DynamicCallCallee::MatchArmTargets { targets } = &call.callee {
+            self.resolve_branch_targets(call, targets, relations, statuses)?;
             return Ok(());
         }
         if let DynamicCallCallee::IfBranchParameter { path }
@@ -143,7 +151,9 @@ impl CallRelationResolver<'_> {
             | DynamicCallCallee::FieldInitializedLocalBinding { .. }
             | DynamicCallCallee::IndexedInitializedLocalBinding { .. }
             | DynamicCallCallee::IfBranchPaths { .. }
+            | DynamicCallCallee::IfBranchTargets { .. }
             | DynamicCallCallee::MatchArmPaths { .. }
+            | DynamicCallCallee::MatchArmTargets { .. }
             | DynamicCallCallee::IfBranchParameter { .. }
             | DynamicCallCallee::MatchArmParameter { .. }
             | DynamicCallCallee::Other => {
@@ -257,6 +267,74 @@ impl CallRelationResolver<'_> {
             }
             DynamicPathResolution::Unsupported => {
                 statuses.push(CallResolutionStatus::Unsupported { source });
+            }
+        }
+
+        Ok(())
+    }
+
+    fn resolve_branch_targets(
+        &self,
+        call: &DynamicCallNode,
+        targets: &[DynamicBranchTarget],
+        relations: &mut Vec<CallRelation>,
+        statuses: &mut Vec<CallResolutionStatus>,
+    ) -> Result<(), SynParserError> {
+        let source = AnyCallSiteId::Dynamic(call.id);
+        if targets.is_empty() {
+            statuses.push(CallResolutionStatus::Unsupported { source });
+            return Ok(());
+        }
+
+        let mut functions = Vec::new();
+        let mut closures = Vec::new();
+        let mut has_external = false;
+        let mut has_unresolved = false;
+
+        for target in targets {
+            match target {
+                DynamicBranchTarget::Path { path } => {
+                    match self.resolve_dynamic_path(call.owner, path)? {
+                        DynamicPathResolution::Resolved(target) => functions.push(target),
+                        DynamicPathResolution::Unresolved => has_unresolved = true,
+                        DynamicPathResolution::Ambiguous => {
+                            statuses.push(CallResolutionStatus::Ambiguous { source });
+                            return Ok(());
+                        }
+                        DynamicPathResolution::External => has_external = true,
+                        DynamicPathResolution::Unsupported => {
+                            statuses.push(CallResolutionStatus::Unsupported { source });
+                            return Ok(());
+                        }
+                    }
+                }
+                DynamicBranchTarget::Closure { closure_id } => closures.push(*closure_id),
+            }
+        }
+
+        functions.sort_unstable();
+        functions.dedup();
+        closures.sort_unstable();
+        closures.dedup();
+
+        let local_count = functions.len() + closures.len();
+        match (local_count, has_external, has_unresolved) {
+            (1, false, false) => {
+                push_branch_relations(call, &functions, &closures, relations);
+                statuses.push(CallResolutionStatus::Resolved {
+                    source,
+                    kind: CallResolutionKind::LocalExact,
+                });
+            }
+            (0, true, false) => {
+                statuses.push(CallResolutionStatus::External { source });
+            }
+            (0, false, true) => {
+                statuses.push(CallResolutionStatus::Unresolved { source });
+            }
+            _ => {
+                push_branch_relations(call, &functions, &closures, relations);
+                statuses.push(CallResolutionStatus::Ambiguous { source });
             }
         }
 
@@ -488,6 +566,32 @@ impl CallRelationResolver<'_> {
             LocalFunctionPathResolution::Unsupported => DynamicPathResolution::Unsupported,
         })
     }
+}
+
+fn push_branch_relations(
+    call: &DynamicCallNode,
+    functions: &[FunctionNodeId],
+    closures: &[ExecutableBodyId],
+    relations: &mut Vec<CallRelation>,
+) {
+    relations.extend(
+        functions
+            .iter()
+            .copied()
+            .map(|target| CallRelation::DynamicFunction {
+                source: call.id,
+                target,
+            }),
+    );
+    relations.extend(
+        closures
+            .iter()
+            .copied()
+            .map(|target| CallRelation::DynamicClosure {
+                source: call.id,
+                target,
+            }),
+    );
 }
 
 fn push_dynamic_parameter_target(

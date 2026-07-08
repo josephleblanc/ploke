@@ -6,7 +6,8 @@
 //! plus any expected typed semantic edge.
 
 use crate::common::call_site_paranoid::{
-    CallOwnerContext, ExpectedCallOutcome, ExpectedCallSite, ExpectedMethodReceiver,
+    CallOwnerContext, ExpectedCallOutcome, ExpectedCallSite, ExpectedDynamicBranchTarget,
+    ExpectedMethodReceiver,
 };
 use crate::common::{
     AssocOwner, AssocParanoidArgs, PARSED_FIXTURE_CRATE_EDGE_CASES, PARSED_FIXTURE_CRATE_IMPLS,
@@ -4757,39 +4758,85 @@ paranoid_call_site_test!(
     },
 );
 
-paranoid_call_site_test!(
-    fixture_call_graph_call_if_closure_branch_fails_closed_dynamic_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_if_closure_branch"
-    },
-    expected: {
-        ExpectedCallSite::dynamic(
-            IF_CLOSURE_BRANCH_DYNAMIC_CALL_SPAN,
-            0,
-            &[],
-            ExpectedCallOutcome::Unsupported,
-        )
-    },
-);
+#[test]
+fn fixture_call_graph_call_if_closure_branch_preserves_mixed_dynamic_candidates()
+-> Result<(), syn_parser::error::SynParserError> {
+    let (graph, tree) = crate::common::build_tree_for_tests("fixture_call_graph");
+    let report = resolve_call_relations_after_tree(&graph, &tree)?;
+    let owner = crate::common::call_site_paranoid::function_owner_context(
+        &graph,
+        &["crate"],
+        "call_if_closure_branch",
+    );
+    let closure = closure_body_inside_span(&graph, &owner, IF_CLOSURE_BRANCH_DYNAMIC_CALL_SPAN);
+    let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
+    let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+    let target_info = target_args.generate_pid(&parsed_graphs)?;
+    let target = FunctionNodeId::try_from(target_info.test_pid())
+        .expect("local_target should regenerate a FunctionNodeId");
+    let targets = [
+        ExpectedDynamicBranchTarget::Path {
+            path: &["local_target"],
+        },
+        ExpectedDynamicBranchTarget::Closure {
+            closure_id: closure,
+        },
+    ];
+    let expected = ExpectedCallSite::dynamic_if_branch_targets(
+        &targets,
+        IF_CLOSURE_BRANCH_DYNAMIC_CALL_SPAN,
+        0,
+        &[],
+        ExpectedCallOutcome::AmbiguousDynamicMixedCandidates {
+            function: target,
+            closure,
+        },
+    );
+    crate::common::call_site_paranoid::assert_paranoid_call_site(
+        &graph, &report, &owner, &expected,
+    );
+    Ok(())
+}
 
-paranoid_call_site_test!(
-    fixture_call_graph_call_match_closure_arm_fails_closed_dynamic_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_match_closure_arm"
-    },
-    expected: {
-        ExpectedCallSite::dynamic(
-            MATCH_CLOSURE_ARM_DYNAMIC_CALL_SPAN,
-            0,
-            &[],
-            ExpectedCallOutcome::Unsupported,
-        )
-    },
-);
+#[test]
+fn fixture_call_graph_call_match_closure_arm_preserves_mixed_dynamic_candidates()
+-> Result<(), syn_parser::error::SynParserError> {
+    let (graph, tree) = crate::common::build_tree_for_tests("fixture_call_graph");
+    let report = resolve_call_relations_after_tree(&graph, &tree)?;
+    let owner = crate::common::call_site_paranoid::function_owner_context(
+        &graph,
+        &["crate"],
+        "call_match_closure_arm",
+    );
+    let closure = closure_body_inside_span(&graph, &owner, MATCH_CLOSURE_ARM_DYNAMIC_CALL_SPAN);
+    let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
+    let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+    let target_info = target_args.generate_pid(&parsed_graphs)?;
+    let target = FunctionNodeId::try_from(target_info.test_pid())
+        .expect("local_target should regenerate a FunctionNodeId");
+    let targets = [
+        ExpectedDynamicBranchTarget::Path {
+            path: &["local_target"],
+        },
+        ExpectedDynamicBranchTarget::Closure {
+            closure_id: closure,
+        },
+    ];
+    let expected = ExpectedCallSite::dynamic_match_arm_targets(
+        &targets,
+        MATCH_CLOSURE_ARM_DYNAMIC_CALL_SPAN,
+        0,
+        &[],
+        ExpectedCallOutcome::AmbiguousDynamicMixedCandidates {
+            function: target,
+            closure,
+        },
+    );
+    crate::common::call_site_paranoid::assert_paranoid_call_site(
+        &graph, &report, &owner, &expected,
+    );
+    Ok(())
+}
 
 paranoid_call_site_test!(
     fixture_call_graph_call_if_function_pointer_param_branch_fails_closed_dynamic_call_site,
