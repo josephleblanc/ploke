@@ -284,12 +284,19 @@ should prevent future resumes from reselecting already-covered shapes.
    - `call_awaited_async_closure_future_alias_with_body_call()` records the
      original `closure()` call as awaited when the same block executes
      `let future = closure(); let alias = future; alias.await;`.
+   - `call_awaited_async_closure_future_block_alias_with_body_call()` records
+     the same awaited edge when the alias initializer is a single-expression
+     block containing the previously recorded future binding:
+     `let future = closure(); let alias = { future }; alias.await;`.
    - Parser extraction uses only one-step same-block alias evidence from a
-     previously recorded future binding. It does not model nested control
-     flow, arbitrary future value flow, returned futures, async callable trait
-     objects, or general poll/resume semantics.
+     previously recorded future binding, including the single-expression block
+     form already used by nearby call extraction helpers. It does not model
+     nested control flow, arbitrary future value flow, returned futures, async
+     callable trait objects, or general poll/resume semantics.
    - Parser, DB traversal, RAG call-context collection, and exact
-     `request_code_context` tool assertions cover the supported alias shape.
+     `request_code_context` tool assertions cover the direct alias shape;
+     parser, DB traversal, and RAG call-context assertions cover the
+     block-alias shape.
 
 16. Private parenthesized generic `FnOnce` single-caller proof - completed:
    - `call_single_parenthesized_generic_fn_once_param<F>(generic_f: F) where

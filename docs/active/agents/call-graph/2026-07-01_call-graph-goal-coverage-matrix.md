@@ -50,24 +50,48 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: real-corpus targetless fallback proof blocker for one guarded
-receiver row.
+Current bucket: bounded same-block async-closure future block-alias proof.
 
 Exit criteria:
 
-- Pick one visible real-corpus unsupported receiver row whose source oracle
-  proves the unresolved receiver shape.
-- Reuse the existing `proof_blocker` shape and allowed blocker reason; do not
-  add resolver behavior, traversal edges, or proof schema.
-- Prove the row remains targetless and expose the explicit blocker through DB
-  proof lookup and GraphRAG proof context.
+- Add one fixture-backed source oracle where `let alias = { future };
+  alias.await;` proves a previously recorded async-closure future binding is
+  polled in the same block.
+- Reuse the existing same-block future alias proof path; do not add general
+  poll/resume modeling, nested control-flow value flow, returned futures, or
+  arbitrary async callable dispatch.
+- Prove parser payload, DB owner/path traversal, and RAG call-context
+  propagation for the new source oracle.
 
-Status: completed for the generic-array guarded match `iter.size_hint()` rows.
+Status: completed for the fixture-backed block-alias awaited future row.
 
 Next bucket: choose the next uncovered matrix bucket. Do not add more
-unsupported receiver blocker breadth unless a source oracle needs it.
+async future-flow breadth unless it has a bounded source oracle and reuses an
+existing proof carrier.
 
-Latest completed slice in current bucket: explicit `type_resolution_missing`
+Latest completed slice in current bucket: same-block async-closure future
+block-alias proof.
+
+Completed evidence:
+
+- The source oracle is
+  `tests/fixture_crates/fixture_call_graph/src/lib.rs:1821-1825`, where
+  `future = closure(); alias = { future }; alias.await;` proves the original
+  `closure()` future binding is awaited through a single-expression block
+  alias in the same block.
+- Parser extraction now accepts that block alias only when it reduces to a
+  path expression, and marks the original async-closure binding call as
+  `AwaitedAsyncClosureBinding`.
+- DB owner context and traversal prove the two-hop path
+  outer function -> async-closure owner -> `local_target`.
+- RAG call-context collection preserves the same resolved closure edge and
+  nested body call.
+- Verification passed:
+  `cargo test -p syn_parser fixture_call_graph_call_awaited_async_closure_future_block_alias_resolves_path_call_site -- --nocapture`,
+  `cargo test -p ploke-db fixture_context_resolves_awaited_async_closure_future_block_alias_to_executable_owner -- --nocapture`, and
+  `cargo test -p ploke-rag call_context_collection_resolves_awaited_async_closure_future_block_alias_rows -- --nocapture`.
+
+Previously completed slice: explicit `type_resolution_missing`
 proof blocker for the real generic-array guarded `size_hint` receiver rows.
 
 Completed evidence:
@@ -763,20 +787,24 @@ proof.
 Completed evidence:
 
 - Parser extraction now recognizes the bounded same-block alias proof shape
-  `let future = closure(); let alias = future; alias.await;` and marks the
-  original async-closure binding call as awaited.
+  `let future = closure(); let alias = future; alias.await;` and the adjacent
+  single-expression block alias shape `let alias = { future }; alias.await;`,
+  and marks the original async-closure binding call as awaited.
 - `call_awaited_async_closure_future_alias_with_body_call()` records the
   original `closure()` path call as an awaited async-closure binding call once
   the same block later awaits the one-step alias.
+- `call_awaited_async_closure_future_block_alias_with_body_call()` records the
+  same awaited edge when the alias initializer is a single-expression block
+  containing the previously recorded future binding.
 - DB owner context and traversal prove the supported two-hop path
   outer function -> async-closure owner -> `local_target`.
 - RAG call-context collection and exact `request_code_context` TUI/tool tests
-  preserve the resolved awaited future-alias expansion into the async-closure
-  body.
+  preserve the direct-alias expansion; RAG call-context collection also
+  preserves the block-alias expansion into the async-closure body.
 - This remains bounded to a direct same-block future binding plus one direct
-  alias before `.await`; nested control flow, arbitrary future value flow,
-  returned futures, async callable trait objects, and general poll/resume
-  semantics remain future work.
+  alias or one single-expression block alias before `.await`; nested control
+  flow, arbitrary future value flow, returned futures, async callable trait
+  objects, and general poll/resume semantics remain future work.
 
 Previously completed bucket: downstream edge-tool safety boundary proof.
 

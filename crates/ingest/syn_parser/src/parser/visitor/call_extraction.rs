@@ -1288,8 +1288,10 @@ fn future_alias_binding(stmt: &syn::Stmt) -> Option<(String, String)> {
     };
     let name = pat_ident_name(&local.pat)?;
     let init_expr = local.init.as_ref()?.expr.as_ref();
-    let syn::Expr::Path(path) = unparen_expr(init_expr) else {
-        return None;
+    let path = match unparen_expr(init_expr) {
+        syn::Expr::Path(path) => path,
+        syn::Expr::Block(_) => block_path_expr(init_expr)?,
+        _ => return None,
     };
     if path.qself.is_some() {
         return None;

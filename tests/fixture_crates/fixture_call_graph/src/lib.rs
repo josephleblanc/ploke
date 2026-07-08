@@ -1817,3 +1817,10 @@ pub fn call_match_arm_initialized_receiver_method(flag: bool) -> i32 {
         _ => 0,
     }
 }
+
+pub async fn call_awaited_async_closure_future_block_alias_with_body_call() {
+    let closure = async || local_target();
+    let future = closure();
+    let alias = { future };
+    alias.await;
+}

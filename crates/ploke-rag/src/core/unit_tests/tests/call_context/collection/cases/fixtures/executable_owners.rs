@@ -574,18 +574,33 @@ async fn call_context_collection_resolves_awaited_async_closure_future_binding_r
 #[tokio::test]
 async fn call_context_collection_resolves_awaited_async_closure_future_alias_rows()
 -> Result<(), Error> {
+    assert_awaited_async_closure_future_context(
+        "call_awaited_async_closure_future_alias_with_body_call",
+        "awaited async-closure future alias",
+    )
+    .await
+}
+
+#[tokio::test]
+async fn call_context_collection_resolves_awaited_async_closure_future_block_alias_rows()
+-> Result<(), Error> {
+    assert_awaited_async_closure_future_context(
+        "call_awaited_async_closure_future_block_alias_with_body_call",
+        "awaited async-closure future block alias",
+    )
+    .await
+}
+
+async fn assert_awaited_async_closure_future_context(
+    owner_name: &str,
+    label: &str,
+) -> Result<(), Error> {
     init_tracing_once();
     let db = Arc::new(Database::new(setup_db_full_multi_embedding(
         "fixture_call_graph",
     )?));
     let target = unique_id_by_name(&db, "function", "local_target")?;
-    let outer = one_uuid(
-        &db,
-        &function_in_module_query(
-            &["crate"],
-            "call_awaited_async_closure_future_alias_with_body_call",
-        ),
-    )?;
+    let outer = one_uuid(&db, &function_in_module_query(&["crate"], owner_name))?;
     let async_closure = async_closure_owner_for_parent(&db, outer)?;
 
     let rag = init_test_rag_mock(Arc::clone(&db));
@@ -593,7 +608,7 @@ async fn call_context_collection_resolves_awaited_async_closure_future_alias_row
 
     let outer_context = call_context
         .get(&outer)
-        .expect("outer function should keep its awaited future alias context");
+        .unwrap_or_else(|| panic!("outer function should keep its {label} context"));
     assert!(
         outer_context.iter().all(|call| {
             call.callee
@@ -601,12 +616,15 @@ async fn call_context_collection_resolves_awaited_async_closure_future_alias_row
                     path: vec!["local_target".to_string()],
                 }
         }),
-        "outer function must not absorb the awaited async-closure future alias body call: {outer_context:#?}"
+        "outer function must not absorb the {label} body call: {outer_context:#?}"
     );
 
     // tests/fixture_crates/fixture_call_graph/src/lib.rs:1722-1727:
-    // `future = closure(); alias = future; alias.await;` proves the original
-    // closure() call is polled through a one-step same-block alias.
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:1821-1825:
+    // `future = closure(); alias = future; alias.await;` and
+    // `future = closure(); alias = { future }; alias.await;` prove the
+    // original closure() call is polled through bounded same-block alias
+    // evidence.
     let closure_call = outer_context
         .iter()
         .find(|call| {
@@ -617,7 +635,7 @@ async fn call_context_collection_resolves_awaited_async_closure_future_alias_row
                         path: vec!["closure".to_string()],
                     }
         })
-        .expect("outer function should expose the awaited closure() future alias call");
+        .unwrap_or_else(|| panic!("outer function should expose the {label} closure() call"));
     assert_eq!(closure_call.status, CallStatusKind::Resolved);
     assert_eq!(
         closure_call.resolution,
