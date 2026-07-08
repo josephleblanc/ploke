@@ -72,7 +72,41 @@ matrix table marks receiver, dynamic callable, executable-owner, and usage
 summary rows as met for now. Remaining work should switch to one of the
 future-heavy carriers above instead of polishing another nearby local proof.
 
-Latest completed slice in current bucket: generated test-entrypoint summary
+Latest completed slice in current bucket: workspace dependency-root proof carrier
+over real axum `FromRef::from_ref` dependency-root rows.
+
+Completed evidence:
+
+- Added a strict `dependency_root` proof fact kind. The fact requires the
+  source callsite, caller definition, resolved target definition, dependency
+  root name, target metadata, import path, resolved path, artifact/review
+  metadata, status, and proof evidence use.
+- DB proof-store tests admit the new fact kind and reject missing
+  `resolved_def_id` or missing `import_path`, preserving fail-closed proof
+  validation.
+- The axum real-corpus dependency-root test still proves
+  `axum/src/extract/state.rs:309` `InnerState::from_ref(state)` and
+  `axum/src/middleware/from_extractor.rs:328` `Secret::from_ref(state)` each
+  traverse to `axum_core::extract::FromRef::from_ref` through one resolved
+  associated-function edge, then admits proof-only dependency-root records for
+  those exact callsite ids.
+- RAG exact proof context for `FromRef::from_ref` exposes the two
+  `dependency_root` records alongside the four normal incoming caller-site
+  proof rows.
+- Exact `code_item_lookup` and `code_item_edges` target-centered FromRef tool
+  tests expose the same two dependency-root proof rows without changing the
+  four incoming caller rows or flattening nested local-item owners into parent
+  functions.
+- Verification passed:
+  `cargo test -p ploke-db --test proof_graph_store dependency_root -- --nocapture`,
+  `cargo test -p ploke-db axum_real_target_from_ref_dependency_root_bound_reaches_workspace_trait_method -- --nocapture`,
+  `cargo test -p ploke-rag proof_context_exact_preserves_axum_supported_target_rows -- --nocapture`,
+  `cargo test -p ploke-tui --test integration code_item_lookup_returns_trait_bound_remaining_real_corpus_callers -- --nocapture`,
+  `cargo test -p ploke-tui --test integration code_item_edges_returns_trait_bound_remaining_real_corpus_callers -- --nocapture`,
+  `cargo check -p ploke-rag --tests`,
+  `cargo fmt --all --check`, and `git diff --check`.
+
+Previously completed slice in current bucket: generated test-entrypoint summary
 proof over a real axum private zero-source-caller target.
 
 Completed evidence:
@@ -1073,11 +1107,11 @@ Completed bucket, 2026-07-07: chrono Option ok_or try receiver proof.
 ## Parking Lot
 
 - Add binding tracking plan that ties syntax body ownership, local bindings, and type graph edges before attempting receiver/dynamic traversal.
-- Add a workspace-level dependency-root proof carrier before resolving selected
-  workspace member imports such as axum-core test code importing
-  `axum::{test_helpers::*, Router}`. The current parser resolver works inside a
-  single crate `ModuleTree`; DB projection must not turn those dependency-root
-  imports into local edges without typed workspace evidence.
+- Extend the dependency-root proof carrier only with source oracles for new
+  workspace import families. The current carrier covers the real axum
+  `FromRef::from_ref` dependency-root rows; broader imports such as axum-core
+  test code importing `axum::{test_helpers::*, Router}` still need their own
+  exact proof before they can be promoted beyond existing resolved rows.
 - Split future resolver work by capability: local binding, field receiver, closure body owner, import/re-export/glob, trait dispatch.
 - Consider adding a small status table to `README.md` only after this matrix has stabilized.
 

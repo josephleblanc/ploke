@@ -111,9 +111,12 @@ Current matrix posture:
   bounded workspace proof for selected type/trait imports such as axum-core
   `TestClient::new`, `Router::new`, axum `FromRef::from_ref`, and axum
   re-exported `Body::empty` rows, including nested closure/local-item owners
-  and a nested local impl where-bound owner. Broader dependency-root imports
-  still require an explicit workspace proof carrier before they can become local
-  call edges; the per-crate `ModuleTree` alone is not enough authority.
+  and a nested local impl where-bound owner. The proof graph now has a strict
+  `dependency_root` carrier for the real axum `FromRef::from_ref`
+  dependency-root rows so downstream context can explain that target
+  admission. Broader dependency-root imports still need their own exact source
+  oracle and proof carrier instances before they can be promoted; the per-crate
+  `ModuleTree` alone is not enough authority.
 
 ## Phase Transition Rule
 
