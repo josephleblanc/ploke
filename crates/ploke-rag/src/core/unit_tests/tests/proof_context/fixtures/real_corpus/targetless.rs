@@ -6,6 +6,7 @@ use super::helpers::{
     method_id_by_name_and_body, targetless_method_site, targetless_method_site_with_status,
     targetless_path_site,
 };
+use ploke_db::ProofGraphStore;
 
 struct DynamicCase {
     label: &'static str,
@@ -201,6 +202,16 @@ async fn proof_context_collection_preserves_axum_future_poll_trait_object_blocke
         .unwrap_or_else(|| panic!("{} should receive outgoing call context", case.label));
     let site_id =
         targetless_method_site_with_status(calls, owner, &case.callee, case.status, case.label);
+    db.upsert_proof_fact_values(&[serde_json::json!({
+        "fact_kind": "proof_blocker",
+        "schema_version": "ploke-proof-facts.v1",
+        "blocker_id": "blocker:axum-dyn-future-poll-runtime-dispatch",
+        "reason": "dynamic_dispatch_unbounded",
+        "status": "blocked",
+        "call_site_id": site_id.to_string(),
+        "detail": "axum/src/error_handling/mod.rs:251 dyn Future::poll concrete runtime future unresolved",
+        "evidence_use": "proof_only"
+    })])?;
 
     let proof_context = rag.collect_proof_context(&[(owner, 1.0)])?;
     let rows = proof_context
@@ -218,6 +229,17 @@ async fn proof_context_collection_preserves_axum_future_poll_trait_object_blocke
     // targetless dyn Future dispatch row. There are zero callee edges until
     // async poll/resume and runtime trait-object dispatch proof are modeled.
     assert_site_blocker(rows, owner, site_id, "type_resolution_missing", case.label);
+    let site = site_id.to_string();
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "proof_blocker"
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.blocker_reason.as_deref() == Some("dynamic_dispatch_unbounded")
+                && proof.status.as_deref() == Some("blocked")
+        }),
+        "{} should preserve the explicit runtime-dispatch proof blocker: {rows:#?}",
+        case.label
+    );
 
     Ok(())
 }

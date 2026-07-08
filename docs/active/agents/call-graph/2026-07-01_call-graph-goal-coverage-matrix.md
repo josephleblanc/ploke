@@ -91,6 +91,13 @@ Completed evidence:
   `proof_blocker` to the real callsite id and proves both
   `proof_blockers()` and `proof_graphrag_context(...)` can retrieve the blocker
   without fabricating a local callee edge.
+- RAG proof-context coverage now attaches the same explicit
+  `dynamic_dispatch_unbounded` blocker to the dyn Future poll callsite and
+  proves `collect_proof_context(...)` preserves both the projected
+  `type_resolution_missing` row and the explicit runtime-dispatch blocker.
+- Exact `code_item_lookup` and `code_item_edges` unsupported-receiver matrix
+  tests now assert the same blocker appears in tool proof-context payloads for
+  the axum dyn Future poll case.
 - No new `effect_class` enum was added for poll/resume here. GitNexus reported
   `validate_enum_fields` as CRITICAL blast radius, so async poll/resume effect
   taxonomy remains a separate schema decision instead of being widened inside a
@@ -98,7 +105,11 @@ Completed evidence:
 - Verification passed:
   `cargo xtask fixtures regenerate --active`,
   `cargo xtask verify-backup-dbs`, and
-  `cargo test -p ploke-db axum_usage_questions_report_dyn_future_poll_runtime_dispatch_blocker -- --nocapture`.
+  `cargo test -p ploke-db axum_usage_questions_report_dyn_future_poll_runtime_dispatch_blocker -- --nocapture`,
+  `cargo test -p ploke-rag proof_context_collection_preserves_axum_future_poll_trait_object_blocker -- --nocapture`,
+  `cargo test -p ploke-tui --test integration code_item_lookup_returns_unsupported_receiver_targetless_real_corpus_rows -- --nocapture`,
+  and
+  `cargo test -p ploke-tui --test integration code_item_edges_returns_unsupported_receiver_targetless_real_corpus_rows -- --nocapture`.
 
 Previously completed slice in current bucket: reachable source/sink effect
 annotation query over a real axum task-spawn frontier.

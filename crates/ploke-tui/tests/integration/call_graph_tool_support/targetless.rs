@@ -264,6 +264,12 @@ impl ReceiverToolCase {
     pub(crate) fn owner_type(&self) -> Option<&'static str> {
         self.owner_type
     }
+
+    pub(crate) fn expects_runtime_dispatch_blocker(&self) -> bool {
+        self.file_suffix == "axum/src/error_handling/mod.rs"
+            && self.body == "self.project().future.poll(cx)"
+            && self.callee == "poll"
+    }
 }
 
 impl PathToolCase {
@@ -469,6 +475,7 @@ impl ReceiverToolFixture {
             "{} should project targetless receiver proof rows",
             case.label
         );
+        attach_runtime_dispatch_blocker_if_needed(&db, owner.id, &case);
         let state = axum_state_for_target(Arc::clone(&db), &owner, case.label).await;
 
         Self {
@@ -487,6 +494,41 @@ impl ReceiverToolFixture {
     pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
         ctx_for_state(&self.state, call_id)
     }
+}
+
+fn attach_runtime_dispatch_blocker_if_needed(db: &Database, owner: Uuid, case: &ReceiverToolCase) {
+    if !case.expects_runtime_dispatch_blocker() {
+        return;
+    }
+    let site = db
+        .call_context_for_owner(owner)
+        .unwrap_or_else(|err| panic!("{} call context lookup: {err}", case.label))
+        .into_iter()
+        .find(|row| {
+            row.site.method.as_deref() == Some(case.callee)
+                && row.status.status == DbCallStatusKind::Unsupported
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "{} should expose the dyn Future::poll unsupported callsite before blocker insertion",
+                case.label
+            )
+        })
+        .site
+        .id
+        .to_string();
+
+    db.upsert_proof_fact_values(&[json!({
+        "fact_kind": "proof_blocker",
+        "schema_version": "ploke-proof-facts.v1",
+        "blocker_id": "blocker:axum-dyn-future-poll-runtime-dispatch",
+        "reason": "dynamic_dispatch_unbounded",
+        "status": "blocked",
+        "call_site_id": site,
+        "detail": "axum/src/error_handling/mod.rs:251 dyn Future::poll concrete runtime future unresolved",
+        "evidence_use": "proof_only"
+    })])
+    .unwrap_or_else(|err| panic!("{} runtime dispatch blocker insert: {err}", case.label));
 }
 
 impl PathToolFixture {
@@ -782,6 +824,28 @@ pub(crate) fn assert_method_proof(
             proof.kind != "call_edge" || proof.call_site_id.as_deref() != Some(site_id.as_str())
         }),
         "{tool} should not fabricate a call_edge for targetless method row {label}: {proofs:#?}"
+    );
+}
+
+pub(crate) fn assert_runtime_dispatch_blocker(
+    proofs: &[serde_json::Value],
+    site_id: Uuid,
+    label: &str,
+    tool: &str,
+) {
+    let site_id = site_id.to_string();
+    let rows = proofs
+        .iter()
+        .filter_map(|proof| serde_json::from_value::<ProofContextInfo>(proof.clone()).ok())
+        .collect::<Vec<_>>();
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "proof_blocker"
+                && proof.call_site_id.as_deref() == Some(site_id.as_str())
+                && proof.blocker_reason.as_deref() == Some("dynamic_dispatch_unbounded")
+                && proof.status.as_deref() == Some("blocked")
+        }),
+        "{tool} should return the runtime-dispatch proof blocker for {label}: {proofs:#?}"
     );
 }
 

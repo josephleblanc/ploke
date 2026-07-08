@@ -11,7 +11,8 @@ use crate::call_graph_tool_support::{
     DynamicToolCase, DynamicToolFixture, PathToolCase, PathToolFixture, ReceiverToolCase,
     ReceiverToolFixture, assert_dynamic_context, assert_dynamic_proof, assert_method_context,
     assert_method_proof, assert_path_blocker_proof, assert_path_context,
-    assert_path_context_absent, assert_path_context_count, assert_path_resolution_proof, ui_field,
+    assert_path_context_absent, assert_path_context_count, assert_path_resolution_proof,
+    assert_runtime_dispatch_blocker, ui_field,
 };
 
 #[tokio::test]
@@ -310,6 +311,9 @@ async fn code_item_lookup_returns_unsupported_receiver_targetless_real_corpus_ro
             fixture.case.label,
             "lookup",
         );
+        if fixture.case.expects_runtime_dispatch_blocker() {
+            assert_runtime_dispatch_blocker(proof_context, site_id, fixture.case.label, "lookup");
+        }
 
         let ui = result.ui_payload.as_ref().expect("ui payload");
         assert!(
@@ -906,6 +910,9 @@ async fn code_item_edges_returns_unsupported_receiver_targetless_real_corpus_row
             fixture.case.label,
             "edges",
         );
+        if fixture.case.expects_runtime_dispatch_blocker() {
+            assert_runtime_dispatch_blocker(proof_context, site_id, fixture.case.label, "edges");
+        }
 
         let ui = result.ui_payload.as_ref().expect("ui payload");
         assert!(
