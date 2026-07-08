@@ -932,6 +932,7 @@ async fn code_item_edges_returns_function_pointer_param_blocker() {
         CallableBlockerFixture::function_pointer_param().await,
         CallableBlockerFixture::multi_conflicting_function_pointer_param().await,
         CallableBlockerFixture::generic_fn_once_value_binding().await,
+        CallableBlockerFixture::multi_conflicting_generic_fn_once_param().await,
     ] {
         let params = EdgesParams {
             item_name: Cow::Borrowed(fixture.owner_name),
@@ -965,7 +966,10 @@ async fn code_item_edges_returns_function_pointer_param_blocker() {
         //     private `call_multi_conflicting_function_pointer_param(f)` also
         //     calls `f()`, but its local callers pass different functions;
         //     public `call_generic_fn_once_value_binding(generic_f)` calls
-        //     `generic_f()`.
+        //     `generic_f()`;
+        //     private `call_multi_conflicting_generic_fn_once_param(generic_f)`
+        //     also calls `generic_f()`, but its local callers pass different
+        //     functions.
         //
         // Edges should expose the same fail-closed path row as lookup while
         // preserving zero outgoing call edges for the unproven parameter target.

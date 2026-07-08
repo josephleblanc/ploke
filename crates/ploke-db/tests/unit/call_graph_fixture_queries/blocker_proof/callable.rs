@@ -9,6 +9,10 @@ fn fixture_projection_marks_real_callable_path_and_vec_external_rows_without_edg
     for (owner_name, expected_path) in [
         ("call_function_pointer_param", &["f"][..]),
         ("call_multi_conflicting_function_pointer_param", &["f"][..]),
+        (
+            "call_multi_conflicting_generic_fn_once_param",
+            &["generic_f"][..],
+        ),
         ("call_generic_fn_once_value_binding", &["generic_f"][..]),
     ] {
         assert_projected_blockers(

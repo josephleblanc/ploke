@@ -1760,3 +1760,33 @@ pub fn call_multi_conflicting_function_pointer_param_with_local_target() -> i32 
 pub fn call_multi_conflicting_function_pointer_param_with_other_target() -> i32 {
     call_multi_conflicting_function_pointer_param(other_target)
 }
+
+fn call_multi_generic_fn_once_param<F>(generic_f: F) -> i32
+where
+    F: FnOnce() -> i32,
+{
+    generic_f()
+}
+
+pub fn call_multi_generic_fn_once_param_with_local_target_a() -> i32 {
+    call_multi_generic_fn_once_param(local_target)
+}
+
+pub fn call_multi_generic_fn_once_param_with_local_target_b() -> i32 {
+    call_multi_generic_fn_once_param(local_target)
+}
+
+fn call_multi_conflicting_generic_fn_once_param<F>(generic_f: F) -> i32
+where
+    F: FnOnce() -> i32,
+{
+    generic_f()
+}
+
+pub fn call_multi_conflicting_generic_fn_once_param_with_local_target() -> i32 {
+    call_multi_conflicting_generic_fn_once_param(local_target)
+}
+
+pub fn call_multi_conflicting_generic_fn_once_param_with_other_target() -> i32 {
+    call_multi_conflicting_generic_fn_once_param(other_target)
+}

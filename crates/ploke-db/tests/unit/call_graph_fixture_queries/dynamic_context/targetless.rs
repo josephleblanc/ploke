@@ -70,6 +70,15 @@ fn fixture_context_reads_projected_callable_value_path_failures_and_vec_external
                 )],
             },
             TargetlessOwnerCase {
+                owner: "call_multi_conflicting_generic_fn_once_param",
+                rows: &[TargetlessRowCase::path(
+                    &["generic_f"],
+                    0,
+                    CallStatusKind::Unsupported,
+                    "call_multi_conflicting_generic_fn_once_param",
+                )],
+            },
+            TargetlessOwnerCase {
                 owner: "call_generic_fn_once_value_binding",
                 rows: &[TargetlessRowCase::path(
                     &["generic_f"],

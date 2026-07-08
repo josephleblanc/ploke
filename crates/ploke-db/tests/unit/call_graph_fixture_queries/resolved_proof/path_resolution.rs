@@ -40,7 +40,7 @@ fn fixture_projection_stores_real_path_resolution_call_proof_facts() -> Result<(
         function_id_by_name_in_module(&db, &["crate", "import_targets"], "imported_target")?;
     let globbed_target =
         function_id_by_name_in_module(&db, &["crate", "import_targets"], "globbed_target")?;
-    let cases: [(&[&str], &str, &[&str], Uuid); 13] = [
+    let cases: &[(&[&str], &str, &[&str], Uuid)] = &[
         (
             &["crate"],
             "call_unqualified_local_target",
@@ -119,10 +119,16 @@ fn fixture_projection_stores_real_path_resolution_call_proof_facts() -> Result<(
             &["f"],
             local_target,
         ),
+        (
+            &["crate"],
+            "call_multi_generic_fn_once_param",
+            &["generic_f"],
+            local_target,
+        ),
     ];
     let mut expected_edges = Vec::new();
 
-    for (module_path, owner_name, expected_path, target) in cases {
+    for (module_path, owner_name, expected_path, target) in cases.iter().copied() {
         let owner = function_id_by_name_in_module(&db, module_path, owner_name)?;
         let context = db.call_context_for_owner(owner)?;
         assert_eq!(context.len(), 1, "{owner_name} context rows: {context:#?}");

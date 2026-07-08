@@ -334,6 +334,27 @@ Completed evidence:
   `cargo test -p ploke-tui --test integration code_item_edges_returns_request_builder_alias_external_path_rows -- --nocapture`,
   `cargo fmt --all --check`, and `git diff --check`.
 
+Completed slice in current bucket: complete private multi-caller generic
+`FnOnce` parameter proof and downstream propagation.
+
+Completed evidence:
+
+- Added fixture rows for
+  `call_multi_generic_fn_once_param<F: FnOnce() -> i32>(generic_f) { generic_f() }`
+  with two local callers that both pass `local_target`, plus
+  `call_multi_conflicting_generic_fn_once_param<F: FnOnce() -> i32>(generic_f) { generic_f() }`
+  with one `local_target` caller and one `other_target` caller.
+- Parser, DB, RAG, and TUI tests now prove the same complete-private-caller
+  contract for generic callable parameters that was previously covered for
+  bare function-pointer parameters: multiple local callers are accepted only
+  when every inspected argument proves the same exact target.
+- The same-target generic helper resolves `generic_f()` to `local_target`;
+  the conflicting helper remains `Unsupported`, targetless, and carries a
+  `type_resolution_missing` proof blocker.
+- The wrapper functions remain ordinary path calls to their private helpers;
+  argument proof is resolver evidence for the helper body and does not replace
+  the caller-to-helper edges.
+
 Previously completed slice in current bucket: complete private multi-caller
 callable parameter proof and downstream propagation.
 

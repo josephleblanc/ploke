@@ -51,6 +51,10 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
         &db,
         &function_in_module_query(&["crate"], "call_multi_conflicting_function_pointer_param"),
     )?;
+    let multi_conflicting_generic_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_multi_conflicting_generic_fn_once_param"),
+    )?;
     let single_parenthesized_param_owner = one_uuid(
         &db,
         &function_in_module_query(
@@ -88,6 +92,7 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
         (single_param_owner, 1.0),
         (multi_param_owner, 1.0),
         (multi_conflicting_param_owner, 1.0),
+        (multi_conflicting_generic_owner, 1.0),
         (single_parenthesized_param_owner, 1.0),
         (generic_owner, 1.0),
         (boxed_owner, 1.0),
@@ -365,6 +370,37 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
         "conflicting multi-caller function-pointer calls must not fabricate RAG targets: {multi_conflicting_call:#?}"
     );
 
+    let multi_conflicting_generic_context =
+        call_context.get(&multi_conflicting_generic_owner).expect(
+            "conflicting multi-caller generic FnOnce owner should receive outgoing call context",
+        );
+    let multi_conflicting_generic_matches = multi_conflicting_generic_context
+        .iter()
+        .filter(|call| {
+            call.owner_id == multi_conflicting_generic_owner
+                && call.kind == CallSiteKind::Path
+                && call.callee
+                    == CallCalleeInfo::Path {
+                        path: vec!["generic_f".to_string()],
+                    }
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        multi_conflicting_generic_matches.len(),
+        1,
+        "conflicting multi-caller generic FnOnce body context: {multi_conflicting_generic_context:#?}"
+    );
+    let multi_conflicting_generic_call = multi_conflicting_generic_matches[0];
+    assert_eq!(
+        multi_conflicting_generic_call.status,
+        CallStatusKind::Unsupported
+    );
+    assert!(multi_conflicting_generic_call.resolution.is_none());
+    assert!(
+        multi_conflicting_generic_call.targets.is_empty(),
+        "conflicting multi-caller generic FnOnce calls must not fabricate RAG targets: {multi_conflicting_generic_call:#?}"
+    );
+
     let single_parenthesized_param_context = call_context
         .get(&single_parenthesized_param_owner)
         .expect("single-caller parenthesized function-pointer param owner should receive outgoing call context");
@@ -506,6 +542,15 @@ async fn call_context_collection_resolves_private_single_caller_generic_fn_once_
         Case {
             owner: "call_single_generic_fn_once_param",
             source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:1519-1524 `generic_f()`",
+            kind: CallSiteKind::Path,
+            callee: CallCalleeInfo::Path {
+                path: vec!["generic_f".to_string()],
+            },
+            relation: CallTargetKind::Function,
+        },
+        Case {
+            owner: "call_multi_generic_fn_once_param",
+            source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:1764-1769 `generic_f()`",
             kind: CallSiteKind::Path,
             callee: CallCalleeInfo::Path {
                 path: vec!["generic_f".to_string()],
