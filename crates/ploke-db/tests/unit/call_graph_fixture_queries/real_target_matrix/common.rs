@@ -5,7 +5,9 @@ use std::{
 
 use cozo::DataValue;
 use ploke_db::multi_embedding::db_ext::{ANCESTOR_RULES_NOW, METHOD_NODE_ANCESTOR_RULE};
-use ploke_test_utils::{CORPUS_AXUM_CALL_GRAPH, FixtureDb, fresh_backup_fixture_db};
+use ploke_test_utils::{
+    CORPUS_AXUM_CALL_GRAPH, FixtureDb, axum_call_graph_domain_records, fresh_backup_fixture_db,
+};
 use serde_json::json;
 use uuid::Uuid;
 
@@ -51,50 +53,7 @@ pub(super) struct AdmittedSummary<'a> {
 }
 
 pub(super) fn axum_domain_records(domain_id: &str) -> Vec<serde_json::Value> {
-    vec![
-        json!({
-            "fact_kind": "build_domain",
-            "schema_version": "ploke-proof-facts.v1",
-            "build_domain_id": domain_id,
-            "cargo_metadata_hash": "sha256:axum-metadata",
-            "cargo_lock_hash": "sha256:axum-lock",
-            "package_id": "github:tokio-rs/axum",
-            "target_kind": "library",
-            "target_name": "axum",
-            "target_root": "axum/src/lib.rs",
-            "target_triple": "x86_64-unknown-linux-gnu",
-            "host_triple": "x86_64-unknown-linux-gnu",
-            "profile": "dev",
-            "features_hash": "sha256:axum-features",
-            "active_cfg_hash": "sha256:axum-cfg",
-            "rustc_version": "rustc fixture",
-            "extractor_version": "ploke-test",
-            "proof_policy_version": "proof-policy-test",
-            "evidence_use": "proof_only"
-        }),
-        json!({
-            "fact_kind": "cfg_domain",
-            "schema_version": "ploke-proof-facts.v1",
-            "cfg_domain_id": "cfg:corpus-axum-call-graph",
-            "build_domain_id": domain_id,
-            "active_cfg_hash": "sha256:axum-cfg",
-            "status": "admitted",
-            "evidence_use": "proof_only"
-        }),
-        json!({
-            "fact_kind": "rustc_invocation",
-            "schema_version": "ploke-proof-facts.v1",
-            "invocation_id": "rustc:corpus-axum-call-graph",
-            "build_domain_id": domain_id,
-            "rustc_program": "rustc",
-            "rustc_version": "rustc fixture",
-            "working_directory": "/workspace/axum",
-            "argument_vector_hash": "sha256:axum-rustc-argv",
-            "environment_hash": "sha256:axum-rustc-env",
-            "status": "admitted",
-            "evidence_use": "proof_only"
-        }),
-    ]
+    axum_call_graph_domain_records(domain_id)
 }
 
 pub(super) fn admitted_summary(row: AdmittedSummary<'_>) -> serde_json::Value {

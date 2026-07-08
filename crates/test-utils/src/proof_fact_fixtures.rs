@@ -268,7 +268,7 @@ pub fn axum_body_empty_dependency_record(
     })
 }
 
-fn axum_call_graph_domain_records(domain_id: &str) -> Vec<serde_json::Value> {
+pub fn axum_call_graph_domain_records(domain_id: &str) -> Vec<serde_json::Value> {
     vec![
         serde_json::json!({
             "fact_kind": "build_domain",
