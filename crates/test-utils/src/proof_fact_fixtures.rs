@@ -62,3 +62,16 @@ pub fn axum_parts_blocker(call_site_id: Uuid) -> serde_json::Value {
         "evidence_use": "proof_only"
     })
 }
+
+pub fn axum_dyn_future_poll_blocker(call_site_id: Uuid) -> serde_json::Value {
+    serde_json::json!({
+        "fact_kind": "proof_blocker",
+        "schema_version": "ploke-proof-facts.v1",
+        "blocker_id": format!("blocker:axum-dyn-future-poll-runtime-dispatch:{call_site_id}"),
+        "reason": "dynamic_dispatch_unbounded",
+        "status": "blocked",
+        "call_site_id": call_site_id.to_string(),
+        "detail": "axum/src/error_handling/mod.rs:251 dyn Future::poll concrete runtime future unresolved",
+        "evidence_use": "proof_only"
+    })
+}

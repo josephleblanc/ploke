@@ -1328,16 +1328,7 @@ fn axum_usage_questions_report_dyn_future_poll_runtime_dispatch_blocker() -> Res
     );
 
     let site = poll.site.id.to_string();
-    db.upsert_proof_fact_values(&[json!({
-        "fact_kind": "proof_blocker",
-        "schema_version": "ploke-proof-facts.v1",
-        "blocker_id": "blocker:axum-dyn-future-poll-runtime-dispatch",
-        "reason": "dynamic_dispatch_unbounded",
-        "status": "blocked",
-        "call_site_id": site,
-        "detail": "axum/src/error_handling/mod.rs:251 dyn Future::poll concrete runtime future unresolved",
-        "evidence_use": "proof_only"
-    })])?;
+    db.upsert_proof_fact_values(&[ploke_test_utils::axum_dyn_future_poll_blocker(poll.site.id)])?;
 
     let blockers = db.proof_blockers()?;
     assert!(

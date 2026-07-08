@@ -294,16 +294,7 @@ async fn proof_context_collection_preserves_axum_future_poll_trait_object_blocke
         .unwrap_or_else(|| panic!("{} should receive outgoing call context", case.label));
     let site_id =
         targetless_method_site_with_status(calls, owner, &case.callee, case.status, case.label);
-    db.upsert_proof_fact_values(&[serde_json::json!({
-        "fact_kind": "proof_blocker",
-        "schema_version": "ploke-proof-facts.v1",
-        "blocker_id": "blocker:axum-dyn-future-poll-runtime-dispatch",
-        "reason": "dynamic_dispatch_unbounded",
-        "status": "blocked",
-        "call_site_id": site_id.to_string(),
-        "detail": "axum/src/error_handling/mod.rs:251 dyn Future::poll concrete runtime future unresolved",
-        "evidence_use": "proof_only"
-    })])?;
+    db.upsert_proof_fact_values(&[ploke_test_utils::axum_dyn_future_poll_blocker(site_id)])?;
 
     let proof_context = rag.collect_proof_context(&[(owner, 1.0)])?;
     let rows = proof_context
