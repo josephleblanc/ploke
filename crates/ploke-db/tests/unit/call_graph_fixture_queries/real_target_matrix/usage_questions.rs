@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use ploke_db::{
     CallContextRelation, CallContextSeed, CallNodeKind, CallPathOptions, CallRelationKind,
 };
+use serde_json::json;
 
 use super::super::*;
 use super::common::*;
@@ -1145,6 +1146,89 @@ fn axum_usage_questions_report_proc_macro_public_entrypoint_impact() -> Result<(
         &report.source_files,
         "axum-macros/src/lib.rs",
         "expand_with proc-macro impact report source files",
+    );
+
+    Ok(())
+}
+
+#[test]
+fn axum_usage_questions_report_reachable_effect_seed_for_task_spawn() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Security/performance:
+    //   "Can this entrypoint reach a sensitive sink?"
+    //   "Which call chain reaches a task-spawn point?"
+    //
+    // Source-oracle chain:
+    //   axum/src/form.rs:262
+    //     `deserialize_error_status_codes` calls `TestClient::new(app)`.
+    //   axum/src/test_helpers/test_client.rs:36
+    //     `TestClient::new` calls `spawn_service(svc)`.
+    //   axum/src/test_helpers/test_client.rs:23
+    //     `spawn_service` calls `tokio::spawn(...)`.
+    // Expected contract: resolved edges make `spawn_service` reachable from the
+    // test owner, while `tokio::spawn` remains an external targetless frontier.
+    // A proof `effect_seed` attached to that frontier is queryable as a
+    // reachable `async_task_spawn` effect without turning the frontier into a
+    // local callee edge.
+    let start = function_id_by_name_in_module(
+        &db,
+        &["crate", "form", "tests"],
+        "deserialize_error_status_codes",
+    )?;
+    let spawn_owner = function_id_by_name_in_module(
+        &db,
+        &["crate", "test_helpers", "test_client"],
+        "spawn_service",
+    )?;
+    let spawn_context = db.call_context_for_owner(spawn_owner)?;
+    let spawn_row = row_by_path(&spawn_context, &["tokio", "spawn"]);
+    assert_external_targetless(spawn_row);
+    assert!(
+        relations_for_site(&db, spawn_row.site.id)?.rows.is_empty(),
+        "tokio::spawn should remain an external frontier, not a local edge"
+    );
+
+    db.upsert_proof_fact_values(&[json!({
+        "fact_kind": "effect_seed",
+        "schema_version": "ploke-proof-facts.v1",
+        "effect_seed_id": "effect:axum-test-client-task-spawn",
+        "call_site_id": spawn_row.site.id.to_string(),
+        "effect_class": "async_task_spawn",
+        "confidence": "source-oracle",
+        "blocker_if_unresolved": false,
+        "evidence_use": "proof_only"
+    })])?;
+
+    let effects = db.call_effects_reachable_from_owner(
+        start,
+        CallPathOptions {
+            max_depth: 3,
+            max_paths: 16,
+        },
+    )?;
+    let effect = effects
+        .iter()
+        .find(|effect| effect.effect_seed_id == "effect:axum-test-client-task-spawn")
+        .unwrap_or_else(|| {
+            panic!("reachable effect query should report the axum tokio::spawn sink: {effects:#?}")
+        });
+    assert_eq!(effect.effect_class, "async_task_spawn");
+    assert_eq!(effect.confidence.as_deref(), Some("source-oracle"));
+    assert_eq!(effect.call_site.site.id, spawn_row.site.id);
+    assert_eq!(effect.call_site.status.status, CallStatusKind::External);
+    assert!(
+        effect.blocker_reasons.is_empty(),
+        "the effect marker itself should not add a blocker when blocker_if_unresolved=false: {effect:#?}"
+    );
+    assert!(
+        relations_for_site(&db, effect.call_site.site.id)?
+            .rows
+            .is_empty(),
+        "reachable effect annotations must not fabricate call edges"
     );
 
     Ok(())

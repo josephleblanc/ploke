@@ -72,8 +72,32 @@ matrix table marks receiver, dynamic callable, executable-owner, and usage
 summary rows as met for now. Remaining work should switch to one of the
 future-heavy carriers above instead of polishing another nearby local proof.
 
-Latest completed slice in current bucket: generated-item macro boundary summary
-proof over a real unresolved constructor frontier.
+Latest completed slice in current bucket: reachable source/sink effect
+annotation query over a real axum task-spawn frontier.
+
+Completed evidence:
+
+- Added `CallReachEffect` plus `Database::call_effects_reachable_from_owner`,
+  which combines resolved owner reachability, targetless frontier context rows,
+  and proof `effect_seed` facts to answer "which annotated effects are
+  reachable from this owner?"
+- Added a DB real-target usage-question test for the source chain
+  `axum/src/form.rs:262` `TestClient::new(app)` ->
+  `axum/src/test_helpers/test_client.rs:36` `spawn_service(svc)` ->
+  `axum/src/test_helpers/test_client.rs:23` `tokio::spawn(...)`.
+- The test annotates the real `tokio::spawn` callsite with
+  `effect_class = async_task_spawn`, proves the new query returns that effect
+  from the upstream test owner, and reasserts the sink remains an external
+  targetless frontier with zero local call edges.
+- This is a query/proof slice only. It does not add source/sink inference, does
+  not classify effects automatically, and does not traverse external frontier
+  rows as local callees.
+- Verification passed:
+  `cargo test -p ploke-db axum_usage_questions_report_reachable_effect_seed_for_task_spawn -- --nocapture`,
+  `cargo fmt --all --check`, and `git diff --check`.
+
+Previously completed slice in current bucket: generated-item macro boundary
+summary proof over a real unresolved constructor frontier.
 
 Completed evidence:
 

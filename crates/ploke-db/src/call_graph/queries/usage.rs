@@ -7,12 +7,13 @@ use crate::{
     Database, DbError,
     database::{to_string, to_string_list, to_uuid},
     multi_embedding::db_ext::{ANCESTOR_RULES_NOW, METHOD_NODE_ANCESTOR_RULE},
+    proof_graph::ProofGraphStore,
 };
 
 use super::super::{
     CallContextRow, CallImpactReport, CallNodeInfo, CallPath, CallPathEdge, CallPathOptions,
-    CallReachReport, CallRelationKind, CallSiteBucket, CallSiteKind, CallSiteRow, CallStatusKind,
-    ModuleBoundaryEdge,
+    CallReachEffect, CallReachReport, CallRelationKind, CallSiteBucket, CallSiteKind, CallSiteRow,
+    CallStatusKind, ModuleBoundaryEdge,
 };
 use super::metadata::{call_node_info_rank, call_node_infos, decode_call_node_info};
 
@@ -167,6 +168,75 @@ impl Database {
             source_cfgs,
             source_modules: sources.modules,
         })
+    }
+
+    /// Lists proof effect annotations attached to callsites reachable from `owner_id`.
+    ///
+    /// Resolved path edges are included by call-site id. Targetless frontier
+    /// rows on the owner and all resolved path participants are also included
+    /// so source/sink queries can report external, unsupported, unresolved, or
+    /// ambiguous effect boundaries without promoting them into traversal edges.
+    pub fn call_effects_reachable_from_owner(
+        &self,
+        owner_id: Uuid,
+        options: CallPathOptions,
+    ) -> Result<Vec<CallReachEffect>, DbError> {
+        let paths = self.call_paths_from_owner(owner_id, options)?;
+        let context_by_site = reachable_callsite_context_rows(self, owner_id, &paths)?;
+        let blockers_by_site = proof_blockers_by_call_site(self)?;
+
+        let mut effects = Vec::new();
+        for proof in ProofGraphStore::proof_graphrag_context(self, "")?
+            .into_iter()
+            .filter(|proof| proof.kind == "effect_seed")
+        {
+            let Some(call_site_id) = proof.call_site_id.as_deref() else {
+                continue;
+            };
+            let Ok(site_id) = Uuid::parse_str(call_site_id) else {
+                continue;
+            };
+            let Some(call_site) = context_by_site.get(&site_id) else {
+                continue;
+            };
+
+            let effect_seed_id = proof.effect_seed_id.ok_or_else(|| {
+                DbError::Cozo(format!(
+                    "stored effect_seed proof row {} is missing effect_seed_id",
+                    proof.fact_id
+                ))
+            })?;
+            let effect_class = proof.effect_class.ok_or_else(|| {
+                DbError::Cozo(format!(
+                    "stored effect_seed proof row {effect_seed_id} is missing effect_class"
+                ))
+            })?;
+            let mut blocker_reasons = blockers_by_site
+                .get(call_site_id)
+                .cloned()
+                .unwrap_or_default();
+            blocker_reasons.sort();
+            blocker_reasons.dedup();
+
+            effects.push(CallReachEffect {
+                effect_seed_id,
+                effect_class,
+                confidence: proof.confidence,
+                blocker_if_unresolved: proof.blocker_if_unresolved,
+                call_site: call_site.clone(),
+                blocker_reasons,
+            });
+        }
+
+        effects.sort_by_key(|effect| {
+            (
+                effect.call_site.site.owner_id.as_u128(),
+                effect.call_site.site.span,
+                effect.effect_class.clone(),
+                effect.effect_seed_id.clone(),
+            )
+        });
+        Ok(effects)
     }
 
     /// Lists private executable call-graph nodes with no direct resolved incoming call edge.
@@ -332,6 +402,45 @@ fn cached_call_site(
         })?;
     cache.insert(edge.call_site_id, site.clone());
     Ok(site)
+}
+
+fn reachable_callsite_context_rows(
+    db: &Database,
+    owner_id: Uuid,
+    paths: &[CallPath],
+) -> Result<BTreeMap<Uuid, CallContextRow>, DbError> {
+    let mut owners = BTreeSet::from([owner_id]);
+    let mut resolved_sites = BTreeSet::new();
+    for path in paths {
+        for edge in &path.edges {
+            owners.insert(edge.caller_id);
+            owners.insert(edge.callee_id);
+            resolved_sites.insert(edge.call_site_id);
+        }
+    }
+
+    let mut rows = BTreeMap::new();
+    for owner in owners {
+        for row in db.call_context_for_owner(owner)? {
+            if resolved_sites.contains(&row.site.id)
+                || row.status.status != CallStatusKind::Resolved
+            {
+                rows.entry(row.site.id).or_insert(row);
+            }
+        }
+    }
+    Ok(rows)
+}
+
+fn proof_blockers_by_call_site(db: &Database) -> Result<BTreeMap<String, Vec<String>>, DbError> {
+    let mut out = BTreeMap::<String, Vec<String>>::new();
+    for blocker in ProofGraphStore::proof_blockers(db)? {
+        let Some(call_site_id) = blocker.call_site_id else {
+            continue;
+        };
+        out.entry(call_site_id).or_default().push(blocker.reason);
+    }
+    Ok(out)
 }
 
 fn test_node_ids(db: &Database, node_ids: &BTreeSet<Uuid>) -> Result<BTreeSet<Uuid>, DbError> {

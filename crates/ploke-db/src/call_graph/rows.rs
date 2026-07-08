@@ -211,3 +211,14 @@ pub struct CallReachReport {
     pub source_cfgs: Vec<String>,
     pub source_modules: Vec<Vec<String>>,
 }
+
+/// Proof effect annotation attached to a callsite reachable from an owner.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CallReachEffect {
+    pub effect_seed_id: String,
+    pub effect_class: String,
+    pub confidence: Option<String>,
+    pub blocker_if_unresolved: Option<bool>,
+    pub call_site: CallContextRow,
+    pub blocker_reasons: Vec<String>,
+}
