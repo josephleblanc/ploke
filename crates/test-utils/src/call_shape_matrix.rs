@@ -46,6 +46,8 @@ pub enum CallOwnerSelector {
     MethodByBody {
         name: &'static str,
         body: &'static str,
+        owner_type: Option<&'static str>,
+        owner_trait: Option<&'static str>,
     },
     MethodByBodyFile {
         name: &'static str,
@@ -136,7 +138,11 @@ static CALL_SHAPE_CASES: &[CallShapeCase] = &[
             target_kind: CallTargetKind::Function,
             edge_count: 1,
         },
-        coverage: &[CallPipelineCoverage::Db, CallPipelineCoverage::RagApi],
+        coverage: &[
+            CallPipelineCoverage::Db,
+            CallPipelineCoverage::RagApi,
+            CallPipelineCoverage::TuiTool,
+        ],
     },
     CallShapeCase {
         name: "chrono_mapped_local_time_single_alias",
@@ -161,7 +167,11 @@ static CALL_SHAPE_CASES: &[CallShapeCase] = &[
             target_kind: CallTargetKind::Variant,
             edge_count: 1,
         },
-        coverage: &[CallPipelineCoverage::Db, CallPipelineCoverage::RagApi],
+        coverage: &[
+            CallPipelineCoverage::Db,
+            CallPipelineCoverage::RagApi,
+            CallPipelineCoverage::TuiTool,
+        ],
     },
     CallShapeCase {
         name: "axum_generated_into_service_future_new",
@@ -171,6 +181,8 @@ static CALL_SHAPE_CASES: &[CallShapeCase] = &[
         owner: CallOwnerSelector::MethodByBody {
             name: "call",
             body: "IntoServiceFuture::new(future)",
+            owner_type: Some("HandlerService"),
+            owner_trait: Some("Service<Request>"),
         },
         site: CallSiteSelector::Path {
             segments: &["super", "future", "IntoServiceFuture", "new"],
@@ -179,7 +191,11 @@ static CALL_SHAPE_CASES: &[CallShapeCase] = &[
         expected: CallExpected::Targetless {
             status: CallStatusKind::Unresolved,
         },
-        coverage: &[CallPipelineCoverage::Db, CallPipelineCoverage::RagApi],
+        coverage: &[
+            CallPipelineCoverage::Db,
+            CallPipelineCoverage::RagApi,
+            CallPipelineCoverage::TuiTool,
+        ],
     },
     CallShapeCase {
         name: "axum_listener_tap_fn_dynamic_field",
@@ -189,11 +205,17 @@ static CALL_SHAPE_CASES: &[CallShapeCase] = &[
         owner: CallOwnerSelector::MethodByBody {
             name: "accept",
             body: "(self.tap_fn)(&mut io)",
+            owner_type: Some("TapIo"),
+            owner_trait: None,
         },
         site: CallSiteSelector::Dynamic { arg_count: Some(1) },
         expected: CallExpected::Targetless {
             status: CallStatusKind::Unsupported,
         },
-        coverage: &[CallPipelineCoverage::Db, CallPipelineCoverage::RagApi],
+        coverage: &[
+            CallPipelineCoverage::Db,
+            CallPipelineCoverage::RagApi,
+            CallPipelineCoverage::TuiTool,
+        ],
     },
 ];

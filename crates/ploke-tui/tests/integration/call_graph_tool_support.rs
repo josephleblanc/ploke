@@ -56,6 +56,10 @@ pub(crate) use real_corpus_remaining::*;
 mod targetless;
 pub(crate) use targetless::*;
 
+#[path = "call_graph_tool_support/shared_matrix.rs"]
+mod shared_matrix;
+pub(crate) use shared_matrix::*;
+
 pub(crate) struct CallGraphToolFixture {
     pub(crate) state: Arc<AppState>,
     pub(crate) file_path: PathBuf,

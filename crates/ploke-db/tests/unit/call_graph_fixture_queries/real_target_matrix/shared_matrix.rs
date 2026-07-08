@@ -72,7 +72,7 @@ fn resolve_owner(db: &Database, owner: CallOwnerSelector) -> Result<Uuid, DbErro
         CallOwnerSelector::FunctionInModule { module_path, name } => {
             function_id_by_name_in_module(db, module_path, name)
         }
-        CallOwnerSelector::MethodByBody { name, body } => {
+        CallOwnerSelector::MethodByBody { name, body, .. } => {
             method_id_by_name_and_body_substring(db, name, body)
         }
         CallOwnerSelector::MethodByBodyFile {

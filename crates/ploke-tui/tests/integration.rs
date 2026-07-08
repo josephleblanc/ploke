@@ -47,6 +47,9 @@ mod call_graph_tool_executable_owner;
 #[path = "integration/call_graph_tool_remaining_matrix.rs"]
 mod call_graph_tool_remaining_matrix;
 
+#[path = "integration/call_graph_tool_shared_matrix.rs"]
+mod call_graph_tool_shared_matrix;
+
 #[path = "integration/call_graph_tool_targetless_matrix.rs"]
 mod call_graph_tool_targetless_matrix;
 
