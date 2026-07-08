@@ -49,6 +49,13 @@ fn fixture_projection_stores_real_local_receiver_method_call_proof_facts() -> Re
                 init_path: path(&["LocalAssoc"]),
             },
         )?,
+        method_case(
+            "call_match_struct_pattern_initialized_receiver_method",
+            CallReceiver::InitializedLocalBinding {
+                name: "value".to_string(),
+                init_path: path(&["LocalAssoc"]),
+            },
+        )?,
         ResolvedProofCase {
             label: "call_typed_tuple_pattern_local_instance_method",
             owner: function_id_by_name(&db, "call_typed_tuple_pattern_local_instance_method")?,

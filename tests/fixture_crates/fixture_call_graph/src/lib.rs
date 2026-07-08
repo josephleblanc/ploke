@@ -1824,3 +1824,9 @@ pub async fn call_awaited_async_closure_future_block_alias_with_body_call() {
     let alias = { future };
     alias.await;
 }
+
+pub fn call_match_struct_pattern_initialized_receiver_method() -> i32 {
+    match (ParamFieldMethodReceiver { value: LocalAssoc }) {
+        ParamFieldMethodReceiver { value } => value.instance_value(),
+    }
+}

@@ -3,6 +3,7 @@ use super::*;
 const METHOD_TUPLE_RETURN_PATTERN_LOCAL_INIT_CALL_SPAN: (usize, usize) = (40981, 40999);
 const MATCH_ARM_INITIALIZED_RECEIVER_GUARD_CALL_SPAN: (u32, u32) = (41337, 41359);
 const MATCH_ARM_INITIALIZED_RECEIVER_BODY_CALL_SPAN: (u32, u32) = (41367, 41389);
+const MATCH_STRUCT_PATTERN_INITIALIZED_RECEIVER_CALL_SPAN: (u32, u32) = (41792, 41814);
 
 #[test]
 fn fixture_context_reads_projected_typed_local_method_call() -> Result<(), DbError> {
@@ -313,6 +314,45 @@ fn fixture_context_reads_projected_match_arm_initialized_receiver() -> Result<()
             MATCH_ARM_INITIALIZED_RECEIVER_BODY_CALL_SPAN
         ],
         "match-arm receiver spans"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn fixture_context_reads_projected_match_struct_pattern_initialized_receiver() -> Result<(), DbError>
+{
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let owner = function_id_by_name(&db, "call_match_struct_pattern_initialized_receiver_method")?;
+    let target = method_id_by_impl_self_type_name(&db, "LocalAssoc", "instance_value")?;
+    let receiver = CallReceiver::InitializedLocalBinding {
+        name: "value".to_string(),
+        init_path: path(&["LocalAssoc"]),
+    };
+
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(
+        context.len(),
+        1,
+        "match struct-pattern receiver owner should expose one row: {context:#?}"
+    );
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:1828-1831:
+    // `ParamFieldMethodReceiver { value } => value.instance_value()` should
+    // reuse the source-visible struct initializer field as receiver proof.
+    let row = row_by_method_receiver(&context, "instance_value", &receiver);
+    assert_eq!(row.site.owner_id, owner);
+    assert_eq!(row.site.arg_count, Some(0));
+    assert_eq!(
+        row.site.span, MATCH_STRUCT_PATTERN_INITIALIZED_RECEIVER_CALL_SPAN,
+        "match struct-pattern receiver span"
+    );
+    assert_resolved_target(
+        row,
+        target,
+        CallRelationKind::Method,
+        CallSiteKind::Method,
+        CallTargetKind::Method,
     );
 
     Ok(())

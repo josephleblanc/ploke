@@ -1071,6 +1071,12 @@ fn local_binding_proofs(
         return vec![proof];
     }
 
+    let struct_proofs =
+        struct_binding_proofs(pat, init_expr, owner, cfgs, param_names, local_scopes);
+    if !struct_proofs.is_empty() {
+        return struct_proofs;
+    }
+
     tuple_binding_proofs(pat, init_expr, owner, cfgs, param_names, local_scopes)
 }
 
@@ -1105,6 +1111,55 @@ fn tuple_binding_proofs(
     }
 
     tuple_return_binding_proofs(pat, init_expr)
+}
+
+fn struct_binding_proofs(
+    pat: &syn::Pat,
+    init_expr: Option<&syn::Expr>,
+    owner: CallBodyOwnerId,
+    cfgs: &[String],
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Vec<LocalBindingProof> {
+    let syn::Pat::Struct(pattern) = pat else {
+        return Vec::new();
+    };
+    if pattern.qself.is_some() || pattern.rest.is_some() {
+        return Vec::new();
+    }
+
+    let Some(init_expr) = init_expr else {
+        return Vec::new();
+    };
+    let syn::Expr::Struct(init) = unparen_expr(init_expr) else {
+        return Vec::new();
+    };
+    if init.qself.is_some() || init.rest.is_some() {
+        return Vec::new();
+    }
+    if path_segments(&pattern.path) != path_segments(&init.path) {
+        return Vec::new();
+    }
+
+    pattern
+        .fields
+        .iter()
+        .filter_map(|field| {
+            let field_name = member_name(&field.member);
+            let init_field = init
+                .fields
+                .iter()
+                .find(|init_field| member_name(&init_field.member) == field_name)?;
+            local_binding_proof(
+                field.pat.as_ref(),
+                Some(&init_field.expr),
+                owner,
+                cfgs,
+                param_names,
+                local_scopes,
+            )
+        })
+        .collect()
 }
 
 fn direct_tuple_binding_proofs(

@@ -50,27 +50,47 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: bounded same-block async-closure future block-alias proof.
+Current bucket: bounded match struct-pattern initialized receiver proof.
 
 Exit criteria:
 
-- Add one fixture-backed source oracle where `let alias = { future };
-  alias.await;` proves a previously recorded async-closure future binding is
-  polled in the same block.
-- Reuse the existing same-block future alias proof path; do not add general
-  poll/resume modeling, nested control-flow value flow, returned futures, or
-  arbitrary async callable dispatch.
-- Prove parser payload, DB owner/path traversal, and RAG call-context
-  propagation for the new source oracle.
+- Add one fixture-backed source oracle where a match arm struct pattern binds
+  a named field initialized from an exact local type.
+- Reuse the existing `InitializedLocalBinding` receiver proof path; do not add
+  a new receiver kind or broad match ergonomics/destructuring semantics.
+- Prove parser payload, DB owner/proof rows, and RAG call-context propagation
+  for the new source oracle.
 
-Status: completed for the fixture-backed block-alias awaited future row.
+Status: completed for the fixture-backed struct-pattern match receiver row.
 
 Next bucket: choose the next uncovered matrix bucket. Do not add more
-async future-flow breadth unless it has a bounded source oracle and reuses an
+receiver-pattern breadth unless it has a bounded source oracle and reuses an
 existing proof carrier.
 
-Latest completed slice in current bucket: same-block async-closure future
-block-alias proof.
+Latest completed slice in current bucket: match struct-pattern initialized
+receiver proof.
+
+Completed evidence:
+
+- The source oracle is
+  `tests/fixture_crates/fixture_call_graph/src/lib.rs:1828-1831`, where
+  `match (ParamFieldMethodReceiver { value: LocalAssoc }) {
+  ParamFieldMethodReceiver { value } => value.instance_value() }` proves
+  `value` has the exact `LocalAssoc` initializer.
+- Parser extraction now derives the arm-local binding from matching
+  struct-pattern and struct-expression field names, then reuses
+  `InitializedLocalBinding { name: "value", init_path: ["LocalAssoc"] }`.
+- DB owner context and resolved proof rows prove the exact local method edge
+  to `LocalAssoc::instance_value`.
+- RAG call-context collection preserves the same resolved receiver payload and
+  target.
+- Verification passed:
+  `cargo test -p syn_parser fixture_call_graph_call_match_struct_pattern_initialized_receiver_method_resolves_call_site -- --nocapture`,
+  `cargo test -p ploke-db fixture_context_reads_projected_match_struct_pattern_initialized_receiver -- --nocapture`,
+  `cargo test -p ploke-db fixture_projection_stores_real_local_receiver_method_call_proof_facts -- --nocapture`, and
+  `cargo test -p ploke-rag call_context_collection_reads_match_struct_pattern_receiver_rows -- --nocapture`.
+
+Previously completed slice: same-block async-closure future block-alias proof.
 
 Completed evidence:
 
@@ -1218,10 +1238,16 @@ Current evidence:
 - RAG call-context collection and `request_code_context` method/proof payload
   tests preserve the two resolved rows without requiring the target-centered
   expansion carrier to collapse them into a single callsite.
-- This remains bounded to simple identifier arm patterns whose scrutinee has
-  exact existing initializer proof. Tuple/struct/enum-pattern destructuring,
-  borrowed pattern bindings, match ergonomics, and real-corpus iterator guard
-  rows remain future proof shapes unless separately modeled.
+- A later bounded sibling slice adds named-field struct-pattern proof for
+  `ParamFieldMethodReceiver { value }` when the scrutinee is the exact
+  matching struct expression `ParamFieldMethodReceiver { value: LocalAssoc }`.
+  That slice reuses the same `InitializedLocalBinding` receiver carrier and
+  table-driven local receiver proof assertions.
+- This remains bounded to simple identifier arm patterns and the exact
+  same-struct named-field pattern/expression form. Tuple/enum-pattern
+  destructuring, borrowed pattern bindings, match ergonomics, rest patterns,
+  and real-corpus iterator guard rows remain future proof shapes unless
+  separately modeled.
 
 Reason to stay in the current receiver bucket: none after focused parser, DB,
 RAG, and TUI verification. Switch buckets.

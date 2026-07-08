@@ -193,6 +193,7 @@ const TUPLE_FIELD_INSTANCE_CALL_SPAN: (usize, usize) = (11853, 11877);
 const PARAM_FIELD_INSTANCE_CALL_SPAN: (usize, usize) = (41185, 41214);
 const MATCH_ARM_INITIALIZED_RECEIVER_GUARD_CALL_SPAN: (usize, usize) = (41337, 41359);
 const MATCH_ARM_INITIALIZED_RECEIVER_BODY_CALL_SPAN: (usize, usize) = (41367, 41389);
+const MATCH_STRUCT_PATTERN_INITIALIZED_RECEIVER_CALL_SPAN: (usize, usize) = (41792, 41814);
 const TUPLE_FIELD_FUNCTION_CALL_SPAN: (usize, usize) = (12028, 12037);
 const AWAIT_RESULT_INSTANCE_CALL_SPAN: (usize, usize) = (12175, 12222);
 const TRY_RESULT_INSTANCE_CALL_SPAN: (usize, usize) = (12370, 12405);
@@ -3062,6 +3063,34 @@ paranoid_call_site_test!(
                 init_path: &["LocalAssoc"],
             },
             MATCH_ARM_INITIALIZED_RECEIVER_BODY_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedMethodLocalExact {
+                target: target_info.test_method_id(),
+            },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_match_struct_pattern_initialized_receiver_method_resolves_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_match_struct_pattern_initialized_receiver_method"
+    },
+    expected: {
+        let target_args = fixture_call_graph_instance_method_args("instance_value");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_method_pid(&parsed_graphs)?;
+        ExpectedCallSite::method(
+            "instance_value",
+            ExpectedMethodReceiver::InitializedLocalBinding {
+                name: "value",
+                init_path: &["LocalAssoc"],
+            },
+            MATCH_STRUCT_PATTERN_INITIALIZED_RECEIVER_CALL_SPAN,
             0,
             0,
             &[],

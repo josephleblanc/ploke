@@ -293,6 +293,62 @@ async fn call_context_collection_reads_match_arm_receiver_rows() -> Result<(), E
 }
 
 #[tokio::test]
+async fn call_context_collection_reads_match_struct_pattern_receiver_rows() -> Result<(), Error> {
+    init_tracing_once();
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let owner = one_uuid(
+        &db,
+        &function_in_module_query(
+            &["crate"],
+            "call_match_struct_pattern_initialized_receiver_method",
+        ),
+    )?;
+    let method_target = one_uuid(
+        &db,
+        &method_by_impl_self_query("LocalAssoc", "instance_value"),
+    )?;
+    let rag = init_test_rag_mock(Arc::clone(&db));
+    assert!(
+        !rag.call_context_degraded(),
+        "fresh fixture call_graph schema should enable call context collection"
+    );
+
+    let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+    let owner_context = call_context
+        .get(&owner)
+        .expect("match struct-pattern receiver owner should receive outgoing call context");
+    assert_eq!(
+        owner_context.len(),
+        1,
+        "match struct-pattern receiver owner context: {owner_context:#?}"
+    );
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:1828-1831:
+    // `ParamFieldMethodReceiver { value } => value.instance_value()` should
+    // preserve source-visible field initializer proof from the match scrutinee.
+    let call = &owner_context[0];
+    assert_eq!(
+        call.callee,
+        CallCalleeInfo::Method {
+            name: "instance_value".to_string(),
+            receiver: Some(CallReceiverInfo::InitializedLocalBinding {
+                name: "value".to_string(),
+                init_path: vec!["LocalAssoc".to_string()],
+            }),
+        }
+    );
+    assert_eq!(call.status, CallStatusKind::Resolved);
+    assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+    assert_eq!(call.targets.len(), 1);
+    assert_eq!(call.targets[0].target_id, method_target);
+    assert_eq!(call.targets[0].relation, CallTargetKind::Method);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn call_context_collection_reads_typed_tuple_pattern_receiver_rows() -> Result<(), Error> {
     init_tracing_once();
     let db = Arc::new(Database::new(setup_db_full_multi_embedding(
