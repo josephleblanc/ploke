@@ -26,7 +26,8 @@ use ploke_io::IoManagerHandle;
 use ploke_rag::{RagConfig, RagService, TokenBudget};
 use ploke_test_utils::{
     CORPUS_AXUM_CALL_GRAPH, CORPUS_CHRONO_CALL_GRAPH, CORPUS_MEMCHR_CALL_GRAPH,
-    axum_dependency_record, fresh_backup_fixture_db, setup_db_full_multi_embedding, workspace_root,
+    axum_dependency_record, axum_handler_async_block_poll_resume_blocker, fresh_backup_fixture_db,
+    setup_db_full_multi_embedding, workspace_root,
 };
 use ploke_tui::{
     EventBus,
@@ -1421,6 +1422,39 @@ impl AxumHandlerAsyncBlockToolFixture {
                 >= 4,
             "Handler::call async block should project self()/into_response() proof rows"
         );
+        let context = db
+            .call_context_for_owner(target.id)
+            .expect("Handler::call async block call context");
+        let self_call = context
+            .iter()
+            .find(|row| {
+                row.site.kind == ploke_db::CallSiteKind::Path
+                    && row.site.path.as_ref() == Some(&vec!["self".to_string()])
+            })
+            .unwrap_or_else(|| {
+                panic!("Handler::call async block should expose self(): {context:#?}")
+            });
+        assert_eq!(self_call.status.status, DbCallStatusKind::Unsupported);
+        assert!(
+            self_call.targets.is_empty(),
+            "Handler::call async-block self() should stay targetless: {self_call:#?}"
+        );
+        let into_response = context
+            .iter()
+            .find(|row| row.site.method.as_deref() == Some("into_response"))
+            .unwrap_or_else(|| {
+                panic!("Handler::call async block should expose into_response(): {context:#?}")
+            });
+        assert_eq!(into_response.status.status, DbCallStatusKind::Unsupported);
+        assert!(
+            into_response.targets.is_empty(),
+            "Handler::call async-block into_response() should stay targetless: {into_response:#?}"
+        );
+        db.upsert_proof_fact_values(&[
+            axum_handler_async_block_poll_resume_blocker(self_call.site.id, "self"),
+            axum_handler_async_block_poll_resume_blocker(into_response.site.id, "into_response"),
+        ])
+        .expect("upsert Handler::call async-block poll/resume blockers");
         let state = axum_state_for_target(Arc::clone(&db), &target, "async_block").await;
 
         Self {

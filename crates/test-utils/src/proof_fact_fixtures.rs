@@ -76,6 +76,22 @@ pub fn axum_dyn_future_poll_blocker(call_site_id: Uuid) -> serde_json::Value {
     })
 }
 
+pub fn axum_handler_async_block_poll_resume_blocker(
+    call_site_id: Uuid,
+    callee: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "fact_kind": "proof_blocker",
+        "schema_version": "ploke-proof-facts.v1",
+        "blocker_id": format!("blocker:axum-handler-async-block-poll-resume:{callee}:{call_site_id}"),
+        "reason": "dynamic_dispatch_unbounded",
+        "status": "blocked",
+        "call_site_id": call_site_id.to_string(),
+        "detail": format!("axum/src/handler/mod.rs:217 async-block `{callee}` remains targetless until callable binding and async poll/resume proof are modeled"),
+        "evidence_use": "proof_only"
+    })
+}
+
 pub fn fixture_extern_c_abs_effect_record(call_site_id: Uuid) -> serde_json::Value {
     serde_json::json!({
         "fact_kind": "effect_seed",

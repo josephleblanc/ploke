@@ -2,6 +2,7 @@ use super::super::*;
 use super::common::*;
 use super::source_lines::*;
 use ploke_test_utils::CORPUS_AXUM_CALL_GRAPH;
+use uuid::Uuid;
 
 #[test]
 fn axum_real_target_trait_associated_paths_reach_trait_methods() -> Result<(), DbError> {
@@ -793,6 +794,79 @@ fn axum_real_target_handler_async_block_body_calls_are_async_block_owned() -> Re
         "axum/src/handler/mod.rs:217 inner async-block `into_response()` must not be flattened into Handler::call: {context:#?}"
     );
 
+    let async_owner = async_block_owner_for_method_parent(&db, owner)?;
+    let async_context = db.call_context_for_owner(async_owner)?;
+    let self_row = row_by_path(&async_context, &["self"]);
+    assert_targetless_status(self_row, CallStatusKind::Unsupported);
+    let into_response_receiver = CallReceiver::AwaitPathCallResult {
+        path: path(&["self"]),
+    };
+    let into_response =
+        row_by_method_receiver(&async_context, "into_response", &into_response_receiver);
+    assert_targetless_status(into_response, CallStatusKind::Unsupported);
+    assert_no_traversal_candidates_for_site(
+        &db,
+        async_owner,
+        self_row.site.id,
+        "axum/src/handler/mod.rs:217 Handler::call async-block self()",
+    )?;
+    assert_no_traversal_candidates_for_site(
+        &db,
+        async_owner,
+        into_response.site.id,
+        "axum/src/handler/mod.rs:217 Handler::call async-block into_response()",
+    )?;
+
+    assert!(
+        db.project_call_proof_facts_for_owner(async_owner, "bd:corpus-axum-call-graph")? >= 4,
+        "Handler::call async block should project targetless self()/into_response() proof rows"
+    );
+    db.upsert_proof_fact_values(&[
+        ploke_test_utils::axum_handler_async_block_poll_resume_blocker(self_row.site.id, "self"),
+        ploke_test_utils::axum_handler_async_block_poll_resume_blocker(
+            into_response.site.id,
+            "into_response",
+        ),
+    ])?;
+
+    let self_site = self_row.site.id.to_string();
+    let into_response_site = into_response.site.id.to_string();
+    let blockers = db.proof_blockers()?;
+    for (site, label) in [
+        (self_site.as_str(), "Handler::call async-block self()"),
+        (
+            into_response_site.as_str(),
+            "Handler::call async-block into_response()",
+        ),
+    ] {
+        assert!(
+            blockers.iter().any(|proof| {
+                proof.call_site_id.as_deref() == Some(site)
+                    && proof.reason == "dynamic_dispatch_unbounded"
+                    && proof.status == "blocked"
+            }),
+            "{label} should expose the async poll/resume blocker: {blockers:#?}"
+        );
+    }
+
+    let proof_rows = db.proof_graphrag_context("async poll/resume")?;
+    for (site, label) in [
+        (self_site.as_str(), "Handler::call async-block self()"),
+        (
+            into_response_site.as_str(),
+            "Handler::call async-block into_response()",
+        ),
+    ] {
+        assert!(
+            proof_rows.iter().any(|proof| {
+                proof.kind == "proof_blocker"
+                    && proof.call_site_id.as_deref() == Some(site)
+                    && proof.blocker_reason.as_deref() == Some("dynamic_dispatch_unbounded")
+            }),
+            "{label} proof context should expose the async poll/resume blocker: {proof_rows:#?}"
+        );
+    }
+
     assert_targetless_path_owner_kind_line_fanout(
         &db,
         &CORPUS_AXUM_CALL_GRAPH,
@@ -817,4 +891,25 @@ fn axum_real_target_handler_async_block_body_calls_are_async_block_owned() -> Re
             lines: &[217],
         }],
     )
+}
+
+fn async_block_owner_for_method_parent(db: &Database, parent: Uuid) -> Result<Uuid, DbError> {
+    let rows = db.raw_query(&format!(
+        r#"?[id] :=
+            parent = to_uuid("{parent}"),
+            *call_body_owner {{
+                id,
+                owner_kind: "AsyncBlock",
+                parent_id: parent,
+                parent_kind: "Method",
+                label: "async_block" @ 'NOW'
+            }}"#
+    ))?;
+    assert_eq!(
+        rows.rows.len(),
+        1,
+        "expected exactly one async_block call_body_owner row for method parent {parent}: {:#?}",
+        rows.rows
+    );
+    to_uuid(&rows.rows[0][0])
 }

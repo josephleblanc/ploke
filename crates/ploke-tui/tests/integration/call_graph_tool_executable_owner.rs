@@ -13,7 +13,7 @@ use ploke_tui::tools::{
 
 use crate::call_graph_tool_support::{
     AxumHandlerAsyncBlockToolFixture, LocalItemToolFixture, assert_method_proof,
-    assert_path_blocker_proof, ui_field,
+    assert_path_blocker_proof, assert_runtime_dispatch_blocker, ui_field,
 };
 
 const AXUM_DOMAIN: &str = "bd:corpus-axum-call-graph";
@@ -616,6 +616,12 @@ fn assert_handler_async_block_targetless_rows(
         "Handler::call async-block self()",
         tool,
     );
+    assert_runtime_dispatch_blocker(
+        proof_context,
+        self_row.site_id,
+        "Handler::call async-block self() async poll/resume",
+        tool,
+    );
 
     let into_response = async_block_into_response_call(calls, fixture);
     assert_unsupported_targetless(into_response, "Handler::call async-block into_response()");
@@ -625,6 +631,12 @@ fn assert_handler_async_block_targetless_rows(
         into_response.site_id,
         &CallStatusKind::Unsupported,
         "Handler::call async-block into_response()",
+        tool,
+    );
+    assert_runtime_dispatch_blocker(
+        proof_context,
+        into_response.site_id,
+        "Handler::call async-block into_response() async poll/resume",
         tool,
     );
 }

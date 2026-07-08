@@ -710,6 +710,14 @@ async fn proof_context_collection_preserves_axum_handler_async_block_owner_block
         "Handler::call async-block into_response()",
     );
 
+    db.upsert_proof_fact_values(&[
+        ploke_test_utils::axum_handler_async_block_poll_resume_blocker(self_site, "self"),
+        ploke_test_utils::axum_handler_async_block_poll_resume_blocker(
+            into_response_site,
+            "into_response",
+        ),
+    ])?;
+
     let proof_context = rag.collect_proof_context(&[(owner, 1.0)])?;
     let rows = proof_context
         .get(&owner)
@@ -732,6 +740,12 @@ async fn proof_context_collection_preserves_axum_handler_async_block_owner_block
         "type_resolution_missing",
         "Handler::call async-block self()",
     );
+    assert_explicit_proof_blocker(
+        rows,
+        self_site,
+        "dynamic_dispatch_unbounded",
+        "Handler::call async-block self() async poll/resume",
+    );
     assert_site_blocker(
         rows,
         owner,
@@ -739,8 +753,32 @@ async fn proof_context_collection_preserves_axum_handler_async_block_owner_block
         "type_resolution_missing",
         "Handler::call async-block into_response()",
     );
+    assert_explicit_proof_blocker(
+        rows,
+        into_response_site,
+        "dynamic_dispatch_unbounded",
+        "Handler::call async-block into_response() async poll/resume",
+    );
 
     Ok(())
+}
+
+fn assert_explicit_proof_blocker(
+    rows: &[ProofContextInfo],
+    site_id: Uuid,
+    reason: &str,
+    label: &str,
+) {
+    let site_id = site_id.to_string();
+    assert!(
+        rows.iter().any(|row| {
+            row.kind == "proof_blocker"
+                && row.call_site_id.as_deref() == Some(site_id.as_str())
+                && row.blocker_reason.as_deref() == Some(reason)
+                && row.status.as_deref() == Some("blocked")
+        }),
+        "{label} proof context should include the explicit proof_blocker fact: {rows:#?}"
+    );
 }
 
 #[tokio::test]
