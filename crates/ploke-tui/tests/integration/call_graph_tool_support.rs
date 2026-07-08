@@ -26,12 +26,13 @@ use ploke_io::IoManagerHandle;
 use ploke_rag::{RagConfig, RagService, TokenBudget};
 use ploke_test_utils::{
     AXUM_OPAQUE_FUTURE_SUMMARY_ID, AXUM_REQUEST_BUILDER_SUMMARY_ID, AXUM_ROUTING_POST_SUMMARY_ID,
-    CORPUS_AXUM_CALL_GRAPH, CORPUS_CHRONO_CALL_GRAPH, CORPUS_MEMCHR_CALL_GRAPH,
-    axum_body_empty_dependency_record, axum_dependency_record,
+    AXUM_STD_MEM_REPLACE_SUMMARY_ID, CORPUS_AXUM_CALL_GRAPH, CORPUS_CHRONO_CALL_GRAPH,
+    CORPUS_MEMCHR_CALL_GRAPH, axum_body_empty_dependency_record, axum_dependency_record,
     axum_handler_async_block_poll_resume_blocker, axum_opaque_future_boundary_id,
     axum_opaque_future_macro_summary_records, axum_request_builder_summary_records,
     axum_routing_post_boundary_id, axum_routing_post_macro_summary_records,
-    fresh_backup_fixture_db, setup_db_full_multi_embedding, workspace_root,
+    axum_std_mem_replace_summary_records, fresh_backup_fixture_db, setup_db_full_multi_embedding,
+    workspace_root,
 };
 use ploke_tui::{
     EventBus,
