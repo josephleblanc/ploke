@@ -380,6 +380,38 @@ fn axum_real_target_turbofish_method_receiver_rows_preserve_current_shapes() -> 
         generic_row.site.id,
         "axum-core/src/ext_traits/request_parts.rs:164 parts.extract_with_state::<State<String>, String>",
     )?;
+    db.project_call_proof_facts_for_owner(generic_owner, "bd:corpus-axum-call-graph")?;
+    db.upsert_proof_fact_values(&[ploke_test_utils::axum_parts_blocker(generic_row.site.id)])?;
+
+    let site = generic_row.site.id.to_string();
+    let blockers = db.proof_blockers()?;
+    assert!(
+        blockers.iter().any(|proof| {
+            proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.reason == "external_dependency_summary_missing"
+                && proof.status == "blocked"
+        }),
+        "request_parts.rs:164 should expose the missing external return summary blocker: {blockers:#?}"
+    );
+    let proof_rows = db.proof_graphrag_context("http::Request::into_parts")?;
+    assert!(
+        proof_rows.iter().any(|proof| {
+            proof.kind == "proof_blocker"
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.blocker_reason.as_deref() == Some("external_dependency_summary_missing")
+                && proof.status.as_deref() == Some("blocked")
+        }),
+        "request_parts.rs:164 proof context should expose the explicit missing external return summary blocker: {proof_rows:#?}"
+    );
+    assert!(
+        proof_rows.iter().any(|proof| {
+            proof.kind == "call_resolution"
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.resolution_state.as_deref() == Some("blocked")
+                && proof.blocker_reason.as_deref() == Some("type_resolution_missing")
+        }),
+        "request_parts.rs:164 projected call_resolution should remain fail-closed with the derived type-resolution blocker: {proof_rows:#?}"
+    );
 
     // Source chain:
     //   axum-core/src/ext_traits/request_parts.rs:186 calls

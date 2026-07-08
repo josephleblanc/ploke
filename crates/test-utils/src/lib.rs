@@ -31,7 +31,7 @@ pub use fixture_dbs::{
     fresh_backup_fixture_db, load_backup_fixture_db, shared_backup_fixture_db,
     validate_backup_fixture_contract,
 };
-pub use proof_fact_fixtures::{axum_dependency_record, axum_entrypoint_record};
+pub use proof_fact_fixtures::{axum_dependency_record, axum_entrypoint_record, axum_parts_blocker};
 pub use type_shape_matrix::{
     ContainingOwnerSelector, CoordinateSpec, CorpusFixture, OwnerSelector, ShapePipelineCoverage,
     TargetSelector, TypeShapeCase, TypeShapeKind, TypeShapeNoTargetCase, absent_type_shape_cases,

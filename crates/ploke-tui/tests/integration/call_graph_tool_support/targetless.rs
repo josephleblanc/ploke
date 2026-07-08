@@ -487,6 +487,7 @@ impl ReceiverToolFixture {
             case.label
         );
         attach_runtime_dispatch_blocker_if_needed(&db, owner.id, &case);
+        attach_parts_blocker_if_needed(&db, owner.id, &case);
         let state = axum_state_for_target(Arc::clone(&db), &owner, case.label).await;
 
         Self {
@@ -540,6 +541,32 @@ fn attach_runtime_dispatch_blocker_if_needed(db: &Database, owner: Uuid, case: &
         "evidence_use": "proof_only"
     })])
     .unwrap_or_else(|err| panic!("{} runtime dispatch blocker insert: {err}", case.label));
+}
+
+fn attach_parts_blocker_if_needed(db: &Database, owner: Uuid, case: &ReceiverToolCase) {
+    if !case.label.contains("request_parts.rs:164") {
+        return;
+    }
+    let site = db
+        .call_context_for_owner(owner)
+        .unwrap_or_else(|err| panic!("{} call context lookup: {err}", case.label))
+        .into_iter()
+        .find(|row| {
+            row.site.method.as_deref() == Some(case.callee)
+                && row.status.status == DbCallStatusKind::Unsupported
+                && row.site.generic_arg_count == Some(2)
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "{} should expose the request-parts turbofish unsupported callsite before blocker insertion",
+                case.label
+            )
+        })
+        .site
+        .id;
+
+    db.upsert_proof_fact_values(&[ploke_test_utils::axum_parts_blocker(site)])
+        .unwrap_or_else(|err| panic!("{} request-parts blocker insert: {err}", case.label));
 }
 
 impl PathToolFixture {
@@ -959,6 +986,37 @@ pub(crate) fn assert_runtime_dispatch_blocker(
                 && proof.status.as_deref() == Some("blocked")
         }),
         "{tool} should return the runtime-dispatch proof blocker for {label}: {proofs:#?}"
+    );
+}
+
+pub(crate) fn assert_parts_blocker(
+    proofs: &[serde_json::Value],
+    site_id: Uuid,
+    label: &str,
+    tool: &str,
+) {
+    let site_id = site_id.to_string();
+    let rows = proofs
+        .iter()
+        .filter_map(|proof| serde_json::from_value::<ProofContextInfo>(proof.clone()).ok())
+        .collect::<Vec<_>>();
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "proof_blocker"
+                && proof.call_site_id.as_deref() == Some(site_id.as_str())
+                && proof.blocker_reason.as_deref() == Some("external_dependency_summary_missing")
+                && proof.status.as_deref() == Some("blocked")
+        }),
+        "{tool} should return the request-parts external return proof blocker for {label}: {proofs:#?}"
+    );
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "call_resolution"
+                && proof.call_site_id.as_deref() == Some(site_id.as_str())
+                && proof.resolution_state.as_deref() == Some("blocked")
+                && proof.blocker_reason.as_deref() == Some("type_resolution_missing")
+        }),
+        "{tool} should keep the request-parts projected call_resolution fail-closed for {label}: {proofs:#?}"
     );
 }
 
