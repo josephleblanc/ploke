@@ -72,8 +72,34 @@ matrix table marks receiver, dynamic callable, executable-owner, and usage
 summary rows as met for now. Remaining work should switch to one of the
 future-heavy carriers above instead of polishing another nearby local proof.
 
-Latest completed slice in current bucket: complete private multi-caller callable
-parameter proof and downstream propagation.
+Latest completed slice in current bucket: proof-authoritative external summary
+admission over a real external frontier.
+
+Completed evidence:
+
+- Added a DB real-target proof test for
+  `axum/src/response/sse.rs:449`, where `write_buf` calls
+  `std::mem::replace(&mut self.data_written, true)`.
+- The test proves the call graph keeps the `std::mem::replace` row as an
+  external targetless frontier with zero local call edges before and after proof
+  admission.
+- The test projects proof rows for the real owner, observes the initial
+  `external_dependency_summary_missing` blocker, admits a build-domain-scoped
+  `external_summary` fact plus a linked `externally_summarized`
+  `call_resolution` fact, and proves the blocker is discharged through
+  `proof_blockers()` and `proof_graphrag_context(...)`.
+- This is a proof-layer slice only. It does not add parser/resolver breadth,
+  does not fabricate a local edge for external dependencies, and does not yet
+  provide production external-summary authoring or policy review UX.
+- Active fixtures were regenerated and `verify-backup-dbs` passed with no
+  tracked fixture drift.
+- Verification passed:
+  `cargo xtask fixtures regenerate --active`, `cargo xtask verify-backup-dbs`,
+  `cargo test -p ploke-db axum_external_frontier_accepts_admitted_summary_proof -- --nocapture`,
+  `cargo fmt --all --check`, and `git diff --check`.
+
+Previously completed slice in current bucket: complete private multi-caller
+callable parameter proof and downstream propagation.
 
 Completed evidence:
 

@@ -2,6 +2,7 @@ use super::super::*;
 use super::common::*;
 use super::source_lines::*;
 use ploke_test_utils::CORPUS_AXUM_CALL_GRAPH;
+use serde_json::json;
 
 #[test]
 fn axum_macros_expand_helpers_reach_root_expand() -> Result<(), DbError> {
@@ -687,6 +688,165 @@ fn axum_real_target_external_path_rows_remain_targetless() -> Result<(), DbError
     }
 
     Ok(())
+}
+
+#[test]
+fn axum_external_frontier_accepts_admitted_summary_proof() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+    let domain_id = "bd:corpus-axum-call-graph";
+    let summary_id = "external-summary:axum-std-mem-replace";
+
+    // Source oracle:
+    //   axum/src/response/sse.rs:449 calls
+    //   `std::mem::replace(&mut self.data_written, true)`.
+    // Current call-graph contract: the std-root row remains an external
+    // targetless frontier with zero local traversal edges. This proof-layer
+    // check adds an admitted external summary for the same real call-site and
+    // proves the derived `external_dependency_summary_missing` blocker is
+    // discharged without inventing a callee edge.
+    let owner = method_id_by_name_and_body_substring(&db, "write_buf", "std::mem::replace")?;
+    let context = db.call_context_for_owner(owner)?;
+    let row = row_by_path(&context, &["std", "mem", "replace"]);
+    assert_external_targetless(row);
+    assert!(relations_for_site(&db, row.site.id)?.rows.is_empty());
+
+    let site = row.site.id.to_string();
+    let count = db.project_call_proof_facts_for_owner(owner, domain_id)?;
+    assert!(
+        count >= 2,
+        "owner proof projection should include call_site and call_resolution rows: {count}"
+    );
+
+    let missing_before = db.proof_graphrag_context("external_dependency_summary_missing")?;
+    assert!(
+        missing_before.iter().any(|proof| {
+            proof.kind == "call_resolution"
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.blocker_reason.as_deref() == Some("external_dependency_summary_missing")
+        }),
+        "projected external frontier should start with a missing-summary blocker: {missing_before:#?}"
+    );
+
+    db.upsert_proof_fact_values(&[
+        build_domain_record(domain_id),
+        cfg_domain_record(domain_id),
+        rustc_invocation_record(domain_id),
+        json!({
+            "fact_kind": "call_resolution",
+            "schema_version": "ploke-proof-facts.v1",
+            "call_site_id": site.clone(),
+            "resolution_state": "externally_summarized",
+            "external_summary_id": summary_id,
+            "evidence_use": "proof_and_navigation"
+        }),
+        json!({
+            "fact_kind": "external_summary",
+            "schema_version": "ploke-proof-facts.v1",
+            "external_summary_id": summary_id,
+            "build_domain_id": domain_id,
+            "summary_class": "audited_no_process_effects",
+            "artifact_hash": "sha256:axum-std-mem-replace-summary",
+            "version": "axum-call-graph-summary-v1",
+            "review_method": "source-oracle-review",
+            "scope_of_validity": "axum std::mem::replace frontier in corpus_axum_call_graph",
+            "allowed_effects": ["external_summary_boundary"],
+            "required_containment": "none",
+            "invalidation_conditions": "call-site span, fixture hash, or proof policy changes",
+            "status": "admitted",
+            "evidence_use": "proof_only"
+        }),
+    ])?;
+
+    let blockers = db.proof_blockers()?;
+    assert!(
+        !blockers.iter().any(|proof| {
+            proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.reason == "external_dependency_summary_missing"
+        }),
+        "linked admitted external summary should discharge the real frontier blocker: {blockers:#?}"
+    );
+
+    let summary_rows = db.proof_graphrag_context(summary_id)?;
+    assert!(
+        summary_rows.iter().any(|proof| {
+            proof.kind == "external_summary"
+                && proof.external_summary_id.as_deref() == Some(summary_id)
+                && proof.summary_class.as_deref() == Some("audited_no_process_effects")
+                && proof.status.as_deref() == Some("admitted")
+        }),
+        "summary-id lookup should expose the admitted summary artifact: {summary_rows:#?}"
+    );
+    assert!(
+        summary_rows.iter().any(|proof| {
+            proof.kind == "call_resolution"
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.external_summary_id.as_deref() == Some(summary_id)
+                && proof.resolution_state.as_deref() == Some("externally_summarized")
+                && proof.blocker_reason.is_none()
+        }),
+        "summary-id lookup should expose the externally summarized call resolution without a blocker: {summary_rows:#?}"
+    );
+
+    let context_after = db.call_context_for_owner(owner)?;
+    let row_after = row_by_path(&context_after, &["std", "mem", "replace"]);
+    assert_external_targetless(row_after);
+    assert!(
+        relations_for_site(&db, row_after.site.id)?.rows.is_empty(),
+        "proof summary admission must not create a call graph edge"
+    );
+
+    Ok(())
+}
+
+fn build_domain_record(domain_id: &str) -> serde_json::Value {
+    json!({
+        "fact_kind": "build_domain",
+        "schema_version": "ploke-proof-facts.v1",
+        "build_domain_id": domain_id,
+        "cargo_metadata_hash": "sha256:axum-metadata",
+        "cargo_lock_hash": "sha256:axum-lock",
+        "package_id": "github:tokio-rs/axum",
+        "target_kind": "library",
+        "target_name": "axum",
+        "target_root": "axum/src/lib.rs",
+        "target_triple": "x86_64-unknown-linux-gnu",
+        "host_triple": "x86_64-unknown-linux-gnu",
+        "profile": "dev",
+        "features_hash": "sha256:axum-features",
+        "active_cfg_hash": "sha256:axum-cfg",
+        "rustc_version": "rustc fixture",
+        "extractor_version": "ploke-test",
+        "proof_policy_version": "proof-policy-test",
+        "evidence_use": "proof_only"
+    })
+}
+
+fn cfg_domain_record(domain_id: &str) -> serde_json::Value {
+    json!({
+        "fact_kind": "cfg_domain",
+        "schema_version": "ploke-proof-facts.v1",
+        "cfg_domain_id": "cfg:corpus-axum-call-graph",
+        "build_domain_id": domain_id,
+        "active_cfg_hash": "sha256:axum-cfg",
+        "status": "admitted",
+        "evidence_use": "proof_only"
+    })
+}
+
+fn rustc_invocation_record(domain_id: &str) -> serde_json::Value {
+    json!({
+        "fact_kind": "rustc_invocation",
+        "schema_version": "ploke-proof-facts.v1",
+        "invocation_id": "rustc:corpus-axum-call-graph",
+        "build_domain_id": domain_id,
+        "rustc_program": "rustc",
+        "rustc_version": "rustc fixture",
+        "working_directory": "/workspace/axum",
+        "argument_vector_hash": "sha256:axum-rustc-argv",
+        "environment_hash": "sha256:axum-rustc-env",
+        "status": "admitted",
+        "evidence_use": "proof_only"
+    })
 }
 
 #[test]
