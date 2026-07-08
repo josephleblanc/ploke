@@ -318,38 +318,70 @@ fn attach_root_proofs(
     target: Uuid,
     callers: &[ExpectedRemainingCallSite],
 ) -> Vec<Uuid> {
-    if !matches!(case, AxumRemainingTarget::FromRef) {
-        return Vec::new();
-    }
-
     let mut sites = Vec::new();
     let mut records = Vec::new();
-    for caller in callers {
-        let site = caller.site.to_string();
-        let source = db
-            .proof_source_provenance(&site)
-            .unwrap_or_else(|err| panic!("{} source provenance: {err}", case.label()))
-            .unwrap_or_else(|| panic!("{} should have proof provenance for {site}", case.label()));
-        if source.source_file.ends_with("axum/src/extract/state.rs")
-            || source
-                .source_file
-                .ends_with("axum/src/middleware/from_extractor.rs")
-        {
-            sites.push(caller.site);
-            records.push(axum_dependency_record(
-                "bd:corpus-axum-call-graph",
-                caller.site,
-                caller.owner,
-                target,
-            ));
+    match case {
+        AxumRemainingTarget::FromRef => {
+            for caller in callers {
+                let site = caller.site.to_string();
+                let source = db
+                    .proof_source_provenance(&site)
+                    .unwrap_or_else(|err| panic!("{} source provenance: {err}", case.label()))
+                    .unwrap_or_else(|| {
+                        panic!("{} should have proof provenance for {site}", case.label())
+                    });
+                if source.source_file.ends_with("axum/src/extract/state.rs")
+                    || source
+                        .source_file
+                        .ends_with("axum/src/middleware/from_extractor.rs")
+                {
+                    sites.push(caller.site);
+                    records.push(axum_dependency_record(
+                        "bd:corpus-axum-call-graph",
+                        caller.site,
+                        caller.owner,
+                        target,
+                    ));
+                }
+            }
+            assert_eq!(
+                sites.len(),
+                2,
+                "{} should identify both dependency-root caller sites",
+                case.label()
+            );
         }
+        AxumRemainingTarget::TestClientNew => {
+            for caller in callers {
+                let site = caller.site.to_string();
+                let source = db
+                    .proof_source_provenance(&site)
+                    .unwrap_or_else(|err| panic!("{} source provenance: {err}", case.label()))
+                    .unwrap_or_else(|| {
+                        panic!("{} should have proof provenance for {site}", case.label())
+                    });
+                if source
+                    .source_file
+                    .ends_with("axum-core/src/extract/request_parts.rs")
+                {
+                    sites.push(caller.site);
+                    records.push(ploke_test_utils::axum_test_client_dependency_record(
+                        "bd:corpus-axum-call-graph",
+                        caller.site,
+                        caller.owner,
+                        target,
+                    ));
+                }
+            }
+            assert_eq!(
+                sites.len(),
+                1,
+                "{} should identify the axum-core dependency-root caller site",
+                case.label()
+            );
+        }
+        _ => return Vec::new(),
     }
-    assert_eq!(
-        sites.len(),
-        2,
-        "{} should identify both dependency-root caller sites",
-        case.label()
-    );
     db.upsert_proof_fact_values(&records)
         .unwrap_or_else(|err| panic!("{} dependency-root proof insert: {err}", case.label()));
     sites
@@ -362,6 +394,10 @@ pub(crate) fn assert_dependency_root_proof(
     tool: &str,
     label: &str,
 ) {
+    if sites.is_empty() {
+        return;
+    }
+    let expected = expected_dependency_root_target(label);
     let target = target.to_string();
     for site in sites {
         let site = site.to_string();
@@ -376,13 +412,41 @@ pub(crate) fn assert_dependency_root_proof(
                         .get("resolved_def_id")
                         .and_then(serde_json::Value::as_str)
                         == Some(target.as_str())
+                    && proof.get("target_kind").and_then(serde_json::Value::as_str)
+                        == Some(expected.target_kind)
                     && proof.get("target_name").and_then(serde_json::Value::as_str)
-                        == Some("axum_core::extract::FromRef::from_ref")
+                        == Some(expected.target_name)
+                    && proof.get("target_root").and_then(serde_json::Value::as_str)
+                        == Some(expected.target_root)
                     && proof.get("status").and_then(serde_json::Value::as_str) == Some("admitted")
             }),
             "{tool} should expose dependency-root proof site {site} for {label}: {proofs:#?}"
         );
     }
+}
+
+struct ExpectedDependencyRoot<'a> {
+    target_kind: &'a str,
+    target_name: &'a str,
+    target_root: &'a str,
+}
+
+fn expected_dependency_root_target(label: &str) -> ExpectedDependencyRoot<'_> {
+    if label == AxumRemainingTarget::FromRef.label() {
+        return ExpectedDependencyRoot {
+            target_kind: "workspace_trait_method",
+            target_name: "axum_core::extract::FromRef::from_ref",
+            target_root: "axum-core/src/extract/from_ref.rs",
+        };
+    }
+    if label == AxumRemainingTarget::TestClientNew.label() {
+        return ExpectedDependencyRoot {
+            target_kind: "workspace_inherent_method",
+            target_name: "axum::test_helpers::TestClient::new",
+            target_root: "axum/src/test_helpers/test_client.rs",
+        };
+    }
+    panic!("{label} does not have dependency-root proof expectations")
 }
 
 fn callee_for_site(site: ploke_db::CallSiteRow, label: &str) -> CallCalleeInfo {

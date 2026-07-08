@@ -583,7 +583,52 @@ fn axum_real_target_test_client_new_high_fanout_is_documented_gap() -> Result<()
         },
     )?;
 
+    let domain_id = "bd:corpus-axum-call-graph";
+    let mut records = axum_domain_records(domain_id);
+    records.push(ploke_test_utils::axum_test_client_dependency_record(
+        domain_id,
+        axum_core_row.site.id,
+        axum_core_owner,
+        target,
+    ));
+    db.upsert_proof_fact_values(&records)?;
+
+    let proof_rows = db.proof_symbol_lookup(&target.to_string())?;
+    assert_test_client_dependency_root_proof(
+        &proof_rows,
+        axum_core_row.site.id,
+        axum_core_owner,
+        target,
+        "axum-core/src/extract/request_parts.rs:193 workspace-glob TestClient::new",
+    );
+
     Ok(())
+}
+
+fn assert_test_client_dependency_root_proof(
+    rows: &[ProofGraphContextRow],
+    site_id: Uuid,
+    caller_id: Uuid,
+    target_id: Uuid,
+    label: &str,
+) {
+    let site_id = site_id.to_string();
+    let caller_id = caller_id.to_string();
+    let target_id = target_id.to_string();
+    assert!(
+        rows.iter().any(|row| {
+            row.kind == "dependency_root"
+                && row.call_site_id.as_deref() == Some(site_id.as_str())
+                && row.caller_def_id.as_deref() == Some(caller_id.as_str())
+                && row.resolved_def_id.as_deref() == Some(target_id.as_str())
+                && row.target_kind.as_deref() == Some("workspace_inherent_method")
+                && row.target_name.as_deref() == Some("axum::test_helpers::TestClient::new")
+                && row.target_root.as_deref() == Some("axum/src/test_helpers/test_client.rs")
+                && row.status.as_deref() == Some("admitted")
+                && row.evidence_use.as_deref() == Some("proof_only")
+        }),
+        "{label} should expose an admitted dependency-root proof row: {rows:#?}"
+    );
 }
 
 #[test]
