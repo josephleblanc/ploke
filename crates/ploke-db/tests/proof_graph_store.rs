@@ -1,6 +1,8 @@
 use ploke_db::{Database, ProofGraphContextRow, ProofGraphStore};
 use serde_json::json;
 
+#[path = "proof_graph_store/entrypoint_summary.rs"]
+mod entrypoint_summary;
 #[path = "proof_graph_store/evidence_use.rs"]
 mod evidence_use;
 #[path = "proof_graph_store/external_summary.rs"]

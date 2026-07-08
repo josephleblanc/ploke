@@ -1597,6 +1597,27 @@ async fn call_impact_exact_reports_private_target_without_incoming_callers() -> 
         "RAG zero-caller impact source files",
     );
 
+    let domain_id = "bd:corpus-axum-call-graph";
+    db.upsert_proof_fact_values(&[ploke_test_utils::axum_entrypoint_record(domain_id, target)])?;
+    let target_id = target.to_string();
+    let proof_rag = init_test_rag_mock(Arc::clone(&db));
+    assert!(
+        !proof_rag.proof_context_degraded(),
+        "entrypoint summary admission should enable proof context for this focused check"
+    );
+    let proof = proof_rag.exact_proof_context(target)?;
+    assert!(
+        proof.iter().any(|row| {
+            row.kind == "entrypoint_summary"
+                && row.definition_id.as_deref() == Some(target_id.as_str())
+                && row.target_kind.as_deref() == Some("test")
+                && row.target_name.as_deref() == Some("generated-test-harness")
+                && row.summary_class.as_deref() == Some("analyzed_source")
+                && row.status.as_deref() == Some("admitted")
+        }),
+        "RAG exact proof context should expose the generated test-harness summary without adding call impact edges: {proof:#?}"
+    );
+
     Ok(())
 }
 

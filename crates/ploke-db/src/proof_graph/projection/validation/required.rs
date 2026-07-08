@@ -122,6 +122,25 @@ pub(in crate::proof_graph::projection) fn validate_required_fields(
             )?;
             require_json_string_array(value, "allowed_effects")
         }
+        "entrypoint_summary" => require_fields(
+            value,
+            &[
+                "entrypoint_summary_id",
+                "build_domain_id",
+                "definition_id",
+                "target_kind",
+                "target_name",
+                "summary_class",
+                "artifact_hash",
+                "version",
+                "review_method",
+                "scope_of_validity",
+                "required_containment",
+                "invalidation_conditions",
+                "status",
+                "evidence_use",
+            ],
+        ),
         "effect_seed" => {
             require_fields(
                 value,

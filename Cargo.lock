@@ -7091,6 +7091,7 @@ dependencies = [
  "ploke-transform",
  "proc-macro2",
  "serde",
+ "serde_json",
  "syn_parser",
  "tokio",
  "tracing",

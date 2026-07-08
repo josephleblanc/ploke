@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use ploke_db::{
     CallContextRelation, CallContextSeed, CallNodeKind, CallPathOptions, CallRelationKind,
+    ProofGraphStore,
 };
 use serde_json::json;
 
@@ -1052,6 +1053,24 @@ fn axum_usage_questions_list_private_nodes_without_incoming_callers() -> Result<
     assert!(report.public_callers.is_empty(), "{report:#?}");
     assert!(report.test_callers.is_empty(), "{report:#?}");
     assert!(report.non_test_callers.is_empty(), "{report:#?}");
+
+    let domain_id = "bd:corpus-axum-call-graph";
+    let mut records = axum_domain_records(domain_id);
+    records.push(ploke_test_utils::axum_entrypoint_record(domain_id, traits));
+    db.upsert_proof_fact_values(&records)?;
+    let traits_id = traits.to_string();
+    let proof_rows = db.proof_symbol_lookup(&traits_id)?;
+    assert!(
+        proof_rows.iter().any(|row| {
+            row.kind == "entrypoint_summary"
+                && row.definition_id.as_deref() == Some(traits_id.as_str())
+                && row.target_kind.as_deref() == Some("test")
+                && row.target_name.as_deref() == Some("generated-test-harness")
+                && row.summary_class.as_deref() == Some("analyzed_source")
+                && row.status.as_deref() == Some("admitted")
+        }),
+        "generated test-harness reachability should be represented as proof context, not source call edges: {proof_rows:#?}"
+    );
 
     Ok(())
 }

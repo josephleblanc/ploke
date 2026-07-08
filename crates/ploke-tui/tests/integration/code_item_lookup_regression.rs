@@ -1467,7 +1467,31 @@ async fn code_item_lookup_reports_private_target_without_incoming_callers() {
         "code_item_lookup zero-caller impact source files",
     );
 
+    let proof_context = payload
+        .get("proof_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("proof_context array");
+    let proof_rows = proof_context
+        .iter()
+        .filter_map(|proof| serde_json::from_value::<ProofContextInfo>(proof.clone()).ok())
+        .collect::<Vec<_>>();
+    assert!(
+        proof_rows.iter().any(|proof| {
+            proof.kind == "entrypoint_summary"
+                && proof.definition_id.as_deref() == Some(target_id.as_str())
+                && proof.target_kind.as_deref() == Some("test")
+                && proof.target_name.as_deref() == Some("generated-test-harness")
+                && proof.summary_class.as_deref() == Some("analyzed_source")
+                && proof.status.as_deref() == Some("admitted")
+        }),
+        "code_item_lookup should expose the generated test-harness entrypoint proof summary without source callers: {proof_context:#?}"
+    );
+
     let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert_eq!(
+        ui_field(ui, "proof_context"),
+        proof_context.len().to_string()
+    );
     assert_eq!(ui_field(ui, "call_context_incoming"), "0");
     assert_eq!(ui_field(ui, "call_paths_to_target"), "0");
     assert_eq!(ui_field(ui, "impact_callers"), "0");

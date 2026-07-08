@@ -72,7 +72,37 @@ matrix table marks receiver, dynamic callable, executable-owner, and usage
 summary rows as met for now. Remaining work should switch to one of the
 future-heavy carriers above instead of polishing another nearby local proof.
 
-Latest completed slice in current bucket: source/sink reachable-effect path
+Latest completed slice in current bucket: generated test-entrypoint summary
+proof over a real axum private zero-source-caller target.
+
+Completed evidence:
+
+- Regenerated active fixture snapshots with the `call_graph` feature and
+  verified the active backup DB registry; no tracked fixture bytes changed.
+- Added a strict `entrypoint_summary` proof fact kind for generated harness or
+  build entrypoint reachability summaries. The fact requires target identity,
+  summary artifact metadata, review/scope/invalidation fields, status, and
+  proof evidence use.
+- DB proof-store tests admit the new fact kind, reject missing
+  `definition_id`, and reject non-schema `target_kind` values.
+- The axum real-corpus dead-code test still proves
+  `error_handling::traits` has zero persisted source callers and zero call
+  impact edges, then admits a proof-only generated test-harness summary for
+  that definition.
+- RAG exact proof context and `code_item_lookup` expose the same
+  `entrypoint_summary` row while preserving empty source caller/path/impact
+  sets. No source call edge is fabricated for the generated test harness.
+- Verification passed:
+  `cargo run -p xtask --features call_graph -- fixtures regenerate --active`,
+  `cargo run -p xtask --features call_graph -- verify-backup-dbs`,
+  `cargo test -p ploke-db --test proof_graph_store entrypoint_summary -- --nocapture`,
+  `cargo test -p ploke-db axum_usage_questions_list_private_nodes_without_incoming_callers -- --nocapture`,
+  `cargo test -p ploke-rag call_impact_exact_reports_private_target_without_incoming_callers -- --nocapture`,
+  `cargo test -p ploke-tui --test integration code_item_lookup_reports_private_target_without_incoming_callers -- --nocapture`,
+  and
+  `cargo test -p ploke-tui --test integration code_private_uncalled_lists_real_corpus_private_zero_caller_target -- --nocapture`.
+
+Previously completed slice in current bucket: source/sink reachable-effect path
 carrier over a real axum task-spawn frontier.
 
 Completed evidence:

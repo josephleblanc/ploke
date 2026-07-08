@@ -8,6 +8,7 @@
 pub mod call_shape_matrix;
 pub mod fixture_dbs;
 pub mod nodes;
+pub mod proof_fact_fixtures;
 pub mod type_shape_matrix;
 
 pub use call_shape_matrix::{
@@ -30,6 +31,7 @@ pub use fixture_dbs::{
     fresh_backup_fixture_db, load_backup_fixture_db, shared_backup_fixture_db,
     validate_backup_fixture_contract,
 };
+pub use proof_fact_fixtures::axum_entrypoint_record;
 pub use type_shape_matrix::{
     ContainingOwnerSelector, CoordinateSpec, CorpusFixture, OwnerSelector, ShapePipelineCoverage,
     TargetSelector, TypeShapeCase, TypeShapeKind, TypeShapeNoTargetCase, absent_type_shape_cases,

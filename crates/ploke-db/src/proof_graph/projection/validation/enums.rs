@@ -57,7 +57,7 @@ pub(in crate::proof_graph::projection) fn validate_enum_fields(
             "external_summary",
         ],
     )?;
-    if kind == "build_domain" {
+    if kind == "build_domain" || kind == "entrypoint_summary" {
         validate_optional_enum(
             value,
             "target_kind",

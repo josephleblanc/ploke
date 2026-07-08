@@ -1095,6 +1095,11 @@ impl AxumErrorHandlingTraitsToolFixture {
                 >= 3,
             "error_handling::traits should project node-scoped proof rows for its outgoing source calls"
         );
+        db.upsert_proof_fact_values(&[ploke_test_utils::axum_entrypoint_record(
+            "bd:corpus-axum-call-graph",
+            target.id,
+        )])
+        .expect("admit generated test-harness entrypoint summary");
         let state = axum_state_for_target(Arc::clone(&db), &target, "error_handling::traits").await;
 
         Self {
