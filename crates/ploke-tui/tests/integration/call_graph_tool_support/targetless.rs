@@ -390,6 +390,17 @@ impl PathToolCase {
         }
     }
 
+    pub(crate) fn expects_admitted_external_summary(&self) -> bool {
+        self.path == ["std", "mem", "replace"]
+            && matches!(
+                self.owner,
+                PathOwner::Method {
+                    file_suffix: "axum/src/response/sse.rs",
+                    ..
+                }
+            )
+    }
+
     pub(crate) fn owner_trait(&self) -> Option<&'static str> {
         match self.owner {
             PathOwner::Function { .. } => None,
@@ -563,6 +574,7 @@ impl PathToolFixture {
             "{} should project targetless path proof rows",
             case.label
         );
+        attach_admitted_external_summary_if_needed(&db, owner.id, &case);
         let state = axum_state_for_target(Arc::clone(&db), &owner, case.label).await;
 
         Self {
@@ -581,6 +593,107 @@ impl PathToolFixture {
     pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
         ctx_for_state(&self.state, call_id)
     }
+}
+
+fn attach_admitted_external_summary_if_needed(db: &Database, owner: Uuid, case: &PathToolCase) {
+    if !case.expects_admitted_external_summary() {
+        return;
+    }
+    let site = db
+        .call_context_for_owner(owner)
+        .unwrap_or_else(|err| panic!("{} call context lookup: {err}", case.label))
+        .into_iter()
+        .find(|row| {
+            row.site.path.as_ref().is_some_and(|path| {
+                path.iter()
+                    .map(String::as_str)
+                    .eq(["std", "mem", "replace"])
+            }) && row.status.status == DbCallStatusKind::External
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "{} should expose the std::mem::replace external callsite before summary insertion",
+                case.label
+            )
+        })
+        .site
+        .id
+        .to_string();
+
+    db.upsert_proof_fact_values(&axum_std_mem_replace_summary_records(site))
+        .unwrap_or_else(|err| panic!("{} admitted external summary insert: {err}", case.label));
+}
+
+fn axum_std_mem_replace_summary_records(site_id: String) -> Vec<serde_json::Value> {
+    const SUMMARY_ID: &str = "external-summary:axum-std-mem-replace";
+    vec![
+        json!({
+            "fact_kind": "build_domain",
+            "schema_version": "ploke-proof-facts.v1",
+            "build_domain_id": "bd:corpus-axum-call-graph",
+            "cargo_metadata_hash": "sha256:axum-metadata",
+            "cargo_lock_hash": "sha256:axum-lock",
+            "package_id": "github:tokio-rs/axum",
+            "target_kind": "library",
+            "target_name": "axum",
+            "target_root": "axum/src/lib.rs",
+            "target_triple": "x86_64-unknown-linux-gnu",
+            "host_triple": "x86_64-unknown-linux-gnu",
+            "profile": "dev",
+            "features_hash": "sha256:axum-features",
+            "active_cfg_hash": "sha256:axum-cfg",
+            "rustc_version": "rustc fixture",
+            "extractor_version": "ploke-test",
+            "proof_policy_version": "proof-policy-test",
+            "evidence_use": "proof_only"
+        }),
+        json!({
+            "fact_kind": "cfg_domain",
+            "schema_version": "ploke-proof-facts.v1",
+            "cfg_domain_id": "cfg:corpus-axum-call-graph",
+            "build_domain_id": "bd:corpus-axum-call-graph",
+            "active_cfg_hash": "sha256:axum-cfg",
+            "status": "admitted",
+            "evidence_use": "proof_only"
+        }),
+        json!({
+            "fact_kind": "rustc_invocation",
+            "schema_version": "ploke-proof-facts.v1",
+            "invocation_id": "rustc:corpus-axum-call-graph",
+            "build_domain_id": "bd:corpus-axum-call-graph",
+            "rustc_program": "rustc",
+            "rustc_version": "rustc fixture",
+            "working_directory": "/workspace/axum",
+            "argument_vector_hash": "sha256:axum-rustc-argv",
+            "environment_hash": "sha256:axum-rustc-env",
+            "status": "admitted",
+            "evidence_use": "proof_only"
+        }),
+        json!({
+            "fact_kind": "call_resolution",
+            "schema_version": "ploke-proof-facts.v1",
+            "call_site_id": site_id,
+            "resolution_state": "externally_summarized",
+            "external_summary_id": SUMMARY_ID,
+            "evidence_use": "proof_and_navigation"
+        }),
+        json!({
+            "fact_kind": "external_summary",
+            "schema_version": "ploke-proof-facts.v1",
+            "external_summary_id": SUMMARY_ID,
+            "build_domain_id": "bd:corpus-axum-call-graph",
+            "summary_class": "audited_no_process_effects",
+            "artifact_hash": "sha256:axum-std-mem-replace-summary",
+            "version": "axum-call-graph-summary-v1",
+            "review_method": "source-oracle-review",
+            "scope_of_validity": "axum std::mem::replace frontier in corpus_axum_call_graph",
+            "allowed_effects": ["external_summary_boundary"],
+            "required_containment": "none",
+            "invalidation_conditions": "source oracle, fixture hash, or proof policy changes",
+            "status": "admitted",
+            "evidence_use": "proof_only"
+        }),
+    ]
 }
 
 pub(crate) fn assert_dynamic_context(
@@ -867,6 +980,59 @@ pub(crate) fn assert_path_blocker_proof(
         blocker_reason,
         label,
         tool,
+    );
+}
+
+pub(crate) fn assert_admitted_external_summary_proof(
+    proofs: &[serde_json::Value],
+    owner: Uuid,
+    site_id: Uuid,
+    label: &str,
+    tool: &str,
+) {
+    let owner = owner.to_string();
+    let site_id = site_id.to_string();
+    const BUILD_DOMAIN: &str = "bd:corpus-axum-call-graph";
+    const SUMMARY_ID: &str = "external-summary:axum-std-mem-replace";
+    let rows = proofs
+        .iter()
+        .filter_map(|proof| serde_json::from_value::<ProofContextInfo>(proof.clone()).ok())
+        .collect::<Vec<_>>();
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "call_site"
+                && proof.caller_def_id.as_deref() == Some(owner.as_str())
+                && proof.call_site_id.as_deref() == Some(site_id.as_str())
+                && proof.build_domain_id.as_deref() == Some(BUILD_DOMAIN)
+        }),
+        "{tool} should return the path call_site proof row for {label}: {proofs:#?}"
+    );
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "call_resolution"
+                && proof.call_site_id.as_deref() == Some(site_id.as_str())
+                && proof.resolution_state.as_deref() == Some("externally_summarized")
+                && proof.external_summary_id.as_deref() == Some(SUMMARY_ID)
+                && proof.blocker_reason.is_none()
+        }),
+        "{tool} should return the externally summarized call_resolution for {label}: {proofs:#?}"
+    );
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "external_summary"
+                && proof.external_summary_id.as_deref() == Some(SUMMARY_ID)
+                && proof.summary_class.as_deref() == Some("audited_no_process_effects")
+                && proof.status.as_deref() == Some("admitted")
+                && proof.allowed_effects == vec!["external_summary_boundary".to_string()]
+        }),
+        "{tool} should return the admitted external_summary artifact for {label}: {proofs:#?}"
+    );
+    assert!(
+        rows.iter().all(|proof| {
+            proof.call_site_id.as_deref() != Some(site_id.as_str())
+                || proof.blocker_reason.as_deref() != Some("external_dependency_summary_missing")
+        }),
+        "{tool} should not retain the missing-summary blocker after admission for {label}: {proofs:#?}"
     );
 }
 

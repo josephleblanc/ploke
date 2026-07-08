@@ -72,8 +72,8 @@ matrix table marks receiver, dynamic callable, executable-owner, and usage
 summary rows as met for now. Remaining work should switch to one of the
 future-heavy carriers above instead of polishing another nearby local proof.
 
-Latest completed slice in current bucket: runtime trait-object dispatch blocker
-proof over a real axum dyn Future poll frontier.
+Previously completed slice in current bucket: runtime trait-object dispatch
+blocker proof over a real axum dyn Future poll frontier.
 
 Completed evidence:
 
@@ -177,8 +177,9 @@ Completed evidence:
   `cargo test -p ploke-db axum_external_frontier_accepts_admitted_summary_proof -- --nocapture`,
   `cargo fmt --all --check`, and `git diff --check`.
 
-Previously completed slice in current bucket: proof-authoritative external
-summary admission over a real external frontier.
+Latest completed slice in current bucket: proof-authoritative external summary
+admission over a real external frontier, propagated through DB, RAG, and TUI
+tool payloads.
 
 Completed evidence:
 
@@ -193,14 +194,30 @@ Completed evidence:
   `external_summary` fact plus a linked `externally_summarized`
   `call_resolution` fact, and proves the blocker is discharged through
   `proof_blockers()` and `proof_graphrag_context(...)`.
-- This is a proof-layer slice only. It does not add parser/resolver breadth,
-  does not fabricate a local edge for external dependencies, and does not yet
-  provide production external-summary authoring or policy review UX.
+- `proof_symbol_lookup(...)` now follows a selected callsite's
+  `external_summary_id` to the linked `external_summary` artifact, matching the
+  existing `proof_graphrag_context(...)` summary-link behavior.
+- RAG exact proof context for `EventDataWriter::write_buf` now preserves the
+  admitted `std::mem::replace` summary artifact and no longer reports the
+  missing-summary blocker for that callsite after admission.
+- Exact TUI `code_item_lookup` and `code_item_edges` now table-drive
+  `Request::builder` as the still-blocked external frontier and
+  `std::mem::replace` as the admitted external-summary frontier, preserving the
+  linked `call_resolution` and `external_summary` proof rows without creating a
+  local edge.
+- This is a proof-layer and query-linking slice only. It does not add
+  parser/resolver breadth, does not fabricate a local edge for external
+  dependencies, and does not yet provide production external-summary authoring
+  or policy review UX.
 - Active fixtures were regenerated and `verify-backup-dbs` passed with no
   tracked fixture drift.
 - Verification passed:
   `cargo xtask fixtures regenerate --active`, `cargo xtask verify-backup-dbs`,
   `cargo test -p ploke-db axum_external_frontier_accepts_admitted_summary_proof -- --nocapture`,
+  `cargo test -p ploke-db proof_symbol_lookup_links_call_site_context_to_external_summary_artifact -- --nocapture`,
+  `cargo test -p ploke-rag proof_context_collection_preserves_axum_std_mem_replace_admitted_summary -- --nocapture`,
+  `cargo test -p ploke-tui --test integration code_item_lookup_returns_request_builder_alias_external_path_rows -- --nocapture`,
+  `cargo test -p ploke-tui --test integration code_item_edges_returns_request_builder_alias_external_path_rows -- --nocapture`,
   `cargo fmt --all --check`, and `git diff --check`.
 
 Previously completed slice in current bucket: complete private multi-caller

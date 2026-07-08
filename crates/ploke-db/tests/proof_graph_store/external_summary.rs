@@ -109,6 +109,48 @@ fn proof_graphrag_context_links_external_summary_artifacts_and_resolution_refs()
 }
 
 #[test]
+fn proof_symbol_lookup_links_call_site_context_to_external_summary_artifact() {
+    let db = Database::new_init().expect("create db");
+    db.ensure_proof_graph_schema().expect("proof graph schema");
+    let mut summary = external_summary_record();
+    summary["summary_class"] = json!("audited_no_process_effects");
+    summary["status"] = json!("admitted");
+    let mut resolution = externally_summarized_resolution(Some("external-summary:dep:serde"));
+    resolution
+        .as_object_mut()
+        .expect("resolution object")
+        .remove("blocking_reason");
+    let mut records = main_domain_records();
+    records.extend([external_call_site_record(), resolution, summary]);
+    db.upsert_proof_fact_values(&records)
+        .expect("import admitted external summary proof facts");
+
+    let rows = db
+        .proof_symbol_lookup("def:launch")
+        .expect("caller proof context");
+    assert!(
+        rows.iter().any(|row| {
+            row.kind == "call_resolution"
+                && row.call_site_id.as_deref() == Some("call:external")
+                && row.external_summary_id.as_deref() == Some("external-summary:dep:serde")
+                && row.resolution_state.as_deref() == Some("externally_summarized")
+                && row.blocker_reason.is_none()
+        }),
+        "caller-seeded proof context should include the externally summarized call resolution: {rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|row| {
+            row.kind == "external_summary"
+                && row.external_summary_id.as_deref() == Some("external-summary:dep:serde")
+                && row.summary_class.as_deref() == Some("audited_no_process_effects")
+                && row.status.as_deref() == Some("admitted")
+                && row.allowed_effects == vec!["external_summary_boundary".to_string()]
+        }),
+        "caller-seeded proof context should include the linked external summary artifact: {rows:#?}"
+    );
+}
+
+#[test]
 fn proof_graph_store_rejects_external_summary_without_artifact_identity() {
     let db = Database::new_init().expect("create db");
     db.ensure_proof_graph_schema().expect("proof graph schema");

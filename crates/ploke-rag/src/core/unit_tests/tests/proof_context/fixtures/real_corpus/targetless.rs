@@ -363,6 +363,90 @@ async fn proof_context_collection_preserves_axum_request_builder_alias_frontier(
 }
 
 #[tokio::test]
+async fn proof_context_collection_preserves_axum_std_mem_replace_admitted_summary()
+-> Result<(), Error> {
+    init_tracing_once();
+    let db = axum_db()?;
+    let summary_id = "external-summary:axum-std-mem-replace";
+
+    let owner = method_id_by_name_and_body(
+        &db,
+        "write_buf",
+        "std::mem::replace(&mut self.data_written, true)",
+    )?;
+    let projected = db.project_call_proof_facts_for_owner(owner, AXUM_DOMAIN)?;
+    assert!(
+        projected >= 2,
+        "EventDataWriter::write_buf should project std::mem::replace frontier proof rows"
+    );
+
+    let rag = init_test_rag_mock(Arc::clone(&db));
+    assert!(
+        !rag.proof_context_degraded(),
+        "projected axum std::mem::replace facts should enable RAG proof context"
+    );
+
+    let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+    let calls = call_context
+        .get(&owner)
+        .expect("EventDataWriter::write_buf should receive outgoing call context");
+    let site_id = targetless_path_site(
+        calls,
+        owner,
+        &["std", "mem", "replace"],
+        CallStatusKind::External,
+        "EventDataWriter::write_buf std::mem::replace",
+    );
+
+    db.upsert_proof_fact_values(&axum_std_mem_replace_summary_records(
+        site_id.to_string(),
+        summary_id,
+    ))?;
+
+    let rows = rag.exact_proof_context(owner)?;
+
+    // Matrix: proof-authoritative external summary over a real external
+    // frontier.
+    // Source chain:
+    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //   axum/src/response/sse.rs:449 calls
+    //   `std::mem::replace(&mut self.data_written, true)`.
+    // Expected proof traversal: the projected external frontier starts
+    // fail-closed, then the linked admitted summary is model-visible through
+    // RAG proof context without turning the frontier into a local edge.
+    let site = site_id.to_string();
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "call_resolution"
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.resolution_state.as_deref() == Some("externally_summarized")
+                && proof.external_summary_id.as_deref() == Some(summary_id)
+                && proof.blocker_reason.is_none()
+        }),
+        "RAG proof context should expose the discharged std::mem::replace call_resolution: {rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "external_summary"
+                && proof.external_summary_id.as_deref() == Some(summary_id)
+                && proof.summary_class.as_deref() == Some("audited_no_process_effects")
+                && proof.status.as_deref() == Some("admitted")
+                && proof.allowed_effects == ["external_summary_boundary".to_string()]
+        }),
+        "RAG proof context should expose the admitted std::mem::replace summary artifact: {rows:#?}"
+    );
+    assert!(
+        rows.iter().all(|proof| {
+            proof.call_site_id.as_deref() != Some(site.as_str())
+                || proof.blocker_reason.as_deref() != Some("external_dependency_summary_missing")
+        }),
+        "RAG proof context should not retain the missing-summary blocker after admission: {rows:#?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn proof_context_collection_preserves_axum_generated_constructor_frontier()
 -> Result<(), Error> {
     init_tracing_once();
@@ -418,6 +502,80 @@ async fn proof_context_collection_preserves_axum_generated_constructor_frontier(
     );
 
     Ok(())
+}
+
+fn axum_std_mem_replace_summary_records(
+    site_id: String,
+    summary_id: &str,
+) -> Vec<serde_json::Value> {
+    vec![
+        serde_json::json!({
+            "fact_kind": "build_domain",
+            "schema_version": "ploke-proof-facts.v1",
+            "build_domain_id": AXUM_DOMAIN,
+            "cargo_metadata_hash": "sha256:axum-metadata",
+            "cargo_lock_hash": "sha256:axum-lock",
+            "package_id": "github:tokio-rs/axum",
+            "target_kind": "library",
+            "target_name": "axum",
+            "target_root": "axum/src/lib.rs",
+            "target_triple": "x86_64-unknown-linux-gnu",
+            "host_triple": "x86_64-unknown-linux-gnu",
+            "profile": "dev",
+            "features_hash": "sha256:axum-features",
+            "active_cfg_hash": "sha256:axum-cfg",
+            "rustc_version": "rustc fixture",
+            "extractor_version": "ploke-test",
+            "proof_policy_version": "proof-policy-test",
+            "evidence_use": "proof_only"
+        }),
+        serde_json::json!({
+            "fact_kind": "cfg_domain",
+            "schema_version": "ploke-proof-facts.v1",
+            "cfg_domain_id": "cfg:corpus-axum-call-graph",
+            "build_domain_id": AXUM_DOMAIN,
+            "active_cfg_hash": "sha256:axum-cfg",
+            "status": "admitted",
+            "evidence_use": "proof_only"
+        }),
+        serde_json::json!({
+            "fact_kind": "rustc_invocation",
+            "schema_version": "ploke-proof-facts.v1",
+            "invocation_id": "rustc:corpus-axum-call-graph",
+            "build_domain_id": AXUM_DOMAIN,
+            "rustc_program": "rustc",
+            "rustc_version": "rustc fixture",
+            "working_directory": "/workspace/axum",
+            "argument_vector_hash": "sha256:axum-rustc-argv",
+            "environment_hash": "sha256:axum-rustc-env",
+            "status": "admitted",
+            "evidence_use": "proof_only"
+        }),
+        serde_json::json!({
+            "fact_kind": "call_resolution",
+            "schema_version": "ploke-proof-facts.v1",
+            "call_site_id": site_id,
+            "resolution_state": "externally_summarized",
+            "external_summary_id": summary_id,
+            "evidence_use": "proof_and_navigation"
+        }),
+        serde_json::json!({
+            "fact_kind": "external_summary",
+            "schema_version": "ploke-proof-facts.v1",
+            "external_summary_id": summary_id,
+            "build_domain_id": AXUM_DOMAIN,
+            "summary_class": "audited_no_process_effects",
+            "artifact_hash": "sha256:axum-std-mem-replace-summary",
+            "version": "axum-call-graph-summary-v1",
+            "review_method": "source-oracle-review",
+            "scope_of_validity": "axum std::mem::replace frontier in corpus_axum_call_graph",
+            "allowed_effects": ["external_summary_boundary"],
+            "required_containment": "none",
+            "invalidation_conditions": "source oracle, fixture hash, or proof policy changes",
+            "status": "admitted",
+            "evidence_use": "proof_only"
+        }),
+    ]
 }
 
 #[tokio::test]
