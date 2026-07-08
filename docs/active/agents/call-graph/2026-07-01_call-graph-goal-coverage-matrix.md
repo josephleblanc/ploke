@@ -69,7 +69,43 @@ Reason to stay in current bucket: the usage-question audit found broad DB/RAG/TU
 query surfaces already exist; the remaining actionable gaps are proof inputs
 for targetless receiver/dynamic rows, not another query-helper layer.
 
-Latest completed bucket: usage-question query-surface gap audit after shared
+Latest completed slice in current bucket: mixed path/closure dynamic branch
+candidate proof.
+
+Completed evidence:
+
+- Existing fixture rows
+  `call_if_closure_branch(flag) { (if flag { local_target } else { || 8 })() }`
+  and
+  `call_match_closure_arm(flag) { (match flag { true => local_target, false => || 13 })() }`
+  now record structured mixed branch targets instead of falling back to an
+  unsupported dynamic call.
+- Parser/resolver proof preserves both candidates with an `Ambiguous` status:
+  one `DynamicFunction` candidate edge to `local_target` and one
+  `DynamicClosure` candidate edge to the inline closure executable owner.
+- Transform keeps the mixed branch call-site path targetless, matching the
+  existing branch-expression projection shape, while persisting the candidate
+  `call_relation` rows.
+- DB owner and target-centered context tests prove both candidates are
+  queryable. Proof projection emits `call_site` plus `call_resolution` with
+  `candidate_def_ids` and still emits no `call_edge` for the ambiguous site.
+- Active fixtures were regenerated and `verify-backup-dbs` passed with no
+  tracked fixture drift.
+- Verification passed:
+  `cargo test -p syn_parser --features call_graph preserves_mixed_dynamic_candidates -- --nocapture`,
+  `cargo test -p ploke-db mixed_branch_dynamic -- --nocapture`,
+  `cargo test -p ploke-db dynamic_context -- --nocapture`,
+  `cargo test -p ploke-db dynamic_proof -- --nocapture`,
+  `cargo test -p syn_parser --features call_graph call_sites -- --nocapture`,
+  `cargo test -p ploke-transform --features call_graph dynamic -- --nocapture`,
+  `cargo xtask verify-backup-dbs`, `cargo fmt --all --check`, and
+  `git diff --check`.
+- This remains bounded to locally visible item-path and inline closure branch
+  targets. Public callable parameters, callable field values, boxed trait
+  objects without initializer proof, arbitrary expression-produced callees, and
+  general callable trait-object dispatch remain fail-closed.
+
+Previously completed bucket: usage-question query-surface gap audit after shared
 matrix propagation.
 
 Completed evidence:
