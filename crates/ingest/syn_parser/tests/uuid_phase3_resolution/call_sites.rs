@@ -228,6 +228,12 @@ const SINGLE_ALIASED_FUNCTION_POINTER_CALLER_SPAN: (usize, usize) = (37569, 3762
 const SINGLE_PARENTHESIZED_ALIASED_FUNCTION_POINTER_PARAM_CALL_SPAN: (usize, usize) =
     (37733, 37738);
 const SINGLE_PARENTHESIZED_ALIASED_FUNCTION_POINTER_CALLER_SPAN: (usize, usize) = (37839, 37909);
+const MULTI_FUNCTION_POINTER_PARAM_CALL_SPAN: (usize, usize) = (39335, 39338);
+const MULTI_FUNCTION_POINTER_CALLER_A_SPAN: (usize, usize) = (39418, 39465);
+const MULTI_FUNCTION_POINTER_CALLER_B_SPAN: (usize, usize) = (39545, 39592);
+const MULTI_CONFLICTING_FUNCTION_POINTER_PARAM_CALL_SPAN: (usize, usize) = (39674, 39677);
+const MULTI_CONFLICTING_FUNCTION_POINTER_LOCAL_CALLER_SPAN: (usize, usize) = (39767, 39826);
+const MULTI_CONFLICTING_FUNCTION_POINTER_OTHER_CALLER_SPAN: (usize, usize) = (39916, 39975);
 const SINGLE_FUNCTION_POINTER_PARAM_CAST_CALL_SPAN: (usize, usize) = (34806, 34826);
 const SINGLE_FUNCTION_POINTER_PARAM_CAST_CALLER_SPAN: (usize, usize) = (34910, 34963);
 const SINGLE_NAMED_FIELD_FUNCTION_PARAM_CALL_SPAN: (usize, usize) = (35452, 35471);
@@ -6216,6 +6222,149 @@ paranoid_call_site_test!(
         ExpectedCallSite::path(
             &["call_single_function_pointer_param"],
             SINGLE_FUNCTION_POINTER_CALLER_SPAN,
+            1,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_multi_function_pointer_param_resolves_same_target_multi_caller_argument,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_multi_function_pointer_param"
+    },
+    expected: {
+        let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("local_target should regenerate a FunctionNodeId");
+        ExpectedCallSite::path_value_binding(
+            &["f"],
+            MULTI_FUNCTION_POINTER_PARAM_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_multi_function_pointer_param_with_local_target_a_resolves_helper_call,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_multi_function_pointer_param_with_local_target_a"
+    },
+    expected: {
+        let target_args =
+            fixture_call_graph_function_args(&["crate"], "call_multi_function_pointer_param");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("call_multi_function_pointer_param should regenerate a FunctionNodeId");
+        ExpectedCallSite::path(
+            &["call_multi_function_pointer_param"],
+            MULTI_FUNCTION_POINTER_CALLER_A_SPAN,
+            1,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_multi_function_pointer_param_with_local_target_b_resolves_helper_call,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_multi_function_pointer_param_with_local_target_b"
+    },
+    expected: {
+        let target_args =
+            fixture_call_graph_function_args(&["crate"], "call_multi_function_pointer_param");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("call_multi_function_pointer_param should regenerate a FunctionNodeId");
+        ExpectedCallSite::path(
+            &["call_multi_function_pointer_param"],
+            MULTI_FUNCTION_POINTER_CALLER_B_SPAN,
+            1,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_multi_conflicting_function_pointer_param_fails_closed,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_multi_conflicting_function_pointer_param"
+    },
+    expected: {
+        ExpectedCallSite::path_value_binding(
+            &["f"],
+            MULTI_CONFLICTING_FUNCTION_POINTER_PARAM_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::Unsupported,
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_multi_conflicting_function_pointer_param_with_local_target_resolves_helper_call,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_multi_conflicting_function_pointer_param_with_local_target"
+    },
+    expected: {
+        let target_args =
+            fixture_call_graph_function_args(&["crate"], "call_multi_conflicting_function_pointer_param");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("call_multi_conflicting_function_pointer_param should regenerate a FunctionNodeId");
+        ExpectedCallSite::path(
+            &["call_multi_conflicting_function_pointer_param"],
+            MULTI_CONFLICTING_FUNCTION_POINTER_LOCAL_CALLER_SPAN,
+            1,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_multi_conflicting_function_pointer_param_with_other_target_resolves_helper_call,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_multi_conflicting_function_pointer_param_with_other_target"
+    },
+    expected: {
+        let target_args =
+            fixture_call_graph_function_args(&["crate"], "call_multi_conflicting_function_pointer_param");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("call_multi_conflicting_function_pointer_param should regenerate a FunctionNodeId");
+        ExpectedCallSite::path(
+            &["call_multi_conflicting_function_pointer_param"],
+            MULTI_CONFLICTING_FUNCTION_POINTER_OTHER_CALLER_SPAN,
             1,
             0,
             &[],

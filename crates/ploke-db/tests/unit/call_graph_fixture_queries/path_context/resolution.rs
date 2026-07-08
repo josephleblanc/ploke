@@ -258,6 +258,81 @@ fn fixture_context_resolves_single_caller_function_pointer_parameter() -> Result
 }
 
 #[test]
+fn fixture_context_resolves_same_target_multi_caller_function_pointer_parameter()
+-> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let owner = function_id_by_name(&db, "call_multi_function_pointer_param")?;
+    let target = function_id_by_name(&db, "local_target")?;
+    let helper = function_id_by_name(&db, "call_multi_function_pointer_param")?;
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:
+    // `call_multi_function_pointer_param(f) { f() }` has two local callers in
+    // this fixture. Both pass `local_target`, so complete private caller proof
+    // still resolves to one exact target.
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(
+        context.len(),
+        1,
+        "multi-caller parameter owner context rows: {context:#?}"
+    );
+    let row = row_by_path(&context, &["f"]);
+    assert_eq!(row.site.owner_id, owner);
+    assert_eq!(row.site.arg_count, Some(0));
+    assert_eq!(row.site.generic_arg_count, Some(0));
+    assert_resolved_target(
+        row,
+        target,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
+
+    let callers = db.callers_for_target(target)?;
+    let caller_row = caller_by_owner_kind_path(&callers, owner, CallSiteKind::Path, &["f"]);
+    assert_eq!(caller_row.status.status, CallStatusKind::Resolved);
+    assert_eq!(
+        caller_row.status.resolution,
+        Some(CallResolutionKind::LocalExact)
+    );
+    assert_eq!(caller_row.target.target_id, target);
+    assert_eq!(caller_row.target.relation, CallRelationKind::Function);
+
+    let paths = db.call_paths_from_owner(
+        owner,
+        CallPathOptions {
+            max_depth: 1,
+            max_paths: 8,
+        },
+    )?;
+    let path = paths
+        .iter()
+        .find(|path| path.start_id == owner && path.end_id == target && path.depth == 1)
+        .expect("multi-caller parameter owner should have a one-hop path to local_target");
+    assert_eq!(path.edges[0].caller_id, owner);
+    assert_eq!(path.edges[0].callee_id, target);
+    assert_eq!(path.edges[0].relation, CallRelationKind::Function);
+
+    for caller_name in [
+        "call_multi_function_pointer_param_with_local_target_a",
+        "call_multi_function_pointer_param_with_local_target_b",
+    ] {
+        let caller = function_id_by_name(&db, caller_name)?;
+        let caller_context = db.call_context_for_owner(caller)?;
+        let helper_call = row_by_path(&caller_context, &["call_multi_function_pointer_param"]);
+        assert_eq!(helper_call.site.arg_count, Some(1));
+        assert_resolved_target(
+            helper_call,
+            helper,
+            CallRelationKind::Function,
+            CallSiteKind::Path,
+            CallTargetKind::Function,
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
 fn fixture_context_resolves_single_caller_dynamic_function_pointer_parameter_forms()
 -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;

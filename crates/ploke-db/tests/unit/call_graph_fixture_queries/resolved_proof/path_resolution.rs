@@ -40,7 +40,7 @@ fn fixture_projection_stores_real_path_resolution_call_proof_facts() -> Result<(
         function_id_by_name_in_module(&db, &["crate", "import_targets"], "imported_target")?;
     let globbed_target =
         function_id_by_name_in_module(&db, &["crate", "import_targets"], "globbed_target")?;
-    let cases: [(&[&str], &str, &[&str], Uuid); 12] = [
+    let cases: [(&[&str], &str, &[&str], Uuid); 13] = [
         (
             &["crate"],
             "call_unqualified_local_target",
@@ -111,6 +111,12 @@ fn fixture_projection_stores_real_path_resolution_call_proof_facts() -> Result<(
             &["crate"],
             "call_single_aliased_function_pointer_param",
             &["g"],
+            local_target,
+        ),
+        (
+            &["crate"],
+            "call_multi_function_pointer_param",
+            &["f"],
             local_target,
         ),
     ];

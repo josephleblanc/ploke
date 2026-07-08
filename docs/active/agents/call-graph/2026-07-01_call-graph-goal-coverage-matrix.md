@@ -69,8 +69,40 @@ Reason to stay in current bucket: the usage-question audit found broad DB/RAG/TU
 query surfaces already exist; the remaining actionable gaps are proof inputs
 for targetless receiver/dynamic rows, not another query-helper layer.
 
-Latest completed slice in current bucket: mixed path/closure dynamic branch
-candidate proof.
+Latest completed slice in current bucket: complete private multi-caller callable
+parameter proof.
+
+Completed evidence:
+
+- Added fixture rows for
+  `call_multi_function_pointer_param(f: fn() -> i32) { f() }` with two local
+  callers that both pass `local_target`, plus
+  `call_multi_conflicting_function_pointer_param(f: fn() -> i32) { f() }`
+  with one `local_target` caller and one `other_target` caller.
+- Parser and DB tests now prove the existing complete-private-caller resolver
+  contract: multiple local callers are accepted only when every inspected
+  argument proves the same target. The same-target helper resolves `f()` to
+  `local_target`; the conflicting helper remains `Unsupported`, targetless,
+  and carries a `type_resolution_missing` proof blocker.
+- The wrapper functions remain ordinary path calls to their private helpers;
+  argument proof is additional resolver evidence and does not replace those
+  caller edges.
+- Active fixtures were regenerated and `verify-backup-dbs` passed with no
+  tracked fixture drift.
+- Verification passed:
+  `cargo test -p syn_parser --features call_graph call_multi_function_pointer_param -- --nocapture`,
+  `cargo test -p syn_parser --features call_graph call_multi_conflicting_function_pointer_param -- --nocapture`,
+  `cargo test -p ploke-db function_pointer_parameter -- --nocapture`,
+  `cargo test -p ploke-db callable_path -- --nocapture`,
+  `cargo test -p ploke-db path_resolution -- --nocapture`,
+  `cargo xtask fixtures regenerate --active`, `cargo xtask verify-backup-dbs`,
+  `cargo fmt --all --check`, and `git diff --check`.
+- This remains bounded to private helpers with complete source-visible caller
+  sets. Public callable parameters, divergent private caller arguments,
+  interprocedural callable value flow beyond direct call arguments, and general
+  callable trait-object dispatch remain fail-closed.
+
+Previously completed bucket: mixed path/closure dynamic branch candidate proof.
 
 Completed evidence:
 
