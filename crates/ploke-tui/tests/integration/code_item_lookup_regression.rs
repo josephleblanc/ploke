@@ -359,6 +359,7 @@ async fn code_item_lookup_returns_function_pointer_param_blocker() {
     for fixture in [
         CallableBlockerFixture::function_pointer_param().await,
         CallableBlockerFixture::multi_conflicting_function_pointer_param().await,
+        CallableBlockerFixture::generic_fn_once_value_binding().await,
     ] {
         let params = LookupParams {
             item_name: Cow::Borrowed(fixture.owner_name),
@@ -388,10 +389,13 @@ async fn code_item_lookup_returns_function_pointer_param_blocker() {
         //   tests/fixture_crates/fixture_call_graph/src/lib.rs:
         //     public `call_function_pointer_param(f)` calls `f()`;
         //     private `call_multi_conflicting_function_pointer_param(f)` also
-        //     calls `f()`, but its local callers pass different functions.
+        //     calls `f()`, but its local callers pass different functions;
+        //     public `call_generic_fn_once_value_binding(generic_f)` calls
+        //     `generic_f()`.
         //
-        // In both cases the tool must surface the path row and
+        // In all cases the tool must surface the path row and
         // `type_resolution_missing` blocker without fabricating a callee edge.
+        let label = format!("{} callable parameter path call", fixture.owner_name);
         let callee = CallCalleeInfo::Path {
             path: fixture.path.clone(),
         };
@@ -400,7 +404,7 @@ async fn code_item_lookup_returns_function_pointer_param_blocker() {
             fixture.owner,
             &callee,
             &CallStatusKind::Unsupported,
-            "function pointer parameter f()",
+            label.as_str(),
             "code_item_lookup",
         );
         assert_path_blocker_proof(
@@ -409,7 +413,7 @@ async fn code_item_lookup_returns_function_pointer_param_blocker() {
             site_id,
             fixture.build_domain,
             "type_resolution_missing",
-            "function pointer parameter f()",
+            label.as_str(),
             "code_item_lookup",
         );
 
@@ -419,7 +423,7 @@ async fn code_item_lookup_returns_function_pointer_param_blocker() {
                 .parse::<usize>()
                 .expect("outgoing count")
                 >= 1,
-            "code_item_lookup should surface the targetless function-pointer parameter call"
+            "code_item_lookup should surface the targetless callable parameter call"
         );
         assert_eq!(
             ui_field(ui, "proof_context"),

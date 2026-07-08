@@ -931,6 +931,7 @@ async fn code_item_edges_returns_function_pointer_param_blocker() {
     for fixture in [
         CallableBlockerFixture::function_pointer_param().await,
         CallableBlockerFixture::multi_conflicting_function_pointer_param().await,
+        CallableBlockerFixture::generic_fn_once_value_binding().await,
     ] {
         let params = EdgesParams {
             item_name: Cow::Borrowed(fixture.owner_name),
@@ -962,10 +963,13 @@ async fn code_item_edges_returns_function_pointer_param_blocker() {
         //   tests/fixture_crates/fixture_call_graph/src/lib.rs:
         //     public `call_function_pointer_param(f)` calls `f()`;
         //     private `call_multi_conflicting_function_pointer_param(f)` also
-        //     calls `f()`, but its local callers pass different functions.
+        //     calls `f()`, but its local callers pass different functions;
+        //     public `call_generic_fn_once_value_binding(generic_f)` calls
+        //     `generic_f()`.
         //
         // Edges should expose the same fail-closed path row as lookup while
         // preserving zero outgoing call edges for the unproven parameter target.
+        let label = format!("{} callable parameter path call", fixture.owner_name);
         let callee = CallCalleeInfo::Path {
             path: fixture.path.clone(),
         };
@@ -974,7 +978,7 @@ async fn code_item_edges_returns_function_pointer_param_blocker() {
             fixture.owner,
             &callee,
             &CallStatusKind::Unsupported,
-            "function pointer parameter f()",
+            label.as_str(),
             "code_item_edges",
         );
         assert_path_blocker_proof(
@@ -983,12 +987,12 @@ async fn code_item_edges_returns_function_pointer_param_blocker() {
             site_id,
             fixture.build_domain,
             "type_resolution_missing",
-            "function pointer parameter f()",
+            label.as_str(),
             "code_item_edges",
         );
         assert!(
             summary_usize(&payload, "blocked") >= 1,
-            "code_item_edges summary should count the targetless function-pointer parameter row: {payload:#?}"
+            "code_item_edges summary should count the targetless callable parameter row: {payload:#?}"
         );
 
         let ui = result.ui_payload.as_ref().expect("ui payload");
@@ -997,7 +1001,7 @@ async fn code_item_edges_returns_function_pointer_param_blocker() {
                 .parse::<usize>()
                 .expect("outgoing count")
                 >= 1,
-            "code_item_edges should surface the targetless function-pointer parameter call"
+            "code_item_edges should surface the targetless callable parameter call"
         );
         assert_eq!(
             ui_field(ui, "proof_context"),

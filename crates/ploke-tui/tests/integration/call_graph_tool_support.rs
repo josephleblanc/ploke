@@ -464,6 +464,10 @@ impl CallableBlockerFixture {
         Self::new_for_owner("call_multi_conflicting_function_pointer_param", &["f"], 8).await
     }
 
+    pub(crate) async fn generic_fn_once_value_binding() -> Self {
+        Self::new_for_owner("call_generic_fn_once_value_binding", &["generic_f"], 2).await
+    }
+
     async fn new_for_owner(
         owner_name: &'static str,
         path: &[&str],

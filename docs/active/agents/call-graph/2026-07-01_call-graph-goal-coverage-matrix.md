@@ -88,7 +88,8 @@ Completed evidence:
   and the fail-closed conflicting helper blocker row without fabricating a target.
 - Exact TUI `code_item_lookup` and `code_item_edges` tests preserve the
   conflicting helper's targetless blocker proof alongside the existing public
-  opaque function-pointer parameter blocker.
+  opaque function-pointer parameter blocker and public generic `FnOnce`
+  parameter blocker.
 - The wrapper functions remain ordinary path calls to their private helpers;
   argument proof is additional resolver evidence and does not replace those
   caller edges.
