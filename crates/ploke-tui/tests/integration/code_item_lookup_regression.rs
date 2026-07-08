@@ -356,71 +356,76 @@ async fn code_item_lookup_returns_nested_self_field_method_context() {
 
 #[tokio::test]
 async fn code_item_lookup_returns_function_pointer_param_blocker() {
-    let fixture = CallableBlockerFixture::function_pointer_param().await;
-    let params = LookupParams {
-        item_name: Cow::Borrowed(fixture.owner_name),
-        file_path: Cow::Owned(fixture.file_path.display().to_string()),
-        node_kind: Cow::Borrowed("function"),
-        module_path: Cow::Borrowed("crate"),
-        owner_trait: None,
-        owner_type: None,
-        parent_name: None,
-    };
+    for fixture in [
+        CallableBlockerFixture::function_pointer_param().await,
+        CallableBlockerFixture::multi_conflicting_function_pointer_param().await,
+    ] {
+        let params = LookupParams {
+            item_name: Cow::Borrowed(fixture.owner_name),
+            file_path: Cow::Owned(fixture.file_path.display().to_string()),
+            node_kind: Cow::Borrowed("function"),
+            module_path: Cow::Borrowed("crate"),
+            owner_trait: None,
+            owner_type: None,
+            parent_name: None,
+        };
 
-    let result = CodeItemLookup::execute(params, fixture.ctx("fn-pointer-param-lookup"))
-        .await
-        .expect("function pointer param lookup");
-    let payload: serde_json::Value =
-        serde_json::from_str(&result.content).expect("deserialize ConciseContext");
-    let call_context = payload
-        .get("call_context")
-        .and_then(serde_json::Value::as_array)
-        .expect("call_context array");
-    let proof_context = payload
-        .get("proof_context")
-        .and_then(serde_json::Value::as_array)
-        .expect("proof_context array");
+        let result = CodeItemLookup::execute(params, fixture.ctx("fn-pointer-param-lookup"))
+            .await
+            .expect("function pointer param lookup");
+        let payload: serde_json::Value =
+            serde_json::from_str(&result.content).expect("deserialize ConciseContext");
+        let call_context = payload
+            .get("call_context")
+            .and_then(serde_json::Value::as_array)
+            .expect("call_context array");
+        let proof_context = payload
+            .get("proof_context")
+            .and_then(serde_json::Value::as_array)
+            .expect("proof_context array");
 
-    // Source oracle:
-    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:675
-    //     `call_function_pointer_param(f: fn() -> i32)` calls `f()`.
-    //
-    // `f` is a parameter, not a local binding with initializer proof, so the
-    // tool must surface the path row and `type_resolution_missing` blocker
-    // without fabricating a callee edge to any concrete function item.
-    let callee = CallCalleeInfo::Path {
-        path: fixture.path.clone(),
-    };
-    let site_id = assert_path_context(
-        call_context,
-        fixture.owner,
-        &callee,
-        &CallStatusKind::Unsupported,
-        "function pointer parameter f()",
-        "code_item_lookup",
-    );
-    assert_path_blocker_proof(
-        proof_context,
-        fixture.owner,
-        site_id,
-        fixture.build_domain,
-        "type_resolution_missing",
-        "function pointer parameter f()",
-        "code_item_lookup",
-    );
+        // Source oracle:
+        //   tests/fixture_crates/fixture_call_graph/src/lib.rs:
+        //     public `call_function_pointer_param(f)` calls `f()`;
+        //     private `call_multi_conflicting_function_pointer_param(f)` also
+        //     calls `f()`, but its local callers pass different functions.
+        //
+        // In both cases the tool must surface the path row and
+        // `type_resolution_missing` blocker without fabricating a callee edge.
+        let callee = CallCalleeInfo::Path {
+            path: fixture.path.clone(),
+        };
+        let site_id = assert_path_context(
+            call_context,
+            fixture.owner,
+            &callee,
+            &CallStatusKind::Unsupported,
+            "function pointer parameter f()",
+            "code_item_lookup",
+        );
+        assert_path_blocker_proof(
+            proof_context,
+            fixture.owner,
+            site_id,
+            fixture.build_domain,
+            "type_resolution_missing",
+            "function pointer parameter f()",
+            "code_item_lookup",
+        );
 
-    let ui = result.ui_payload.as_ref().expect("ui payload");
-    assert!(
-        ui_field(ui, "call_context_outgoing")
-            .parse::<usize>()
-            .expect("outgoing count")
-            >= 1,
-        "code_item_lookup should surface the targetless function-pointer parameter call"
-    );
-    assert_eq!(
-        ui_field(ui, "proof_context"),
-        proof_context.len().to_string()
-    );
+        let ui = result.ui_payload.as_ref().expect("ui payload");
+        assert!(
+            ui_field(ui, "call_context_outgoing")
+                .parse::<usize>()
+                .expect("outgoing count")
+                >= 1,
+            "code_item_lookup should surface the targetless function-pointer parameter call"
+        );
+        assert_eq!(
+            ui_field(ui, "proof_context"),
+            proof_context.len().to_string()
+        );
+    }
 }
 
 async fn assert_resolved_dynamic_callable_lookup(owner_name: &'static str) {

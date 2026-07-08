@@ -928,76 +928,82 @@ async fn code_item_edges_returns_nested_self_field_method_context() {
 
 #[tokio::test]
 async fn code_item_edges_returns_function_pointer_param_blocker() {
-    let fixture = CallableBlockerFixture::function_pointer_param().await;
-    let params = EdgesParams {
-        item_name: Cow::Borrowed(fixture.owner_name),
-        file_path: Cow::Owned(fixture.file_path.display().to_string()),
-        node_kind: Cow::Borrowed("function"),
-        module_path: Cow::Borrowed("crate"),
-        owner_trait: None,
-        owner_type: None,
-        parent_name: None,
-    };
+    for fixture in [
+        CallableBlockerFixture::function_pointer_param().await,
+        CallableBlockerFixture::multi_conflicting_function_pointer_param().await,
+    ] {
+        let params = EdgesParams {
+            item_name: Cow::Borrowed(fixture.owner_name),
+            file_path: Cow::Owned(fixture.file_path.display().to_string()),
+            node_kind: Cow::Borrowed("function"),
+            module_path: Cow::Borrowed("crate"),
+            owner_trait: None,
+            owner_type: None,
+            parent_name: None,
+        };
 
-    let result = CodeItemEdges::execute(params, fixture.ctx("fn-pointer-param-edges"))
-        .await
-        .expect("function pointer param edges");
-    let payload: serde_json::Value =
-        serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
-    let call_context = payload
-        .get("node_info")
-        .and_then(|node| node.get("call_context"))
-        .and_then(serde_json::Value::as_array)
-        .expect("node_info.call_context array");
-    let proof_context = payload
-        .get("node_info")
-        .and_then(|node| node.get("proof_context"))
-        .and_then(serde_json::Value::as_array)
-        .expect("node_info.proof_context array");
+        let result = CodeItemEdges::execute(params, fixture.ctx("fn-pointer-param-edges"))
+            .await
+            .expect("function pointer param edges");
+        let payload: serde_json::Value =
+            serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
+        let call_context = payload
+            .get("node_info")
+            .and_then(|node| node.get("call_context"))
+            .and_then(serde_json::Value::as_array)
+            .expect("node_info.call_context array");
+        let proof_context = payload
+            .get("node_info")
+            .and_then(|node| node.get("proof_context"))
+            .and_then(serde_json::Value::as_array)
+            .expect("node_info.proof_context array");
 
-    // Source oracle:
-    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:675
-    //     `call_function_pointer_param(f: fn() -> i32)` calls `f()`.
-    //
-    // Edges should expose the same fail-closed path row as lookup while
-    // preserving zero outgoing call edges for the unproven parameter target.
-    let callee = CallCalleeInfo::Path {
-        path: fixture.path.clone(),
-    };
-    let site_id = assert_path_context(
-        call_context,
-        fixture.owner,
-        &callee,
-        &CallStatusKind::Unsupported,
-        "function pointer parameter f()",
-        "code_item_edges",
-    );
-    assert_path_blocker_proof(
-        proof_context,
-        fixture.owner,
-        site_id,
-        fixture.build_domain,
-        "type_resolution_missing",
-        "function pointer parameter f()",
-        "code_item_edges",
-    );
-    assert!(
-        summary_usize(&payload, "blocked") >= 1,
-        "code_item_edges summary should count the targetless function-pointer parameter row: {payload:#?}"
-    );
+        // Source oracle:
+        //   tests/fixture_crates/fixture_call_graph/src/lib.rs:
+        //     public `call_function_pointer_param(f)` calls `f()`;
+        //     private `call_multi_conflicting_function_pointer_param(f)` also
+        //     calls `f()`, but its local callers pass different functions.
+        //
+        // Edges should expose the same fail-closed path row as lookup while
+        // preserving zero outgoing call edges for the unproven parameter target.
+        let callee = CallCalleeInfo::Path {
+            path: fixture.path.clone(),
+        };
+        let site_id = assert_path_context(
+            call_context,
+            fixture.owner,
+            &callee,
+            &CallStatusKind::Unsupported,
+            "function pointer parameter f()",
+            "code_item_edges",
+        );
+        assert_path_blocker_proof(
+            proof_context,
+            fixture.owner,
+            site_id,
+            fixture.build_domain,
+            "type_resolution_missing",
+            "function pointer parameter f()",
+            "code_item_edges",
+        );
+        assert!(
+            summary_usize(&payload, "blocked") >= 1,
+            "code_item_edges summary should count the targetless function-pointer parameter row: {payload:#?}"
+        );
 
-    let ui = result.ui_payload.as_ref().expect("ui payload");
-    assert!(
-        ui_field(ui, "call_context_outgoing")
-            .parse::<usize>()
-            .expect("outgoing count")
-            >= 1,
-        "code_item_edges should surface the targetless function-pointer parameter call"
-    );
-    assert_eq!(
-        ui_field(ui, "proof_context"),
-        proof_context.len().to_string()
-    );
+        let ui = result.ui_payload.as_ref().expect("ui payload");
+        assert!(
+            ui_field(ui, "call_context_outgoing")
+                .parse::<usize>()
+                .expect("outgoing count")
+                >= 1,
+            "code_item_edges should surface the targetless function-pointer parameter call"
+        );
+        assert_eq!(
+            ui_field(ui, "proof_context"),
+            proof_context.len().to_string()
+        );
+    }
 }
 
 #[tokio::test]

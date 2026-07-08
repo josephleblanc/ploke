@@ -457,10 +457,18 @@ impl FixtureSelfFieldReceiverToolFixture {
 
 impl CallableBlockerFixture {
     pub(crate) async fn function_pointer_param() -> Self {
-        Self::new_for_owner("call_function_pointer_param", &["f"]).await
+        Self::new_for_owner("call_function_pointer_param", &["f"], 2).await
     }
 
-    async fn new_for_owner(owner_name: &'static str, path: &[&str]) -> Self {
+    pub(crate) async fn multi_conflicting_function_pointer_param() -> Self {
+        Self::new_for_owner("call_multi_conflicting_function_pointer_param", &["f"], 8).await
+    }
+
+    async fn new_for_owner(
+        owner_name: &'static str,
+        path: &[&str],
+        expected_projection_count: usize,
+    ) -> Self {
         let db = Arc::new(Database::new(
             setup_db_full_multi_embedding("fixture_call_graph").expect("fixture_call_graph db"),
         ));
@@ -481,8 +489,8 @@ impl CallableBlockerFixture {
         assert_eq!(
             db.project_call_proof_facts_for_node(owner, "bd:fixture-call-graph")
                 .expect("project callable blocker proof facts"),
-            2,
-            "{owner_name} should project exactly one call_site row and one blocked call_resolution row"
+            expected_projection_count,
+            "{owner_name} should project the expected outgoing/incoming call proof fact rows"
         );
 
         let state = app_state_with_rag(db, crate_root).await;

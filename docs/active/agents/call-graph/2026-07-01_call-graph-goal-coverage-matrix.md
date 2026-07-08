@@ -10,7 +10,7 @@ Related planning files:
 - [`2026-06-28_real-corpus-call-site-oracle-matrices.md`](2026-06-28_real-corpus-call-site-oracle-matrices.md)
 - [`2026-07-07_call-graph-usage-question-gap-audit.md`](2026-07-07_call-graph-usage-question-gap-audit.md)
 
-Status date: 2026-07-07
+Status date: 2026-07-08
 Baseline HEAD when created: `19860cc40`
 
 ## Operating Rule
@@ -70,7 +70,7 @@ query surfaces already exist; the remaining actionable gaps are proof inputs
 for targetless receiver/dynamic rows, not another query-helper layer.
 
 Latest completed slice in current bucket: complete private multi-caller callable
-parameter proof.
+parameter proof and downstream propagation.
 
 Completed evidence:
 
@@ -84,6 +84,11 @@ Completed evidence:
   argument proves the same target. The same-target helper resolves `f()` to
   `local_target`; the conflicting helper remains `Unsupported`, targetless,
   and carries a `type_resolution_missing` proof blocker.
+- RAG call-context collection preserves the same resolved same-target helper row
+  and the fail-closed conflicting helper blocker row without fabricating a target.
+- Exact TUI `code_item_lookup` and `code_item_edges` tests preserve the
+  conflicting helper's targetless blocker proof alongside the existing public
+  opaque function-pointer parameter blocker.
 - The wrapper functions remain ordinary path calls to their private helpers;
   argument proof is additional resolver evidence and does not replace those
   caller edges.
@@ -95,6 +100,9 @@ Completed evidence:
   `cargo test -p ploke-db function_pointer_parameter -- --nocapture`,
   `cargo test -p ploke-db callable_path -- --nocapture`,
   `cargo test -p ploke-db path_resolution -- --nocapture`,
+  `cargo test -p ploke-rag call_context_collection_reads_real_fixture_callable_path_rows -- --nocapture`,
+  `cargo test -p ploke-tui --test integration code_item_lookup_returns_function_pointer_param_blocker -- --nocapture`,
+  `cargo test -p ploke-tui --test integration code_item_edges_returns_function_pointer_param_blocker -- --nocapture`,
   `cargo xtask fixtures regenerate --active`, `cargo xtask verify-backup-dbs`,
   `cargo fmt --all --check`, and `git diff --check`.
 - This remains bounded to private helpers with complete source-visible caller

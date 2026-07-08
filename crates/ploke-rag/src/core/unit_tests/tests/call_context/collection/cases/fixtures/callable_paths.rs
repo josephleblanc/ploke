@@ -43,6 +43,14 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
         &db,
         &function_in_module_query(&["crate"], "call_single_function_pointer_param"),
     )?;
+    let multi_param_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_multi_function_pointer_param"),
+    )?;
+    let multi_conflicting_param_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_multi_conflicting_function_pointer_param"),
+    )?;
     let single_parenthesized_param_owner = one_uuid(
         &db,
         &function_in_module_query(
@@ -62,7 +70,8 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
         &db,
         &function_in_module_query(&["crate"], "call_prelude_vec_new"),
     )?;
-    let rag = init_test_rag_mock(Arc::clone(&db));
+    let mut rag = init_test_rag_mock(Arc::clone(&db));
+    rag.cfg.call_context.max_owner_hits = 64;
     assert!(
         !rag.call_context_degraded(),
         "fresh fixture call_graph schema should enable callable path call context"
@@ -77,6 +86,8 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
         (block_owner, 1.0),
         (fn_param_owner, 1.0),
         (single_param_owner, 1.0),
+        (multi_param_owner, 1.0),
+        (multi_conflicting_param_owner, 1.0),
         (single_parenthesized_param_owner, 1.0),
         (generic_owner, 1.0),
         (boxed_owner, 1.0),
@@ -285,6 +296,73 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
     assert_eq!(
         single_param_call.targets[0].relation,
         CallTargetKind::Function
+    );
+
+    let multi_param_context = call_context
+        .get(&multi_param_owner)
+        .expect("same-target multi-caller function-pointer param owner should receive outgoing call context");
+    let multi_param_call = multi_param_context
+        .iter()
+        .find(|call| {
+            call.kind == CallSiteKind::Path
+                && call.callee
+                    == CallCalleeInfo::Path {
+                        path: vec!["f".to_string()],
+                    }
+                && call
+                    .targets
+                    .iter()
+                    .any(|target| target.target_id == local_target)
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "same-target multi-caller function-pointer param context should include resolved f() -> local_target: {multi_param_context:#?}"
+            )
+        });
+    assert_eq!(multi_param_call.status, CallStatusKind::Resolved);
+    assert_eq!(
+        multi_param_call.resolution,
+        Some(CallResolutionKind::LocalExact)
+    );
+    assert_eq!(multi_param_call.targets.len(), 1);
+    assert_eq!(multi_param_call.targets[0].target_id, local_target);
+    assert_eq!(
+        multi_param_call.targets[0].relation,
+        CallTargetKind::Function
+    );
+
+    let multi_conflicting_context = call_context
+        .get(&multi_conflicting_param_owner)
+        .expect("conflicting multi-caller function-pointer param owner should receive outgoing call context");
+    let multi_conflicting_matches = multi_conflicting_context
+        .iter()
+        .filter(|call| {
+            call.owner_id == multi_conflicting_param_owner
+                && call.kind == CallSiteKind::Path
+                && call.callee
+                    == CallCalleeInfo::Path {
+                        path: vec!["f".to_string()],
+                    }
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        multi_conflicting_matches.len(),
+        1,
+        "conflicting multi-caller function-pointer param body context: {multi_conflicting_context:#?}"
+    );
+    let multi_conflicting_call = multi_conflicting_matches[0];
+    assert_eq!(multi_conflicting_call.kind, CallSiteKind::Path);
+    assert_eq!(
+        multi_conflicting_call.callee,
+        CallCalleeInfo::Path {
+            path: vec!["f".to_string()],
+        }
+    );
+    assert_eq!(multi_conflicting_call.status, CallStatusKind::Unsupported);
+    assert!(multi_conflicting_call.resolution.is_none());
+    assert!(
+        multi_conflicting_call.targets.is_empty(),
+        "conflicting multi-caller function-pointer calls must not fabricate RAG targets: {multi_conflicting_call:#?}"
     );
 
     let single_parenthesized_param_context = call_context
