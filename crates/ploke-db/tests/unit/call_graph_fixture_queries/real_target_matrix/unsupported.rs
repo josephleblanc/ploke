@@ -3,6 +3,7 @@ use super::common::*;
 use super::source_lines::{
     SourceLineFanout, assert_targetless_dynamic_line_fanout_by_method_arg_count,
 };
+use ploke_db::ProofGraphStore;
 use ploke_test_utils::CORPUS_AXUM_CALL_GRAPH;
 
 #[test]
@@ -274,6 +275,28 @@ fn axum_macro_callback_rows_are_visible_or_explicitly_absent() -> Result<(), DbE
         callback.site.id,
         "axum-macros/src/lib.rs:737 f(attr, input)",
     )?;
+    db.upsert_proof_fact_values(&[ploke_test_utils::axum_callback_parameter_blocker(
+        callback.site.id,
+    )])?;
+    let callback_site = callback.site.id.to_string();
+    let blockers = db.proof_blockers()?;
+    assert!(
+        blockers.iter().any(|proof| {
+            proof.call_site_id.as_deref() == Some(callback_site.as_str())
+                && proof.reason == "dynamic_dispatch_unbounded"
+                && proof.status == "blocked"
+        }),
+        "axum-macros/src/lib.rs:737 f(attr, input) should expose a callable-parameter proof blocker: {blockers:#?}"
+    );
+    let proof_rows = db.proof_graphrag_context("dynamic_dispatch_unbounded")?;
+    assert!(
+        proof_rows.iter().any(|proof| {
+            proof.kind == "proof_blocker"
+                && proof.call_site_id.as_deref() == Some(callback_site.as_str())
+                && proof.blocker_reason.as_deref() == Some("dynamic_dispatch_unbounded")
+        }),
+        "proof context lookup should retrieve the callback-parameter blocker: {proof_rows:#?}"
+    );
 
     let from_request_expand =
         function_id_by_name_in_module(&db, &["crate", "from_request"], "expand")?;

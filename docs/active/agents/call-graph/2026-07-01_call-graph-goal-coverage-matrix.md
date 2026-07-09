@@ -67,6 +67,23 @@ Next bucket: choose the next uncovered matrix bucket. Do not add more
 receiver initializer breadth unless it has a bounded source oracle and reuses
 an existing proof carrier.
 
+Latest completed slice: real-corpus callback-parameter runtime-dispatch
+blocker proof.
+
+Completed evidence:
+
+- The source oracle is `axum-macros/src/lib.rs:727,734-738`, where
+  `expand_attr_with` accepts `f: F` with a callable bound, immediately invokes
+  a closure, and the closure body calls `f(attr, input)`.
+- The persisted call graph keeps the closure-owned `f(attr, input)` path row
+  `Unsupported`, targetless, and absent from traversal edges.
+- DB, RAG proof context, and exact TUI `code_item_lookup` / `code_item_edges`
+  tests now attach and expose an explicit `dynamic_dispatch_unbounded`
+  `proof_blocker` for that same callsite, while preserving the projected
+  `type_resolution_missing` call-resolution row.
+- This is proof visibility only. It does not perform interprocedural callback
+  argument flow and does not fabricate a local callee edge for `f`.
+
 Latest completed slice in current bucket: branch-initialized local receiver
 proof.
 

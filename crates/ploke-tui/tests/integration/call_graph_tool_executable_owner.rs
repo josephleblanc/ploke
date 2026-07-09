@@ -12,8 +12,8 @@ use ploke_tui::tools::{
 };
 
 use crate::call_graph_tool_support::{
-    AxumHandlerAsyncBlockToolFixture, LocalItemToolFixture, assert_method_proof,
-    assert_path_blocker_proof, assert_runtime_dispatch_blocker, ui_field,
+    AxumCallbackClosureToolFixture, AxumHandlerAsyncBlockToolFixture, LocalItemToolFixture,
+    assert_method_proof, assert_path_blocker_proof, assert_runtime_dispatch_blocker, ui_field,
 };
 
 const AXUM_DOMAIN: &str = "bd:corpus-axum-call-graph";
@@ -403,6 +403,124 @@ async fn code_item_edges_accepts_real_corpus_async_block_body_owner() {
 }
 
 #[tokio::test]
+async fn code_item_lookup_accepts_axum_callback_closure_owner() {
+    let fixture = AxumCallbackClosureToolFixture::new().await;
+    let params = LookupParams {
+        item_name: Cow::Borrowed("closure"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("closure"),
+        module_path: Cow::Owned(fixture.module_path_arg()),
+        owner_trait: None,
+        owner_type: None,
+        parent_name: Some(Cow::Borrowed("expand_attr_with")),
+    };
+
+    let result = CodeItemLookup::execute(params, fixture.ctx("callback-closure-lookup"))
+        .await
+        .expect("code_item_lookup should accept closure executable owners");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize ConciseContext");
+    let call_context = payload
+        .get("call_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_context array");
+    let proof_context = payload
+        .get("proof_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("proof_context array");
+    let calls = decode_call_context(call_context);
+
+    // Matrix:
+    //   docs/active/agents/call-graph/
+    //   2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //
+    // Source chain:
+    //   axum-macros/src/lib.rs:727 defines `f: F`.
+    //   axum-macros/src/lib.rs:734-738 immediately invokes a closure.
+    //   axum-macros/src/lib.rs:737 calls `f(attr, input)` inside that closure.
+    // Expected traversal: the exact tool can address the nested closure owner,
+    // but the captured callback parameter remains targetless until
+    // interprocedural callback argument proof exists.
+    assert_callback_parameter_rows(&calls, proof_context, &fixture, "code_item_lookup");
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert!(
+        ui_field(ui, "call_context_outgoing")
+            .parse::<usize>()
+            .expect("outgoing count")
+            >= 1,
+        "closure lookup should surface the targetless callback row"
+    );
+    assert!(
+        ui_field(ui, "proof_context")
+            .parse::<usize>()
+            .expect("proof count")
+            >= 3,
+        "closure lookup should surface projected and explicit blocker proof rows"
+    );
+}
+
+#[tokio::test]
+async fn code_item_edges_accepts_axum_callback_closure_owner() {
+    let fixture = AxumCallbackClosureToolFixture::new().await;
+    let params = EdgesParams {
+        item_name: Cow::Borrowed("closure"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("closure"),
+        module_path: Cow::Owned(fixture.module_path_arg()),
+        owner_trait: None,
+        owner_type: None,
+        parent_name: Some(Cow::Borrowed("expand_attr_with")),
+    };
+
+    let result = CodeItemEdges::execute(params, fixture.ctx("callback-closure-edges"))
+        .await
+        .expect("code_item_edges should accept closure executable owners");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
+    let node_info = payload.get("node_info").expect("node_info");
+    let call_context = node_info
+        .get("call_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.call_context array");
+    let proof_context = node_info
+        .get("proof_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.proof_context array");
+    let calls = decode_call_context(call_context);
+
+    assert_callback_parameter_rows(&calls, proof_context, &fixture, "code_item_edges");
+
+    let paths = payload
+        .get("call_paths_from_owner")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_paths_from_owner array")
+        .iter()
+        .map(|value| serde_json::from_value::<CallPathInfo>(value.clone()).expect("call path row"))
+        .collect::<Vec<_>>();
+    assert!(
+        paths.is_empty(),
+        "captured callback parameter row must not fabricate traversal paths: {paths:#?}"
+    );
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert!(
+        ui_field(ui, "blocked_calls")
+            .parse::<usize>()
+            .expect("blocked call count")
+            >= 1,
+        "closure edges should count the unsupported callback row"
+    );
+    assert!(
+        ui_field(ui, "proof_context")
+            .parse::<usize>()
+            .expect("proof count")
+            >= 3,
+        "closure edges should surface projected and explicit blocker proof rows"
+    );
+}
+
+#[tokio::test]
 async fn code_item_call_path_accepts_local_item_body_owner_endpoint() {
     let fixture = LocalItemToolFixture::axum_path_deserialize_local_impl_method().await;
     let endpoint = CodeItemCallPathEndpoint {
@@ -597,6 +715,50 @@ fn async_block_into_response_call<'a>(
                 "expected Handler::call async block to expose awaited into_response() call: {calls:#?}"
             )
         })
+}
+
+fn callback_parameter_call<'a>(
+    calls: &'a [CallContextInfo],
+    fixture: &AxumCallbackClosureToolFixture,
+) -> &'a CallContextInfo {
+    calls
+        .iter()
+        .find(|call| {
+            call.owner_id == fixture.owner
+                && call.kind == CallSiteKind::Path
+                && call.callee
+                    == CallCalleeInfo::Path {
+                        path: vec!["f".to_string()],
+                    }
+        })
+        .unwrap_or_else(|| {
+            panic!("expected expand_attr_with closure to expose f(attr, input) call: {calls:#?}")
+        })
+}
+
+fn assert_callback_parameter_rows(
+    calls: &[CallContextInfo],
+    proof_context: &[serde_json::Value],
+    fixture: &AxumCallbackClosureToolFixture,
+    tool: &str,
+) {
+    let callback = callback_parameter_call(calls, fixture);
+    assert_unsupported_targetless(callback, "expand_attr_with closure f(attr, input)");
+    assert_path_blocker_proof(
+        proof_context,
+        fixture.owner,
+        callback.site_id,
+        AXUM_DOMAIN,
+        "type_resolution_missing",
+        "expand_attr_with closure f(attr, input)",
+        tool,
+    );
+    assert_runtime_dispatch_blocker(
+        proof_context,
+        callback.site_id,
+        "expand_attr_with closure f(attr, input)",
+        tool,
+    );
 }
 
 fn assert_handler_async_block_targetless_rows(

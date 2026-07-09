@@ -27,12 +27,13 @@ use ploke_rag::{RagConfig, RagService, TokenBudget};
 use ploke_test_utils::{
     AXUM_OPAQUE_FUTURE_SUMMARY_ID, AXUM_REQUEST_BUILDER_SUMMARY_ID, AXUM_ROUTING_POST_SUMMARY_ID,
     AXUM_STD_MEM_REPLACE_SUMMARY_ID, CORPUS_AXUM_CALL_GRAPH, CORPUS_CHRONO_CALL_GRAPH,
-    CORPUS_MEMCHR_CALL_GRAPH, axum_body_empty_dependency_record, axum_dependency_record,
-    axum_handler_async_block_poll_resume_blocker, axum_opaque_future_boundary_id,
-    axum_opaque_future_macro_summary_records, axum_request_builder_summary_records,
-    axum_routing_post_boundary_id, axum_routing_post_macro_summary_records,
-    axum_std_mem_replace_summary_records, fixture_async_closure_poll_resume_blocker,
-    fresh_backup_fixture_db, setup_db_full_multi_embedding, workspace_root,
+    CORPUS_MEMCHR_CALL_GRAPH, axum_body_empty_dependency_record, axum_callback_parameter_blocker,
+    axum_dependency_record, axum_handler_async_block_poll_resume_blocker,
+    axum_opaque_future_boundary_id, axum_opaque_future_macro_summary_records,
+    axum_request_builder_summary_records, axum_routing_post_boundary_id,
+    axum_routing_post_macro_summary_records, axum_std_mem_replace_summary_records,
+    fixture_async_closure_poll_resume_blocker, fresh_backup_fixture_db,
+    setup_db_full_multi_embedding, workspace_root,
 };
 use ploke_tui::{
     EventBus,
@@ -84,6 +85,13 @@ pub(crate) struct LocalItemToolFixture {
 }
 
 pub(crate) struct AxumHandlerAsyncBlockToolFixture {
+    pub(crate) state: Arc<AppState>,
+    pub(crate) file_path: PathBuf,
+    pub(crate) module_path: Vec<String>,
+    pub(crate) owner: Uuid,
+}
+
+pub(crate) struct AxumCallbackClosureToolFixture {
     pub(crate) state: Arc<AppState>,
     pub(crate) file_path: PathBuf,
     pub(crate) module_path: Vec<String>,
@@ -1256,6 +1264,76 @@ impl AxumHandlerAsyncBlockToolFixture {
         ])
         .expect("upsert Handler::call async-block poll/resume blockers");
         let state = axum_state_for_target(Arc::clone(&db), &target, "async_block").await;
+
+        Self {
+            state,
+            file_path: target.file_path,
+            module_path: target.module_path,
+            owner: target.id,
+        }
+    }
+
+    pub(crate) fn module_path_arg(&self) -> String {
+        self.module_path.join("::")
+    }
+
+    pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
+        ctx_for_state(&self.state, call_id)
+    }
+}
+
+impl AxumCallbackClosureToolFixture {
+    pub(crate) async fn new() -> Self {
+        let db = axum_call_graph_db();
+        let target = axum_call_body_owner_target_by_label_and_parent(
+            db.as_ref(),
+            "Closure",
+            "closure",
+            "expand_attr_with",
+            &["crate"],
+            "axum-macros/src/lib.rs",
+        );
+        let exact = graph_resolve_exact_call_body_owner_for_parent(
+            db.as_ref(),
+            target.file_path.as_path(),
+            &target.module_path,
+            "closure",
+            "Closure",
+            "expand_attr_with",
+        )
+        .expect("resolve expand_attr_with IIFE closure owner");
+        assert_eq!(
+            exact.len(),
+            1,
+            "parent_name should disambiguate the expand_attr_with closure owner"
+        );
+        assert_eq!(exact[0].id, target.id);
+        assert!(
+            db.project_call_proof_facts_for_node(target.id, "bd:corpus-axum-call-graph")
+                .expect("project expand_attr_with closure proof facts")
+                >= 2,
+            "expand_attr_with closure should project f(attr, input) proof rows"
+        );
+        let context = db
+            .call_context_for_owner(target.id)
+            .expect("expand_attr_with closure call context");
+        let callback = context
+            .iter()
+            .find(|row| {
+                row.site.kind == ploke_db::CallSiteKind::Path
+                    && row.site.path.as_ref() == Some(&vec!["f".to_string()])
+            })
+            .unwrap_or_else(|| {
+                panic!("expand_attr_with closure should expose f(attr, input): {context:#?}")
+            });
+        assert_eq!(callback.status.status, DbCallStatusKind::Unsupported);
+        assert!(
+            callback.targets.is_empty(),
+            "expand_attr_with closure f(attr, input) should stay targetless: {callback:#?}"
+        );
+        db.upsert_proof_fact_values(&[axum_callback_parameter_blocker(callback.site.id)])
+            .expect("upsert axum callback parameter blocker");
+        let state = axum_state_for_target(Arc::clone(&db), &target, "closure").await;
 
         Self {
             state,

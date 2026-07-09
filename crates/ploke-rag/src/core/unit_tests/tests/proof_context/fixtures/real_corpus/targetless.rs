@@ -7,7 +7,10 @@ use super::helpers::{
     targetless_path_site,
 };
 use ploke_db::ProofGraphStore;
-use ploke_test_utils::{AXUM_STD_MEM_REPLACE_SUMMARY_ID, axum_std_mem_replace_summary_records};
+use ploke_test_utils::{
+    AXUM_STD_MEM_REPLACE_SUMMARY_ID, axum_callback_parameter_blocker,
+    axum_std_mem_replace_summary_records,
+};
 
 struct DynamicCase {
     label: &'static str,
@@ -826,6 +829,85 @@ async fn proof_context_collection_preserves_axum_handler_async_block_owner_block
         into_response_site,
         "dynamic_dispatch_unbounded",
         "Handler::call async-block into_response() async poll/resume",
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn proof_context_collection_preserves_axum_callback_parameter_blocker() -> Result<(), Error> {
+    init_tracing_once();
+    let db = axum_db()?;
+
+    let parent = function_id(&db, &["crate"], "expand_attr_with")?;
+    let parent_rag = init_test_rag_mock(Arc::clone(&db));
+    let parent_context = parent_rag.collect_call_context(&[(parent, 1.0)])?;
+    let parent_calls = parent_context
+        .get(&parent)
+        .expect("expand_attr_with should receive outgoing call context");
+    let iife = parent_calls
+        .iter()
+        .find(|call| {
+            call.kind == CallSiteKind::Dynamic
+                && call
+                    .targets
+                    .iter()
+                    .any(|target| target.relation == CallTargetKind::DynamicClosure)
+        })
+        .expect("expand_attr_with should expose the resolved IIFE closure target");
+    let owner = iife.targets[0].target_id;
+
+    let projected = db.project_call_proof_facts_for_owner(owner, AXUM_DOMAIN)?;
+    assert!(
+        projected >= 2,
+        "expand_attr_with IIFE closure owner should project targetless callback proof rows"
+    );
+    let rag = init_test_rag_mock(Arc::clone(&db));
+    assert!(
+        !rag.proof_context_degraded(),
+        "projected callback proof rows should enable RAG proof context"
+    );
+    let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+    let calls = call_context
+        .get(&owner)
+        .expect("expand_attr_with IIFE closure owner should receive outgoing call context");
+    let site_id = targetless_path_site(
+        calls,
+        owner,
+        &["f"],
+        CallStatusKind::Unsupported,
+        "axum-macros/src/lib.rs:737 f(attr, input)",
+    );
+    db.upsert_proof_fact_values(&[axum_callback_parameter_blocker(site_id)])?;
+
+    let proof_context = rag.collect_proof_context(&[(owner, 1.0)])?;
+    let rows = proof_context
+        .get(&owner)
+        .expect("expand_attr_with IIFE closure owner should receive projected proof rows");
+
+    // Matrix: captured callable parameter row.
+    // Source chain:
+    //   docs/active/agents/call-graph/
+    //   2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //   axum-macros/src/lib.rs:727 defines `f: F`.
+    //   axum-macros/src/lib.rs:729 bounds `F: FnOnce(A, I) -> K`.
+    //   axum-macros/src/lib.rs:734-738 immediately invokes a closure.
+    //   axum-macros/src/lib.rs:737 calls `f(attr, input)` inside that closure.
+    // Expected proof traversal: proof context exposes the fail-closed
+    // call_resolution row plus an explicit runtime-dispatch blocker, while
+    // preserving zero local traversal edges for the captured callback.
+    assert_site_blocker(
+        rows,
+        owner,
+        site_id,
+        "type_resolution_missing",
+        "axum callback parameter f(attr, input)",
+    );
+    assert_explicit_proof_blocker(
+        rows,
+        site_id,
+        "dynamic_dispatch_unbounded",
+        "axum callback parameter f(attr, input)",
     );
 
     Ok(())

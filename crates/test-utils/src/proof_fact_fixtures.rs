@@ -357,6 +357,19 @@ pub fn axum_handler_async_block_poll_resume_blocker(
     })
 }
 
+pub fn axum_callback_parameter_blocker(call_site_id: Uuid) -> serde_json::Value {
+    serde_json::json!({
+        "fact_kind": "proof_blocker",
+        "schema_version": "ploke-proof-facts.v1",
+        "blocker_id": format!("blocker:axum-callback-parameter-dispatch:{call_site_id}"),
+        "reason": "dynamic_dispatch_unbounded",
+        "status": "blocked",
+        "call_site_id": call_site_id.to_string(),
+        "detail": "axum-macros/src/lib.rs:737 f(attr, input) captures a callable parameter; traversal remains targetless until interprocedural callback argument proof is modeled",
+        "evidence_use": "proof_only"
+    })
+}
+
 pub fn fixture_async_closure_poll_resume_blocker(
     call_site_id: Uuid,
     owner_name: &str,
