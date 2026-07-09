@@ -16,6 +16,8 @@ pub enum CallShapeKind {
     AliasConstructorPath,
     GeneratedConstructorFrontier,
     DynamicCallableField,
+    FunctionPointerField,
+    CallableTraitObjectField,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -209,6 +211,94 @@ static CALL_SHAPE_CASES: &[CallShapeCase] = &[
             owner_trait: None,
         },
         site: CallSiteSelector::Dynamic { arg_count: Some(1) },
+        expected: CallExpected::Targetless {
+            status: CallStatusKind::Unsupported,
+        },
+        coverage: &[
+            CallPipelineCoverage::Db,
+            CallPipelineCoverage::RagApi,
+            CallPipelineCoverage::TuiTool,
+        ],
+    },
+    CallShapeCase {
+        name: "memchr_searcher_function_pointer_field",
+        kind: CallShapeKind::FunctionPointerField,
+        fixture: CallCorpusFixture::Memchr,
+        source: "memchr/src/memmem/searcher.rs:222 (self.call)(self, prestate, haystack, needle)",
+        owner: CallOwnerSelector::MethodByBody {
+            name: "find",
+            body: "(self.call)(self, prestate, haystack, needle)",
+            owner_type: Some("Searcher"),
+            owner_trait: None,
+        },
+        site: CallSiteSelector::Dynamic { arg_count: Some(4) },
+        expected: CallExpected::Targetless {
+            status: CallStatusKind::Unsupported,
+        },
+        coverage: &[
+            CallPipelineCoverage::Db,
+            CallPipelineCoverage::RagApi,
+            CallPipelineCoverage::TuiTool,
+        ],
+    },
+    CallShapeCase {
+        name: "memchr_prefilter_function_pointer_field",
+        kind: CallShapeKind::FunctionPointerField,
+        fixture: CallCorpusFixture::Memchr,
+        source: "memchr/src/memmem/searcher.rs:718 (self.call)(self, haystack)",
+        owner: CallOwnerSelector::MethodByBody {
+            name: "find",
+            body: "(self.call)(self, haystack)",
+            owner_type: Some("Prefilter"),
+            owner_trait: None,
+        },
+        site: CallSiteSelector::Dynamic { arg_count: Some(2) },
+        expected: CallExpected::Targetless {
+            status: CallStatusKind::Unsupported,
+        },
+        coverage: &[
+            CallPipelineCoverage::Db,
+            CallPipelineCoverage::RagApi,
+            CallPipelineCoverage::TuiTool,
+        ],
+    },
+    CallShapeCase {
+        name: "memchr_runner_fwd_boxed_fnmut_field",
+        kind: CallShapeKind::CallableTraitObjectField,
+        fixture: CallCorpusFixture::Memchr,
+        source: "memchr/src/tests/substring/mod.rs:94 fwd(t.haystack.as_bytes(), t.needle.as_bytes())",
+        owner: CallOwnerSelector::MethodByBodyFile {
+            name: "run",
+            body: "fwd(t.haystack.as_bytes(), t.needle.as_bytes())",
+            file_suffix: "src/tests/substring/mod.rs",
+        },
+        site: CallSiteSelector::Path {
+            segments: &["fwd"],
+            arg_count: Some(2),
+        },
+        expected: CallExpected::Targetless {
+            status: CallStatusKind::Unsupported,
+        },
+        coverage: &[
+            CallPipelineCoverage::Db,
+            CallPipelineCoverage::RagApi,
+            CallPipelineCoverage::TuiTool,
+        ],
+    },
+    CallShapeCase {
+        name: "memchr_runner_rev_boxed_fnmut_field",
+        kind: CallShapeKind::CallableTraitObjectField,
+        fixture: CallCorpusFixture::Memchr,
+        source: "memchr/src/tests/substring/mod.rs:110 rev(t.haystack.as_bytes(), t.needle.as_bytes())",
+        owner: CallOwnerSelector::MethodByBodyFile {
+            name: "run",
+            body: "fwd(t.haystack.as_bytes(), t.needle.as_bytes())",
+            file_suffix: "src/tests/substring/mod.rs",
+        },
+        site: CallSiteSelector::Path {
+            segments: &["rev"],
+            arg_count: Some(2),
+        },
         expected: CallExpected::Targetless {
             status: CallStatusKind::Unsupported,
         },
