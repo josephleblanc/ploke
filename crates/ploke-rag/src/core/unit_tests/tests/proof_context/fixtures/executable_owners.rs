@@ -1,5 +1,6 @@
 use super::super::super::*;
 use super::super::helpers::assert_projected_owner_rows;
+use ploke_db::ProofGraphStore;
 
 #[tokio::test]
 async fn proof_context_collection_preserves_closure_owner_projected_rows() -> Result<(), Error> {
@@ -71,6 +72,72 @@ async fn proof_context_collection_preserves_async_closure_owner_projected_rows()
 }
 
 #[tokio::test]
+async fn proof_context_collection_preserves_non_awaited_async_closure_poll_resume_blockers()
+-> Result<(), Error> {
+    init_tracing_once();
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let cases = [
+        (
+            "call_async_closure_binding_without_await_with_body_call",
+            "non-awaited async closure binding",
+        ),
+        (
+            "call_async_closure_future_binding_without_await_with_body_call",
+            "unawaited async closure future binding",
+        ),
+    ];
+
+    let mut seeds = Vec::new();
+    let mut expected = Vec::new();
+    for (owner_name, label) in cases {
+        let owner = one_uuid(&db, &function_in_module_query(&["crate"], owner_name))?;
+        assert_eq!(
+            db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?,
+            2,
+            "{label} should project call_site plus blocked call_resolution facts"
+        );
+
+        let context = db.call_context_for_owner(owner)?;
+        let closure_path = vec!["closure".to_string()];
+        let call = context
+            .iter()
+            .find(|row| row.site.path.as_ref() == Some(&closure_path))
+            .unwrap_or_else(|| {
+                panic!("{label} should expose closure() call context: {context:#?}")
+            });
+        assert_eq!(call.status.status, ploke_db::CallStatusKind::Unsupported);
+        assert!(
+            call.targets.is_empty(),
+            "{label} must stay targetless before poll/resume proof exists: {call:#?}"
+        );
+        db.upsert_proof_fact_values(&[
+            ploke_test_utils::fixture_async_closure_poll_resume_blocker(call.site.id, owner_name),
+        ])?;
+
+        seeds.push((owner, 1.0));
+        expected.push((owner, call.site.id, label));
+    }
+
+    let rag = init_test_rag_mock(Arc::clone(&db));
+    assert!(
+        !rag.proof_context_degraded(),
+        "fixture async poll/resume blockers should keep proof context available"
+    );
+
+    let proof_context = rag.collect_proof_context(&seeds)?;
+    for (owner, site, label) in expected {
+        let rows = proof_context
+            .get(&owner)
+            .unwrap_or_else(|| panic!("{label} owner seed should receive proof rows"));
+        assert_async_poll_resume_blocker(rows, owner, site, label);
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn proof_context_collection_preserves_local_item_owner_projected_rows() -> Result<(), Error> {
     init_tracing_once();
     let db = Arc::new(Database::new(setup_db_full_multi_embedding(
@@ -133,4 +200,39 @@ async fn proof_context_collection_preserves_local_item_owner_projected_rows() ->
     }
 
     Ok(())
+}
+
+fn assert_async_poll_resume_blocker(
+    rows: &[ProofContextInfo],
+    owner: Uuid,
+    site: Uuid,
+    label: &str,
+) {
+    let owner = owner.to_string();
+    let site = site.to_string();
+    assert!(
+        rows.iter().any(|row| {
+            row.kind == "call_site"
+                && row.call_site_id.as_deref() == Some(site.as_str())
+                && row.caller_def_id.as_deref() == Some(owner.as_str())
+        }),
+        "{label} proof context should include the linked call_site row: {rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|row| {
+            row.kind == "call_resolution"
+                && row.call_site_id.as_deref() == Some(site.as_str())
+                && row.blocker_reason.as_deref() == Some("type_resolution_missing")
+        }),
+        "{label} proof context should preserve the projected fail-closed resolution row: {rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|row| {
+            row.kind == "proof_blocker"
+                && row.call_site_id.as_deref() == Some(site.as_str())
+                && row.blocker_reason.as_deref() == Some("dynamic_dispatch_unbounded")
+                && row.status.as_deref() == Some("blocked")
+        }),
+        "{label} proof context should include the explicit async poll/resume blocker: {rows:#?}"
+    );
 }

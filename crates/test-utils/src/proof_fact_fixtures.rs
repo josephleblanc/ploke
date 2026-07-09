@@ -357,6 +357,22 @@ pub fn axum_handler_async_block_poll_resume_blocker(
     })
 }
 
+pub fn fixture_async_closure_poll_resume_blocker(
+    call_site_id: Uuid,
+    owner_name: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "fact_kind": "proof_blocker",
+        "schema_version": "ploke-proof-facts.v1",
+        "blocker_id": format!("blocker:fixture-async-closure-poll-resume:{owner_name}:{call_site_id}"),
+        "reason": "dynamic_dispatch_unbounded",
+        "status": "blocked",
+        "call_site_id": call_site_id.to_string(),
+        "detail": format!("fixture_call_graph::{owner_name} calls an async closure without awaiting the returned future; traversal remains targetless until async poll/resume proof is modeled"),
+        "evidence_use": "proof_only"
+    })
+}
+
 pub fn generic_array_size_hint_guard_blocker(call_site_id: Uuid) -> serde_json::Value {
     serde_json::json!({
         "fact_kind": "proof_blocker",

@@ -27,8 +27,9 @@ use crate::call_graph_tool_support::{
     assert_json_from_bytes_incoming_context, assert_parse_attrs_incoming_context,
     assert_path_blocker_proof, assert_path_context, assert_resolved_callable_param_proof,
     assert_resolved_path_context, assert_run_ui_tests_incoming_context,
-    assert_self_field_receiver_context, assert_self_field_receiver_proof, assert_target_proof,
-    assert_task_spawn_effects, assert_two_hop_call_path, ui_field,
+    assert_runtime_dispatch_blocker, assert_self_field_receiver_context,
+    assert_self_field_receiver_proof, assert_target_proof, assert_task_spawn_effects,
+    assert_two_hop_call_path, ui_field,
 };
 
 #[tokio::test]
@@ -534,6 +535,88 @@ async fn code_item_lookup_returns_function_pointer_param_blocker() {
                 .expect("outgoing count")
                 >= 1,
             "code_item_lookup should surface the targetless callable parameter call"
+        );
+        assert_eq!(
+            ui_field(ui, "proof_context"),
+            proof_context.len().to_string()
+        );
+    }
+}
+
+#[tokio::test]
+async fn code_item_lookup_returns_non_awaited_async_closure_poll_resume_blockers() {
+    let fixture = CallGraphToolFixture::new().await;
+
+    for (owner_name, label) in [
+        (
+            "call_async_closure_binding_without_await_with_body_call",
+            "non-awaited async closure binding",
+        ),
+        (
+            "call_async_closure_future_binding_without_await_with_body_call",
+            "unawaited async closure future binding",
+        ),
+    ] {
+        let seeded = fixture.seed_async_closure_poll_resume_blocker(owner_name);
+        let params = LookupParams {
+            item_name: Cow::Borrowed(owner_name),
+            file_path: Cow::Owned(fixture.file_path.display().to_string()),
+            node_kind: Cow::Borrowed("function"),
+            module_path: Cow::Borrowed("crate"),
+            owner_trait: None,
+            owner_type: None,
+            parent_name: None,
+        };
+
+        let result = CodeItemLookup::execute(params, fixture.ctx("async-closure-blocker-lookup"))
+            .await
+            .expect("async closure poll/resume blocker lookup");
+        let payload: serde_json::Value =
+            serde_json::from_str(&result.content).expect("deserialize ConciseContext");
+        let call_context = payload
+            .get("call_context")
+            .and_then(serde_json::Value::as_array)
+            .expect("call_context array");
+        let proof_context = payload
+            .get("proof_context")
+            .and_then(serde_json::Value::as_array)
+            .expect("proof_context array");
+
+        // Fixture source:
+        //   tests/fixture_crates/fixture_call_graph/src/lib.rs:1701-1714
+        //   calls an async closure without awaiting the returned future. The
+        //   outer call remains targetless; the explicit proof blocker explains
+        //   the missing async poll/resume proof input.
+        let callee = CallCalleeInfo::Path {
+            path: seeded.path.clone(),
+        };
+        let site_id = assert_path_context(
+            call_context,
+            seeded.owner,
+            &callee,
+            &CallStatusKind::Unsupported,
+            label,
+            "code_item_lookup",
+        );
+        assert_eq!(site_id, seeded.site);
+        assert_path_blocker_proof(
+            proof_context,
+            seeded.owner,
+            site_id,
+            "bd:fixture-call-graph",
+            "type_resolution_missing",
+            label,
+            "code_item_lookup",
+        );
+        assert_runtime_dispatch_blocker(proof_context, site_id, label, "code_item_lookup");
+
+        let ui = result.ui_payload.as_ref().expect("ui payload");
+        assert!(
+            ui_field(ui, "call_context_outgoing")
+                .parse::<usize>()
+                .expect("outgoing count")
+                >= 1,
+            "code_item_lookup should surface the targetless async closure call"
         );
         assert_eq!(
             ui_field(ui, "proof_context"),

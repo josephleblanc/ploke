@@ -926,6 +926,30 @@ Completed evidence:
 - This remains bounded to immediate `.await` on a locally bound async closure;
   broader async callable values and poll/resume semantics remain future work.
 
+Previously completed slice: fixture-backed non-awaited async closure
+poll/resume blocker proof.
+
+Completed evidence:
+
+- The source oracles are
+  `tests/fixture_crates/fixture_call_graph/src/lib.rs:1701-1714`, where
+  `closure()` is called without awaiting the returned async-closure future,
+  both directly and through `_future = closure()`.
+- The persisted call graph keeps each outer `closure()` row `Unsupported` and
+  targetless, while the nested async-closure executable owner still owns and
+  resolves the body `local_target()` call.
+- DB proof projection preserves the fail-closed `type_resolution_missing`
+  call-resolution row for each targetless outer callsite, then explicit
+  `dynamic_dispatch_unbounded` proof blockers explain that traversal is
+  blocked on async poll/resume proof rather than a missing parser row.
+- RAG proof context and exact `code_item_lookup` / `code_item_edges` payloads
+  expose both facts for each site without fabricating a traversal edge.
+- Verification passed:
+  `cargo test -p ploke-db fixture_projection_attaches_non_awaited_async_closure_poll_resume_blockers_without_edges -- --nocapture`,
+  `cargo test -p ploke-rag proof_context_collection_preserves_non_awaited_async_closure_poll_resume_blockers -- --nocapture`,
+  `cargo test -p ploke-tui --test integration code_item_lookup_returns_non_awaited_async_closure_poll_resume_blockers -- --nocapture`, and
+  `cargo test -p ploke-tui --test integration code_item_edges_returns_non_awaited_async_closure_poll_resume_blockers -- --nocapture`.
+
 Previously completed bucket: dereferenced boxed dyn Fn exact initializer proof.
 
 Completed evidence:

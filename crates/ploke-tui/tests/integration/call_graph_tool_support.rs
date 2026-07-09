@@ -31,8 +31,8 @@ use ploke_test_utils::{
     axum_handler_async_block_poll_resume_blocker, axum_opaque_future_boundary_id,
     axum_opaque_future_macro_summary_records, axum_request_builder_summary_records,
     axum_routing_post_boundary_id, axum_routing_post_macro_summary_records,
-    axum_std_mem_replace_summary_records, fresh_backup_fixture_db, setup_db_full_multi_embedding,
-    workspace_root,
+    axum_std_mem_replace_summary_records, fixture_async_closure_poll_resume_blocker,
+    fresh_backup_fixture_db, setup_db_full_multi_embedding, workspace_root,
 };
 use ploke_tui::{
     EventBus,
@@ -341,6 +341,61 @@ impl CallGraphToolFixture {
             owner,
             site: row.site.id,
             path: vec!["abs".to_string()],
+        }
+    }
+
+    pub(crate) fn seed_async_closure_poll_resume_blocker(
+        &self,
+        owner_name: &'static str,
+    ) -> ExpectedCallSite {
+        let module_path = vec!["crate".to_string()];
+        let owner = graph_resolve_exact(
+            self.state.db.as_ref(),
+            "function",
+            self.file_path.as_path(),
+            &module_path,
+            owner_name,
+        )
+        .unwrap_or_else(|err| panic!("resolve {owner_name}: {err}"))
+        .pop()
+        .unwrap_or_else(|| panic!("{owner_name} row"))
+        .id;
+        let context = self
+            .state
+            .db
+            .call_context_for_owner(owner)
+            .unwrap_or_else(|err| panic!("{owner_name} call context: {err}"));
+        let closure_path = vec!["closure".to_string()];
+        let row = context
+            .iter()
+            .find(|row| row.site.path.as_ref() == Some(&closure_path))
+            .unwrap_or_else(|| panic!("{owner_name} should expose closure(): {context:#?}"));
+        assert_eq!(row.status.status, DbCallStatusKind::Unsupported);
+        assert!(
+            row.targets.is_empty(),
+            "{owner_name} closure() should stay targetless before async poll/resume proof exists: {row:#?}"
+        );
+
+        assert!(
+            self.state
+                .db
+                .project_call_proof_facts_for_node(owner, "bd:fixture-call-graph")
+                .unwrap_or_else(|err| panic!("project {owner_name} proof facts: {err}"))
+                >= 2,
+            "{owner_name} should project targetless proof rows"
+        );
+        self.state
+            .db
+            .upsert_proof_fact_values(&[fixture_async_closure_poll_resume_blocker(
+                row.site.id,
+                owner_name,
+            )])
+            .unwrap_or_else(|err| panic!("upsert {owner_name} async poll/resume blocker: {err}"));
+
+        ExpectedCallSite {
+            owner,
+            site: row.site.id,
+            path: closure_path,
         }
     }
 }
