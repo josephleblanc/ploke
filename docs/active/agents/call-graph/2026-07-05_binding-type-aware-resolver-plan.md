@@ -317,7 +317,20 @@ should prevent future resumes from reselecting already-covered shapes.
      exact `request_code_context` tool assertions batch the regular path and
      parenthesized dynamic forms under the same fixture-backed proof.
 
-17. Next adjacent candidate:
+17. Branch-initialized local receiver proof - completed:
+   - `call_if_initialized_local_instance_method()` records
+     `let value = if flag { LocalAssoc } else { LocalAssoc };
+     value.instance_value()` as an `InitializedLocalBinding` receiver because
+     every branch arm proves the same exact local initializer path.
+   - `call_match_initialized_local_instance_method()` records the equivalent
+     `match` initializer shape through the same proof carrier.
+   - Parser extraction reuses the existing `branch_init_path` local-binding
+     proof and does not add a new receiver kind. Mixed, opaque, or unproven
+     branch initializers do not become initialized local receivers.
+   - Parser, DB owner/proof/target-centered rows, and RAG call-context
+     assertions cover the exact fixture-backed shapes.
+
+18. Next adjacent candidate:
    - Select from the coverage matrix parking lot rather than adding more
      import breadth by default.
    - Already audited candidates should not be reselected as simple parser

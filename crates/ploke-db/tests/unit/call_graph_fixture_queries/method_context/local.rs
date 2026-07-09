@@ -99,6 +99,20 @@ fn fixture_context_reads_projected_local_and_alias_instance_method_receivers() -
                 paths: vec![path(&["LocalAssoc"]), path(&["LocalAssoc"])],
             },
         ),
+        (
+            "call_if_initialized_local_instance_method",
+            CallReceiver::InitializedLocalBinding {
+                name: "value".to_string(),
+                init_path: path(&["LocalAssoc"]),
+            },
+        ),
+        (
+            "call_match_initialized_local_instance_method",
+            CallReceiver::InitializedLocalBinding {
+                name: "value".to_string(),
+                init_path: path(&["LocalAssoc"]),
+            },
+        ),
     ];
 
     for (owner_name, receiver) in cases {

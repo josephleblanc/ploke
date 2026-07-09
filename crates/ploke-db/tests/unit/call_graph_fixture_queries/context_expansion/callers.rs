@@ -148,7 +148,7 @@ fn fixture_callers_for_target_reads_method_and_associated_callers() -> Result<()
 
     let target = method_id_by_impl_self_type_name(&db, "LocalAssoc", "instance_value")?;
     let callers = db.callers_for_target(target)?;
-    assert_resolved_callers_for_target(&callers, target, 7, "LocalAssoc::instance_value");
+    assert_resolved_callers_for_target(&callers, target, 9, "LocalAssoc::instance_value");
 
     let owner = function_id_by_name(&db, "call_typed_local_instance_method")?;
     let caller = caller_by_owner_method_receiver(
@@ -237,6 +237,25 @@ fn fixture_callers_for_target_reads_method_and_associated_callers() -> Result<()
     assert_eq!(caller.target.relation, CallRelationKind::Method);
     assert_eq!(caller.target.source_kind, CallSiteKind::Method);
     assert_eq!(caller.target.target_kind, CallTargetKind::Method);
+
+    for owner_name in [
+        "call_if_initialized_local_instance_method",
+        "call_match_initialized_local_instance_method",
+    ] {
+        let owner = function_id_by_name(&db, owner_name)?;
+        let caller = caller_by_owner_method_receiver(
+            &callers,
+            owner,
+            "instance_value",
+            &CallReceiver::InitializedLocalBinding {
+                name: "value".to_string(),
+                init_path: path(&["LocalAssoc"]),
+            },
+        );
+        assert_eq!(caller.target.relation, CallRelationKind::Method);
+        assert_eq!(caller.target.source_kind, CallSiteKind::Method);
+        assert_eq!(caller.target.target_kind, CallTargetKind::Method);
+    }
 
     let owner = function_id_by_name(&db, "call_method_as_associated_function")?;
     let caller = caller_by_owner_kind_path(

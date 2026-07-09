@@ -1830,3 +1830,16 @@ pub fn call_match_struct_pattern_initialized_receiver_method() -> i32 {
         ParamFieldMethodReceiver { value } => value.instance_value(),
     }
 }
+
+pub fn call_if_initialized_local_instance_method(flag: bool) -> i32 {
+    let value = if flag { LocalAssoc } else { LocalAssoc };
+    value.instance_value()
+}
+
+pub fn call_match_initialized_local_instance_method(flag: bool) -> i32 {
+    let value = match flag {
+        true => LocalAssoc,
+        false => LocalAssoc,
+    };
+    value.instance_value()
+}

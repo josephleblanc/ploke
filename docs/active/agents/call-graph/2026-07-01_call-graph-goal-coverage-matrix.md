@@ -50,25 +50,49 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: bounded match struct-pattern initialized receiver proof.
+Current bucket: bounded branch-initialized local receiver proof.
 
 Exit criteria:
 
-- Add one fixture-backed source oracle where a match arm struct pattern binds
-  a named field initialized from an exact local type.
+- Add fixture-backed source oracles where `if` and `match` initializers bind a
+  local receiver from branch arms that all prove the same exact local type.
 - Reuse the existing `InitializedLocalBinding` receiver proof path; do not add
-  a new receiver kind or broad match ergonomics/destructuring semantics.
-- Prove parser payload, DB owner/proof rows, and RAG call-context propagation
-  for the new source oracle.
+  a new receiver kind or broad branch/value-flow semantics.
+- Prove parser payload, DB owner/proof/target-centered rows, and RAG
+  call-context propagation for the new source oracles.
 
-Status: completed for the fixture-backed struct-pattern match receiver row.
+Status: completed for the fixture-backed branch-initialized local receiver rows.
 
 Next bucket: choose the next uncovered matrix bucket. Do not add more
-receiver-pattern breadth unless it has a bounded source oracle and reuses an
-existing proof carrier.
+receiver initializer breadth unless it has a bounded source oracle and reuses
+an existing proof carrier.
 
-Latest completed slice in current bucket: match struct-pattern initialized
-receiver proof.
+Latest completed slice in current bucket: branch-initialized local receiver
+proof.
+
+Completed evidence:
+
+- The source oracles are
+  `tests/fixture_crates/fixture_call_graph/src/lib.rs:1834-1845`, where
+  `let value = if flag { LocalAssoc } else { LocalAssoc };
+  value.instance_value()` and the equivalent `match` initializer prove
+  `value` has the exact `LocalAssoc` initializer.
+- Parser extraction reuses the existing `branch_init_path` local-binding
+  evidence and records both receiver calls as
+  `InitializedLocalBinding { name: "value", init_path: ["LocalAssoc"] }`.
+- DB owner context, resolved proof rows, and target-centered caller/proof rows
+  prove both exact local method edges to `LocalAssoc::instance_value`.
+- RAG call-context collection preserves the same resolved receiver payload and
+  target for both owners.
+- Verification passed:
+  `cargo test -p syn_parser fixture_call_graph_call_if_initialized_local_instance_method_resolves_initialized_receiver_method_call_site -- --nocapture`,
+  `cargo test -p syn_parser fixture_call_graph_call_match_initialized_local_instance_method_resolves_initialized_receiver_method_call_site -- --nocapture`,
+  `cargo test -p ploke-db fixture_context_reads_projected_local_and_alias_instance_method_receivers -- --nocapture`,
+  `cargo test -p ploke-db fixture_projection_stores_real_local_receiver_method_call_proof_facts -- --nocapture`,
+  `cargo test -p ploke-db fixture_projection_stores_real_target_centered_method_call_proof_facts -- --nocapture`, and
+  `cargo test -p ploke-rag call_context_collection_reads_branch_initialized_local_receiver_rows -- --nocapture`.
+
+Previously completed slice: match struct-pattern initialized receiver proof.
 
 Completed evidence:
 
