@@ -50,7 +50,47 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: bounded same-block async-closure future alias-chain proof.
+Current bucket: missing-trait-visibility blocker proof propagation.
+
+Exit criteria:
+
+- Reuse the fixture-backed source oracle
+  `trait_scope::without_trait_import::call_unimported_trait_method`, where the
+  receiver type is local but the trait method is not visible in scope.
+- Keep the method call targetless and `Unsupported`; do not import the trait,
+  broaden trait dispatch, or fabricate a local edge.
+- Assert DB proof projection, RAG proof context, and exact
+  `request_code_context` proof payloads expose the existing
+  `type_resolution_missing` blocker for the nested owner.
+
+Status: completed for this checkpoint.
+
+Latest completed slice: missing trait visibility now has the same blocker
+proof propagation as the existing macro, ambiguous, external, and callable
+fixture blockers.
+
+Completed evidence:
+
+- DB
+  `fixture_projection_marks_unimported_trait_method_without_edges` asserts
+  `value.scoped_value()` remains targetless `Unsupported` and projects the
+  owner-linked `type_resolution_missing` proof row.
+- RAG
+  `proof_context_collection_preserves_projected_blocker_rows` now includes the
+  nested `trait_scope::without_trait_import` owner and preserves the blocker in
+  exact proof context.
+- Exact TUI
+  `request_code_context_returns_fixture_blocker_proof_context` now includes
+  the same nested owner and proof blocker in the tool payload.
+- This does not change parser extraction, resolver behavior, or traversal
+  edges.
+
+Next bucket: choose a distinct unresolved proof input from the remaining
+focused unsupported inventory; do not continue adding simple blocker-propagation
+rows unless a downstream surface is missing coverage.
+
+Previous completed bucket: bounded same-block async-closure future alias-chain
+proof.
 
 Exit criteria:
 
@@ -65,7 +105,7 @@ Exit criteria:
 
 Status: completed for this checkpoint.
 
-Latest completed slice: fixture-backed
+Previous completed slice: fixture-backed
 `call_awaited_async_closure_future_alias_chain_with_body_call` now proves the
 existing same-block future alias tracker covers a two-step direct alias chain.
 

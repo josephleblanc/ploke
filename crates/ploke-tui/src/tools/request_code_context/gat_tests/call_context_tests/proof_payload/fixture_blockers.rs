@@ -2,6 +2,7 @@ use super::super::*;
 
 struct Case {
     label: &'static str,
+    module_path: &'static [&'static str],
     owner: &'static str,
     expected_rows: usize,
     reasons: &'static [&'static str],
@@ -65,46 +66,60 @@ async fn request_code_context_returns_fixture_blocker_proof_context() -> color_e
     Ok(())
 }
 
-fn blocker_cases() -> [Case; 7] {
+fn blocker_cases() -> [Case; 8] {
     [
         Case {
             label: "String::new external blocker",
+            module_path: &["crate"],
             owner: "call_prelude_string_new",
             expected_rows: 2,
             reasons: &["external_dependency_summary_missing"],
         },
         Case {
             label: "T::default external bound blocker",
+            module_path: &["crate"],
             owner: "call_external_default_bound_assoc",
             expected_rows: 2,
             reasons: &["external_dependency_summary_missing"],
         },
         Case {
             label: "crate macro blocker",
+            module_path: &["crate"],
             owner: "call_crate_scoped_macro",
             expected_rows: 2,
             reasons: &["macro_expansion_not_available"],
         },
         Case {
             label: "ambiguous trait method blocker",
+            module_path: &["crate"],
             owner: "call_ambiguous_trait_method",
             expected_rows: 2,
             reasons: &["type_resolution_missing"],
         },
         Case {
+            label: "unimported trait method blocker",
+            module_path: &["crate", "trait_scope", "without_trait_import"],
+            owner: "call_unimported_trait_method",
+            expected_rows: 2,
+            reasons: &["type_resolution_missing"],
+        },
+        Case {
             label: "function pointer path blocker",
+            module_path: &["crate"],
             owner: "call_function_pointer_param",
             expected_rows: 2,
             reasons: &["type_resolution_missing"],
         },
         Case {
             label: "boxed dyn Fn setup blocker",
+            module_path: &["crate"],
             owner: "call_boxed_dyn_fn_value_binding",
             expected_rows: 5,
             reasons: &["external_dependency_summary_missing"],
         },
         Case {
             label: "parenthesized boxed dyn Fn setup blocker",
+            module_path: &["crate"],
             owner: "call_parenthesized_boxed_dyn_fn_value_binding",
             expected_rows: 5,
             reasons: &["external_dependency_summary_missing"],
@@ -115,13 +130,14 @@ fn blocker_cases() -> [Case; 7] {
 fn resolve_case(db: &Database, case: Case) -> color_eyre::Result<ResolvedCase> {
     Ok(ResolvedCase {
         label: case.label,
-        owner: one_uuid(db, &function_in_module_query(&["crate"], case.owner))?,
+        owner: one_uuid(db, &function_in_module_query(case.module_path, case.owner))?,
         search_term: case.owner,
         call_id: match case.owner {
             "call_prelude_string_new" => "string_new_blocker_proof_context",
             "call_external_default_bound_assoc" => "default_bound_blocker_proof_context",
             "call_crate_scoped_macro" => "macro_blocker_proof_context",
             "call_ambiguous_trait_method" => "ambiguous_method_blocker_proof_context",
+            "call_unimported_trait_method" => "unimported_trait_method_blocker_proof_context",
             "call_function_pointer_param" => "fn_pointer_blocker_proof_context",
             "call_boxed_dyn_fn_value_binding" => "boxed_dyn_fn_blocker_proof_context",
             "call_parenthesized_boxed_dyn_fn_value_binding" => {
