@@ -696,6 +696,9 @@ fn format_receiver(receiver: &CallReceiverInfo) -> String {
         CallReceiverInfo::InitializedLocalBinding { name, init_path } => {
             format!("{name} = {}", init_path.join("::"))
         }
+        CallReceiverInfo::AliasedLocalBinding { name, source_path } => {
+            format!("{name} = {}", source_path.join("."))
+        }
         CallReceiverInfo::TupleReturnBinding { name, path, index } => {
             format!("{name} = {}().{index}", path.join("::"))
         }

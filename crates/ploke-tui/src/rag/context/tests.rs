@@ -1340,6 +1340,41 @@ call_context: 1 call site(s)
 }
 
 #[test]
+fn format_call_context_block_renders_aliased_local_receiver() {
+    let target = Uuid::from_u128(0xa11);
+    let calls = vec![CallContextInfo {
+        site_id: Uuid::from_u128(0xa12),
+        owner_id: Uuid::from_u128(0xa13),
+        kind: CallSiteKind::Method,
+        span: (42, 64),
+        arg_count: None,
+        generic_arg_count: None,
+        callee: CallCalleeInfo::Method {
+            name: "instance_value".to_string(),
+            receiver: Some(CallReceiverInfo::AliasedLocalBinding {
+                name: "alias".to_string(),
+                source_path: vec!["value".to_string()],
+            }),
+        },
+        status: CallStatusKind::Resolved,
+        resolution: Some(CallResolutionKind::LocalExact),
+        targets: vec![CallTargetInfo {
+            target_id: target,
+            relation: CallTargetKind::Method,
+        }],
+    }];
+
+    let rendered = format_call_context_block(&calls, "  ", 8);
+    let expected = format!(
+        "\
+call_context: 1 call site(s)
+  - Method @ 42..64: method instance_value on alias = value => Resolved(LocalExact), targets [Method:{target}], owner 00000000-0000-0000-0000-000000000a13"
+    );
+
+    assert_eq!(rendered, expected);
+}
+
+#[test]
 fn format_call_context_block_renders_borrowed_initialized_local_receiver() {
     let target = Uuid::from_u128(0xb01);
     let calls = vec![CallContextInfo {
