@@ -50,52 +50,69 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: generic self-field receiver exact frontier proof.
+Current bucket: generic self-field external trait-bound frontier proof.
 
 Exit criteria:
 
 - Reuse the parser-pinned fixture source rows
   `fixture_nodes/src/impls.rs:77` `self.value.len()` and `:103`
   `self.value.into()`.
-- Promote only the exact `GenericStruct<&str>::get_str_len` `self.value.len()`
-  row to an external frontier through the concrete impl argument.
-- Keep `GenericStruct<T> as SimpleTrait::trait_method` `self.value.into()`
-  targetless and `Unsupported` until trait-bound dispatch proof exists.
-- Prove parser, DB, and RAG call-context collection preserve the split statuses
-  without fabricated local targets.
+- Reuse the exact generic-bound source proof already used for external
+  `Service::poll_ready` forwarding.
+- Promote `GenericStruct<T> as SimpleTrait::trait_method`
+  `self.value.into()` to a targetless external frontier only through the
+  source-visible external `Into<i32>` trait bound.
+- Keep both generic self-field rows targetless, with no fabricated local
+  traversal targets.
+- Prove parser, DB, and RAG call-context collection preserve the external
+  frontier statuses without local targets.
 
-Status: completed for the fixture-backed generic self-field receiver frontier
-slice.
+Status: completed for the fixture-backed generic self-field external
+trait-bound frontier slice.
 
 Next bucket: choose the next uncovered matrix bucket. Do not continue adding
 receiver-shape assertions unless the next slice implements exact receiver proof
 by shape or covers a missing downstream surface for an already-modeled shape.
 
 Latest completed slice: exact external-frontier classification for the
-`GenericStruct<&str>` self-field `len` receiver, with the generic `into`
-receiver still fail-closed.
+`GenericStruct<T>` self-field `into` receiver through the external `Into<i32>`
+where-bound.
+
+Completed evidence:
+
+- Parser
+  `fixture_nodes_generic_simple_trait_method_records_self_field_into_method_call_site`
+  now asserts the `self.value.into()` row is targetless `External` with
+  `SelfField(["value"])`, using the `T: Into<i32>` impl where-bound.
+- DB `fixture_context_reads_generic_self_field_receiver_targetless_statuses`
+  asserts both `self.value.len()` and `self.value.into()` are targetless
+  `External` frontiers.
+- RAG `call_context_collection_reads_generic_self_field_receiver_frontiers`
+  asserts the same frontiers survive call-context collection as
+  `CallReceiverInfo::SelfField { path: ["value"] }` without targets.
+- This intentionally does not add a TUI assertion because the TUI targetless
+  receiver matrix already covers current real-corpus unsupported receiver
+  payloads; this slice only adds the missing fixture-backed generic field proof.
+- Verification passed:
+  `cargo test -p syn_parser --features call_graph fixture_nodes_generic_simple_trait_method_records_self_field_into_method_call_site -- --nocapture`,
+  `cargo test -p ploke-db fixture_context_reads_generic_self_field_receiver_targetless_statuses -- --nocapture`,
+  `cargo test -p ploke-rag call_context_collection_reads_generic_self_field_receiver_frontiers -- --nocapture`,
+  `cargo fmt --all --check`, and `git diff --check`.
+- This is exact external-frontier promotion over parser-pinned receiver
+  evidence. It does not convert any row into a local traversal edge.
+
+Previous completed slice: exact external-frontier classification for the
+`GenericStruct<&str>` self-field `len` receiver.
 
 Completed evidence:
 
 - Parser `fixture_nodes_get_str_len_records_self_field_len_method_call_site`
   now asserts the `self.value.len()` row is targetless `External` with
   `SelfField(["value"])`, using the concrete `&str` impl argument.
-- DB `fixture_context_reads_generic_self_field_receiver_targetless_statuses`
-  asserts `self.value.len()` is targetless `External` while
-  `self.value.into()` remains targetless `Unsupported`.
-- RAG `call_context_collection_reads_generic_self_field_receiver_frontiers`
-  asserts the same split survives call-context collection as
-  `CallReceiverInfo::SelfField { path: ["value"] }` without targets.
-- This intentionally does not add a TUI assertion because the TUI targetless
-  receiver matrix already covers current real-corpus unsupported receiver
-  payloads; this slice only adds the missing fixture-backed generic field proof.
-- Verification passed:
-  `cargo test -p syn_parser --features call_graph fixture_nodes_get_str_len_records_self_field_len_method_call_site -- --nocapture`,
-  `cargo test -p ploke-db fixture_context_reads_generic_self_field_receiver_targetless_statuses -- --nocapture`,
-  `cargo test -p ploke-rag call_context_collection_reads_generic_self_field_receiver_frontiers -- --nocapture`,
-  `cargo fmt --all --check`, and `git diff --check`.
-- This is exact external-frontier promotion over parser-pinned receiver
-  evidence. It does not convert any row into a local traversal edge.
+- DB and RAG targetless self-field receiver tests preserved the row as an
+  external frontier without local targets.
+- This did not broaden receiver resolution or convert targetless rows into
+  traversal edges.
 
 Previous completed slice: deep explicit local path coverage.
 

@@ -489,9 +489,11 @@ impl CallRelationResolver<'_> {
         method_name: &str,
         type_relations: &[TypeRelation],
     ) -> Result<bool, SynParserError> {
-        if method_name != "poll_ready" {
-            return Ok(false);
-        }
+        let expected_trait = match method_name {
+            "into" => "Into",
+            "poll_ready" => "Service",
+            _ => return Ok(false),
+        };
 
         let Some(target) = self.single_ordinary_target(field_type, type_relations)? else {
             return Ok(false);
@@ -502,7 +504,7 @@ impl CallRelationResolver<'_> {
 
         let sources = self.generic_bound_sources(owner, target, Some(param_id), type_relations)?;
         for source in sources {
-            if self.is_external_service_trait_bound(owner, source)? {
+            if self.is_external_trait_bound(owner, source, expected_trait)? {
                 return Ok(true);
             }
         }
@@ -517,10 +519,11 @@ impl CallRelationResolver<'_> {
         self.is_external_import_path(owner, &["ServiceExt".to_string()])
     }
 
-    fn is_external_service_trait_bound(
+    fn is_external_trait_bound(
         &self,
         owner: CallBodyOwnerId,
         source: TraitTypeSourceId,
+        expected_trait: &str,
     ) -> Result<bool, SynParserError> {
         let path = match self.type_node(source)? {
             TypeNode::Named(node) => &node.path,
@@ -528,7 +531,7 @@ impl CallRelationResolver<'_> {
             _ => return Ok(false),
         };
 
-        self.is_external_service_path(owner, path)
+        self.is_external_trait_path(owner, path, expected_trait)
     }
 
     fn is_external_service_path(
@@ -536,14 +539,26 @@ impl CallRelationResolver<'_> {
         owner: CallBodyOwnerId,
         path: &[String],
     ) -> Result<bool, SynParserError> {
-        if !path.last().is_some_and(|segment| segment == "Service") {
+        self.is_external_trait_path(owner, path, "Service")
+    }
+
+    fn is_external_trait_path(
+        &self,
+        owner: CallBodyOwnerId,
+        path: &[String],
+        expected_trait: &str,
+    ) -> Result<bool, SynParserError> {
+        if !path.last().is_some_and(|segment| segment == expected_trait) {
             return Ok(false);
         }
         if self.is_external_path(path) {
             return Ok(true);
         }
         if self.is_external_import_path(owner, path)? {
-            return Ok(!self.service_trait_is_local(owner, path)?);
+            return Ok(!self.trait_path_is_local(owner, path)?);
+        }
+        if expected_trait == "Into" && matches!(path, [segment] if segment == "Into") {
+            return Ok(!self.trait_path_is_local(owner, path)?);
         }
 
         let [segment] = path else {
@@ -554,16 +569,16 @@ impl CallRelationResolver<'_> {
         };
         let module_id = self.import_scope_module(module_id)?;
         let paths = self.segment_external_paths(module_id, segment, 0)?;
-        if paths.is_empty() || self.service_trait_is_local(owner, path)? {
+        if paths.is_empty() || self.trait_path_is_local(owner, path)? {
             return Ok(false);
         }
 
         Ok(paths
             .iter()
-            .all(|path| path.last().is_some_and(|segment| segment == "Service")))
+            .all(|path| path.last().is_some_and(|segment| segment == expected_trait)))
     }
 
-    fn service_trait_is_local(
+    fn trait_path_is_local(
         &self,
         owner: CallBodyOwnerId,
         path: &[String],

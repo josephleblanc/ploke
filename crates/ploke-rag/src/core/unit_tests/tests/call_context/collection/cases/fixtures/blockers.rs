@@ -134,7 +134,7 @@ async fn call_context_collection_reads_generic_self_field_receiver_frontiers() -
                 &method_by_impl_trait_self_query("SimpleTrait", "GenericStruct", "trait_method"),
             )?,
             "into",
-            CallStatusKind::Unsupported,
+            CallStatusKind::External,
         ),
     ];
     let rag = init_test_rag_mock(Arc::clone(&db));
@@ -172,8 +172,8 @@ async fn call_context_collection_reads_generic_self_field_receiver_frontiers() -
         );
         // tests/fixture_crates/fixture_nodes/src/impls.rs:77 and :103:
         // keep both generic self-field receiver rows visible without inventing
-        // local targets. `len` is an external frontier through `&str`;
-        // `into` remains blocked until trait-bound dispatch proof exists.
+        // local targets. `len` is external through `&str`; `into` is external
+        // through the source-visible `Into<i32>` trait bound.
         assert_eq!(call.status, status, "{label}");
         assert!(call.resolution.is_none(), "{label}: {call:#?}");
         assert!(

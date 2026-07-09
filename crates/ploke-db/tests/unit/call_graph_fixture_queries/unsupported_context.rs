@@ -96,7 +96,7 @@ fn fixture_context_reads_generic_self_field_receiver_targetless_statuses() -> Re
                 "trait_method",
             )?,
             "into",
-            CallStatusKind::Unsupported,
+            CallStatusKind::External,
         ),
     ];
 
@@ -105,9 +105,9 @@ fn fixture_context_reads_generic_self_field_receiver_targetless_statuses() -> Re
         assert_eq!(context.len(), 1, "{label} context rows: {context:#?}");
 
         // tests/fixture_crates/fixture_nodes/src/impls.rs:77 and :103:
-        // `self.value.len()` is promoted to an external frontier through the
-        // concrete `GenericStruct<&str>` impl argument; `self.value.into()`
-        // remains unsupported until trait-bound dispatch can prove a target.
+        // `self.value.len()` is promoted through the concrete
+        // `GenericStruct<&str>` impl argument; `self.value.into()` is promoted
+        // through the source-visible external `Into<i32>` trait bound.
         assert_targetless_method_row(
             &context,
             owner,
