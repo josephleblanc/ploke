@@ -26,12 +26,13 @@ use ploke_io::IoManagerHandle;
 use ploke_rag::{RagConfig, RagService, TokenBudget};
 use ploke_test_utils::{
     AXUM_OPAQUE_FUTURE_SUMMARY_ID, AXUM_REQUEST_BUILDER_SUMMARY_ID, AXUM_ROUTING_POST_SUMMARY_ID,
-    AXUM_STD_MEM_REPLACE_SUMMARY_ID, CORPUS_AXUM_CALL_GRAPH, CORPUS_CHRONO_CALL_GRAPH,
-    CORPUS_MEMCHR_CALL_GRAPH, axum_body_empty_dependency_record, axum_callback_parameter_blocker,
-    axum_dependency_record, axum_handler_async_block_poll_resume_blocker,
-    axum_opaque_future_boundary_id, axum_opaque_future_macro_summary_records,
-    axum_request_builder_summary_records, axum_router_new_dependency_record,
-    axum_routing_post_boundary_id, axum_routing_post_macro_summary_records,
+    AXUM_SERDE_JSON_FROM_SLICE_SUMMARY_ID, AXUM_STD_MEM_REPLACE_SUMMARY_ID, CORPUS_AXUM_CALL_GRAPH,
+    CORPUS_CHRONO_CALL_GRAPH, CORPUS_MEMCHR_CALL_GRAPH, axum_body_empty_dependency_record,
+    axum_callback_parameter_blocker, axum_dependency_record,
+    axum_handler_async_block_poll_resume_blocker, axum_opaque_future_boundary_id,
+    axum_opaque_future_macro_summary_records, axum_request_builder_summary_records,
+    axum_router_new_dependency_record, axum_routing_post_boundary_id,
+    axum_routing_post_macro_summary_records, axum_serde_json_from_slice_summary_records,
     axum_std_mem_replace_summary_records, fixture_async_closure_poll_resume_blocker,
     fresh_backup_fixture_db, setup_db_full_multi_embedding, workspace_root,
 };
@@ -1870,51 +1871,42 @@ pub(crate) fn assert_json_from_bytes_incoming_context(
     assert_expected_path_incoming_context(calls, callers, target, label, "Json::from_bytes");
 }
 
-pub(crate) fn assert_external_summary_need_for_call(
+pub(crate) fn assert_no_external_summary_need_for_site(
     needs: &[serde_json::Value],
-    call: &CallContextInfo,
+    site_id: Uuid,
     label: &str,
     tool: &str,
 ) {
-    assert_eq!(
-        call.status,
-        CallStatusKind::External,
-        "{tool} external-summary need source call should be an external frontier for {label}: {call:#?}"
-    );
+    let site = site_id.to_string();
     assert!(
-        call.targets.is_empty(),
-        "{tool} external-summary need source call should stay targetless for {label}: {call:#?}"
-    );
-
-    let site = call.site_id.to_string();
-    let need = needs
-        .iter()
-        .find(|need| {
+        needs.iter().all(|need| {
             need.get("call_site")
                 .and_then(|call| call.get("site_id"))
                 .and_then(serde_json::Value::as_str)
-                == Some(site.as_str())
-        })
-        .unwrap_or_else(|| {
-            panic!("{tool} should expose an external summary need for {label}: {needs:#?}")
-        });
-    let reasons = need
-        .get("blocker_reasons")
-        .and_then(serde_json::Value::as_array)
-        .unwrap_or_else(|| panic!("{tool} external summary need reasons missing: {need:#?}"));
-    assert!(
-        reasons
-            .iter()
-            .any(|reason| reason.as_str() == Some("external_dependency_summary_missing")),
-        "{tool} external summary need should preserve missing-summary blocker for {label}: {need:#?}"
+                != Some(site.as_str())
+        }),
+        "{tool} should not expose an external summary need for admitted {label}: {needs:#?}"
     );
-    let paths = need
-        .get("paths_to_owner")
-        .and_then(serde_json::Value::as_array)
-        .unwrap_or_else(|| panic!("{tool} external summary need paths missing: {need:#?}"));
-    assert!(
-        paths.is_empty(),
-        "{tool} direct frontier need should not include intermediate owner paths for {label}: {need:#?}"
+}
+
+pub(crate) fn assert_serde_json_summary_proof(
+    proofs: &[serde_json::Value],
+    owner: Uuid,
+    site_id: Uuid,
+    label: &str,
+    tool: &str,
+) {
+    assert_admitted_external_summary_proof(
+        proofs,
+        owner,
+        site_id,
+        ExternalSummaryCase {
+            path: &["serde_json", "Deserializer", "from_slice"],
+            records: axum_serde_json_from_slice_summary_records,
+            summary_id: AXUM_SERDE_JSON_FROM_SLICE_SUMMARY_ID,
+        },
+        label,
+        tool,
     );
 }
 

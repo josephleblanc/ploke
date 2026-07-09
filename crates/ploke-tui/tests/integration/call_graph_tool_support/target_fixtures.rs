@@ -221,6 +221,37 @@ impl AxumJsonFromBytesToolFixture {
         self.module_path.join("::")
     }
 
+    pub(crate) fn admit_serde_summary(&self) -> Uuid {
+        let context = self
+            .state
+            .db
+            .call_context_for_owner(self.target)
+            .expect("Json::from_bytes call context");
+        let site = context
+            .iter()
+            .find(|row| {
+                row.site.path.as_ref().is_some_and(|call_path| {
+                    call_path
+                        .iter()
+                        .map(String::as_str)
+                        .eq(["serde_json", "Deserializer", "from_slice"])
+                }) && row.status.status == DbCallStatusKind::External
+                    && row.targets.is_empty()
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "Json::from_bytes should expose the targetless serde_json::Deserializer::from_slice frontier: {context:#?}"
+                )
+            })
+            .site
+            .id;
+        self.state
+            .db
+            .upsert_proof_fact_values(&axum_serde_json_from_slice_summary_records(site))
+            .expect("insert Json::from_bytes serde external summary");
+        site
+    }
+
     pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
         ctx_for_state(&self.state, call_id)
     }

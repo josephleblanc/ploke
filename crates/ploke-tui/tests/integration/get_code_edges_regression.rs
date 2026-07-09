@@ -41,15 +41,16 @@ use crate::call_graph_tool_support::{
     assert_body_empty_impact_summary, assert_body_empty_incoming_context,
     assert_boxed_into_route_incoming_context, assert_branch_receiver_context,
     assert_branch_receiver_proof, assert_call_path_node, assert_chrono_naive_utc_incoming_context,
-    assert_expected_path_incoming_context, assert_external_summary_need_for_call,
-    assert_fixture_extern_c_abs_effects, assert_handler_call_incoming_context,
-    assert_incoming_context, assert_initialized_local_receiver_context,
-    assert_initialized_local_receiver_proof, assert_json_from_bytes_incoming_context,
+    assert_expected_path_incoming_context, assert_fixture_extern_c_abs_effects,
+    assert_handler_call_incoming_context, assert_incoming_context,
+    assert_initialized_local_receiver_context, assert_initialized_local_receiver_proof,
+    assert_json_from_bytes_incoming_context, assert_no_external_summary_need_for_site,
     assert_parse_attrs_incoming_context, assert_path_blocker_proof, assert_path_context,
     assert_resolved_callable_param_proof, assert_resolved_path_context,
     assert_run_ui_tests_incoming_context, assert_runtime_dispatch_blocker,
-    assert_self_field_receiver_context, assert_self_field_receiver_proof, assert_target_proof,
-    assert_task_spawn_effects, assert_two_hop_call_path, ui_field,
+    assert_self_field_receiver_context, assert_self_field_receiver_proof,
+    assert_serde_json_summary_proof, assert_target_proof, assert_task_spawn_effects,
+    assert_two_hop_call_path, ui_field,
 };
 
 #[tokio::test]
@@ -2265,6 +2266,7 @@ async fn code_item_edges_returns_real_corpus_parse_attrs_callers() {
 #[tokio::test]
 async fn code_item_edges_returns_real_corpus_json_from_bytes_callers() {
     let fixture = AxumJsonFromBytesToolFixture::new().await;
+    let serde_site = fixture.admit_serde_summary();
     let ctx = fixture.ctx("axum-json-from-bytes-edges");
     let module_path = fixture.module_path_arg();
     let params = EdgesParams {
@@ -2322,8 +2324,11 @@ async fn code_item_edges_returns_real_corpus_json_from_bytes_callers() {
     // Expected tool traversal: exact edge lookup of the callee method exposes
     // the same two trait-impl caller-site edges and projected proof rows as
     // the DB target-centered query. Its owner reach summary also exposes the
-    // serde_json dependency-root call as a targetless external frontier and
-    // missing-summary need while preserving the inherited feature gate.
+    // serde_json dependency-root call as a targetless external frontier. The
+    // fixture admits an audited summary before tool execution, so the payload
+    // should expose the externally-summarized proof and no longer queue this
+    // site as an active missing-summary need, while preserving the inherited
+    // feature gate.
     assert_json_from_bytes_incoming_context(
         call_context,
         &fixture.callers,
@@ -2363,10 +2368,18 @@ async fn code_item_edges_returns_real_corpus_json_from_bytes_callers() {
             panic!(
                 "code_item_edges should surface serde_json in external frontier rows: {external_frontier_calls:#?}"
             )
-        });
-    assert_external_summary_need_for_call(
+    });
+    assert_eq!(serde_frontier.site_id, serde_site);
+    assert_serde_json_summary_proof(
+        proof_context,
+        fixture.target,
+        serde_site,
+        "Json::from_bytes serde_json::Deserializer::from_slice",
+        "code_item_edges",
+    );
+    assert_no_external_summary_need_for_site(
         summary_needs,
-        serde_frontier,
+        serde_site,
         "Json::from_bytes serde_json::Deserializer::from_slice",
         "code_item_edges",
     );

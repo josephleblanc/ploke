@@ -50,7 +50,45 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: exact closure-binding cast proof propagation.
+Current bucket: feature-gated serde_json admitted-summary tool proof.
+
+Exit criteria:
+
+- Reuse the existing real-corpus source oracle
+  `axum/src/json.rs:184`, where `Json::from_bytes` calls
+  `serde_json::Deserializer::from_slice(bytes)` under the inherited
+  `feature = "json"` cfg.
+- Do not resolve the external dependency call to a local target; keep it
+  targetless and externally summarized only through an admitted summary fact.
+- Assert exact lookup and edge tool payloads expose the admitted
+  `external_summary` artifact and no longer list the callsite as an
+  `external_summary_need` after upsert.
+
+Status: completed for this checkpoint.
+
+Latest completed slice: the existing real-corpus `Json::from_bytes` TUI tests
+now admit the feature-gated serde_json frontier summary before tool execution
+and require the tool payloads to expose the admitted proof rows.
+
+Completed evidence:
+
+- `AxumJsonFromBytesToolFixture::admit_serde_summary` pins the real axum
+  `serde_json::Deserializer::from_slice(bytes)` callsite and reuses
+  `axum_serde_json_from_slice_summary_records`.
+- Exact lookup
+  `code_item_lookup_returns_real_corpus_json_from_bytes_callers` now requires
+  the admitted serde summary proof and absence from `external_summary_needs`.
+- Exact edges
+  `code_item_edges_returns_real_corpus_json_from_bytes_callers` covers the
+  same admitted-summary proof through `node_info`.
+- This does not change parser extraction, resolver behavior, DB query
+  semantics, or fixture bytes.
+
+Next bucket: return to semantic expansion only if there is a new exact
+parser-owned proof carrier. Do not add more external-summary rows without a
+new source oracle and downstream surface gap.
+
+Previous completed bucket: exact closure-binding cast proof propagation.
 
 Exit criteria:
 
