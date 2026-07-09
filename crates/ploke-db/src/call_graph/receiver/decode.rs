@@ -63,6 +63,20 @@ impl CallReceiver {
                     ))),
                 }
             }
+            "AliasedLocalBinding" => {
+                let path = to_string_list(path)?;
+                match path.as_slice() {
+                    [name, source_path @ ..] if !source_path.is_empty() => {
+                        Ok(Some(Self::AliasedLocalBinding {
+                            name: name.clone(),
+                            source_path: source_path.to_vec(),
+                        }))
+                    }
+                    other => Err(DbError::Cozo(format!(
+                        "aliased local binding receiver should store a name followed by a source path, got {other:?}"
+                    ))),
+                }
+            }
             "TupleReturnBinding" => {
                 let path = to_string_list(path)?;
                 match path.as_slice() {

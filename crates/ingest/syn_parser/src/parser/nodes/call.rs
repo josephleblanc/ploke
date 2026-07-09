@@ -431,6 +431,14 @@ pub enum MethodCallReceiver {
         /// type proof.
         init_path: Vec<String>,
     },
+    /// The receiver is a local binding that aliases another visible value
+    /// binding or parameter, such as `let alias = value; alias.method()`.
+    AliasedLocalBinding {
+        /// Binding identifier used as the receiver expression.
+        name: String,
+        /// Structural source path for the aliased value.
+        source_path: Vec<String>,
+    },
     /// The receiver is a local binding destructured from one element of a
     /// local function's tuple return value.
     TupleReturnBinding {

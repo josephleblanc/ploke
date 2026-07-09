@@ -97,6 +97,9 @@ impl CallRelationResolver<'_> {
             MethodCallReceiver::InitializedLocalBinding { init_path, .. } => {
                 self.resolve_typed_local_method_call(call, init_path, type_relations)?
             }
+            MethodCallReceiver::AliasedLocalBinding { source_path, .. } => {
+                self.resolve_alias_method_call(call, source_path, type_relations)?
+            }
             MethodCallReceiver::TupleReturnBinding { path, index, .. } => {
                 self.resolve_tuple_return_method_call(call, path, *index, type_relations)?
             }
@@ -1367,6 +1370,9 @@ impl CallRelationResolver<'_> {
             MethodCallReceiver::InitializedLocalBinding { init_path, .. } => {
                 self.resolve_typed_local_method_call(call, init_path, type_relations)
             }
+            MethodCallReceiver::AliasedLocalBinding { source_path, .. } => {
+                self.resolve_alias_method_call(call, source_path, type_relations)
+            }
             MethodCallReceiver::TupleReturnBinding { path, index, .. } => {
                 self.resolve_tuple_return_method_call(call, path, *index, type_relations)
             }
@@ -1482,6 +1488,19 @@ impl CallRelationResolver<'_> {
             ([], _) => AssocPathResolution::Unsupported,
             _ => AssocPathResolution::Ambiguous,
         })
+    }
+
+    fn resolve_alias_method_call(
+        &self,
+        call: &MethodCallNode,
+        source_path: &[String],
+        type_relations: &[TypeRelation],
+    ) -> Result<AssocPathResolution, SynParserError> {
+        let [name] = source_path else {
+            return Ok(AssocPathResolution::Unsupported);
+        };
+
+        self.resolve_param_method_call(call, name, type_relations)
     }
 
     fn resolve_field_local_method_call(

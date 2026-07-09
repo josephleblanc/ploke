@@ -644,6 +644,9 @@ fn receiver_info(receiver: CallReceiver) -> CallReceiverInfo {
         CallReceiver::InitializedLocalBinding { name, init_path } => {
             CallReceiverInfo::InitializedLocalBinding { name, init_path }
         }
+        CallReceiver::AliasedLocalBinding { name, source_path } => {
+            CallReceiverInfo::AliasedLocalBinding { name, source_path }
+        }
         CallReceiver::TupleReturnBinding { name, path, index } => {
             CallReceiverInfo::TupleReturnBinding { name, path, index }
         }

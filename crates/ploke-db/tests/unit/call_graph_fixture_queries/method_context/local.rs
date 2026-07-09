@@ -46,6 +46,13 @@ fn fixture_context_reads_projected_local_and_alias_instance_method_receivers() -
             },
         ),
         (
+            "call_param_alias_instance_method",
+            CallReceiver::AliasedLocalBinding {
+                name: "alias".to_string(),
+                source_path: path(&["value"]),
+            },
+        ),
+        (
             "call_initialized_local_instance_method",
             CallReceiver::InitializedLocalBinding {
                 name: "value".to_string(),

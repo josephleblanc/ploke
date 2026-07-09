@@ -29,6 +29,13 @@ fn fixture_projection_stores_real_local_receiver_method_call_proof_facts() -> Re
             },
         )?,
         method_case(
+            "call_param_alias_instance_method",
+            CallReceiver::AliasedLocalBinding {
+                name: "alias".to_string(),
+                source_path: path(&["value"]),
+            },
+        )?,
+        method_case(
             "call_initialized_local_instance_method",
             CallReceiver::InitializedLocalBinding {
                 name: "value".to_string(),

@@ -1875,3 +1875,8 @@ pub fn call_multi_conflicting_named_field_function_param_with_other_target() -> 
         callback: other_target,
     })
 }
+
+pub fn call_param_alias_instance_method(value: LocalAssoc) -> i32 {
+    let alias = value;
+    alias.instance_value()
+}

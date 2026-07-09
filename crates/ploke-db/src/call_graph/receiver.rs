@@ -19,6 +19,10 @@ pub enum CallReceiver {
         name: String,
         init_path: Vec<String>,
     },
+    AliasedLocalBinding {
+        name: String,
+        source_path: Vec<String>,
+    },
     TupleReturnBinding {
         name: String,
         path: Vec<String>,

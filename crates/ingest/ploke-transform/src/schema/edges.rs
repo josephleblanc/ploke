@@ -625,6 +625,15 @@ fn method_receiver_to_cozo(receiver: &MethodCallReceiver) -> (cozo::DataValue, c
                 string_list(&path),
             )
         }
+        MethodCallReceiver::AliasedLocalBinding { name, source_path } => {
+            let mut path = Vec::with_capacity(source_path.len() + 1);
+            path.push(name.clone());
+            path.extend(source_path.iter().cloned());
+            (
+                cozo::DataValue::from("AliasedLocalBinding"),
+                string_list(&path),
+            )
+        }
         MethodCallReceiver::TupleReturnBinding { name, path, index } => {
             let mut encoded = Vec::with_capacity(path.len() + 2);
             encoded.push(name.clone());

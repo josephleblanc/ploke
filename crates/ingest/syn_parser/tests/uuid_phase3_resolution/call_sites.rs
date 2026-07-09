@@ -119,6 +119,7 @@ const REEXPORTED_TARGET_CALL_SPAN: (usize, usize) = (1526, 1545);
 const MODULE_ALIAS_TARGET_CALL_SPAN: (usize, usize) = (1599, 1630);
 const INSTANCE_IMPL_SPAN: (usize, usize) = (1634, 1712);
 const INSTANCE_CALL_SPAN: (usize, usize) = (1780, 1802);
+const PARAM_ALIAS_INSTANCE_CALL_SPAN: (usize, usize) = (43242, 43264);
 const TYPED_LOCAL_INSTANCE_CALL_SPAN: (usize, usize) = (1901, 1923);
 const INITIALIZED_LOCAL_INSTANCE_CALL_SPAN: (usize, usize) = (2016, 2038);
 const INITIALIZED_LOCAL_ALIAS_INSTANCE_CALL_SPAN: (usize, usize) = (31434, 31456);
@@ -4237,6 +4238,34 @@ paranoid_call_site_test!(
             "instance_value",
             ExpectedMethodReceiver::LocalBinding { name: "value" },
             INSTANCE_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedMethodLocalExact {
+                target: target_info.test_method_id(),
+            },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_param_alias_instance_method_resolves_aliased_local_binding_method_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_param_alias_instance_method"
+    },
+    expected: {
+        let target_args = fixture_call_graph_instance_method_args("instance_value");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_method_pid(&parsed_graphs)?;
+        ExpectedCallSite::method(
+            "instance_value",
+            ExpectedMethodReceiver::AliasedLocalBinding {
+                name: "alias",
+                source_path: &["value"],
+            },
+            PARAM_ALIAS_INSTANCE_CALL_SPAN,
             0,
             0,
             &[],

@@ -81,7 +81,12 @@ pub(super) fn classify_method_receiver(
                     }
                     LocalBindingProof::Closure { .. } => MethodCallReceiver::Unsupported,
                     LocalBindingProof::LocalFunction { .. } => MethodCallReceiver::Unsupported,
-                    LocalBindingProof::ValueAlias { .. } => MethodCallReceiver::Unsupported,
+                    LocalBindingProof::ValueAlias { name, source_path } => {
+                        MethodCallReceiver::AliasedLocalBinding {
+                            name: name.clone(),
+                            source_path: source_path.clone(),
+                        }
+                    }
                     LocalBindingProof::Untyped { .. } => MethodCallReceiver::Unsupported,
                 };
             }

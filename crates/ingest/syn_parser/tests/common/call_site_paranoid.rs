@@ -58,6 +58,11 @@ pub enum ExpectedMethodReceiver<'a> {
         name: &'a str,
         init_path: &'a [&'a str],
     },
+    /// The receiver expression is a named local binding that aliases another value.
+    AliasedLocalBinding {
+        name: &'a str,
+        source_path: &'a [&'a str],
+    },
     /// The receiver expression is a named local binding from a tuple-returning call.
     TupleReturnBinding {
         name: &'a str,
@@ -147,6 +152,12 @@ impl ExpectedMethodReceiver<'_> {
                 MethodCallReceiver::InitializedLocalBinding {
                     name: name.to_string(),
                     init_path: init_path.iter().copied().map(String::from).collect(),
+                }
+            }
+            Self::AliasedLocalBinding { name, source_path } => {
+                MethodCallReceiver::AliasedLocalBinding {
+                    name: name.to_string(),
+                    source_path: source_path.iter().copied().map(String::from).collect(),
                 }
             }
             Self::TupleReturnBinding { name, path, index } => {
