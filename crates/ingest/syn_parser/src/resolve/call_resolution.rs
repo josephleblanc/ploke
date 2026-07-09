@@ -29,6 +29,7 @@ use super::module_tree::ModuleTree;
 mod associated;
 mod constructors;
 mod dynamic;
+mod external_summary;
 mod method;
 mod owners;
 mod path;

@@ -682,30 +682,22 @@ Completed evidence:
   `node_info.proof_context`, while preserving zero incoming paths and empty
   source-caller impact sets. No generated harness source edge is fabricated.
 
-Previously completed slice in current bucket: fail-closed request-parts external
-return summary blocker over the real axum-core turbofish receiver row.
+Previously completed slice in current bucket: exact request-parts external
+tuple-return summary over the real axum-core turbofish receiver row.
 
 Completed evidence:
 
 - The axum-core `request_parts.rs:164`
-  `parts.extract_with_state::<State<String>, String>(&state)` row remains
-  unsupported, targetless, and absent from traversal edges while preserving
-  the `TupleMethodReturn(parts, into_parts, index 0)` receiver proof.
-- Added a shared proof fixture for the explicit
-  `external_dependency_summary_missing` blocker naming the exact missing input:
-  an external summary for `http::Request::into_parts` returning
-  `http::request::Parts`.
-- DB, RAG, `code_item_lookup`, and `code_item_edges` tests now show both proof
-  facts for the same site: the projected fail-closed `type_resolution_missing`
-  call-resolution row, plus the explicit proof-only external-return-summary
-  blocker. This explains why the row is unsupported without fabricating a local
-  callee edge.
-- Verification passed:
-  `cargo test -p ploke-db axum_real_target_turbofish_method_receiver_rows_preserve_current_shapes -- --nocapture`,
-  `cargo test -p ploke-rag proof_context_collection_preserves_axum_request_parts_external_return_blocker -- --nocapture`,
-  `cargo test -p ploke-tui --test integration code_item_lookup_returns_unsupported_receiver_targetless_real_corpus_rows -- --nocapture`,
-  `cargo test -p ploke-tui --test integration code_item_edges_returns_unsupported_receiver_targetless_real_corpus_rows -- --nocapture`,
-  `cargo check -p ploke-tui --test integration`,
+  `parts.extract_with_state::<State<String>, String>(&state)` row now resolves
+  to `RequestPartsExt for Parts::extract_with_state` while preserving the
+  `TupleMethodReturn(parts, into_parts, index 0)` receiver proof and the two
+  explicit method generic arguments.
+- Added the parser-side exact summary carrier for the source-visible shape
+  `http::Request::into_parts -> (http::request::Parts, _)`, index 0 only. The
+  carrier feeds existing local extension-trait receiver matching; it does not
+  introduce broad external method traversal.
+- DB, RAG, `code_item_lookup`, and `code_item_edges` tests now assert the
+  resolved local edge and proof rows for the same site.
   `cargo fmt --all --check`, and `git diff --check`.
 
 Previously completed slice in current bucket: workspace dependency-root proof carrier
@@ -1997,6 +1989,14 @@ Completed bucket, 2026-07-07: chrono Option ok_or try receiver proof.
 | DB usage summaries | Strong current surface | `call_impact_for_target`, `call_reach_for_owner`, paths, owner-scoped module-boundary edges, owner-recursion cycle paths, source files/modules/crates/cfgs, buckets, boundary/frontier rows; real-corpus usage-question tests now prove impact, navigation, dead-code, public/test caller bucketing, architecture boundary edges, external/unsupported/unresolved frontier rows, proc-macro entrypoint impact, Body::empty component/source-module/source-crate impact, axum listener `#[cfg(unix)]` reach source-cfg preservation, axum `Json::from_bytes` `#[cfg(feature = "json")]` reach/callsite cfg preservation through parent module declarations, and `std::any::type_name::<K>()` API argument-shape preservation over the regenerated axum fixture; fixture-backed usage-question coverage now proves FFI `abs(value)` remains an external frontier in owner reach summaries; reach summaries split full nonresolved frontier rows into external, unsupported, unresolved, and ambiguous subsets without promoting them into traversal edges | N/A | N/A | axum plus local fixture fallback | Add fields only when they answer a matrix question, not opportunistically. |
 | RAG usage summaries | Strong current surface | N/A | Exact call paths, owner-recursion cycle paths, impact, reach, source metadata; real-corpus reach summaries now preserve external, unsupported, unresolved, and ambiguous frontier subsets from DB, including the axum generated `IntoServiceFuture::new` unresolved frontier, the regenerated `Body::empty` component/source-module/source-crate impact, the axum listener `#[cfg(unix)]` source-cfg reach summary, the axum `Json::from_bytes` `feature = "json"` reach summary, the axum `type_name::<K>()` generic-argument call shape, the axum-core `request_parts.rs:164` unsupported turbofish tuple-method-return receiver shape, and fixture-backed FFI `abs(value)` external-frontier reach | N/A | axum plus local fixture fallback | Add only when DB bucket already has proof. |
 | TUI/tool usage summaries | Strong current surface | N/A | N/A | `code_item_lookup`, `code_item_edges`, and exact call-path tool coverage; `code_item_edges` now carries the same existing impact/reach summaries in `node_info` that lookup exposes, with real-corpus assertions for paths, owner-recursion cycle paths, boundary edges, direct callsites, callsite buckets, source files/modules/crates/cfgs, frontier status counts, safety-boundary metadata, proof context, and UI counts; lookup/edges `Body::empty` tool tests assert the regenerated component-impact callsite buckets, path-shape counts, source file/module/crate carriers, and test/non-test impact partition; lookup/edges generated-constructor tests assert unresolved frontier payload/count propagation; lookup/edges generated test-harness tests assert the `entrypoint_summary` proof row without incoming source edges; lookup/edges `Json::from_bytes` tests assert the inherited `feature = "json"` reach source-cfg payload/count; lookup coverage asserts the axum `type_name::<K>()` generic-argument call shape; lookup/edges targetless matrix tests assert the axum-core `request_parts.rs:164` unsupported turbofish tuple-method-return receiver row; lookup/edges executable-owner tests assert the real-corpus axum `Handler::call` async-block owner targetless rows and blocker proof payloads; edge-tool safety tests assert fixture-backed unsafe target impact metadata and extern-C external frontier reach without inventing local traversal | axum plus local fixture fallback | Keep tool changes thin; do not invent semantics outside RAG/DB. |
+
+Update 2026-07-09: the request-parts notes in the matrix row above are
+superseded by the current tuple-return summary slice. The axum-core
+`request_parts.rs:164`
+`parts.extract_with_state::<State<String>, String>(&state)` row now resolves
+to `RequestPartsExt for Parts::extract_with_state`, and DB/RAG/TUI assertions
+preserve the tuple-method-return receiver payload, turbofish arity, resolved
+local edge, and resolved proof rows.
 
 ## Parking Lot
 

@@ -240,7 +240,7 @@ external receiver type proof.
 | method-call result receiver | `axum/src/routing/route.rs:51` | `Route::oneshot_inner` | `Route<E>(BoxCloneSyncService<...>)` at `:31`; imports `BoxCloneSyncService`, `Oneshot`, `ServiceExt` at `:20-22`; external tower trait methods. |
 | await result receiver | `axum/src/test_helpers/test_client.rs:134` | `RequestBuilder::into_future` | field `builder: reqwest::RequestBuilder` at `:90-92`; `.send()` external reqwest method; `.await.unwrap()` external result handling. |
 | await result receiver helpers | `axum/src/test_helpers/test_client.rs:156,160,168,172` | `TestResponse::{bytes,text,json,chunk}` | response helper awaited `unwrap()` rows are visible and targetless; they should not resolve to concrete callee edges. |
-| turbofish method call | `axum-core/src/ext_traits/request_parts.rs:164` | test `extract_with_state` | `parts: http::request::Parts` from `Request::new(()).into_parts()` at `:159`; impl `RequestPartsExt for Parts` at `:117`; method impl at `:125`; trait decl `:108`; current DB projection preserves the two explicit method generic arguments and the tuple-method-return receiver shape, but the row remains unsupported and targetless until an admitted external summary proves `http::Request::into_parts` returns `http::request::Parts`. |
+| turbofish method call | `axum-core/src/ext_traits/request_parts.rs:164` | test `extract_with_state` | `parts: http::request::Parts` from `Request::new(()).into_parts()` at `:159`; impl `RequestPartsExt for Parts` at `:117`; method impl at `:125`; trait decl `:108`; current DB projection preserves the two explicit method generic arguments and the tuple-method-return receiver shape, and now resolves through the exact external tuple-return summary for `http::Request::into_parts` returning `http::request::Parts`. |
 | local `Parts` extension-trait receiver | `axum-core/src/ext_traits/request_parts.rs:186` | `WorksForCustomExtractor::from_request_parts` | parameter `parts: &mut Parts` at `:184`; `Parts` imported from `http::request` at `:2`; impl `RequestPartsExt for Parts` at `:117`; method impl at `:125`; trait decl `:108`; exact imported external receiver type proof resolves the row to the local impl method. |
 | shadowed callable `get` | `axum/src/routing/tests/mod.rs:423,424,425,426,427,429,430,431,432,433,434` | test `what_matches_wildcard` | module imports routing `get` at `:8-10`, but local `let get = |path| ...` at `:418` shadows it; calls target local closure, not `routing::get`. DB, RAG, and exact TUI lookup/edges preserve only the two current setup `get(...)` path rows and do not fabricate closure-to-routing edges. |
 
@@ -299,23 +299,21 @@ Await-result receiver coverage now
 asserts 44 raw targetless `unwrap()` rows; the source-line fanout helper covers
 the 43 module-anchored rows while the additional row is owned by a nested async
 block.
-The targetless receiver rows for `self.0.size_hint()`, the turbofish
-`parts.extract_with_state::<State<String>, String>(&state)` test call at
-`request_parts.rs:164`, and `Route::oneshot` are also pinned. The
-request-parts turbofish row is
+The targetless receiver rows for `self.0.size_hint()` and `Route::oneshot` are
+also pinned. The request-parts turbofish row at `request_parts.rs:164` is
 projected on the test function owner, preserves two method generic arguments,
-and remains `Unsupported`/targetless because the tuple-method-return receiver
-is blocked on an external-return summary. The non-turbofish
+and now resolves to `RequestPartsExt for Parts::extract_with_state` through the
+exact external tuple-return summary for `http::Request::into_parts`. The
+non-turbofish
 `parts.extract_with_state(state)` blanket-helper call at `request_parts.rs:186`
 now resolves to the local `RequestPartsExt for Parts` impl method through exact
 imported external receiver type proof. RAG call-context and proof-context tests
 now preserve both the `axum-core/src/body.rs:127` `self.0.size_hint()` row as
 an `External` tuple-field frontier with an
 `external_dependency_summary_missing` proof reason and the `request_parts.rs:164`
-turbofish row as an `Unsupported` frontier with `generic_arg_count = 2`. Exact
-TUI `code_item_lookup` and `code_item_edges` tests assert the same owner-seeded
-rows and targetless proof facts, including the request-parts function-owned
-turbofish row.
+turbofish row as a resolved local edge with `generic_arg_count = 2`. Exact TUI
+`code_item_lookup` and `code_item_edges` tests assert the same owner-seeded
+rows and proof facts, including the request-parts function-owned turbofish row.
 The exact local external-trait impl receiver coverage now pins all 13 projected
 `Router::clone` rows: ten typed-local `router.clone()` rows across
 `serve/mod.rs`, one typed-local `app.clone()` row in `routing/tests/mod.rs`,

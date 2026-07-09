@@ -12,9 +12,10 @@ use crate::call_graph_tool_support::{
     DynamicToolCase, DynamicToolFixture, PathToolCase, PathToolFixture, ReceiverToolCase,
     ReceiverToolFixture, assert_admitted_external_summary_proof,
     assert_admitted_macro_boundary_summary_proof, assert_dynamic_context, assert_dynamic_proof,
-    assert_method_context, assert_method_proof, assert_parts_blocker, assert_path_blocker_proof,
-    assert_path_context, assert_path_context_absent, assert_path_context_count,
-    assert_path_resolution_proof, assert_runtime_dispatch_blocker, ui_field,
+    assert_method_context, assert_method_proof, assert_path_blocker_proof, assert_path_context,
+    assert_path_context_absent, assert_path_context_count, assert_path_resolution_proof,
+    assert_resolved_method_context, assert_resolved_method_proof, assert_runtime_dispatch_blocker,
+    request_parts_extract_target, ui_field,
 };
 
 #[tokio::test]
@@ -300,34 +301,57 @@ async fn code_item_lookup_returns_unsupported_receiver_targetless_real_corpus_ro
         //   axum/src/error_handling/mod.rs:238 defines `HandleErrorFuture`.
         //   axum/src/error_handling/mod.rs:251 calls
         //   `self.project().future.poll(cx)` through a boxed dyn Future.
-        // Expected traversal: exact owner lookup exposes the unsupported
-        // receiver rows, preserves method-generic arguments and precise
-        // receiver shapes where present, and leaves them targetless until
-        // external return summaries, async poll/resume, or runtime
+        // Expected traversal: exact owner lookup preserves method-generic
+        // arguments and precise receiver shapes. The request-parts row now
+        // resolves through the exact external-return summary; the dyn Future
+        // row remains targetless until async poll/resume or runtime
         // trait-object dispatch proof is available.
         let callee = fixture.case.callee();
-        let site_id = assert_method_context(
-            call_context,
-            fixture.owner,
-            &callee,
-            &fixture.case.status,
-            fixture.case.generic_arg_count,
-            fixture.case.label,
-            "lookup",
-        );
-        assert_method_proof(
-            proof_context,
-            fixture.owner,
-            site_id,
-            &fixture.case.status,
-            fixture.case.label,
-            "lookup",
-        );
-        if fixture.case.expects_runtime_dispatch_blocker() {
-            assert_runtime_dispatch_blocker(proof_context, site_id, fixture.case.label, "lookup");
-        }
-        if fixture.case.label.contains("request_parts.rs:164") {
-            assert_parts_blocker(proof_context, site_id, fixture.case.label, "lookup");
+        if fixture.case.status == CallStatusKind::Resolved {
+            let target = request_parts_extract_target(fixture.state.db.as_ref());
+            let site_id = assert_resolved_method_context(
+                call_context,
+                fixture.owner,
+                &callee,
+                target,
+                fixture.case.generic_arg_count,
+                fixture.case.label,
+                "lookup",
+            );
+            assert_resolved_method_proof(
+                proof_context,
+                fixture.owner,
+                site_id,
+                target,
+                fixture.case.label,
+                "lookup",
+            );
+        } else {
+            let site_id = assert_method_context(
+                call_context,
+                fixture.owner,
+                &callee,
+                &fixture.case.status,
+                fixture.case.generic_arg_count,
+                fixture.case.label,
+                "lookup",
+            );
+            assert_method_proof(
+                proof_context,
+                fixture.owner,
+                site_id,
+                &fixture.case.status,
+                fixture.case.label,
+                "lookup",
+            );
+            if fixture.case.expects_runtime_dispatch_blocker() {
+                assert_runtime_dispatch_blocker(
+                    proof_context,
+                    site_id,
+                    fixture.case.label,
+                    "lookup",
+                );
+            }
         }
 
         let ui = result.ui_payload.as_ref().expect("ui payload");
@@ -1006,31 +1030,54 @@ async fn code_item_edges_returns_unsupported_receiver_targetless_real_corpus_row
             .and_then(serde_json::Value::as_array)
             .expect("node_info.proof_context array");
 
-        // Same unsupported-receiver source oracles as the lookup test above,
-        // exercised through the edge-oriented payload.
+        // Same receiver source oracles as the lookup test above, exercised
+        // through the edge-oriented payload.
         let callee = fixture.case.callee();
-        let site_id = assert_method_context(
-            call_context,
-            fixture.owner,
-            &callee,
-            &fixture.case.status,
-            fixture.case.generic_arg_count,
-            fixture.case.label,
-            "edges",
-        );
-        assert_method_proof(
-            proof_context,
-            fixture.owner,
-            site_id,
-            &fixture.case.status,
-            fixture.case.label,
-            "edges",
-        );
-        if fixture.case.expects_runtime_dispatch_blocker() {
-            assert_runtime_dispatch_blocker(proof_context, site_id, fixture.case.label, "edges");
-        }
-        if fixture.case.label.contains("request_parts.rs:164") {
-            assert_parts_blocker(proof_context, site_id, fixture.case.label, "edges");
+        if fixture.case.status == CallStatusKind::Resolved {
+            let target = request_parts_extract_target(fixture.state.db.as_ref());
+            let site_id = assert_resolved_method_context(
+                call_context,
+                fixture.owner,
+                &callee,
+                target,
+                fixture.case.generic_arg_count,
+                fixture.case.label,
+                "edges",
+            );
+            assert_resolved_method_proof(
+                proof_context,
+                fixture.owner,
+                site_id,
+                target,
+                fixture.case.label,
+                "edges",
+            );
+        } else {
+            let site_id = assert_method_context(
+                call_context,
+                fixture.owner,
+                &callee,
+                &fixture.case.status,
+                fixture.case.generic_arg_count,
+                fixture.case.label,
+                "edges",
+            );
+            assert_method_proof(
+                proof_context,
+                fixture.owner,
+                site_id,
+                &fixture.case.status,
+                fixture.case.label,
+                "edges",
+            );
+            if fixture.case.expects_runtime_dispatch_blocker() {
+                assert_runtime_dispatch_blocker(
+                    proof_context,
+                    site_id,
+                    fixture.case.label,
+                    "edges",
+                );
+            }
         }
 
         let ui = result.ui_payload.as_ref().expect("ui payload");

@@ -225,7 +225,7 @@ impl ReceiverToolCase {
         label: "axum-core/src/ext_traits/request_parts.rs:164 extract_with_state turbofish tuple-return receiver",
         item: "extract_with_state",
         callee: "extract_with_state",
-        status: CallStatusKind::Unsupported,
+        status: CallStatusKind::Resolved,
         owner_type: None,
         module_path: Some(&["crate", "ext_traits", "request_parts", "tests"]),
         file_suffix: "axum-core/src/ext_traits/request_parts.rs",
@@ -613,11 +613,10 @@ impl ReceiverToolFixture {
             db.project_call_proof_facts_for_node(owner.id, "bd:corpus-axum-call-graph")
                 .unwrap_or_else(|err| panic!("project {} proof facts: {err}", case.label))
                 >= 2,
-            "{} should project targetless receiver proof rows",
+            "{} should project receiver proof rows",
             case.label
         );
         attach_runtime_dispatch_blocker_if_needed(&db, owner.id, &case);
-        attach_parts_blocker_if_needed(&db, owner.id, &case);
         let state = axum_state_for_target(Arc::clone(&db), &owner, case.label).await;
 
         Self {
@@ -663,30 +662,14 @@ fn attach_runtime_dispatch_blocker_if_needed(db: &Database, owner: Uuid, case: &
         .unwrap_or_else(|err| panic!("{} runtime dispatch blocker insert: {err}", case.label));
 }
 
-fn attach_parts_blocker_if_needed(db: &Database, owner: Uuid, case: &ReceiverToolCase) {
-    if !case.label.contains("request_parts.rs:164") {
-        return;
-    }
-    let site = db
-        .call_context_for_owner(owner)
-        .unwrap_or_else(|err| panic!("{} call context lookup: {err}", case.label))
-        .into_iter()
-        .find(|row| {
-            row.site.method.as_deref() == Some(case.callee)
-                && row.status.status == DbCallStatusKind::Unsupported
-                && row.site.generic_arg_count == Some(2)
-        })
-        .unwrap_or_else(|| {
-            panic!(
-                "{} should expose the request-parts turbofish unsupported callsite before blocker insertion",
-                case.label
-            )
-        })
-        .site
-        .id;
-
-    db.upsert_proof_fact_values(&[ploke_test_utils::axum_parts_blocker(site)])
-        .unwrap_or_else(|err| panic!("{} request-parts blocker insert: {err}", case.label));
+pub(crate) fn request_parts_extract_target(db: &Database) -> Uuid {
+    method_target_by_body_and_file(
+        db,
+        "extract_with_state",
+        "E::from_request_parts(self, state)",
+        "axum-core/src/ext_traits/request_parts.rs",
+    )
+    .id
 }
 
 impl PathToolFixture {
@@ -876,6 +859,47 @@ pub(crate) fn assert_method_context(
         call.targets.is_empty(),
         "{tool} should not fabricate traversal targets for {label}: {call:#?}"
     );
+    call.site_id
+}
+
+pub(crate) fn assert_resolved_method_context(
+    calls: &[serde_json::Value],
+    owner: Uuid,
+    callee: &CallCalleeInfo,
+    target: Uuid,
+    generic_arg_count: Option<u32>,
+    label: &str,
+    tool: &str,
+) -> Uuid {
+    let matching = calls
+        .iter()
+        .filter_map(|call| serde_json::from_value::<CallContextInfo>(call.clone()).ok())
+        .filter(|call| {
+            call.owner_id == owner && call.kind == CallSiteKind::Method && &call.callee == callee
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching.len(),
+        1,
+        "{tool} should return exactly one resolved method row for {label}: {calls:#?}"
+    );
+    let call = &matching[0];
+    assert_eq!(call.status, CallStatusKind::Resolved);
+    assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+    if let Some(expected) = generic_arg_count {
+        assert_eq!(
+            call.generic_arg_count,
+            Some(expected),
+            "{tool} should preserve method generic argument count for {label}: {call:#?}"
+        );
+    }
+    assert_eq!(
+        call.targets.len(),
+        1,
+        "{tool} target rows for {label}: {call:#?}"
+    );
+    assert_eq!(call.targets[0].target_id, target);
+    assert_eq!(call.targets[0].relation, CallTargetKind::Method);
     call.site_id
 }
 
@@ -1075,6 +1099,51 @@ pub(crate) fn assert_method_proof(
     );
 }
 
+pub(crate) fn assert_resolved_method_proof(
+    proofs: &[serde_json::Value],
+    owner: Uuid,
+    site_id: Uuid,
+    target: Uuid,
+    label: &str,
+    tool: &str,
+) {
+    let owner = owner.to_string();
+    let site = site_id.to_string();
+    let target = target.to_string();
+    let rows = proofs
+        .iter()
+        .filter_map(|proof| serde_json::from_value::<ProofContextInfo>(proof.clone()).ok())
+        .collect::<Vec<_>>();
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "call_site"
+                && proof.caller_def_id.as_deref() == Some(owner.as_str())
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.build_domain_id.as_deref() == Some("bd:corpus-axum-call-graph")
+        }),
+        "{tool} should return the resolved method call_site proof row for {label}: {proofs:#?}"
+    );
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "call_edge"
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.caller_def_id.as_deref() == Some(owner.as_str())
+                && proof.callee_def_id.as_deref() == Some(target.as_str())
+                && proof.resolution_state.as_deref() == Some("resolved")
+        }),
+        "{tool} should return the resolved method call_edge proof row for {label}: {proofs:#?}"
+    );
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "call_resolution"
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.resolution_state.as_deref() == Some("resolved")
+                && proof.resolved_def_id.as_deref() == Some(target.as_str())
+        }),
+        "{tool} should return the resolved method call_resolution proof row for {label}: {proofs:#?}"
+    );
+}
+
 pub(crate) fn assert_runtime_dispatch_blocker(
     proofs: &[serde_json::Value],
     site_id: Uuid,
@@ -1094,37 +1163,6 @@ pub(crate) fn assert_runtime_dispatch_blocker(
                 && proof.status.as_deref() == Some("blocked")
         }),
         "{tool} should return the runtime-dispatch proof blocker for {label}: {proofs:#?}"
-    );
-}
-
-pub(crate) fn assert_parts_blocker(
-    proofs: &[serde_json::Value],
-    site_id: Uuid,
-    label: &str,
-    tool: &str,
-) {
-    let site_id = site_id.to_string();
-    let rows = proofs
-        .iter()
-        .filter_map(|proof| serde_json::from_value::<ProofContextInfo>(proof.clone()).ok())
-        .collect::<Vec<_>>();
-    assert!(
-        rows.iter().any(|proof| {
-            proof.kind == "proof_blocker"
-                && proof.call_site_id.as_deref() == Some(site_id.as_str())
-                && proof.blocker_reason.as_deref() == Some("external_dependency_summary_missing")
-                && proof.status.as_deref() == Some("blocked")
-        }),
-        "{tool} should return the request-parts external return proof blocker for {label}: {proofs:#?}"
-    );
-    assert!(
-        rows.iter().any(|proof| {
-            proof.kind == "call_resolution"
-                && proof.call_site_id.as_deref() == Some(site_id.as_str())
-                && proof.resolution_state.as_deref() == Some("blocked")
-                && proof.blocker_reason.as_deref() == Some("type_resolution_missing")
-        }),
-        "{tool} should keep the request-parts projected call_resolution fail-closed for {label}: {proofs:#?}"
     );
 }
 

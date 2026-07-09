@@ -208,9 +208,10 @@ should prevent future resumes from reselecting already-covered shapes.
      local initializer method proof remain out of scope unless an explicit
      local type annotation supplies a per-element type proof. The regenerated
      axum `request_parts.rs:164` row now preserves the
-     `TupleMethodReturn(parts, into_parts, index 0)` receiver payload, but
-     remains targetless until an admitted external-return summary proves the
-     selected tuple element type.
+     `TupleMethodReturn(parts, into_parts, index 0)` receiver payload and
+     resolves through the exact external tuple-return summary proving
+     `http::Request::into_parts` returns `http::request::Parts` at tuple
+     index 0.
 
 9. External `Service`-bound self-field receiver frontier - completed:
    - Regenerated axum `self.inner.poll_ready(cx)` and `self.0.poll_ready(cx)`
@@ -351,9 +352,9 @@ should prevent future resumes from reselecting already-covered shapes.
    - Already audited candidates should not be reselected as simple parser
      slices: real-corpus routing helper rows require macro/cfg evidence,
      axum callable fields and proc-macro callback rows require broader
-     interprocedural value flow, and the axum-core request-parts turbofish row
-     now carries tuple-method-return receiver proof but is blocked on an
-     external-return summary.
+     interprocedural value flow. The axum-core request-parts turbofish row is
+     no longer a candidate: it now resolves through the exact
+     `http::Request::into_parts` tuple-return summary.
    - Likely remaining options are a broader async poll/resume proof carrier, a
      new explicitly reviewed dependency-root source oracle, or another bounded
      local binding/type proof only if it reuses existing parser-owned evidence

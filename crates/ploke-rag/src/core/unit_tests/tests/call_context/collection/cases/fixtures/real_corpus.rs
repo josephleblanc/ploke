@@ -2785,6 +2785,8 @@ async fn call_context_collection_preserves_axum_turbofish_method_receiver_shape(
         &["crate", "ext_traits", "request_parts", "tests"],
         "extract_with_state",
     )?;
+    let target =
+        method_id_by_name_and_body_substring(&db, "extract_with_state", "E::from_request_parts")?;
 
     let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
     let context = call_context.get(&owner).unwrap_or_else(|| {
@@ -2816,8 +2818,8 @@ async fn call_context_collection_preserves_axum_turbofish_method_receiver_shape(
     //
     // Current contract: the row is visible to RAG, preserves the two explicit
     // method generic arguments and tuple-method-return receiver proof, and
-    // remains unsupported/targetless until the external return summary is
-    // admitted.
+    // resolves to the local `RequestPartsExt for Parts::extract_with_state`
+    // method through the external-return summary for `Request::into_parts`.
     assert_eq!(
         turbofish.len(),
         1,
@@ -2826,13 +2828,11 @@ async fn call_context_collection_preserves_axum_turbofish_method_receiver_shape(
 
     let call = turbofish[0];
     assert_eq!(call.owner_id, owner);
-    assert_eq!(call.status, CallStatusKind::Unsupported);
+    assert_eq!(call.status, CallStatusKind::Resolved);
     assert_eq!(call.generic_arg_count, Some(2));
-    assert_eq!(call.resolution, None);
-    assert!(
-        call.targets.is_empty(),
-        "request_parts.rs:164 turbofish row should remain targetless: {call:#?}"
-    );
+    assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+    assert_eq!(call.targets.len(), 1);
+    assert_eq!(call.targets[0].target_id, target);
     let reach = rag
         .exact_call_reach_for_owner(
             owner,
@@ -2842,19 +2842,29 @@ async fn call_context_collection_preserves_axum_turbofish_method_receiver_shape(
             },
         )?
         .expect("call context enabled");
-    let unsupported = reach
-        .unsupported_frontier_calls
-        .iter()
-        .find(|frontier| frontier.site_id == call.site_id)
-        .unwrap_or_else(|| {
-            panic!("RAG reach should expose the turbofish row as unsupported: {reach:#?}")
-        });
-    assert_eq!(unsupported.owner_id, owner);
-    assert_eq!(unsupported.status, CallStatusKind::Unsupported);
-    assert_eq!(unsupported.generic_arg_count, Some(2));
     assert!(
-        unsupported.targets.is_empty(),
-        "RAG unsupported frontier call should remain targetless: {unsupported:#?}"
+        reach
+            .unsupported_frontier_calls
+            .iter()
+            .all(|frontier| frontier.site_id != call.site_id),
+        "RAG reach should not keep the resolved turbofish row in the unsupported frontier: {reach:#?}"
+    );
+    let path = reach
+        .paths
+        .iter()
+        .find(|path| {
+            path.edges
+                .iter()
+                .any(|edge| edge.call_site_id == call.site_id && edge.callee_id == target)
+        })
+        .unwrap_or_else(|| {
+            panic!("RAG reach should expose the resolved turbofish edge: {reach:#?}")
+        });
+    assert!(
+        path.edges
+            .iter()
+            .any(|edge| edge.call_site_id == call.site_id && edge.callee_id == target),
+        "RAG reach should include the request_parts.rs:164 edge to RequestPartsExt::extract_with_state: {path:#?}"
     );
 
     Ok(())

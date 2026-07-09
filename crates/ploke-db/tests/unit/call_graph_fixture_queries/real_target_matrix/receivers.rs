@@ -378,15 +378,20 @@ fn axum_real_target_turbofish_method_receiver_rows_preserve_current_shapes() -> 
     // Source chain:
     //   axum-core/src/ext_traits/request_parts.rs:164 calls
     //   `parts.extract_with_state::<State<String>, String>(&state)`.
-    // Current model: the turbofish row is projected and preserves the two
-    // explicit method generic arguments. The receiver is now a precise
-    // tuple-method-return binding from `Request::new(()).into_parts()`, but it
-    // remains unsupported and targetless until the external return summary is
-    // admitted.
+    // Current model: the turbofish row is projected, preserves the two
+    // explicit method generic arguments, carries tuple-method-return proof
+    // from `Request::new(()).into_parts()`, and resolves through the exact
+    // external-return summary for `http::Request::into_parts` returning
+    // `http::request::Parts`.
     let generic_owner = function_id_by_name_in_module(
         &db,
         &["crate", "ext_traits", "request_parts", "tests"],
         "extract_with_state",
+    )?;
+    let target_owner = method_id_by_name_and_body_substring(
+        &db,
+        "extract_with_state",
+        "E::from_request_parts(self, state)",
     )?;
     let generic_context = db.call_context_for_owner(generic_owner)?;
     let generic_receiver = CallReceiver::TupleMethodReturn {
@@ -397,55 +402,43 @@ fn axum_real_target_turbofish_method_receiver_rows_preserve_current_shapes() -> 
     };
     let generic_row =
         row_by_method_receiver(&generic_context, "extract_with_state", &generic_receiver);
-    assert_targetless_status(generic_row, CallStatusKind::Unsupported);
+    assert_eq!(generic_row.status.status, CallStatusKind::Resolved);
+    assert_eq!(
+        generic_row.status.resolution,
+        Some(CallResolutionKind::LocalExact)
+    );
+    assert_eq!(generic_row.targets.len(), 1);
+    assert_eq!(generic_row.targets[0].target_id, target_owner);
+    assert_eq!(generic_row.targets[0].relation, CallRelationKind::Method);
+    assert_eq!(generic_row.targets[0].source_kind, CallSiteKind::Method);
+    assert_eq!(generic_row.targets[0].target_kind, CallTargetKind::Method);
     assert_eq!(
         generic_row.site.generic_arg_count,
         Some(2),
         "request_parts.rs:164 should preserve `<State<String>, String>`"
     );
-    assert!(
-        relations_for_site(&db, generic_row.site.id)?
-            .rows
-            .is_empty(),
-        "request_parts.rs:164 tuple-method-return receiver should not have raw call_relation targets"
-    );
-    assert_no_traversal_candidates_for_site(
+    assert_one_edge_traversal(
         &db,
-        generic_owner,
-        generic_row.site.id,
-        "axum-core/src/ext_traits/request_parts.rs:164 parts.extract_with_state::<State<String>, String>",
+        TraversalExpectation {
+            label: "axum-core/src/ext_traits/request_parts.rs:164 parts.extract_with_state::<State<String>, String>",
+            owner: generic_owner,
+            target: target_owner,
+            site_id: generic_row.site.id,
+            expected_edge_count: 1,
+        },
     )?;
     db.project_call_proof_facts_for_owner(generic_owner, "bd:corpus-axum-call-graph")?;
-    db.upsert_proof_fact_values(&[ploke_test_utils::axum_parts_blocker(generic_row.site.id)])?;
-
-    let site = generic_row.site.id.to_string();
-    let blockers = db.proof_blockers()?;
-    assert!(
-        blockers.iter().any(|proof| {
-            proof.call_site_id.as_deref() == Some(site.as_str())
-                && proof.reason == "external_dependency_summary_missing"
-                && proof.status == "blocked"
-        }),
-        "request_parts.rs:164 should expose the missing external return summary blocker: {blockers:#?}"
-    );
-    let proof_rows = db.proof_graphrag_context("http::Request::into_parts")?;
-    assert!(
-        proof_rows.iter().any(|proof| {
-            proof.kind == "proof_blocker"
-                && proof.call_site_id.as_deref() == Some(site.as_str())
-                && proof.blocker_reason.as_deref() == Some("external_dependency_summary_missing")
-                && proof.status.as_deref() == Some("blocked")
-        }),
-        "request_parts.rs:164 proof context should expose the explicit missing external return summary blocker: {proof_rows:#?}"
-    );
+    let generic_site = generic_row.site.id.to_string();
+    let target = target_owner.to_string();
+    let proof_rows = db.proof_graphrag_context(&generic_site)?;
     assert!(
         proof_rows.iter().any(|proof| {
             proof.kind == "call_resolution"
-                && proof.call_site_id.as_deref() == Some(site.as_str())
-                && proof.resolution_state.as_deref() == Some("blocked")
-                && proof.blocker_reason.as_deref() == Some("type_resolution_missing")
+                && proof.call_site_id.as_deref() == Some(generic_site.as_str())
+                && proof.resolution_state.as_deref() == Some("resolved")
+                && proof.resolved_def_id.as_deref() == Some(target.as_str())
         }),
-        "request_parts.rs:164 projected call_resolution should remain fail-closed with the derived type-resolution blocker: {proof_rows:#?}"
+        "request_parts.rs:164 proof context should expose the resolved call_resolution row: {proof_rows:#?}"
     );
 
     // Source chain:
@@ -454,11 +447,6 @@ fn axum_real_target_turbofish_method_receiver_rows_preserve_current_shapes() -> 
     // The local-binding receiver has parameter type `&mut Parts`; the resolver
     // now matches that imported external receiver type to the local extension
     // trait impl `impl RequestPartsExt for Parts`.
-    let target_owner = method_id_by_name_and_body_substring(
-        &db,
-        "extract_with_state",
-        "E::from_request_parts(self, state)",
-    )?;
     let owner = method_id_by_name_body_and_file_suffix(
         &db,
         "from_request_parts",

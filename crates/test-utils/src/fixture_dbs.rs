@@ -837,7 +837,7 @@ pub const CORPUS_AXUM_TYPE_GRAPH: FixtureDb = FixtureDb {
 
 pub const CORPUS_AXUM_CALL_GRAPH: FixtureDb = FixtureDb {
     id: "corpus_axum_call_graph",
-    rel_path: "tests/backup_dbs/corpus_axum_call_graph_2026-07-07.sqlite",
+    rel_path: "tests/backup_dbs/corpus_axum_call_graph_2026-07-09.sqlite",
     parsed_targets: &["github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1"],
     status: FixtureStatus::Active,
     creation: FixtureCreationStrategy::Automated(FixtureAutomation::GithubCorpusWorkspaceTargets {

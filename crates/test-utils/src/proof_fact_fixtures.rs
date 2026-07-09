@@ -407,19 +407,6 @@ pub fn axum_call_graph_domain_records(domain_id: &str) -> Vec<serde_json::Value>
     ]
 }
 
-pub fn axum_parts_blocker(call_site_id: Uuid) -> serde_json::Value {
-    serde_json::json!({
-        "fact_kind": "proof_blocker",
-        "schema_version": "ploke-proof-facts.v1",
-        "blocker_id": format!("blocker:axum-request-parts-into-parts:{call_site_id}"),
-        "reason": "external_dependency_summary_missing",
-        "status": "blocked",
-        "call_site_id": call_site_id.to_string(),
-        "detail": "axum-core/src/ext_traits/request_parts.rs:164 requires a summary for http::Request::into_parts returning http::request::Parts before the turbofish receiver can resolve",
-        "evidence_use": "proof_only"
-    })
-}
-
 pub fn axum_dyn_future_poll_blocker(call_site_id: Uuid) -> serde_json::Value {
     serde_json::json!({
         "fact_kind": "proof_blocker",

@@ -213,7 +213,7 @@ impl Drop for FixtureRestoreGuard {
 | `corpus_chrono_call_graph_2026-07-07.sqlite` | `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be` | plain corpus backup for real-target call graph query contracts | 2026-07-09 |
 | `corpus_chrono_openrouter_embeddings_2026-05-17.sqlite` | `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be` | OpenRouter-searchable corpus backup for type-context matrix tests | 2026-05-17 |
 | `corpus_axum_type_graph_2026-05-17.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | typed graphRAG workspace-member corpus backup for type-context matrix tests | 2026-05-17 |
-| `corpus_axum_call_graph_2026-07-07.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | plain workspace-member corpus backup for real-target call graph query contracts | 2026-07-09 |
+| `corpus_axum_call_graph_2026-07-09.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | plain workspace-member corpus backup for real-target call graph query contracts | 2026-07-09 |
 | `corpus_axum_openrouter_embeddings_2026-05-17.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | OpenRouter-searchable workspace-member corpus backup for type-context matrix tests | 2026-05-17 |
 | `ploke-db_af8e3a20-728d-5967-8523-da8a5ccdae45` | `crates/ploke-db` | currently orphaned snapshot | 2026-03-20 |
 
@@ -232,6 +232,23 @@ Post-regeneration verification:
 - The regenerated shared call-graph corpus snapshots for memchr,
   generic-array, chrono, and axum were copied into `tests/backup_dbs/` as the
   committed seed artifacts.
+
+## 2026-07-09 Axum Tuple-Return Receiver Refresh
+
+The `corpus_axum_call_graph` fixture was recreated with
+`cargo run -p xtask --features call_graph -- recreate-backup-db --fixture corpus_axum_call_graph`
+after call graph resolution began resolving
+`axum-core/src/ext_traits/request_parts.rs:164`
+`parts.extract_with_state::<State<String>, String>(&state)` through the exact
+external tuple-return summary for `http::Request::into_parts`.
+
+Post-regeneration verification:
+
+- The recreated `corpus_axum_call_graph_2026-07-09.sqlite` shared snapshot was
+  copied into `tests/backup_dbs/` as the committed seed artifact.
+- Registry metadata now points at the 2026-07-09 axum call-graph snapshot so
+  DB, RAG, and TUI real-corpus rows see the resolved
+  `RequestPartsExt for Parts::extract_with_state` edge.
 
 ## 2026-06-27 Active Fixture Review
 
@@ -852,10 +869,10 @@ Expected searchable corpus embedding config:
   - `Token![,]` under `Punctuated<syn::Variant, Token![,]>` retains a nested
     macro type without fabricating a terminal target
 
-### `corpus_axum_call_graph_2026-07-07.sqlite`
+### `corpus_axum_call_graph_2026-07-09.sqlite`
 
 - Status: active
-- File: `tests/backup_dbs/corpus_axum_call_graph_2026-07-07.sqlite`
+- File: `tests/backup_dbs/corpus_axum_call_graph_2026-07-09.sqlite`
 - Parsed target: `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1`
 - Checkout slug: `tests/fixture_github_clones/corpus/tokio-rs__axum`
 - Selected workspace members:

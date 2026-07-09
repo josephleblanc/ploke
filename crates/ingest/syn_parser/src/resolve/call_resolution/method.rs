@@ -1658,7 +1658,15 @@ impl CallRelationResolver<'_> {
                 ),
             AssocPathResolution::Unresolved => Ok(AssocPathResolution::Unresolved),
             AssocPathResolution::Ambiguous => Ok(AssocPathResolution::Ambiguous),
-            AssocPathResolution::Unsupported => Ok(AssocPathResolution::Unsupported),
+            AssocPathResolution::Unsupported => Ok(self
+                .resolve_external_tuple_method_return_method_call(
+                    call.owner,
+                    inner_call,
+                    index,
+                    &call.method_name,
+                    type_relations,
+                )?
+                .unwrap_or(AssocPathResolution::Unsupported)),
         }
     }
 
