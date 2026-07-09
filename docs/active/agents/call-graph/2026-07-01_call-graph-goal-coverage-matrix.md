@@ -50,21 +50,43 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: parameter-alias method receiver proof.
+Current bucket: deep explicit local path coverage.
 
 Exit criteria:
 
-- Add one fixture-backed source oracle where a local receiver aliases an owner
-  parameter before invoking an inherent method.
-- Carry the existing `ValueAlias { name, source_path }` binding proof into a
-  first-class method receiver payload without broadening arbitrary value flow.
+- Add fixture-backed source oracles for deeper `self::...` and `crate::...`
+  local function paths beyond the existing one-module examples.
+- Reuse the existing local function path resolver; do not add new import or
+  path semantics.
 - Prove parser payload, DB owner/proof rows, and RAG call-context propagation.
 
-Status: completed for the fixture-backed direct parameter-alias receiver row.
+Status: completed for fixture-backed deep explicit local path rows.
 
-Next bucket: choose the next uncovered matrix bucket. Do not add more receiver
-alias breadth unless it has a bounded source oracle and a concrete existing
-proof carrier.
+Next bucket: choose the next uncovered matrix bucket. Do not add more path
+breadth unless it represents a materially new source shape.
+
+Latest completed slice: deep explicit local path coverage.
+
+Completed evidence:
+
+- Added fixture source oracles for
+  `deep_path_root::call_self_deep_path_target() -> self::branch::leaf::deep_target()`,
+  root `call_crate_deep_path_target() -> crate::deep_path_root::branch::leaf::deep_target()`,
+  and root `call_self_deep_path_target() -> self::deep_path_root::branch::leaf::deep_target()`.
+- Parser paranoid tests prove all three calls preserve their full observed path
+  segments and resolve to `deep_path_root::branch::leaf::deep_target`.
+- Existing DB path-context and proof tables now include the three deep explicit
+  path forms, so persisted call graph rows and projected proof rows cover more
+  than one nested module segment.
+- RAG path-family expansion now propagates the same three resolved path rows to
+  the deep target.
+- Verification passed with focused parser, DB, and RAG tests, plus
+  `cargo run -p xtask --features call_graph -- fixtures regenerate --active`,
+  `cargo run -p xtask --features call_graph -- verify-backup-dbs`,
+  `cargo fmt --all --check`, and `git diff --check`.
+- This is coverage over existing resolver behavior. It does not broaden
+  import/re-export/glob semantics, dependency-root imports, or macro-expanded
+  path resolution.
 
 Latest completed slice: parameter-alias method receiver proof.
 

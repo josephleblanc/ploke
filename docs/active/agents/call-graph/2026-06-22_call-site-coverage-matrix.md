@@ -635,7 +635,7 @@ This section maps the exhaustive rows below to concrete fixtures we can use. Pre
 
 | Missing case | Matrix rows | Suggested fixture action |
 |---|---|---|
-| Broader explicit local paths beyond current crate/self/super module traversal | P02/P03/P04 | Add focused fixture rows when a new path form is not covered by `crate::local_mod::nested_target()`, `self::local_mod::nested_target()`, or `super::restricted_func()`. |
+| Broader explicit local paths beyond current crate/self/super module traversal | P02/P03/P04 | Deep multi-module `crate::...` and `self::...` fixture rows are now covered by `deep_path_root::{call_self_deep_path_target}` plus root `call_crate_deep_path_target` / `call_self_deep_path_target`; add future rows only for materially new path forms such as different visibility/module-file interactions. |
 | Broader associated-function paths beyond current local type/trait proofs | P12/P15/P16/P17 | Keep adding explicit artificial fixture rows only when the existing exact local type/trait/import proof does not cover the syntax. |
 | Broader `if`/`match` dynamic callee shapes | D05-D06 | Basic resolved, ambiguous, guarded, non-path, opaque parameter, and nested expression branch/arm cases are green; add future rows only for materially new syntax. |
 | Function pointer and `Fn` trait calls beyond exact initializer-path aliases and fail-closed generic/boxed/opaque binding coverage | P26/P27/D10-D13 | Add remaining nested/member dynamic callee fixtures and broader Fn-flow forms; closure-binding cast/deref and field/index guardrails are green. |
