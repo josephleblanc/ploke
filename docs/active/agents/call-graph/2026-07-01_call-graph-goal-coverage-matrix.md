@@ -609,6 +609,9 @@ Completed evidence:
   `axum/src/middleware/from_fn.rs:411` `Request::builder()` frontier appears
   in the queue before summary admission and disappears after the admitted
   summary records are inserted.
+- RAG exact coverage now table-drives the same queue/discharge contract for
+  `axum/src/response/sse.rs:449` `std::mem::replace(...)`, preserving the
+  targetless frontier row after summary admission.
 - Exact `code_item_lookup` and `code_item_edges` payloads now include
   `external_summary_needs`, and their UI payloads report the same count.
   Positive TUI checks cover unresolved real external frontiers; admitted

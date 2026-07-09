@@ -2317,6 +2317,111 @@ async fn external_summary_needs_exact_reads_axum_request_builder_queue() -> Resu
 }
 
 #[tokio::test]
+async fn external_summary_needs_exact_reads_axum_std_mem_replace_queue() -> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+    let domain_id = "bd:corpus-axum-call-graph";
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Security/performance:
+    //   "Which reachable external dependency frontiers still need an audited
+    //   summary before their effects can be trusted?"
+    //
+    // Source oracle:
+    //   axum/src/response/sse.rs:449 calls
+    //   `std::mem::replace(&mut self.data_written, true)`.
+    // Expected contract: RAG exposes the owner-scoped external-summary queue
+    // for the std-root frontier while the proof blocker is active, and the row
+    // disappears after the admitted summary is linked without adding a local
+    // traversal edge.
+    let owner = method_id_by_name_and_body_substring(&db, "write_buf", "std::mem::replace")?;
+    let context = db.call_context_for_owner(owner)?;
+    let replace = context
+        .iter()
+        .find(|row| {
+            row.site
+                .path
+                .as_ref()
+                .is_some_and(|call_path| call_path == &path(&["std", "mem", "replace"]))
+        })
+        .unwrap_or_else(|| {
+            panic!("EventDataWriter::write_buf should expose std::mem::replace: {context:#?}")
+        });
+    assert_eq!(replace.status.status, DbCallStatusKind::External);
+    assert!(
+        replace.targets.is_empty(),
+        "std::mem::replace should stay targetless before summary admission: {replace:#?}"
+    );
+
+    let projected = db.project_call_proof_facts_for_owner(owner, domain_id)?;
+    assert!(
+        projected >= 2,
+        "owner proof projection should include call_site and call_resolution rows: {projected}"
+    );
+    let options = CallPathOptions {
+        max_depth: 3,
+        max_paths: 64,
+    };
+    let needs = rag
+        .exact_external_summary_needs_for_owner(owner, options)?
+        .expect("call context enabled");
+    let need = needs
+        .iter()
+        .find(|need| need.call_site.site_id == replace.site.id)
+        .unwrap_or_else(|| {
+            panic!("RAG should expose std::mem::replace as an external-summary need: {needs:#?}")
+        });
+    assert_eq!(need.call_site.owner_id, owner);
+    assert_eq!(need.call_site.status, CallStatusKind::External);
+    assert!(
+        need.paths_to_owner.is_empty(),
+        "direct owner frontier should not carry an intermediate path: {need:#?}"
+    );
+    assert!(
+        need.blocker_reasons
+            .iter()
+            .any(|reason| reason == "external_dependency_summary_missing"),
+        "RAG need should preserve the active missing-summary blocker: {need:#?}"
+    );
+    assert!(
+        matches!(
+            &need.call_site.callee,
+            CallCalleeInfo::Path { path: call_path }
+                if call_path == &path(&["std", "mem", "replace"])
+        ),
+        "RAG need should preserve the original std::mem::replace path: {need:#?}"
+    );
+
+    db.upsert_proof_fact_values(&ploke_test_utils::axum_std_mem_replace_summary_records(
+        replace.site.id,
+    ))?;
+    let after = rag
+        .exact_external_summary_needs_for_owner(owner, options)?
+        .expect("call context enabled");
+    assert!(
+        after
+            .iter()
+            .all(|need| need.call_site.site_id != replace.site.id),
+        "admitted std::mem::replace summary should discharge this RAG need: {after:#?}"
+    );
+    let context_after = db.call_context_for_owner(owner)?;
+    let replace_after = context_after
+        .iter()
+        .find(|row| row.site.id == replace.site.id)
+        .unwrap_or_else(|| {
+            panic!("std::mem::replace frontier row should remain visible: {context_after:#?}")
+        });
+    assert!(
+        replace_after.targets.is_empty(),
+        "summary admission must not fabricate a local std::mem::replace edge: {replace_after:#?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn get_context_attaches_axum_request_extract_two_hop_call_paths() -> Result<(), Error> {
     init_tracing_once();
     let db = Arc::new(fresh_backup_fixture_db(
