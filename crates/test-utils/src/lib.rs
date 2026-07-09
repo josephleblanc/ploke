@@ -12,8 +12,8 @@ pub mod proof_fact_fixtures;
 pub mod type_shape_matrix;
 
 pub use call_shape_matrix::{
-    CallCorpusFixture, CallExpected, CallOwnerSelector, CallPipelineCoverage, CallShapeCase,
-    CallShapeKind, CallSiteSelector, CallTargetSelector, call_shape_cases,
+    CallCorpusFixture, CallExpected, CallOwnerSelector, CallPipelineCoverage, CallReceiverSelector,
+    CallShapeCase, CallShapeKind, CallSiteSelector, CallTargetSelector, call_shape_cases,
 };
 pub use fixture_dbs::{
     BACKUP_DB_FIXTURES, CORPUS_AXUM_CALL_GRAPH, CORPUS_AXUM_OPENROUTER_EMBEDDINGS,

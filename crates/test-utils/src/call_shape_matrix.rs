@@ -18,6 +18,8 @@ pub enum CallShapeKind {
     DynamicCallableField,
     FunctionPointerField,
     CallableTraitObjectField,
+    SelfFieldMethod,
+    LocalReceiverMethod,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -67,6 +69,17 @@ pub enum CallSiteSelector {
     Dynamic {
         arg_count: Option<u32>,
     },
+    Method {
+        name: &'static str,
+        arg_count: Option<u32>,
+        receiver: Option<CallReceiverSelector>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CallReceiverSelector {
+    SelfField { path: &'static [&'static str] },
+    Unsupported,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -298,6 +311,77 @@ static CALL_SHAPE_CASES: &[CallShapeCase] = &[
         site: CallSiteSelector::Path {
             segments: &["rev"],
             arg_count: Some(2),
+        },
+        expected: CallExpected::Targetless {
+            status: CallStatusKind::Unsupported,
+        },
+        coverage: &[
+            CallPipelineCoverage::Db,
+            CallPipelineCoverage::RagApi,
+            CallPipelineCoverage::TuiTool,
+        ],
+    },
+    CallShapeCase {
+        name: "chrono_parse_next_item_queue_is_empty_self_field",
+        kind: CallShapeKind::SelfFieldMethod,
+        fixture: CallCorpusFixture::Chrono,
+        source: "chrono/src/format/strftime.rs:635 self.queue.is_empty()",
+        owner: CallOwnerSelector::MethodByBody {
+            name: "parse_next_item",
+            body: "self.queue.is_empty()",
+            owner_type: Some("StrftimeItems"),
+            owner_trait: None,
+        },
+        site: CallSiteSelector::Method {
+            name: "is_empty",
+            arg_count: Some(0),
+            receiver: Some(CallReceiverSelector::SelfField { path: &["queue"] }),
+        },
+        expected: CallExpected::Targetless {
+            status: CallStatusKind::External,
+        },
+        coverage: &[CallPipelineCoverage::Db],
+    },
+    CallShapeCase {
+        name: "generic_array_try_from_iter_size_hint_local_receiver",
+        kind: CallShapeKind::LocalReceiverMethod,
+        fixture: CallCorpusFixture::GenericArray,
+        source: "generic-array/src/lib.rs:1239 iter.size_hint()",
+        owner: CallOwnerSelector::MethodByBody {
+            name: "try_from_iter",
+            body: "match iter.size_hint()",
+            owner_type: Some("GenericArray"),
+            owner_trait: None,
+        },
+        site: CallSiteSelector::Method {
+            name: "size_hint",
+            arg_count: Some(0),
+            receiver: Some(CallReceiverSelector::Unsupported),
+        },
+        expected: CallExpected::Targetless {
+            status: CallStatusKind::Unsupported,
+        },
+        coverage: &[
+            CallPipelineCoverage::Db,
+            CallPipelineCoverage::RagApi,
+            CallPipelineCoverage::TuiTool,
+        ],
+    },
+    CallShapeCase {
+        name: "generic_array_try_from_fallible_iter_size_hint_local_receiver",
+        kind: CallShapeKind::LocalReceiverMethod,
+        fixture: CallCorpusFixture::GenericArray,
+        source: "generic-array/src/lib.rs:1276 iter.size_hint()",
+        owner: CallOwnerSelector::MethodByBody {
+            name: "try_from_fallible_iter",
+            body: "match iter.size_hint()",
+            owner_type: Some("GenericArray"),
+            owner_trait: None,
+        },
+        site: CallSiteSelector::Method {
+            name: "size_hint",
+            arg_count: Some(0),
+            receiver: Some(CallReceiverSelector::Unsupported),
         },
         expected: CallExpected::Targetless {
             status: CallStatusKind::Unsupported,

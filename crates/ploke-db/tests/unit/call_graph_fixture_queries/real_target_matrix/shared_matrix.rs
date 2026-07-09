@@ -1,8 +1,8 @@
 //! DB assertions for the shared real-target call-shape matrix.
 
 use ploke_test_utils::{
-    CallExpected, CallOwnerSelector, CallShapeCase, CallSiteSelector, CallTargetSelector,
-    call_shape_cases,
+    CallExpected, CallOwnerSelector, CallReceiverSelector, CallShapeCase, CallSiteSelector,
+    CallTargetSelector, call_shape_cases,
 };
 use uuid::Uuid;
 
@@ -132,7 +132,52 @@ fn select_site<'a>(
             );
             row
         }
+        CallSiteSelector::Method {
+            name,
+            arg_count,
+            receiver,
+        } => {
+            let matches = context
+                .iter()
+                .filter(|row| {
+                    row.site.kind == CallSiteKind::Method
+                        && row.site.method.as_deref() == Some(name)
+                        && db_receiver_matches(&row.site.receiver, receiver)
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                matches.len(),
+                1,
+                "{} should expose exactly one method row named {name}; source: {}; context: {context:#?}",
+                case.name,
+                case.source
+            );
+            let row = matches[0];
+            assert_eq!(
+                row.site.arg_count, arg_count,
+                "{} should preserve method argument count; source: {}",
+                case.name, case.source
+            );
+            row
+        }
     };
 
     Ok(row)
+}
+
+fn db_receiver_matches(
+    actual: &Option<ploke_db::CallReceiver>,
+    expected: Option<CallReceiverSelector>,
+) -> bool {
+    match expected {
+        None => true,
+        Some(CallReceiverSelector::SelfField { path }) => matches!(
+            actual,
+            Some(ploke_db::CallReceiver::SelfField { path: actual })
+                if actual.iter().map(String::as_str).eq(path.iter().copied())
+        ),
+        Some(CallReceiverSelector::Unsupported) => {
+            matches!(actual, Some(ploke_db::CallReceiver::Unsupported))
+        }
+    }
 }

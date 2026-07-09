@@ -1,6 +1,7 @@
 use ploke_db::CallSiteKind as DbCallSiteKind;
 use ploke_test_utils::{
-    CallExpected, CallOwnerSelector, CallShapeCase, CallSiteSelector, CallTargetSelector,
+    CallExpected, CallOwnerSelector, CallReceiverSelector, CallShapeCase, CallSiteSelector,
+    CallTargetSelector,
 };
 
 use super::*;
@@ -111,6 +112,33 @@ fn db_site_matches(row: &ploke_db::CallContextRow, site: CallSiteSelector) -> bo
         }
         CallSiteSelector::Dynamic { arg_count } => {
             row.site.kind == DbCallSiteKind::Dynamic && row.site.arg_count == arg_count
+        }
+        CallSiteSelector::Method {
+            name,
+            arg_count,
+            receiver,
+        } => {
+            row.site.kind == DbCallSiteKind::Method
+                && row.site.arg_count == arg_count
+                && row.site.method.as_deref() == Some(name)
+                && db_receiver_matches(&row.site.receiver, receiver)
+        }
+    }
+}
+
+fn db_receiver_matches(
+    actual: &Option<ploke_db::CallReceiver>,
+    expected: Option<CallReceiverSelector>,
+) -> bool {
+    match expected {
+        None => true,
+        Some(CallReceiverSelector::SelfField { path }) => matches!(
+            actual,
+            Some(ploke_db::CallReceiver::SelfField { path: actual })
+                if actual.iter().map(String::as_str).eq(path.iter().copied())
+        ),
+        Some(CallReceiverSelector::Unsupported) => {
+            matches!(actual, Some(ploke_db::CallReceiver::Unsupported))
         }
     }
 }

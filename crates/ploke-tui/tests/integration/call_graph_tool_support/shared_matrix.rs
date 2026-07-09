@@ -18,7 +18,9 @@ use query::{
     MatrixQuery, QueryDirection, build_domain, crate_root_from_file, query_for_owner,
     query_for_target, query_node_id,
 };
-use rag::{rag_callee, rag_relation_kind, rag_site_kind, rag_status_kind, targetless_proof_state};
+use rag::{
+    rag_callee_matches, rag_relation_kind, rag_site_kind, rag_status_kind, targetless_proof_state,
+};
 
 pub(crate) struct SharedCallShapeToolFixture {
     pub(crate) state: Arc<AppState>,
@@ -122,7 +124,11 @@ impl SharedCallShapeToolFixture {
         );
         let call = &matching[0];
         assert_eq!(call.kind, rag_site_kind(self.case.site));
-        assert_eq!(call.callee, rag_callee(self.case.site));
+        assert!(
+            rag_callee_matches(&call.callee, self.case.site),
+            "{tool} should expose the selected callee for {}: {call:#?}",
+            self.case.name
+        );
 
         match self.case.expected {
             CallExpected::Resolved {

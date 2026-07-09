@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use ploke_test_utils::{
-    CallExpected, CallOwnerSelector, CallPipelineCoverage, CallShapeCase, CallSiteSelector,
-    CallTargetSelector, call_shape_cases,
+    CallExpected, CallOwnerSelector, CallPipelineCoverage, CallReceiverSelector, CallShapeCase,
+    CallSiteSelector, CallTargetSelector, call_shape_cases,
 };
 
 use super::super::expected::path;
@@ -227,6 +227,48 @@ fn site_matches(call: &CallContextInfo, site: CallSiteSelector) -> bool {
             call.kind == CallSiteKind::Dynamic
                 && call.arg_count == arg_count
                 && call.callee == CallCalleeInfo::Dynamic
+        }
+        CallSiteSelector::Method {
+            name,
+            arg_count,
+            receiver,
+        } => {
+            call.kind == CallSiteKind::Method
+                && call.arg_count == arg_count
+                && rag_method_matches(&call.callee, name, receiver)
+        }
+    }
+}
+
+fn rag_method_matches(
+    callee: &CallCalleeInfo,
+    name: &str,
+    receiver: Option<CallReceiverSelector>,
+) -> bool {
+    let CallCalleeInfo::Method {
+        name: method,
+        receiver: actual,
+    } = callee
+    else {
+        return false;
+    };
+
+    method == name && rag_receiver_matches(actual, receiver)
+}
+
+fn rag_receiver_matches(
+    actual: &Option<CallReceiverInfo>,
+    expected: Option<CallReceiverSelector>,
+) -> bool {
+    match expected {
+        None => true,
+        Some(CallReceiverSelector::SelfField { path }) => matches!(
+            actual,
+            Some(CallReceiverInfo::SelfField { path: actual })
+                if actual.iter().map(String::as_str).eq(path.iter().copied())
+        ),
+        Some(CallReceiverSelector::Unsupported) => {
+            matches!(actual, Some(CallReceiverInfo::Unsupported))
         }
     }
 }
