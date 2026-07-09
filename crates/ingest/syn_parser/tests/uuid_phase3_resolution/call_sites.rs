@@ -412,6 +412,9 @@ const REEXPORTED_TRAIT_ASSOC_FUNCTION_CALL_SPAN: (usize, usize) = (24996, 25047)
 const GROUPED_IMPORTED_TRAIT_ASSOC_FUNCTION_CALL_SPAN: (usize, usize) = (26203, 26251);
 const CRATE_MODULE_NESTED_TARGET_CALL_SPAN: (usize, usize) = (8743, 8776);
 const SELF_MODULE_NESTED_TARGET_CALL_SPAN: (usize, usize) = (8833, 8865);
+const SELF_DEEP_PATH_TARGET_CALL_SPAN: (usize, usize) = (43487, 43520);
+const CRATE_DEEP_PATH_TARGET_CALL_SPAN: (usize, usize) = (43580, 43630);
+const SELF_ROOT_DEEP_PATH_TARGET_CALL_SPAN: (usize, usize) = (43683, 43732);
 const CRATE_FILE_MODULE_TARGET_CALL_SPAN: (usize, usize) = (26664, 26701);
 const METHOD_AS_ASSOCIATED_FUNCTION_CALL_SPAN: (usize, usize) = (8954, 8988);
 const FN_CALL_CONST_FIVE_CALL_SPAN: (usize, usize) = (1631, 1637);
@@ -2331,6 +2334,81 @@ paranoid_call_site_test!(
         ExpectedCallSite::path(
             &["self", "local_mod", "nested_target"],
             SELF_MODULE_NESTED_TARGET_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_self_deep_path_target_resolves_deep_self_path_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate", "deep_path_root"],
+        name: "call_self_deep_path_target"
+    },
+    expected: {
+        let target_args =
+            fixture_call_graph_function_args(&["crate", "deep_path_root", "branch", "leaf"], "deep_target");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("deep_path_root::branch::leaf::deep_target should regenerate a FunctionNodeId");
+        ExpectedCallSite::path(
+            &["self", "branch", "leaf", "deep_target"],
+            SELF_DEEP_PATH_TARGET_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_crate_deep_path_target_resolves_deep_crate_path_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_crate_deep_path_target"
+    },
+    expected: {
+        let target_args =
+            fixture_call_graph_function_args(&["crate", "deep_path_root", "branch", "leaf"], "deep_target");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("deep_path_root::branch::leaf::deep_target should regenerate a FunctionNodeId");
+        ExpectedCallSite::path(
+            &["crate", "deep_path_root", "branch", "leaf", "deep_target"],
+            CRATE_DEEP_PATH_TARGET_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_self_root_deep_path_target_resolves_deep_self_path_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_self_deep_path_target"
+    },
+    expected: {
+        let target_args =
+            fixture_call_graph_function_args(&["crate", "deep_path_root", "branch", "leaf"], "deep_target");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("deep_path_root::branch::leaf::deep_target should regenerate a FunctionNodeId");
+        ExpectedCallSite::path(
+            &["self", "deep_path_root", "branch", "leaf", "deep_target"],
+            SELF_ROOT_DEEP_PATH_TARGET_CALL_SPAN,
             0,
             0,
             &[],

@@ -40,6 +40,11 @@ fn fixture_projection_stores_real_path_resolution_call_proof_facts() -> Result<(
         function_id_by_name_in_module(&db, &["crate", "import_targets"], "imported_target")?;
     let globbed_target =
         function_id_by_name_in_module(&db, &["crate", "import_targets"], "globbed_target")?;
+    let deep_target = function_id_by_name_in_module(
+        &db,
+        &["crate", "deep_path_root", "branch", "leaf"],
+        "deep_target",
+    )?;
     let cases: &[(&[&str], &str, &[&str], Uuid)] = &[
         (
             &["crate"],
@@ -106,6 +111,24 @@ fn fixture_projection_stores_real_path_resolution_call_proof_facts() -> Result<(
             "call_grouped_imported_globbed_target",
             &["grouped_globbed_alias"],
             globbed_target,
+        ),
+        (
+            &["crate", "deep_path_root"],
+            "call_self_deep_path_target",
+            &["self", "branch", "leaf", "deep_target"],
+            deep_target,
+        ),
+        (
+            &["crate"],
+            "call_crate_deep_path_target",
+            &["crate", "deep_path_root", "branch", "leaf", "deep_target"],
+            deep_target,
+        ),
+        (
+            &["crate"],
+            "call_self_deep_path_target",
+            &["self", "deep_path_root", "branch", "leaf", "deep_target"],
+            deep_target,
         ),
         (
             &["crate"],

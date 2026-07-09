@@ -85,9 +85,14 @@ fn fixture_context_reads_projected_path_resolution_forms() -> Result<(), DbError
         function_id_by_name_in_module(&db, &["crate", "import_targets"], "imported_target")?;
     let globbed_target =
         function_id_by_name_in_module(&db, &["crate", "import_targets"], "globbed_target")?;
+    let deep_target = function_id_by_name_in_module(
+        &db,
+        &["crate", "deep_path_root", "branch", "leaf"],
+        "deep_target",
+    )?;
     let file_module_target =
         function_id_by_name_in_module(&db, &["crate", "file_mod"], "file_module_target")?;
-    let cases: [(&[&str], &str, Vec<String>, Uuid); 12] = [
+    let cases: [(&[&str], &str, Vec<String>, Uuid); 15] = [
         (
             &["crate"],
             "call_unqualified_local_target",
@@ -159,6 +164,24 @@ fn fixture_context_reads_projected_path_resolution_forms() -> Result<(), DbError
             "call_crate_file_module_target",
             path(&["crate", "file_mod", "file_module_target"]),
             file_module_target,
+        ),
+        (
+            &["crate", "deep_path_root"],
+            "call_self_deep_path_target",
+            path(&["self", "branch", "leaf", "deep_target"]),
+            deep_target,
+        ),
+        (
+            &["crate"],
+            "call_crate_deep_path_target",
+            path(&["crate", "deep_path_root", "branch", "leaf", "deep_target"]),
+            deep_target,
+        ),
+        (
+            &["crate"],
+            "call_self_deep_path_target",
+            path(&["self", "deep_path_root", "branch", "leaf", "deep_target"]),
+            deep_target,
         ),
     ];
 

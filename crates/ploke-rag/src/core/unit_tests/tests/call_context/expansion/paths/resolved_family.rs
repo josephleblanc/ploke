@@ -25,6 +25,13 @@ async fn call_context_expansion_preserves_resolved_path_resolution_family() -> R
         &db,
         &function_in_module_query(&["crate", "import_targets"], "globbed_target"),
     )?;
+    let deep_target = one_uuid(
+        &db,
+        &function_in_module_query(
+            &["crate", "deep_path_root", "branch", "leaf"],
+            "deep_target",
+        ),
+    )?;
     let cases = [
         Case {
             label: "self nested path",
@@ -93,6 +100,59 @@ async fn call_context_expansion_preserves_resolved_path_resolution_family() -> R
             target: imported_target,
             callee: CallCalleeInfo::Path {
                 path: vec!["grouped_alias".to_string()],
+            },
+        },
+        Case {
+            label: "deep module self path",
+            owner: one_uuid(
+                &db,
+                &function_in_module_query(
+                    &["crate", "deep_path_root"],
+                    "call_self_deep_path_target",
+                ),
+            )?,
+            target: deep_target,
+            callee: CallCalleeInfo::Path {
+                path: vec![
+                    "self".to_string(),
+                    "branch".to_string(),
+                    "leaf".to_string(),
+                    "deep_target".to_string(),
+                ],
+            },
+        },
+        Case {
+            label: "deep crate path",
+            owner: one_uuid(
+                &db,
+                &function_in_module_query(&["crate"], "call_crate_deep_path_target"),
+            )?,
+            target: deep_target,
+            callee: CallCalleeInfo::Path {
+                path: vec![
+                    "crate".to_string(),
+                    "deep_path_root".to_string(),
+                    "branch".to_string(),
+                    "leaf".to_string(),
+                    "deep_target".to_string(),
+                ],
+            },
+        },
+        Case {
+            label: "deep root self path",
+            owner: one_uuid(
+                &db,
+                &function_in_module_query(&["crate"], "call_self_deep_path_target"),
+            )?,
+            target: deep_target,
+            callee: CallCalleeInfo::Path {
+                path: vec![
+                    "self".to_string(),
+                    "deep_path_root".to_string(),
+                    "branch".to_string(),
+                    "leaf".to_string(),
+                    "deep_target".to_string(),
+                ],
             },
         },
     ];

@@ -1880,3 +1880,25 @@ pub fn call_param_alias_instance_method(value: LocalAssoc) -> i32 {
     let alias = value;
     alias.instance_value()
 }
+
+pub mod deep_path_root {
+    pub mod branch {
+        pub mod leaf {
+            pub fn deep_target() -> i32 {
+                144
+            }
+        }
+    }
+
+    pub fn call_self_deep_path_target() -> i32 {
+        self::branch::leaf::deep_target()
+    }
+}
+
+pub fn call_crate_deep_path_target() -> i32 {
+    crate::deep_path_root::branch::leaf::deep_target()
+}
+
+pub fn call_self_deep_path_target() -> i32 {
+    self::deep_path_root::branch::leaf::deep_target()
+}
