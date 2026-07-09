@@ -56,11 +56,17 @@ async fn proof_context_collection_preserves_projected_blocker_rows() -> Result<(
     Ok(())
 }
 
-fn blocker_cases() -> [Case; 6] {
+fn blocker_cases() -> [Case; 7] {
     [
         Case {
             label: "String::new external blocker",
             owner: "call_prelude_string_new",
+            expected_rows: 2,
+            reasons: &["external_dependency_summary_missing"],
+        },
+        Case {
+            label: "T::default external bound blocker",
+            owner: "call_external_default_bound_assoc",
             expected_rows: 2,
             reasons: &["external_dependency_summary_missing"],
         },

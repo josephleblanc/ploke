@@ -415,6 +415,7 @@ const SELF_MODULE_NESTED_TARGET_CALL_SPAN: (usize, usize) = (8833, 8865);
 const SELF_DEEP_PATH_TARGET_CALL_SPAN: (usize, usize) = (43487, 43520);
 const CRATE_DEEP_PATH_TARGET_CALL_SPAN: (usize, usize) = (43580, 43630);
 const SELF_ROOT_DEEP_PATH_TARGET_CALL_SPAN: (usize, usize) = (43683, 43732);
+const EXTERNAL_DEFAULT_BOUND_ASSOC_CALL_SPAN: (usize, usize) = (43815, 43827);
 const CRATE_FILE_MODULE_TARGET_CALL_SPAN: (usize, usize) = (26664, 26701);
 const METHOD_AS_ASSOCIATED_FUNCTION_CALL_SPAN: (usize, usize) = (8954, 8988);
 const FN_CALL_CONST_FIVE_CALL_SPAN: (usize, usize) = (1631, 1637);
@@ -2029,7 +2030,7 @@ paranoid_call_site_test!(
 );
 
 paranoid_call_site_test!(
-    fixture_edge_cases_generic_item_new_records_t_default_unsupported_path_call_site,
+    fixture_edge_cases_generic_item_new_records_t_default_external_path_call_site,
     fixture: "fixture_edge_cases",
     owner: method {
         args: fixture_edge_cases_generic_item_method_args("new")
@@ -2040,7 +2041,7 @@ paranoid_call_site_test!(
         0,
         0,
         &[],
-        ExpectedCallOutcome::Unsupported,
+        ExpectedCallOutcome::External,
     ),
 );
 
@@ -2123,7 +2124,7 @@ paranoid_call_site_test!(
 );
 
 paranoid_call_site_test!(
-    fixture_generics_generic_function_records_t_default_unsupported_path_call_site,
+    fixture_generics_generic_function_records_t_default_external_path_call_site,
     fixture: "fixture_generics",
     owner: function {
         module_path: &["crate"],
@@ -2135,7 +2136,7 @@ paranoid_call_site_test!(
         0,
         0,
         &[],
-        ExpectedCallOutcome::Unsupported,
+        ExpectedCallOutcome::External,
     ),
 );
 
@@ -2415,6 +2416,23 @@ paranoid_call_site_test!(
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
         )
     },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_external_default_bound_assoc_is_external_frontier,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_external_default_bound_assoc"
+    },
+    expected: ExpectedCallSite::path(
+        &["T", "default"],
+        EXTERNAL_DEFAULT_BOUND_ASSOC_CALL_SPAN,
+        0,
+        0,
+        &[],
+        ExpectedCallOutcome::External,
+    ),
 );
 
 paranoid_call_site_test!(

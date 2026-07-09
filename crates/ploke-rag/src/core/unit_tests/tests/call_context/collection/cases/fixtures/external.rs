@@ -10,6 +10,10 @@ async fn call_context_collection_reads_real_fixture_external_rows() -> Result<()
         &db,
         &function_in_module_query(&["crate"], "call_prelude_string_new"),
     )?;
+    let default_bound_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_external_default_bound_assoc"),
+    )?;
     let literal_owner = one_uuid(
         &db,
         &function_in_module_query(&["crate"], "call_literal_str_to_string"),
@@ -24,8 +28,12 @@ async fn call_context_collection_reads_real_fixture_external_rows() -> Result<()
         "fresh fixture call_graph schema should enable external call context"
     );
 
-    let call_context =
-        rag.collect_call_context(&[(string_owner, 1.0), (literal_owner, 1.0), (vec_owner, 1.0)])?;
+    let call_context = rag.collect_call_context(&[
+        (string_owner, 1.0),
+        (default_bound_owner, 1.0),
+        (literal_owner, 1.0),
+        (vec_owner, 1.0),
+    ])?;
 
     let string_context = call_context
         .get(&string_owner)
@@ -48,6 +56,29 @@ async fn call_context_collection_reads_real_fixture_external_rows() -> Result<()
     assert!(
         string_call.targets.is_empty(),
         "external path calls must not fabricate RAG targets: {string_call:#?}"
+    );
+
+    let default_bound_context = call_context
+        .get(&default_bound_owner)
+        .expect("Default-bound owner should receive outgoing call context");
+    assert_eq!(
+        default_bound_context.len(),
+        1,
+        "Default-bound owner context: {default_bound_context:#?}"
+    );
+    let default_bound_call = &default_bound_context[0];
+    assert_eq!(default_bound_call.kind, CallSiteKind::Path);
+    assert_eq!(
+        default_bound_call.callee,
+        CallCalleeInfo::Path {
+            path: vec!["T".to_string(), "default".to_string()],
+        }
+    );
+    assert_eq!(default_bound_call.status, CallStatusKind::External);
+    assert!(default_bound_call.resolution.is_none());
+    assert!(
+        default_bound_call.targets.is_empty(),
+        "external Default-bound calls must not fabricate RAG targets: {default_bound_call:#?}"
     );
 
     let literal_context = call_context

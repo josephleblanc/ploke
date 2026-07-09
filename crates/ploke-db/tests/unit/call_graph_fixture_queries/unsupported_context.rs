@@ -3,21 +3,34 @@ use super::*;
 #[test]
 fn fixture_context_reads_projected_external_path_status_without_targets() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
-    let owner = function_id_by_name(&db, "call_prelude_string_new")?;
-
-    let context = db.call_context_for_owner(owner)?;
-    assert_eq!(context.len(), 1, "context rows: {context:#?}");
-
-    assert_targetless_row(
-        &context,
-        owner,
-        TargetlessRowCase::path(
-            &["String", "new"],
-            0,
-            CallStatusKind::External,
-            "String::new external",
+    let cases = [
+        (
+            "call_prelude_string_new",
+            TargetlessRowCase::path(
+                &["String", "new"],
+                0,
+                CallStatusKind::External,
+                "String::new external",
+            ),
         ),
-    );
+        (
+            "call_external_default_bound_assoc",
+            TargetlessRowCase::path(
+                &["T", "default"],
+                0,
+                CallStatusKind::External,
+                "T::default external Default-bound assoc",
+            ),
+        ),
+    ];
+
+    for (owner_name, expected) in cases {
+        let owner = function_id_by_name(&db, owner_name)?;
+        let context = db.call_context_for_owner(owner)?;
+        assert_eq!(context.len(), 1, "{owner_name} context rows: {context:#?}");
+
+        assert_targetless_row(&context, owner, expected);
+    }
 
     Ok(())
 }

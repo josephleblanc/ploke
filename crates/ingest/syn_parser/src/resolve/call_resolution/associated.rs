@@ -72,6 +72,62 @@ impl CallRelationResolver<'_> {
         }
     }
 
+    pub(super) fn is_external_generic_bound_assoc_path(
+        &self,
+        owner: CallBodyOwnerId,
+        path: &[String],
+        arg_count: usize,
+    ) -> Result<bool, SynParserError> {
+        let Some((method_name, type_path)) = path.split_last() else {
+            return Ok(false);
+        };
+        let [type_segment] = type_path else {
+            return Ok(false);
+        };
+        let expected_trait = match method_name.as_str() {
+            "default" if arg_count == 0 => "Default",
+            _ => return Ok(false),
+        };
+
+        for scope in self.generic_bound_scopes(owner)? {
+            for param in scope.params {
+                if param.kind.name() != Some(type_segment.as_str()) {
+                    continue;
+                }
+                if let Some(bounds) = param.kind.bounds()
+                    && self.bounds_include_external_trait(owner, bounds, expected_trait)?
+                {
+                    return Ok(true);
+                }
+            }
+
+            for predicate in scope.predicates {
+                if !self.type_path_matches_segment(predicate.subject, type_segment)? {
+                    continue;
+                }
+                if self.bounds_include_external_trait(owner, &predicate.bounds, expected_trait)? {
+                    return Ok(true);
+                }
+            }
+        }
+
+        Ok(false)
+    }
+
+    fn bounds_include_external_trait(
+        &self,
+        owner: CallBodyOwnerId,
+        bounds: &[crate::parser::type_slots::TraitTypeUseId],
+        expected_trait: &str,
+    ) -> Result<bool, SynParserError> {
+        for bound in bounds {
+            if self.is_external_trait_bound(owner, *bound, expected_trait)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     fn local_type_target_alias_is_external(
         &self,
         owner: CallBodyOwnerId,

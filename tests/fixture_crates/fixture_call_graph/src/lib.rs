@@ -1902,3 +1902,10 @@ pub fn call_crate_deep_path_target() -> i32 {
 pub fn call_self_deep_path_target() -> i32 {
     self::deep_path_root::branch::leaf::deep_target()
 }
+
+pub fn call_external_default_bound_assoc<T>() -> T
+where
+    T: Default,
+{
+    T::default()
+}

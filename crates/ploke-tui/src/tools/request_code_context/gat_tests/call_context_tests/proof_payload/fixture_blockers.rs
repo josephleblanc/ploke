@@ -65,11 +65,17 @@ async fn request_code_context_returns_fixture_blocker_proof_context() -> color_e
     Ok(())
 }
 
-fn blocker_cases() -> [Case; 6] {
+fn blocker_cases() -> [Case; 7] {
     [
         Case {
             label: "String::new external blocker",
             owner: "call_prelude_string_new",
+            expected_rows: 2,
+            reasons: &["external_dependency_summary_missing"],
+        },
+        Case {
+            label: "T::default external bound blocker",
+            owner: "call_external_default_bound_assoc",
             expected_rows: 2,
             reasons: &["external_dependency_summary_missing"],
         },
@@ -113,6 +119,7 @@ fn resolve_case(db: &Database, case: Case) -> color_eyre::Result<ResolvedCase> {
         search_term: case.owner,
         call_id: match case.owner {
             "call_prelude_string_new" => "string_new_blocker_proof_context",
+            "call_external_default_bound_assoc" => "default_bound_blocker_proof_context",
             "call_crate_scoped_macro" => "macro_blocker_proof_context",
             "call_ambiguous_trait_method" => "ambiguous_method_blocker_proof_context",
             "call_function_pointer_param" => "fn_pointer_blocker_proof_context",

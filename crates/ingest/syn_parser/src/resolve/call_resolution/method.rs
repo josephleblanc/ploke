@@ -519,7 +519,7 @@ impl CallRelationResolver<'_> {
         self.is_external_import_path(owner, &["ServiceExt".to_string()])
     }
 
-    fn is_external_trait_bound(
+    pub(super) fn is_external_trait_bound(
         &self,
         owner: CallBodyOwnerId,
         source: TraitTypeSourceId,
@@ -557,7 +557,9 @@ impl CallRelationResolver<'_> {
         if self.is_external_import_path(owner, path)? {
             return Ok(!self.trait_path_is_local(owner, path)?);
         }
-        if expected_trait == "Into" && matches!(path, [segment] if segment == "Into") {
+        if matches!(expected_trait, "Default" | "Into")
+            && matches!(path, [segment] if segment == expected_trait)
+        {
             return Ok(!self.trait_path_is_local(owner, path)?);
         }
 
