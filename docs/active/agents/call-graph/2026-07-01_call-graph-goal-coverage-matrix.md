@@ -50,7 +50,42 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: missing-trait-visibility blocker proof propagation.
+Current bucket: exact closure-binding cast proof propagation.
+
+Exit criteria:
+
+- Reuse the fixture-backed source oracle
+  `call_closure_binding_cast`, where `let closure = || 21; (closure as fn() ->
+  i32)()` carries exact local closure-binding proof.
+- Keep the target as the closure executable owner, not `local_target`; do not
+  generalize to arbitrary callable casts or trait-object dispatch.
+- Assert DB proof projection, RAG call-context collection, and exact
+  `request_code_context` preserve the `DynamicClosure` edge to the closure
+  owner.
+
+Status: completed for this checkpoint.
+
+Latest completed slice: closure-binding cast now has the same downstream
+positive proof coverage as the existing dereferenced closure-binding sibling.
+
+Completed evidence:
+
+- DB `fixture_projection_stores_closure_binding_dynamic_proof_facts` now
+  batches `call_closure_binding_cast` and `call_dereferenced_closure_binding`
+  through the same closure-binding proof helper.
+- RAG `call_context_collection_reads_real_fixture_dynamic_rows` now requires
+  both closure-binding forms to preserve a resolved `DynamicClosure` target.
+- Exact TUI
+  `request_code_context_returns_closure_binding_cast_owner_call_context`
+  materializes the closure executable target and verifies the outgoing dynamic
+  closure edge.
+- This does not change parser extraction, resolver behavior, or fixture bytes.
+
+Next bucket: re-check the matrix before adding more dynamic-call coverage; do
+not continue in dynamic callable positives unless the next row adds a distinct
+proof input or missing downstream surface.
+
+Previous completed bucket: missing-trait-visibility blocker proof propagation.
 
 Exit criteria:
 
@@ -65,7 +100,7 @@ Exit criteria:
 
 Status: completed for this checkpoint.
 
-Latest completed slice: missing trait visibility now has the same blocker
+Previous completed slice: missing trait visibility now has the same blocker
 proof propagation as the existing macro, ambiguous, external, and callable
 fixture blockers.
 

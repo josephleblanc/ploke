@@ -195,6 +195,70 @@ async fn request_code_context_returns_function_and_dynamic_owner_call_context()
 }
 
 #[tokio::test]
+async fn request_code_context_returns_closure_binding_cast_owner_call_context()
+-> color_eyre::Result<()> {
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_closure_binding_cast"),
+    )?;
+    let closure = closure_owner_for_parent(&db, owner)?;
+
+    let result = execute_fixture_request(
+        &db,
+        "call_closure_binding_cast closure",
+        1,
+        "closure_binding_cast_call_context",
+    )
+    .await?;
+    assert_result_ok(
+        &result,
+        "call_closure_binding_cast closure",
+        1,
+        "fixture_call_graph",
+    );
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:695-701:
+    // `let closure = || 21; (closure as fn() -> i32)()` carries exact local
+    // closure-binding proof. The tool should expose the dynamic call edge to
+    // the closure executable owner without inventing a `local_target` edge.
+    let owner_part = result
+        .context
+        .iter()
+        .find(|part| part.id == owner)
+        .expect("request_code_context should materialize the closure cast owner");
+    let closure_part = result
+        .context
+        .iter()
+        .find(|part| part.id == closure)
+        .expect("request_code_context should materialize the closure executable owner");
+    let call = owner_part
+        .call_context
+        .iter()
+        .find(|call| {
+            call.kind == CallSiteKind::Dynamic
+                && call.callee == CallCalleeInfo::Dynamic
+                && call
+                    .targets
+                    .iter()
+                    .any(|target_info| target_info.target_id == closure)
+        })
+        .expect("closure cast owner should retain outgoing dynamic closure call context");
+    assert_resolved_target(call, closure, CallTargetKind::DynamicClosure);
+    assert_expansion(
+        closure_part,
+        owner,
+        closure,
+        call.site_id,
+        CallExpansionKind::OutgoingTarget,
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn request_code_context_attaches_incoming_context_to_target_seed() -> color_eyre::Result<()> {
     let db = Arc::new(Database::new(setup_db_full_multi_embedding(
         "fixture_call_graph",

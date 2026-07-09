@@ -167,21 +167,33 @@ fn fixture_projection_stores_real_callable_expression_dynamic_call_proof_facts()
 }
 
 #[test]
-fn fixture_projection_stores_dereferenced_closure_binding_proof_facts() -> Result<(), DbError> {
+fn fixture_projection_stores_closure_binding_dynamic_proof_facts() -> Result<(), DbError> {
+    let cases = [
+        ("call_closure_binding_cast", "closure binding cast"),
+        (
+            "call_dereferenced_closure_binding",
+            "dereferenced closure binding",
+        ),
+    ];
+
+    for (owner_name, label) in cases {
+        assert_closure_binding_dynamic_proof(owner_name, label)?;
+    }
+
+    Ok(())
+}
+
+fn assert_closure_binding_dynamic_proof(owner_name: &str, label: &str) -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
-    let owner = function_id_by_name(&db, "call_dereferenced_closure_binding")?;
+    let owner = function_id_by_name(&db, owner_name)?;
     let context = db.call_context_for_owner(owner)?;
-    assert_eq!(
-        context.len(),
-        1,
-        "dereferenced closure binding context rows: {context:#?}"
-    );
+    assert_eq!(context.len(), 1, "{label} context rows: {context:#?}");
 
     let row = row_by_kind_path(&context, CallSiteKind::Dynamic, &["closure"]);
     assert_eq!(
         row.targets.len(),
         1,
-        "dereferenced closure binding should resolve to one closure owner: {row:#?}"
+        "{label} should resolve to one closure owner: {row:#?}"
     );
     let closure = row.targets[0].target_id;
     assert_resolved_target(
@@ -192,11 +204,11 @@ fn fixture_projection_stores_dereferenced_closure_binding_proof_facts() -> Resul
         CallTargetKind::Closure,
     );
     let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
-    assert_eq!(count, 3, "dereferenced closure binding proof fact count");
+    assert_eq!(count, 3, "{label} proof fact count");
 
     assert_owner_proof_edges(
         &db,
-        "dereferenced closure binding dynamic",
+        label,
         &[OwnerProofEdge {
             owner,
             site: row.site.id,

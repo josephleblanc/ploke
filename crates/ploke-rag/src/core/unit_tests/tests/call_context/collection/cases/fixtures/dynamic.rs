@@ -42,6 +42,10 @@ async fn call_context_collection_reads_real_fixture_dynamic_rows() -> Result<(),
     )?;
     let closure_binding_owner =
         one_uuid(&db, &function_in_module_query(&["crate"], "dynamic_calls"))?;
+    let closure_cast_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_closure_binding_cast"),
+    )?;
     let dereferenced_closure_owner = one_uuid(
         &db,
         &function_in_module_query(&["crate"], "call_dereferenced_closure_binding"),
@@ -118,6 +122,7 @@ async fn call_context_collection_reads_real_fixture_dynamic_rows() -> Result<(),
         (boxed_owner, 1.0),
         (dereferenced_boxed_owner, 1.0),
         (closure_binding_owner, 1.0),
+        (closure_cast_owner, 1.0),
         (dereferenced_closure_owner, 1.0),
         (named_field_param_owner, 1.0),
         (multi_named_field_param_owner, 1.0),
@@ -276,35 +281,40 @@ async fn call_context_collection_reads_real_fixture_dynamic_rows() -> Result<(),
         assert_eq!(call.targets[0].relation, CallTargetKind::DynamicClosure);
     }
 
-    let dereferenced_closure_context = call_context
-        .get(&dereferenced_closure_owner)
-        .expect("dereferenced closure owner should receive outgoing call context");
-    assert_eq!(
-        dereferenced_closure_context.len(),
-        1,
-        "dereferenced closure owner context: {dereferenced_closure_context:#?}"
-    );
-    // tests/fixture_crates/fixture_call_graph/src/lib.rs:692-694:
-    // `let closure = || 34; (*closure)()` carries exact local closure-binding
-    // proof, so RAG should expose the same resolved DynamicClosure edge that
-    // the DB call graph stores.
-    let dereferenced_call = &dereferenced_closure_context[0];
-    assert_eq!(dereferenced_call.kind, CallSiteKind::Dynamic);
-    assert_eq!(dereferenced_call.callee, CallCalleeInfo::Dynamic);
-    assert_eq!(dereferenced_call.status, CallStatusKind::Resolved);
-    assert_eq!(
-        dereferenced_call.resolution,
-        Some(CallResolutionKind::LocalExact)
-    );
-    assert_eq!(
-        dereferenced_call.targets.len(),
-        1,
-        "dereferenced closure call should resolve to one closure owner: {dereferenced_call:#?}"
-    );
-    assert_eq!(
-        dereferenced_call.targets[0].relation,
-        CallTargetKind::DynamicClosure
-    );
+    for (label, owner) in [
+        ("closure binding cast", closure_cast_owner),
+        ("dereferenced closure binding", dereferenced_closure_owner),
+    ] {
+        let context = call_context
+            .get(&owner)
+            .unwrap_or_else(|| panic!("{label} owner should receive outgoing call context"));
+        assert_eq!(context.len(), 1, "{label} owner context: {context:#?}");
+        // tests/fixture_crates/fixture_call_graph/src/lib.rs:695-701 and
+        // :1696-1699:
+        // `let closure = || 21; (closure as fn() -> i32)()` and
+        // `let closure = || 34; (*closure)()` both carry exact local
+        // closure-binding proof, so RAG should expose the same resolved
+        // DynamicClosure edge that the DB call graph stores.
+        let call = &context[0];
+        assert_eq!(call.kind, CallSiteKind::Dynamic, "{label}");
+        assert_eq!(call.callee, CallCalleeInfo::Dynamic, "{label}");
+        assert_eq!(call.status, CallStatusKind::Resolved, "{label}");
+        assert_eq!(
+            call.resolution,
+            Some(CallResolutionKind::LocalExact),
+            "{label}"
+        );
+        assert_eq!(
+            call.targets.len(),
+            1,
+            "{label} should resolve to one closure owner: {call:#?}"
+        );
+        assert_eq!(
+            call.targets[0].relation,
+            CallTargetKind::DynamicClosure,
+            "{label}"
+        );
+    }
 
     let named_field_param_callers = [named_field_param_caller];
     let multi_named_field_param_callers = [
