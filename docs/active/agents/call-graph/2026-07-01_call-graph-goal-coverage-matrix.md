@@ -10,7 +10,7 @@ Related planning files:
 - [`2026-06-28_real-corpus-call-site-oracle-matrices.md`](2026-06-28_real-corpus-call-site-oracle-matrices.md)
 - [`2026-07-07_call-graph-usage-question-gap-audit.md`](2026-07-07_call-graph-usage-question-gap-audit.md)
 
-Status date: 2026-07-08
+Status date: 2026-07-09
 Baseline HEAD when created: `19860cc40`
 
 ## Operating Rule
@@ -50,22 +50,44 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: bounded branch-initialized local receiver proof.
+Current bucket: parameter-alias method receiver proof.
 
 Exit criteria:
 
-- Add fixture-backed source oracles where `if` and `match` initializers bind a
-  local receiver from branch arms that all prove the same exact local type.
-- Reuse the existing `InitializedLocalBinding` receiver proof path; do not add
-  a new receiver kind or broad branch/value-flow semantics.
-- Prove parser payload, DB owner/proof/target-centered rows, and RAG
-  call-context propagation for the new source oracles.
+- Add one fixture-backed source oracle where a local receiver aliases an owner
+  parameter before invoking an inherent method.
+- Carry the existing `ValueAlias { name, source_path }` binding proof into a
+  first-class method receiver payload without broadening arbitrary value flow.
+- Prove parser payload, DB owner/proof rows, and RAG call-context propagation.
 
-Status: completed for the fixture-backed branch-initialized local receiver rows.
+Status: completed for the fixture-backed direct parameter-alias receiver row.
 
-Next bucket: choose the next uncovered matrix bucket. Do not add more
-receiver initializer breadth unless it has a bounded source oracle and reuses
-an existing proof carrier.
+Next bucket: choose the next uncovered matrix bucket. Do not add more receiver
+alias breadth unless it has a bounded source oracle and a concrete existing
+proof carrier.
+
+Latest completed slice: parameter-alias method receiver proof.
+
+Completed evidence:
+
+- Added fixture source oracle
+  `call_param_alias_instance_method(value: LocalAssoc) { let alias = value; alias.instance_value() }`.
+- Parser extraction now records the method receiver as
+  `AliasedLocalBinding { name: "alias", source_path: ["value"] }` instead of
+  dropping the value-alias proof to `Unsupported`.
+- Resolver proof remains narrow: only one-segment alias sources are followed,
+  and the target is resolved by reusing the existing parameter method proof for
+  `value: LocalAssoc`.
+- Transform, DB decode, and RAG receiver payloads preserve the new receiver
+  shape; DB context/proof tests and RAG incoming expansion tests assert the
+  resolved `LocalAssoc::instance_value` edge.
+- Verification passed with focused parser, DB, and RAG tests, plus
+  `cargo run -p xtask --features call_graph -- fixtures regenerate --active`,
+  `cargo run -p xtask --features call_graph -- verify-backup-dbs`,
+  `cargo fmt --all --check`, and `git diff --check`.
+- This remains bounded to direct local aliases of visible parameters. Borrowed,
+  dereferenced, field, multi-segment, external, and arbitrary expression alias
+  sources remain future binding/type-flow work.
 
 Latest completed slice: real-corpus callback-parameter runtime-dispatch
 blocker proof.
