@@ -327,7 +327,8 @@ should prevent future resumes from reselecting already-covered shapes.
    - Parser extraction reuses the existing `branch_init_path` local-binding
      proof and does not add a new receiver kind. Mixed, opaque, or unproven
      branch initializers do not become initialized local receivers.
-   - Parser, DB owner/proof/target-centered rows, and RAG call-context
+   - Parser, DB owner/proof/target-centered rows, RAG call-context
+     collection, and exact `code_item_lookup` / `code_item_edges` tool
      assertions cover the exact fixture-backed shapes.
 
 18. Next adjacent candidate:

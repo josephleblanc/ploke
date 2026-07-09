@@ -43,6 +43,7 @@ use crate::call_graph_tool_support::{
     assert_branch_receiver_proof, assert_call_path_node, assert_chrono_naive_utc_incoming_context,
     assert_expected_path_incoming_context, assert_fixture_extern_c_abs_effects,
     assert_handler_call_incoming_context, assert_incoming_context,
+    assert_initialized_local_receiver_context, assert_initialized_local_receiver_proof,
     assert_json_from_bytes_incoming_context, assert_parse_attrs_incoming_context,
     assert_path_blocker_proof, assert_path_context, assert_resolved_callable_param_proof,
     assert_resolved_path_context, assert_run_ui_tests_incoming_context,
@@ -881,6 +882,66 @@ async fn code_item_edges_returns_branch_receiver_method_context() {
                 .expect("outgoing count")
                 >= 1,
             "code_item_edges should surface outgoing branch receiver call context for {owner_name}"
+        );
+        assert_eq!(
+            ui_field(ui, "proof_context"),
+            proof_context.len().to_string()
+        );
+    }
+}
+
+#[tokio::test]
+async fn code_item_edges_returns_branch_initialized_receiver_method_context() {
+    // Same fixture source and initialized-local receiver proof as the lookup
+    // test: edge lookup should expose the resolved method context/proof under
+    // `node_info` for both if-initialized and match-initialized locals.
+    for owner_name in [
+        "call_if_initialized_local_instance_method",
+        "call_match_initialized_local_instance_method",
+    ] {
+        let fixture = FixtureBranchReceiverToolFixture::new_for_owner(owner_name).await;
+        let params = EdgesParams {
+            item_name: Cow::Borrowed(fixture.owner_name),
+            file_path: Cow::Owned(fixture.file_path.display().to_string()),
+            node_kind: Cow::Borrowed("function"),
+            module_path: Cow::Borrowed("crate"),
+            owner_trait: None,
+            owner_type: None,
+            parent_name: None,
+        };
+
+        let result = CodeItemEdges::execute(params, fixture.ctx("branch-init-receiver-edges"))
+            .await
+            .expect("branch initialized receiver edges");
+        let payload: serde_json::Value =
+            serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
+        let call_context = payload
+            .get("node_info")
+            .and_then(|node| node.get("call_context"))
+            .and_then(serde_json::Value::as_array)
+            .expect("node_info.call_context array");
+        let proof_context = payload
+            .get("node_info")
+            .and_then(|node| node.get("proof_context"))
+            .and_then(serde_json::Value::as_array)
+            .expect("node_info.proof_context array");
+
+        let call =
+            assert_initialized_local_receiver_context(call_context, &fixture, "code_item_edges");
+        assert_initialized_local_receiver_proof(
+            proof_context,
+            &fixture,
+            call.site_id,
+            "code_item_edges",
+        );
+
+        let ui = result.ui_payload.as_ref().expect("ui payload");
+        assert!(
+            ui_field(ui, "call_context_outgoing")
+                .parse::<usize>()
+                .expect("outgoing count")
+                >= 1,
+            "code_item_edges should surface outgoing initialized receiver call context for {owner_name}"
         );
         assert_eq!(
             ui_field(ui, "proof_context"),

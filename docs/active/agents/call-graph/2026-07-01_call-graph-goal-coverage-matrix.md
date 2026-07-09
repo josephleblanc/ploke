@@ -84,6 +84,8 @@ Completed evidence:
   prove both exact local method edges to `LocalAssoc::instance_value`.
 - RAG call-context collection preserves the same resolved receiver payload and
   target for both owners.
+- Exact TUI `code_item_lookup` and `code_item_edges` payloads preserve the
+  same outgoing call-context and proof rows for both owners.
 - Verification passed:
   `cargo test -p syn_parser fixture_call_graph_call_if_initialized_local_instance_method_resolves_initialized_receiver_method_call_site -- --nocapture`,
   `cargo test -p syn_parser fixture_call_graph_call_match_initialized_local_instance_method_resolves_initialized_receiver_method_call_site -- --nocapture`,
@@ -91,6 +93,9 @@ Completed evidence:
   `cargo test -p ploke-db fixture_projection_stores_real_local_receiver_method_call_proof_facts -- --nocapture`,
   `cargo test -p ploke-db fixture_projection_stores_real_target_centered_method_call_proof_facts -- --nocapture`, and
   `cargo test -p ploke-rag call_context_collection_reads_branch_initialized_local_receiver_rows -- --nocapture`.
+  TUI tool verification passed:
+  `cargo test -p ploke-tui --test integration code_item_lookup_returns_branch_initialized_receiver_method_context -- --nocapture` and
+  `cargo test -p ploke-tui --test integration code_item_edges_returns_branch_initialized_receiver_method_context -- --nocapture`.
 
 Previously completed slice: match struct-pattern initialized receiver proof.
 

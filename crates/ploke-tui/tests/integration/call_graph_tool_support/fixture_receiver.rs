@@ -244,6 +244,52 @@ pub(crate) fn assert_branch_receiver_proof(
     );
 }
 
+pub(crate) fn assert_initialized_local_receiver_context(
+    calls: &[serde_json::Value],
+    fixture: &FixtureBranchReceiverToolFixture,
+    label: &str,
+) -> CallContextInfo {
+    let callee = initialized_local_receiver_callee();
+    let calls = calls
+        .iter()
+        .filter_map(|call| serde_json::from_value::<CallContextInfo>(call.clone()).ok())
+        .filter(|call| {
+            call.owner_id == fixture.owner
+                && call.kind == CallSiteKind::Method
+                && call.callee == callee
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        calls.len(),
+        1,
+        "{label} should expose exactly one resolved initialized local receiver row for {}: {calls:#?}",
+        fixture.owner_name
+    );
+    let call = calls[0].clone();
+    assert_eq!(call.status, CallStatusKind::Resolved);
+    assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+    assert_eq!(call.targets.len(), 1, "{call:#?}");
+    assert_eq!(call.targets[0].target_id, fixture.target);
+    assert_eq!(call.targets[0].relation, CallTargetKind::Method);
+    call
+}
+
+pub(crate) fn assert_initialized_local_receiver_proof(
+    proofs: &[serde_json::Value],
+    fixture: &FixtureBranchReceiverToolFixture,
+    site: Uuid,
+    label: &str,
+) {
+    assert_resolved_method_proof_rows(
+        proofs,
+        fixture.owner,
+        fixture.target,
+        site,
+        label,
+        fixture.owner_name,
+    );
+}
+
 pub(crate) fn assert_self_field_receiver_context(
     calls: &[serde_json::Value],
     fixture: &FixtureSelfFieldReceiverToolFixture,
@@ -349,6 +395,16 @@ fn branch_receiver_callee() -> CallCalleeInfo {
                 vec!["LocalAssoc".to_string()],
                 vec!["LocalAssoc".to_string()],
             ],
+        }),
+    }
+}
+
+fn initialized_local_receiver_callee() -> CallCalleeInfo {
+    CallCalleeInfo::Method {
+        name: "instance_value".to_string(),
+        receiver: Some(CallReceiverInfo::InitializedLocalBinding {
+            name: "value".to_string(),
+            init_path: vec!["LocalAssoc".to_string()],
         }),
     }
 }
