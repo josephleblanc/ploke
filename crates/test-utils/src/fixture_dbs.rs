@@ -627,7 +627,7 @@ pub const CORPUS_MEMCHR_CALL_GRAPH: FixtureDb = FixtureDb {
     requires_primary_index: false,
     bm25_index_expected: false,
     embedding: None,
-    last_updated: "2026-07-07",
+    last_updated: "2026-07-09",
     notes: "Source-pinned memchr corpus backup for real-target call graph query contracts over arbitrary-expression dynamic callees, function-pointer fields, and callable trait object fields.",
 };
 
@@ -702,7 +702,7 @@ pub const CORPUS_GENERIC_ARRAY_CALL_GRAPH: FixtureDb = FixtureDb {
     requires_primary_index: false,
     bm25_index_expected: false,
     embedding: None,
-    last_updated: "2026-07-07",
+    last_updated: "2026-07-09",
     notes: "Source-pinned generic-array corpus backup for real-target call graph query contracts over guarded match-arm method calls.",
 };
 
@@ -777,7 +777,7 @@ pub const CORPUS_CHRONO_CALL_GRAPH: FixtureDb = FixtureDb {
     requires_primary_index: false,
     bm25_index_expected: false,
     embedding: None,
-    last_updated: "2026-07-07",
+    last_updated: "2026-07-09",
     notes: "Source-pinned chrono corpus backup for real-target call graph query contracts over resolved alias constructors, Option ok_or try receivers, and guarded match-arm external slice receiver frontiers.",
 };
 
