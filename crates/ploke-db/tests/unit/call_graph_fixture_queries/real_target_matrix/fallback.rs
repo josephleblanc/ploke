@@ -499,35 +499,50 @@ fn generic_array_guarded_match_arm_method_guard_is_targetless_fallback_oracle()
     let records = site_ids
         .iter()
         .copied()
-        .map(ploke_test_utils::generic_array_size_hint_guard_blocker)
+        .flat_map(|site_id| {
+            [
+                ploke_test_utils::generic_array_size_hint_guard_blocker(site_id),
+                ploke_test_utils::generic_array_iter_summary_blocker(site_id),
+            ]
+        })
         .collect::<Vec<_>>();
     db.upsert_proof_fact_values(&records)?;
 
     let blockers = db.proof_blockers()?;
     for site_id in &site_ids {
         let site = site_id.to_string();
-        assert!(
-            blockers.iter().any(|proof| {
-                proof.call_site_id.as_deref() == Some(site.as_str())
-                    && proof.reason == "type_resolution_missing"
-                    && proof.status == "blocked"
-            }),
-            "generic-array guarded size_hint site {site} should expose the explicit receiver proof blocker: {blockers:#?}"
-        );
+        for reason in [
+            "type_resolution_missing",
+            "external_dependency_summary_missing",
+        ] {
+            assert!(
+                blockers.iter().any(|proof| {
+                    proof.call_site_id.as_deref() == Some(site.as_str())
+                        && proof.reason == reason
+                        && proof.status == "blocked"
+                }),
+                "generic-array guarded size_hint site {site} should expose the explicit {reason} blocker: {blockers:#?}"
+            );
+        }
     }
 
     let proof_rows = db.proof_graphrag_context("guarded match receiver")?;
     for site_id in &site_ids {
         let site = site_id.to_string();
-        assert!(
-            proof_rows.iter().any(|proof| {
-                proof.kind == "proof_blocker"
-                    && proof.call_site_id.as_deref() == Some(site.as_str())
-                    && proof.blocker_reason.as_deref() == Some("type_resolution_missing")
-                    && proof.status.as_deref() == Some("blocked")
-            }),
-            "generic-array guarded size_hint site {site} should be retrievable through proof context: {proof_rows:#?}"
-        );
+        for reason in [
+            "type_resolution_missing",
+            "external_dependency_summary_missing",
+        ] {
+            assert!(
+                proof_rows.iter().any(|proof| {
+                    proof.kind == "proof_blocker"
+                        && proof.call_site_id.as_deref() == Some(site.as_str())
+                        && proof.blocker_reason.as_deref() == Some(reason)
+                        && proof.status.as_deref() == Some("blocked")
+                }),
+                "generic-array guarded size_hint site {site} should expose the {reason} blocker through proof context: {proof_rows:#?}"
+            );
+        }
     }
 
     Ok(())

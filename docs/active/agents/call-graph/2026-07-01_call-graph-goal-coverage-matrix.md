@@ -182,8 +182,8 @@ Completed evidence:
   `cargo test -p ploke-db fixture_context_resolves_awaited_async_closure_future_block_alias_to_executable_owner -- --nocapture`, and
   `cargo test -p ploke-rag call_context_collection_resolves_awaited_async_closure_future_block_alias_rows -- --nocapture`.
 
-Previously completed slice: explicit `type_resolution_missing`
-proof blocker for the real generic-array guarded `size_hint` receiver rows.
+Previously completed slice: explicit blocker proof for the real generic-array
+guarded `size_hint` receiver rows.
 
 Completed evidence:
 
@@ -194,10 +194,17 @@ Completed evidence:
 - The persisted call graph keeps both rows `Unsupported`, with no
   `call_relation` targets and no traversal candidates.
 - DB proof lookup and GraphRAG proof context expose explicit
-  `type_resolution_missing` blockers for both callsite ids, documenting that
-  exact iterator receiver type proof is required before traversal can be
-  admitted.
+  `type_resolution_missing` blockers for both callsite ids. The same oracle
+  now also attaches an `external_dependency_summary_missing` blocker naming
+  the missing proof input: an external summary for
+  `IntoIterator::into_iter` that proves the returned iterator supports
+  `Iterator::size_hint`.
+- This does not resolve the receiver and does not create traversal edges; it
+  keeps the row fail-closed while documenting why local binding proof alone is
+  insufficient.
 - Verification passed:
+  `cargo run -p xtask --features call_graph -- fixtures regenerate --active`,
+  `cargo run -p xtask --features call_graph -- verify-backup-dbs`,
   `cargo test -p ploke-db generic_array_guarded_match_arm_method_guard_is_targetless_fallback_oracle -- --nocapture`,
   `cargo fmt --all --check`, and `git diff --check`.
 

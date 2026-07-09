@@ -41,7 +41,8 @@ pub use proof_fact_fixtures::{
     axum_request_builder_summary_records, axum_routing_post_boundary_id,
     axum_routing_post_macro_summary_records, axum_std_mem_replace_summary_records,
     axum_test_client_dependency_record, fixture_async_closure_poll_resume_blocker,
-    fixture_extern_c_abs_effect_record, generic_array_size_hint_guard_blocker,
+    fixture_extern_c_abs_effect_record, generic_array_iter_summary_blocker,
+    generic_array_size_hint_guard_blocker,
 };
 pub use type_shape_matrix::{
     ContainingOwnerSelector, CoordinateSpec, CorpusFixture, OwnerSelector, ShapePipelineCoverage,

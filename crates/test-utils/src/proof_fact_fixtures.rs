@@ -399,6 +399,19 @@ pub fn generic_array_size_hint_guard_blocker(call_site_id: Uuid) -> serde_json::
     })
 }
 
+pub fn generic_array_iter_summary_blocker(call_site_id: Uuid) -> serde_json::Value {
+    serde_json::json!({
+        "fact_kind": "proof_blocker",
+        "schema_version": "ploke-proof-facts.v1",
+        "blocker_id": format!("blocker:generic-array-into-iter-summary:{call_site_id}"),
+        "reason": "external_dependency_summary_missing",
+        "status": "blocked",
+        "call_site_id": call_site_id.to_string(),
+        "detail": "generic-array/src/lib.rs guarded `iter.size_hint()` needs an external summary for `IntoIterator::into_iter` proving the returned iterator supports `Iterator::size_hint`",
+        "evidence_use": "proof_only"
+    })
+}
+
 pub fn fixture_extern_c_abs_effect_record(call_site_id: Uuid) -> serde_json::Value {
     serde_json::json!({
         "fact_kind": "effect_seed",
