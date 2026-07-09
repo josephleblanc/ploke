@@ -4,10 +4,14 @@
 //! RAG, and TUI layers decide which rows they can materialize.
 
 use ploke_db::{CallRelationKind, CallStatusKind, CallTargetKind};
+use uuid::Uuid;
 
 use crate::{
     CORPUS_AXUM_CALL_GRAPH, CORPUS_CHRONO_CALL_GRAPH, CORPUS_GENERIC_ARRAY_CALL_GRAPH,
     CORPUS_MEMCHR_CALL_GRAPH, FixtureDb,
+    proof_fact_fixtures::{
+        generic_array_iter_summary_blocker, generic_array_size_hint_guard_blocker,
+    },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -128,6 +132,39 @@ pub struct CallShapeCase {
 
 pub const fn call_shape_cases() -> &'static [CallShapeCase] {
     CALL_SHAPE_CASES
+}
+
+pub fn call_shape_case_blocker_reasons(case: &CallShapeCase) -> &'static [&'static str] {
+    if is_generic_array_size_hint_case(case) {
+        &[
+            "type_resolution_missing",
+            "external_dependency_summary_missing",
+        ]
+    } else {
+        &[]
+    }
+}
+
+pub fn call_shape_case_proof_blockers(
+    case: &CallShapeCase,
+    call_site_id: Uuid,
+) -> Vec<serde_json::Value> {
+    if is_generic_array_size_hint_case(case) {
+        vec![
+            generic_array_size_hint_guard_blocker(call_site_id),
+            generic_array_iter_summary_blocker(call_site_id),
+        ]
+    } else {
+        Vec::new()
+    }
+}
+
+fn is_generic_array_size_hint_case(case: &CallShapeCase) -> bool {
+    matches!(
+        case.name,
+        "generic_array_try_from_iter_size_hint_local_receiver"
+            | "generic_array_try_from_fallible_iter_size_hint_local_receiver"
+    )
 }
 
 static CALL_SHAPE_CASES: &[CallShapeCase] = &[

@@ -50,23 +50,48 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: feature-gated external-summary frontier proof for
-`Json::from_bytes`.
+Current bucket: shared real-corpus matrix explicit blocker propagation for
+generic-array guarded `size_hint` receiver rows.
 
 Exit criteria:
 
-- Use the existing axum `Json::from_bytes` source oracle:
-  `axum/src/json.rs:184`
-  `serde_json::Deserializer::from_slice(bytes)`.
-- Preserve the inherited `#[cfg(feature = "json")]` module gate on the
-  targetless external frontier.
-- Expose the owner-scoped missing external-summary queue through DB, RAG, and
-  exact TUI tool payloads.
-- Admit a test summary record without fabricating a local traversal edge.
+- Reuse the existing real-corpus matrix rows for
+  `generic-array/src/lib.rs:1239` and `:1276`.
+- Keep both `iter.size_hint()` rows targetless/unsupported, with no invented
+  call edge.
+- Centralize the explicit blocker facts in the shared call-shape matrix helper
+  instead of duplicating generic-array setup in each downstream tool test.
+- Assert exact TUI `code_item_lookup` and `code_item_edges` proof payloads
+  expose both explicit blockers.
 
 Status: completed for this checkpoint.
 
-Latest completed slice: feature-gated serde_json external-summary frontier
+Latest completed slice: shared TUI matrix proof payloads now preserve the
+generic-array guarded `size_hint` explicit blockers.
+
+Completed evidence:
+
+- `call_shape_case_proof_blockers` and `call_shape_case_blocker_reasons`
+  attach the two source-oracle blockers to the existing shared call-shape
+  matrix rows for `generic_array_try_from_iter_size_hint_local_receiver` and
+  `generic_array_try_from_fallible_iter_size_hint_local_receiver`.
+- The TUI shared-matrix fixture upserts those case-owned blockers before
+  building `AppState`, then `assert_proof_context` requires both
+  `type_resolution_missing` and `external_dependency_summary_missing` blocker
+  rows in exact lookup and edge-tool proof payloads.
+- This is downstream proof propagation only. It does not resolve the receiver,
+  create a traversal edge, or relax the targetless status.
+- Verification passed:
+  `cargo run -p xtask --features call_graph -- fixtures regenerate --active`,
+  `cargo run -p xtask --features call_graph -- verify-backup-dbs`,
+  `cargo check -p ploke-test-utils`, and
+  `cargo test -p ploke-tui --test integration call_graph_tool_shared_matrix -- --nocapture`.
+
+Next bucket: choose the next binding/type-aware semantic row from the plan's
+remaining proof-input list. Do not stay on generic-array unless the next slice
+adds real proof input for resolving the guarded receiver.
+
+Previous completed slice: feature-gated serde_json external-summary frontier
 proof.
 
 Completed evidence:
@@ -86,10 +111,6 @@ Completed evidence:
 - The shared test proof fixture
   `axum_serde_json_from_slice_summary_records` mirrors the existing
   `Request::builder` and `std::mem::replace` admitted-summary pattern.
-
-Next bucket: choose the next binding/type-aware semantic row from the plan's
-remaining proof-input list only after the fresh workspace verifier completes or
-reports a concrete failure.
 
 Previous completed bucket: active call-graph corpus fixture refresh plus
 `Default`-bound associated external frontier proof.
@@ -392,6 +413,9 @@ Completed evidence:
 - This does not resolve the receiver and does not create traversal edges; it
   keeps the row fail-closed while documenting why local binding proof alone is
   insufficient.
+- The shared TUI call-shape matrix now reuses the same matrix-owned blocker
+  facts and asserts exact `code_item_lookup` / `code_item_edges` proof payloads
+  include both blockers for each row.
 - Verification passed:
   `cargo run -p xtask --features call_graph -- fixtures regenerate --active`,
   `cargo run -p xtask --features call_graph -- verify-backup-dbs`,

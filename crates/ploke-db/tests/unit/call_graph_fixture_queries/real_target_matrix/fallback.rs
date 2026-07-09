@@ -547,14 +547,15 @@ fn generic_array_guarded_match_arm_method_guard_is_targetless_fallback_oracle()
         }],
     )?;
 
+    let size_hint_case = ploke_test_utils::call_shape_cases()
+        .iter()
+        .find(|case| case.name == "generic_array_try_from_iter_size_hint_local_receiver")
+        .expect("generic-array size_hint matrix case");
     let records = site_ids
         .iter()
         .copied()
         .flat_map(|site_id| {
-            [
-                ploke_test_utils::generic_array_size_hint_guard_blocker(site_id),
-                ploke_test_utils::generic_array_iter_summary_blocker(site_id),
-            ]
+            ploke_test_utils::call_shape_case_proof_blockers(size_hint_case, site_id)
         })
         .collect::<Vec<_>>();
     db.upsert_proof_fact_values(&records)?;

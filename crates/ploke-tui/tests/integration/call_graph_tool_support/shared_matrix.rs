@@ -1,7 +1,9 @@
 use std::borrow::Cow;
 
 use ploke_core::rag_types::CallResolutionKind;
-use ploke_test_utils::{CallExpected, CallShapeCase};
+use ploke_test_utils::{
+    CallExpected, CallShapeCase, call_shape_case_blocker_reasons, call_shape_case_proof_blockers,
+};
 use ploke_tui::tools::{code_item_lookup::LookupParams, get_code_edges::EdgesParams};
 
 use super::*;
@@ -54,6 +56,11 @@ impl SharedCallShapeToolFixture {
             .unwrap_or_else(|err| panic!("{} owner call context: {err}", case.name));
         let row = select_site(&context, case);
         assert_db_expectation(row, case, target.as_ref().map(|node| node.id));
+        let explicit_blockers = call_shape_case_proof_blockers(case, row.site.id);
+        if !explicit_blockers.is_empty() {
+            db.upsert_proof_fact_values(&explicit_blockers)
+                .unwrap_or_else(|err| panic!("{} explicit proof blockers: {err}", case.name));
+        }
 
         let query = match target.as_ref() {
             Some(target) => query_for_target(target, case.expected),
@@ -226,6 +233,18 @@ impl SharedCallShapeToolFixture {
                     "{tool} should return the targetless call_resolution proof row for {}: {proofs:#?}",
                     self.case.name
                 );
+                for reason in call_shape_case_blocker_reasons(self.case) {
+                    assert!(
+                        rows.iter().any(|proof| {
+                            proof.kind == "proof_blocker"
+                                && proof.call_site_id.as_deref() == Some(site.as_str())
+                                && proof.blocker_reason.as_deref() == Some(*reason)
+                                && proof.status.as_deref() == Some("blocked")
+                        }),
+                        "{tool} should return the explicit {reason} proof_blocker row for {}: {proofs:#?}",
+                        self.case.name
+                    );
+                }
                 assert!(
                     rows.iter().all(|proof| {
                         proof.kind != "call_edge"
