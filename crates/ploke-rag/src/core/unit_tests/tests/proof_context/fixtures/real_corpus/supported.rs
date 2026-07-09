@@ -221,6 +221,12 @@ async fn proof_context_exact_preserves_axum_supported_target_rows() -> Result<()
         .expect("Body::empty projected case");
     let rows = rag.exact_proof_context(body_empty.case.target)?;
     assert_body_empty_dependency_root(&rows, body_empty);
+    let router_new = projected
+        .iter()
+        .find(|case| case.case.label == "axum Router::new resolved fanout")
+        .expect("Router::new projected case");
+    let rows = rag.exact_proof_context(router_new.case.target)?;
+    assert_router_new_dependency_root(&rows, router_new);
 
     Ok(())
 }
@@ -284,6 +290,28 @@ fn attach_dependency_roots(
     }
     if let Some(case) = projected
         .iter()
+        .find(|case| case.case.label == "axum Router::new resolved fanout")
+    {
+        for caller in &case.callers {
+            let site = caller.site.id.to_string();
+            let source = db.proof_source_provenance(&site)?.unwrap_or_else(|| {
+                panic!("Router::new caller site {site} should have proof provenance")
+            });
+            if source
+                .source_file
+                .ends_with("axum-core/src/extract/request_parts.rs")
+            {
+                records.push(ploke_test_utils::axum_router_new_dependency_record(
+                    super::helpers::AXUM_DOMAIN,
+                    caller.site.id,
+                    caller.site.owner_id,
+                    case.case.target,
+                ));
+            }
+        }
+    }
+    if let Some(case) = projected
+        .iter()
         .find(|case| case.case.label == "axum-core Body::empty current resolved subset")
     {
         for caller in &case.callers {
@@ -304,6 +332,41 @@ fn attach_dependency_roots(
     db.upsert_proof_fact_values(&records)?;
 
     Ok(())
+}
+
+fn assert_router_new_dependency_root(
+    rows: &[ProofContextInfo],
+    case: &super::helpers::ProjectedCase,
+) {
+    let target = case.case.target.to_string();
+    let sites = case
+        .callers
+        .iter()
+        .filter(|caller| {
+            let path = caller
+                .site
+                .path
+                .as_ref()
+                .map(|path| path.iter().map(String::as_str).collect::<Vec<_>>());
+            path.as_deref() == Some(&["Router", "new"][..])
+        })
+        .filter(|caller| {
+            let site = caller.site.id.to_string();
+            let owner = caller.site.owner_id.to_string();
+            rows.iter().any(|row| {
+                row.kind == "dependency_root"
+                    && row.call_site_id.as_deref() == Some(site.as_str())
+                    && row.caller_def_id.as_deref() == Some(owner.as_str())
+                    && row.resolved_def_id.as_deref() == Some(target.as_str())
+                    && row.target_name.as_deref() == Some("axum::routing::Router::new")
+                    && row.status.as_deref() == Some("admitted")
+            })
+        })
+        .count();
+    assert_eq!(
+        sites, 1,
+        "RAG exact proof context should expose the axum-core Router::new dependency-root proof row: {rows:#?}"
+    );
 }
 
 fn assert_body_empty_dependency_root(

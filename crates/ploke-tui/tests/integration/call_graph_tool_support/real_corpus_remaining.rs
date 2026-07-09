@@ -380,6 +380,35 @@ fn attach_root_proofs(
                 case.label()
             );
         }
+        AxumRemainingTarget::RouterNew => {
+            for caller in callers {
+                let site = caller.site.to_string();
+                let source = db
+                    .proof_source_provenance(&site)
+                    .unwrap_or_else(|err| panic!("{} source provenance: {err}", case.label()))
+                    .unwrap_or_else(|| {
+                        panic!("{} should have proof provenance for {site}", case.label())
+                    });
+                if source
+                    .source_file
+                    .ends_with("axum-core/src/extract/request_parts.rs")
+                {
+                    sites.push(caller.site);
+                    records.push(axum_router_new_dependency_record(
+                        "bd:corpus-axum-call-graph",
+                        caller.site,
+                        caller.owner,
+                        target,
+                    ));
+                }
+            }
+            assert_eq!(
+                sites.len(),
+                1,
+                "{} should identify the axum-core dependency-root caller site",
+                case.label()
+            );
+        }
         _ => return Vec::new(),
     }
     db.upsert_proof_fact_values(&records)
@@ -444,6 +473,13 @@ fn expected_dependency_root_target(label: &str) -> ExpectedDependencyRoot<'_> {
             target_kind: "workspace_inherent_method",
             target_name: "axum::test_helpers::TestClient::new",
             target_root: "axum/src/test_helpers/test_client.rs",
+        };
+    }
+    if label == AxumRemainingTarget::RouterNew.label() {
+        return ExpectedDependencyRoot {
+            target_kind: "workspace_inherent_method",
+            target_name: "axum::routing::Router::new",
+            target_root: "axum/src/routing/mod.rs",
         };
     }
     panic!("{label} does not have dependency-root proof expectations")

@@ -891,6 +891,25 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
         },
     )?;
 
+    let domain_id = "bd:corpus-axum-call-graph";
+    let mut records = axum_domain_records(domain_id);
+    records.push(ploke_test_utils::axum_router_new_dependency_record(
+        domain_id,
+        axum_core_router_new.site.id,
+        axum_core_owner,
+        target,
+    ));
+    db.upsert_proof_fact_values(&records)?;
+
+    let proof_rows = db.proof_symbol_lookup(&target.to_string())?;
+    assert_router_new_dependency_root_proof(
+        &proof_rows,
+        axum_core_router_new.site.id,
+        axum_core_owner,
+        target,
+        "axum-core/src/extract/request_parts.rs:193 workspace-import Router::new",
+    );
+
     let clone_target = method_id_by_name_body_and_file_suffix(
         &db,
         "clone",
@@ -1118,6 +1137,32 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
     }
 
     Ok(())
+}
+
+fn assert_router_new_dependency_root_proof(
+    rows: &[ProofGraphContextRow],
+    site_id: Uuid,
+    caller_id: Uuid,
+    target_id: Uuid,
+    label: &str,
+) {
+    let site_id = site_id.to_string();
+    let caller_id = caller_id.to_string();
+    let target_id = target_id.to_string();
+    assert!(
+        rows.iter().any(|row| {
+            row.kind == "dependency_root"
+                && row.call_site_id.as_deref() == Some(site_id.as_str())
+                && row.caller_def_id.as_deref() == Some(caller_id.as_str())
+                && row.resolved_def_id.as_deref() == Some(target_id.as_str())
+                && row.target_kind.as_deref() == Some("workspace_inherent_method")
+                && row.target_name.as_deref() == Some("axum::routing::Router::new")
+                && row.target_root.as_deref() == Some("axum/src/routing/mod.rs")
+                && row.status.as_deref() == Some("admitted")
+                && row.evidence_use.as_deref() == Some("proof_only")
+        }),
+        "{label} should expose an admitted Router::new dependency-root proof row: {rows:#?}"
+    );
 }
 
 #[test]

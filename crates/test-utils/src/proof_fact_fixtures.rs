@@ -239,6 +239,35 @@ pub fn axum_test_client_dependency_record(
     })
 }
 
+pub fn axum_router_new_dependency_record(
+    domain_id: &str,
+    call_site_id: Uuid,
+    caller_def_id: Uuid,
+    resolved_def_id: Uuid,
+) -> serde_json::Value {
+    serde_json::json!({
+        "fact_kind": "dependency_root",
+        "schema_version": "ploke-proof-facts.v1",
+        "dependency_root_id": format!("dependency-root:axum-router-new:{call_site_id}"),
+        "build_domain_id": domain_id,
+        "call_site_id": call_site_id.to_string(),
+        "caller_def_id": caller_def_id.to_string(),
+        "resolved_def_id": resolved_def_id.to_string(),
+        "dependency_name": "axum",
+        "target_kind": "workspace_inherent_method",
+        "target_name": "axum::routing::Router::new",
+        "target_root": "axum/src/routing/mod.rs",
+        "import_path": ["axum", "Router"],
+        "resolved_path": ["axum", "routing", "Router", "new"],
+        "artifact_hash": "sha256:axum-router-new-dependency-root",
+        "version": "axum-call-graph-dependency-root-v1",
+        "review_method": "source-oracle-review",
+        "scope_of_validity": "axum-core request_parts Router::new workspace dependency-root source oracle in corpus_axum_call_graph",
+        "status": "admitted",
+        "evidence_use": "proof_only"
+    })
+}
+
 pub fn axum_body_empty_dependency_record(
     domain_id: &str,
     call_site_id: Uuid,
