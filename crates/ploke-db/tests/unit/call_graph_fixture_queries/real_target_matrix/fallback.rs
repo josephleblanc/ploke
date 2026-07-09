@@ -375,7 +375,7 @@ fn memchr_function_pointer_field_calls_are_dynamic_targetless_oracles() -> Resul
         "(self.call)(self, prestate, haystack, needle)",
         "src/memmem/searcher.rs",
     )?;
-    assert_owner_dynamic_targetless(
+    let searcher_site = assert_owner_dynamic_targetless(
         &db,
         searcher_find,
         4,
@@ -388,12 +388,33 @@ fn memchr_function_pointer_field_calls_are_dynamic_targetless_oracles() -> Resul
         "(self.call)(self, haystack)",
         "src/memmem/searcher.rs",
     )?;
-    assert_owner_dynamic_targetless(
+    let prefilter_site = assert_owner_dynamic_targetless(
         &db,
         prefilter_find,
         2,
         "memchr/src/memmem/searcher.rs:718 Prefilter.call",
     )?;
+
+    for (owner, site, label) in [
+        (
+            searcher_find,
+            searcher_site,
+            "memchr/src/memmem/searcher.rs:222 Searcher.call",
+        ),
+        (
+            prefilter_find,
+            prefilter_site,
+            "memchr/src/memmem/searcher.rs:718 Prefilter.call",
+        ),
+    ] {
+        let projected =
+            db.project_call_proof_facts_for_owner(owner, "bd:corpus-memchr-call-graph")?;
+        assert!(
+            projected >= 2,
+            "{label} should project at least call_site and call_resolution proof facts"
+        );
+        assert_dynamic_blocker_proof(&db, site, label)?;
+    }
 
     Ok(())
 }
@@ -698,6 +719,30 @@ fn assert_owner_dynamic_targetless(
     assert_no_traversal_candidates_for_site(db, owner, row.site.id, label)?;
 
     Ok(row.site.id)
+}
+
+fn assert_dynamic_blocker_proof(db: &Database, site_id: Uuid, label: &str) -> Result<(), DbError> {
+    let site = site_id.to_string();
+    let rows = db.proof_graphrag_context("dynamic_dispatch_unbounded")?;
+    assert!(
+        rows.iter().any(|row| {
+            row.kind == "call_resolution"
+                && row.call_site_id.as_deref() == Some(site.as_str())
+                && row.resolution_state.as_deref() == Some("blocked")
+                && row.blocker_reason.as_deref() == Some("dynamic_dispatch_unbounded")
+        }),
+        "{label} should project a blocked dynamic-dispatch call_resolution proof row: {rows:#?}"
+    );
+
+    let provenance = db
+        .proof_source_provenance(&site)?
+        .unwrap_or_else(|| panic!("{label} should project source provenance for {site}"));
+    assert!(
+        provenance.source_file.ends_with("src/memmem/searcher.rs"),
+        "{label} proof source provenance should point at memchr searcher.rs: {provenance:#?}"
+    );
+
+    Ok(())
 }
 
 fn assert_no_owner_dynamic_rows(
