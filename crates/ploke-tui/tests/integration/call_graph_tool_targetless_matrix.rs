@@ -301,9 +301,10 @@ async fn code_item_lookup_returns_unsupported_receiver_targetless_real_corpus_ro
         //   axum/src/error_handling/mod.rs:251 calls
         //   `self.project().future.poll(cx)` through a boxed dyn Future.
         // Expected traversal: exact owner lookup exposes the unsupported
-        // receiver rows, preserves method-generic arguments where present,
-        // and leaves them targetless until method-chain, async poll/resume, or
-        // runtime trait-object dispatch proof is available.
+        // receiver rows, preserves method-generic arguments and precise
+        // receiver shapes where present, and leaves them targetless until
+        // external return summaries, async poll/resume, or runtime
+        // trait-object dispatch proof is available.
         let callee = fixture.case.callee();
         let site_id = assert_method_context(
             call_context,

@@ -2792,7 +2792,12 @@ async fn call_context_collection_preserves_axum_turbofish_method_receiver_shape(
     });
     let expected_callee = CallCalleeInfo::Method {
         name: "extract_with_state".to_string(),
-        receiver: Some(CallReceiverInfo::Unsupported),
+        receiver: Some(CallReceiverInfo::TupleMethodReturn {
+            name: "parts".to_string(),
+            method_name: "into_parts".to_string(),
+            method_span: (4640, 4669),
+            index: 0,
+        }),
     };
     let turbofish = context
         .iter()
@@ -2810,8 +2815,9 @@ async fn call_context_collection_preserves_axum_turbofish_method_receiver_shape(
     //   `parts.extract_with_state::<State<String>, String>(&state)`.
     //
     // Current contract: the row is visible to RAG, preserves the two explicit
-    // method generic arguments, and remains unsupported/targetless until the
-    // method-chain receiver can be proven.
+    // method generic arguments and tuple-method-return receiver proof, and
+    // remains unsupported/targetless until the external return summary is
+    // admitted.
     assert_eq!(
         turbofish.len(),
         1,

@@ -122,7 +122,12 @@ async fn proof_context_collection_preserves_axum_request_parts_external_return_b
         .expect("request_parts.rs:164 owner should receive outgoing call context");
     let callee = CallCalleeInfo::Method {
         name: "extract_with_state".to_string(),
-        receiver: Some(CallReceiverInfo::Unsupported),
+        receiver: Some(CallReceiverInfo::TupleMethodReturn {
+            name: "parts".to_string(),
+            method_name: "into_parts".to_string(),
+            method_span: (4640, 4669),
+            index: 0,
+        }),
     };
     let observed = targetless_method_site_with_status(
         calls,
@@ -144,9 +149,10 @@ async fn proof_context_collection_preserves_axum_request_parts_external_return_b
     //   `Request::new(()).into_parts()`.
     //   axum-core/src/ext_traits/request_parts.rs:164 calls
     //   `parts.extract_with_state::<State<String>, String>(&state)`.
-    // Expected proof traversal: the row stays targetless and unsupported, but
-    // proof context must name the concrete missing input: an external summary
-    // for `http::Request::into_parts` returning `http::request::Parts`.
+    // Expected proof traversal: the row carries tuple-method-return receiver
+    // proof and stays targetless/unsupported. Proof context must name the
+    // concrete missing input: an external summary for
+    // `http::Request::into_parts` returning `http::request::Parts`.
     let site = site_id.to_string();
     assert!(
         rows.iter().any(|proof| {

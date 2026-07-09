@@ -379,19 +379,24 @@ fn axum_real_target_turbofish_method_receiver_rows_preserve_current_shapes() -> 
     //   axum-core/src/ext_traits/request_parts.rs:164 calls
     //   `parts.extract_with_state::<State<String>, String>(&state)`.
     // Current model: the turbofish row is projected and preserves the two
-    // explicit method generic arguments, but its method-chain receiver remains
-    // unsupported and targetless.
+    // explicit method generic arguments. The receiver is now a precise
+    // tuple-method-return binding from `Request::new(()).into_parts()`, but it
+    // remains unsupported and targetless until the external return summary is
+    // admitted.
     let generic_owner = function_id_by_name_in_module(
         &db,
         &["crate", "ext_traits", "request_parts", "tests"],
         "extract_with_state",
     )?;
     let generic_context = db.call_context_for_owner(generic_owner)?;
-    let generic_row = row_by_method_receiver(
-        &generic_context,
-        "extract_with_state",
-        &CallReceiver::Unsupported,
-    );
+    let generic_receiver = CallReceiver::TupleMethodReturn {
+        name: "parts".to_string(),
+        method_name: "into_parts".to_string(),
+        method_span: (4640, 4669),
+        index: 0,
+    };
+    let generic_row =
+        row_by_method_receiver(&generic_context, "extract_with_state", &generic_receiver);
     assert_targetless_status(generic_row, CallStatusKind::Unsupported);
     assert_eq!(
         generic_row.site.generic_arg_count,
@@ -402,7 +407,7 @@ fn axum_real_target_turbofish_method_receiver_rows_preserve_current_shapes() -> 
         relations_for_site(&db, generic_row.site.id)?
             .rows
             .is_empty(),
-        "request_parts.rs:164 unsupported receiver should not have raw call_relation targets"
+        "request_parts.rs:164 tuple-method-return receiver should not have raw call_relation targets"
     );
     assert_no_traversal_candidates_for_site(
         &db,

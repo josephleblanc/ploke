@@ -206,7 +206,11 @@ should prevent future resumes from reselecting already-covered shapes.
      as `let (parts, body) = Request::new(()).into_parts();`, nested value-flow,
      and tuple patterns without direct tuple-expression initializers or exact
      local initializer method proof remain out of scope unless an explicit
-     local type annotation supplies a per-element type proof.
+     local type annotation supplies a per-element type proof. The regenerated
+     axum `request_parts.rs:164` row now preserves the
+     `TupleMethodReturn(parts, into_parts, index 0)` receiver payload, but
+     remains targetless until an admitted external-return summary proves the
+     selected tuple element type.
 
 9. External `Service`-bound self-field receiver frontier - completed:
    - Regenerated axum `self.inner.poll_ready(cx)` and `self.0.poll_ready(cx)`
@@ -348,7 +352,8 @@ should prevent future resumes from reselecting already-covered shapes.
      slices: real-corpus routing helper rows require macro/cfg evidence,
      axum callable fields and proc-macro callback rows require broader
      interprocedural value flow, and the axum-core request-parts turbofish row
-     is blocked on an external-return summary rather than local receiver proof.
+     now carries tuple-method-return receiver proof but is blocked on an
+     external-return summary.
    - Likely remaining options are a broader async poll/resume proof carrier, a
      new explicitly reviewed dependency-root source oracle, or another bounded
      local binding/type proof only if it reuses existing parser-owned evidence

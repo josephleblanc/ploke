@@ -240,7 +240,7 @@ external receiver type proof.
 | method-call result receiver | `axum/src/routing/route.rs:51` | `Route::oneshot_inner` | `Route<E>(BoxCloneSyncService<...>)` at `:31`; imports `BoxCloneSyncService`, `Oneshot`, `ServiceExt` at `:20-22`; external tower trait methods. |
 | await result receiver | `axum/src/test_helpers/test_client.rs:134` | `RequestBuilder::into_future` | field `builder: reqwest::RequestBuilder` at `:90-92`; `.send()` external reqwest method; `.await.unwrap()` external result handling. |
 | await result receiver helpers | `axum/src/test_helpers/test_client.rs:156,160,168,172` | `TestResponse::{bytes,text,json,chunk}` | response helper awaited `unwrap()` rows are visible and targetless; they should not resolve to concrete callee edges. |
-| turbofish method call | `axum-core/src/ext_traits/request_parts.rs:164` | test `extract_with_state` | `parts: http::request::Parts` from `Request::new(()).into_parts()` at `:159`; impl `RequestPartsExt for Parts` at `:117`; method impl at `:125`; trait decl `:108`; current DB projection preserves the two explicit method generic arguments, but the method-chain receiver remains unsupported and targetless. |
+| turbofish method call | `axum-core/src/ext_traits/request_parts.rs:164` | test `extract_with_state` | `parts: http::request::Parts` from `Request::new(()).into_parts()` at `:159`; impl `RequestPartsExt for Parts` at `:117`; method impl at `:125`; trait decl `:108`; current DB projection preserves the two explicit method generic arguments and the tuple-method-return receiver shape, but the row remains unsupported and targetless until an admitted external summary proves `http::Request::into_parts` returns `http::request::Parts`. |
 | local `Parts` extension-trait receiver | `axum-core/src/ext_traits/request_parts.rs:186` | `WorksForCustomExtractor::from_request_parts` | parameter `parts: &mut Parts` at `:184`; `Parts` imported from `http::request` at `:2`; impl `RequestPartsExt for Parts` at `:117`; method impl at `:125`; trait decl `:108`; exact imported external receiver type proof resolves the row to the local impl method. |
 | shadowed callable `get` | `axum/src/routing/tests/mod.rs:423,424,425,426,427,429,430,431,432,433,434` | test `what_matches_wildcard` | module imports routing `get` at `:8-10`, but local `let get = |path| ...` at `:418` shadows it; calls target local closure, not `routing::get`. DB, RAG, and exact TUI lookup/edges preserve only the two current setup `get(...)` path rows and do not fabricate closure-to-routing edges. |
 
@@ -304,8 +304,8 @@ The targetless receiver rows for `self.0.size_hint()`, the turbofish
 `request_parts.rs:164`, and `Route::oneshot` are also pinned. The
 request-parts turbofish row is
 projected on the test function owner, preserves two method generic arguments,
-and remains `Unsupported`/targetless because the method-chain receiver is not
-classified yet. The non-turbofish
+and remains `Unsupported`/targetless because the tuple-method-return receiver
+is blocked on an external-return summary. The non-turbofish
 `parts.extract_with_state(state)` blanket-helper call at `request_parts.rs:186`
 now resolves to the local `RequestPartsExt for Parts` impl method through exact
 imported external receiver type proof. RAG call-context and proof-context tests

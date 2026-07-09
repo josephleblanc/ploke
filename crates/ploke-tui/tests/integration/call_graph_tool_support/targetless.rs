@@ -41,8 +41,18 @@ pub(crate) struct ReceiverToolCase {
 
 #[derive(Clone, Copy)]
 enum ReceiverShape {
-    MethodResult { method: &'static str },
-    SelfField { path: &'static [&'static str] },
+    MethodResult {
+        method: &'static str,
+    },
+    SelfField {
+        path: &'static [&'static str],
+    },
+    TupleMethodReturn {
+        name: &'static str,
+        method_name: &'static str,
+        method_span: (usize, usize),
+        index: usize,
+    },
     Unsupported,
 }
 
@@ -212,7 +222,7 @@ impl ReceiverToolCase {
     }];
 
     pub(crate) const REQUEST_PARTS_TURBOFISH: [Self; 1] = [Self {
-        label: "axum-core/src/ext_traits/request_parts.rs:164 extract_with_state turbofish unsupported receiver",
+        label: "axum-core/src/ext_traits/request_parts.rs:164 extract_with_state turbofish tuple-return receiver",
         item: "extract_with_state",
         callee: "extract_with_state",
         status: CallStatusKind::Unsupported,
@@ -221,7 +231,12 @@ impl ReceiverToolCase {
         file_suffix: "axum-core/src/ext_traits/request_parts.rs",
         body: "parts.extract_with_state::<State<String>, String>(&state)",
         generic_arg_count: Some(2),
-        receiver: ReceiverShape::Unsupported,
+        receiver: ReceiverShape::TupleMethodReturn {
+            name: "parts",
+            method_name: "into_parts",
+            method_span: (4640, 4669),
+            index: 0,
+        },
     }];
 
     pub(crate) const FUTURE_POLL: [Self; 1] = [Self {
@@ -244,6 +259,17 @@ impl ReceiverToolCase {
             }),
             ReceiverShape::SelfField { path } => Some(CallReceiverInfo::SelfField {
                 path: path.iter().map(|segment| (*segment).to_string()).collect(),
+            }),
+            ReceiverShape::TupleMethodReturn {
+                name,
+                method_name,
+                method_span,
+                index,
+            } => Some(CallReceiverInfo::TupleMethodReturn {
+                name: name.to_string(),
+                method_name: method_name.to_string(),
+                method_span,
+                index,
             }),
             ReceiverShape::Unsupported => Some(CallReceiverInfo::Unsupported),
         };
