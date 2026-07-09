@@ -854,8 +854,8 @@ pub const CORPUS_AXUM_CALL_GRAPH: FixtureDb = FixtureDb {
     requires_primary_index: false,
     bm25_index_expected: false,
     embedding: None,
-    last_updated: "2026-07-07",
-    notes: "Source-pinned axum workspace backup for real-target call graph query contracts over helper callers, proc-macro entrypoint body callers, call sites, self-method calls, exact local external-trait impl receiver calls including imported external receiver types, trait method path calls, same-crate and selected workspace dependency-root trait-bound associated paths, and documented unsupported local-impl owner, closure, and dynamic dispatch shapes.",
+    last_updated: "2026-07-09",
+    notes: "Source-pinned axum workspace backup for real-target call graph query contracts over helper callers, proc-macro entrypoint body callers, call sites, self-method calls, exact local external-trait impl receiver calls including imported external receiver types, impl Trait parameter external frontiers, trait method path calls, same-crate and selected workspace dependency-root trait-bound associated paths, and documented unsupported local-impl owner, closure, and dynamic dispatch shapes.",
 };
 
 pub const CORPUS_AXUM_OPENROUTER_EMBEDDINGS: FixtureDb = FixtureDb {

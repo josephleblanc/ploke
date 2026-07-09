@@ -303,6 +303,36 @@ fn axum_real_target_request_extensions_mut_receiver_statuses_are_proof_backed()
 }
 
 #[test]
+fn axum_real_target_impl_trait_into_parameter_is_external_frontier() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Matrix: axum-core/src/error.rs:12-14
+    // `Error::new(error: impl Into<BoxError>)` calls `error.into()`.
+    // The parameter's `impl Into<BoxError>` bound is source-visible, but the
+    // concrete callee is external/prelude dispatch, so the row remains
+    // targetless and absent from local traversal.
+    let owner = method_id_by_name_body_and_file_suffix(
+        &db,
+        "new",
+        "inner: error.into()",
+        "axum-core/src/error.rs",
+    )?;
+    let receiver = CallReceiver::LocalBinding {
+        name: "error".to_string(),
+    };
+    assert_owner_method_targetless(
+        &db,
+        owner,
+        "into",
+        &receiver,
+        CallStatusKind::External,
+        "axum-core/src/error.rs:14 impl Into parameter",
+    )?;
+
+    Ok(())
+}
+
+#[test]
 fn axum_real_target_self_field_size_hint_is_external_frontier() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 

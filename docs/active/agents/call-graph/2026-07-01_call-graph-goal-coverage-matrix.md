@@ -50,9 +50,44 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: generic self-field external trait-bound frontier proof.
+Current bucket: axum impl Trait parameter external frontier proof.
 
 Exit criteria:
+
+- Reuse the real-corpus axum row
+  `axum-core/src/error.rs:12-14` where `Error::new(error: impl
+  Into<BoxError>)` calls `error.into()`.
+- Promote the row to a targetless external frontier only through the
+  source-visible `impl Into<BoxError>` parameter bound.
+- Keep the row targetless, with no fabricated local traversal target.
+- Regenerate and promote the axum call-graph fixture seed so normal immutable
+  fixture tests exercise the new status instead of the older committed seed.
+
+Status: completed for the real-corpus axum impl Trait parameter external
+frontier slice.
+
+Latest completed slice: exact external-frontier classification for
+`Error::new(error: impl Into<BoxError>)` `error.into()`.
+
+Completed evidence:
+
+- DB
+  `axum_real_target_impl_trait_into_parameter_is_external_frontier` asserts
+  the `error.into()` row in `axum-core/src/error.rs:14` is a targetless
+  `External` frontier with `LocalBinding("error")`.
+- The initial normal immutable fixture run exposed the expected stale-seed
+  failure (`Unresolved`). The isolated regenerated snapshot passed, proving
+  the resolver and regenerated snapshot were correct before seed promotion.
+- Active fixture regeneration and backup verification passed with
+  `cargo run -p xtask --features call_graph -- fixtures regenerate --active`
+  and `cargo run -p xtask --features call_graph -- verify-backup-dbs`.
+- This intentionally does not add a local traversal edge or claim concrete
+  `Into` dispatch; it only preserves the external/prelude frontier status.
+
+Previous completed bucket: generic self-field external trait-bound frontier
+proof.
+
+Completed evidence:
 
 - Reuse the parser-pinned fixture source rows
   `fixture_nodes/src/impls.rs:77` `self.value.len()` and `:103`
@@ -67,14 +102,11 @@ Exit criteria:
 - Prove parser, DB, and RAG call-context collection preserve the external
   frontier statuses without local targets.
 
-Status: completed for the fixture-backed generic self-field external
-trait-bound frontier slice.
-
 Next bucket: choose the next uncovered matrix bucket. Do not continue adding
 receiver-shape assertions unless the next slice implements exact receiver proof
 by shape or covers a missing downstream surface for an already-modeled shape.
 
-Latest completed slice: exact external-frontier classification for the
+Previous completed slice: exact external-frontier classification for the
 `GenericStruct<T>` self-field `into` receiver through the external `Into<i32>`
 where-bound.
 

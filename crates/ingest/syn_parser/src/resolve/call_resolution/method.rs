@@ -768,12 +768,47 @@ impl CallRelationResolver<'_> {
                 } else {
                     false
                 };
-            if direct_external || dereferenced_external {
+            let impl_trait_bound_external = self.is_external_impl_trait_bound_method(
+                call.owner,
+                param.type_id,
+                &call.method_name,
+            )?;
+            if direct_external || dereferenced_external || impl_trait_bound_external {
                 return Ok(true);
             }
         }
 
         Ok(false)
+    }
+
+    fn is_external_impl_trait_bound_method(
+        &self,
+        owner: CallBodyOwnerId,
+        type_id: OrdinaryTypeUseId,
+        method_name: &str,
+    ) -> Result<bool, SynParserError> {
+        let expected_trait = match method_name {
+            "into" => "Into",
+            _ => return Ok(false),
+        };
+
+        match self.type_node(type_id)? {
+            TypeNode::ImplTrait(node) => {
+                for source in &node.bounds {
+                    if self.is_external_trait_bound(owner, *source, expected_trait)? {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+            TypeNode::Reference(node) => {
+                self.is_external_impl_trait_bound_method(owner, node.referenced, method_name)
+            }
+            TypeNode::Paren(node) => {
+                self.is_external_impl_trait_bound_method(owner, node.inner, method_name)
+            }
+            _ => Ok(false),
+        }
     }
 
     fn is_external_method_result_method(

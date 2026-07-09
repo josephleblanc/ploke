@@ -1,7 +1,7 @@
 # Backup DB Fixtures
 
-Last reviewed: 2026-07-07
-Last updated: 2026-07-07
+Last reviewed: 2026-07-09
+Last updated: 2026-07-09
 
 This document is the current inventory for backup database fixtures under
 the shared DB snapshot fixture directory. It records which source targets
@@ -213,7 +213,7 @@ impl Drop for FixtureRestoreGuard {
 | `corpus_chrono_call_graph_2026-07-07.sqlite` | `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be` | plain corpus backup for real-target call graph query contracts | 2026-07-07 |
 | `corpus_chrono_openrouter_embeddings_2026-05-17.sqlite` | `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be` | OpenRouter-searchable corpus backup for type-context matrix tests | 2026-05-17 |
 | `corpus_axum_type_graph_2026-05-17.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | typed graphRAG workspace-member corpus backup for type-context matrix tests | 2026-05-17 |
-| `corpus_axum_call_graph_2026-07-07.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | plain workspace-member corpus backup for real-target call graph query contracts | 2026-07-07 |
+| `corpus_axum_call_graph_2026-07-07.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | plain workspace-member corpus backup for real-target call graph query contracts | 2026-07-09 |
 | `corpus_axum_openrouter_embeddings_2026-05-17.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | OpenRouter-searchable workspace-member corpus backup for type-context matrix tests | 2026-05-17 |
 | `ploke-db_af8e3a20-728d-5967-8523-da8a5ccdae45` | `crates/ploke-db` | currently orphaned snapshot | 2026-03-20 |
 
@@ -344,6 +344,26 @@ Post-regeneration verification:
   `cargo test -p ploke-tui --test integration code_item_lookup_returns_real_corpus_reachable_effects -- --nocapture`,
   and
   `cargo test -p ploke-tui --test integration code_item_edges_returns_real_corpus_reachable_effects -- --nocapture`.
+
+## 2026-07-09 Axum Impl Trait Parameter Frontier Refresh
+
+The active fixture set was regenerated with
+`cargo run -p xtask --features call_graph -- fixtures regenerate --active`
+after call graph resolution began classifying
+`axum-core/src/error.rs:14` `error.into()` as an external targetless frontier
+through the source-visible `error: impl Into<BoxError>` parameter bound.
+
+Post-regeneration verification:
+
+- The regeneration command roundtripped all active checkout-local fixtures and
+  shared call-graph corpus snapshots successfully.
+- `cargo run -p xtask --features call_graph -- verify-backup-dbs` passed for
+  all registered backup DB fixtures.
+- The regenerated `corpus_axum_call_graph_2026-07-07.sqlite` shared snapshot
+  was copied into `tests/backup_dbs/` as the committed seed artifact.
+- The isolated regenerated snapshot passed
+  `cargo test -p ploke-db axum_real_target_impl_trait_into_parameter_is_external_frontier -- --nocapture`
+  before seed promotion.
 
 ## 2026-07-06 Axum Route Oneshot Frontier Refresh
 
