@@ -111,7 +111,8 @@ async fn call_context_collection_reads_real_fixture_blocker_rows() -> Result<(),
 }
 
 #[tokio::test]
-async fn call_context_collection_reads_generic_self_field_receiver_blockers() -> Result<(), Error> {
+async fn call_context_collection_reads_generic_self_field_receiver_frontiers() -> Result<(), Error>
+{
     init_tracing_once();
     let db = Arc::new(Database::new(setup_db_full_multi_embedding(
         "fixture_nodes",
@@ -124,6 +125,7 @@ async fn call_context_collection_reads_generic_self_field_receiver_blockers() ->
                 &method_by_impl_self_query("GenericStruct", "get_str_len"),
             )?,
             "len",
+            CallStatusKind::External,
         ),
         (
             "generic SimpleTrait self-field into",
@@ -132,21 +134,22 @@ async fn call_context_collection_reads_generic_self_field_receiver_blockers() ->
                 &method_by_impl_trait_self_query("SimpleTrait", "GenericStruct", "trait_method"),
             )?,
             "into",
+            CallStatusKind::Unsupported,
         ),
     ];
     let rag = init_test_rag_mock(Arc::clone(&db));
     assert!(
         !rag.call_context_degraded(),
-        "fresh fixture_nodes call_graph schema should enable self-field blocker call context"
+        "fresh fixture_nodes call_graph schema should enable self-field frontier call context"
     );
 
     let hits = cases
         .iter()
-        .map(|(_, owner, _)| (*owner, 1.0))
+        .map(|(_, owner, _, _)| (*owner, 1.0))
         .collect::<Vec<_>>();
     let call_context = rag.collect_call_context(&hits)?;
 
-    for (label, owner, method) in cases {
+    for (label, owner, method, status) in cases {
         let owner_context = call_context
             .get(&owner)
             .unwrap_or_else(|| panic!("{label} owner should receive outgoing call context"));
@@ -168,13 +171,14 @@ async fn call_context_collection_reads_generic_self_field_receiver_blockers() ->
             "{label}"
         );
         // tests/fixture_crates/fixture_nodes/src/impls.rs:77 and :103:
-        // keep generic self-field receiver rows visible without inventing
-        // a target before generic field receiver typing can prove one.
-        assert_eq!(call.status, CallStatusKind::Unsupported, "{label}");
+        // keep both generic self-field receiver rows visible without inventing
+        // local targets. `len` is an external frontier through `&str`;
+        // `into` remains blocked until trait-bound dispatch proof exists.
+        assert_eq!(call.status, status, "{label}");
         assert!(call.resolution.is_none(), "{label}: {call:#?}");
         assert!(
             call.targets.is_empty(),
-            "{label} self-field blocker must not fabricate RAG targets: {call:#?}"
+            "{label} self-field frontier must not fabricate RAG targets: {call:#?}"
         );
     }
 

@@ -1303,7 +1303,7 @@ paranoid_call_site_test!(
         0,
         0,
         &[],
-        ExpectedCallOutcome::Unsupported,
+        ExpectedCallOutcome::External,
     ),
 );
 

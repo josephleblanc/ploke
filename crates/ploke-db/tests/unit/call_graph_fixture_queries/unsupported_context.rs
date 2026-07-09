@@ -75,8 +75,7 @@ fn fixture_context_reads_projected_unsupported_method_status_without_targets() -
 }
 
 #[test]
-fn fixture_context_reads_generic_self_field_receiver_status_without_targets() -> Result<(), DbError>
-{
+fn fixture_context_reads_generic_self_field_receiver_targetless_statuses() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_nodes")?;
     let receiver = CallReceiver::SelfField {
         path: path(&["value"]),
@@ -86,6 +85,7 @@ fn fixture_context_reads_generic_self_field_receiver_status_without_targets() ->
             "generic str self-field len",
             method_id_by_impl_self_type_name(&db, "GenericStruct", "get_str_len")?,
             "len",
+            CallStatusKind::External,
         ),
         (
             "generic SimpleTrait self-field into",
@@ -96,21 +96,22 @@ fn fixture_context_reads_generic_self_field_receiver_status_without_targets() ->
                 "trait_method",
             )?,
             "into",
+            CallStatusKind::Unsupported,
         ),
     ];
 
-    for (label, owner, method) in cases {
+    for (label, owner, method, status) in cases {
         let context = db.call_context_for_owner(owner)?;
         assert_eq!(context.len(), 1, "{label} context rows: {context:#?}");
 
         // tests/fixture_crates/fixture_nodes/src/impls.rs:77 and :103:
-        // `self.value.len()` / `self.value.into()` are structurally known
-        // self-field receivers, but remain targetless until generic field
-        // receiver typing and trait dispatch can prove the concrete target.
+        // `self.value.len()` is promoted to an external frontier through the
+        // concrete `GenericStruct<&str>` impl argument; `self.value.into()`
+        // remains unsupported until trait-bound dispatch can prove a target.
         assert_targetless_method_row(
             &context,
             owner,
-            TargetlessMethodCase::method(method, &receiver, CallStatusKind::Unsupported, label),
+            TargetlessMethodCase::method(method, &receiver, status, label),
         );
     }
 

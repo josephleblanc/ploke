@@ -218,18 +218,20 @@ impl CallRelationResolver<'_> {
         else {
             return Ok(false);
         };
-        if self.is_external_type_method(
-            call.owner,
-            field_type.declared,
-            &call.method_name,
-            type_relations,
-        )? {
-            return Ok(true);
-        }
-
         let mut candidates = vec![field_type.declared];
         if let Some(impl_arg) = field_type.impl_arg {
             candidates.push(impl_arg);
+        }
+
+        for field_type in &candidates {
+            if self.is_external_type_method(
+                call.owner,
+                *field_type,
+                &call.method_name,
+                type_relations,
+            )? {
+                return Ok(true);
+            }
         }
 
         for field_type in candidates {
@@ -431,8 +433,16 @@ impl CallRelationResolver<'_> {
         if method_name == "is_empty" {
             return self.type_use_is_slice(type_id);
         }
+        if method_name == "len" && self.type_use_is_slice(type_id)? {
+            return Ok(true);
+        }
 
         let TypeNode::Named(type_node) = self.type_node(type_id)? else {
+            if method_name == "len"
+                && let Some(inner) = self.dereferenced_type_use(type_id)?
+            {
+                return self.is_external_type_method(owner, inner, method_name, type_relations);
+            }
             return Ok(false);
         };
 
@@ -456,7 +466,7 @@ impl CallRelationResolver<'_> {
         }
 
         match type_node.path.as_slice() {
-            [segment] if matches!(segment.as_str(), "String" | "Vec") => {
+            [segment] if matches!(segment.as_str(), "String" | "Vec" | "str") => {
                 Ok(!self.local_segment_visible(owner, segment)?)
             }
             _ => Ok(false),
