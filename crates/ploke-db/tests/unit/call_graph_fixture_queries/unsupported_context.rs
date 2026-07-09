@@ -75,6 +75,49 @@ fn fixture_context_reads_projected_unsupported_method_status_without_targets() -
 }
 
 #[test]
+fn fixture_context_reads_generic_self_field_receiver_status_without_targets() -> Result<(), DbError>
+{
+    let db = setup_call_graph_fixture_db("fixture_nodes")?;
+    let receiver = CallReceiver::SelfField {
+        path: path(&["value"]),
+    };
+    let cases = [
+        (
+            "generic str self-field len",
+            method_id_by_impl_self_type_name(&db, "GenericStruct", "get_str_len")?,
+            "len",
+        ),
+        (
+            "generic SimpleTrait self-field into",
+            method_id_by_impl_trait_and_self_type_names(
+                &db,
+                "SimpleTrait",
+                "GenericStruct",
+                "trait_method",
+            )?,
+            "into",
+        ),
+    ];
+
+    for (label, owner, method) in cases {
+        let context = db.call_context_for_owner(owner)?;
+        assert_eq!(context.len(), 1, "{label} context rows: {context:#?}");
+
+        // tests/fixture_crates/fixture_nodes/src/impls.rs:77 and :103:
+        // `self.value.len()` / `self.value.into()` are structurally known
+        // self-field receivers, but remain targetless until generic field
+        // receiver typing and trait dispatch can prove the concrete target.
+        assert_targetless_method_row(
+            &context,
+            owner,
+            TargetlessMethodCase::method(method, &receiver, CallStatusKind::Unsupported, label),
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
 fn fixture_context_reads_function_pointer_param_cast_path_without_target() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let owner = function_id_by_name(&db, "call_function_pointer_param_cast")?;

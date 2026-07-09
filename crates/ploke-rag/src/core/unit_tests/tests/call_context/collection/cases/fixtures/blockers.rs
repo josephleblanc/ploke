@@ -109,3 +109,74 @@ async fn call_context_collection_reads_real_fixture_blocker_rows() -> Result<(),
 
     Ok(())
 }
+
+#[tokio::test]
+async fn call_context_collection_reads_generic_self_field_receiver_blockers() -> Result<(), Error> {
+    init_tracing_once();
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_nodes",
+    )?));
+    let cases = [
+        (
+            "generic str self-field len",
+            one_uuid(
+                &db,
+                &method_by_impl_self_query("GenericStruct", "get_str_len"),
+            )?,
+            "len",
+        ),
+        (
+            "generic SimpleTrait self-field into",
+            one_uuid(
+                &db,
+                &method_by_impl_trait_self_query("SimpleTrait", "GenericStruct", "trait_method"),
+            )?,
+            "into",
+        ),
+    ];
+    let rag = init_test_rag_mock(Arc::clone(&db));
+    assert!(
+        !rag.call_context_degraded(),
+        "fresh fixture_nodes call_graph schema should enable self-field blocker call context"
+    );
+
+    let hits = cases
+        .iter()
+        .map(|(_, owner, _)| (*owner, 1.0))
+        .collect::<Vec<_>>();
+    let call_context = rag.collect_call_context(&hits)?;
+
+    for (label, owner, method) in cases {
+        let owner_context = call_context
+            .get(&owner)
+            .unwrap_or_else(|| panic!("{label} owner should receive outgoing call context"));
+        assert_eq!(
+            owner_context.len(),
+            1,
+            "{label} owner context: {owner_context:#?}"
+        );
+        let call = &owner_context[0];
+        assert_eq!(call.kind, CallSiteKind::Method, "{label}");
+        assert_eq!(
+            call.callee,
+            CallCalleeInfo::Method {
+                name: method.to_string(),
+                receiver: Some(CallReceiverInfo::SelfField {
+                    path: vec!["value".to_string()],
+                }),
+            },
+            "{label}"
+        );
+        // tests/fixture_crates/fixture_nodes/src/impls.rs:77 and :103:
+        // keep generic self-field receiver rows visible without inventing
+        // a target before generic field receiver typing can prove one.
+        assert_eq!(call.status, CallStatusKind::Unsupported, "{label}");
+        assert!(call.resolution.is_none(), "{label}: {call:#?}");
+        assert!(
+            call.targets.is_empty(),
+            "{label} self-field blocker must not fabricate RAG targets: {call:#?}"
+        );
+    }
+
+    Ok(())
+}

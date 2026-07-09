@@ -50,51 +50,45 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: `Router::new` workspace-import dependency-root proof.
+Current bucket: generic self-field receiver blocker visibility.
 
 Exit criteria:
 
-- Reuse the already-resolved real-corpus axum-core
-  `request_parts.rs:193` `Router::new()` workspace import row.
-- Add proof-only `dependency_root` evidence for that source oracle without
-  changing resolver semantics, traversal counts, or target admission.
-- Prove DB proof lookup, RAG exact proof context, and exact
-  `code_item_lookup` / `code_item_edges` proof propagation.
+- Reuse the parser-pinned fixture source rows
+  `fixture_nodes/src/impls.rs:77` `self.value.len()` and `:103`
+  `self.value.into()`.
+- Prove the persisted DB rows preserve `SelfField(["value"])`,
+  `Unsupported`, no resolution, and no fabricated targets.
+- Prove RAG call-context collection preserves the same targetless blocker
+  payloads.
 
-Status: completed for the `Router::new` dependency-root proof row.
+Status: completed for the fixture-backed generic self-field receiver blocker
+rows.
 
-Next bucket: choose the next uncovered matrix bucket. Do not add more
-dependency-root proof rows without an exact source oracle and downstream proof
-surface.
+Next bucket: choose the next uncovered matrix bucket. Do not continue adding
+receiver-shape assertions unless the next slice implements exact receiver proof
+by shape or covers a missing downstream surface for an already-modeled shape.
 
-Latest completed slice: proof-only dependency-root carrier for the real
-axum-core `Router::new` workspace import row.
+Latest completed slice: fixture-backed fail-closed downstream coverage for
+generic self-field receiver rows.
 
 Completed evidence:
 
-- The source oracle is
-  `tests/fixture_github_clones/corpus/axum/axum-core/src/extract/request_parts.rs:193`,
-  where the test imports `axum::{extract::Extension, routing::get,
-  test_helpers::*, Router}` and calls `Router::new()` from `extract_request_parts`.
-- The existing call graph still resolves the `Router::new` target-centered set
-  to 310 callers, including the axum-core workspace-import row, with no
-  traversal-count change.
-- Added a shared `dependency_root` proof fixture record for that exact callsite
-  with `import_path = ["axum", "Router"]` and `resolved_path = ["axum",
-  "routing", "Router", "new"]`.
-- DB proof lookup, RAG exact proof context, and exact
-  `code_item_lookup` / `code_item_edges` remaining-real-corpus tool tests now
-  expose the same admitted proof row.
+- DB `fixture_context_reads_generic_self_field_receiver_status_without_targets`
+  asserts both rows are targetless `Unsupported` method calls with
+  `CallReceiver::SelfField { path: ["value"] }`.
+- RAG `call_context_collection_reads_generic_self_field_receiver_blockers`
+  asserts the same rows survive call-context collection as
+  `CallReceiverInfo::SelfField { path: ["value"] }` without targets.
+- This intentionally does not add a TUI assertion because the TUI targetless
+  receiver matrix already covers current real-corpus unsupported receiver
+  payloads; this slice only adds the missing fixture-backed generic field proof.
 - Verification passed:
-  `cargo test -p ploke-db axum_real_target_router_new_and_router_clone_contracts -- --nocapture`,
-  `cargo test -p ploke-rag proof_context_exact_preserves_axum_supported_target_rows -- --nocapture`,
-  `cargo test -p ploke-tui format_call_context_block_renders_aliased_local_receiver -- --nocapture`,
-  `cargo test -p ploke-tui --test integration code_item_lookup_returns_remaining_real_corpus_supported_callers -- --nocapture`,
-  `cargo test -p ploke-tui --test integration code_item_edges_returns_remaining_real_corpus_supported_callers -- --nocapture`,
+  `cargo test -p ploke-db fixture_context_reads_generic_self_field_receiver_status_without_targets -- --nocapture`,
+  `cargo test -p ploke-rag call_context_collection_reads_generic_self_field_receiver_blockers -- --nocapture`,
   `cargo fmt --all --check`, and `git diff --check`.
-- This is proof propagation over an already-resolved row. It does not broaden
-  import/re-export/glob resolution and does not convert any targetless import
-  row into a traversal edge.
+- This is blocker propagation over parser-pinned unsupported rows. It does not
+  broaden receiver resolution or convert targetless rows into traversal edges.
 
 Previous completed slice: deep explicit local path coverage.
 
