@@ -380,6 +380,9 @@ Post-regeneration verification:
 - The isolated regenerated snapshot passed
   `cargo test -p ploke-db axum_real_target_impl_trait_into_parameter_is_external_frontier -- --nocapture`
   before seed promotion.
+- Follow-up broad verification passed with
+  `cargo test --workspace --exclude ploke-eval --no-fail-fast`, including DB,
+  RAG, TUI tool, transform, parser, and doctest surfaces.
 
 ## 2026-07-06 Axum Route Oneshot Frontier Refresh
 
