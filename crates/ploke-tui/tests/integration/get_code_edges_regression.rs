@@ -31,11 +31,11 @@ use uuid::Uuid;
 
 use crate::call_graph_tool_support::{
     AxumAwaitReceiverToolFixture, AxumBodyEmptyToolFixture, AxumBoxedIntoRouteToolFixture,
-    AxumErrorHandlingTraitsToolFixture, AxumHandlerCallToolFixture, AxumJsonFromBytesToolFixture,
-    AxumParseAttrsToolFixture, AxumRequestExtractPathToolFixture, AxumRunUiTestsToolFixture,
-    AxumTaskSpawnEffectToolFixture, CallGraphToolFixture, CallableBlockerFixture,
-    CallableParamResolvedFixture, ChronoAliasConstructorToolFixture, ChronoNaiveUtcToolFixture,
-    FixtureBranchReceiverToolFixture, FixtureDynamicCallableToolFixture,
+    AxumErrorHandlingTraitsToolFixture, AxumExpandWithToolFixture, AxumHandlerCallToolFixture,
+    AxumJsonFromBytesToolFixture, AxumParseAttrsToolFixture, AxumRequestExtractPathToolFixture,
+    AxumRunUiTestsToolFixture, AxumTaskSpawnEffectToolFixture, CallGraphToolFixture,
+    CallableBlockerFixture, CallableParamResolvedFixture, ChronoAliasConstructorToolFixture,
+    ChronoNaiveUtcToolFixture, FixtureBranchReceiverToolFixture, FixtureDynamicCallableToolFixture,
     FixtureSelfFieldReceiverToolFixture, assert_await_result_unwrap_context,
     assert_await_result_unwrap_proof, assert_body_empty_dependency_root_proof,
     assert_body_empty_impact_summary, assert_body_empty_incoming_context,
@@ -1405,6 +1405,138 @@ async fn code_item_edges_reports_private_target_without_incoming_callers() {
     assert_eq!(ui_field(ui, "impact_public_callers"), "0");
     assert_eq!(ui_field(ui, "impact_test_callers"), "0");
     assert_eq!(ui_field(ui, "impact_non_test_callers"), "0");
+}
+
+#[tokio::test]
+async fn code_item_edges_surfaces_proc_macro_impact_callers() {
+    let fixture = AxumExpandWithToolFixture::new().await;
+    let params = EdgesParams {
+        item_name: Cow::Borrowed("expand_with"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("function"),
+        module_path: Cow::Owned(fixture.module_path_arg()),
+        owner_trait: None,
+        owner_type: None,
+        parent_name: None,
+    };
+
+    let result = CodeItemEdges::execute(params, fixture.ctx("axum-expand-with-impact-edges"))
+        .await
+        .expect("expand_with edges");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
+    let node_info = payload.get("node_info").expect("node_info");
+    let impact = node_info
+        .get("call_impact")
+        .and_then(serde_json::Value::as_object)
+        .expect("node_info.call_impact object");
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Dead code detection:
+    //   "Is this function reachable from any binary, test, macro entrypoint,
+    //   or exported API?"
+    //
+    // Source oracle:
+    //   axum-macros/src/lib.rs:377,426,665,715 call `expand_with(...)` from
+    //   public proc-macro entrypoints.
+    // Current contract: `code_item_edges` should expose the same target-
+    // centered impact summary as `code_item_lookup`, preserving the four
+    // one-hop public macro callers and their direct path callsite rows.
+    let target_id = fixture.target.to_string();
+    assert_eq!(
+        impact
+            .get("target")
+            .and_then(|target| target.get("id"))
+            .and_then(serde_json::Value::as_str),
+        Some(target_id.as_str())
+    );
+    let expected_callers = [
+        "derive_from_request",
+        "derive_from_request_parts",
+        "derive_typed_path",
+        "derive_from_ref",
+    ];
+    for field in ["paths", "callers", "direct_callers", "direct_call_sites"] {
+        let rows = impact
+            .get(field)
+            .and_then(serde_json::Value::as_array)
+            .unwrap_or_else(|| panic!("call_impact {field} array: {impact:#?}"));
+        assert_eq!(
+            rows.len(),
+            expected_callers.len(),
+            "expand_with edge impact {field} should expose one row per proc-macro caller: {rows:#?}"
+        );
+    }
+    let callers = impact
+        .get("callers")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_impact callers array");
+    let public_callers = impact
+        .get("public_callers")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_impact public_callers array");
+    assert_eq!(
+        public_callers.len(),
+        expected_callers.len(),
+        "expand_with edge impact public_callers should expose public proc-macro entrypoints: {public_callers:#?}"
+    );
+    for name in expected_callers {
+        assert!(
+            callers.iter().any(|caller| {
+                caller.get("name").and_then(serde_json::Value::as_str) == Some(name)
+            }),
+            "expand_with edge impact callers should include {name}: {callers:#?}"
+        );
+        assert!(
+            public_callers.iter().any(|caller| {
+                caller.get("name").and_then(serde_json::Value::as_str) == Some(name)
+            }),
+            "expand_with edge impact public_callers should include {name}: {public_callers:#?}"
+        );
+    }
+    let direct_call_sites = impact
+        .get("direct_call_sites")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_impact direct_call_sites array")
+        .iter()
+        .map(|call| serde_json::from_value::<CallContextInfo>(call.clone()))
+        .collect::<Result<Vec<_>, _>>()
+        .expect("typed expand_with direct callsite rows");
+    for call in direct_call_sites {
+        assert!(
+            matches!(&call.callee, CallCalleeInfo::Path { path } if path == &vec!["expand_with".to_string()]),
+            "expand_with direct callsite should preserve the path callee: {call:#?}"
+        );
+        assert_eq!(
+            call.arg_count,
+            Some(2),
+            "expand_with direct callsite should preserve arity: {call:#?}"
+        );
+        assert!(
+            call.targets.iter().any(|target| {
+                target.target_id.to_string() == target_id
+                    && target.relation == CallTargetKind::Function
+            }),
+            "expand_with direct callsite should target the looked-up function: {call:#?}"
+        );
+    }
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert_eq!(ui_field(ui, "impact_callers"), "4");
+    assert_eq!(ui_field(ui, "impact_direct_callers"), "4");
+    assert_eq!(ui_field(ui, "impact_direct_call_sites"), "4");
+    assert_eq!(ui_field(ui, "impact_public_callers"), "4");
+    assert_eq!(
+        ui_field(ui, "impact_source_cfgs"),
+        impact
+            .get("source_cfgs")
+            .and_then(serde_json::Value::as_array)
+            .expect("call_impact source_cfgs array")
+            .len()
+            .to_string()
+    );
 }
 
 #[tokio::test]
