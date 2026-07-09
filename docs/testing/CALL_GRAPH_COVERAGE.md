@@ -138,5 +138,12 @@ real-corpus checkpoints passed:
 The focused `axum_usage_questions_report_reachable_effect_seed_for_task_spawn`
 DB/RAG/TUI effect-propagation commands above were also rerun and passed.
 
+On 2026-07-09 `cargo xtask fixtures regenerate --all` completed again and
+`cargo xtask verify-backup-dbs` passed; the regeneration produced no tracked
+fixture seed diffs. A broad
+`cargo test --workspace --exclude ploke-eval --no-fail-fast` checkpoint was
+started but interrupted before a final Cargo summary, so it is not a full
+workspace-green checkpoint.
+
 Before claiming a wider rollout boundary, rerun the relevant focused suites and
 a workspace checkpoint as described in the root call-graph plan.
