@@ -50,26 +50,48 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: regenerated corpus fixture checkpoint and latest semantic
-frontier proof plus remaining unsupported parser-row inventory.
+Current bucket: feature-gated external-summary frontier proof for
+`Json::from_bytes`.
 
 Exit criteria:
 
-- Regenerate and promote the active call-graph corpus fixtures after the recent
-  real-corpus semantic slices.
-- Preserve memchr dynamic/function-pointer and callable trait-object fallback
-  rows as visible targetless blockers with proof payloads.
-- Classify fixture-backed `T::default()` calls through source-visible external
-  `Default` bounds as targetless external frontiers without fabricating a local
-  trait-dispatch edge.
-- Record the remaining focused parser `Unsupported` rows in the binding/type
-  resolver plan so future slices do not reselect intentional macro, public
-  callable-parameter, conflicting-caller, unawaited-async, ambiguous-branch, or
-  missing-trait-visibility cases as simple parser gaps.
+- Use the existing axum `Json::from_bytes` source oracle:
+  `axum/src/json.rs:184`
+  `serde_json::Deserializer::from_slice(bytes)`.
+- Preserve the inherited `#[cfg(feature = "json")]` module gate on the
+  targetless external frontier.
+- Expose the owner-scoped missing external-summary queue through DB, RAG, and
+  exact TUI tool payloads.
+- Admit a test summary record without fabricating a local traversal edge.
 
 Status: completed for this checkpoint.
 
-Latest completed slice: active call-graph corpus fixture refresh plus
+Latest completed slice: feature-gated serde_json external-summary frontier
+proof.
+
+Completed evidence:
+
+- DB `axum_usage_questions_list_external_summary_need_for_feature_gated_json_frontier`
+  proves the `serde_json::Deserializer::from_slice(bytes)` row is a direct,
+  targetless external frontier, preserves `feature = "json"`, appears in
+  `external_summary_needs_for_owner`, and disappears after an admitted
+  `external_summary` proof record is linked.
+- RAG
+  `external_summary_needs_exact_reads_axum_feature_gated_json_queue` preserves
+  the same owner-scoped missing-summary queue and discharge behavior through
+  `exact_external_summary_needs_for_owner`.
+- Exact TUI `code_item_lookup` and `code_item_edges` `Json::from_bytes` tests
+  now expose the same `external_summary_needs` payload and UI count while the
+  call remains targetless.
+- The shared test proof fixture
+  `axum_serde_json_from_slice_summary_records` mirrors the existing
+  `Request::builder` and `std::mem::replace` admitted-summary pattern.
+
+Next bucket: choose the next binding/type-aware semantic row from the plan's
+remaining proof-input list only after the fresh workspace verifier completes or
+reports a concrete failure.
+
+Previous completed bucket: active call-graph corpus fixture refresh plus
 `Default`-bound associated external frontier proof.
 
 Completed evidence:
@@ -92,10 +114,6 @@ Completed evidence:
   remaining focused unsupported inventory. The next semantic slice should add
   a new exact proof carrier or an explicitly reviewed source oracle, not
   re-open rows that are already intentionally fail-closed.
-
-Next bucket: choose the next binding/type-aware semantic row from the plan's
-remaining proof-input list only after the fresh workspace verifier completes or
-reports a concrete failure.
 
 Previous completed bucket: axum impl Trait parameter external frontier proof.
 
@@ -1632,6 +1650,12 @@ Completed evidence:
   edges for external frontiers; RAG exact reach now also preserves the
   `Json::from_bytes` feature-gated external frontier summary, and lookup/edges
   tests assert the same feature-cfg reach payload/count.
+- DB and RAG owner-scoped external-summary queue tests now prove the same
+  feature-gated serde_json frontier is listed as
+  `external_dependency_summary_missing` until an admitted external summary is
+  linked. Exact `code_item_lookup` and `code_item_edges` payloads expose that
+  same `external_summary_needs` row and UI count without inventing a local
+  edge.
 
 Additional completed bucket: owner-scoped architecture boundary query.
 
