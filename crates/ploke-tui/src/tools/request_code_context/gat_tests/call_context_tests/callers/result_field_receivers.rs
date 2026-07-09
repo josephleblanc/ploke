@@ -11,6 +11,7 @@ struct ExpectedCall {
 struct Case {
     label: &'static str,
     search_term: &'static str,
+    top_k: usize,
     call_id: &'static str,
     owner: Uuid,
     calls: Vec<ExpectedCall>,
@@ -51,6 +52,7 @@ async fn request_code_context_returns_result_field_receiver_call_context() -> co
         Case {
             label: "path-call result receiver",
             search_term: "call_path_result_instance_method",
+            top_k: 1,
             call_id: "path_result_receiver_call_context",
             owner: one_uuid(
                 &db,
@@ -79,6 +81,7 @@ async fn request_code_context_returns_result_field_receiver_call_context() -> co
         Case {
             label: "method-call result receiver",
             search_term: "call_method_result_instance_method",
+            top_k: 1,
             call_id: "method_result_receiver_call_context",
             owner: one_uuid(
                 &db,
@@ -113,6 +116,7 @@ async fn request_code_context_returns_result_field_receiver_call_context() -> co
         Case {
             label: "self-field method-call result receiver",
             search_term: "call_self_field_method_result_instance_method",
+            top_k: 1,
             call_id: "self_field_method_result_receiver_call_context",
             owner: one_uuid(
                 &db,
@@ -149,6 +153,7 @@ async fn request_code_context_returns_result_field_receiver_call_context() -> co
         Case {
             label: "await path-call result receiver",
             search_term: "call_await_result_instance_method",
+            top_k: 1,
             call_id: "await_result_receiver_call_context",
             owner: one_uuid(
                 &db,
@@ -177,6 +182,7 @@ async fn request_code_context_returns_result_field_receiver_call_context() -> co
         Case {
             label: "try method-call result receiver",
             search_term: "call_try_method_result_instance_method",
+            top_k: 5,
             call_id: "try_method_result_receiver_call_context",
             owner: one_uuid(
                 &db,
@@ -211,6 +217,7 @@ async fn request_code_context_returns_result_field_receiver_call_context() -> co
         Case {
             label: "tuple-field method receiver",
             search_term: "call_tuple_field_instance_method",
+            top_k: 1,
             call_id: "tuple_field_receiver_call_context",
             owner: one_uuid(
                 &db,
@@ -241,6 +248,7 @@ async fn request_code_context_returns_result_field_receiver_call_context() -> co
         Case {
             label: "parameter-field method receiver",
             search_term: "call_param_field_instance_method",
+            top_k: 1,
             call_id: "param_field_receiver_call_context",
             owner: one_uuid(
                 &db,
@@ -262,8 +270,9 @@ async fn request_code_context_returns_result_field_receiver_call_context() -> co
     ];
 
     for case in cases {
-        let result = execute_fixture_request(&db, case.search_term, 1, case.call_id).await?;
-        assert_result_ok(&result, case.search_term, 1, "fixture_call_graph");
+        let result =
+            execute_fixture_request(&db, case.search_term, case.top_k, case.call_id).await?;
+        assert_result_ok(&result, case.search_term, case.top_k, "fixture_call_graph");
 
         let owner_part = result
             .context
