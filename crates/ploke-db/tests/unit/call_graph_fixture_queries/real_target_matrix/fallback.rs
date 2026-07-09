@@ -413,7 +413,13 @@ fn memchr_function_pointer_field_calls_are_dynamic_targetless_oracles() -> Resul
             projected >= 2,
             "{label} should project at least call_site and call_resolution proof facts"
         );
-        assert_dynamic_blocker_proof(&db, site, label)?;
+        assert_blocked_resolution_proof(
+            &db,
+            site,
+            "dynamic_dispatch_unbounded",
+            "src/memmem/searcher.rs",
+            label,
+        )?;
     }
 
     Ok(())
@@ -469,20 +475,44 @@ fn memchr_callable_trait_object_field_calls_are_visible_targetless_path_rows() -
         owner,
         "memchr/src/tests/substring/mod.rs:94 and :110 boxed dyn FnMut calls",
     )?;
-    assert_owner_path_targetless(
+    let fwd_site = assert_owner_path_targetless(
         &db,
         owner,
         &["fwd"],
         CallStatusKind::Unsupported,
         "memchr/src/tests/substring/mod.rs:94 boxed fwd dyn FnMut local binding",
     )?;
-    assert_owner_path_targetless(
+    let rev_site = assert_owner_path_targetless(
         &db,
         owner,
         &["rev"],
         CallStatusKind::Unsupported,
         "memchr/src/tests/substring/mod.rs:110 boxed rev dyn FnMut local binding",
     )?;
+
+    let projected = db.project_call_proof_facts_for_owner(owner, "bd:corpus-memchr-call-graph")?;
+    assert!(
+        projected >= 4,
+        "memchr boxed dyn FnMut owner should project call_site and call_resolution rows for fwd/rev"
+    );
+    for (site, label) in [
+        (
+            fwd_site,
+            "memchr/src/tests/substring/mod.rs:94 boxed fwd dyn FnMut local binding",
+        ),
+        (
+            rev_site,
+            "memchr/src/tests/substring/mod.rs:110 boxed rev dyn FnMut local binding",
+        ),
+    ] {
+        assert_blocked_resolution_proof(
+            &db,
+            site,
+            "type_resolution_missing",
+            "src/tests/substring/mod.rs",
+            label,
+        )?;
+    }
 
     Ok(())
 }
@@ -721,25 +751,31 @@ fn assert_owner_dynamic_targetless(
     Ok(row.site.id)
 }
 
-fn assert_dynamic_blocker_proof(db: &Database, site_id: Uuid, label: &str) -> Result<(), DbError> {
+fn assert_blocked_resolution_proof(
+    db: &Database,
+    site_id: Uuid,
+    blocker_reason: &str,
+    source_suffix: &str,
+    label: &str,
+) -> Result<(), DbError> {
     let site = site_id.to_string();
-    let rows = db.proof_graphrag_context("dynamic_dispatch_unbounded")?;
+    let rows = db.proof_graphrag_context(blocker_reason)?;
     assert!(
         rows.iter().any(|row| {
             row.kind == "call_resolution"
                 && row.call_site_id.as_deref() == Some(site.as_str())
                 && row.resolution_state.as_deref() == Some("blocked")
-                && row.blocker_reason.as_deref() == Some("dynamic_dispatch_unbounded")
+                && row.blocker_reason.as_deref() == Some(blocker_reason)
         }),
-        "{label} should project a blocked dynamic-dispatch call_resolution proof row: {rows:#?}"
+        "{label} should project a blocked {blocker_reason} call_resolution proof row: {rows:#?}"
     );
 
     let provenance = db
         .proof_source_provenance(&site)?
         .unwrap_or_else(|| panic!("{label} should project source provenance for {site}"));
     assert!(
-        provenance.source_file.ends_with("src/memmem/searcher.rs"),
-        "{label} proof source provenance should point at memchr searcher.rs: {provenance:#?}"
+        provenance.source_file.ends_with(source_suffix),
+        "{label} proof source provenance should point at {source_suffix}: {provenance:#?}"
     );
 
     Ok(())
