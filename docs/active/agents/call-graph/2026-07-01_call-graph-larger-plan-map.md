@@ -45,7 +45,7 @@ The larger implementation has been progressing through these phases:
 | Real-corpus proof | Prove query behavior against real Rust targets, especially axum | Active and partially covered |
 | RAG/TUI/tool surfaces | Expose exact call context, paths, impact, reach, and proof blockers downstream | Strong current surface |
 | Proof/authority integration | Explain trusted edges and fail-closed blockers | Partial but substantial |
-| Semantic expansion | Add binding/type-aware capabilities for remaining gaps | Started with exact local external-trait impl receiver methods, fixture-backed borrowed initialized local receivers, borrowed value-parameter receivers, and borrowed value-parameter method-result chains |
+| Semantic expansion | Add binding/type-aware capabilities for remaining gaps | Active with exact local external-trait impl receiver methods, fixture-backed borrowed initialized local receivers, borrowed value-parameter receivers and method-result chains, private callable-parameter proof, selected external/frontier promotions such as impl Trait `Into` and generic-bound `Default`, and fail-closed blocker proof for unproven dynamic callable rows |
 
 ## Where The Coverage Matrix Fits
 
@@ -83,6 +83,13 @@ Current matrix posture:
   direct, alias, branch/match including guarded same-target match arms, and
   single-expression block initializers through parser, DB, RAG, and TUI proof
   where exposed.
+- External generic-bound associated frontiers: fixture-backed
+  `T::default()` rows with source-visible external/prelude `Default` bounds now
+  classify as targetless external frontiers across parser, DB, RAG, and TUI
+  proof surfaces without claiming concrete trait dispatch.
+- Real-corpus dynamic callable fallback proof: memchr function-pointer field
+  rows and boxed callable-field rows remain fail-closed and targetless while DB
+  proof rows preserve their blocker reasons and source provenance.
 - Tool usage summaries: `code_item_edges` now propagates the existing
   impact/reach summaries in `node_info`, matching `code_item_lookup` instead
   of exposing only lower-level path carriers.

@@ -50,7 +50,45 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: axum impl Trait parameter external frontier proof.
+Current bucket: regenerated corpus fixture checkpoint and latest semantic
+frontier proof.
+
+Exit criteria:
+
+- Regenerate and promote the active call-graph corpus fixtures after the recent
+  real-corpus semantic slices.
+- Preserve memchr dynamic/function-pointer and callable trait-object fallback
+  rows as visible targetless blockers with proof payloads.
+- Classify fixture-backed `T::default()` calls through source-visible external
+  `Default` bounds as targetless external frontiers without fabricating a local
+  trait-dispatch edge.
+
+Status: completed for this checkpoint.
+
+Latest completed slice: active call-graph corpus fixture refresh plus
+`Default`-bound associated external frontier proof.
+
+Completed evidence:
+
+- The active fixture set was regenerated with
+  `cargo run -p xtask --features call_graph -- fixtures regenerate --active`;
+  the refreshed memchr, generic-array, chrono, and axum corpus snapshots were
+  promoted into `tests/backup_dbs/`.
+- Registry-backed verification passed with
+  `cargo run -p xtask --features call_graph -- verify-backup-dbs`.
+- DB fallback tests now assert the memchr function-pointer field rows and boxed
+  `dyn FnMut` callable-field rows remain targetless blockers with projected
+  `dynamic_dispatch_unbounded` or `type_resolution_missing` proof rows and
+  source provenance.
+- Parser, DB, RAG, and TUI proof/context tests now cover fixture-backed
+  `T::default()` as an external/prelude `Default`-bound associated path
+  frontier. The row remains targetless and does not claim concrete trait
+  dispatch.
+
+Next bucket: choose the next uncovered binding/type-aware semantic row only
+after the fresh workspace verifier completes or reports a concrete failure.
+
+Previous completed bucket: axum impl Trait parameter external frontier proof.
 
 Exit criteria:
 
