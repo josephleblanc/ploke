@@ -258,6 +258,11 @@ fn fixture_projection_stores_real_field_dynamic_call_proof_facts() -> Result<(),
             expected_rows: 1,
         },
         ResolvedDynamicContextCase {
+            owner: "call_multi_named_field_function_param",
+            path: &["holder", "callback"],
+            expected_rows: 1,
+        },
+        ResolvedDynamicContextCase {
             owner: "call_single_indexed_function_pointer_param",
             path: &["funcs", "0"],
             expected_rows: 1,

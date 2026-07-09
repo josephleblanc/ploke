@@ -50,6 +50,12 @@ async fn request_code_context_returns_field_dynamic_proof_context() -> color_eyr
             "call_aliased_indexed_named_field_function_binding",
             dynamic_target,
         )?,
+        dynamic_case(
+            &db,
+            "multi-caller named-field function parameter",
+            "call_multi_named_field_function_param",
+            dynamic_target,
+        )?,
         tuple_case(
             &db,
             "indexed tuple-field function",

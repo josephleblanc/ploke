@@ -16,6 +16,12 @@ fn fixture_projection_marks_real_branch_and_match_dynamic_failures_without_edges
             CallStatusKind::Unsupported,
             "dynamic_dispatch_unbounded",
         ),
+        (
+            "call_multi_conflicting_named_field_function_param",
+            Some(&["holder", "callback"][..]),
+            CallStatusKind::Unsupported,
+            "dynamic_dispatch_unbounded",
+        ),
     ];
 
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;

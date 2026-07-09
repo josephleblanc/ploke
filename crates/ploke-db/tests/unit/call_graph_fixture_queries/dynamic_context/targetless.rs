@@ -32,6 +32,10 @@ fn fixture_context_reads_projected_targetless_dynamic_failures() -> Result<(), D
             "call_indexed_tuple_field_function_param",
             &["holder", "0", "0"],
         ),
+        TargetlessDynamicContextCase::unsupported_path(
+            "call_multi_conflicting_named_field_function_param",
+            &["holder", "callback"],
+        ),
         TargetlessDynamicContextCase::unsupported("call_async_closure_literal_with_body_call"),
         TargetlessDynamicContextCase::unsupported_path(
             "call_parenthesized_generic_fn_once_value_binding",

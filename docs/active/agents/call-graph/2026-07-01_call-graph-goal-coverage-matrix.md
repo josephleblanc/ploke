@@ -84,6 +84,31 @@ Completed evidence:
 - This is proof visibility only. It does not perform interprocedural callback
   argument flow and does not fabricate a local callee edge for `f`.
 
+Latest completed slice: complete private multi-caller named-field holder
+callable proof.
+
+Completed evidence:
+
+- The source oracles are
+  `tests/fixture_crates/fixture_call_graph/src/lib.rs:1847-1877`.
+  `call_multi_named_field_function_param(holder: CallbackHolder)` calls
+  `(holder.callback)()`, and both local callers construct
+  `CallbackHolder { callback: local_target }`.
+- Parser extraction records the dynamic callee as the existing
+  field-local-binding shape; resolver proof reuses the complete private
+  caller-set boundary and resolves the dynamic call to `local_target`.
+- The paired
+  `call_multi_conflicting_named_field_function_param` fixture has two local
+  callers that pass different function items and remains targetless with
+  `dynamic_dispatch_unbounded`; no traversal edge is fabricated.
+- DB owner context, target-centered callers, one-hop paths, dynamic proof
+  rows, RAG call/proof collection, and exact `request_code_context` payloads
+  preserve the positive edge, incoming wrapper helper rows, and fail-closed
+  blocker.
+- This is not arbitrary callable holder/value-flow dispatch. It is only the
+  exact private helper case where the complete local caller set proves one
+  function target.
+
 Latest completed slice in current bucket: branch-initialized local receiver
 proof.
 

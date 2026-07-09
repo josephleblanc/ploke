@@ -119,6 +119,16 @@ should prevent future resumes from reselecting already-covered shapes.
      RAG, and lookup/edges tool assertions now preserve these exact indexed
      holder-parameter `DynamicFunction` edges and the wrapper helper path rows
      that make the single-caller proof auditable downstream.
+   - The same complete-local-caller boundary now has one private multi-caller
+     constructed-holder named-field proof:
+     `call_multi_named_field_function_param(holder: CallbackHolder) {
+     (holder.callback)() }` resolves only because both local callers construct
+     `CallbackHolder { callback: local_target }`. Its paired conflicting
+     fixture, `call_multi_conflicting_named_field_function_param`, has callers
+     that pass different function items and remains targetless with a
+     `dynamic_dispatch_unbounded` blocker. Parser, DB, RAG, and
+     `request_code_context` assertions preserve both the exact positive edge
+     and the fail-closed blocker without broad holder/value-flow dispatch.
 
 2. Direct typed local receiver alias - completed:
    - Extend one exact local alias propagation case for method receivers only if it reuses existing initializer proof.

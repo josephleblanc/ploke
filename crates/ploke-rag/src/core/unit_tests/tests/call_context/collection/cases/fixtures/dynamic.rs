@@ -68,6 +68,24 @@ async fn call_context_collection_reads_real_fixture_dynamic_rows() -> Result<(),
             "call_single_named_field_function_param_with_local_target",
         ),
     )?;
+    let multi_named_field_param_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_multi_named_field_function_param"),
+    )?;
+    let multi_named_field_param_caller_a = one_uuid(
+        &db,
+        &function_in_module_query(
+            &["crate"],
+            "call_multi_named_field_function_param_with_local_target_a",
+        ),
+    )?;
+    let multi_named_field_param_caller_b = one_uuid(
+        &db,
+        &function_in_module_query(
+            &["crate"],
+            "call_multi_named_field_function_param_with_local_target_b",
+        ),
+    )?;
     let array_param_owner = one_uuid(
         &db,
         &function_in_module_query(&["crate"], "call_single_indexed_function_pointer_param"),
@@ -91,13 +109,8 @@ async fn call_context_collection_reads_real_fixture_dynamic_rows() -> Result<(),
         ),
     )?;
 
-    let rag = init_test_rag_mock(Arc::clone(&db));
-    assert!(
-        !rag.call_context_degraded(),
-        "fresh fixture call_graph schema should enable dynamic call context collection"
-    );
-
-    let call_context = rag.collect_call_context(&[
+    let mut rag = init_test_rag_mock(Arc::clone(&db));
+    let seeds = [
         (resolved_owner, 1.0),
         (branch_owner, 1.0),
         (block_owner, 1.0),
@@ -107,10 +120,18 @@ async fn call_context_collection_reads_real_fixture_dynamic_rows() -> Result<(),
         (closure_binding_owner, 1.0),
         (dereferenced_closure_owner, 1.0),
         (named_field_param_owner, 1.0),
+        (multi_named_field_param_owner, 1.0),
         (array_param_owner, 1.0),
         (field_param_owner, 1.0),
         (tuple_field_param_owner, 1.0),
-    ])?;
+    ];
+    rag.cfg.call_context.max_owner_hits = seeds.len();
+    assert!(
+        !rag.call_context_degraded(),
+        "fresh fixture call_graph schema should enable dynamic call context collection"
+    );
+
+    let call_context = rag.collect_call_context(&seeds)?;
     let resolved_context = call_context
         .get(&resolved_owner)
         .expect("resolved dynamic owner should receive outgoing call context");
@@ -285,37 +306,52 @@ async fn call_context_collection_reads_real_fixture_dynamic_rows() -> Result<(),
         CallTargetKind::DynamicClosure
     );
 
+    let named_field_param_callers = [named_field_param_caller];
+    let multi_named_field_param_callers = [
+        multi_named_field_param_caller_a,
+        multi_named_field_param_caller_b,
+    ];
+    let array_param_callers = [array_param_caller];
+    let field_param_callers = [field_param_caller];
+    let tuple_field_param_callers = [tuple_field_param_caller];
+
     // tests/fixture_crates/fixture_call_graph/src/lib.rs:1511-1555,
-    // 1598-1606, and the final direct array-parameter helper:
-    // private helper parameters receive holder/array values from a single
-    // local caller, so DB proof resolves `(holder.callback)()`,
+    // 1598-1606, 1847-1877, and the final direct array-parameter helper:
+    // private helper parameters receive holder/array values from complete
+    // local caller sets, so DB proof resolves `(holder.callback)()`,
     // `holder.callbacks[0]()`, `holder.0[0]()` and `funcs[0]()` to
     // `local_target`. RAG node context also includes the incoming wrapper
     // helper call, while still exposing pathless dynamic callees as generic
     // `Dynamic` calls.
-    for (label, owner, caller, helper_path) in [
+    for (label, owner, callers, helper_path) in [
         (
             "single-caller-named-field-parameter",
             named_field_param_owner,
-            named_field_param_caller,
+            named_field_param_callers.as_slice(),
             vec!["call_single_named_field_function_param".to_string()],
+        ),
+        (
+            "multi-caller-named-field-parameter",
+            multi_named_field_param_owner,
+            multi_named_field_param_callers.as_slice(),
+            vec!["call_multi_named_field_function_param".to_string()],
         ),
         (
             "single-caller-array-parameter",
             array_param_owner,
-            array_param_caller,
+            array_param_callers.as_slice(),
             vec!["call_single_indexed_function_pointer_param".to_string()],
         ),
         (
             "single-caller-field-parameter",
             field_param_owner,
-            field_param_caller,
+            field_param_callers.as_slice(),
             vec!["call_single_indexed_field_function_param".to_string()],
         ),
         (
             "single-caller-tuple-field-parameter",
             tuple_field_param_owner,
-            tuple_field_param_caller,
+            tuple_field_param_callers.as_slice(),
             vec!["call_single_indexed_tuple_field_function_param".to_string()],
         ),
     ] {
@@ -324,7 +360,7 @@ async fn call_context_collection_reads_real_fixture_dynamic_rows() -> Result<(),
         });
         assert_eq!(
             context.len(),
-            2,
+            1 + callers.len(),
             "{label} dynamic owner context: {context:#?}"
         );
         let call = context
@@ -349,31 +385,35 @@ async fn call_context_collection_reads_real_fixture_dynamic_rows() -> Result<(),
             "{label}"
         );
 
-        let incoming = context
-            .iter()
-            .find(|call| call.owner_id == caller && call.kind == CallSiteKind::Path)
-            .unwrap_or_else(|| {
-                panic!("{label} should expose incoming wrapper helper call: {context:#?}")
-            });
-        assert_eq!(
-            incoming.callee,
-            CallCalleeInfo::Path { path: helper_path },
-            "{label}"
-        );
-        assert_eq!(incoming.arg_count, Some(1), "{label}");
-        assert_eq!(incoming.status, CallStatusKind::Resolved, "{label}");
-        assert_eq!(
-            incoming.resolution,
-            Some(CallResolutionKind::LocalExact),
-            "{label}"
-        );
-        assert_eq!(incoming.targets.len(), 1, "{label}: {incoming:#?}");
-        assert_eq!(incoming.targets[0].target_id, owner, "{label}");
-        assert_eq!(
-            incoming.targets[0].relation,
-            CallTargetKind::Function,
-            "{label}"
-        );
+        for caller in callers {
+            let incoming = context
+                .iter()
+                .find(|call| call.owner_id == *caller && call.kind == CallSiteKind::Path)
+                .unwrap_or_else(|| {
+                    panic!("{label} should expose incoming wrapper helper call: {context:#?}")
+                });
+            assert_eq!(
+                incoming.callee,
+                CallCalleeInfo::Path {
+                    path: helper_path.clone(),
+                },
+                "{label}"
+            );
+            assert_eq!(incoming.arg_count, Some(1), "{label}");
+            assert_eq!(incoming.status, CallStatusKind::Resolved, "{label}");
+            assert_eq!(
+                incoming.resolution,
+                Some(CallResolutionKind::LocalExact),
+                "{label}"
+            );
+            assert_eq!(incoming.targets.len(), 1, "{label}: {incoming:#?}");
+            assert_eq!(incoming.targets[0].target_id, owner, "{label}");
+            assert_eq!(
+                incoming.targets[0].relation,
+                CallTargetKind::Function,
+                "{label}"
+            );
+        }
     }
 
     Ok(())

@@ -1843,3 +1843,35 @@ pub fn call_match_initialized_local_instance_method(flag: bool) -> i32 {
     };
     value.instance_value()
 }
+
+fn call_multi_named_field_function_param(holder: CallbackHolder) -> i32 {
+    (holder.callback)()
+}
+
+pub fn call_multi_named_field_function_param_with_local_target_a() -> i32 {
+    call_multi_named_field_function_param(CallbackHolder {
+        callback: local_target,
+    })
+}
+
+pub fn call_multi_named_field_function_param_with_local_target_b() -> i32 {
+    call_multi_named_field_function_param(CallbackHolder {
+        callback: local_target,
+    })
+}
+
+fn call_multi_conflicting_named_field_function_param(holder: CallbackHolder) -> i32 {
+    (holder.callback)()
+}
+
+pub fn call_multi_conflicting_named_field_function_param_with_local_target() -> i32 {
+    call_multi_conflicting_named_field_function_param(CallbackHolder {
+        callback: local_target,
+    })
+}
+
+pub fn call_multi_conflicting_named_field_function_param_with_other_target() -> i32 {
+    call_multi_conflicting_named_field_function_param(CallbackHolder {
+        callback: other_target,
+    })
+}

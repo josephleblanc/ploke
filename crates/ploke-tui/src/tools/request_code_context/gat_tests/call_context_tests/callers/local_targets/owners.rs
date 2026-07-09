@@ -6,6 +6,7 @@ async fn request_code_context_returns_function_and_dynamic_owner_call_context()
     struct Case<'a> {
         label: &'a str,
         search_term: &'a str,
+        top_k: usize,
         owner: &'a str,
         call_kind: CallSiteKind,
         callee: CallCalleeInfo,
@@ -21,6 +22,7 @@ async fn request_code_context_returns_function_and_dynamic_owner_call_context()
         Case {
             label: "ordinary path caller",
             search_term: "call_crate_local_target",
+            top_k: 1,
             owner: "call_crate_local_target",
             call_kind: CallSiteKind::Path,
             callee: CallCalleeInfo::Path {
@@ -31,6 +33,7 @@ async fn request_code_context_returns_function_and_dynamic_owner_call_context()
         Case {
             label: "dynamic function caller",
             search_term: "call_parenthesized_local_target",
+            top_k: 1,
             owner: "call_parenthesized_local_target",
             call_kind: CallSiteKind::Dynamic,
             callee: CallCalleeInfo::Dynamic,
@@ -39,7 +42,17 @@ async fn request_code_context_returns_function_and_dynamic_owner_call_context()
         Case {
             label: "aliased indexed dynamic function caller",
             search_term: "call_aliased_indexed_named_field_function_binding",
+            top_k: 1,
             owner: "call_aliased_indexed_named_field_function_binding",
+            call_kind: CallSiteKind::Dynamic,
+            callee: CallCalleeInfo::Dynamic,
+            relation: CallTargetKind::DynamicFunction,
+        },
+        Case {
+            label: "multi-caller named-field function parameter",
+            search_term: "call_multi_named_field_function_param holder callback local_target",
+            top_k: 5,
+            owner: "call_multi_named_field_function_param",
             call_kind: CallSiteKind::Dynamic,
             callee: CallCalleeInfo::Dynamic,
             relation: CallTargetKind::DynamicFunction,
@@ -47,6 +60,7 @@ async fn request_code_context_returns_function_and_dynamic_owner_call_context()
         Case {
             label: "guarded match dynamic function caller",
             search_term: "call_match_guarded_function_item",
+            top_k: 1,
             owner: "call_match_guarded_function_item",
             call_kind: CallSiteKind::Dynamic,
             callee: CallCalleeInfo::Dynamic,
@@ -55,6 +69,7 @@ async fn request_code_context_returns_function_and_dynamic_owner_call_context()
         Case {
             label: "single-caller parenthesized function-pointer parameter",
             search_term: "call_single_parenthesized_function_pointer_param f fn i32",
+            top_k: 1,
             owner: "call_single_parenthesized_function_pointer_param",
             call_kind: CallSiteKind::Dynamic,
             callee: CallCalleeInfo::Dynamic,
@@ -63,6 +78,7 @@ async fn request_code_context_returns_function_and_dynamic_owner_call_context()
         Case {
             label: "single-caller if-branch function-pointer parameter",
             search_term: "call_single_if_function_pointer_param_branch f fn i32",
+            top_k: 1,
             owner: "call_single_if_function_pointer_param_branch",
             call_kind: CallSiteKind::Dynamic,
             callee: CallCalleeInfo::Dynamic,
@@ -71,6 +87,7 @@ async fn request_code_context_returns_function_and_dynamic_owner_call_context()
         Case {
             label: "single-caller match-arm function-pointer parameter",
             search_term: "call_single_match_function_pointer_param_arm f fn i32",
+            top_k: 1,
             owner: "call_single_match_function_pointer_param_arm",
             call_kind: CallSiteKind::Dynamic,
             callee: CallCalleeInfo::Dynamic,
@@ -79,6 +96,7 @@ async fn request_code_context_returns_function_and_dynamic_owner_call_context()
         Case {
             label: "single-caller function-pointer cast parameter",
             search_term: "call_single_function_pointer_param_cast f fn i32",
+            top_k: 1,
             owner: "call_single_function_pointer_param_cast",
             call_kind: CallSiteKind::Dynamic,
             callee: CallCalleeInfo::Dynamic,
@@ -87,6 +105,7 @@ async fn request_code_context_returns_function_and_dynamic_owner_call_context()
         Case {
             label: "dereferenced boxed dyn Fn exact initializer",
             search_term: "call_dereferenced_boxed_dyn_fn_value_binding boxed_fn",
+            top_k: 1,
             owner: "call_dereferenced_boxed_dyn_fn_value_binding",
             call_kind: CallSiteKind::Dynamic,
             callee: CallCalleeInfo::Dynamic,
@@ -95,6 +114,7 @@ async fn request_code_context_returns_function_and_dynamic_owner_call_context()
         Case {
             label: "single-caller generic FnOnce parameter",
             search_term: "call_single_generic_fn_once_param generic_f FnOnce",
+            top_k: 1,
             owner: "call_single_generic_fn_once_param",
             call_kind: CallSiteKind::Path,
             callee: CallCalleeInfo::Path {
@@ -105,6 +125,7 @@ async fn request_code_context_returns_function_and_dynamic_owner_call_context()
         Case {
             label: "single-caller parenthesized generic FnOnce parameter",
             search_term: "call_single_parenthesized_generic_fn_once_param generic_f FnOnce",
+            top_k: 1,
             owner: "call_single_parenthesized_generic_fn_once_param",
             call_kind: CallSiteKind::Dynamic,
             callee: CallCalleeInfo::Dynamic,
@@ -114,9 +135,14 @@ async fn request_code_context_returns_function_and_dynamic_owner_call_context()
 
     for case in cases {
         let owner = one_uuid(&db, &function_in_module_query(&["crate"], case.owner))?;
-        let result =
-            execute_fixture_request(&db, case.search_term, 1, "local_target_call_context").await?;
-        assert_result_ok(&result, case.search_term, 1, "fixture_call_graph");
+        let result = execute_fixture_request(
+            &db,
+            case.search_term,
+            case.top_k,
+            "local_target_call_context",
+        )
+        .await?;
+        assert_result_ok(&result, case.search_term, case.top_k, "fixture_call_graph");
 
         let target_part = result
             .context

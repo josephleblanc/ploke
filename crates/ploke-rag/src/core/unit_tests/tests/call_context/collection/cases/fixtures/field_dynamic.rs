@@ -50,6 +50,13 @@ async fn call_context_collection_reads_real_field_dynamic_rows() -> Result<(), E
             "call_single_named_field_function_param",
             dynamic_target,
         )?,
+        parameter_case(
+            &db,
+            "multi-caller named-field function parameter",
+            "call_multi_named_field_function_param",
+            dynamic_target,
+            2,
+        )?,
         private_parameter_case(
             &db,
             "single-caller indexed function-pointer parameter",
@@ -127,19 +134,28 @@ fn private_parameter_case(
     owner: &'static str,
     dynamic_target: Uuid,
 ) -> Result<CallCase, Error> {
+    parameter_case(db, label, owner, dynamic_target, 1)
+}
+
+fn parameter_case(
+    db: &Database,
+    label: &'static str,
+    owner: &'static str,
+    dynamic_target: Uuid,
+    caller_count: usize,
+) -> Result<CallCase, Error> {
     let owner_id = one_uuid(db, &function_in_module_query(&["crate"], owner))?;
+    let mut calls = vec![dynamic_call(dynamic_target)];
+    calls.extend((0..caller_count).map(|_| ExpectedCall {
+        kind: CallSiteKind::Path,
+        callee: path_call(&[owner]),
+        target: owner_id,
+        relation: CallTargetKind::Function,
+    }));
     Ok(CallCase {
         label,
         owner: owner_id,
-        calls: vec![
-            dynamic_call(dynamic_target),
-            ExpectedCall {
-                kind: CallSiteKind::Path,
-                callee: path_call(&[owner]),
-                target: owner_id,
-                relation: CallTargetKind::Function,
-            },
-        ],
+        calls,
     })
 }
 
