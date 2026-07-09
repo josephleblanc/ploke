@@ -1858,6 +1858,54 @@ pub(crate) fn assert_json_from_bytes_incoming_context(
     assert_expected_path_incoming_context(calls, callers, target, label, "Json::from_bytes");
 }
 
+pub(crate) fn assert_external_summary_need_for_call(
+    needs: &[serde_json::Value],
+    call: &CallContextInfo,
+    label: &str,
+    tool: &str,
+) {
+    assert_eq!(
+        call.status,
+        CallStatusKind::External,
+        "{tool} external-summary need source call should be an external frontier for {label}: {call:#?}"
+    );
+    assert!(
+        call.targets.is_empty(),
+        "{tool} external-summary need source call should stay targetless for {label}: {call:#?}"
+    );
+
+    let site = call.site_id.to_string();
+    let need = needs
+        .iter()
+        .find(|need| {
+            need.get("call_site")
+                .and_then(|call| call.get("site_id"))
+                .and_then(serde_json::Value::as_str)
+                == Some(site.as_str())
+        })
+        .unwrap_or_else(|| {
+            panic!("{tool} should expose an external summary need for {label}: {needs:#?}")
+        });
+    let reasons = need
+        .get("blocker_reasons")
+        .and_then(serde_json::Value::as_array)
+        .unwrap_or_else(|| panic!("{tool} external summary need reasons missing: {need:#?}"));
+    assert!(
+        reasons
+            .iter()
+            .any(|reason| reason.as_str() == Some("external_dependency_summary_missing")),
+        "{tool} external summary need should preserve missing-summary blocker for {label}: {need:#?}"
+    );
+    let paths = need
+        .get("paths_to_owner")
+        .and_then(serde_json::Value::as_array)
+        .unwrap_or_else(|| panic!("{tool} external summary need paths missing: {need:#?}"));
+    assert!(
+        paths.is_empty(),
+        "{tool} direct frontier need should not include intermediate owner paths for {label}: {need:#?}"
+    );
+}
+
 pub(crate) fn assert_expected_path_incoming_context(
     calls: &[serde_json::Value],
     callers: &[ExpectedCallSite],

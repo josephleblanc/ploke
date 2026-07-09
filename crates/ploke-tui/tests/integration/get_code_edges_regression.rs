@@ -41,15 +41,15 @@ use crate::call_graph_tool_support::{
     assert_body_empty_impact_summary, assert_body_empty_incoming_context,
     assert_boxed_into_route_incoming_context, assert_branch_receiver_context,
     assert_branch_receiver_proof, assert_call_path_node, assert_chrono_naive_utc_incoming_context,
-    assert_expected_path_incoming_context, assert_fixture_extern_c_abs_effects,
-    assert_handler_call_incoming_context, assert_incoming_context,
-    assert_initialized_local_receiver_context, assert_initialized_local_receiver_proof,
-    assert_json_from_bytes_incoming_context, assert_parse_attrs_incoming_context,
-    assert_path_blocker_proof, assert_path_context, assert_resolved_callable_param_proof,
-    assert_resolved_path_context, assert_run_ui_tests_incoming_context,
-    assert_runtime_dispatch_blocker, assert_self_field_receiver_context,
-    assert_self_field_receiver_proof, assert_target_proof, assert_task_spawn_effects,
-    assert_two_hop_call_path, ui_field,
+    assert_expected_path_incoming_context, assert_external_summary_need_for_call,
+    assert_fixture_extern_c_abs_effects, assert_handler_call_incoming_context,
+    assert_incoming_context, assert_initialized_local_receiver_context,
+    assert_initialized_local_receiver_proof, assert_json_from_bytes_incoming_context,
+    assert_parse_attrs_incoming_context, assert_path_blocker_proof, assert_path_context,
+    assert_resolved_callable_param_proof, assert_resolved_path_context,
+    assert_run_ui_tests_incoming_context, assert_runtime_dispatch_blocker,
+    assert_self_field_receiver_context, assert_self_field_receiver_proof, assert_target_proof,
+    assert_task_spawn_effects, assert_two_hop_call_path, ui_field,
 };
 
 #[tokio::test]
@@ -2292,6 +2292,11 @@ async fn code_item_edges_returns_real_corpus_json_from_bytes_callers() {
         .and_then(|node| node.get("proof_context"))
         .and_then(serde_json::Value::as_array)
         .expect("node_info.proof_context array");
+    let summary_needs = payload
+        .get("node_info")
+        .and_then(|node| node.get("external_summary_needs"))
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.external_summary_needs array");
     let reach = payload
         .get("node_info")
         .and_then(|node| node.get("call_reach"))
@@ -2301,17 +2306,24 @@ async fn code_item_edges_returns_real_corpus_json_from_bytes_callers() {
         .get("source_cfgs")
         .and_then(serde_json::Value::as_array)
         .expect("node_info.call_reach source_cfgs array");
+    let external_frontier = reach
+        .get("external_frontier_calls")
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.call_reach external_frontier_calls array");
 
     // Real-corpus oracle matrix:
     //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
     //   axum/src/json.rs:164 defines `Json::from_bytes`.
     //   axum/src/json.rs:112 and :128 call `Self::from_bytes(&bytes)`.
+    //   axum/src/json.rs:184 calls
+    //     `serde_json::Deserializer::from_slice(bytes)`.
     //   axum/src/lib.rs:488-489 gates the file module with
     //     `#[cfg(feature = "json")] mod json;`.
     // Expected tool traversal: exact edge lookup of the callee method exposes
     // the same two trait-impl caller-site edges and projected proof rows as
-    // the DB target-centered query, while preserving the inherited feature
-    // gate in the owner reach summary.
+    // the DB target-centered query. Its owner reach summary also exposes the
+    // serde_json dependency-root call as a targetless external frontier and
+    // missing-summary need while preserving the inherited feature gate.
     assert_json_from_bytes_incoming_context(
         call_context,
         &fixture.callers,
@@ -2326,6 +2338,38 @@ async fn code_item_edges_returns_real_corpus_json_from_bytes_callers() {
             "code_item_edges",
         );
     }
+    let external_frontier_calls = external_frontier
+        .iter()
+        .map(|call| serde_json::from_value::<CallContextInfo>(call.clone()))
+        .collect::<Result<Vec<_>, _>>()
+        .expect("typed external frontier call rows");
+    let serde_frontier = external_frontier_calls
+        .iter()
+        .find(|call| {
+            call.owner_id == fixture.target
+                && call.kind == CallSiteKind::Path
+                && call.status == CallStatusKind::External
+                && call.targets.is_empty()
+                && matches!(
+                    &call.callee,
+                    CallCalleeInfo::Path { path }
+                        if path
+                            .iter()
+                            .map(String::as_str)
+                            .eq(["serde_json", "Deserializer", "from_slice"])
+                )
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "code_item_edges should surface serde_json in external frontier rows: {external_frontier_calls:#?}"
+            )
+        });
+    assert_external_summary_need_for_call(
+        summary_needs,
+        serde_frontier,
+        "Json::from_bytes serde_json::Deserializer::from_slice",
+        "code_item_edges",
+    );
     assert!(
         reach_source_cfgs
             .iter()
@@ -2339,6 +2383,10 @@ async fn code_item_edges_returns_real_corpus_json_from_bytes_callers() {
     assert_eq!(
         ui_field(ui, "reach_source_cfgs"),
         reach_source_cfgs.len().to_string()
+    );
+    assert_eq!(
+        ui_field(ui, "external_summary_needs"),
+        summary_needs.len().to_string()
     );
     assert!(
         ui_field(ui, "proof_context")
