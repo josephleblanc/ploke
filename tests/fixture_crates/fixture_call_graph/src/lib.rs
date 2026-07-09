@@ -1909,3 +1909,11 @@ where
 {
     T::default()
 }
+
+pub async fn call_awaited_async_closure_future_alias_chain_with_body_call() {
+    let closure = async || local_target();
+    let future = closure();
+    let alias = future;
+    let second = alias;
+    second.await;
+}

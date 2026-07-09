@@ -50,7 +50,48 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: proof-only dependency-root carrier for the real axum
+Current bucket: bounded same-block async-closure future alias-chain proof.
+
+Exit criteria:
+
+- Add one fixture-backed source oracle where an async closure future is awaited
+  through a direct same-block alias chain:
+  `future = closure(); alias = future; second = alias; second.await`.
+- Reuse the existing awaited async-closure binding payload and traversal edge;
+  do not add general async poll/resume modeling or arbitrary future value flow.
+- Assert parser, DB traversal, RAG collection, and exact TUI
+  `request_code_context` preserve the two-hop path from outer function to
+  async-closure owner to `local_target`.
+
+Status: completed for this checkpoint.
+
+Latest completed slice: fixture-backed
+`call_awaited_async_closure_future_alias_chain_with_body_call` now proves the
+existing same-block future alias tracker covers a two-step direct alias chain.
+
+Completed evidence:
+
+- Parser paranoid coverage asserts the original `closure()` call is recorded as
+  `AwaitedAsyncClosureBinding` and resolves to the async-closure executable
+  owner, while the closure body `local_target()` remains owned by the
+  async-closure owner.
+- DB `fixture_context_resolves_awaited_async_closure_future_alias_chain_to_executable_owner`
+  asserts the persisted two-hop traversal
+  outer function -> async-closure owner -> `local_target`.
+- RAG
+  `call_context_collection_resolves_awaited_async_closure_future_alias_chain_rows`
+  preserves the same outgoing closure edge and nested body call.
+- Exact TUI
+  `request_code_context_returns_awaited_async_closure_future_alias_chain_owner_call_context`
+  preserves the same expansion and call-context payload.
+- This does not resolve non-awaited async-closure futures, returned futures,
+  async callable trait objects, or general poll/resume semantics.
+
+Next bucket: switch away from async-closure alias coverage unless the next row
+adds a distinct exact proof carrier. Re-check the remaining focused unsupported
+inventory before selecting another binding/type-aware semantic slice.
+
+Previous completed bucket: proof-only dependency-root carrier for the real axum
 `Body::empty` re-export import row.
 
 Exit criteria:
@@ -66,7 +107,7 @@ Exit criteria:
 
 Status: completed for this checkpoint.
 
-Latest completed slice: Body::empty dependency-root proof now covers the
+Previous completed slice: Body::empty dependency-root proof now covers the
 direct `axum/src/form.rs:158` row and the `crate::body::Body` re-export row at
 `axum/src/extract/raw_form.rs:65`.
 

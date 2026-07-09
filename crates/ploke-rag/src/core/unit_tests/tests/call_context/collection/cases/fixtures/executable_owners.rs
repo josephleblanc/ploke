@@ -591,6 +591,16 @@ async fn call_context_collection_resolves_awaited_async_closure_future_block_ali
     .await
 }
 
+#[tokio::test]
+async fn call_context_collection_resolves_awaited_async_closure_future_alias_chain_rows()
+-> Result<(), Error> {
+    assert_awaited_async_closure_future_context(
+        "call_awaited_async_closure_future_alias_chain_with_body_call",
+        "awaited async-closure future alias chain",
+    )
+    .await
+}
+
 async fn assert_awaited_async_closure_future_context(
     owner_name: &str,
     label: &str,
@@ -621,10 +631,12 @@ async fn assert_awaited_async_closure_future_context(
 
     // tests/fixture_crates/fixture_call_graph/src/lib.rs:1722-1727:
     // tests/fixture_crates/fixture_call_graph/src/lib.rs:1821-1825:
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:1913-1919:
     // `future = closure(); alias = future; alias.await;` and
-    // `future = closure(); alias = { future }; alias.await;` prove the
-    // original closure() call is polled through bounded same-block alias
-    // evidence.
+    // `future = closure(); alias = { future }; alias.await;` and the two-step
+    // `future = closure(); alias = future; second = alias; second.await;`
+    // prove the original closure() call is polled through bounded same-block
+    // alias evidence.
     let closure_call = outer_context
         .iter()
         .find(|call| {

@@ -917,6 +917,16 @@ fn fixture_context_resolves_awaited_async_closure_future_block_alias_to_executab
     )
 }
 
+#[test]
+fn fixture_context_resolves_awaited_async_closure_future_alias_chain_to_executable_owner()
+-> Result<(), DbError> {
+    assert_awaited_async_closure_future_path(
+        "call_awaited_async_closure_future_alias_chain_with_body_call",
+        "awaited async-closure future alias chain",
+        "awaited async closure future alias chain",
+    )
+}
+
 fn assert_awaited_async_closure_future_path(
     owner_name: &str,
     body_label: &str,
@@ -939,9 +949,11 @@ fn assert_awaited_async_closure_future_path(
     // tests/fixture_crates/fixture_call_graph/src/lib.rs:1716-1720:
     // tests/fixture_crates/fixture_call_graph/src/lib.rs:1722-1727:
     // tests/fixture_crates/fixture_call_graph/src/lib.rs:1821-1825:
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:1913-1919:
     // `future = closure(); future.await;`, `future = closure(); alias =
     // future; alias.await;`, and `future = closure(); alias = { future };
-    // alias.await;` prove the original async-closure binding call is polled
+    // alias.await;`, and `future = closure(); alias = future; second = alias;
+    // second.await;` prove the original async-closure binding call is polled
     // through bounded same-block evidence.
     let closure_call = row_by_path(&outer_context, &["closure"]);
     assert_resolved_target(

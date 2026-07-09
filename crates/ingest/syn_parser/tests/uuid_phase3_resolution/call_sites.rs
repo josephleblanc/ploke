@@ -313,6 +313,9 @@ const AWAITED_ASYNC_CLOSURE_FUTURE_ALIAS_BODY_LOCAL_TARGET_CALL_SPAN: (usize, us
 const AWAITED_ASYNC_CLOSURE_FUTURE_BLOCK_ALIAS_CALL_SPAN: (usize, usize) = (41554, 41563);
 const AWAITED_ASYNC_CLOSURE_FUTURE_BLOCK_ALIAS_BODY_LOCAL_TARGET_CALL_SPAN: (usize, usize) =
     (41521, 41535);
+const AWAITED_ASYNC_CLOSURE_FUTURE_ALIAS_CHAIN_CALL_SPAN: (usize, usize) = (43969, 43978);
+const AWAITED_ASYNC_CLOSURE_FUTURE_ALIAS_CHAIN_BODY_LOCAL_TARGET_CALL_SPAN: (usize, usize) =
+    (43936, 43950);
 const NAMED_FIELD_FUNCTION_DYNAMIC_CALL_SPAN: (usize, usize) = (17945, 17964);
 const ALIASED_NAMED_FIELD_FUNCTION_DYNAMIC_CALL_SPAN: (usize, usize) = (18134, 18152);
 const INDEXED_FIELD_FUNCTION_PARAM_DYNAMIC_CALL_SPAN: (usize, usize) = (18239, 18260);
@@ -5526,107 +5529,58 @@ fn fixture_call_graph_call_async_closure_future_binding_without_await_fails_clos
 #[test]
 fn fixture_call_graph_call_awaited_async_closure_future_binding_resolves_path_call_site()
 -> Result<(), syn_parser::error::SynParserError> {
-    let (graph, tree) = crate::common::build_tree_for_tests("fixture_call_graph");
-    let report = resolve_call_relations_after_tree(&graph, &tree)?;
-    let owner = crate::common::call_site_paranoid::function_owner_context(
-        &graph,
-        &["crate"],
+    assert_awaited_async_closure_future_path_call_site(
         "call_awaited_async_closure_future_binding_with_body_call",
-    );
-    let closure = closure_body_containing_span(
-        &graph,
-        &owner,
-        AWAITED_ASYNC_CLOSURE_FUTURE_BINDING_BODY_LOCAL_TARGET_CALL_SPAN,
-    );
-
-    let expected = ExpectedCallSite::path_awaited_async_closure_binding(
-        &["closure"],
-        closure,
         AWAITED_ASYNC_CLOSURE_FUTURE_BINDING_CALL_SPAN,
-        0,
-        0,
-        &[],
-        ExpectedCallOutcome::ResolvedClosureLocalExact { target: closure },
-    );
-    crate::common::call_site_paranoid::assert_paranoid_call_site(
-        &graph, &report, &owner, &expected,
-    );
-    assert_no_call_site_owned_at_span(
-        &graph,
-        &owner,
         AWAITED_ASYNC_CLOSURE_FUTURE_BINDING_BODY_LOCAL_TARGET_CALL_SPAN,
-    );
-    assert_closure_body_path_call_owned_at_span(
-        &graph,
-        &owner,
-        AWAITED_ASYNC_CLOSURE_FUTURE_BINDING_BODY_LOCAL_TARGET_CALL_SPAN,
-        &["local_target"],
-    );
-    Ok(())
+    )
 }
 
 #[test]
 fn fixture_call_graph_call_awaited_async_closure_future_alias_resolves_path_call_site()
 -> Result<(), syn_parser::error::SynParserError> {
-    let (graph, tree) = crate::common::build_tree_for_tests("fixture_call_graph");
-    let report = resolve_call_relations_after_tree(&graph, &tree)?;
-    let owner = crate::common::call_site_paranoid::function_owner_context(
-        &graph,
-        &["crate"],
+    assert_awaited_async_closure_future_path_call_site(
         "call_awaited_async_closure_future_alias_with_body_call",
-    );
-    let closure = closure_body_containing_span(
-        &graph,
-        &owner,
-        AWAITED_ASYNC_CLOSURE_FUTURE_ALIAS_BODY_LOCAL_TARGET_CALL_SPAN,
-    );
-
-    let expected = ExpectedCallSite::path_awaited_async_closure_binding(
-        &["closure"],
-        closure,
         AWAITED_ASYNC_CLOSURE_FUTURE_ALIAS_CALL_SPAN,
-        0,
-        0,
-        &[],
-        ExpectedCallOutcome::ResolvedClosureLocalExact { target: closure },
-    );
-    crate::common::call_site_paranoid::assert_paranoid_call_site(
-        &graph, &report, &owner, &expected,
-    );
-    assert_no_call_site_owned_at_span(
-        &graph,
-        &owner,
         AWAITED_ASYNC_CLOSURE_FUTURE_ALIAS_BODY_LOCAL_TARGET_CALL_SPAN,
-    );
-    assert_closure_body_path_call_owned_at_span(
-        &graph,
-        &owner,
-        AWAITED_ASYNC_CLOSURE_FUTURE_ALIAS_BODY_LOCAL_TARGET_CALL_SPAN,
-        &["local_target"],
-    );
-    Ok(())
+    )
 }
 
 #[test]
 fn fixture_call_graph_call_awaited_async_closure_future_block_alias_resolves_path_call_site()
 -> Result<(), syn_parser::error::SynParserError> {
+    assert_awaited_async_closure_future_path_call_site(
+        "call_awaited_async_closure_future_block_alias_with_body_call",
+        AWAITED_ASYNC_CLOSURE_FUTURE_BLOCK_ALIAS_CALL_SPAN,
+        AWAITED_ASYNC_CLOSURE_FUTURE_BLOCK_ALIAS_BODY_LOCAL_TARGET_CALL_SPAN,
+    )
+}
+
+#[test]
+fn fixture_call_graph_call_awaited_async_closure_future_alias_chain_resolves_path_call_site()
+-> Result<(), syn_parser::error::SynParserError> {
+    assert_awaited_async_closure_future_path_call_site(
+        "call_awaited_async_closure_future_alias_chain_with_body_call",
+        AWAITED_ASYNC_CLOSURE_FUTURE_ALIAS_CHAIN_CALL_SPAN,
+        AWAITED_ASYNC_CLOSURE_FUTURE_ALIAS_CHAIN_BODY_LOCAL_TARGET_CALL_SPAN,
+    )
+}
+
+fn assert_awaited_async_closure_future_path_call_site(
+    owner_name: &str,
+    call_span: (usize, usize),
+    body_call_span: (usize, usize),
+) -> Result<(), syn_parser::error::SynParserError> {
     let (graph, tree) = crate::common::build_tree_for_tests("fixture_call_graph");
     let report = resolve_call_relations_after_tree(&graph, &tree)?;
-    let owner = crate::common::call_site_paranoid::function_owner_context(
-        &graph,
-        &["crate"],
-        "call_awaited_async_closure_future_block_alias_with_body_call",
-    );
-    let closure = closure_body_containing_span(
-        &graph,
-        &owner,
-        AWAITED_ASYNC_CLOSURE_FUTURE_BLOCK_ALIAS_BODY_LOCAL_TARGET_CALL_SPAN,
-    );
+    let owner =
+        crate::common::call_site_paranoid::function_owner_context(&graph, &["crate"], owner_name);
+    let closure = closure_body_containing_span(&graph, &owner, body_call_span);
 
     let expected = ExpectedCallSite::path_awaited_async_closure_binding(
         &["closure"],
         closure,
-        AWAITED_ASYNC_CLOSURE_FUTURE_BLOCK_ALIAS_CALL_SPAN,
+        call_span,
         0,
         0,
         &[],
@@ -5635,17 +5589,8 @@ fn fixture_call_graph_call_awaited_async_closure_future_block_alias_resolves_pat
     crate::common::call_site_paranoid::assert_paranoid_call_site(
         &graph, &report, &owner, &expected,
     );
-    assert_no_call_site_owned_at_span(
-        &graph,
-        &owner,
-        AWAITED_ASYNC_CLOSURE_FUTURE_BLOCK_ALIAS_BODY_LOCAL_TARGET_CALL_SPAN,
-    );
-    assert_closure_body_path_call_owned_at_span(
-        &graph,
-        &owner,
-        AWAITED_ASYNC_CLOSURE_FUTURE_BLOCK_ALIAS_BODY_LOCAL_TARGET_CALL_SPAN,
-        &["local_target"],
-    );
+    assert_no_call_site_owned_at_span(&graph, &owner, body_call_span);
+    assert_closure_body_path_call_owned_at_span(&graph, &owner, body_call_span, &["local_target"]);
     Ok(())
 }
 
