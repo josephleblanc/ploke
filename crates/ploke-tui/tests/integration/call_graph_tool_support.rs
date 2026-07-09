@@ -1735,7 +1735,7 @@ fn attach_body_empty_dependency_root_proof(
     db: &Database,
     target: Uuid,
     callers: &[ExpectedCallSite],
-) -> Uuid {
+) -> Vec<Uuid> {
     let mut records = Vec::new();
     let mut sites = Vec::new();
     for caller in callers {
@@ -1752,47 +1752,59 @@ fn attach_body_empty_dependency_root_proof(
                 caller.owner,
                 target,
             ));
+        } else if source.source_file.ends_with("axum/src/extract/raw_form.rs") {
+            sites.push(caller.site);
+            records.push(
+                ploke_test_utils::axum_body_empty_reexport_dependency_record(
+                    "bd:corpus-axum-call-graph",
+                    caller.site,
+                    caller.owner,
+                    target,
+                ),
+            );
         }
     }
     assert_eq!(
         sites.len(),
-        1,
-        "Body::empty should identify the direct axum/src/form.rs dependency-root caller site"
+        2,
+        "Body::empty should identify the direct form.rs and re-exported raw_form.rs dependency-root caller sites"
     );
     db.upsert_proof_fact_values(&records)
         .expect("insert Body::empty dependency-root proof");
-    sites[0]
+    sites
 }
 
 pub(crate) fn assert_body_empty_dependency_root_proof(
     proofs: &[serde_json::Value],
-    site: Uuid,
+    sites: &[Uuid],
     target: Uuid,
     tool: &str,
 ) {
-    let site = site.to_string();
     let target = target.to_string();
-    assert!(
-        proofs.iter().any(|proof| {
-            proof.get("kind").and_then(serde_json::Value::as_str) == Some("dependency_root")
-                && proof
-                    .get("call_site_id")
-                    .and_then(serde_json::Value::as_str)
-                    == Some(site.as_str())
-                && proof
-                    .get("resolved_def_id")
-                    .and_then(serde_json::Value::as_str)
-                    == Some(target.as_str())
-                && proof.get("target_kind").and_then(serde_json::Value::as_str)
-                    == Some("workspace_inherent_method")
-                && proof.get("target_name").and_then(serde_json::Value::as_str)
-                    == Some("axum_core::body::Body::empty")
-                && proof.get("target_root").and_then(serde_json::Value::as_str)
-                    == Some("axum-core/src/body.rs")
-                && proof.get("status").and_then(serde_json::Value::as_str) == Some("admitted")
-        }),
-        "{tool} should expose the axum/src/form.rs Body::empty dependency-root proof row: {proofs:#?}"
-    );
+    for site in sites {
+        let site = site.to_string();
+        assert!(
+            proofs.iter().any(|proof| {
+                proof.get("kind").and_then(serde_json::Value::as_str) == Some("dependency_root")
+                    && proof
+                        .get("call_site_id")
+                        .and_then(serde_json::Value::as_str)
+                        == Some(site.as_str())
+                    && proof
+                        .get("resolved_def_id")
+                        .and_then(serde_json::Value::as_str)
+                        == Some(target.as_str())
+                    && proof.get("target_kind").and_then(serde_json::Value::as_str)
+                        == Some("workspace_inherent_method")
+                    && proof.get("target_name").and_then(serde_json::Value::as_str)
+                        == Some("axum_core::body::Body::empty")
+                    && proof.get("target_root").and_then(serde_json::Value::as_str)
+                        == Some("axum-core/src/body.rs")
+                    && proof.get("status").and_then(serde_json::Value::as_str) == Some("admitted")
+            }),
+            "{tool} should expose Body::empty dependency-root proof site {site}: {proofs:#?}"
+        );
+    }
 }
 
 pub(crate) fn assert_parse_attrs_incoming_context(

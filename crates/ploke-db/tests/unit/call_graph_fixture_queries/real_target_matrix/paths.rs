@@ -1047,6 +1047,7 @@ fn axum_real_target_body_empty_projects_proof_facts() -> Result<(), DbError> {
 
     let mut records = axum_domain_records("bd:corpus-axum-call-graph");
     let mut form_sites = Vec::new();
+    let mut raw_form_sites = Vec::new();
     for caller in &callers {
         let provenance = db
             .proof_source_provenance(&caller.site.id.to_string())?
@@ -1059,12 +1060,30 @@ fn axum_real_target_body_empty_projects_proof_facts() -> Result<(), DbError> {
                 caller.site.owner_id,
                 target,
             ));
+        } else if provenance
+            .source_file
+            .ends_with("axum/src/extract/raw_form.rs")
+        {
+            raw_form_sites.push(caller);
+            records.push(
+                ploke_test_utils::axum_body_empty_reexport_dependency_record(
+                    "bd:corpus-axum-call-graph",
+                    caller.site.id,
+                    caller.site.owner_id,
+                    target,
+                ),
+            );
         }
     }
     assert_eq!(
         form_sites.len(),
         1,
         "Body::empty dependency-root proof should use the single direct axum/src/form.rs callsite"
+    );
+    assert_eq!(
+        raw_form_sites.len(),
+        1,
+        "Body::empty dependency-root proof should use the single axum/src/extract/raw_form.rs re-export callsite"
     );
     db.upsert_proof_fact_values(&records)?;
 
@@ -1075,6 +1094,13 @@ fn axum_real_target_body_empty_projects_proof_facts() -> Result<(), DbError> {
         form_sites[0].site.owner_id,
         target,
         "axum/src/form.rs:158 direct Body::empty import",
+    );
+    assert_body_empty_dependency_root_proof(
+        &proof_rows,
+        raw_form_sites[0].site.id,
+        raw_form_sites[0].site.owner_id,
+        target,
+        "axum/src/extract/raw_form.rs:65 crate::body::Body re-export import",
     );
 
     Ok(())

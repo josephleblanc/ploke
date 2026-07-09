@@ -326,6 +326,15 @@ fn attach_dependency_roots(
                     caller.site.owner_id,
                     case.case.target,
                 ));
+            } else if source.source_file.ends_with("axum/src/extract/raw_form.rs") {
+                records.push(
+                    ploke_test_utils::axum_body_empty_reexport_dependency_record(
+                        super::helpers::AXUM_DOMAIN,
+                        caller.site.id,
+                        caller.site.owner_id,
+                        case.case.target,
+                    ),
+                );
             }
         }
     }
@@ -399,8 +408,8 @@ fn assert_body_empty_dependency_root(
         })
         .count();
     assert_eq!(
-        sites, 1,
-        "RAG exact proof context should expose the axum/src/form.rs Body::empty dependency-root proof row: {rows:#?}"
+        sites, 2,
+        "RAG exact proof context should expose the direct and re-exported Body::empty dependency-root proof rows: {rows:#?}"
     );
 }
 

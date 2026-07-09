@@ -6,7 +6,7 @@ pub(crate) struct AxumBodyEmptyToolFixture {
     pub(crate) module_path: Vec<String>,
     pub(crate) target: Uuid,
     pub(crate) callers: Vec<ExpectedCallSite>,
-    pub(crate) dependency_root_site: Uuid,
+    pub(crate) dependency_root_sites: Vec<Uuid>,
 }
 
 pub(crate) struct AxumParseAttrsToolFixture {
@@ -107,7 +107,7 @@ impl AxumBodyEmptyToolFixture {
                 >= callers.len(),
             "Body::empty should project target-scoped proof rows for real-corpus callers"
         );
-        let dependency_root_site =
+        let dependency_root_sites =
             attach_body_empty_dependency_root_proof(&db, target.id, &callers);
         let state = axum_state_for_target(Arc::clone(&db), &target, "Body::empty").await;
 
@@ -117,7 +117,7 @@ impl AxumBodyEmptyToolFixture {
             module_path: target.module_path,
             target: target.id,
             callers,
-            dependency_root_site,
+            dependency_root_sites,
         }
     }
 

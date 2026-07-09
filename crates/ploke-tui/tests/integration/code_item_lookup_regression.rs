@@ -1902,7 +1902,7 @@ async fn code_item_lookup_returns_real_corpus_body_empty_callers() {
     }
     assert_body_empty_dependency_root_proof(
         proof_context,
-        fixture.dependency_root_site,
+        &fixture.dependency_root_sites,
         fixture.target,
         "code_item_lookup",
     );

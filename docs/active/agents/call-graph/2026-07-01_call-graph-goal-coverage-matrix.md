@@ -50,23 +50,50 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: shared real-corpus matrix explicit blocker propagation for
-generic-array guarded `size_hint` receiver rows.
+Current bucket: proof-only dependency-root carrier for the real axum
+`Body::empty` re-export import row.
 
 Exit criteria:
 
-- Reuse the existing real-corpus matrix rows for
-  `generic-array/src/lib.rs:1239` and `:1276`.
-- Keep both `iter.size_hint()` rows targetless/unsupported, with no invented
-  call edge.
-- Centralize the explicit blocker facts in the shared call-shape matrix helper
-  instead of duplicating generic-array setup in each downstream tool test.
-- Assert exact TUI `code_item_lookup` and `code_item_edges` proof payloads
-  expose both explicit blockers.
+- Reuse the existing resolved `Body::empty` target-centered caller set.
+- Add a second exact source oracle for
+  `axum/src/extract/raw_form.rs:65`, where `crate::body::Body` re-exports the
+  `axum_core::body::Body::empty` workspace target.
+- Keep the call graph traversal unchanged; this is an admitted proof-only
+  dependency-root record, not broader dependency-root import resolution.
+- Assert DB, RAG exact proof context, and exact TUI lookup/edge proof payloads
+  expose both the direct `form.rs` row and the re-exported `raw_form.rs` row.
 
 Status: completed for this checkpoint.
 
-Latest completed slice: shared TUI matrix proof payloads now preserve the
+Latest completed slice: Body::empty dependency-root proof now covers the
+direct `axum/src/form.rs:158` row and the `crate::body::Body` re-export row at
+`axum/src/extract/raw_form.rs:65`.
+
+Completed evidence:
+
+- `axum_body_empty_reexport_dependency_record` records the raw-form source
+  oracle with `import_path = ["crate", "body", "Body"]` and the same resolved
+  workspace target `axum_core::body::Body::empty`.
+- DB `axum_real_target_body_empty_projects_proof_facts` now inserts and
+  asserts both admitted dependency-root proof rows.
+- RAG `proof_context_exact_preserves_axum_supported_target_rows` now requires
+  both proof rows through exact proof context.
+- Exact TUI `body_empty` lookup/edges tests now require both dependency-root
+  proof sites in tool proof payloads.
+- This does not change the existing twenty-three `Body::empty` caller edges,
+  resolution status, or traversal behavior.
+- Verification passed:
+  `cargo check -p ploke-test-utils`,
+  `cargo test -p ploke-db axum_real_target_body_empty_projects_proof_facts -- --nocapture`,
+  `cargo test -p ploke-rag proof_context_exact_preserves_axum_supported_target_rows -- --nocapture`,
+  and `cargo test -p ploke-tui --test integration body_empty -- --nocapture`.
+
+Next bucket: choose the next binding/type-aware semantic row from the plan's
+remaining proof-input list. Do not add more dependency-root records unless the
+next row has a new exact source oracle and DB/RAG/TUI proof value.
+
+Previous completed slice: shared TUI matrix proof payloads now preserve the
 generic-array guarded `size_hint` explicit blockers.
 
 Completed evidence:
@@ -86,10 +113,6 @@ Completed evidence:
   `cargo run -p xtask --features call_graph -- verify-backup-dbs`,
   `cargo check -p ploke-test-utils`, and
   `cargo test -p ploke-tui --test integration call_graph_tool_shared_matrix -- --nocapture`.
-
-Next bucket: choose the next binding/type-aware semantic row from the plan's
-remaining proof-input list. Do not stay on generic-array unless the next slice
-adds real proof input for resolving the guarded receiver.
 
 Previous completed slice: feature-gated serde_json external-summary frontier
 proof.
