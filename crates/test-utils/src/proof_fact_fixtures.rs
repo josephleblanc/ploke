@@ -5,6 +5,8 @@ pub const AXUM_OPAQUE_FUTURE_SUMMARY_ID: &str = "external-summary:axum-opaque-fu
 pub const AXUM_ROUTING_POST_SUMMARY_ID: &str = "external-summary:axum-routing-post-macro";
 pub const AXUM_REQUEST_BUILDER_SUMMARY_ID: &str = "external-summary:axum-request-builder";
 pub const AXUM_STD_MEM_REPLACE_SUMMARY_ID: &str = "external-summary:axum-std-mem-replace";
+pub const AXUM_SERDE_JSON_FROM_SLICE_SUMMARY_ID: &str =
+    "external-summary:axum-serde-json-from-slice";
 
 pub fn axum_opaque_future_boundary_id(call_site_id: Uuid) -> String {
     format!("boundary:{call_site_id}:opaque_future")
@@ -171,6 +173,38 @@ pub fn axum_std_mem_replace_summary_records(call_site_id: Uuid) -> Vec<serde_jso
             "version": "axum-call-graph-summary-v1",
             "review_method": "source-oracle-review",
             "scope_of_validity": "axum std::mem::replace frontier in corpus_axum_call_graph",
+            "allowed_effects": ["external_summary_boundary"],
+            "required_containment": "none",
+            "invalidation_conditions": "source oracle, fixture hash, or proof policy changes",
+            "status": "admitted",
+            "evidence_use": "proof_only"
+        }),
+    ]);
+    records
+}
+
+pub fn axum_serde_json_from_slice_summary_records(call_site_id: Uuid) -> Vec<serde_json::Value> {
+    let site = call_site_id.to_string();
+    let mut records = axum_call_graph_domain_records(AXUM_CALL_GRAPH_DOMAIN_ID);
+    records.extend([
+        serde_json::json!({
+            "fact_kind": "call_resolution",
+            "schema_version": "ploke-proof-facts.v1",
+            "call_site_id": site,
+            "resolution_state": "externally_summarized",
+            "external_summary_id": AXUM_SERDE_JSON_FROM_SLICE_SUMMARY_ID,
+            "evidence_use": "proof_and_navigation"
+        }),
+        serde_json::json!({
+            "fact_kind": "external_summary",
+            "schema_version": "ploke-proof-facts.v1",
+            "external_summary_id": AXUM_SERDE_JSON_FROM_SLICE_SUMMARY_ID,
+            "build_domain_id": AXUM_CALL_GRAPH_DOMAIN_ID,
+            "summary_class": "audited_no_process_effects",
+            "artifact_hash": "sha256:axum-serde-json-from-slice-summary",
+            "version": "axum-call-graph-summary-v1",
+            "review_method": "source-oracle-review",
+            "scope_of_validity": "axum serde_json::Deserializer::from_slice frontier in corpus_axum_call_graph",
             "allowed_effects": ["external_summary_boundary"],
             "required_containment": "none",
             "invalidation_conditions": "source oracle, fixture hash, or proof policy changes",

@@ -616,6 +616,97 @@ fn axum_usage_questions_list_external_summary_needs_for_owner() -> Result<(), Db
 }
 
 #[test]
+fn axum_usage_questions_list_external_summary_need_for_feature_gated_json_frontier()
+-> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+    let domain_id = "bd:corpus-axum-call-graph";
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Security analysis / Performance work:
+    //   "Which feature-gated external dependency frontiers still need an
+    //   audited summary before their effects can be trusted?"
+    //
+    // Source oracle:
+    //   axum/src/json.rs:164 defines `Json::from_bytes`.
+    //   axum/src/json.rs:184 calls
+    //     `serde_json::Deserializer::from_slice(bytes)`.
+    //   axum/src/lib.rs:488-489 gates the file module with
+    //     `#[cfg(feature = "json")] mod json;`.
+    // Expected contract: proof projection lists the serde_json frontier as an
+    // owner-scoped external-summary need while the blocker is active, preserves
+    // the inherited feature cfg, and drops the need after an admitted summary
+    // is linked without creating a local traversal edge.
+    let owner = method_id_by_name_body_and_file_suffix(
+        &db,
+        "from_bytes",
+        "serde_json::Deserializer::from_slice(bytes)",
+        "axum/src/json.rs",
+    )?;
+    let site_id = assert_owner_path_targetless(
+        &db,
+        owner,
+        &["serde_json", "Deserializer", "from_slice"],
+        CallStatusKind::External,
+        "axum/src/json.rs:184 serde_json::Deserializer::from_slice",
+    )?;
+    let projected = db.project_call_proof_facts_for_owner(owner, domain_id)?;
+    assert!(
+        projected >= 2,
+        "Json::from_bytes should project call_site and call_resolution facts: {projected}"
+    );
+
+    let options = CallPathOptions {
+        max_depth: 1,
+        max_paths: 16,
+    };
+    let needs = db.external_summary_needs_for_owner(owner, options)?;
+    let need = needs
+        .iter()
+        .find(|need| need.call_site.site.id == site_id)
+        .unwrap_or_else(|| {
+            panic!(
+                "serde_json::Deserializer::from_slice should be listed as an external-summary need before admission: {needs:#?}"
+            )
+        });
+    assert_external_targetless(&need.call_site);
+    assert!(
+        need.paths_to_owner.is_empty(),
+        "direct serde_json frontier should not need an intermediate path: {need:#?}"
+    );
+    assert!(
+        need.call_site
+            .site
+            .cfgs
+            .iter()
+            .any(|cfg| cfg == r#"feature = "json""#),
+        "serde_json summary need should preserve the inherited json cfg: {need:#?}"
+    );
+    assert!(
+        need.blocker_reasons
+            .iter()
+            .any(|reason| reason == "external_dependency_summary_missing"),
+        "serde_json summary need should retain the active missing-summary blocker: {need:#?}"
+    );
+
+    db.upsert_proof_fact_values(
+        &ploke_test_utils::axum_serde_json_from_slice_summary_records(site_id),
+    )?;
+    let after = db.external_summary_needs_for_owner(owner, options)?;
+    assert!(
+        after.iter().all(|need| need.call_site.site.id != site_id),
+        "admitted serde_json summary should discharge this owner-scoped need without adding a local edge: {after:#?}"
+    );
+    assert!(
+        relations_for_site(&db, site_id)?.rows.is_empty(),
+        "summary admission must not fabricate a local serde_json::Deserializer::from_slice edge"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn axum_usage_questions_preserve_argument_shape_for_external_frontier() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
