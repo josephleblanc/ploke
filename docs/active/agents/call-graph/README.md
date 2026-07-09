@@ -487,11 +487,11 @@ Implemented/scaffolded:
   - `fixture_edge_cases_use_imports_resolves_reexported_helper_method_call_site`
   - `fixture_edge_cases_use_imports_records_literal_to_string_external_method_call_site`
   - `fixture_edge_cases_processor_trait_impl_records_format_macro_call_site`
-  - `fixture_edge_cases_generic_item_new_records_t_default_unsupported_path_call_site`
+  - `fixture_edge_cases_generic_item_new_records_t_default_external_path_call_site`
   - `fixture_edge_cases_test_visibility_resolves_internal_helper_path_call_site`
   - `fixture_edge_cases_test_visibility_resolves_super_helper_path_call_site`
   - `fixture_edge_cases_test_visibility_resolves_restricted_func_path_call_site`
-  - `fixture_generics_generic_function_records_t_default_unsupported_path_call_site`
+  - `fixture_generics_generic_function_records_t_default_external_path_call_site`
   - `fixture_generics_trait_impl_process_records_format_macro_call_site`
   - `fixture_type_resolution_v2_generic_assoc_const_records_panic_macro_call_site`
   - `fixture_call_graph_dynamic_calls_records_parenthesized_binding_dynamic_call_site`
