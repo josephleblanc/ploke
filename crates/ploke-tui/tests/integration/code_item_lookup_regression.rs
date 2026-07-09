@@ -627,72 +627,81 @@ async fn code_item_lookup_returns_non_awaited_async_closure_poll_resume_blockers
 
 #[tokio::test]
 async fn code_item_lookup_returns_multi_caller_function_pointer_param_target() {
-    let fixture = CallableParamResolvedFixture::multi_function_pointer_param().await;
-    let params = LookupParams {
-        item_name: Cow::Borrowed(fixture.owner_name),
-        file_path: Cow::Owned(fixture.file_path.display().to_string()),
-        node_kind: Cow::Borrowed("function"),
-        module_path: Cow::Borrowed("crate"),
-        owner_trait: None,
-        owner_type: None,
-        parent_name: None,
-    };
-
-    let result = CodeItemLookup::execute(params, fixture.ctx("multi-fn-pointer-param-lookup"))
-        .await
-        .expect("multi-caller function pointer param lookup");
-    let payload: serde_json::Value =
-        serde_json::from_str(&result.content).expect("deserialize ConciseContext");
-    let call_context = payload
-        .get("call_context")
-        .and_then(serde_json::Value::as_array)
-        .expect("call_context array");
-    let proof_context = payload
-        .get("proof_context")
-        .and_then(serde_json::Value::as_array)
-        .expect("proof_context array");
-
     // Source oracle:
     //   tests/fixture_crates/fixture_call_graph/src/lib.rs:1740-1742
     //     private `call_multi_function_pointer_param(f)` calls `f()`.
     //   tests/fixture_crates/fixture_call_graph/src/lib.rs:1744-1749
     //     both local callers pass `local_target`.
-    // Exact tool lookup should preserve the complete-private-caller proof:
-    // multiple local callers are accepted only because every visible argument
-    // proves the same target.
-    let callee = CallCalleeInfo::Path {
-        path: fixture.path.clone(),
-    };
-    let site_id = assert_resolved_path_context(
-        call_context,
-        fixture.owner,
-        &callee,
-        fixture.target,
-        CallTargetKind::Function,
-        "multi-caller function-pointer parameter f()",
-        "code_item_lookup",
-    );
-    assert_resolved_callable_param_proof(
-        proof_context,
-        fixture.owner,
-        fixture.target,
-        site_id,
-        fixture.build_domain,
-        "code_item_lookup",
-    );
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:1764-1768
+    //     private `call_multi_generic_fn_once_param(generic_f)` calls
+    //     `generic_f()`.
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:1771-1776
+    //     both local generic callers pass `local_target`.
+    for fixture in [
+        CallableParamResolvedFixture::multi_function_pointer_param().await,
+        CallableParamResolvedFixture::multi_generic_fn_once_param().await,
+    ] {
+        let params = LookupParams {
+            item_name: Cow::Borrowed(fixture.owner_name),
+            file_path: Cow::Owned(fixture.file_path.display().to_string()),
+            node_kind: Cow::Borrowed("function"),
+            module_path: Cow::Borrowed("crate"),
+            owner_trait: None,
+            owner_type: None,
+            parent_name: None,
+        };
 
-    let ui = result.ui_payload.as_ref().expect("ui payload");
-    assert!(
-        ui_field(ui, "call_context_outgoing")
-            .parse::<usize>()
-            .expect("outgoing count")
-            >= 1,
-        "code_item_lookup should surface the resolved multi-caller callable parameter row"
-    );
-    assert_eq!(
-        ui_field(ui, "proof_context"),
-        proof_context.len().to_string()
-    );
+        let result = CodeItemLookup::execute(params, fixture.ctx("multi-callable-param-lookup"))
+            .await
+            .unwrap_or_else(|err| panic!("{} lookup: {err}", fixture.owner_name));
+        let payload: serde_json::Value =
+            serde_json::from_str(&result.content).expect("deserialize ConciseContext");
+        let call_context = payload
+            .get("call_context")
+            .and_then(serde_json::Value::as_array)
+            .expect("call_context array");
+        let proof_context = payload
+            .get("proof_context")
+            .and_then(serde_json::Value::as_array)
+            .expect("proof_context array");
+
+        // Exact tool lookup should preserve the complete-private-caller proof:
+        // multiple local callers are accepted only because every visible
+        // argument proves the same target.
+        let callee = CallCalleeInfo::Path {
+            path: fixture.path.clone(),
+        };
+        let site_id = assert_resolved_path_context(
+            call_context,
+            fixture.owner,
+            &callee,
+            fixture.target,
+            CallTargetKind::Function,
+            "multi-caller callable parameter",
+            "code_item_lookup",
+        );
+        assert_resolved_callable_param_proof(
+            proof_context,
+            fixture.owner,
+            fixture.target,
+            site_id,
+            fixture.build_domain,
+            "code_item_lookup",
+        );
+
+        let ui = result.ui_payload.as_ref().expect("ui payload");
+        assert!(
+            ui_field(ui, "call_context_outgoing")
+                .parse::<usize>()
+                .expect("outgoing count")
+                >= 1,
+            "code_item_lookup should surface the resolved multi-caller callable parameter row"
+        );
+        assert_eq!(
+            ui_field(ui, "proof_context"),
+            proof_context.len().to_string()
+        );
+    }
 }
 
 async fn assert_resolved_dynamic_callable_lookup(owner_name: &'static str) {

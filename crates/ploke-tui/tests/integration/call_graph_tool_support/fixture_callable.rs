@@ -92,6 +92,10 @@ impl CallableParamResolvedFixture {
         Self::new_for_owner("call_multi_function_pointer_param", &["f"], 9).await
     }
 
+    pub(crate) async fn multi_generic_fn_once_param() -> Self {
+        Self::new_for_owner("call_multi_generic_fn_once_param", &["generic_f"], 9).await
+    }
+
     async fn new_for_owner(
         owner_name: &'static str,
         path: &[&str],

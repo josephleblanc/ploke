@@ -1177,73 +1177,82 @@ async fn code_item_edges_returns_non_awaited_async_closure_poll_resume_blockers(
 
 #[tokio::test]
 async fn code_item_edges_returns_multi_caller_function_pointer_param_target() {
-    let fixture = CallableParamResolvedFixture::multi_function_pointer_param().await;
-    let params = EdgesParams {
-        item_name: Cow::Borrowed(fixture.owner_name),
-        file_path: Cow::Owned(fixture.file_path.display().to_string()),
-        node_kind: Cow::Borrowed("function"),
-        module_path: Cow::Borrowed("crate"),
-        owner_trait: None,
-        owner_type: None,
-        parent_name: None,
-    };
-
-    let result = CodeItemEdges::execute(params, fixture.ctx("multi-fn-pointer-param-edges"))
-        .await
-        .expect("multi-caller function pointer param edges");
-    let payload: serde_json::Value =
-        serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
-    let call_context = payload
-        .get("node_info")
-        .and_then(|node| node.get("call_context"))
-        .and_then(serde_json::Value::as_array)
-        .expect("node_info.call_context array");
-    let proof_context = payload
-        .get("node_info")
-        .and_then(|node| node.get("proof_context"))
-        .and_then(serde_json::Value::as_array)
-        .expect("node_info.proof_context array");
-
     // Source oracle:
     //   tests/fixture_crates/fixture_call_graph/src/lib.rs:1740-1742
     //     private `call_multi_function_pointer_param(f)` calls `f()`.
     //   tests/fixture_crates/fixture_call_graph/src/lib.rs:1744-1749
     //     both local callers pass `local_target`.
-    // Edge payloads should preserve the same resolved Function edge that DB/RAG
-    // expose for complete private same-target caller proof.
-    let callee = CallCalleeInfo::Path {
-        path: fixture.path.clone(),
-    };
-    let site_id = assert_resolved_path_context(
-        call_context,
-        fixture.owner,
-        &callee,
-        fixture.target,
-        CallTargetKind::Function,
-        "multi-caller function-pointer parameter f()",
-        "code_item_edges",
-    );
-    assert_resolved_callable_param_proof(
-        proof_context,
-        fixture.owner,
-        fixture.target,
-        site_id,
-        fixture.build_domain,
-        "code_item_edges",
-    );
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:1764-1768
+    //     private `call_multi_generic_fn_once_param(generic_f)` calls
+    //     `generic_f()`.
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:1771-1776
+    //     both local generic callers pass `local_target`.
+    for fixture in [
+        CallableParamResolvedFixture::multi_function_pointer_param().await,
+        CallableParamResolvedFixture::multi_generic_fn_once_param().await,
+    ] {
+        let params = EdgesParams {
+            item_name: Cow::Borrowed(fixture.owner_name),
+            file_path: Cow::Owned(fixture.file_path.display().to_string()),
+            node_kind: Cow::Borrowed("function"),
+            module_path: Cow::Borrowed("crate"),
+            owner_trait: None,
+            owner_type: None,
+            parent_name: None,
+        };
 
-    let ui = result.ui_payload.as_ref().expect("ui payload");
-    assert!(
-        ui_field(ui, "call_context_outgoing")
-            .parse::<usize>()
-            .expect("outgoing count")
-            >= 1,
-        "code_item_edges should surface the resolved multi-caller callable parameter row"
-    );
-    assert_eq!(
-        ui_field(ui, "proof_context"),
-        proof_context.len().to_string()
-    );
+        let result = CodeItemEdges::execute(params, fixture.ctx("multi-callable-param-edges"))
+            .await
+            .unwrap_or_else(|err| panic!("{} edges: {err}", fixture.owner_name));
+        let payload: serde_json::Value =
+            serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
+        let call_context = payload
+            .get("node_info")
+            .and_then(|node| node.get("call_context"))
+            .and_then(serde_json::Value::as_array)
+            .expect("node_info.call_context array");
+        let proof_context = payload
+            .get("node_info")
+            .and_then(|node| node.get("proof_context"))
+            .and_then(serde_json::Value::as_array)
+            .expect("node_info.proof_context array");
+
+        // Edge payloads should preserve the same resolved Function edge that
+        // DB/RAG expose for complete private same-target caller proof.
+        let callee = CallCalleeInfo::Path {
+            path: fixture.path.clone(),
+        };
+        let site_id = assert_resolved_path_context(
+            call_context,
+            fixture.owner,
+            &callee,
+            fixture.target,
+            CallTargetKind::Function,
+            "multi-caller callable parameter",
+            "code_item_edges",
+        );
+        assert_resolved_callable_param_proof(
+            proof_context,
+            fixture.owner,
+            fixture.target,
+            site_id,
+            fixture.build_domain,
+            "code_item_edges",
+        );
+
+        let ui = result.ui_payload.as_ref().expect("ui payload");
+        assert!(
+            ui_field(ui, "call_context_outgoing")
+                .parse::<usize>()
+                .expect("outgoing count")
+                >= 1,
+            "code_item_edges should surface the resolved multi-caller callable parameter row"
+        );
+        assert_eq!(
+            ui_field(ui, "proof_context"),
+            proof_context.len().to_string()
+        );
+    }
 }
 
 #[tokio::test]
