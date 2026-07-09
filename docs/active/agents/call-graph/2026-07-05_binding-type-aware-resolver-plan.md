@@ -354,6 +354,32 @@ should prevent future resumes from reselecting already-covered shapes.
      local binding/type proof only if it reuses existing parser-owned evidence
      without arbitrary interprocedural value flow.
 
+## Remaining Focused Unsupported Inventory
+
+Status checkpoint: 2026-07-09 after the active call-graph corpus fixtures were
+regenerated and `xtask --features call_graph verify-backup-dbs` passed.
+
+The focused parser call-site suite has a small remaining set of
+`ExpectedCallOutcome::Unsupported` rows. These should not be treated as the
+next implementation target unless the missing proof input below is supplied.
+
+| Group | Representative tests | Why it remains fail-closed |
+| --- | --- | --- |
+| Macro calls | `fixture_nodes_use_imported_items_records_documented_macro_call_site`, `fixture_macros_use_local_macro_records_local_macro_call_site`, `fixture_call_graph_assert_eq_macro_call_records_test_body_macro_call_site` | Macro expansion bodies and generated call edges are not modeled as source call graph edges. |
+| Public callable parameters | `call_function_pointer_param`, `call_parenthesized_function_pointer_param`, `call_function_pointer_param_cast`, `call_generic_fn_once_value_binding`, `call_parenthesized_generic_fn_once_value_binding` | Public API callers do not give a complete source-visible argument set, so no local callee can be proven. |
+| Conflicting callable caller sets | `call_multi_conflicting_function_pointer_param`, `call_multi_conflicting_generic_fn_once_param`, `call_multi_conflicting_named_field_function_param` | Complete local callers exist but pass different callable targets, so the row must stay targetless with blocker proof. |
+| Public callable fields and arrays | `call_field_function_param`, `call_indexed_field_function_param`, `call_indexed_tuple_field_function_param`, `call_indexed_function_pointer` | Parameter field/index values lack exact single-caller or initializer proof at public API boundaries. |
+| Non-awaited async callable values | `call_async_closure_binding_without_await_with_body_call`, `call_async_closure_future_binding_without_await_with_body_call` | Constructing an async-closure future does not prove poll/resume execution. |
+| Ambiguous local callable initialization | `call_if_ambiguous_initialized_function_item_binding` | Branch proof reaches multiple possible function items, so no exact edge can be emitted. |
+| Missing trait visibility | `call_unimported_trait_method` | The receiver type is local, but the trait method is not visible in the call scope. |
+
+The nearby completed positive rows already cover private complete caller sets,
+same-target multi-caller sets, branch/match same-parameter forms, typed local
+function items, boxed callable initializers, returned closures, and exact local
+receiver proof. The next semantic slice should therefore introduce a new proof
+carrier, or add one explicitly sourced real-corpus/dependency-root oracle,
+rather than reworking these fail-closed parser rows.
+
 ## Implementation Order
 
 1. Select one source shape from the candidate list and record why it is the next bucket.

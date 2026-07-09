@@ -51,7 +51,7 @@ No bucket should receive more than four consecutive commits without re-checking 
 ## Current And Recent Buckets
 
 Current bucket: regenerated corpus fixture checkpoint and latest semantic
-frontier proof.
+frontier proof plus remaining unsupported parser-row inventory.
 
 Exit criteria:
 
@@ -62,6 +62,10 @@ Exit criteria:
 - Classify fixture-backed `T::default()` calls through source-visible external
   `Default` bounds as targetless external frontiers without fabricating a local
   trait-dispatch edge.
+- Record the remaining focused parser `Unsupported` rows in the binding/type
+  resolver plan so future slices do not reselect intentional macro, public
+  callable-parameter, conflicting-caller, unawaited-async, ambiguous-branch, or
+  missing-trait-visibility cases as simple parser gaps.
 
 Status: completed for this checkpoint.
 
@@ -84,9 +88,14 @@ Completed evidence:
   `T::default()` as an external/prelude `Default`-bound associated path
   frontier. The row remains targetless and does not claim concrete trait
   dispatch.
+- `2026-07-05_binding-type-aware-resolver-plan.md` now contains a consolidated
+  remaining focused unsupported inventory. The next semantic slice should add
+  a new exact proof carrier or an explicitly reviewed source oracle, not
+  re-open rows that are already intentionally fail-closed.
 
-Next bucket: choose the next uncovered binding/type-aware semantic row only
-after the fresh workspace verifier completes or reports a concrete failure.
+Next bucket: choose the next binding/type-aware semantic row from the plan's
+remaining proof-input list only after the fresh workspace verifier completes or
+reports a concrete failure.
 
 Previous completed bucket: axum impl Trait parameter external frontier proof.
 
