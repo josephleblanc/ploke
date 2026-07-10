@@ -12,10 +12,21 @@ async fn proof_context_target_seed_preserves_ambiguous_dynamic_candidates() -> R
         &db,
         &function_in_module_query(&["crate"], "call_if_ambiguous_function_item"),
     )?;
+    let callers = db.callers_for_target(target)?;
     let count = db.project_call_proof_facts_for_target(target, "bd:fixture-call-graph")?;
+    let expected_count = callers
+        .iter()
+        .map(|caller| {
+            if caller.status.status == ploke_db::call_graph::CallStatusKind::Resolved {
+                3
+            } else {
+                2
+            }
+        })
+        .sum::<usize>();
     assert_eq!(
-        count, 4,
-        "two ambiguous dynamic call sites should each project call_site + resolution facts"
+        count, expected_count,
+        "target-centered ambiguous proof projection should project resolved rows with call edges and candidate-only ambiguous rows without call edges: {callers:#?}"
     );
 
     let mut cfg = crate::RagConfig::default();

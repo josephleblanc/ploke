@@ -101,6 +101,9 @@ async fn call_context_exact_reads_remaining_axum_supported_matrix_targets() -> R
             // axum-core/src/ext_traits/request_parts.rs:122 calls
             // `self.extract_with_state(&())`; the callee is the same impl
             // method whose body calls `E::from_request_parts(self, state)`.
+            // axum-core/src/ext_traits/request_parts.rs:164 calls
+            // `parts.extract_with_state::<State<String>, String>(&state)`
+            // through the `http::Request::into_parts` tuple-return summary.
             // axum-core/src/ext_traits/request_parts.rs:186 calls
             // `parts.extract_with_state(state)` through the local extension
             // trait impl `RequestPartsExt for Parts`.
@@ -121,6 +124,17 @@ async fn call_context_exact_reads_remaining_axum_supported_matrix_targets() -> R
                     "extract_with_state",
                     Some(CallReceiverInfo::LocalBinding {
                         name: "parts".to_string(),
+                    }),
+                    CallTargetKind::Method,
+                    1,
+                ),
+                method_shape(
+                    "extract_with_state",
+                    Some(CallReceiverInfo::TupleMethodReturn {
+                        name: "parts".to_string(),
+                        method_name: "into_parts".to_string(),
+                        method_span: (4640, 4669),
+                        index: 0,
                     }),
                     CallTargetKind::Method,
                     1,
