@@ -382,6 +382,20 @@ should prevent future resumes from reselecting already-covered shapes.
      oracle with missing proof payload, or a bounded local binding/type proof
      shape not already covered in parser/DB/RAG/TUI tests.
 
+20. Ambiguous branch-initialized path-call candidate proof - completed:
+   - `call_if_ambiguous_initialized_function_item_binding(flag)` now records
+     `f()` as an `AmbiguousInitializedValueBinding` path-call callee when
+     `f: fn() -> i32 = if flag { local_target } else { other_target }`.
+   - The resolver preserves the complete local function candidate set with
+     `Ambiguous` status and candidate `Function` relations, but still emits no
+     resolved traversal edge or proof `call_edge`.
+   - DB context, target-centered context, proof lookup, and relation
+     cardinality tests assert `candidate_def_ids` and the narrow allowed
+     path/function candidate shape.
+   - This closes the previous targetless blocker for that fixture row without
+     broadening arbitrary callable value-flow or weakening non-resolved local
+     target validation.
+
 ## Remaining Focused Unsupported Inventory
 
 Status checkpoint: 2026-07-09 after the active call-graph corpus fixtures were
@@ -398,15 +412,15 @@ next implementation target unless the missing proof input below is supplied.
 | Conflicting callable caller sets | `call_multi_conflicting_function_pointer_param`, `call_multi_conflicting_generic_fn_once_param`, `call_multi_conflicting_named_field_function_param` | Complete local callers exist but pass different callable targets, so the row must stay targetless with blocker proof. |
 | Public callable fields and arrays | `call_field_function_param`, `call_indexed_field_function_param`, `call_indexed_tuple_field_function_param`, `call_indexed_function_pointer` | Parameter field/index values lack exact single-caller or initializer proof at public API boundaries. |
 | Non-awaited async callable values | `call_async_closure_binding_without_await_with_body_call`, `call_async_closure_future_binding_without_await_with_body_call` | Constructing an async-closure future does not prove poll/resume execution. |
-| Ambiguous local callable initialization | `call_if_ambiguous_initialized_function_item_binding` | Branch proof reaches multiple possible function items, so no exact edge can be emitted. |
 | Missing trait visibility | `call_unimported_trait_method` | The receiver type is local, but the trait method is not visible in the call scope. |
 
 The nearby completed positive rows already cover private complete caller sets,
 same-target multi-caller sets, branch/match same-parameter forms, typed local
-function items, boxed callable initializers, returned closures, and exact local
-receiver proof. The next semantic slice should therefore introduce a new proof
-carrier, or add one explicitly sourced real-corpus/dependency-root oracle,
-rather than reworking these fail-closed parser rows.
+function items, boxed callable initializers, returned closures, exact local
+receiver proof, and ambiguous local callable initialization with candidate-only
+proof. The next semantic slice should therefore introduce a new proof carrier,
+or add one explicitly sourced real-corpus/dependency-root oracle, rather than
+reworking these fail-closed parser rows.
 
 ## Implementation Order
 
