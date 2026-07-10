@@ -63,6 +63,12 @@ async fn proof_context_collection_preserves_projected_field_dynamic_rows() -> Re
         )?,
         dynamic_case(
             &db,
+            "forwarded named-field function parameter",
+            "call_forwarded_named_field_leaf",
+            dynamic_target,
+        )?,
+        dynamic_case(
+            &db,
             "single-caller indexed function-pointer parameter",
             "call_single_indexed_function_pointer_param",
             dynamic_target,

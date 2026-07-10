@@ -81,7 +81,7 @@ fn fixture_proof_symbol_lookup_matches_ambiguous_dynamic_candidate_payloads() ->
     let callers = db.callers_for_target(target)?;
     assert_eq!(
         callers.len(),
-        AMBIGUOUS_DYNAMIC_OWNERS.len() + 5,
+        AMBIGUOUS_DYNAMIC_OWNERS.len() + 6,
         "other_target should be reachable through every ambiguous fixture candidate caller: {callers:#?}"
     );
     let context = db.call_context_for_owner(owner)?;
@@ -122,6 +122,14 @@ fn fixture_proof_symbol_lookup_matches_ambiguous_dynamic_candidate_payloads() ->
     )
     .site
     .id;
+    let forwarded_conflicting_field_site = caller_by_owner_kind_path(
+        &callers,
+        function_id_by_name(&db, "call_forwarded_conflicting_named_field_leaf")?,
+        CallSiteKind::Dynamic,
+        &["holder", "callback"],
+    )
+    .site
+    .id;
 
     let count = db.project_call_proof_facts_for_target(target, "bd:fixture-call-graph")?;
     assert_eq!(
@@ -149,6 +157,10 @@ fn fixture_proof_symbol_lookup_matches_ambiguous_dynamic_candidate_payloads() ->
         (
             "conflicting named-field parameter candidate",
             conflicting_field_site,
+        ),
+        (
+            "forwarded conflicting named-field parameter candidate",
+            forwarded_conflicting_field_site,
         ),
     ] {
         let site_rows = proof_rows_for_site(&rows, site);

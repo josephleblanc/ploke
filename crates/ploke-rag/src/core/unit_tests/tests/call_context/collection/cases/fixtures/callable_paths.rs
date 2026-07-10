@@ -74,6 +74,10 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
             "call_multi_conflicting_named_field_function_param",
         ),
     )?;
+    let forwarded_conflicting_field_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_forwarded_conflicting_named_field_leaf"),
+    )?;
     let single_parenthesized_param_owner = one_uuid(
         &db,
         &function_in_module_query(
@@ -115,6 +119,7 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
         (forwarded_conflicting_owner, 1.0),
         (multi_conflicting_generic_owner, 1.0),
         (multi_conflicting_field_owner, 1.0),
+        (forwarded_conflicting_field_owner, 1.0),
         (single_parenthesized_param_owner, 1.0),
         (generic_owner, 1.0),
         (boxed_owner, 1.0),
@@ -520,6 +525,36 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
         other_target,
         CallTargetKind::DynamicFunction,
         "conflicting multi-caller named-field",
+    );
+
+    let forwarded_conflicting_field_context = call_context
+        .get(&forwarded_conflicting_field_owner)
+        .expect("forwarded conflicting named-field leaf should receive outgoing call context");
+    let forwarded_conflicting_field_matches = forwarded_conflicting_field_context
+        .iter()
+        .filter(|call| {
+            call.owner_id == forwarded_conflicting_field_owner
+                && call.kind == CallSiteKind::Dynamic
+                && call.callee == CallCalleeInfo::Dynamic
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        forwarded_conflicting_field_matches.len(),
+        1,
+        "forwarded conflicting named-field leaf context: {forwarded_conflicting_field_context:#?}"
+    );
+    let forwarded_conflicting_field_call = forwarded_conflicting_field_matches[0];
+    assert_eq!(
+        forwarded_conflicting_field_call.status,
+        CallStatusKind::Ambiguous
+    );
+    assert!(forwarded_conflicting_field_call.resolution.is_none());
+    assert_conflicting_candidates(
+        forwarded_conflicting_field_call,
+        local_target,
+        other_target,
+        CallTargetKind::DynamicFunction,
+        "forwarded conflicting named-field",
     );
 
     let single_parenthesized_param_context = call_context

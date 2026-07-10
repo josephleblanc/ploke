@@ -59,6 +59,12 @@ async fn call_context_collection_reads_real_field_dynamic_rows() -> Result<(), E
         )?,
         private_parameter_case(
             &db,
+            "forwarded named-field function parameter",
+            "call_forwarded_named_field_leaf",
+            dynamic_target,
+        )?,
+        private_parameter_case(
+            &db,
             "single-caller indexed function-pointer parameter",
             "call_single_indexed_function_pointer_param",
             dynamic_target,

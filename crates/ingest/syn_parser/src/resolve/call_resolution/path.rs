@@ -406,6 +406,15 @@ impl CallRelationResolver<'_> {
         owner: CallBodyOwnerId,
         path: &[String],
     ) -> Result<Option<ParameterCallResolution>, SynParserError> {
+        self.resolve_parameter_field_call_with_depth(owner, path, PARAMETER_FORWARDING_DEPTH)
+    }
+
+    fn resolve_parameter_field_call_with_depth(
+        &self,
+        owner: CallBodyOwnerId,
+        path: &[String],
+        depth: usize,
+    ) -> Result<Option<ParameterCallResolution>, SynParserError> {
         let Some((name, field_path)) = path.split_first() else {
             return Ok(None);
         };
@@ -413,7 +422,17 @@ impl CallRelationResolver<'_> {
             return Ok(None);
         }
 
-        self.resolve_parameter_call(owner, name, ParameterProof::Field(field_path), 0)
+        self.resolve_parameter_field_name_call_with_depth(owner, name, field_path, depth)
+    }
+
+    fn resolve_parameter_field_name_call_with_depth(
+        &self,
+        owner: CallBodyOwnerId,
+        name: &str,
+        field_path: &[String],
+        depth: usize,
+    ) -> Result<Option<ParameterCallResolution>, SynParserError> {
+        self.resolve_parameter_call(owner, name, ParameterProof::Field(field_path), depth)
     }
 
     fn resolve_parameter_call(
@@ -658,7 +677,48 @@ impl CallRelationResolver<'_> {
                         ParameterCallResolution::Exact(ParameterCallTarget::Function(target))
                     }))
             }
+            (ParameterProof::Field(field_path), CallArgument::Path { path }) => {
+                if depth == 0 || !self.parameter_type_matches(site.owner, path, expected_type)? {
+                    return Ok(None);
+                }
+                let [name] = path.as_slice() else {
+                    return Ok(None);
+                };
+                self.resolve_parameter_field_name_call_with_depth(
+                    site.owner,
+                    name,
+                    field_path,
+                    depth - 1,
+                )
+            }
             _ => Ok(None),
+        }
+    }
+
+    fn parameter_type_matches(
+        &self,
+        owner: CallBodyOwnerId,
+        path: &[String],
+        expected_type: Option<&[String]>,
+    ) -> Result<bool, SynParserError> {
+        let Some(expected_type) = expected_type else {
+            return Ok(false);
+        };
+        let [name] = path else {
+            return Ok(false);
+        };
+        let Some(params) = self.owner_parameters(owner)? else {
+            return Ok(false);
+        };
+        let Some(param) = params
+            .iter()
+            .find(|param| param.name.as_deref() == Some(name.as_str()))
+        else {
+            return Ok(false);
+        };
+        match self.type_node(param.type_id)? {
+            TypeNode::Named(node) => Ok(path_leaf_matches(&node.path, expected_type)),
+            _ => Ok(false),
         }
     }
 

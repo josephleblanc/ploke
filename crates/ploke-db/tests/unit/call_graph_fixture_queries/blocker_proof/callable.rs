@@ -84,26 +84,30 @@ fn fixture_projection_marks_conflicting_callable_value_and_field_candidates() ->
         );
     }
 
-    let owner_name = "call_multi_conflicting_named_field_function_param";
-    let owner = function_id_by_name(&db, owner_name)?;
-    let context = db.call_context_for_owner(owner)?;
-    assert_eq!(context.len(), 1, "{owner_name} context rows: {context:#?}");
-    let row = &context[0];
-    assert_dynamic_path_function_candidates(
-        row,
-        owner,
-        &["holder", "callback"],
-        &expected,
-        owner_name,
-    );
+    for owner_name in [
+        "call_multi_conflicting_named_field_function_param",
+        "call_forwarded_conflicting_named_field_leaf",
+    ] {
+        let owner = function_id_by_name(&db, owner_name)?;
+        let context = db.call_context_for_owner(owner)?;
+        assert_eq!(context.len(), 1, "{owner_name} context rows: {context:#?}");
+        let row = &context[0];
+        assert_dynamic_path_function_candidates(
+            row,
+            owner,
+            &["holder", "callback"],
+            &expected,
+            owner_name,
+        );
 
-    let site = row.site.id.to_string();
-    let facts = db.call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
-    assert_candidate_proof(&facts, &site, &expected_names, owner_name);
-    assert!(
-        db.proof_checker_edges()?.is_empty(),
-        "{owner_name} ambiguous callable candidates must not fabricate proof edges"
-    );
+        let site = row.site.id.to_string();
+        let facts = db.call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
+        assert_candidate_proof(&facts, &site, &expected_names, owner_name);
+        assert!(
+            db.proof_checker_edges()?.is_empty(),
+            "{owner_name} ambiguous callable candidates must not fabricate proof edges"
+        );
+    }
 
     Ok(())
 }

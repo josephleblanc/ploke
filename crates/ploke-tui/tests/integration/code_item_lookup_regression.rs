@@ -301,6 +301,18 @@ async fn code_item_lookup_returns_resolved_dynamic_callable_context() {
 }
 
 #[tokio::test]
+async fn code_item_lookup_returns_forwarded_named_field_dynamic_callable_context() {
+    // Fixture source:
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs EOF
+    //     private `call_forwarded_named_field_leaf(holder)` resolves through a
+    //     private wrapper whose complete caller set constructs a holder with
+    //     `callback: local_target`.
+    // This keeps the new field-forwarding proof covered at the tool boundary
+    // without widening the already-expensive dynamic-callable batch.
+    assert_resolved_dynamic_callable_lookup("call_forwarded_named_field_leaf").await;
+}
+
+#[tokio::test]
 async fn code_item_lookup_returns_branch_receiver_method_context() {
     // Fixture source:
     //   tests/fixture_crates/fixture_call_graph/src/lib.rs:
@@ -474,6 +486,33 @@ async fn code_item_lookup_returns_nested_self_field_method_context() {
 
 #[tokio::test]
 async fn code_item_lookup_returns_function_pointer_param_blocker() {
+    // Source oracle:
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:
+    //     public `call_function_pointer_param(f)` calls `f()`;
+    //     private `call_multi_conflicting_function_pointer_param(f)` also
+    //     calls `f()`, but its local callers pass different functions;
+    //     private `call_forwarded_conflicting_function_pointer_leaf(f)`
+    //     receives `f` through a private wrapper whose callers pass
+    //     different functions;
+    //     public `call_generic_fn_once_value_binding(generic_f)` calls
+    //     `generic_f()`;
+    //     private `call_multi_conflicting_generic_fn_once_param(generic_f)`
+    //     also calls `generic_f()`, but its local callers pass different
+    //     functions;
+    //     private `call_multi_conflicting_named_field_function_param(holder)`
+    //     calls `(holder.callback)()`, but its local callers pass different
+    //     functions in that field;
+    //     public `call_field_function_param(holder)` calls
+    //     `(holder.callback)()`;
+    //     public `call_indexed_function_pointer(funcs)` calls `funcs[0]()`;
+    //     public `call_indexed_field_function_param(holder)` calls
+    //     `holder.callbacks[0]()`;
+    //     public `call_indexed_tuple_field_function_param(holder)` calls
+    //     `holder.0[0]()`.
+    //
+    // Public opaque parameters stay blocked and targetless. Private complete
+    // local caller sets with conflicting callable arguments expose candidate
+    // targets, but still do not fabricate a resolved call edge.
     for fixture in [
         CallableBlockerFixture::function_pointer_param().await,
         CallableBlockerFixture::multi_conflicting_function_pointer_param().await,
@@ -486,141 +525,131 @@ async fn code_item_lookup_returns_function_pointer_param_blocker() {
         CallableBlockerFixture::indexed_field_function_param().await,
         CallableBlockerFixture::indexed_tuple_field_function_param().await,
     ] {
-        let params = LookupParams {
-            item_name: Cow::Borrowed(fixture.owner_name),
-            file_path: Cow::Owned(fixture.file_path.display().to_string()),
-            node_kind: Cow::Borrowed("function"),
-            module_path: Cow::Borrowed("crate"),
-            owner_trait: None,
-            owner_type: None,
-            parent_name: None,
-            allowed_effects: Vec::new(),
-        };
+        assert_callable_blocker_lookup(fixture).await;
+    }
+}
 
-        let result = CodeItemLookup::execute(params, fixture.ctx("fn-pointer-param-lookup"))
-            .await
-            .expect("function pointer param lookup");
-        let payload: serde_json::Value =
-            serde_json::from_str(&result.content).expect("deserialize ConciseContext");
-        let call_context = payload
-            .get("call_context")
-            .and_then(serde_json::Value::as_array)
-            .expect("call_context array");
-        let proof_context = payload
-            .get("proof_context")
-            .and_then(serde_json::Value::as_array)
-            .expect("proof_context array");
+#[tokio::test]
+async fn code_item_lookup_returns_forwarded_named_field_param_blocker() {
+    // Source oracle:
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs EOF:
+    //     private `call_forwarded_conflicting_named_field_leaf(holder)` receives
+    //     `holder` through a private wrapper whose callers pass different
+    //     callback functions.
+    assert_callable_blocker_lookup(
+        CallableBlockerFixture::forwarded_conflicting_named_field_leaf().await,
+    )
+    .await;
+}
 
-        // Source oracle:
-        //   tests/fixture_crates/fixture_call_graph/src/lib.rs:
-        //     public `call_function_pointer_param(f)` calls `f()`;
-        //     private `call_multi_conflicting_function_pointer_param(f)` also
-        //     calls `f()`, but its local callers pass different functions;
-        //     private `call_forwarded_conflicting_function_pointer_leaf(f)`
-        //     receives `f` through a private wrapper whose callers pass
-        //     different functions;
-        //     public `call_generic_fn_once_value_binding(generic_f)` calls
-        //     `generic_f()`;
-        //     private `call_multi_conflicting_generic_fn_once_param(generic_f)`
-        //     also calls `generic_f()`, but its local callers pass different
-        //     functions;
-        //     private `call_multi_conflicting_named_field_function_param(holder)`
-        //     calls `(holder.callback)()`, but its local callers pass different
-        //     functions in that field;
-        //     public `call_field_function_param(holder)` calls
-        //     `(holder.callback)()`;
-        //     public `call_indexed_function_pointer(funcs)` calls `funcs[0]()`;
-        //     public `call_indexed_field_function_param(holder)` calls
-        //     `holder.callbacks[0]()`;
-        //     public `call_indexed_tuple_field_function_param(holder)` calls
-        //     `holder.0[0]()`.
-        //
-        // Public opaque parameters stay blocked and targetless. Private
-        // complete local caller sets with conflicting callable arguments expose
-        // candidate targets, but still do not fabricate a resolved call edge.
-        let label = format!("{} callable parameter call", fixture.owner_name);
-        let callee = CallCalleeInfo::Path {
-            path: fixture.path.clone(),
-        };
-        let site_id = match fixture.shape {
-            CallableBlockerShape::Path => assert_path_context(
-                call_context,
-                fixture.owner,
-                &callee,
-                &CallStatusKind::Unsupported,
-                label.as_str(),
-                "code_item_lookup",
-            ),
-            CallableBlockerShape::Dynamic => assert_dynamic_context(
-                call_context,
-                fixture.owner,
-                None,
-                None,
-                label.as_str(),
-                "code_item_lookup",
-            ),
-            CallableBlockerShape::AmbiguousPath => assert_ambiguous_path_candidates(
-                call_context,
-                fixture.owner,
-                &callee,
-                &fixture.candidates,
-                label.as_str(),
-                "code_item_lookup",
-            ),
-            CallableBlockerShape::AmbiguousDynamic => assert_ambiguous_dynamic_candidates(
-                call_context,
-                fixture.owner,
-                &fixture.candidates,
-                label.as_str(),
-                "code_item_lookup",
-            ),
-        };
-        match fixture.shape {
-            CallableBlockerShape::Path => assert_path_resolution_proof(
+async fn assert_callable_blocker_lookup(fixture: CallableBlockerFixture) {
+    let params = LookupParams {
+        item_name: Cow::Borrowed(fixture.owner_name),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("function"),
+        module_path: Cow::Borrowed("crate"),
+        owner_trait: None,
+        owner_type: None,
+        parent_name: None,
+        allowed_effects: Vec::new(),
+    };
+
+    let result = CodeItemLookup::execute(params, fixture.ctx("fn-pointer-param-lookup"))
+        .await
+        .expect("function pointer param lookup");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize ConciseContext");
+    let call_context = payload
+        .get("call_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_context array");
+    let proof_context = payload
+        .get("proof_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("proof_context array");
+
+    let label = format!("{} callable parameter call", fixture.owner_name);
+    let callee = CallCalleeInfo::Path {
+        path: fixture.path.clone(),
+    };
+    let site_id = match fixture.shape {
+        CallableBlockerShape::Path => assert_path_context(
+            call_context,
+            fixture.owner,
+            &callee,
+            &CallStatusKind::Unsupported,
+            label.as_str(),
+            "code_item_lookup",
+        ),
+        CallableBlockerShape::Dynamic => assert_dynamic_context(
+            call_context,
+            fixture.owner,
+            None,
+            None,
+            label.as_str(),
+            "code_item_lookup",
+        ),
+        CallableBlockerShape::AmbiguousPath => assert_ambiguous_path_candidates(
+            call_context,
+            fixture.owner,
+            &callee,
+            &fixture.candidates,
+            label.as_str(),
+            "code_item_lookup",
+        ),
+        CallableBlockerShape::AmbiguousDynamic => assert_ambiguous_dynamic_candidates(
+            call_context,
+            fixture.owner,
+            &fixture.candidates,
+            label.as_str(),
+            "code_item_lookup",
+        ),
+    };
+    match fixture.shape {
+        CallableBlockerShape::Path => assert_path_resolution_proof(
+            proof_context,
+            fixture.owner,
+            site_id,
+            fixture.build_domain,
+            "blocked",
+            "type_resolution_missing",
+            label.as_str(),
+            "code_item_lookup",
+        ),
+        CallableBlockerShape::Dynamic => assert_dynamic_proof(
+            proof_context,
+            fixture.owner,
+            site_id,
+            fixture.build_domain,
+            label.as_str(),
+            "code_item_lookup",
+        ),
+        CallableBlockerShape::AmbiguousPath | CallableBlockerShape::AmbiguousDynamic => {
+            assert_path_resolution_proof(
                 proof_context,
                 fixture.owner,
                 site_id,
                 fixture.build_domain,
-                "blocked",
+                "ambiguous",
                 "type_resolution_missing",
                 label.as_str(),
                 "code_item_lookup",
-            ),
-            CallableBlockerShape::Dynamic => assert_dynamic_proof(
-                proof_context,
-                fixture.owner,
-                site_id,
-                fixture.build_domain,
-                label.as_str(),
-                "code_item_lookup",
-            ),
-            CallableBlockerShape::AmbiguousPath | CallableBlockerShape::AmbiguousDynamic => {
-                assert_path_resolution_proof(
-                    proof_context,
-                    fixture.owner,
-                    site_id,
-                    fixture.build_domain,
-                    "ambiguous",
-                    "type_resolution_missing",
-                    label.as_str(),
-                    "code_item_lookup",
-                );
-            }
+            );
         }
-
-        let ui = result.ui_payload.as_ref().expect("ui payload");
-        assert!(
-            ui_field(ui, "call_context_outgoing")
-                .parse::<usize>()
-                .expect("outgoing count")
-                >= 1,
-            "code_item_lookup should surface the callable parameter call"
-        );
-        assert_eq!(
-            ui_field(ui, "proof_context"),
-            proof_context.len().to_string()
-        );
     }
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert!(
+        ui_field(ui, "call_context_outgoing")
+            .parse::<usize>()
+            .expect("outgoing count")
+            >= 1,
+        "code_item_lookup should surface the callable parameter call"
+    );
+    assert_eq!(
+        ui_field(ui, "proof_context"),
+        proof_context.len().to_string()
+    );
 }
 
 #[tokio::test]

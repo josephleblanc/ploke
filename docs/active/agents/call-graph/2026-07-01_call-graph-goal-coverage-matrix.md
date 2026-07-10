@@ -61,8 +61,23 @@ Exit criteria:
 - Add one DB assertion, one RAG assertion if exposed downstream, one TUI/tool
   assertion if exposed downstream, and one consolidated doc note.
 
-Status: latest one-hop callable parameter forwarding slice completed and
-verified; ready for the next proof-carrier selection.
+Status: latest one-hop holder-field forwarding slice completed and focused
+verification is green; ready for the next proof-carrier selection.
+
+Latest completed slice: one-hop private holder-field forwarding proof. The
+resolver now extends the same complete-private-caller-set rule from callable
+value parameters to named holder fields, but only for one forwarding hop and
+only when the wrapper argument is itself a parameter with the same named holder
+type. The positive fixture chain
+`call_forwarded_named_field_param_with_local_target ->
+call_forwarded_named_field_wrapper -> call_forwarded_named_field_leaf ->
+local_target` traverses as caller -> wrapper -> leaf -> target, with the final
+edge stored as `DynamicFunction` for `(holder.callback)()`. The paired
+conflicting fixture preserves `local_target` and `other_target` as ambiguous
+dynamic candidates on the forwarded leaf and still emits no resolved edge.
+Parser, DB path/proof/target-centered candidate queries, RAG call/proof
+collection, and exact TUI lookup/edges dynamic-callable and blocker tests cover
+both shapes without adding arbitrary interprocedural value-flow.
 
 Latest completed slice: one-hop private callable parameter forwarding proof.
 The resolver now reuses the existing complete-private-caller-set rule when a

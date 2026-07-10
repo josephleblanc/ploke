@@ -60,6 +60,16 @@ impl CallableBlockerFixture {
         .await
     }
 
+    pub(crate) async fn forwarded_conflicting_named_field_leaf() -> Self {
+        Self::new_for_owner(
+            "call_forwarded_conflicting_named_field_leaf",
+            &["holder", "callback"],
+            CallableBlockerShape::AmbiguousDynamic,
+            5,
+        )
+        .await
+    }
+
     pub(crate) async fn generic_fn_once_value_binding() -> Self {
         Self::new_for_owner(
             "call_generic_fn_once_value_binding",
