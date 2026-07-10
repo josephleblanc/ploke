@@ -96,8 +96,8 @@ fn axum_core_extract_self_methods_reach_same_impl_methods() -> Result<(), DbErro
         ),
         (
             parts_target,
-            2,
-            "RequestPartsExt::extract_with_state callers at request_parts.rs:122 and request_parts.rs:186",
+            3,
+            "RequestPartsExt::extract_with_state callers at request_parts.rs:122, request_parts.rs:164, and request_parts.rs:186",
         ),
     ];
     for (target, expected_count, label) in expected_target_callers {

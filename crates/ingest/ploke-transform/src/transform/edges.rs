@@ -87,8 +87,8 @@ use tracing::instrument;
 
 use super::*;
 use crate::schema::edges::{
-    CallBodyOwnerSchema, CallRelationSchema, CallResolutionStatusSchema, CallSiteRelationSchema,
-    CallSiteSchema, SyntacticRelationSchema, TypeRelationSchema,
+    CallBodyOwnerSchema, CallCalleeEvidenceSchema, CallRelationSchema, CallResolutionStatusSchema,
+    CallSiteRelationSchema, CallSiteSchema, SyntacticRelationSchema, TypeRelationSchema,
 };
 
 #[instrument(skip_all)]
@@ -126,6 +126,7 @@ pub(super) fn transform_call_sites(
 ) -> Result<(), TransformError> {
     for call_site in call_sites {
         CallSiteSchema::insert_call_site(db, call_site)?;
+        CallCalleeEvidenceSchema::insert_call_site(db, call_site)?;
     }
     Ok(())
 }

@@ -1363,6 +1363,10 @@ mod tests {
             call_rels.contains(&"call_body_owner".to_string()),
             "call graph fixtures should import call_body_owner"
         );
+        assert!(
+            call_rels.contains(&"call_callee_evidence".to_string()),
+            "call graph fixtures should import call_callee_evidence"
+        );
 
         let plain_rels =
             plain_backup_import_relations(&FIXTURE_NODES_CANONICAL, &db).expect("plain rels");
@@ -1370,12 +1374,20 @@ mod tests {
             !plain_rels.contains(&"call_body_owner".to_string()),
             "plain fixtures should keep call graph relations excluded"
         );
+        assert!(
+            !plain_rels.contains(&"call_callee_evidence".to_string()),
+            "plain fixtures should keep call graph evidence excluded"
+        );
 
         let typed_rels =
             plain_backup_import_relations(&CORPUS_AXUM_TYPE_GRAPH, &db).expect("typed rels");
         assert!(
             !typed_rels.contains(&"call_body_owner".to_string()),
             "typed graph fixtures should keep call graph relations excluded"
+        );
+        assert!(
+            !typed_rels.contains(&"call_callee_evidence".to_string()),
+            "typed graph fixtures should keep call graph evidence excluded"
         );
         assert!(
             typed_rels.contains(&"type_relation".to_string()),

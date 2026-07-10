@@ -217,6 +217,21 @@ impl Drop for FixtureRestoreGuard {
 | `corpus_axum_openrouter_embeddings_2026-05-17.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | OpenRouter-searchable workspace-member corpus backup for type-context matrix tests | 2026-05-17 |
 | `ploke-db_af8e3a20-728d-5967-8523-da8a5ccdae45` | `crates/ploke-db` | currently orphaned snapshot | 2026-03-20 |
 
+## 2026-07-10 Call Callee Evidence Regeneration
+
+`cargo xtask fixtures regenerate --active` was rerun after adding the
+`call_callee_evidence` call-graph relation. The regenerated shared snapshots
+were copied back to the committed seed files for:
+
+- `corpus_memchr_call_graph_2026-07-07.sqlite`
+- `corpus_generic_array_call_graph_2026-07-07.sqlite`
+- `corpus_chrono_call_graph_2026-07-07.sqlite`
+- `corpus_axum_call_graph_2026-07-09.sqlite`
+
+`cargo xtask verify-backup-dbs` passed after the seed refresh. Direct relation
+inspection confirmed `call_callee_evidence` is present in the refreshed axum
+seed.
+
 ## 2026-07-09 Active Corpus Seed Promotion
 
 The active fixture set was regenerated with

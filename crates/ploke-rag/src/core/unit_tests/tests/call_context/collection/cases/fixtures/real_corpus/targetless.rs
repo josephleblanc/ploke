@@ -288,19 +288,28 @@ async fn call_context_collection_reads_axum_captured_callback_parameter_gap() ->
     //   axum-macros/src/lib.rs:734-738 immediately invokes an IIFE closure.
     //   axum-macros/src/lib.rs:737 calls `f(attr, input)` inside that closure.
     // Expected traversal: the closure-owned path call to captured callback
-    // parameter `f` is visible for RAG, but it remains targetless until
-    // interprocedural callable argument proof exists.
+    // parameter `f` is visible for RAG as a finite ambiguous closure-candidate
+    // set, but no resolved traversal edge is admitted until interprocedural
+    // callable argument proof exists.
     assert_eq!(
         callback.len(),
         1,
         "expand_attr_with IIFE closure should expose one captured callback parameter row: {context:#?}"
     );
     assert_eq!(callback[0].arg_count, Some(2));
-    assert_eq!(callback[0].status, CallStatusKind::Unsupported);
+    assert_eq!(callback[0].status, CallStatusKind::Ambiguous);
     assert_eq!(callback[0].resolution, None);
+    assert_eq!(
+        callback[0].targets.len(),
+        2,
+        "captured callback parameter f(attr, input) should expose both closure candidates: {callback:#?}"
+    );
     assert!(
-        callback[0].targets.is_empty(),
-        "captured callback parameter f(attr, input) should remain targetless: {callback:#?}"
+        callback[0]
+            .targets
+            .iter()
+            .all(|target| target.relation == CallTargetKind::Closure),
+        "captured callback parameter f(attr, input) should only expose closure candidates: {callback:#?}"
     );
 
     Ok(())

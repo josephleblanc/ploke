@@ -1,6 +1,6 @@
 # Call Graph Coverage
 
-Date: 2026-07-08
+Date: 2026-07-10
 
 This document inventories the current call-graph coverage surface. It follows
 the same purpose as `TYPE_RESOLUTION_COVERAGE.md`: identify the source rows,
@@ -24,13 +24,13 @@ The most useful companion documents are:
 | Layer | Primary tests or sources | Current state | Notes |
 | --- | --- | --- | --- |
 | Parser structural extraction and resolver | `crates/ingest/syn_parser/tests/uuid_phase3_resolution/call_sites.rs` | Strong fixture coverage | Uses the paranoid call-site harness for exact IDs, owner relation, status, and typed relation checks. |
-| Transform projection | `crates/ingest/ploke-transform` focused call-graph tests | Implemented | Projects `call_site`, `call_site_edge`, `call_relation`, and `call_resolution_status` from typed parser facts. |
+| Transform projection | `crates/ingest/ploke-transform` focused call-graph tests | Implemented | Projects `call_site`, `call_callee_evidence`, `call_site_edge`, `call_relation`, and `call_resolution_status` from typed parser facts. |
 | DB fixture queries | `crates/ploke-db/tests/unit/call_graph_fixture_queries/` | Strong fixture and real-corpus coverage | Covers caller/callee context, paths, impact, reach, frontier buckets, proof rows, and real-target matrices. |
 | Shared real-corpus call-shape matrix | `crates/test-utils/src/call_shape_matrix.rs` plus DB/RAG adapter tests | Implemented for current rows | Mirrors the type-shape matrix pattern for source-pinned callsite rows. |
 | RAG exact APIs | `crates/ploke-rag/src/core/unit_tests/tests/call_context/` and `proof_context/` | Strong exact coverage | Preserves DB call context, paths, impact, reach, effects, targetless rows, and proof context without search ambiguity. |
 | TUI/tool payloads | `crates/ploke-tui/tests/integration/` call-graph lookup/edges/path tests | Strong exact coverage | `code_item_lookup`, `code_item_edges`, `code_item_call_path`, `code_private_uncalled`, and `request_code_context` cover selected strict rows. |
 | Proof graph | `crates/ploke-db/tests/proof_graph_store*` and proof-context tests | Substantial | Includes resolved call projection, blockers, external summaries, expansion boundaries, reachable effects, entrypoint summaries, and dependency-root proof rows. |
-| Fixture regeneration | `cargo xtask fixtures regenerate --active`; `cargo xtask verify-backup-dbs` | Recently green with no tracked fixture drift | `call_graph` is only a compatibility feature alias; backup DBs remain schema-coupled fixtures and should be regenerated instead of loosening imports. |
+| Fixture regeneration | `cargo xtask fixtures regenerate --active`; `cargo xtask verify-backup-dbs` | Green after call-callee evidence seed refresh | `call_graph` is only a compatibility feature alias; backup DBs remain schema-coupled fixtures and should be regenerated instead of loosening imports. |
 
 ## Fixture Inventory
 
@@ -126,6 +126,19 @@ Recent focused verification during the active call-graph goal included:
 - `cargo test -p ploke-rag proof_context_collection_preserves_axum_request_parts_external_return_blocker -- --nocapture`
 - `cargo test -p ploke-tui --test integration code_item_lookup_returns_unsupported_receiver_targetless_real_corpus_rows -- --nocapture`
 - `cargo test -p ploke-tui --test integration code_item_edges_returns_unsupported_receiver_targetless_real_corpus_rows -- --nocapture`
+
+On 2026-07-10 the call graph schema added `call_callee_evidence` to preserve
+typed parser callee evidence for async closure bindings. Active fixtures were
+regenerated and the real-corpus committed call-graph seeds were refreshed from
+the registry-backed shared snapshots. Verification passed:
+
+- `cargo test -p ploke-transform --features call_graph test_call_graph_projection_for_async_closure_callee_evidence -- --nocapture`
+- `cargo test -p ploke-db fixture_projection_attaches_non_awaited_async_closure_poll_resume_blockers_without_edges -- --nocapture`
+- `cargo test -p ploke-rag proof_context_collection_preserves_non_awaited_async_closure_poll_resume_blockers -- --nocapture`
+- `cargo test -p ploke-tui --test integration code_item_lookup_returns_non_awaited_async_closure_poll_resume_blockers -- --nocapture`
+- `cargo test -p ploke-tui --test integration code_item_edges_returns_non_awaited_async_closure_poll_resume_blockers -- --nocapture`
+- `cargo xtask fixtures regenerate --active`
+- `cargo xtask verify-backup-dbs`
 
 On 2026-07-08 `cargo xtask fixtures regenerate --all` completed with no
 tracked fixture drift, `cargo xtask verify-backup-dbs` passed, and the broader

@@ -12,7 +12,7 @@ use itertools::Itertools;
 use std::collections::BTreeMap;
 use syn_parser::parser::nodes::{
     AnyCallSiteId, CallBodyOwnerId, CallNode, DynamicCallCallee, ExecutableBodyKind,
-    ExecutableBodyNode, MethodCallReceiver, ToCozoUuid,
+    ExecutableBodyNode, MethodCallReceiver, PathCallCallee, ToCozoUuid,
 };
 use syn_parser::parser::relations::{
     CallRelation, CallResolutionKind, CallResolutionStatus, CallSiteRelation, SyntacticRelation,
@@ -63,6 +63,15 @@ define_schema!(CallResolutionStatusSchema {
     source_kind: "String",
     status_kind: "String",
     resolution_kind: "String?"
+});
+
+define_schema!(CallCalleeEvidenceSchema {
+    "call_callee_evidence",
+    source_id: "Uuid",
+    source_kind: "String",
+    callee_kind: "String",
+    callee_path: "[String]?",
+    closure_id: "Uuid?"
 });
 
 pub struct CallBodyOwnerSchema;
@@ -181,6 +190,21 @@ impl CallSiteSchema {
             params,
             cozo::ScriptMutability::Mutable,
         )?;
+        Ok(())
+    }
+}
+
+impl CallCalleeEvidenceSchema {
+    pub fn insert_call_site(
+        db: &Db<MemStorage>,
+        call_site: &CallNode,
+    ) -> Result<(), TransformError> {
+        let Some(params) = call_callee_evidence_params(call_site) else {
+            return Ok(());
+        };
+        let schema = &Self::SCHEMA;
+        let script = schema.script_put(&params);
+        db.run_script(&script, params, cozo::ScriptMutability::Mutable)?;
         Ok(())
     }
 }
@@ -864,6 +888,44 @@ fn call_site_to_params(call_site: &CallNode) -> BTreeMap<String, cozo::DataValue
     }
 
     params
+}
+
+fn call_callee_evidence_params(call_site: &CallNode) -> Option<BTreeMap<String, cozo::DataValue>> {
+    let (kind, path, closure_id) = match call_site {
+        CallNode::PathCall(call) => match &call.callee {
+            PathCallCallee::AsyncClosureBinding { path, closure_id } => {
+                ("AsyncClosureBinding", path, closure_id)
+            }
+            PathCallCallee::AwaitedAsyncClosureBinding { path, closure_id } => {
+                ("AwaitedAsyncClosureBinding", path, closure_id)
+            }
+            _ => return None,
+        },
+        CallNode::DynamicCall(call) => match &call.callee {
+            DynamicCallCallee::AsyncClosureBinding { path, closure_id } => {
+                ("AsyncClosureBinding", path, closure_id)
+            }
+            DynamicCallCallee::AwaitedAsyncClosureBinding { path, closure_id } => {
+                ("AwaitedAsyncClosureBinding", path, closure_id)
+            }
+            _ => return None,
+        },
+        CallNode::MethodCall(_) | CallNode::MacroCall(_) => return None,
+    };
+
+    Some(BTreeMap::from([
+        (
+            "source_id".to_string(),
+            call_site_id_to_cozo(call_site.id()),
+        ),
+        (
+            "source_kind".to_string(),
+            cozo::DataValue::from(call_site_kind(call_site.id())),
+        ),
+        ("callee_kind".to_string(), cozo::DataValue::from(kind)),
+        ("callee_path".to_string(), string_list(path)),
+        ("closure_id".to_string(), closure_id.to_cozo_uuid()),
+    ]))
 }
 
 pub struct TypeContainsSchema;

@@ -95,8 +95,8 @@ async fn proof_context_collection_preserves_non_awaited_async_closure_poll_resum
         let owner = one_uuid(&db, &function_in_module_query(&["crate"], owner_name))?;
         assert_eq!(
             db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?,
-            2,
-            "{label} should project call_site plus blocked call_resolution facts"
+            3,
+            "{label} should project call_site, blocked call_resolution, and async poll/resume proof_blocker facts"
         );
 
         let context = db.call_context_for_owner(owner)?;
@@ -112,9 +112,6 @@ async fn proof_context_collection_preserves_non_awaited_async_closure_poll_resum
             call.targets.is_empty(),
             "{label} must stay targetless before poll/resume proof exists: {call:#?}"
         );
-        db.upsert_proof_fact_values(&[
-            ploke_test_utils::fixture_async_closure_poll_resume_blocker(call.site.id, owner_name),
-        ])?;
 
         seeds.push((owner, 1.0));
         expected.push((owner, call.site.id, label));
@@ -233,6 +230,6 @@ fn assert_async_poll_resume_blocker(
                 && row.blocker_reason.as_deref() == Some("dynamic_dispatch_unbounded")
                 && row.status.as_deref() == Some("blocked")
         }),
-        "{label} proof context should include the explicit async poll/resume blocker: {rows:#?}"
+        "{label} proof context should include the derived async poll/resume blocker: {rows:#?}"
     );
 }

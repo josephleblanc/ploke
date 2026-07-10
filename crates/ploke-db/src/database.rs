@@ -77,6 +77,7 @@ fn is_call_graph_relation(relation: &str) -> bool {
         relation,
         "call_body_owner"
             | "call_site"
+            | "call_callee_evidence"
             | "call_site_edge"
             | "call_relation"
             | "call_resolution_status"
@@ -3922,6 +3923,7 @@ mod tests {
         for relation in [
             "call_body_owner",
             "call_site",
+            "call_callee_evidence",
             "call_site_edge",
             "call_relation",
             "call_resolution_status",

@@ -129,6 +129,102 @@ fn test_call_graph_projection_for_local_function_item_target()
     Ok(())
 }
 
+#[test]
+fn test_call_graph_projection_for_async_closure_callee_evidence()
+-> Result<(), Box<dyn std::error::Error>> {
+    let db = Db::new(MemStorage::default()).expect("Failed to create database");
+    db.initialize().expect("Failed to initialize database");
+    create_schema_all(&db)?;
+
+    let successful_graphs = test_run_phases_and_collect("fixture_call_graph");
+    let mut merged = ParsedCodeGraph::merge_new(successful_graphs).expect("Failed to merge graph");
+    let tree = merged.build_tree_and_prune().unwrap_or_else(|e| {
+        tracing::error!(target: "transform_function", "Error building tree: {}", e);
+        panic!()
+    });
+
+    let cases = [
+        (
+            "call_async_closure_binding_without_await_with_body_call",
+            "AsyncClosureBinding",
+        ),
+        (
+            "call_awaited_async_closure_binding_with_body_call",
+            "AwaitedAsyncClosureBinding",
+        ),
+    ];
+    let mut expected = Vec::new();
+
+    for (owner_name, kind) in cases {
+        let owner = merged
+            .functions()
+            .iter()
+            .find(|function| function.name == owner_name)
+            .map(|function| function.id)
+            .unwrap_or_else(|| panic!("fixture_call_graph should define {owner_name}"));
+        let (site, closure) = merged
+            .call_sites()
+            .iter()
+            .find_map(|call| {
+                let CallNode::PathCall(call) = call else {
+                    return None;
+                };
+                if call.owner != CallBodyOwnerId::Function(owner) || call.path != ["closure"] {
+                    return None;
+                }
+                match &call.callee {
+                    PathCallCallee::AsyncClosureBinding { path, closure_id } => {
+                        assert_eq!(kind, "AsyncClosureBinding");
+                        assert_eq!(path, &vec!["closure".to_string()]);
+                        Some((call.id, *closure_id))
+                    }
+                    PathCallCallee::AwaitedAsyncClosureBinding { path, closure_id } => {
+                        assert_eq!(kind, "AwaitedAsyncClosureBinding");
+                        assert_eq!(path, &vec!["closure".to_string()]);
+                        Some((call.id, *closure_id))
+                    }
+                    _ => None,
+                }
+            })
+            .unwrap_or_else(|| panic!("{owner_name} should expose closure() callee evidence"));
+        expected.push((site.to_cozo_uuid(), kind, closure.to_cozo_uuid()));
+    }
+
+    transform_parsed_graph(&db, merged, &tree)?;
+
+    for (site, kind, closure) in expected {
+        let mut params = BTreeMap::new();
+        params.insert("site_id".to_string(), site.clone());
+        let rows = db.run_script(
+            r#"?[source_id, source_kind, callee_kind, callee_path, closure_id] :=
+                source_id = $site_id,
+                *call_callee_evidence {
+                    source_id,
+                    source_kind,
+                    callee_kind,
+                    callee_path,
+                    closure_id @ 'NOW'
+                }"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+        assert_eq!(
+            rows.rows.len(),
+            1,
+            "expected one persisted {kind} call_callee_evidence row"
+        );
+        assert_eq!(&rows.rows[0][1], &DataValue::from("Path"));
+        assert_eq!(&rows.rows[0][2], &DataValue::from(kind));
+        assert_eq!(
+            &rows.rows[0][3],
+            &DataValue::List(vec![DataValue::from("closure")])
+        );
+        assert_eq!(&rows.rows[0][4], &closure);
+    }
+
+    Ok(())
+}
+
 struct ExecutableProjectionCase {
     owner_name: &'static str,
     kind: ExecutableBodyKind,

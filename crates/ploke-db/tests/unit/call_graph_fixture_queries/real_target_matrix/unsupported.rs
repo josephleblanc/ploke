@@ -3,7 +3,6 @@ use super::common::*;
 use super::source_lines::{
     SourceLineFanout, assert_targetless_dynamic_line_fanout_by_method_arg_count,
 };
-use ploke_db::ProofGraphStore;
 use ploke_test_utils::CORPUS_AXUM_CALL_GRAPH;
 
 #[test]
@@ -201,9 +200,9 @@ fn axum_macro_callback_rows_are_visible_or_explicitly_absent() -> Result<(), DbE
     // Current model contract: the `syn::parse` path and `and_then(f)` receiver
     // are projected in `expand_with`; `expand_attr_with` projects its IIFE
     // dynamic call as a closure target, and the closure-owned callable-parameter
-    // call `f(attr, input)` is visible but remains targetless. The
-    // `from_request::expand` enum-state IIFE also resolves to its closure
-    // target.
+    // call `f(attr, input)` is visible as an ambiguous finite closure-candidate
+    // row without admitting resolved traversal. The `from_request::expand`
+    // enum-state IIFE also resolves to its closure target.
     let expand_with = function_id_by_name_in_module(&db, &["crate"], "expand_with")?;
     let expand_with_context = db.call_context_for_owner(expand_with)?;
 
@@ -264,38 +263,55 @@ fn axum_macro_callback_rows_are_visible_or_explicitly_absent() -> Result<(), DbE
     );
     assert_eq!(callback.site.kind, CallSiteKind::Path);
     assert_eq!(callback.site.arg_count, Some(2));
-    assert_targetless_status(callback, CallStatusKind::Unsupported);
-    assert!(
-        relations_for_site(&db, callback.site.id)?.rows.is_empty(),
-        "axum-macros/src/lib.rs:737 f(attr, input) should have zero persisted call edges"
+    assert_eq!(callback.status.status, CallStatusKind::Ambiguous);
+    assert_eq!(callback.status.resolution, None);
+    assert_eq!(
+        callback.targets.len(),
+        2,
+        "axum-macros/src/lib.rs:737 f(attr, input) should expose two finite closure candidates: {callback:#?}"
     );
-    assert_no_traversal_candidates_for_site(
-        &db,
-        iife_target,
-        callback.site.id,
-        "axum-macros/src/lib.rs:737 f(attr, input)",
+    assert!(callback.targets.iter().all(|target| {
+        target.relation == CallRelationKind::Closure
+            && target.source_kind == CallSiteKind::Path
+            && target.target_kind == CallTargetKind::Closure
+    }));
+    assert_eq!(
+        relations_for_site(&db, callback.site.id)?.rows.len(),
+        2,
+        "axum-macros/src/lib.rs:737 f(attr, input) should persist two ambiguous closure candidates"
+    );
+    let outgoing = db.expand_call_context(
+        CallContextSeed::Owner(iife_target),
+        CallContextOptions {
+            include_incoming_callers: false,
+            max_candidates: 512,
+            ..CallContextOptions::default()
+        },
     )?;
-    db.upsert_proof_fact_values(&[ploke_test_utils::axum_callback_parameter_blocker(
-        callback.site.id,
-    )])?;
-    let callback_site = callback.site.id.to_string();
-    let blockers = db.proof_blockers()?;
     assert!(
-        blockers.iter().any(|proof| {
-            proof.call_site_id.as_deref() == Some(callback_site.as_str())
-                && proof.reason == "dynamic_dispatch_unbounded"
-                && proof.status == "blocked"
-        }),
-        "axum-macros/src/lib.rs:737 f(attr, input) should expose a callable-parameter proof blocker: {blockers:#?}"
+        outgoing
+            .iter()
+            .all(|candidate| candidate.call_site_id != callback.site.id),
+        "axum-macros/src/lib.rs:737 f(attr, input) should not admit resolved traversal candidates: {outgoing:#?}"
     );
-    let proof_rows = db.proof_graphrag_context("dynamic_dispatch_unbounded")?;
+    let facts = db.call_proof_facts_for_owner(iife_target, "bd:corpus-axum-call-graph")?;
+    let callback_site = callback.site.id.to_string();
+    let resolution = facts
+        .iter()
+        .find(|fact| {
+            fact.get("fact_kind") == Some(&serde_json::json!("call_resolution"))
+                && fact.get("call_site_id") == Some(&serde_json::json!(callback_site))
+        })
+        .unwrap_or_else(|| {
+            panic!("axum-macros/src/lib.rs:737 f(attr, input) should project a call_resolution proof fact: {facts:#?}")
+        });
     assert!(
-        proof_rows.iter().any(|proof| {
-            proof.kind == "proof_blocker"
-                && proof.call_site_id.as_deref() == Some(callback_site.as_str())
-                && proof.blocker_reason.as_deref() == Some("dynamic_dispatch_unbounded")
-        }),
-        "proof context lookup should retrieve the callback-parameter blocker: {proof_rows:#?}"
+        resolution.get("resolution_state") == Some(&serde_json::json!("ambiguous"))
+            && resolution
+                .get("candidate_def_ids")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|candidates| candidates.len() == 2),
+        "axum-macros/src/lib.rs:737 f(attr, input) should project an ambiguous proof row with two candidates: {resolution:#?}"
     );
 
     let from_request_expand =

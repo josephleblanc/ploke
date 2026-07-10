@@ -5,7 +5,8 @@ use std::collections::BTreeMap;
 use syn_parser::parser::ParsedCodeGraph;
 use syn_parser::parser::graph::GraphAccess;
 use syn_parser::parser::nodes::{
-    AnyCallSiteId, CallBodyOwnerId, CallNode, DynamicCallCallee, ExecutableBodyKind, ToCozoUuid,
+    AnyCallSiteId, CallBodyOwnerId, CallNode, DynamicCallCallee, ExecutableBodyKind,
+    PathCallCallee, ToCozoUuid,
 };
 use syn_parser::parser::relations::{CallRelation, CallResolutionStatus};
 use syn_parser::resolve::call_resolution::resolve_call_relations_after_tree;

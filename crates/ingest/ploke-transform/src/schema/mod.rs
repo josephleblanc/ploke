@@ -125,6 +125,7 @@ pub fn create_schema_all(db: &Db<MemStorage>) -> Result<(), crate::error::Transf
     TypeContainsSchema::create_and_insert_schema(db)?;
     edges::CallBodyOwnerSchema::create_and_insert_schema(db)?;
     edges::CallSiteSchema::create_and_insert_schema(db)?;
+    edges::CallCalleeEvidenceSchema::create_and_insert_schema(db)?;
     edges::CallSiteRelationSchema::create_and_insert_schema(db)?;
     edges::CallRelationSchema::create_and_insert_schema(db)?;
     edges::CallResolutionStatusSchema::create_and_insert_schema(db)?;

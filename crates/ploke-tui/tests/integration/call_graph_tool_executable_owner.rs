@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use ploke_core::rag_types::{
     CallCalleeInfo, CallContextInfo, CallPathInfo, CallReceiverInfo, CallResolutionKind,
-    CallSiteKind, CallStatusKind, CallTargetKind,
+    CallSiteKind, CallStatusKind, CallTargetKind, ProofContextInfo,
 };
 use ploke_tui::tools::{
     Tool,
@@ -10,6 +10,7 @@ use ploke_tui::tools::{
     code_item_lookup::{CodeItemLookup, LookupParams},
     get_code_edges::{CodeItemEdges, EdgesParams},
 };
+use uuid::Uuid;
 
 use crate::call_graph_tool_support::{
     AxumCallbackClosureToolFixture, AxumHandlerAsyncBlockToolFixture, LocalItemToolFixture,
@@ -439,8 +440,8 @@ async fn code_item_lookup_accepts_axum_callback_closure_owner() {
     //   axum-macros/src/lib.rs:734-738 immediately invokes a closure.
     //   axum-macros/src/lib.rs:737 calls `f(attr, input)` inside that closure.
     // Expected traversal: the exact tool can address the nested closure owner,
-    // but the captured callback parameter remains targetless until
-    // interprocedural callback argument proof exists.
+    // and the captured callback parameter carries finite ambiguous closure
+    // candidates until interprocedural callback argument proof selects one.
     assert_callback_parameter_rows(&calls, proof_context, &fixture, "code_item_lookup");
 
     let ui = result.ui_payload.as_ref().expect("ui payload");
@@ -449,14 +450,14 @@ async fn code_item_lookup_accepts_axum_callback_closure_owner() {
             .parse::<usize>()
             .expect("outgoing count")
             >= 1,
-        "closure lookup should surface the targetless callback row"
+        "closure lookup should surface the ambiguous callback row"
     );
     assert!(
         ui_field(ui, "proof_context")
             .parse::<usize>()
             .expect("proof count")
             >= 3,
-        "closure lookup should surface projected and explicit blocker proof rows"
+        "closure lookup should surface projected ambiguous proof rows"
     );
 }
 
@@ -516,7 +517,7 @@ async fn code_item_edges_accepts_axum_callback_closure_owner() {
             .parse::<usize>()
             .expect("proof count")
             >= 3,
-        "closure edges should surface projected and explicit blocker proof rows"
+        "closure edges should surface projected ambiguous proof rows"
     );
 }
 
@@ -743,21 +744,80 @@ fn assert_callback_parameter_rows(
     tool: &str,
 ) {
     let callback = callback_parameter_call(calls, fixture);
-    assert_unsupported_targetless(callback, "expand_attr_with closure f(attr, input)");
-    assert_path_blocker_proof(
+    assert_eq!(
+        callback.status,
+        CallStatusKind::Ambiguous,
+        "expand_attr_with closure f(attr, input): {callback:#?}"
+    );
+    assert_eq!(
+        callback.resolution, None,
+        "expand_attr_with closure f(attr, input): {callback:#?}"
+    );
+    assert_eq!(
+        callback.targets.len(),
+        2,
+        "{tool} should expose both closure candidates for expand_attr_with closure f(attr, input): {callback:#?}"
+    );
+    assert!(
+        callback
+            .targets
+            .iter()
+            .all(|target| target.relation == CallTargetKind::Closure),
+        "{tool} should expose only closure candidates for expand_attr_with closure f(attr, input): {callback:#?}"
+    );
+    assert_callback_parameter_ambiguous_proof(
         proof_context,
         fixture.owner,
         callback.site_id,
-        AXUM_DOMAIN,
-        "type_resolution_missing",
         "expand_attr_with closure f(attr, input)",
         tool,
     );
-    assert_runtime_dispatch_blocker(
-        proof_context,
-        callback.site_id,
-        "expand_attr_with closure f(attr, input)",
-        tool,
+}
+
+fn assert_callback_parameter_ambiguous_proof(
+    proof_context: &[serde_json::Value],
+    owner: Uuid,
+    site_id: Uuid,
+    label: &str,
+    tool: &str,
+) {
+    let owner = owner.to_string();
+    let site_id = site_id.to_string();
+    let rows = proof_context
+        .iter()
+        .filter_map(|proof| serde_json::from_value::<ProofContextInfo>(proof.clone()).ok())
+        .collect::<Vec<_>>();
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "call_site"
+                && proof.caller_def_id.as_deref() == Some(owner.as_str())
+                && proof.call_site_id.as_deref() == Some(site_id.as_str())
+                && proof.build_domain_id.as_deref() == Some(AXUM_DOMAIN)
+        }),
+        "{tool} should return the callback parameter call_site proof row for {label}: {proof_context:#?}"
+    );
+    let resolution = rows
+        .iter()
+        .find(|proof| {
+            proof.kind == "call_resolution"
+                && proof.call_site_id.as_deref() == Some(site_id.as_str())
+                && proof.resolution_state.as_deref() == Some("ambiguous")
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "{tool} should return the ambiguous callback parameter call_resolution proof row for {label}: {proof_context:#?}"
+            )
+        });
+    assert_eq!(
+        resolution.candidate_def_ids.len(),
+        2,
+        "{tool} should preserve both callback parameter candidates for {label}"
+    );
+    assert!(
+        rows.iter().all(|proof| {
+            proof.kind != "call_edge" || proof.call_site_id.as_deref() != Some(site_id.as_str())
+        }),
+        "{tool} should not fabricate a call_edge for ambiguous callback parameter {label}: {proof_context:#?}"
     );
 }
 

@@ -1,8 +1,14 @@
 use serde_json::Value;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use uuid::Uuid;
 
-use crate::{Database, DbError, call_graph::CallContextRow};
+use cozo::{DataValue, ScriptMutability, UuidWrapper};
+
+use crate::{
+    Database, DbError,
+    call_graph::{CallContextRow, CallStatusKind},
+    database::{to_string, to_string_list},
+};
 
 use super::{PROOF_FACT_SCHEMA_VERSION, ProofGraphStore};
 
@@ -14,6 +20,7 @@ use context::validate_call_context;
 use facts::{call_edge_facts, call_resolution_fact, call_site_fact};
 
 fn append_call_proof_facts(
+    db: &Database,
     values: &mut Vec<Value>,
     row: CallContextRow,
     build_domain_id: &str,
@@ -23,10 +30,81 @@ fn append_call_proof_facts(
     values.push(call_site_fact(&row, build_domain_id, source_file));
     values.extend(call_edge_facts(&row));
     values.push(call_resolution_fact(&row));
+    if let Some(fact) = db.async_blocker_fact(&row)? {
+        values.push(fact);
+    }
     Ok(())
 }
 
+struct CalleeEvidence {
+    kind: String,
+    path: Vec<String>,
+}
+
 impl Database {
+    fn callee_evidence_for_site(&self, site_id: Uuid) -> Result<Option<CalleeEvidence>, DbError> {
+        let mut params = BTreeMap::new();
+        params.insert("site_id".to_string(), DataValue::Uuid(UuidWrapper(site_id)));
+
+        let rows = self.run_script(
+            r#"?[callee_kind, callee_path] :=
+                site_id = $site_id,
+                *call_site { id: site_id, call_kind @ 'NOW' },
+                *call_callee_evidence {
+                    source_id: site_id,
+                    source_kind: call_kind,
+                    callee_kind,
+                    callee_path @ 'NOW'
+                }"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+
+        match rows.rows.as_slice() {
+            [] => Ok(None),
+            [row] => Ok(Some(CalleeEvidence {
+                kind: to_string(&row[0])?,
+                path: to_string_list(&row[1])?,
+            })),
+            rows => Err(DbError::Cozo(format!(
+                "expected at most one call_callee_evidence row for call site {site_id}, found {}",
+                rows.len()
+            ))),
+        }
+    }
+
+    fn async_blocker_fact(&self, row: &CallContextRow) -> Result<Option<Value>, DbError> {
+        if row.status.status != CallStatusKind::Unsupported {
+            return Ok(None);
+        }
+
+        let Some(evidence) = self.callee_evidence_for_site(row.site.id)? else {
+            return Ok(None);
+        };
+
+        match evidence.kind.as_str() {
+            "AsyncClosureBinding" => Ok(Some(serde_json::json!({
+                "fact_kind": "proof_blocker",
+                "schema_version": PROOF_FACT_SCHEMA_VERSION,
+                "blocker_id": format!("blocker:async-closure-poll-resume:{}", row.site.id),
+                "reason": "dynamic_dispatch_unbounded",
+                "status": "blocked",
+                "call_site_id": row.site.id.to_string(),
+                "detail": format!(
+                    "{} calls async closure binding {} without awaiting the returned future; traversal remains targetless until async poll/resume proof is modeled",
+                    row.site.owner_id,
+                    evidence.path.join("::")
+                ),
+                "evidence_use": "proof_only"
+            }))),
+            "AwaitedAsyncClosureBinding" => Ok(None),
+            other => Err(DbError::Cozo(format!(
+                "unknown call_callee_evidence kind {other:?} for call site {}",
+                row.site.id
+            ))),
+        }
+    }
+
     pub fn call_proof_facts_for_owner(
         &self,
         owner_id: Uuid,
@@ -42,7 +120,7 @@ impl Database {
         let mut values = Vec::with_capacity(context.len() * 3);
 
         for row in context {
-            append_call_proof_facts(&mut values, row, build_domain_id, &source_file)?;
+            append_call_proof_facts(self, &mut values, row, build_domain_id, &source_file)?;
         }
 
         Ok(values)
@@ -75,7 +153,7 @@ impl Database {
 
         for row in context {
             let source_file = self.source_file_for_owner(row.site.owner_id)?;
-            append_call_proof_facts(&mut values, row, build_domain_id, &source_file)?;
+            append_call_proof_facts(self, &mut values, row, build_domain_id, &source_file)?;
         }
 
         Ok(values)
@@ -111,7 +189,7 @@ impl Database {
             let source_file = self.source_file_for_owner(node_id)?;
             for row in context.outgoing {
                 seen_sites.insert(row.site.id);
-                append_call_proof_facts(&mut values, row, build_domain_id, &source_file)?;
+                append_call_proof_facts(self, &mut values, row, build_domain_id, &source_file)?;
             }
         }
 
@@ -120,7 +198,7 @@ impl Database {
                 continue;
             }
             let source_file = self.source_file_for_owner(row.site.owner_id)?;
-            append_call_proof_facts(&mut values, row, build_domain_id, &source_file)?;
+            append_call_proof_facts(self, &mut values, row, build_domain_id, &source_file)?;
         }
 
         Ok(values)

@@ -162,7 +162,10 @@ fn axum_real_target_supported_callers_are_one_hop_traversable() -> Result<(), Db
             // axum-core/src/ext_traits/request_parts.rs:122 calls
             // `self.extract_with_state(&())`. Callee is the same impl method
             // with body `E::from_request_parts(self, state)`.
-            // axum-core/src/ext_traits/request_parts.rs:186 also calls
+            // axum-core/src/ext_traits/request_parts.rs:164 also calls
+            // `parts.extract_with_state::<State<String>, String>(&state)`
+            // after destructuring `Request::new(()).into_parts()`.
+            // axum-core/src/ext_traits/request_parts.rs:186 calls
             // `parts.extract_with_state(state)` through the local extension
             // trait impl `RequestPartsExt for Parts`.
             label: "axum-core RequestPartsExt extract self-call",
@@ -171,8 +174,8 @@ fn axum_real_target_supported_callers_are_one_hop_traversable() -> Result<(), Db
                 "extract_with_state",
                 "E::from_request_parts(self, state)",
             )?,
-            expected_call_edges: 2,
-            expected_traversal_candidates: 2,
+            expected_call_edges: 3,
+            expected_traversal_candidates: 3,
         },
         ResolvedTraversalCase {
             // axum-core/src/ext_traits/request.rs:279 calls
@@ -377,6 +380,9 @@ fn axum_real_target_supported_callers_match_oracle_shape_counts() -> Result<(), 
         ResolvedShapeCase {
             // Caller: axum-core/src/ext_traits/request_parts.rs:122
             // self.extract_with_state(&()).
+            // Caller: axum-core/src/ext_traits/request_parts.rs:164
+            // parts.extract_with_state::<State<String>, String>(&state)
+            // where `parts` comes from `Request::new(()).into_parts()`.
             // Caller: axum-core/src/ext_traits/request_parts.rs:186
             // parts.extract_with_state(state).
             // Callee: same impl method body containing E::from_request_parts(...).
@@ -390,6 +396,10 @@ fn axum_real_target_supported_callers_match_oracle_shape_counts() -> Result<(), 
                 ("method:self.extract_with_state", 1),
                 (
                     "method:LocalBinding { name: \"parts\" }.extract_with_state",
+                    1,
+                ),
+                (
+                    "method:TupleMethodReturn { name: \"parts\", method_name: \"into_parts\", method_span: (4640, 4669), index: 0 }.extract_with_state",
                     1,
                 ),
             ],

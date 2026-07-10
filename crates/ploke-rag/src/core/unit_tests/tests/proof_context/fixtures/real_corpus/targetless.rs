@@ -7,10 +7,7 @@ use super::helpers::{
     targetless_path_site,
 };
 use ploke_db::ProofGraphStore;
-use ploke_test_utils::{
-    AXUM_STD_MEM_REPLACE_SUMMARY_ID, axum_callback_parameter_blocker,
-    axum_std_mem_replace_summary_records,
-};
+use ploke_test_utils::{AXUM_STD_MEM_REPLACE_SUMMARY_ID, axum_std_mem_replace_summary_records};
 
 struct DynamicCase {
     label: &'static str,
@@ -743,7 +740,8 @@ async fn proof_context_collection_preserves_axum_handler_async_block_owner_block
 }
 
 #[tokio::test]
-async fn proof_context_collection_preserves_axum_callback_parameter_blocker() -> Result<(), Error> {
+async fn proof_context_collection_preserves_axum_callback_parameter_ambiguity() -> Result<(), Error>
+{
     init_tracing_once();
     let db = axum_db()?;
 
@@ -768,7 +766,7 @@ async fn proof_context_collection_preserves_axum_callback_parameter_blocker() ->
     let projected = db.project_call_proof_facts_for_owner(owner, AXUM_DOMAIN)?;
     assert!(
         projected >= 2,
-        "expand_attr_with IIFE closure owner should project targetless callback proof rows"
+        "expand_attr_with IIFE closure owner should project ambiguous callback proof rows"
     );
     let rag = init_test_rag_mock(Arc::clone(&db));
     assert!(
@@ -779,14 +777,36 @@ async fn proof_context_collection_preserves_axum_callback_parameter_blocker() ->
     let calls = call_context
         .get(&owner)
         .expect("expand_attr_with IIFE closure owner should receive outgoing call context");
-    let site_id = targetless_path_site(
-        calls,
-        owner,
-        &["f"],
-        CallStatusKind::Unsupported,
-        "axum-macros/src/lib.rs:737 f(attr, input)",
+    let callee = CallCalleeInfo::Path {
+        path: vec!["f".to_string()],
+    };
+    let callback = calls
+        .iter()
+        .find(|call| {
+            call.owner_id == owner
+                && call.kind == CallSiteKind::Path
+                && call.callee == callee
+                && call.status == CallStatusKind::Ambiguous
+                && call.resolution.is_none()
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "axum-macros/src/lib.rs:737 f(attr, input) should expose one ambiguous closure-candidate row: {calls:#?}"
+            )
+        });
+    assert_eq!(
+        callback.targets.len(),
+        2,
+        "axum callback parameter should expose both closure candidates: {callback:#?}"
     );
-    db.upsert_proof_fact_values(&[axum_callback_parameter_blocker(site_id)])?;
+    assert!(
+        callback
+            .targets
+            .iter()
+            .all(|target| target.relation == CallTargetKind::Closure),
+        "axum callback parameter candidates should all be closures: {callback:#?}"
+    );
+    let site_id = callback.site_id;
 
     let proof_context = rag.collect_proof_context(&[(owner, 1.0)])?;
     let rows = proof_context
@@ -801,21 +821,41 @@ async fn proof_context_collection_preserves_axum_callback_parameter_blocker() ->
     //   axum-macros/src/lib.rs:729 bounds `F: FnOnce(A, I) -> K`.
     //   axum-macros/src/lib.rs:734-738 immediately invokes a closure.
     //   axum-macros/src/lib.rs:737 calls `f(attr, input)` inside that closure.
-    // Expected proof traversal: proof context exposes the fail-closed
-    // call_resolution row plus an explicit runtime-dispatch blocker, while
-    // preserving zero local traversal edges for the captured callback.
-    assert_site_blocker(
-        rows,
-        owner,
-        site_id,
-        "type_resolution_missing",
-        "axum callback parameter f(attr, input)",
+    // Expected proof traversal: proof context exposes the ambiguous
+    // call_resolution row and all candidate ids, while preserving zero
+    // admitted local traversal edges for the captured callback.
+    let site = site_id.to_string();
+    assert!(
+        rows.iter().any(|row| {
+            row.kind == "call_site"
+                && row.caller_def_id.as_deref() == Some(&owner.to_string())
+                && row.call_site_id.as_deref() == Some(site.as_str())
+                && row.build_domain_id.as_deref() == Some(AXUM_DOMAIN)
+        }),
+        "axum callback parameter proof context should include the call_site fact: {rows:#?}"
     );
-    assert_explicit_proof_blocker(
-        rows,
-        site_id,
-        "dynamic_dispatch_unbounded",
-        "axum callback parameter f(attr, input)",
+    let resolution = rows
+        .iter()
+        .find(|row| {
+            row.kind == "call_resolution"
+                && row.call_site_id.as_deref() == Some(site.as_str())
+                && row.resolution_state.as_deref() == Some("ambiguous")
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "axum callback parameter proof context should include the ambiguous call_resolution fact: {rows:#?}"
+            )
+        });
+    assert_eq!(
+        resolution.candidate_def_ids.len(),
+        2,
+        "axum callback parameter ambiguous proof row should preserve both candidates"
+    );
+    assert!(
+        rows.iter().all(|row| {
+            row.kind != "call_edge" || row.call_site_id.as_deref() != Some(site.as_str())
+        }),
+        "axum callback parameter proof context should not fabricate a call_edge: {rows:#?}"
     );
 
     Ok(())

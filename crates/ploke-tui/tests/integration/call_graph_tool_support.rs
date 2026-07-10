@@ -28,12 +28,11 @@ use ploke_test_utils::{
     AXUM_OPAQUE_FUTURE_SUMMARY_ID, AXUM_REQUEST_BUILDER_SUMMARY_ID, AXUM_ROUTING_POST_SUMMARY_ID,
     AXUM_SERDE_JSON_FROM_SLICE_SUMMARY_ID, AXUM_STD_MEM_REPLACE_SUMMARY_ID, CORPUS_AXUM_CALL_GRAPH,
     CORPUS_CHRONO_CALL_GRAPH, CORPUS_MEMCHR_CALL_GRAPH, axum_body_empty_dependency_record,
-    axum_callback_parameter_blocker, axum_dependency_record,
-    axum_handler_async_block_poll_resume_blocker, axum_opaque_future_boundary_id,
-    axum_opaque_future_macro_summary_records, axum_request_builder_summary_records,
-    axum_router_new_dependency_record, axum_routing_post_boundary_id,
-    axum_routing_post_macro_summary_records, axum_serde_json_from_slice_summary_records,
-    axum_std_mem_replace_summary_records, fixture_async_closure_poll_resume_blocker,
+    axum_dependency_record, axum_handler_async_block_poll_resume_blocker,
+    axum_opaque_future_boundary_id, axum_opaque_future_macro_summary_records,
+    axum_request_builder_summary_records, axum_router_new_dependency_record,
+    axum_routing_post_boundary_id, axum_routing_post_macro_summary_records,
+    axum_serde_json_from_slice_summary_records, axum_std_mem_replace_summary_records,
     fresh_backup_fixture_db, setup_db_full_multi_embedding, workspace_root,
 };
 use ploke_tui::{
@@ -278,10 +277,7 @@ impl CallGraphToolFixture {
         }
     }
 
-    pub(crate) fn seed_async_closure_poll_resume_blocker(
-        &self,
-        owner_name: &'static str,
-    ) -> ExpectedCallSite {
+    pub(crate) fn async_closure_blocker(&self, owner_name: &'static str) -> ExpectedCallSite {
         let module_path = vec!["crate".to_string()];
         let owner = graph_resolve_exact(
             self.state.db.as_ref(),
@@ -315,16 +311,9 @@ impl CallGraphToolFixture {
                 .db
                 .project_call_proof_facts_for_node(owner, "bd:fixture-call-graph")
                 .unwrap_or_else(|err| panic!("project {owner_name} proof facts: {err}"))
-                >= 2,
-            "{owner_name} should project targetless proof rows"
+                >= 3,
+            "{owner_name} should project targetless proof rows plus the async poll/resume blocker"
         );
-        self.state
-            .db
-            .upsert_proof_fact_values(&[fixture_async_closure_poll_resume_blocker(
-                row.site.id,
-                owner_name,
-            )])
-            .unwrap_or_else(|err| panic!("upsert {owner_name} async poll/resume blocker: {err}"));
 
         ExpectedCallSite {
             owner,
@@ -705,13 +694,19 @@ impl AxumCallbackClosureToolFixture {
             .unwrap_or_else(|| {
                 panic!("expand_attr_with closure should expose f(attr, input): {context:#?}")
             });
-        assert_eq!(callback.status.status, DbCallStatusKind::Unsupported);
-        assert!(
-            callback.targets.is_empty(),
-            "expand_attr_with closure f(attr, input) should stay targetless: {callback:#?}"
+        assert_eq!(callback.status.status, DbCallStatusKind::Ambiguous);
+        assert_eq!(
+            callback.targets.len(),
+            2,
+            "expand_attr_with closure f(attr, input) should expose both closure candidates: {callback:#?}"
         );
-        db.upsert_proof_fact_values(&[axum_callback_parameter_blocker(callback.site.id)])
-            .expect("upsert axum callback parameter blocker");
+        assert!(
+            callback.targets.iter().all(|target| {
+                target.relation == ploke_db::CallRelationKind::Closure
+                    && target.target_kind == ploke_db::CallTargetKind::Closure
+            }),
+            "expand_attr_with closure f(attr, input) should expose only closure candidates: {callback:#?}"
+        );
         let state = axum_state_for_target(Arc::clone(&db), &target, "closure").await;
 
         Self {

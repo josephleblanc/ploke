@@ -19,6 +19,16 @@ pub(in crate::unit) fn assert_projected_blockers(
     owner_name: &str,
     blockers: &[TargetlessBlockerCase<'_>],
 ) -> Result<(), DbError> {
+    assert_projected_blockers_with_count(db, expected, owner_name, blockers, blockers.len() * 2)
+}
+
+pub(in crate::unit) fn assert_projected_blockers_with_count(
+    db: &Database,
+    expected: &mut Vec<BlockerProofSite>,
+    owner_name: &str,
+    blockers: &[TargetlessBlockerCase<'_>],
+    expected_count: usize,
+) -> Result<(), DbError> {
     let owner = function_id_by_name(db, owner_name)?;
     let context = db.call_context_for_owner(owner)?;
     assert_eq!(
@@ -37,7 +47,7 @@ pub(in crate::unit) fn assert_projected_blockers(
     }
 
     let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
-    assert_eq!(count, blockers.len() * 2);
+    assert_eq!(count, expected_count);
     Ok(())
 }
 

@@ -1178,7 +1178,7 @@ async fn code_item_edges_returns_non_awaited_async_closure_poll_resume_blockers(
             "unawaited async closure future binding",
         ),
     ] {
-        let seeded = fixture.seed_async_closure_poll_resume_blocker(owner_name);
+        let expected = fixture.async_closure_blocker(owner_name);
         let params = EdgesParams {
             item_name: Cow::Borrowed(owner_name),
             file_path: Cow::Owned(fixture.file_path.display().to_string()),
@@ -1208,23 +1208,23 @@ async fn code_item_edges_returns_non_awaited_async_closure_poll_resume_blockers(
         // Fixture source:
         //   tests/fixture_crates/fixture_call_graph/src/lib.rs:1701-1714
         //   calls an async closure without awaiting the returned future. The
-        //   edge tool must preserve the targetless row plus its explicit async
+        //   edge tool must preserve the targetless row plus its derived async
         //   poll/resume blocker without fabricating traversal.
         let callee = CallCalleeInfo::Path {
-            path: seeded.path.clone(),
+            path: expected.path.clone(),
         };
         let site_id = assert_path_context(
             call_context,
-            seeded.owner,
+            expected.owner,
             &callee,
             &CallStatusKind::Unsupported,
             label,
             "code_item_edges",
         );
-        assert_eq!(site_id, seeded.site);
+        assert_eq!(site_id, expected.site);
         assert_path_blocker_proof(
             proof_context,
-            seeded.owner,
+            expected.owner,
             site_id,
             "bd:fixture-call-graph",
             "type_resolution_missing",
