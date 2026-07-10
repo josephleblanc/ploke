@@ -510,7 +510,7 @@ async fn code_item_edges_accepts_axum_callback_closure_owner() {
             .parse::<usize>()
             .expect("blocked call count")
             >= 1,
-        "closure edges should count the unsupported callback row"
+        "closure edges should count the unresolved callback frontier row"
     );
     assert!(
         ui_field(ui, "proof_context")
