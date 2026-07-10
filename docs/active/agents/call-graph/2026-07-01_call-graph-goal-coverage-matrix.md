@@ -50,7 +50,39 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: public callable field/indexed blocker proof surfacing.
+Current bucket: async closure callee evidence and proof-only poll/resume
+blockers.
+
+Exit criteria:
+
+- Persist parser-side async closure callee evidence through transform/DB
+  projection without flattening it into local traversal edges.
+- Keep non-awaited async closure calls targetless unsupported because
+  constructing the future does not prove poll/resume execution.
+- Derive proof-only `dynamic_dispatch_unbounded` blockers for non-awaited
+  async closure bindings/future bindings, and do not derive those blockers for
+  awaited/resolved rows.
+- Regenerate affected call-graph backup fixtures and update downstream
+  DB/RAG/TUI proof assertions.
+
+Status: completed for this checkpoint.
+
+Latest completed slice: `call_callee_evidence` now preserves async closure
+callee evidence in the persisted call graph. Proof projection derives
+poll/resume blockers from that evidence for non-awaited async closure calls,
+while awaited async closure rows remain normal resolved traversal candidates.
+The active call-graph fixtures and committed real-corpus seeds were
+regenerated/reviewed with the new relation.
+
+Next bucket: re-check remaining unsupported semantic proof inputs before
+selecting another parser/resolver slice; likely candidates are a reviewed
+dependency-root source oracle, missing trait visibility proof, or a new
+bounded local binding/type proof carrier. Do not keep polishing async
+poll/resume rows unless there is new execution evidence beyond the proof-only
+blocker.
+
+Previous completed bucket: public callable field/indexed blocker proof
+surfacing.
 
 Exit criteria:
 
@@ -68,11 +100,6 @@ Status: completed for this checkpoint.
 Latest completed slice: public callable field/indexed blockers now have
 DB proof, RAG proof-context, and TUI lookup/edges proof payload coverage. This
 is proof-surface hardening, not semantic expansion.
-
-Next bucket: after focused verification and commit, re-check remaining
-unsupported semantic proof inputs before selecting another parser/resolver
-slice; likely candidates are async poll/resume proof, dependency-root source
-oracles, or missing trait visibility.
 
 Previous completed bucket: conflicting callable field-parameter candidate
 proof.
