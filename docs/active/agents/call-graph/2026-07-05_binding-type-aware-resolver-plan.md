@@ -360,6 +360,28 @@ should prevent future resumes from reselecting already-covered shapes.
      local binding/type proof only if it reuses existing parser-owned evidence
      without arbitrary interprocedural value flow.
 
+19. Post-request-parts candidate audit:
+   - The focused unsupported fixture inventory still has no safe promotion
+     candidate without a new proof input. Public callable parameters and
+     public callable fields lack complete source-visible caller proof;
+     conflicting caller sets intentionally stay blocked; non-awaited async
+     callable values lack poll/resume evidence; ambiguous local callable
+     initialization and missing trait visibility remain fail-closed.
+   - The real-corpus routing helper rows remain a macro/generated-code
+     boundary problem, not a same-module path-resolution bug: the
+     `fallback_endpoint` callsites live inside `tap_inner!` input, and the
+     debug-only `super::take_route_or_internal_error` test owner is not present
+     in the current fixture.
+   - Existing external-summary proof surfaces already cover the DB/RAG/TUI
+     owner-need and admission pattern for Request::builder,
+     std::mem::replace, and feature-gated serde_json. Do not add
+     Body::size_hint or Route::oneshot summary rows unless there is a new
+     usage-question surface gap or an explicit summary artifact plan.
+   - Next code work should therefore start only after selecting one of:
+     a real async poll/resume proof carrier, a reviewed dependency-root source
+     oracle with missing proof payload, or a bounded local binding/type proof
+     shape not already covered in parser/DB/RAG/TUI tests.
+
 ## Remaining Focused Unsupported Inventory
 
 Status checkpoint: 2026-07-09 after the active call-graph corpus fixtures were
