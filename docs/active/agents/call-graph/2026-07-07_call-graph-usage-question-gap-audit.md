@@ -85,3 +85,27 @@ Suggested first candidate: local binding/type proof for a still-unsupported
 receiver or callable value shape, because it matches the larger plan's next
 phase and directly improves several partially covered usage-question sections
 without weakening frontier semantics.
+
+### 2026-07-10 inventory update
+
+Active fixtures were regenerated and backup DB verification passed for the
+current call-graph schema. The historical `call_graph` feature gate is closed:
+workspace crates keep the feature only as a compatibility alias, and active
+fixtures include baseline call-graph relations.
+
+The post-regeneration inventory found that the obvious nearby candidates are
+already closed or intentionally fail-closed with proof rows:
+
+- fixture test-body macro expansion blockers
+- public callable parameter and holder blockers
+- missing trait-visibility blockers
+- axum-core `request_parts.rs:164` tuple-return receiver resolution
+- routing helper rows hidden behind macro/generated source boundaries
+- generated `IntoServiceFuture::new` rows
+- current effect and external-summary reach surfaces
+
+The next implementation bucket should therefore start with a genuinely new
+proof input instead of more breadth over those closed rows. Viable carriers are
+macro-expanded/generated source bodies, async poll/resume execution proof,
+interprocedural callable argument/value-flow, broader callable trait-object
+dispatch, source/sink policy annotations, or build/test entrypoint summaries.
