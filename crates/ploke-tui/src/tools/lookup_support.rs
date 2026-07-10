@@ -636,23 +636,35 @@ pub(super) fn call_effect_policy_violations_for_node(
 ) -> Result<Vec<CallEffectPolicyViolationInfo>, ploke_error::Error> {
     use ploke_error::InternalError;
 
-    if allowed_effects.is_empty() {
-        return Ok(Vec::new());
-    }
-
     match ctx.state.rag.as_ref() {
-        Some(rag) if !rag.call_context_degraded() => Ok(rag
-            .exact_call_effect_policy_violations_for_owner(
-                node_id,
-                TOOL_CALL_PATH_OPTIONS,
-                allowed_effects,
-            )
-            .map_err(|err| {
-                ploke_error::Error::Internal(InternalError::CompilerError(format!(
-                    "failed to collect effect policy violations for code item {node_id}: {err}"
-                )))
-            })?
-            .unwrap_or_default()),
+        Some(rag) if !rag.call_context_degraded() => {
+            let result = if allowed_effects.is_empty() {
+                rag.exact_call_effect_policy_violations_for_stored_owner_policy(
+                    node_id,
+                    TOOL_CALL_PATH_OPTIONS,
+                )
+            } else {
+                rag.exact_call_effect_policy_violations_for_owner(
+                    node_id,
+                    TOOL_CALL_PATH_OPTIONS,
+                    allowed_effects,
+                )
+            };
+
+            match result {
+                Ok(rows) => Ok(rows.unwrap_or_default()),
+                Err(ploke_rag::RagError::Db(ploke_db::DbError::Cozo(message)))
+                    if message.contains("no admitted effect_policy proof row") =>
+                {
+                    Ok(Vec::new())
+                }
+                Err(err) => Err(ploke_error::Error::Internal(InternalError::CompilerError(
+                    format!(
+                        "failed to collect effect policy violations for code item {node_id}: {err}"
+                    ),
+                ))),
+            }
+        }
         _ => Ok(Vec::new()),
     }
 }

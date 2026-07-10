@@ -758,16 +758,32 @@ impl AxumTaskSpawnEffectToolFixture {
             "tokio::spawn should stay targetless before tool execution: {spawn_row:#?}"
         );
 
-        db.upsert_proof_fact_values(&[json!({
-            "fact_kind": "effect_seed",
-            "schema_version": "ploke-proof-facts.v1",
-            "effect_seed_id": "effect:axum-tui-test-client-task-spawn",
-            "call_site_id": spawn_row.site.id.to_string(),
-            "effect_class": "async_task_spawn",
-            "confidence": "source-oracle",
-            "blocker_if_unresolved": false,
-            "evidence_use": "proof_only"
-        })])
+        db.upsert_proof_fact_values(&[
+            json!({
+                "fact_kind": "effect_seed",
+                "schema_version": "ploke-proof-facts.v1",
+                "effect_seed_id": "effect:axum-tui-test-client-task-spawn",
+                "call_site_id": spawn_row.site.id.to_string(),
+                "effect_class": "async_task_spawn",
+                "confidence": "source-oracle",
+                "blocker_if_unresolved": false,
+                "evidence_use": "proof_only"
+            }),
+            json!({
+                "fact_kind": "effect_policy",
+                "schema_version": "ploke-proof-facts.v1",
+                "effect_policy_id": "effect-policy:axum-tui-test-client:stored-policy",
+                "build_domain_id": "bd:axum-call-graph",
+                "definition_id": start.id.to_string(),
+                "proof_policy_version": "axum-task-spawn-tool-policy-v1",
+                "review_method": "source-oracle-review",
+                "scope_of_validity": "axum deserialize_error_status_codes task-spawn tool oracle",
+                "allowed_effects": ["ffi_boundary"],
+                "invalidation_conditions": "source oracle, fixture hash, or proof policy changes",
+                "status": "admitted",
+                "evidence_use": "proof_only"
+            }),
+        ])
         .expect("upsert axum task-spawn effect seed");
         let effects = db
             .call_effects_reachable_from_owner(
@@ -2104,7 +2120,7 @@ pub(crate) fn assert_task_spawn_policy_violation(
                     .collect::<Vec<_>>()
             }),
         Some(vec!["ffi_boundary"]),
-        "{label} should preserve the caller-supplied allowlist: {violation:#?}"
+        "{label} should preserve the effect-policy allowlist: {violation:#?}"
     );
 
     let effect = violation

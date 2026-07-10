@@ -947,6 +947,45 @@ async fn code_item_lookup_returns_real_corpus_reachable_effects() {
 }
 
 #[tokio::test]
+async fn code_item_lookup_uses_stored_effect_policy_when_allowlist_omitted() {
+    let fixture = AxumTaskSpawnEffectToolFixture::new().await;
+    let params = LookupParams {
+        item_name: Cow::Borrowed("deserialize_error_status_codes"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("function"),
+        module_path: Cow::Owned(fixture.module_path_arg()),
+        owner_trait: None,
+        owner_type: None,
+        parent_name: None,
+        allowed_effects: Vec::new(),
+    };
+
+    let result =
+        CodeItemLookup::execute(params, fixture.ctx("axum-task-spawn-stored-policy-lookup"))
+            .await
+            .expect("deserialize_error_status_codes stored-policy lookup");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize ConciseContext");
+    let policy_violations = payload
+        .get("call_effect_policy_violations")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_effect_policy_violations array");
+
+    // Source oracle:
+    //   axum/src/form.rs:262 -> TestClient::new(app)
+    //   axum/src/test_helpers/test_client.rs:36 -> spawn_service(svc)
+    //   axum/src/test_helpers/test_client.rs:23 -> tokio::spawn(...)
+    //
+    // The fixture admits a stored owner `effect_policy` for
+    // `deserialize_error_status_codes` that allows only `ffi_boundary`.
+    assert_task_spawn_policy_violation(
+        policy_violations,
+        &fixture,
+        "code_item_lookup stored-policy call_effect_policy_violations",
+    );
+}
+
+#[tokio::test]
 async fn code_item_lookup_returns_real_corpus_await_receiver_targetless_row() {
     let fixture = AxumAwaitReceiverToolFixture::new().await;
     let module_path = fixture.module_path_arg();

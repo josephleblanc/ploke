@@ -1416,6 +1416,48 @@ async fn code_item_edges_returns_real_corpus_reachable_effects() {
 }
 
 #[tokio::test]
+async fn code_item_edges_uses_stored_effect_policy_when_allowlist_omitted() {
+    let fixture = AxumTaskSpawnEffectToolFixture::new().await;
+    let params = EdgesParams {
+        item_name: Cow::Borrowed("deserialize_error_status_codes"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("function"),
+        module_path: Cow::Owned(fixture.module_path_arg()),
+        owner_trait: None,
+        owner_type: None,
+        parent_name: None,
+        allowed_effects: Vec::new(),
+    };
+
+    let result = CodeItemEdges::execute(params, fixture.ctx("axum-task-spawn-stored-policy-edges"))
+        .await
+        .expect("deserialize_error_status_codes stored-policy edge lookup");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
+    let node_info = payload
+        .get("node_info")
+        .and_then(serde_json::Value::as_object)
+        .expect("node_info object");
+    let policy_violations = node_info
+        .get("call_effect_policy_violations")
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.call_effect_policy_violations array");
+
+    // Source oracle:
+    //   axum/src/form.rs:262 -> TestClient::new(app)
+    //   axum/src/test_helpers/test_client.rs:36 -> spawn_service(svc)
+    //   axum/src/test_helpers/test_client.rs:23 -> tokio::spawn(...)
+    //
+    // The fixture admits a stored owner `effect_policy` for
+    // `deserialize_error_status_codes` that allows only `ffi_boundary`.
+    assert_task_spawn_policy_violation(
+        policy_violations,
+        &fixture,
+        "code_item_edges stored-policy call_effect_policy_violations",
+    );
+}
+
+#[tokio::test]
 async fn code_item_edges_reports_private_target_without_incoming_callers() {
     let fixture = AxumErrorHandlingTraitsToolFixture::new().await;
     let params = EdgesParams {
