@@ -421,6 +421,7 @@ const SELF_DEEP_PATH_TARGET_CALL_SPAN: (usize, usize) = (43487, 43520);
 const CRATE_DEEP_PATH_TARGET_CALL_SPAN: (usize, usize) = (43580, 43630);
 const SELF_ROOT_DEEP_PATH_TARGET_CALL_SPAN: (usize, usize) = (43683, 43732);
 const EXTERNAL_DEFAULT_BOUND_ASSOC_CALL_SPAN: (usize, usize) = (43815, 43827);
+const AWAIT_METHOD_RESULT_UNWRAP_CALL_SPAN: (usize, usize) = (44505, 44541);
 const CRATE_FILE_MODULE_TARGET_CALL_SPAN: (usize, usize) = (26664, 26701);
 const METHOD_AS_ASSOCIATED_FUNCTION_CALL_SPAN: (usize, usize) = (8954, 8988);
 const FN_CALL_CONST_FIVE_CALL_SPAN: (usize, usize) = (1631, 1637);
@@ -3260,6 +3261,26 @@ paranoid_call_site_test!(
             },
         )
     },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_await_method_result_unwrap_records_awaited_method_receiver_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_await_method_result_unwrap"
+    },
+    expected: ExpectedCallSite::method(
+        "unwrap",
+        ExpectedMethodReceiver::AwaitMethodCallResult {
+            method_name: "ready_result",
+        },
+        AWAIT_METHOD_RESULT_UNWRAP_CALL_SPAN,
+        0,
+        0,
+        &[],
+        ExpectedCallOutcome::Unsupported,
+    ),
 );
 
 paranoid_call_site_test!(

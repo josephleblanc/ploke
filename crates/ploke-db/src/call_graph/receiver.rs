@@ -81,6 +81,9 @@ pub enum CallReceiver {
     AwaitPathCallResult {
         path: Vec<String>,
     },
+    AwaitMethodCallResult {
+        method_name: String,
+    },
     TryResult,
     TryPathCallResult {
         path: Vec<String>,

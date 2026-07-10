@@ -232,6 +232,24 @@ Post-regeneration verification:
   `axum/src/serve/listener.rs:236` dynamic callable field rows preserve
   `call_site.path` while remaining unsupported and targetless.
 
+## 2026-07-10 Axum Awaited Method-Call Receiver Refresh
+
+The `corpus_axum_call_graph` fixture was recreated with
+`cargo run -p xtask --features call_graph -- recreate-backup-db --fixture corpus_axum_call_graph`
+after awaited method-call receivers began preserving the awaited inner method
+name as `AwaitMethodCallResult`.
+
+Post-regeneration verification:
+
+- The recreated `corpus_axum_call_graph_2026-07-10.sqlite` shared snapshot was
+  copied into `tests/backup_dbs/` as the committed seed artifact.
+- `cargo run -p xtask --features call_graph -- verify-backup-dbs --fixture corpus_axum_call_graph`
+  passed with `roundtrip=ok`.
+- `axum/src/serve/listener.rs:143`
+  `self.sem.clone().acquire_owned().await.unwrap()` now persists the outer
+  `unwrap` receiver as `AwaitMethodCallResult(["acquire_owned"])` while
+  remaining unsupported and targetless.
+
 ## 2026-07-10 Call Callee Evidence Regeneration
 
 `cargo xtask fixtures regenerate --active` was rerun after adding the

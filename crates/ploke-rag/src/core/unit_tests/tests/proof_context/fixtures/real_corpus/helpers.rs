@@ -303,9 +303,11 @@ pub(super) fn conn_limiter_accept_owner(db: &Database) -> Result<Uuid, Error> {
 pub(super) fn await_result_unwrap_site(calls: &[CallContextInfo], owner: Uuid) -> Uuid {
     let callee = CallCalleeInfo::Method {
         name: "unwrap".to_string(),
-        receiver: Some(CallReceiverInfo::AwaitResult),
+        receiver: Some(CallReceiverInfo::AwaitMethodCallResult {
+            method_name: "acquire_owned".to_string(),
+        }),
     };
-    targetless_method_site(calls, owner, &callee, "AwaitResult unwrap")
+    targetless_method_site(calls, owner, &callee, "AwaitMethodCallResult unwrap")
 }
 
 pub(super) fn targetless_method_site(

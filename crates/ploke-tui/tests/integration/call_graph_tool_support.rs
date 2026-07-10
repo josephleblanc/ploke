@@ -2480,21 +2480,23 @@ pub(crate) fn assert_await_result_unwrap_context(
                 && call.callee
                     == (CallCalleeInfo::Method {
                         name: "unwrap".to_string(),
-                        receiver: Some(CallReceiverInfo::AwaitResult),
+                        receiver: Some(CallReceiverInfo::AwaitMethodCallResult {
+                            method_name: "acquire_owned".to_string(),
+                        }),
                     })
         })
         .collect::<Vec<_>>();
     assert_eq!(
         matching.len(),
         1,
-        "{label} should return exactly one targetless AwaitResult unwrap row: {calls:#?}"
+        "{label} should return exactly one targetless AwaitMethodCallResult unwrap row: {calls:#?}"
     );
     let call = &matching[0];
     assert_eq!(call.status, CallStatusKind::Unsupported);
     assert_eq!(call.resolution, None);
     assert!(
         call.targets.is_empty(),
-        "{label} should not fabricate a target for AwaitResult unwrap: {call:#?}"
+        "{label} should not fabricate a target for AwaitMethodCallResult unwrap: {call:#?}"
     );
     call.site_id
 }
@@ -2568,7 +2570,7 @@ pub(crate) fn assert_await_result_unwrap_proof(
                 && proof.call_site_id.as_deref() == Some(site_id.as_str())
                 && proof.build_domain_id.as_deref() == Some("bd:corpus-axum-call-graph")
         }),
-        "{label} should return the AwaitResult unwrap call_site proof row: {proofs:#?}"
+        "{label} should return the AwaitMethodCallResult unwrap call_site proof row: {proofs:#?}"
     );
     assert!(
         rows.iter().any(|proof| {
@@ -2577,7 +2579,7 @@ pub(crate) fn assert_await_result_unwrap_proof(
                 && proof.resolution_state.as_deref() == Some("blocked")
                 && proof.blocker_reason.as_deref() == Some("type_resolution_missing")
         }),
-        "{label} should return the AwaitResult unwrap blocked resolution proof row: {proofs:#?}"
+        "{label} should return the AwaitMethodCallResult unwrap blocked resolution proof row: {proofs:#?}"
     );
 }
 

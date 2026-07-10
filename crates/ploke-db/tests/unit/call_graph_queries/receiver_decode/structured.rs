@@ -103,6 +103,13 @@ fn context_for_owner_decodes_structured_method_receivers() -> Result<(), DbError
             },
         ),
         structured_receiver(
+            "AwaitMethodCallResult",
+            vec!["acquire_owned"],
+            CallReceiver::AwaitMethodCallResult {
+                method_name: "acquire_owned".to_string(),
+            },
+        ),
+        structured_receiver(
             "TryPathCallResult",
             vec!["try_local_assoc"],
             CallReceiver::TryPathCallResult {

@@ -284,6 +284,17 @@ impl CallReceiver {
                     Ok(Some(Self::AwaitPathCallResult { path }))
                 }
             }
+            "AwaitMethodCallResult" => {
+                let path = to_string_list(path)?;
+                match path.as_slice() {
+                    [method_name] => Ok(Some(Self::AwaitMethodCallResult {
+                        method_name: method_name.clone(),
+                    })),
+                    other => Err(DbError::Cozo(format!(
+                        "await method-call result receiver should store exactly one method name, got {other:?}"
+                    ))),
+                }
+            }
             "TryResult" => match path {
                 DataValue::Null => Ok(Some(Self::TryResult)),
                 other => Err(DbError::Cozo(format!(

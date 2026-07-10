@@ -564,6 +564,12 @@ pub enum MethodCallReceiver {
         /// Path used as the awaited receiver call's callee.
         path: Vec<String>,
     },
+    /// The receiver is the awaited result of a method call, such as
+    /// `value.make_future().await`.
+    AwaitMethodCallResult {
+        /// Method name used by the awaited receiver call.
+        method_name: String,
+    },
     /// The receiver is the result of a try expression, such as `value?`.
     TryResult,
     /// The receiver is the try result of a path call, such as

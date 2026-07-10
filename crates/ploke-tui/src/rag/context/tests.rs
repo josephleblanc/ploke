@@ -1361,6 +1361,35 @@ call_context: 1 call site(s)
 }
 
 #[test]
+fn format_call_context_block_renders_await_method_result_receiver() {
+    let calls = vec![CallContextInfo {
+        site_id: Uuid::from_u128(0x709),
+        owner_id: Uuid::from_u128(0x709),
+        kind: CallSiteKind::Method,
+        span: (44501, 44537),
+        path: None,
+        arg_count: Some(0),
+        generic_arg_count: Some(0),
+        callee: CallCalleeInfo::Method {
+            name: "unwrap".to_string(),
+            receiver: Some(CallReceiverInfo::AwaitMethodCallResult {
+                method_name: "ready_result".to_string(),
+            }),
+        },
+        status: CallStatusKind::Unsupported,
+        resolution: None,
+        targets: Vec::new(),
+    }];
+
+    let rendered = format_call_context_block(&calls, "  ", 8);
+    let expected = "\
+call_context: 1 call site(s)
+  - Method @ 44501..44537: method unwrap on ready_result().await => Unsupported, targets [], owner 00000000-0000-0000-0000-000000000709";
+
+    assert_eq!(rendered, expected);
+}
+
+#[test]
 fn format_call_context_block_renders_trait_dispatch_initialized_local_receiver() {
     let target = Uuid::from_u128(0xa01);
     let calls = vec![CallContextInfo {

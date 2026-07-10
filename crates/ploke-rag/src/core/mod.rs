@@ -766,6 +766,9 @@ fn receiver_info(receiver: CallReceiver) -> CallReceiverInfo {
         CallReceiver::AwaitPathCallResult { path } => {
             CallReceiverInfo::AwaitPathCallResult { path }
         }
+        CallReceiver::AwaitMethodCallResult { method_name } => {
+            CallReceiverInfo::AwaitMethodCallResult { method_name }
+        }
         CallReceiver::TryResult => CallReceiverInfo::TryResult,
         CallReceiver::TryPathCallResult { path } => CallReceiverInfo::TryPathCallResult { path },
         CallReceiver::TryMethodCallResult { method_name } => {

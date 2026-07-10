@@ -126,6 +126,8 @@ pub enum ExpectedMethodReceiver<'a> {
     AwaitResult,
     /// The receiver expression is the awaited result of a path call.
     AwaitPathCallResult { path: &'a [&'a str] },
+    /// The receiver expression is the awaited result of a method call.
+    AwaitMethodCallResult { method_name: &'a str },
     /// The receiver expression is the result of a try expression.
     TryResult,
     /// The receiver expression is the try result of a path call.
@@ -251,6 +253,11 @@ impl ExpectedMethodReceiver<'_> {
             Self::AwaitPathCallResult { path } => MethodCallReceiver::AwaitPathCallResult {
                 path: path.iter().copied().map(String::from).collect(),
             },
+            Self::AwaitMethodCallResult { method_name } => {
+                MethodCallReceiver::AwaitMethodCallResult {
+                    method_name: method_name.to_string(),
+                }
+            }
             Self::TryResult => MethodCallReceiver::TryResult,
             Self::TryPathCallResult { path } => MethodCallReceiver::TryPathCallResult {
                 path: path.iter().copied().map(String::from).collect(),

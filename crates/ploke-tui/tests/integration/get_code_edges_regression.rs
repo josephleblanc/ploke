@@ -1843,7 +1843,8 @@ async fn code_item_edges_returns_real_corpus_await_receiver_targetless_row() {
     //   axum/src/serve/listener.rs:143 calls
     //   `self.sem.clone().acquire_owned().await.unwrap()`.
     // The edge-oriented exact tool should expose the same unsupported,
-    // targetless AwaitResult receiver row as lookup, without a fabricated edge.
+    // targetless AwaitMethodCallResult(acquire_owned) receiver row as lookup,
+    // without a fabricated edge.
     let site_id =
         assert_await_result_unwrap_context(call_context, fixture.owner, "code_item_edges");
     assert_await_result_unwrap_proof(proof_context, fixture.owner, site_id, "code_item_edges");

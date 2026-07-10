@@ -776,6 +776,10 @@ fn method_receiver_to_cozo(receiver: &MethodCallReceiver) -> (cozo::DataValue, c
             cozo::DataValue::from("AwaitPathCallResult"),
             string_list(path),
         ),
+        MethodCallReceiver::AwaitMethodCallResult { method_name } => (
+            cozo::DataValue::from("AwaitMethodCallResult"),
+            string_list(std::slice::from_ref(method_name)),
+        ),
         MethodCallReceiver::TryResult => {
             (cozo::DataValue::from("TryResult"), cozo::DataValue::Null)
         }

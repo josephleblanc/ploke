@@ -1925,3 +1925,16 @@ where
     let iter = iter.into_iter();
     iter.size_hint()
 }
+
+pub struct AwaitMethodResultSource;
+
+impl AwaitMethodResultSource {
+    pub fn ready_result(&self) -> std::future::Ready<Result<i32, ()>> {
+        std::future::ready(Ok(91))
+    }
+}
+
+pub async fn call_await_method_result_unwrap() -> i32 {
+    let source = AwaitMethodResultSource;
+    source.ready_result().await.unwrap()
+}

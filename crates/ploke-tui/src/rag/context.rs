@@ -745,6 +745,9 @@ fn format_receiver(receiver: &CallReceiverInfo) -> String {
         CallReceiverInfo::AwaitPathCallResult { path } => {
             format!("{}().await", path.join("::"))
         }
+        CallReceiverInfo::AwaitMethodCallResult { method_name } => {
+            format!("{method_name}().await")
+        }
         CallReceiverInfo::TryResult => "?".to_string(),
         CallReceiverInfo::TryPathCallResult { path } => format!("{}()?", path.join("::")),
         CallReceiverInfo::TryMethodCallResult { method_name } => format!("{method_name}()?"),

@@ -61,8 +61,21 @@ Exit criteria:
 - Add one DB assertion, one RAG assertion if exposed downstream, one TUI/tool
   assertion if exposed downstream, and one consolidated doc note.
 
-Status: latest method-result local-binding receiver slice completed and
-verified; ready for the next proof-carrier selection.
+Status: latest awaited method-call receiver slice completed and verified;
+ready for the next proof-carrier selection.
+
+Latest completed slice: awaited method-call receiver proof for unsupported
+`future_method().await.unwrap()` rows. Parser extraction now preserves an
+outer method call whose receiver is the awaited result of an inner method call
+as `AwaitMethodCallResult { method_name }`; transform, DB receiver decoding,
+RAG call context, and TUI formatting preserve that payload while the resolver
+keeps these rows unsupported and targetless. The refreshed axum
+`corpus_axum_call_graph_2026-07-10.sqlite` seed proves the real-corpus split:
+only the remaining arbitrary awaited-expression `unwrap` rows stay in the
+coarse `AwaitResult` bucket, while awaited method-call receivers are counted by
+their inner method payload, including
+`self.sem.clone().acquire_owned().await.unwrap()` at
+`axum/src/serve/listener.rs:143`.
 
 Latest completed slice: method-result local-binding receiver proof for
 `IntoIterator::into_iter().size_hint()` frontiers. Parser extraction now

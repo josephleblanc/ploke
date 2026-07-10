@@ -154,14 +154,19 @@ fn receiver_path_call(call: &syn::ExprCall) -> Option<MethodCallReceiver> {
 }
 
 fn receiver_await_path_call(await_expr: &syn::ExprAwait) -> Option<MethodCallReceiver> {
-    let syn::Expr::Call(call) = unparen_expr(await_expr.base.as_ref()) else {
-        return None;
-    };
-    let syn::Expr::Path(path) = call.func.as_ref() else {
-        return None;
-    };
-    let path = path_call_segments(path);
-    (!path.is_empty()).then_some(MethodCallReceiver::AwaitPathCallResult { path })
+    match unparen_expr(await_expr.base.as_ref()) {
+        syn::Expr::Call(call) => {
+            let syn::Expr::Path(path) = call.func.as_ref() else {
+                return None;
+            };
+            let path = path_call_segments(path);
+            (!path.is_empty()).then_some(MethodCallReceiver::AwaitPathCallResult { path })
+        }
+        syn::Expr::MethodCall(call) => Some(MethodCallReceiver::AwaitMethodCallResult {
+            method_name: call.method.to_string(),
+        }),
+        _ => None,
+    }
 }
 
 fn receiver_try_call(try_expr: &syn::ExprTry) -> Option<MethodCallReceiver> {

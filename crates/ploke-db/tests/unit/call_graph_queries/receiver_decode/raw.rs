@@ -86,6 +86,13 @@ fn context_for_owner_decodes_raw_method_receivers() -> Result<(), DbError> {
             },
         ),
         raw_receiver(
+            "AwaitMethodCallResult",
+            list(&["send"]),
+            CallReceiver::AwaitMethodCallResult {
+                method_name: "send".to_string(),
+            },
+        ),
+        raw_receiver(
             "IfBranchPaths",
             list(&["LocalAssoc", "", "LocalAssoc"]),
             CallReceiver::IfBranchPaths {

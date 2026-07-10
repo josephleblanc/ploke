@@ -1031,7 +1031,8 @@ async fn code_item_lookup_returns_real_corpus_await_receiver_targetless_row() {
     //   axum/src/serve/listener.rs:143 calls
     //   `self.sem.clone().acquire_owned().await.unwrap()`.
     // The exact lookup tool should expose the DB/RAG-pinned targetless
-    // `AwaitResult.unwrap` row without inventing an outgoing target edge.
+    // `AwaitMethodCallResult(acquire_owned).unwrap` row without inventing an
+    // outgoing target edge.
     let site_id =
         assert_await_result_unwrap_context(call_context, fixture.owner, "code_item_lookup");
     assert_await_result_unwrap_proof(proof_context, fixture.owner, site_id, "code_item_lookup");
@@ -1045,7 +1046,7 @@ async fn code_item_lookup_returns_real_corpus_await_receiver_targetless_row() {
         .find(|call| call.site_id == site_id)
         .unwrap_or_else(|| {
             panic!(
-                "code_item_lookup should expose AwaitResult unwrap in unsupported frontier rows: {unsupported_calls:#?}"
+                "code_item_lookup should expose AwaitMethodCallResult unwrap in unsupported frontier rows: {unsupported_calls:#?}"
             )
         });
     assert_eq!(unsupported.owner_id, fixture.owner);
@@ -1072,7 +1073,7 @@ async fn code_item_lookup_returns_real_corpus_await_receiver_targetless_row() {
             .parse::<usize>()
             .expect("proof count")
             >= 2,
-        "code_item_lookup should surface targetless AwaitResult proof rows"
+        "code_item_lookup should surface targetless AwaitMethodCallResult proof rows"
     );
 }
 

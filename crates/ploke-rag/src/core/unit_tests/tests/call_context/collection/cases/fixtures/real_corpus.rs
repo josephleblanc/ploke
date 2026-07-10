@@ -3181,7 +3181,9 @@ async fn call_context_collection_reads_axum_await_result_receiver_gap() -> Resul
         .unwrap_or_else(|| panic!("ConnLimiter::accept should receive outgoing call context"));
     let expected_callee = CallCalleeInfo::Method {
         name: "unwrap".to_string(),
-        receiver: Some(CallReceiverInfo::AwaitResult),
+        receiver: Some(CallReceiverInfo::AwaitMethodCallResult {
+            method_name: "acquire_owned".to_string(),
+        }),
     };
     let await_unwrap = context
         .iter()
@@ -3195,13 +3197,13 @@ async fn call_context_collection_reads_axum_await_result_receiver_gap() -> Resul
     //   axum/src/serve/listener.rs:143 calls
     //   `self.sem.clone().acquire_owned().await.unwrap()`.
     // Current contract: RAG owner-seeded call context preserves the DB-pinned
-    // `AwaitResult.unwrap` row as unsupported and targetless. It must expose
-    // zero traversal targets rather than guessing the concrete awaited result
-    // type or a local `unwrap` callee.
+    // `AwaitMethodCallResult(acquire_owned).unwrap` row as unsupported and
+    // targetless. It must expose zero traversal targets rather than guessing
+    // the concrete awaited result type or a local `unwrap` callee.
     assert_eq!(
         await_unwrap.len(),
         1,
-        "RAG call context should expose exactly the listener AwaitResult unwrap row: {context:#?}"
+        "RAG call context should expose exactly the listener AwaitMethodCallResult unwrap row: {context:#?}"
     );
 
     let call = await_unwrap[0];
@@ -3210,7 +3212,7 @@ async fn call_context_collection_reads_axum_await_result_receiver_gap() -> Resul
     assert_eq!(call.resolution, None);
     assert!(
         call.targets.is_empty(),
-        "AwaitResult unwrap should remain targetless in RAG call context: {call:#?}"
+        "AwaitMethodCallResult unwrap should remain targetless in RAG call context: {call:#?}"
     );
     let reach = rag
         .exact_call_reach_for_owner(
@@ -3227,7 +3229,7 @@ async fn call_context_collection_reads_axum_await_result_receiver_gap() -> Resul
         .find(|frontier| frontier.site_id == call.site_id)
         .unwrap_or_else(|| {
             panic!(
-                "RAG reach should expose AwaitResult unwrap in unsupported frontier rows: {reach:#?}"
+                "RAG reach should expose AwaitMethodCallResult unwrap in unsupported frontier rows: {reach:#?}"
             )
         });
     assert_eq!(unsupported.owner_id, owner);

@@ -2050,7 +2050,9 @@ fn axum_usage_questions_surface_fail_closed_debugging_context() -> Result<(), Db
         &db,
         owner,
         "unwrap",
-        &CallReceiver::AwaitResult,
+        &CallReceiver::AwaitMethodCallResult {
+            method_name: "acquire_owned".to_string(),
+        },
         CallStatusKind::Unsupported,
         "axum/src/serve/listener.rs:143 awaited-result unwrap",
     )?;

@@ -62,15 +62,16 @@ async fn proof_context_collection_preserves_axum_await_result_receiver_blocker()
     //   `self.sem.clone().acquire_owned().await.unwrap()`.
     // Expected proof traversal: owner-seeded proof context must include the
     // call_site plus blocked call_resolution facts for the exact unsupported,
-    // targetless AwaitResult `unwrap` site. There are zero callee edges for
-    // this row until awaited-result receiver resolution is implemented.
+    // targetless AwaitMethodCallResult(acquire_owned) `unwrap` site. There are
+    // zero callee edges for this row until awaited-result receiver resolution
+    // is implemented.
     assert_blocked_resolution(rows, owner, "type_resolution_missing");
     assert_site_blocker(
         rows,
         owner,
         site_id,
         "type_resolution_missing",
-        "ConnLimiter::accept AwaitResult unwrap",
+        "ConnLimiter::accept AwaitMethodCallResult unwrap",
     );
 
     Ok(())

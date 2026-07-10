@@ -145,6 +145,7 @@ impl CallRelationResolver<'_> {
             MethodCallReceiver::AwaitPathCallResult { path } => {
                 self.resolve_path_result_method_call(call, path, type_relations)?
             }
+            MethodCallReceiver::AwaitMethodCallResult { .. } => AssocPathResolution::Unsupported,
             MethodCallReceiver::TryPathCallResult { path } => {
                 self.resolve_try_path_result_method_call(call, path, type_relations)?
             }
@@ -1605,6 +1606,9 @@ impl CallRelationResolver<'_> {
             }
             MethodCallReceiver::AwaitPathCallResult { path } => {
                 self.resolve_path_result_method_call(call, path, type_relations)
+            }
+            MethodCallReceiver::AwaitMethodCallResult { .. } => {
+                Ok(AssocPathResolution::Unsupported)
             }
             MethodCallReceiver::TryPathCallResult { path } => {
                 self.resolve_try_path_result_method_call(call, path, type_relations)

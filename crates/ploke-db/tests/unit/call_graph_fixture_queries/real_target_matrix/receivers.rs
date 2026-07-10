@@ -1602,9 +1602,10 @@ fn axum_real_target_await_result_receivers_are_documented_gaps() -> Result<(), D
     //   axum/src/serve/listener.rs:143 calls
     //   `self.sem.clone().acquire_owned().await.unwrap()`.
     // Current model gap: awaited-result receiver shapes are visible in the
-    // corpus, but they stay targetless. The test-client method owner is
-    // visible, and its async-block `unwrap()` row is now owned by the nested
-    // async executable instead of being flattened into that owner.
+    // corpus, but they stay targetless. Receivers produced by awaited method
+    // calls preserve the inner method name as proof context, while the
+    // test-client async-block `unwrap()` row is now owned by the nested async
+    // executable instead of being flattened into the enclosing method owner.
     let listener_owner = method_id_by_name_body_and_file_suffix(
         &db,
         "accept",
@@ -1615,7 +1616,9 @@ fn axum_real_target_await_result_receivers_are_documented_gaps() -> Result<(), D
         &db,
         listener_owner,
         "unwrap",
-        &CallReceiver::AwaitResult,
+        &CallReceiver::AwaitMethodCallResult {
+            method_name: "acquire_owned".to_string(),
+        },
         CallStatusKind::Unsupported,
         "axum/src/serve/listener.rs:143",
     )?;
@@ -1640,7 +1643,7 @@ fn axum_real_target_await_result_receivers_are_documented_gaps() -> Result<(), D
         "AwaitResult",
         None,
         CallStatusKind::Unsupported,
-        44,
+        2,
     )?;
     // Matrix: awaited-result receiver rows from
     // `docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md`.
@@ -1651,8 +1654,10 @@ fn axum_real_target_await_result_receivers_are_documented_gaps() -> Result<(), D
     //     `self.builder.send().await.unwrap()` is represented by a nested
     //     async-block owner, not by the enclosing method owner.
     // All currently projected awaited-result `unwrap()` rows are targetless:
-    // the receiver value is the result of an arbitrary awaited expression, so
-    // the call graph must not fabricate a concrete callee edge.
+    // the receiver value is the result of an awaited expression, so the call
+    // graph must not fabricate a concrete callee edge. Awaited method-call
+    // receivers preserve the inner method name as proof payload instead of
+    // collapsing into this coarse bucket.
     assert_targetless_method_line_fanout(
         &db,
         &CORPUS_AXUM_CALL_GRAPH,
@@ -1660,53 +1665,41 @@ fn axum_real_target_await_result_receivers_are_documented_gaps() -> Result<(), D
         "AwaitResult",
         None,
         CallStatusKind::Unsupported,
-        &[
-            SourceLineFanout {
-                file_suffix: "axum-core/src/ext_traits/request.rs",
-                lines: &[348, 357, 368, 380, 396, 418, 419],
-            },
-            SourceLineFanout {
-                file_suffix: "axum-core/src/ext_traits/request_parts.rs",
-                lines: &[152, 163],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/extract/connect_info.rs",
-                lines: &[326, 330, 331, 367, 371, 372, 416, 417],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/middleware/from_fn.rs",
-                lines: &[410, 415],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/response/sse.rs",
-                lines: &[720, 724, 728, 761, 767, 797, 803, 808],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/routing/method_routing.rs",
-                lines: &[1702, 1702],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/routing/tests/get_to_head.rs",
-                lines: &[20, 54],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/routing/tests/mod.rs",
-                lines: &[1136, 1138, 1154, 1156],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/serve/listener.rs",
-                lines: &[143],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/serve/mod.rs",
-                lines: &[725, 747, 801],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/test_helpers/test_client.rs",
-                lines: &[156, 160, 168, 172],
-            },
-        ],
+        &[SourceLineFanout {
+            file_suffix: "axum/src/extract/connect_info.rs",
+            lines: &[326, 367],
+        }],
     )?;
+
+    for (method_name, expected_count) in [
+        ("acquire_owned", 1),
+        ("bytes", 1),
+        ("call", 1),
+        ("chunk", 1),
+        ("chunk_text", 8),
+        ("collect", 3),
+        ("extract", 3),
+        ("extract_parts", 2),
+        ("extract_parts_with_state", 2),
+        ("extract_with_state", 2),
+        ("json", 1),
+        ("oneshot", 5),
+        ("ready", 1),
+        ("send", 4),
+        ("send_request", 1),
+        ("text", 4),
+        ("write_all", 2),
+    ] {
+        assert_targetless_method_rows(
+            &db,
+            "unwrap",
+            "AwaitMethodCallResult",
+            Some(&[method_name]),
+            CallStatusKind::Unsupported,
+            expected_count,
+        )?;
+    }
+
     assert_targetless_method_rows(
         &db,
         "send",
