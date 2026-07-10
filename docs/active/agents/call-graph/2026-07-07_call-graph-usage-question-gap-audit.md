@@ -14,9 +14,10 @@ Related planning files:
 The core query surface is now substantially implemented. DB tests cover real
 axum usage questions for paths, impact, reach, module-boundary edges,
 frontiers, source files/modules/crates/cfgs, argument shape, test/non-test
-caller buckets, public caller buckets, private zero-incoming nodes, and
-proc-macro entrypoint impact. RAG and tool tests preserve the same major
-surfaces through exact APIs and tool payloads.
+caller buckets, public caller buckets, private zero-incoming nodes, generated
+entrypoint-summary proof context, and proc-macro entrypoint impact. RAG and
+tool tests preserve the same major surfaces through exact APIs and tool
+payloads.
 
 The remaining gaps are mostly not missing query helpers. They are missing proof
 inputs:
@@ -27,19 +28,19 @@ inputs:
 - source/sink and policy annotations for security/performance/refactoring
   questions that need domain semantics beyond caller/callee reachability;
 - generated harness/build-entrypoint summaries for full binary/test/CI
-  reachability.
+  reachability beyond admitted proof-only entrypoint summaries.
 
 ## Usage Question Coverage
 
 | Section | Current evidence | Status |
 | --- | --- | --- |
 | Impact analysis | `call_impact_for_target`, RAG `exact_call_impact_for_target`, `code_item_lookup`, and `code_item_edges` cover eventual callers, public callers, test/non-test buckets, direct callsites, source files/modules/crates, and callsite buckets. | Strong current surface. |
-| Dead code detection | `private_uncalled_nodes`, RAG `exact_private_uncalled_nodes`, and `code_private_uncalled` cover private zero-incoming nodes and cross-check empty impact reports. | Strong for stored source call graph; generated harness reach remains out of scope. |
+| Dead code detection | `private_uncalled_nodes`, RAG `exact_private_uncalled_nodes`, and `code_private_uncalled` cover private zero-incoming nodes and cross-check empty impact reports. `code_private_uncalled` now also exposes admitted generated-entrypoint summaries for returned nodes. | Strong for stored source call graph; generated harness reach remains proof-only and does not become a local call edge. |
 | Navigation | `callers_for_target`, `call_sites_for_target`, `call_context_for_owner`, `call_paths_*`, RAG exact paths, and `code_item_call_path` cover direct and multi-hop traversal. | Strong current surface. |
 | Security analysis | Reach/path/frontier queries can answer "can A reach B?" and expose unsafe/FFI/external frontier rows, including `abs(value)` and unsafe-block metadata. | Partial: source/sink classification and policy-order checks are not modeled. |
 | Performance work | Reach/path/frontier queries expose known helpers, external calls, cfgs, and argument shape. | Partial: hot-path/cost/blocking annotations are not modeled. |
 | Refactoring support | Impact, direct callsites, source files/modules/crates, boundary edges, and callsite buckets support migration planning. | Strong for caller inventory; move-safety/cycle prediction needs dependency-policy rules. |
-| Test planning | Impact test/non-test buckets and source metadata identify stored test callers and fixture-backed coverage. | Partial: generated test harness entrypoints and CI test selection are not modeled. |
+| Test planning | Impact test/non-test buckets, source metadata, and admitted generated test-harness entrypoint summaries identify stored test callers and proof-only generated entrypoints. | Partial: generated harness summaries are proof context, and CI test selection is not modeled. |
 | Architecture review | `module_boundary_edges_from_owner`, reach `boundary_edges`, lookup/edges payloads, and source modules expose cross-module call edges. | Strong for module-boundary inventory; intended layer policies are not modeled. |
 | Debugging | Owner/target context, exact paths, frontier status buckets, proof context, and source spans map persisted edges/blockers back to source callsites. | Strong current surface. |
 | API understanding | Impact buckets, argument/generic argument counts, constructor relation kinds, path-shape counts, aliases/re-exports, and source crates show real target usage. | Strong current surface. |
@@ -55,7 +56,9 @@ inputs:
   `crates/ploke-rag/src/core/unit_tests/tests/call_context/collection/cases/fixtures/real_corpus.rs`.
 - TUI/tools: `code_item_call_path`, `code_item_lookup`, `code_item_edges`,
   `code_private_uncalled`, and targetless matrix integration tests under
-  `crates/ploke-tui/tests/integration/`.
+  `crates/ploke-tui/tests/integration/`. The private-uncalled tool now exposes
+  admitted generated-entrypoint summaries without fabricating source call
+  edges.
 
 ## Selected Next Bucket
 
