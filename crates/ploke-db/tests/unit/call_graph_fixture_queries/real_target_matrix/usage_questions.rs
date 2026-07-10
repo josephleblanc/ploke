@@ -1435,6 +1435,109 @@ fn axum_usage_questions_report_reachable_effect_seed_for_task_spawn() -> Result<
 }
 
 #[test]
+fn axum_usage_questions_report_reachable_effect_policy_violation() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Security/performance:
+    //   "Can this entrypoint reach a sensitive sink that is outside the
+    //   caller's reviewed effect policy?"
+    //
+    // Source-oracle chain:
+    //   axum/src/form.rs:262
+    //     `deserialize_error_status_codes` calls `TestClient::new(app)`.
+    //   axum/src/test_helpers/test_client.rs:36
+    //     `TestClient::new` calls `spawn_service(svc)`.
+    //   axum/src/test_helpers/test_client.rs:23
+    //     `spawn_service` calls `tokio::spawn(...)`.
+    // Expected contract: a caller-supplied policy allowlist is evaluated over
+    // existing reachable effect seeds only. The disallowed `async_task_spawn`
+    // effect remains attached to the external targetless `tokio::spawn`
+    // frontier and does not become a local traversal edge.
+    let start = function_id_by_name_in_module(
+        &db,
+        &["crate", "form", "tests"],
+        "deserialize_error_status_codes",
+    )?;
+    let spawn_owner = function_id_by_name_in_module(
+        &db,
+        &["crate", "test_helpers", "test_client"],
+        "spawn_service",
+    )?;
+    let spawn_context = db.call_context_for_owner(spawn_owner)?;
+    let spawn_row = row_by_path(&spawn_context, &["tokio", "spawn"]);
+    assert_external_targetless(spawn_row);
+
+    db.upsert_proof_fact_values(&[json!({
+        "fact_kind": "effect_seed",
+        "schema_version": "ploke-proof-facts.v1",
+        "effect_seed_id": "effect:axum-test-client-task-spawn-policy",
+        "call_site_id": spawn_row.site.id.to_string(),
+        "effect_class": "async_task_spawn",
+        "confidence": "source-oracle",
+        "blocker_if_unresolved": false,
+        "evidence_use": "proof_only"
+    })])?;
+
+    let violations = db.call_effect_policy_violations_for_owner(
+        start,
+        CallPathOptions {
+            max_depth: 3,
+            max_paths: 16,
+        },
+        &["ffi_boundary"],
+    )?;
+    let violation = violations
+        .iter()
+        .find(|violation| {
+            violation.effect.effect_seed_id == "effect:axum-test-client-task-spawn-policy"
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "policy helper should report the reachable async_task_spawn violation: {violations:#?}"
+            )
+        });
+    assert_eq!(violation.allowed_effects, vec!["ffi_boundary".to_string()]);
+    assert_eq!(violation.effect.effect_class, "async_task_spawn");
+    assert_eq!(violation.effect.call_site.site.id, spawn_row.site.id);
+    assert_eq!(
+        violation.effect.call_site.status.status,
+        CallStatusKind::External
+    );
+    assert!(
+        violation
+            .effect
+            .paths_to_owner
+            .iter()
+            .any(|path| path.start_id == start && path.end_id == spawn_owner && path.depth == 2),
+        "policy violation should preserve the resolved path to the sink owner: {violation:#?}"
+    );
+    assert!(
+        relations_for_site(&db, violation.effect.call_site.site.id)?
+            .rows
+            .is_empty(),
+        "policy evaluation must not fabricate local call edges"
+    );
+
+    let allowed = db.call_effect_policy_violations_for_owner(
+        start,
+        CallPathOptions {
+            max_depth: 3,
+            max_paths: 16,
+        },
+        &["async_task_spawn"],
+    )?;
+    assert!(
+        allowed.is_empty(),
+        "allowing async_task_spawn should clear the policy violation: {allowed:#?}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn axum_usage_questions_report_dyn_future_poll_runtime_dispatch_blocker() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 

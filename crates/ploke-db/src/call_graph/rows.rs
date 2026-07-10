@@ -225,6 +225,13 @@ pub struct CallReachEffect {
     pub blocker_reasons: Vec<String>,
 }
 
+/// Reachable effect that is outside a caller-supplied policy allowlist.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CallEffectPolicyViolation {
+    pub allowed_effects: Vec<String>,
+    pub effect: CallReachEffect,
+}
+
 /// Active external-summary blocker reachable from an owner.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ExternalSummaryNeed {

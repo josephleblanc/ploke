@@ -11,9 +11,10 @@ use crate::{
 };
 
 use super::super::{
-    CallContextRow, CallImpactReport, CallNodeInfo, CallPath, CallPathEdge, CallPathOptions,
-    CallReachEffect, CallReachReport, CallRelationKind, CallSiteBucket, CallSiteKind, CallSiteRow,
-    CallStatusKind, ExternalSummaryNeed, ModuleBoundaryEdge,
+    CallContextRow, CallEffectPolicyViolation, CallImpactReport, CallNodeInfo, CallPath,
+    CallPathEdge, CallPathOptions, CallReachEffect, CallReachReport, CallRelationKind,
+    CallSiteBucket, CallSiteKind, CallSiteRow, CallStatusKind, ExternalSummaryNeed,
+    ModuleBoundaryEdge,
 };
 use super::metadata::{call_node_info_rank, call_node_infos, decode_call_node_info};
 
@@ -248,6 +249,44 @@ impl Database {
             )
         });
         Ok(effects)
+    }
+
+    /// Lists reachable effect annotations outside the supplied allowlist.
+    ///
+    /// This is a derived policy helper over `effect_seed` proof facts. It does
+    /// not add proof facts, infer effect classes, or promote targetless
+    /// frontier rows into traversal edges.
+    pub fn call_effect_policy_violations_for_owner<S: AsRef<str>>(
+        &self,
+        owner_id: Uuid,
+        options: CallPathOptions,
+        allowed_effects: &[S],
+    ) -> Result<Vec<CallEffectPolicyViolation>, DbError> {
+        let allowed = allowed_effects
+            .iter()
+            .map(|effect| effect.as_ref().to_string())
+            .collect::<BTreeSet<_>>();
+        let allowed_effects = allowed.iter().cloned().collect::<Vec<_>>();
+
+        let mut violations = self
+            .call_effects_reachable_from_owner(owner_id, options)?
+            .into_iter()
+            .filter(|effect| !allowed.contains(&effect.effect_class))
+            .map(|effect| CallEffectPolicyViolation {
+                allowed_effects: allowed_effects.clone(),
+                effect,
+            })
+            .collect::<Vec<_>>();
+
+        violations.sort_by_key(|violation| {
+            (
+                violation.effect.call_site.site.owner_id.as_u128(),
+                violation.effect.call_site.site.span,
+                violation.effect.effect_class.clone(),
+                violation.effect.effect_seed_id.clone(),
+            )
+        });
+        Ok(violations)
     }
 
     /// Lists active external-summary blockers attached to callsites reachable from `owner_id`.

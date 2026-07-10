@@ -11,15 +11,16 @@ mod unit_tests;
 use super::*;
 use ploke_core::rag_types::AssembledContext;
 use ploke_core::rag_types::{
-    CallCalleeInfo, CallContextInfo, CallEndpointKind, CallExpansionInfo, CallExpansionKind,
-    CallImpactInfo, CallNodeInfo, CallPathEdgeInfo, CallPathInfo, CallPathNodeInfo,
-    CallReachEffectInfo, CallReachInfo, CallReceiverInfo,
+    CallCalleeInfo, CallContextInfo, CallEffectPolicyViolationInfo, CallEndpointKind,
+    CallExpansionInfo, CallExpansionKind, CallImpactInfo, CallNodeInfo, CallPathEdgeInfo,
+    CallPathInfo, CallPathNodeInfo, CallReachEffectInfo, CallReachInfo, CallReceiverInfo,
     CallResolutionKind as RagCallResolutionKind, CallSiteBucketInfo,
     CallSiteKind as RagCallSiteKind, CallStatusKind as RagCallStatusKind, CallTargetInfo,
     CallTargetKind, CanonPath, ExternalSummaryNeedInfo, NodeFilepath, ProofContextInfo,
 };
 use ploke_db::{
     CallContextCandidate, CallContextOptions, CallContextRelation, CallContextRow, CallContextSeed,
+    CallEffectPolicyViolation as DbCallEffectPolicyViolation,
     CallImpactReport as DbCallImpactReport, CallNodeInfo as DbCallNodeInfo, CallPath as DbCallPath,
     CallPathEdge as DbCallPathEdge, CallPathOptions, CallReachEffect as DbCallReachEffect,
     CallReachReport as DbCallReachReport, CallReceiver, CallRelationKind, CallResolutionKind,
@@ -526,6 +527,16 @@ fn external_summary_need_info(
     })
 }
 
+fn effect_policy_violation_info(
+    db: &Database,
+    row: DbCallEffectPolicyViolation,
+) -> Result<CallEffectPolicyViolationInfo, RagError> {
+    Ok(CallEffectPolicyViolationInfo {
+        allowed_effects: row.allowed_effects,
+        effect: reach_effect_info(db, row.effect)?,
+    })
+}
+
 fn call_node_info(row: DbCallNodeInfo) -> CallNodeInfo {
     CallNodeInfo {
         id: row.id,
@@ -930,6 +941,25 @@ impl RagService {
                 .call_effects_reachable_from_owner(owner_id, options)?
                 .into_iter()
                 .map(|row| reach_effect_info(self.db.as_ref(), row))
+                .collect::<Result<Vec<_>, RagError>>()?,
+        ))
+    }
+
+    pub fn exact_call_effect_policy_violations_for_owner<S: AsRef<str>>(
+        &self,
+        owner_id: Uuid,
+        options: CallPathOptions,
+        allowed_effects: &[S],
+    ) -> Result<Option<Vec<CallEffectPolicyViolationInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .call_effect_policy_violations_for_owner(owner_id, options, allowed_effects)?
+                .into_iter()
+                .map(|row| effect_policy_violation_info(self.db.as_ref(), row))
                 .collect::<Result<Vec<_>, RagError>>()?,
         ))
     }

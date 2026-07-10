@@ -491,6 +491,12 @@ pub struct CallReachEffectInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct CallEffectPolicyViolationInfo {
+    pub allowed_effects: Vec<String>,
+    pub effect: CallReachEffectInfo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct ExternalSummaryNeedInfo {
     #[serde(default)]
     pub paths_to_owner: Vec<CallPathInfo>,
