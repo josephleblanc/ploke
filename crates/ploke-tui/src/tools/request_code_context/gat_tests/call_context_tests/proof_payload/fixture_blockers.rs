@@ -66,7 +66,7 @@ async fn request_code_context_returns_fixture_blocker_proof_context() -> color_e
     Ok(())
 }
 
-fn blocker_cases() -> [Case; 9] {
+fn blocker_cases() -> [Case; 15] {
     [
         Case {
             label: "String::new external blocker",
@@ -118,6 +118,48 @@ fn blocker_cases() -> [Case; 9] {
             reasons: &["type_resolution_missing"],
         },
         Case {
+            label: "generic FnOnce path blocker",
+            module_path: &["crate"],
+            owner: "call_generic_fn_once_value_binding",
+            expected_rows: 2,
+            reasons: &["type_resolution_missing"],
+        },
+        Case {
+            label: "parenthesized function pointer dynamic blocker",
+            module_path: &["crate"],
+            owner: "call_parenthesized_function_pointer_param",
+            expected_rows: 2,
+            reasons: &["dynamic_dispatch_unbounded"],
+        },
+        Case {
+            label: "branch function pointer dynamic blocker",
+            module_path: &["crate"],
+            owner: "call_if_function_pointer_param_branch",
+            expected_rows: 2,
+            reasons: &["dynamic_dispatch_unbounded"],
+        },
+        Case {
+            label: "match function pointer dynamic blocker",
+            module_path: &["crate"],
+            owner: "call_match_function_pointer_param_arm",
+            expected_rows: 2,
+            reasons: &["dynamic_dispatch_unbounded"],
+        },
+        Case {
+            label: "function pointer cast dynamic blocker",
+            module_path: &["crate"],
+            owner: "call_function_pointer_param_cast",
+            expected_rows: 2,
+            reasons: &["dynamic_dispatch_unbounded"],
+        },
+        Case {
+            label: "parenthesized generic FnOnce dynamic blocker",
+            module_path: &["crate"],
+            owner: "call_parenthesized_generic_fn_once_value_binding",
+            expected_rows: 2,
+            reasons: &["dynamic_dispatch_unbounded"],
+        },
+        Case {
             label: "boxed dyn Fn setup blocker",
             module_path: &["crate"],
             owner: "call_boxed_dyn_fn_value_binding",
@@ -147,6 +189,16 @@ fn resolve_case(db: &Database, case: Case) -> color_eyre::Result<ResolvedCase> {
             "call_ambiguous_trait_method" => "ambiguous_method_blocker_proof_context",
             "call_unimported_trait_method" => "unimported_trait_method_blocker_proof_context",
             "call_function_pointer_param" => "fn_pointer_blocker_proof_context",
+            "call_generic_fn_once_value_binding" => "generic_fn_once_blocker_proof_context",
+            "call_parenthesized_function_pointer_param" => {
+                "parenthesized_fn_pointer_blocker_proof_context"
+            }
+            "call_if_function_pointer_param_branch" => "branch_fn_pointer_blocker_proof_context",
+            "call_match_function_pointer_param_arm" => "match_fn_pointer_blocker_proof_context",
+            "call_function_pointer_param_cast" => "cast_fn_pointer_blocker_proof_context",
+            "call_parenthesized_generic_fn_once_value_binding" => {
+                "parenthesized_generic_fn_once_blocker_proof_context"
+            }
             "call_boxed_dyn_fn_value_binding" => "boxed_dyn_fn_blocker_proof_context",
             "call_parenthesized_boxed_dyn_fn_value_binding" => {
                 "parenthesized_boxed_dyn_fn_blocker_proof_context"

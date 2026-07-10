@@ -64,7 +64,7 @@ async fn proof_context_collection_preserves_projected_blocker_rows() -> Result<(
     Ok(())
 }
 
-fn blocker_cases() -> [Case; 13] {
+fn blocker_cases() -> [Case; 19] {
     [
         Case {
             label: "String::new external blocker",
@@ -114,6 +114,48 @@ fn blocker_cases() -> [Case; 13] {
             owner: "call_function_pointer_param",
             expected_rows: 2,
             reasons: &["type_resolution_missing"],
+        },
+        Case {
+            label: "generic FnOnce path blocker",
+            module_path: &["crate"],
+            owner: "call_generic_fn_once_value_binding",
+            expected_rows: 2,
+            reasons: &["type_resolution_missing"],
+        },
+        Case {
+            label: "parenthesized function pointer dynamic blocker",
+            module_path: &["crate"],
+            owner: "call_parenthesized_function_pointer_param",
+            expected_rows: 2,
+            reasons: &["dynamic_dispatch_unbounded"],
+        },
+        Case {
+            label: "branch function pointer dynamic blocker",
+            module_path: &["crate"],
+            owner: "call_if_function_pointer_param_branch",
+            expected_rows: 2,
+            reasons: &["dynamic_dispatch_unbounded"],
+        },
+        Case {
+            label: "match function pointer dynamic blocker",
+            module_path: &["crate"],
+            owner: "call_match_function_pointer_param_arm",
+            expected_rows: 2,
+            reasons: &["dynamic_dispatch_unbounded"],
+        },
+        Case {
+            label: "function pointer cast dynamic blocker",
+            module_path: &["crate"],
+            owner: "call_function_pointer_param_cast",
+            expected_rows: 2,
+            reasons: &["dynamic_dispatch_unbounded"],
+        },
+        Case {
+            label: "parenthesized generic FnOnce dynamic blocker",
+            module_path: &["crate"],
+            owner: "call_parenthesized_generic_fn_once_value_binding",
+            expected_rows: 2,
+            reasons: &["dynamic_dispatch_unbounded"],
         },
         Case {
             label: "boxed dyn Fn path setup blocker",

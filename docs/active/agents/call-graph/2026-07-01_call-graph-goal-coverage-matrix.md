@@ -50,7 +50,39 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: fixture test-body macro blocker proof propagation.
+Current bucket: public callable parameter blocker proof propagation.
+
+Exit criteria:
+
+- Use the existing fixture source oracles for public callable parameter API
+  boundaries: `call_function_pointer_param`,
+  `call_parenthesized_function_pointer_param`,
+  `call_if_function_pointer_param_branch`,
+  `call_match_function_pointer_param_arm`,
+  `call_function_pointer_param_cast`, `call_generic_fn_once_value_binding`,
+  and `call_parenthesized_generic_fn_once_value_binding`.
+- Keep these rows targetless unsupported because public callers do not provide
+  complete source-visible callable values.
+- Assert DB context/proof, RAG proof-context, and TUI proof payload surfaces
+  expose `type_resolution_missing` for path rows and
+  `dynamic_dispatch_unbounded` for dynamic rows without traversal edges.
+
+Status: completed for this checkpoint.
+
+Latest completed slice: the remaining fixture-backed public callable parameter
+rows are now covered beyond the parser/DB context harness. DB blocker proof
+queries, RAG proof-context collection, and TUI request-code-context proof
+payloads preserve both path and dynamic public-parameter blockers without
+inventing traversal edges.
+
+Next bucket: re-check remaining unsupported semantic proof inputs before
+selecting another parser/resolver slice; likely candidates are a reviewed
+dependency-root source oracle, missing trait visibility proof, or a new
+bounded local binding/type proof carrier. Do not keep polishing public callable
+parameter blockers unless there is new caller-value or initializer proof beyond
+the fail-closed blocker rows.
+
+Previous completed bucket: fixture test-body macro blocker proof propagation.
 
 Exit criteria:
 
@@ -69,13 +101,6 @@ Latest completed slice: the fixture test-body `assert_eq!` macro row is now
 covered beyond the parser harness. DB call-context/proof queries, RAG
 proof-context collection, and TUI request-code-context proof payloads all
 preserve the targetless macro blocker row.
-
-Next bucket: re-check remaining unsupported semantic proof inputs before
-selecting another parser/resolver slice; likely candidates are a reviewed
-dependency-root source oracle, missing trait visibility proof, or a new
-bounded local binding/type proof carrier. Do not keep polishing macro blocker
-rows unless there is new macro expansion evidence beyond the proof-only
-blocker.
 
 Previous completed bucket: async closure callee evidence and proof-only
 poll/resume blockers.

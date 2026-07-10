@@ -112,6 +112,16 @@ fn fixture_projection_marks_real_parenthesized_callable_dynamic_rows_without_edg
 
     for (owner_name, expected_path, label) in [
         (
+            "call_parenthesized_function_pointer_param",
+            &["f"][..],
+            "parenthesized function-pointer parameter dynamic proof setup",
+        ),
+        (
+            "call_function_pointer_param_cast",
+            &["f"][..],
+            "function-pointer parameter cast dynamic proof setup",
+        ),
+        (
             "call_parenthesized_generic_fn_once_value_binding",
             &["generic_f"][..],
             "parenthesized generic FnOnce dynamic proof setup",
