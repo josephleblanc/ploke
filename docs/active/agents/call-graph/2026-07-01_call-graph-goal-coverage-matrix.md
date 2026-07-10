@@ -50,30 +50,33 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: build/test-domain summary surface for generated test-entrypoint
-proof.
+Current bucket: select the next proof-carrier slice.
 
 Exit criteria:
 
-- Reuse the existing axum source oracle
-  `axum/src/error_handling/mod.rs:257 #[test] fn traits()`, where the generated
-  test harness is represented by an admitted proof-only `entrypoint_summary`
-  rather than a persisted source call edge.
-- Read existing strict `build_domain` proof facts linked through exact
-  definition/caller/callee proof fields; do not infer build targets from source
-  paths or proof-context text search.
-- Expose the linked build/test domain through DB, RAG, exact
-  `code_item_lookup` / `code_item_edges`, and the direct
-  `code_private_uncalled` payload while preserving zero incoming source-call
-  paths for `traits`.
-- Expose the linked generated test entrypoint as a typed `call_test_entrypoints`
-  payload through the same DB, RAG, and TUI surfaces, instead of requiring
-  clients to scrape generic proof context rows.
-- Preserve fail-closed build-domain blockers when cfg/rustc evidence is
-  incomplete; admitted axum cfg/rustc evidence should surface an unblocked
-  domain summary.
+- Choose a row that has new source evidence or proof payload not already covered
+  by the completed buckets below.
+- Keep unsupported rows fail-closed unless the selected proof carrier can prove
+  an exact local target.
+- Add one DB assertion, one RAG assertion if exposed downstream, one TUI/tool
+  assertion if exposed downstream, and one consolidated doc note.
 
-Status: completed for this checkpoint.
+Status: ready for selection; no implementation slice is currently selected.
+
+Latest completed slice: dynamic self-field callee evidence and downstream
+call-context path payloads. Parser, transform, DB, RAG, and exact TUI tests now
+preserve targetless dynamic self-field callees from regenerated axum fixture
+`corpus_axum_call_graph_2026-07-10`: `axum/src/boxed.rs:85`
+`["self", "into_route"]`, `boxed.rs:120` `["self", "into_route"]`,
+`boxed.rs:159` `["self", "layer"]`, and
+`serve/listener.rs:236` `["self", "tap_fn"]`. These rows remain unsupported,
+targetless, and edge-free with `dynamic_dispatch_unbounded` proof blockers.
+`CallContextInfo.path` now exposes the persisted call-site path payload through
+RAG and exact TUI `code_item_lookup` / `code_item_edges` surfaces without
+promoting dynamic dispatch.
+
+Previous completed bucket: build/test-domain summary surface for generated
+test-entrypoint proof.
 
 Latest completed slice: DB, RAG, and exact TUI lookup/edges surfaces now expose
 linked `build_domain` proof metadata for the axum generated test-harness
@@ -99,10 +102,11 @@ targetless, and edge-free until callable trait-object value-flow proof exists.
 
 Next bucket: choose another new proof-carrier slice only if it has fresh proof
 input. The 2026-07-10 inventory found that missing trait visibility proof,
-public callable parameter blockers, fixture test-body macro blockers, the
-axum-core `request_parts.rs:164` tuple-return receiver row, routing helper
-macro/generated rows, generated `IntoServiceFuture::new` rows, caller-supplied
-effect-policy allowlist queries, exact tool policy inputs, and persisted
+public callable parameter blockers, fixture test-body macro blockers, dynamic
+self-field evidence payloads, the axum-core `request_parts.rs:164` tuple-return
+receiver row, routing helper macro/generated rows, generated
+`IntoServiceFuture::new` rows, caller-supplied effect-policy allowlist queries,
+exact tool policy inputs, generated test entrypoint payloads, and persisted
 effect-policy proof annotations are now covered or intentionally fail-closed.
 The memchr boxed `dyn FnMut` rows are likewise covered as explicit blockers.
 Do not revisit those families unless the implementation adds new proof input

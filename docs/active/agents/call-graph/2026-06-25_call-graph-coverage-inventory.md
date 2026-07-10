@@ -166,6 +166,14 @@ future work can choose the next batch without rereading the diary-style notes.
   `cargo test -p ploke-tui --features call_graph code_item_lookup_returns_real_corpus_parse_attrs_callers -- --nocapture`,
   and
   `cargo test -p ploke-tui --features call_graph code_item -- --nocapture`.
+- 2026-07-10: RAG/TUI `CallContextInfo` rows now preserve existing DB
+  callsite `path` payloads. The regenerated axum call-graph fixture
+  `corpus_axum_call_graph_2026-07-10` proves targetless dynamic self-field
+  callees at `axum/src/boxed.rs:85,120,159` and
+  `axum/src/serve/listener.rs:236` keep `["self", "into_route"]`,
+  `["self", "layer"]`, and `["self", "tap_fn"]` visible through DB, RAG,
+  `code_item_lookup`, and `code_item_edges` while remaining unsupported,
+  targetless, and edge-free.
 - 2026-07-01: Existing target-centered impact summaries now have a
   real-corpus public-API caller proof for the `public_callers` bucket. The
   axum source oracle is `MethodRouter::new` in

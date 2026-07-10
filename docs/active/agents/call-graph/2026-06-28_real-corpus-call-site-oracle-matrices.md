@@ -359,9 +359,11 @@ It also asserts that proc-macro callback arguments such as `from_ref::expand` an
 interprocedural callback proof exists. RAG call-context and proof-context tests
 now preserve the four currently projected dynamic callable-field blockers in
 `axum/src/boxed.rs:{85,120,159}` and `axum/src/serve/listener.rs:236`, including
-zero traversal targets and `dynamic_dispatch_unbounded` proof rows. Exact TUI
-`code_item_lookup` and `code_item_edges` tests assert the same four owner-seeded
-targetless rows and blocked proof facts.
+zero traversal targets, `dynamic_dispatch_unbounded` proof rows, and the
+persisted self-field callsite paths `["self", "into_route"]`,
+`["self", "layer"]`, and `["self", "tap_fn"]` through `CallContextInfo.path`.
+Exact TUI `code_item_lookup` and `code_item_edges` tests assert the same four
+owner-seeded targetless rows, blocked proof facts, and path payloads.
 
 ## Fallback Fixture Oracle Matrix
 
