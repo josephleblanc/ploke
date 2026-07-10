@@ -48,6 +48,24 @@ async fn code_private_uncalled_lists_real_corpus_private_zero_caller_target() {
             .ends_with("axum/src/error_handling/mod.rs"),
         "private uncalled target should point at the real axum source file: {target:#?}"
     );
+    let entrypoint = payload
+        .entrypoint_summaries
+        .iter()
+        .find(|entrypoint| entrypoint.node_id.to_string() == target_id)
+        .unwrap_or_else(|| {
+            panic!("private uncalled payload should include the generated test-harness summary: {payload:#?}")
+        });
+    assert!(
+        entrypoint.proof_context.iter().any(|row| {
+            row.kind == "entrypoint_summary"
+                && row.definition_id.as_deref() == Some(target_id.as_str())
+                && row.target_kind.as_deref() == Some("test")
+                && row.target_name.as_deref() == Some("generated-test-harness")
+                && row.summary_class.as_deref() == Some("analyzed_source")
+                && row.status.as_deref() == Some("admitted")
+        }),
+        "entrypoint summary should preserve the generated test-harness proof row: {entrypoint:#?}"
+    );
 
     assert!(payload.total >= payload.returned);
     assert_eq!(payload.truncated, payload.total > payload.returned);
@@ -55,4 +73,8 @@ async fn code_private_uncalled_lists_real_corpus_private_zero_caller_target() {
     let ui = result.ui_payload.as_ref().expect("ui payload");
     assert_eq!(ui_field(ui, "returned"), payload.returned.to_string());
     assert_eq!(ui_field(ui, "truncated"), payload.truncated.to_string());
+    assert_eq!(
+        ui_field(ui, "entrypoint_summaries"),
+        payload.entrypoint_summaries.len().to_string()
+    );
 }

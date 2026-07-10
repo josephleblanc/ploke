@@ -1,10 +1,13 @@
 use std::ops::Deref;
 
 use ploke_core::{
-    rag_types::CallNodeInfo, tool_descriptions::ToolDescription, tool_types::ToolName,
+    rag_types::{CallNodeInfo, ProofContextInfo},
+    tool_descriptions::ToolDescription,
+    tool_types::ToolName,
 };
 use ploke_error::InternalError;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::tools::{Tool, ToolError, ToolErrorCode, ToolInvocationError};
 
@@ -39,11 +42,19 @@ pub struct PrivateUncalledParamsOwned {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrivateEntrypointSummary {
+    pub node_id: Uuid,
+    pub proof_context: Vec<ProofContextInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodePrivateUncalledResult {
     pub total: usize,
     pub returned: usize,
     pub truncated: bool,
     pub nodes: Vec<CallNodeInfo>,
+    #[serde(default)]
+    pub entrypoint_summaries: Vec<PrivateEntrypointSummary>,
 }
 
 pub struct CodePrivateUncalled;
@@ -125,18 +136,53 @@ impl Tool for CodePrivateUncalled {
         };
         let total = nodes.len();
         let returned_nodes = nodes.into_iter().take(max_results).collect::<Vec<_>>();
+        let entrypoint_summaries = match ctx.state.rag.as_ref() {
+            Some(rag) if !rag.proof_context_degraded() => {
+                let mut summaries = Vec::new();
+                for node in &returned_nodes {
+                    let node_id = node.id.to_string();
+                    let proof_context = rag.exact_proof_context(node.id).map_err(|err| {
+                        ploke_error::Error::Internal(InternalError::CompilerError(format!(
+                            "failed to collect entrypoint summaries for private uncalled node {}: {err}",
+                            node.id
+                        )))
+                    })?;
+                    let proof_context = proof_context
+                        .into_iter()
+                        .filter(|row| {
+                            row.kind == "entrypoint_summary"
+                                && row.definition_id.as_deref() == Some(node_id.as_str())
+                                && row.status.as_deref() == Some("admitted")
+                        })
+                        .collect::<Vec<_>>();
+                    if !proof_context.is_empty() {
+                        summaries.push(PrivateEntrypointSummary {
+                            node_id: node.id,
+                            proof_context,
+                        });
+                    }
+                }
+                summaries
+            }
+            _ => Vec::new(),
+        };
         let result = CodePrivateUncalledResult {
             total,
             returned: returned_nodes.len(),
             truncated: total > returned_nodes.len(),
             nodes: returned_nodes,
+            entrypoint_summaries,
         };
         let summary = format!("Found {} private uncalled node(s)", result.total);
         let ui_payload = super::ToolUiPayload::new(Self::name(), ctx.call_id.clone(), summary)
             .with_field("total", result.total.to_string())
             .with_field("returned", result.returned.to_string())
             .with_field("truncated", result.truncated.to_string())
-            .with_field("max_results", max_results.to_string());
+            .with_field("max_results", max_results.to_string())
+            .with_field(
+                "entrypoint_summaries",
+                result.entrypoint_summaries.len().to_string(),
+            );
         let content = serde_json::to_string(&result).map_err(|err| {
             ploke_error::Error::Internal(InternalError::CompilerError(format!(
                 "failed to serialize CodePrivateUncalledResult: {err}. This indicates an error in the ploke application itself, not due to incorrect search terms. Please consider filing an issue on the ploke github."

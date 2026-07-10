@@ -10,7 +10,7 @@ Related planning files:
 - [`2026-06-28_real-corpus-call-site-oracle-matrices.md`](2026-06-28_real-corpus-call-site-oracle-matrices.md)
 - [`2026-07-07_call-graph-usage-question-gap-audit.md`](2026-07-07_call-graph-usage-question-gap-audit.md)
 
-Status date: 2026-07-09
+Status date: 2026-07-10
 Baseline HEAD when created: `19860cc40`
 
 ## Operating Rule
@@ -50,7 +50,44 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: feature-gated serde_json admitted-summary tool proof.
+Current bucket: generated-entrypoint summary proof for private-uncalled tools.
+
+Exit criteria:
+
+- Reuse the existing real-corpus source oracle
+  `axum/src/error_handling/mod.rs:257`, where private `#[test] fn traits()`
+  has no persisted source callers but can be reached by the generated test
+  harness.
+- Keep `private_uncalled_nodes` as a source-call graph query; do not remove the
+  node from zero-incoming results and do not fabricate generated harness call
+  edges.
+- Assert the `code_private_uncalled` payload exposes the admitted
+  `entrypoint_summary` proof row for returned nodes.
+
+Status: completed for this checkpoint.
+
+Latest completed slice: `code_private_uncalled` now keeps its existing `nodes`
+payload stable while adding `entrypoint_summaries` for returned nodes with
+admitted generated-entrypoint proof.
+
+Completed evidence:
+
+- `AxumErrorHandlingTraitsToolFixture` already admits the real axum generated
+  test-harness `entrypoint_summary` for `error_handling::traits`.
+- `code_private_uncalled_lists_real_corpus_private_zero_caller_target` now
+  requires the tool payload to include the admitted proof row with
+  `target_kind = "test"` and `target_name = "generated-test-harness"`.
+- The `nodes` list remains the raw persisted source-call zero-incoming result;
+  generated entrypoint summaries remain proof context, not local call edges.
+- Verification passed:
+  `cargo test -p ploke-tui --test integration code_private_uncalled -- --nocapture`
+  and `cargo check -p ploke-tui`.
+
+Next bucket: return to semantic expansion only if there is a new exact
+parser-owned proof carrier, or choose another usage-question proof surface only
+when an existing proof artifact is not exposed through DB/RAG/TUI.
+
+Previous completed bucket: feature-gated serde_json admitted-summary tool proof.
 
 Exit criteria:
 
@@ -66,7 +103,7 @@ Exit criteria:
 
 Status: completed for this checkpoint.
 
-Latest completed slice: the existing real-corpus `Json::from_bytes` TUI tests
+Previous completed slice: the existing real-corpus `Json::from_bytes` TUI tests
 now admit the feature-gated serde_json frontier summary before tool execution
 and require the tool payloads to expose the admitted proof rows.
 
@@ -83,10 +120,6 @@ Completed evidence:
   same admitted-summary proof through `node_info`.
 - This does not change parser extraction, resolver behavior, DB query
   semantics, or fixture bytes.
-
-Next bucket: return to semantic expansion only if there is a new exact
-parser-owned proof carrier. Do not add more external-summary rows without a
-new source oracle and downstream surface gap.
 
 Previous completed bucket: exact closure-binding cast proof propagation.
 
