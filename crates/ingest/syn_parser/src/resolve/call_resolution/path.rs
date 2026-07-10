@@ -462,12 +462,10 @@ impl CallRelationResolver<'_> {
         targets.sort_unstable();
         targets.dedup();
 
-        Ok(match (proof, targets.as_slice()) {
-            (_, [target]) => Some(ParameterCallResolution::Exact(*target)),
-            (ParameterProof::Value, [_, _, ..]) => {
-                Some(ParameterCallResolution::Ambiguous(targets))
-            }
-            _ => None,
+        Ok(match targets.as_slice() {
+            [target] => Some(ParameterCallResolution::Exact(*target)),
+            [_, _, ..] => Some(ParameterCallResolution::Ambiguous(targets)),
+            [] => None,
         })
     }
 

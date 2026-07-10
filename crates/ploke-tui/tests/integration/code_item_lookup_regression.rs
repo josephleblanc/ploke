@@ -16,22 +16,22 @@ use crate::call_graph_tool_support::{
     AxumRunUiTestsToolFixture, AxumTaskSpawnEffectToolFixture, CallGraphToolFixture,
     CallableBlockerFixture, CallableParamResolvedFixture, ChronoAliasConstructorToolFixture,
     ChronoNaiveUtcToolFixture, FixtureBranchReceiverToolFixture, FixtureDynamicCallableToolFixture,
-    FixtureSelfFieldReceiverToolFixture, assert_ambiguous_path_candidates,
-    assert_await_result_unwrap_context, assert_await_result_unwrap_proof,
-    assert_body_empty_dependency_root_proof, assert_body_empty_impact_summary,
-    assert_body_empty_incoming_context, assert_boxed_into_route_incoming_context,
-    assert_branch_receiver_context, assert_branch_receiver_proof, assert_call_path_node,
-    assert_chrono_naive_utc_incoming_context, assert_expected_path_incoming_context,
-    assert_fixture_extern_c_abs_effects, assert_handler_call_incoming_context,
-    assert_incoming_context, assert_initialized_local_receiver_context,
-    assert_initialized_local_receiver_proof, assert_json_from_bytes_incoming_context,
-    assert_no_external_summary_need_for_site, assert_parse_attrs_incoming_context,
-    assert_path_blocker_proof, assert_path_context, assert_path_resolution_proof,
-    assert_resolved_callable_param_proof, assert_resolved_path_context,
-    assert_run_ui_tests_incoming_context, assert_runtime_dispatch_blocker,
-    assert_self_field_receiver_context, assert_self_field_receiver_proof,
-    assert_serde_json_summary_proof, assert_target_proof, assert_task_spawn_effects,
-    assert_two_hop_call_path, ui_field,
+    FixtureSelfFieldReceiverToolFixture, assert_ambiguous_dynamic_candidates,
+    assert_ambiguous_path_candidates, assert_await_result_unwrap_context,
+    assert_await_result_unwrap_proof, assert_body_empty_dependency_root_proof,
+    assert_body_empty_impact_summary, assert_body_empty_incoming_context,
+    assert_boxed_into_route_incoming_context, assert_branch_receiver_context,
+    assert_branch_receiver_proof, assert_call_path_node, assert_chrono_naive_utc_incoming_context,
+    assert_expected_path_incoming_context, assert_fixture_extern_c_abs_effects,
+    assert_handler_call_incoming_context, assert_incoming_context,
+    assert_initialized_local_receiver_context, assert_initialized_local_receiver_proof,
+    assert_json_from_bytes_incoming_context, assert_no_external_summary_need_for_site,
+    assert_parse_attrs_incoming_context, assert_path_blocker_proof, assert_path_context,
+    assert_path_resolution_proof, assert_resolved_callable_param_proof,
+    assert_resolved_path_context, assert_run_ui_tests_incoming_context,
+    assert_runtime_dispatch_blocker, assert_self_field_receiver_context,
+    assert_self_field_receiver_proof, assert_serde_json_summary_proof, assert_target_proof,
+    assert_task_spawn_effects, assert_two_hop_call_path, ui_field,
 };
 
 #[tokio::test]
@@ -470,6 +470,7 @@ async fn code_item_lookup_returns_function_pointer_param_blocker() {
         CallableBlockerFixture::multi_conflicting_function_pointer_param().await,
         CallableBlockerFixture::generic_fn_once_value_binding().await,
         CallableBlockerFixture::multi_conflicting_generic_fn_once_param().await,
+        CallableBlockerFixture::multi_conflicting_named_field_function_param().await,
     ] {
         let params = LookupParams {
             item_name: Cow::Borrowed(fixture.owner_name),
@@ -504,17 +505,29 @@ async fn code_item_lookup_returns_function_pointer_param_blocker() {
         //     `generic_f()`;
         //     private `call_multi_conflicting_generic_fn_once_param(generic_f)`
         //     also calls `generic_f()`, but its local callers pass different
-        //     functions.
+        //     functions;
+        //     private `call_multi_conflicting_named_field_function_param(holder)`
+        //     calls `(holder.callback)()`, but its local callers pass different
+        //     functions in that field.
         //
         // Public opaque parameters stay blocked and targetless. Private
         // complete local caller sets with conflicting callable arguments expose
         // candidate targets, but still do not fabricate a resolved call edge.
-        let label = format!("{} callable parameter path call", fixture.owner_name);
+        let label = format!("{} callable parameter call", fixture.owner_name);
         let callee = CallCalleeInfo::Path {
             path: fixture.path.clone(),
         };
         let is_conflicting = fixture.owner_name.contains("multi_conflicting");
-        let site_id = if is_conflicting {
+        let is_field = fixture.owner_name.contains("named_field");
+        let site_id = if is_conflicting && is_field {
+            assert_ambiguous_dynamic_candidates(
+                call_context,
+                fixture.owner,
+                &fixture.candidates,
+                label.as_str(),
+                "code_item_lookup",
+            )
+        } else if is_conflicting {
             assert_ambiguous_path_candidates(
                 call_context,
                 fixture.owner,

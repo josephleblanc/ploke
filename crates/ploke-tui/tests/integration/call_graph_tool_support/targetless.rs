@@ -967,6 +967,53 @@ pub(crate) fn assert_ambiguous_path_candidates(
     call.site_id
 }
 
+pub(crate) fn assert_ambiguous_dynamic_candidates(
+    calls: &[serde_json::Value],
+    owner: Uuid,
+    expected: &[Uuid],
+    label: &str,
+    tool: &str,
+) -> Uuid {
+    let matching = calls
+        .iter()
+        .filter_map(|call| serde_json::from_value::<CallContextInfo>(call.clone()).ok())
+        .filter(|call| {
+            call.owner_id == owner
+                && call.kind == CallSiteKind::Dynamic
+                && call.callee == CallCalleeInfo::Dynamic
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching.len(),
+        1,
+        "{tool} should return exactly one ambiguous dynamic row for {label}: {calls:#?}"
+    );
+    let call = &matching[0];
+    assert_eq!(call.status, CallStatusKind::Ambiguous);
+    assert_eq!(call.resolution, None);
+    assert_eq!(
+        call.targets.len(),
+        expected.len(),
+        "{tool} should expose every candidate for {label}: {call:#?}"
+    );
+    assert!(
+        call.targets
+            .iter()
+            .all(|target| target.relation == CallTargetKind::DynamicFunction),
+        "{tool} should expose only dynamic-function candidates for {label}: {call:#?}"
+    );
+    let mut actual = call
+        .targets
+        .iter()
+        .map(|target| target.target_id)
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    let mut expected = expected.to_vec();
+    expected.sort_unstable();
+    assert_eq!(actual, expected, "{tool} candidate targets for {label}");
+    call.site_id
+}
+
 pub(crate) fn assert_resolved_path_context(
     calls: &[serde_json::Value],
     owner: Uuid,

@@ -32,10 +32,6 @@ fn fixture_context_reads_projected_targetless_dynamic_failures() -> Result<(), D
             "call_indexed_tuple_field_function_param",
             &["holder", "0", "0"],
         ),
-        TargetlessDynamicContextCase::unsupported_path(
-            "call_multi_conflicting_named_field_function_param",
-            &["holder", "callback"],
-        ),
         TargetlessDynamicContextCase::unsupported("call_async_closure_literal_with_body_call"),
         TargetlessDynamicContextCase::unsupported_path(
             "call_parenthesized_generic_fn_once_value_binding",
@@ -105,6 +101,25 @@ fn fixture_context_reads_projected_conflicting_callable_value_candidates() -> Re
         assert_eq!(context.len(), 1, "{owner_name} context rows: {context:#?}");
         assert_path_function_candidates(&context[0], owner, expected_path, &expected, owner_name);
     }
+
+    Ok(())
+}
+
+#[test]
+fn fixture_context_reads_projected_conflicting_callable_field_candidates() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let expected = dynamic_candidates(&db)?;
+    let owner_name = "call_multi_conflicting_named_field_function_param";
+    let owner = function_id_by_name(&db, owner_name)?;
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(context.len(), 1, "{owner_name} context rows: {context:#?}");
+    assert_dynamic_path_function_candidates(
+        &context[0],
+        owner,
+        &["holder", "callback"],
+        &expected,
+        owner_name,
+    );
 
     Ok(())
 }

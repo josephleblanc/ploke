@@ -72,9 +72,29 @@ pub(in crate::unit) fn assert_dynamic_candidates(
     expected: &[Uuid],
     label: &str,
 ) {
+    assert_dynamic_function_candidates(row, owner, None, expected, label);
+}
+
+pub(in crate::unit) fn assert_dynamic_path_function_candidates(
+    row: &CallContextRow,
+    owner: Uuid,
+    expected_path: &[&str],
+    expected: &[Uuid],
+    label: &str,
+) {
+    assert_dynamic_function_candidates(row, owner, Some(expected_path), expected, label);
+}
+
+fn assert_dynamic_function_candidates(
+    row: &CallContextRow,
+    owner: Uuid,
+    expected_path: Option<&[&str]>,
+    expected: &[Uuid],
+    label: &str,
+) {
     assert_eq!(row.site.owner_id, owner);
     assert_eq!(row.site.kind, CallSiteKind::Dynamic);
-    assert_eq!(row.site.path, None);
+    assert_eq!(row.site.path, expected_path.map(path));
     assert_eq!(row.site.arg_count, Some(0));
     assert_eq!(row.site.generic_arg_count, None);
     assert_eq!(row.status.status, CallStatusKind::Ambiguous);

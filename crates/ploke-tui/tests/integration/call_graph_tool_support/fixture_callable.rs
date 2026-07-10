@@ -42,6 +42,15 @@ impl CallableBlockerFixture {
         .await
     }
 
+    pub(crate) async fn multi_conflicting_named_field_function_param() -> Self {
+        Self::new_for_owner(
+            "call_multi_conflicting_named_field_function_param",
+            &["holder", "callback"],
+            8,
+        )
+        .await
+    }
+
     async fn new_for_owner(
         owner_name: &'static str,
         path: &[&str],

@@ -404,14 +404,22 @@ should prevent future resumes from reselecting already-covered shapes.
    - The parameter resolver returns exact proof for single/same-target value
      parameter caller sets and candidate-only `Ambiguous` proof for conflicting
      complete value-parameter caller sets.
-   - Public opaque value parameters remain targetless unsupported, and
-     field/index parameter conflicts remain targetless until their field-path
-     candidate proof is modeled explicitly.
+   - Public opaque value parameters remain targetless unsupported.
+
+22. Conflicting callable named-field candidate proof - completed:
+   - Private complete-local caller sets for
+     `call_multi_conflicting_named_field_function_param(holder)` now preserve
+     both `local_target` and `other_target` as candidate dynamic-function
+     targets for `(holder.callback)()`.
+   - The shared parameter resolver returns candidate-only `Ambiguous` proof for
+     conflicting complete field-parameter caller sets, while preserving exact
+     proof for single/same-target field caller sets.
+   - Public opaque field and array parameters remain targetless unsupported.
 
 ## Remaining Focused Unsupported Inventory
 
-Status checkpoint: 2026-07-09 after the active call-graph corpus fixtures were
-regenerated and `xtask --features call_graph verify-backup-dbs` passed.
+Status checkpoint: 2026-07-10 after conflicting callable value and named-field
+candidate proof batches passed parser, DB, RAG, and TUI focused verification.
 
 The focused parser call-site suite has a small remaining set of
 `ExpectedCallOutcome::Unsupported` rows. These should not be treated as the
@@ -421,7 +429,6 @@ next implementation target unless the missing proof input below is supplied.
 | --- | --- | --- |
 | Macro calls | `fixture_nodes_use_imported_items_records_documented_macro_call_site`, `fixture_macros_use_local_macro_records_local_macro_call_site`, `fixture_call_graph_assert_eq_macro_call_records_test_body_macro_call_site` | Macro expansion bodies and generated call edges are not modeled as source call graph edges. |
 | Public callable parameters | `call_function_pointer_param`, `call_parenthesized_function_pointer_param`, `call_function_pointer_param_cast`, `call_generic_fn_once_value_binding`, `call_parenthesized_generic_fn_once_value_binding` | Public API callers do not give a complete source-visible argument set, so no local callee can be proven. |
-| Conflicting callable field/index caller sets | `call_multi_conflicting_named_field_function_param` | Complete local callers exist but pass different callable field targets; field/index candidate proof is intentionally separate from value-parameter proof. |
 | Public callable fields and arrays | `call_field_function_param`, `call_indexed_field_function_param`, `call_indexed_tuple_field_function_param`, `call_indexed_function_pointer` | Parameter field/index values lack exact single-caller or initializer proof at public API boundaries. |
 | Non-awaited async callable values | `call_async_closure_binding_without_await_with_body_call`, `call_async_closure_future_binding_without_await_with_body_call` | Constructing an async-closure future does not prove poll/resume execution. |
 | Missing trait visibility | `call_unimported_trait_method` | The receiver type is local, but the trait method is not visible in the call scope. |
@@ -430,8 +437,9 @@ The nearby completed positive rows already cover private complete caller sets,
 same-target multi-caller sets, branch/match same-parameter forms, typed local
 function items, boxed callable initializers, returned closures, exact local
 receiver proof, ambiguous local callable initialization with candidate-only
-proof, and conflicting complete value-parameter candidate proof. The next
-semantic slice should therefore introduce a new proof carrier, or add one
+proof, conflicting complete value-parameter candidate proof, and conflicting
+complete named-field candidate proof. The next semantic slice should therefore
+introduce a new proof carrier, or add one
 explicitly sourced real-corpus/dependency-root oracle, rather than reworking
 these fail-closed parser rows.
 

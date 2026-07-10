@@ -7421,19 +7421,30 @@ paranoid_call_site_test!(
 );
 
 paranoid_call_site_test!(
-    fixture_call_graph_call_multi_conflicting_named_field_function_param_fails_closed,
+    fixture_call_graph_call_multi_conflicting_named_field_function_param_preserves_dynamic_candidates,
     fixture: "fixture_call_graph",
     owner: function {
         module_path: &["crate"],
         name: "call_multi_conflicting_named_field_function_param"
     },
-    expected: ExpectedCallSite::dynamic_field_local_binding(
-        &["holder", "callback"],
-        MULTI_CONFLICTING_NAMED_FIELD_FUNCTION_PARAM_CALL_SPAN,
-        0,
-        &[],
-        ExpectedCallOutcome::Unsupported,
-    ),
+    expected: {
+        let first_args = fixture_call_graph_function_args(&["crate"], "local_target");
+        let second_args = fixture_call_graph_function_args(&["crate"], "other_target");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let first_info = first_args.generate_pid(&parsed_graphs)?;
+        let second_info = second_args.generate_pid(&parsed_graphs)?;
+        let first = FunctionNodeId::try_from(first_info.test_pid())
+            .expect("local_target should regenerate a FunctionNodeId");
+        let second = FunctionNodeId::try_from(second_info.test_pid())
+            .expect("other_target should regenerate a FunctionNodeId");
+        ExpectedCallSite::dynamic_field_local_binding(
+            &["holder", "callback"],
+            MULTI_CONFLICTING_NAMED_FIELD_FUNCTION_PARAM_CALL_SPAN,
+            0,
+            &[],
+            ExpectedCallOutcome::AmbiguousDynamicFunctionCandidates { first, second },
+        )
+    },
 );
 
 paranoid_call_site_test!(

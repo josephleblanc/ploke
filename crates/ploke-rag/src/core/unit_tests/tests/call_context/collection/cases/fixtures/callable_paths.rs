@@ -56,6 +56,13 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
         &db,
         &function_in_module_query(&["crate"], "call_multi_conflicting_generic_fn_once_param"),
     )?;
+    let multi_conflicting_field_owner = one_uuid(
+        &db,
+        &function_in_module_query(
+            &["crate"],
+            "call_multi_conflicting_named_field_function_param",
+        ),
+    )?;
     let single_parenthesized_param_owner = one_uuid(
         &db,
         &function_in_module_query(
@@ -94,6 +101,7 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
         (multi_param_owner, 1.0),
         (multi_conflicting_param_owner, 1.0),
         (multi_conflicting_generic_owner, 1.0),
+        (multi_conflicting_field_owner, 1.0),
         (single_parenthesized_param_owner, 1.0),
         (generic_owner, 1.0),
         (boxed_owner, 1.0),
@@ -370,6 +378,7 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
         multi_conflicting_call,
         local_target,
         other_target,
+        CallTargetKind::Function,
         "conflicting multi-caller function-pointer",
     );
 
@@ -403,7 +412,38 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
         multi_conflicting_generic_call,
         local_target,
         other_target,
+        CallTargetKind::Function,
         "conflicting multi-caller generic FnOnce",
+    );
+
+    let multi_conflicting_field_context = call_context
+        .get(&multi_conflicting_field_owner)
+        .expect("conflicting multi-caller named-field owner should receive outgoing call context");
+    let multi_conflicting_field_matches = multi_conflicting_field_context
+        .iter()
+        .filter(|call| {
+            call.owner_id == multi_conflicting_field_owner
+                && call.kind == CallSiteKind::Dynamic
+                && call.callee == CallCalleeInfo::Dynamic
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        multi_conflicting_field_matches.len(),
+        1,
+        "conflicting multi-caller named-field body context: {multi_conflicting_field_context:#?}"
+    );
+    let multi_conflicting_field_call = multi_conflicting_field_matches[0];
+    assert_eq!(
+        multi_conflicting_field_call.status,
+        CallStatusKind::Ambiguous
+    );
+    assert!(multi_conflicting_field_call.resolution.is_none());
+    assert_conflicting_candidates(
+        multi_conflicting_field_call,
+        local_target,
+        other_target,
+        CallTargetKind::DynamicFunction,
+        "conflicting multi-caller named-field",
     );
 
     let single_parenthesized_param_context = call_context
@@ -525,13 +565,19 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
     Ok(())
 }
 
-fn assert_conflicting_candidates(call: &CallContextInfo, first: Uuid, second: Uuid, label: &str) {
+fn assert_conflicting_candidates(
+    call: &CallContextInfo,
+    first: Uuid,
+    second: Uuid,
+    relation: CallTargetKind,
+    label: &str,
+) {
     assert_eq!(call.targets.len(), 2, "{label}: {call:#?}");
     assert!(
         call.targets
             .iter()
-            .all(|target| target.relation == CallTargetKind::Function),
-        "{label} should expose only function candidates: {call:#?}"
+            .all(|target| target.relation == relation),
+        "{label} should expose only {relation:?} candidates: {call:#?}"
     );
     let mut actual = call
         .targets
