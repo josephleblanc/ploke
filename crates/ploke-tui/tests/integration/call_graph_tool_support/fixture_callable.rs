@@ -50,6 +50,16 @@ impl CallableBlockerFixture {
         .await
     }
 
+    pub(crate) async fn forwarded_conflicting_function_pointer_leaf() -> Self {
+        Self::new_for_owner(
+            "call_forwarded_conflicting_function_pointer_leaf",
+            &["f"],
+            CallableBlockerShape::AmbiguousPath,
+            5,
+        )
+        .await
+    }
+
     pub(crate) async fn generic_fn_once_value_binding() -> Self {
         Self::new_for_owner(
             "call_generic_fn_once_value_binding",
@@ -200,6 +210,10 @@ fn function_id(
 impl CallableParamResolvedFixture {
     pub(crate) async fn multi_function_pointer_param() -> Self {
         Self::new_for_owner("call_multi_function_pointer_param", &["f"], 9).await
+    }
+
+    pub(crate) async fn forwarded_function_pointer_leaf() -> Self {
+        Self::new_for_owner("call_forwarded_function_pointer_leaf", &["f"], 6).await
     }
 
     pub(crate) async fn multi_generic_fn_once_param() -> Self {

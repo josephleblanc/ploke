@@ -92,6 +92,10 @@ fn fixture_context_reads_projected_conflicting_callable_value_candidates() -> Re
     for (owner_name, expected_path) in [
         ("call_multi_conflicting_function_pointer_param", &["f"][..]),
         (
+            "call_forwarded_conflicting_function_pointer_leaf",
+            &["f"][..],
+        ),
+        (
             "call_multi_conflicting_generic_fn_once_param",
             &["generic_f"][..],
         ),

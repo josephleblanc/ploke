@@ -61,8 +61,23 @@ Exit criteria:
 - Add one DB assertion, one RAG assertion if exposed downstream, one TUI/tool
   assertion if exposed downstream, and one consolidated doc note.
 
-Status: latest awaited method-call receiver slice completed and verified;
-ready for the next proof-carrier selection.
+Status: latest one-hop callable parameter forwarding slice completed and
+verified; ready for the next proof-carrier selection.
+
+Latest completed slice: one-hop private callable parameter forwarding proof.
+The resolver now reuses the existing complete-private-caller-set rule when a
+private helper receives a callable parameter forwarded from another private
+caller's own callable parameter, but only for one forwarding hop. The positive
+fixture chain
+`call_forwarded_function_pointer_param_with_local_target ->
+call_forwarded_function_pointer_wrapper ->
+call_forwarded_function_pointer_leaf -> local_target` now traverses as three
+ordinary function edges because the wrapper's complete local caller set passes
+`local_target`. The paired conflicting fixture preserves `local_target` and
+`other_target` as ambiguous candidates on the forwarded leaf and still emits no
+resolved edge. Parser, DB path/proof/target-centered candidate queries, RAG
+call-context collection, and exact TUI lookup/edges tests cover both shapes
+without broad interprocedural value-flow.
 
 Latest completed slice: awaited method-call receiver proof for unsupported
 `future_method().await.unwrap()` rows. Parser extraction now preserves an

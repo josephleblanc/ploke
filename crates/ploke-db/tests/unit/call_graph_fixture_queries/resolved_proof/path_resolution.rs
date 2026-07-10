@@ -148,6 +148,12 @@ fn fixture_projection_stores_real_path_resolution_call_proof_facts() -> Result<(
             &["generic_f"],
             local_target,
         ),
+        (
+            &["crate"],
+            "call_forwarded_function_pointer_leaf",
+            &["f"],
+            local_target,
+        ),
     ];
     let mut expected_edges = Vec::new();
 

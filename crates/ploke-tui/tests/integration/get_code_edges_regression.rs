@@ -1019,6 +1019,7 @@ async fn code_item_edges_returns_function_pointer_param_blocker() {
     for fixture in [
         CallableBlockerFixture::function_pointer_param().await,
         CallableBlockerFixture::multi_conflicting_function_pointer_param().await,
+        CallableBlockerFixture::forwarded_conflicting_function_pointer_leaf().await,
         CallableBlockerFixture::generic_fn_once_value_binding().await,
         CallableBlockerFixture::multi_conflicting_generic_fn_once_param().await,
         CallableBlockerFixture::multi_conflicting_named_field_function_param().await,
@@ -1059,6 +1060,9 @@ async fn code_item_edges_returns_function_pointer_param_blocker() {
         //     public `call_function_pointer_param(f)` calls `f()`;
         //     private `call_multi_conflicting_function_pointer_param(f)` also
         //     calls `f()`, but its local callers pass different functions;
+        //     private `call_forwarded_conflicting_function_pointer_leaf(f)`
+        //     receives `f` through a private wrapper whose callers pass
+        //     different functions;
         //     public `call_generic_fn_once_value_binding(generic_f)` calls
         //     `generic_f()`;
         //     private `call_multi_conflicting_generic_fn_once_param(generic_f)`
@@ -1274,6 +1278,9 @@ async fn code_item_edges_returns_multi_caller_function_pointer_param_target() {
     //     private `call_multi_function_pointer_param(f)` calls `f()`.
     //   tests/fixture_crates/fixture_call_graph/src/lib.rs:1744-1749
     //     both local callers pass `local_target`.
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:1942-1951
+    //     private `call_forwarded_function_pointer_leaf(f)` resolves through a
+    //     private wrapper whose complete caller set passes `local_target`.
     //   tests/fixture_crates/fixture_call_graph/src/lib.rs:1764-1768
     //     private `call_multi_generic_fn_once_param(generic_f)` calls
     //     `generic_f()`.
@@ -1281,6 +1288,7 @@ async fn code_item_edges_returns_multi_caller_function_pointer_param_target() {
     //     both local generic callers pass `local_target`.
     for fixture in [
         CallableParamResolvedFixture::multi_function_pointer_param().await,
+        CallableParamResolvedFixture::forwarded_function_pointer_leaf().await,
         CallableParamResolvedFixture::multi_generic_fn_once_param().await,
     ] {
         let params = EdgesParams {

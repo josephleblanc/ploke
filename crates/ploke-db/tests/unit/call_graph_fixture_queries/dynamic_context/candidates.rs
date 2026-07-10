@@ -17,7 +17,7 @@ fn fixture_context_reads_projected_ambiguous_dynamic_candidates() -> Result<(), 
     let context = db.call_context_for_target(target)?;
     assert_eq!(
         context.len(),
-        AMBIGUOUS_DYNAMIC_OWNERS.len() + 4,
+        AMBIGUOUS_DYNAMIC_OWNERS.len() + 5,
         "other_target should expose every ambiguous candidate caller: {context:#?}"
     );
 
@@ -43,6 +43,10 @@ fn fixture_context_reads_projected_ambiguous_dynamic_candidates() -> Result<(), 
 
     for (owner_name, expected_path) in [
         ("call_multi_conflicting_function_pointer_param", &["f"][..]),
+        (
+            "call_forwarded_conflicting_function_pointer_leaf",
+            &["f"][..],
+        ),
         (
             "call_multi_conflicting_generic_fn_once_param",
             &["generic_f"][..],

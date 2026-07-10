@@ -34,6 +34,8 @@ enum ParameterProof<'a> {
     Field(&'a [String]),
 }
 
+const PARAMETER_FORWARDING_DEPTH: usize = 1;
+
 impl CallRelationResolver<'_> {
     pub(super) fn resolve_path_call(
         &self,
@@ -383,11 +385,20 @@ impl CallRelationResolver<'_> {
         owner: CallBodyOwnerId,
         path: &[String],
     ) -> Result<Option<ParameterCallResolution>, SynParserError> {
+        self.resolve_parameter_value_call_with_depth(owner, path, PARAMETER_FORWARDING_DEPTH)
+    }
+
+    fn resolve_parameter_value_call_with_depth(
+        &self,
+        owner: CallBodyOwnerId,
+        path: &[String],
+        depth: usize,
+    ) -> Result<Option<ParameterCallResolution>, SynParserError> {
         let [name] = path else {
             return Ok(None);
         };
 
-        self.resolve_parameter_call(owner, name, ParameterProof::Value)
+        self.resolve_parameter_call(owner, name, ParameterProof::Value, depth)
     }
 
     pub(super) fn resolve_parameter_field_call(
@@ -402,7 +413,7 @@ impl CallRelationResolver<'_> {
             return Ok(None);
         }
 
-        self.resolve_parameter_call(owner, name, ParameterProof::Field(field_path))
+        self.resolve_parameter_call(owner, name, ParameterProof::Field(field_path), 0)
     }
 
     fn resolve_parameter_call(
@@ -410,6 +421,7 @@ impl CallRelationResolver<'_> {
         owner: CallBodyOwnerId,
         name: &str,
         proof: ParameterProof<'_>,
+        depth: usize,
     ) -> Result<Option<ParameterCallResolution>, SynParserError> {
         let Some(parameter_owner) = self.parameter_function_owner(owner)? else {
             return Ok(None);
@@ -446,13 +458,17 @@ impl CallRelationResolver<'_> {
             if site.arguments.len() <= index {
                 return Ok(None);
             }
-            if let Some(target) =
-                self.resolve_call_argument(site, &site.arguments[index], proof, expected_type)?
-            {
-                targets.push(target);
-            } else {
+            let Some(resolution) = self.resolve_call_argument(
+                site,
+                &site.arguments[index],
+                proof,
+                expected_type,
+                depth,
+            )?
+            else {
                 return Ok(None);
-            }
+            };
+            extend_parameter_targets(&mut targets, resolution);
         }
 
         if caller_count == 0 {
@@ -596,14 +612,23 @@ impl CallRelationResolver<'_> {
         arg: &CallArgument,
         proof: ParameterProof<'_>,
         expected_type: Option<&[String]>,
-    ) -> Result<Option<ParameterCallTarget>, SynParserError> {
+        depth: usize,
+    ) -> Result<Option<ParameterCallResolution>, SynParserError> {
         match (proof, arg) {
-            (ParameterProof::Value, CallArgument::Path { path }) => self
-                .resolve_argument_path(site.owner, path)
-                .map(|target| target.map(ParameterCallTarget::Function)),
-            (ParameterProof::Value, CallArgument::Closure { closure_id }) => {
-                Ok(Some(ParameterCallTarget::Closure(*closure_id)))
+            (ParameterProof::Value, CallArgument::Path { path }) => {
+                if let Some(target) = self.resolve_argument_path(site.owner, path)? {
+                    return Ok(Some(ParameterCallResolution::Exact(
+                        ParameterCallTarget::Function(target),
+                    )));
+                }
+                if depth == 0 {
+                    return Ok(None);
+                }
+                self.resolve_parameter_value_call_with_depth(site.owner, path, depth - 1)
             }
+            (ParameterProof::Value, CallArgument::Closure { closure_id }) => Ok(Some(
+                ParameterCallResolution::Exact(ParameterCallTarget::Closure(*closure_id)),
+            )),
             (
                 ParameterProof::Field(field_path),
                 CallArgument::Constructed { type_path, fields },
@@ -614,8 +639,11 @@ impl CallRelationResolver<'_> {
                 let Some(field) = fields.iter().find(|field| field.field_path == field_path) else {
                     return Ok(None);
                 };
-                self.resolve_argument_path(site.owner, &field.init_path)
-                    .map(|target| target.map(ParameterCallTarget::Function))
+                Ok(self
+                    .resolve_argument_path(site.owner, &field.init_path)?
+                    .map(|target| {
+                        ParameterCallResolution::Exact(ParameterCallTarget::Function(target))
+                    }))
             }
             (ParameterProof::Field(field_path), CallArgument::Array { element_init_paths }) => {
                 let Some(index) = field_path_index(field_path) else {
@@ -624,8 +652,11 @@ impl CallRelationResolver<'_> {
                 let Some(Some(init_path)) = element_init_paths.get(index) else {
                     return Ok(None);
                 };
-                self.resolve_argument_path(site.owner, init_path)
-                    .map(|target| target.map(ParameterCallTarget::Function))
+                Ok(self
+                    .resolve_argument_path(site.owner, init_path)?
+                    .map(|target| {
+                        ParameterCallResolution::Exact(ParameterCallTarget::Function(target))
+                    }))
             }
             _ => Ok(None),
         }
@@ -654,6 +685,16 @@ impl CallRelationResolver<'_> {
             | LocalFunctionPathResolution::Ambiguous
             | LocalFunctionPathResolution::Unsupported => Ok(None),
         }
+    }
+}
+
+fn extend_parameter_targets(
+    targets: &mut Vec<ParameterCallTarget>,
+    resolution: ParameterCallResolution,
+) {
+    match resolution {
+        ParameterCallResolution::Exact(target) => targets.push(target),
+        ParameterCallResolution::Ambiguous(candidates) => targets.extend(candidates),
     }
 }
 

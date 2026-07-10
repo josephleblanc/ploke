@@ -250,6 +250,13 @@ const MULTI_GENERIC_FN_ONCE_CALLER_B_SPAN: (usize, usize) = (40290, 40336);
 const MULTI_CONFLICTING_GENERIC_FN_ONCE_PARAM_CALL_SPAN: (usize, usize) = (40448, 40459);
 const MULTI_CONFLICTING_GENERIC_FN_ONCE_LOCAL_CALLER_SPAN: (usize, usize) = (40548, 40606);
 const MULTI_CONFLICTING_GENERIC_FN_ONCE_OTHER_CALLER_SPAN: (usize, usize) = (40695, 40753);
+const FORWARDED_FUNCTION_POINTER_LEAF_CALL_SPAN: (usize, usize) = (44614, 44617);
+const FORWARDED_FUNCTION_POINTER_WRAPPER_CALL_SPAN: (usize, usize) = (44693, 44732);
+const FORWARDED_FUNCTION_POINTER_PUBLIC_CALLER_SPAN: (usize, usize) = (44814, 44867);
+const FORWARDED_CONFLICTING_FUNCTION_POINTER_LEAF_CALL_SPAN: (usize, usize) = (44952, 44955);
+const FORWARDED_CONFLICTING_FUNCTION_POINTER_WRAPPER_CALL_SPAN: (usize, usize) = (45043, 45094);
+const FORWARDED_CONFLICTING_FUNCTION_POINTER_LOCAL_CALLER_SPAN: (usize, usize) = (45188, 45253);
+const FORWARDED_CONFLICTING_FUNCTION_POINTER_OTHER_CALLER_SPAN: (usize, usize) = (45347, 45412);
 const SINGLE_FUNCTION_POINTER_PARAM_CAST_CALL_SPAN: (usize, usize) = (34806, 34826);
 const SINGLE_FUNCTION_POINTER_PARAM_CAST_CALLER_SPAN: (usize, usize) = (34910, 34963);
 const SINGLE_NAMED_FIELD_FUNCTION_PARAM_CALL_SPAN: (usize, usize) = (35452, 35471);
@@ -6946,6 +6953,183 @@ paranoid_call_site_test!(
         ExpectedCallSite::path(
             &["call_multi_conflicting_generic_fn_once_param"],
             MULTI_CONFLICTING_GENERIC_FN_ONCE_OTHER_CALLER_SPAN,
+            1,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_forwarded_function_pointer_leaf_resolves_forwarded_private_parameter,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_forwarded_function_pointer_leaf"
+    },
+    expected: {
+        let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("local_target should regenerate a FunctionNodeId");
+        ExpectedCallSite::path_value_binding(
+            &["f"],
+            FORWARDED_FUNCTION_POINTER_LEAF_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_forwarded_function_pointer_wrapper_resolves_leaf_call,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_forwarded_function_pointer_wrapper"
+    },
+    expected: {
+        let target_args =
+            fixture_call_graph_function_args(&["crate"], "call_forwarded_function_pointer_leaf");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("call_forwarded_function_pointer_leaf should regenerate a FunctionNodeId");
+        ExpectedCallSite::path(
+            &["call_forwarded_function_pointer_leaf"],
+            FORWARDED_FUNCTION_POINTER_WRAPPER_CALL_SPAN,
+            1,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_forwarded_function_pointer_param_with_local_target_resolves_wrapper_call,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_forwarded_function_pointer_param_with_local_target"
+    },
+    expected: {
+        let target_args =
+            fixture_call_graph_function_args(&["crate"], "call_forwarded_function_pointer_wrapper");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("call_forwarded_function_pointer_wrapper should regenerate a FunctionNodeId");
+        ExpectedCallSite::path(
+            &["call_forwarded_function_pointer_wrapper"],
+            FORWARDED_FUNCTION_POINTER_PUBLIC_CALLER_SPAN,
+            1,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_forwarded_conflicting_function_pointer_leaf_preserves_forwarded_candidates,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_forwarded_conflicting_function_pointer_leaf"
+    },
+    expected: {
+        let first_args = fixture_call_graph_function_args(&["crate"], "local_target");
+        let second_args = fixture_call_graph_function_args(&["crate"], "other_target");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let first_info = first_args.generate_pid(&parsed_graphs)?;
+        let second_info = second_args.generate_pid(&parsed_graphs)?;
+        let first = FunctionNodeId::try_from(first_info.test_pid())
+            .expect("local_target should regenerate a FunctionNodeId");
+        let second = FunctionNodeId::try_from(second_info.test_pid())
+            .expect("other_target should regenerate a FunctionNodeId");
+        ExpectedCallSite::path_value_binding(
+            &["f"],
+            FORWARDED_CONFLICTING_FUNCTION_POINTER_LEAF_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::AmbiguousPathFunctionCandidates { first, second },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_forwarded_conflicting_function_pointer_wrapper_resolves_leaf_call,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_forwarded_conflicting_function_pointer_wrapper"
+    },
+    expected: {
+        let target_args =
+            fixture_call_graph_function_args(&["crate"], "call_forwarded_conflicting_function_pointer_leaf");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("call_forwarded_conflicting_function_pointer_leaf should regenerate a FunctionNodeId");
+        ExpectedCallSite::path(
+            &["call_forwarded_conflicting_function_pointer_leaf"],
+            FORWARDED_CONFLICTING_FUNCTION_POINTER_WRAPPER_CALL_SPAN,
+            1,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_forwarded_conflicting_function_pointer_param_with_local_target_resolves_wrapper_call,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_forwarded_conflicting_function_pointer_param_with_local_target"
+    },
+    expected: {
+        let target_args =
+            fixture_call_graph_function_args(&["crate"], "call_forwarded_conflicting_function_pointer_wrapper");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("call_forwarded_conflicting_function_pointer_wrapper should regenerate a FunctionNodeId");
+        ExpectedCallSite::path(
+            &["call_forwarded_conflicting_function_pointer_wrapper"],
+            FORWARDED_CONFLICTING_FUNCTION_POINTER_LOCAL_CALLER_SPAN,
+            1,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_forwarded_conflicting_function_pointer_param_with_other_target_resolves_wrapper_call,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_forwarded_conflicting_function_pointer_param_with_other_target"
+    },
+    expected: {
+        let target_args =
+            fixture_call_graph_function_args(&["crate"], "call_forwarded_conflicting_function_pointer_wrapper");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("call_forwarded_conflicting_function_pointer_wrapper should regenerate a FunctionNodeId");
+        ExpectedCallSite::path(
+            &["call_forwarded_conflicting_function_pointer_wrapper"],
+            FORWARDED_CONFLICTING_FUNCTION_POINTER_OTHER_CALLER_SPAN,
             1,
             0,
             &[],

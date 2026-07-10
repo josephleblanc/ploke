@@ -1938,3 +1938,31 @@ pub async fn call_await_method_result_unwrap() -> i32 {
     let source = AwaitMethodResultSource;
     source.ready_result().await.unwrap()
 }
+
+fn call_forwarded_function_pointer_leaf(f: fn() -> i32) -> i32 {
+    f()
+}
+
+fn call_forwarded_function_pointer_wrapper(f: fn() -> i32) -> i32 {
+    call_forwarded_function_pointer_leaf(f)
+}
+
+pub fn call_forwarded_function_pointer_param_with_local_target() -> i32 {
+    call_forwarded_function_pointer_wrapper(local_target)
+}
+
+fn call_forwarded_conflicting_function_pointer_leaf(f: fn() -> i32) -> i32 {
+    f()
+}
+
+fn call_forwarded_conflicting_function_pointer_wrapper(f: fn() -> i32) -> i32 {
+    call_forwarded_conflicting_function_pointer_leaf(f)
+}
+
+pub fn call_forwarded_conflicting_function_pointer_param_with_local_target() -> i32 {
+    call_forwarded_conflicting_function_pointer_wrapper(local_target)
+}
+
+pub fn call_forwarded_conflicting_function_pointer_param_with_other_target() -> i32 {
+    call_forwarded_conflicting_function_pointer_wrapper(other_target)
+}

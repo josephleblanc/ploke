@@ -48,9 +48,20 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
         &db,
         &function_in_module_query(&["crate"], "call_multi_function_pointer_param"),
     )?;
+    let forwarded_param_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_forwarded_function_pointer_leaf"),
+    )?;
     let multi_conflicting_param_owner = one_uuid(
         &db,
         &function_in_module_query(&["crate"], "call_multi_conflicting_function_pointer_param"),
+    )?;
+    let forwarded_conflicting_owner = one_uuid(
+        &db,
+        &function_in_module_query(
+            &["crate"],
+            "call_forwarded_conflicting_function_pointer_leaf",
+        ),
     )?;
     let multi_conflicting_generic_owner = one_uuid(
         &db,
@@ -99,7 +110,9 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
         (fn_param_owner, 1.0),
         (single_param_owner, 1.0),
         (multi_param_owner, 1.0),
+        (forwarded_param_owner, 1.0),
         (multi_conflicting_param_owner, 1.0),
+        (forwarded_conflicting_owner, 1.0),
         (multi_conflicting_generic_owner, 1.0),
         (multi_conflicting_field_owner, 1.0),
         (single_parenthesized_param_owner, 1.0),
@@ -345,6 +358,39 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
         CallTargetKind::Function
     );
 
+    let forwarded_param_context = call_context
+        .get(&forwarded_param_owner)
+        .expect("forwarded function-pointer leaf should receive outgoing call context");
+    let forwarded_param_call = forwarded_param_context
+        .iter()
+        .find(|call| {
+            call.kind == CallSiteKind::Path
+                && call.callee
+                    == CallCalleeInfo::Path {
+                        path: vec!["f".to_string()],
+                    }
+                && call
+                    .targets
+                    .iter()
+                    .any(|target| target.target_id == local_target)
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "forwarded function-pointer leaf context should include resolved f() -> local_target: {forwarded_param_context:#?}"
+            )
+        });
+    assert_eq!(forwarded_param_call.status, CallStatusKind::Resolved);
+    assert_eq!(
+        forwarded_param_call.resolution,
+        Some(CallResolutionKind::LocalExact)
+    );
+    assert_eq!(forwarded_param_call.targets.len(), 1);
+    assert_eq!(forwarded_param_call.targets[0].target_id, local_target);
+    assert_eq!(
+        forwarded_param_call.targets[0].relation,
+        CallTargetKind::Function
+    );
+
     let multi_conflicting_context = call_context
         .get(&multi_conflicting_param_owner)
         .expect("conflicting multi-caller function-pointer param owner should receive outgoing call context");
@@ -380,6 +426,36 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
         other_target,
         CallTargetKind::Function,
         "conflicting multi-caller function-pointer",
+    );
+
+    let forwarded_conflicting_context = call_context
+        .get(&forwarded_conflicting_owner)
+        .expect("forwarded conflicting function-pointer leaf should receive outgoing call context");
+    let forwarded_conflicting_matches = forwarded_conflicting_context
+        .iter()
+        .filter(|call| {
+            call.owner_id == forwarded_conflicting_owner
+                && call.kind == CallSiteKind::Path
+                && call.callee
+                    == CallCalleeInfo::Path {
+                        path: vec!["f".to_string()],
+                    }
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        forwarded_conflicting_matches.len(),
+        1,
+        "forwarded conflicting function-pointer leaf context: {forwarded_conflicting_context:#?}"
+    );
+    let forwarded_conflicting_call = forwarded_conflicting_matches[0];
+    assert_eq!(forwarded_conflicting_call.status, CallStatusKind::Ambiguous);
+    assert!(forwarded_conflicting_call.resolution.is_none());
+    assert_conflicting_candidates(
+        forwarded_conflicting_call,
+        local_target,
+        other_target,
+        CallTargetKind::Function,
+        "forwarded conflicting function-pointer",
     );
 
     let multi_conflicting_generic_context =
