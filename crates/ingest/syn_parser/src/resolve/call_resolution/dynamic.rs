@@ -145,6 +145,7 @@ impl CallRelationResolver<'_> {
             | DynamicCallCallee::DereferencedInitializedLocalBinding { .. }
             | DynamicCallCallee::DereferencedClosureBinding { .. }
             | DynamicCallCallee::FieldLocalBinding { .. }
+            | DynamicCallCallee::SelfField { .. }
             | DynamicCallCallee::FieldInitializedLocalBinding { .. }
             | DynamicCallCallee::IndexedInitializedLocalBinding { .. }
             | DynamicCallCallee::IfBranchPaths { .. }

@@ -421,6 +421,8 @@ pub enum ExpectedDynamicCallee<'a> {
     },
     /// The callee expression is a field projection rooted at a named local binding.
     FieldLocalBinding { path: &'a [&'a str] },
+    /// The callee expression is a field projection rooted at `self`.
+    SelfField { path: &'a [&'a str] },
     /// The callee expression is a field projection rooted at a constructed local binding.
     FieldInitializedLocalBinding {
         path: &'a [&'a str],
@@ -550,6 +552,9 @@ impl ExpectedDynamicCallee<'_> {
                 }
             }
             Self::FieldLocalBinding { path } => DynamicCallCallee::FieldLocalBinding {
+                path: path.iter().copied().map(String::from).collect(),
+            },
+            Self::SelfField { path } => DynamicCallCallee::SelfField {
                 path: path.iter().copied().map(String::from).collect(),
             },
             Self::FieldInitializedLocalBinding { path, init_path } => {

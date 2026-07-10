@@ -340,6 +340,9 @@ pub enum DynamicCallCallee {
     /// The callee expression is a field projection rooted at a local binding,
     /// such as `value.0()`.
     FieldLocalBinding { path: Vec<String> },
+    /// The callee expression is a field projection rooted at `self`, such as
+    /// `(self.callback)()`.
+    SelfField { path: Vec<String> },
     /// The callee expression is a field projection rooted at a constructed
     /// local binding whose selected constructor argument is a path expression,
     /// such as `let value = Tuple(local_target); value.0()`.

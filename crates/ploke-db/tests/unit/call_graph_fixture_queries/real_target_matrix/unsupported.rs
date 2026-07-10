@@ -74,6 +74,7 @@ struct DynamicGap {
     body_marker: &'static str,
     source_line: u32,
     expected_args: u32,
+    expected_path: &'static [&'static str],
 }
 
 #[test]
@@ -91,24 +92,28 @@ fn axum_dynamic_callable_fields_are_visible_unsupported_blockers() -> Result<(),
             body_marker: "(self.into_route)(self.handler, state)",
             source_line: 85,
             expected_args: 2,
+            expected_path: &["self", "into_route"],
         },
         DynamicGap {
             method_name: "into_route",
             body_marker: "(self.into_route)(self.router, state)",
             source_line: 120,
             expected_args: 2,
+            expected_path: &["self", "into_route"],
         },
         DynamicGap {
             method_name: "into_route",
             body_marker: "(self.layer)(self.inner.into_route(state))",
             source_line: 159,
             expected_args: 1,
+            expected_path: &["self", "layer"],
         },
         DynamicGap {
             method_name: "accept",
             body_marker: "(self.tap_fn)(&mut io)",
             source_line: 236,
             expected_args: 1,
+            expected_path: &["self", "tap_fn"],
         },
     ];
 
@@ -127,6 +132,12 @@ fn axum_dynamic_callable_fields_are_visible_unsupported_blockers() -> Result<(),
             case.source_line
         );
         let row = dynamic_rows[0];
+        assert_eq!(
+            row.site.path.as_ref(),
+            Some(&path(case.expected_path)),
+            "dynamic callable row at matrix source line {} should preserve the self-field callee path",
+            case.source_line
+        );
         assert_eq!(
             row.site.arg_count,
             Some(case.expected_args),

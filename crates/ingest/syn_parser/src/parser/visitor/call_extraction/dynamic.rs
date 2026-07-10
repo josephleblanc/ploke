@@ -9,8 +9,8 @@ use super::model::{ConstructedFields, FieldInitProof, LocalBindingProof};
 use super::receiver::local_field_path;
 use super::{
     block_path_expr, expr_path_segments, if_branch_paths, is_callable_trait,
-    is_unshadowed_item_path, literal_usize, match_arm_paths, path_segments, unparen_expr,
-    visible_local_binding,
+    is_unshadowed_item_path, literal_usize, match_arm_paths, path_segments, self_field_path,
+    unparen_expr, visible_local_binding,
 };
 
 pub(super) fn classify_dynamic_callee(
@@ -31,6 +31,14 @@ pub(super) fn classify_dynamic_callee(
 
     if let Some((path, init_path)) = indexed_initialized_path(callee, param_names, local_scopes) {
         return DynamicCallCallee::IndexedInitializedLocalBinding { path, init_path };
+    }
+
+    if let Some(field_path) = self_field_path(unparen_expr(callee)).filter(|path| !path.is_empty())
+    {
+        let mut path = Vec::with_capacity(field_path.len() + 1);
+        path.push("self".to_string());
+        path.extend(field_path);
+        return DynamicCallCallee::SelfField { path };
     }
 
     if let Some((name, field_path)) = local_field_path(callee, param_names, local_scopes) {

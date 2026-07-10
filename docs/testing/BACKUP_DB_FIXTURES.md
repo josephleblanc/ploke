@@ -213,9 +213,24 @@ impl Drop for FixtureRestoreGuard {
 | `corpus_chrono_call_graph_2026-07-07.sqlite` | `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be` | plain corpus backup for real-target call graph query contracts | 2026-07-09 |
 | `corpus_chrono_openrouter_embeddings_2026-05-17.sqlite` | `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be` | OpenRouter-searchable corpus backup for type-context matrix tests | 2026-05-17 |
 | `corpus_axum_type_graph_2026-05-17.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | typed graphRAG workspace-member corpus backup for type-context matrix tests | 2026-05-17 |
-| `corpus_axum_call_graph_2026-07-09.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | plain workspace-member corpus backup for real-target call graph query contracts | 2026-07-09 |
+| `corpus_axum_call_graph_2026-07-10.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | plain workspace-member corpus backup for real-target call graph query contracts | 2026-07-10 |
 | `corpus_axum_openrouter_embeddings_2026-05-17.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | OpenRouter-searchable workspace-member corpus backup for type-context matrix tests | 2026-05-17 |
 | `ploke-db_af8e3a20-728d-5967-8523-da8a5ccdae45` | `crates/ploke-db` | currently orphaned snapshot | 2026-03-20 |
+
+## 2026-07-10 Axum Dynamic Self-Field Callee Evidence Refresh
+
+The `corpus_axum_call_graph` fixture was recreated with
+`cargo run -p xtask --features call_graph -- recreate-backup-db --fixture corpus_axum_call_graph`
+after dynamic call extraction began preserving `self`-field callable paths for
+unsupported targetless rows.
+
+Post-regeneration verification:
+
+- The recreated `corpus_axum_call_graph_2026-07-10.sqlite` shared snapshot was
+  copied into `tests/backup_dbs/` as the committed seed artifact.
+- `axum/src/boxed.rs:{85,120,159}` and
+  `axum/src/serve/listener.rs:236` dynamic callable field rows preserve
+  `call_site.path` while remaining unsupported and targetless.
 
 ## 2026-07-10 Call Callee Evidence Regeneration
 
@@ -900,10 +915,10 @@ Expected searchable corpus embedding config:
   - `Token![,]` under `Punctuated<syn::Variant, Token![,]>` retains a nested
     macro type without fabricating a terminal target
 
-### `corpus_axum_call_graph_2026-07-09.sqlite`
+### `corpus_axum_call_graph_2026-07-10.sqlite`
 
 - Status: active
-- File: `tests/backup_dbs/corpus_axum_call_graph_2026-07-09.sqlite`
+- File: `tests/backup_dbs/corpus_axum_call_graph_2026-07-10.sqlite`
 - Parsed target: `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1`
 - Checkout slug: `tests/fixture_github_clones/corpus/tokio-rs__axum`
 - Selected workspace members:
@@ -953,6 +968,9 @@ Expected searchable corpus embedding config:
   - typed local `Router` receiver `.clone()` rows reach the local
     `impl<S> Clone for Router<S>` method through exact local external-trait impl
     receiver resolution
+  - targetless dynamic callees such as `(self.into_route)(...)`,
+    `(self.layer)(...)`, and `(self.tap_fn)(...)` preserve their self-field
+    callee path while remaining unsupported and edge-free
   - selected proc-macro entrypoint bodies reach local helper functions through
     `CallBodyOwnerId::Macro` owner edges, including `expand_with` and active
     `expand_attr_with` callers
