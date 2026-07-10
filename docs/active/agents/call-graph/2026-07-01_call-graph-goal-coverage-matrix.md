@@ -66,6 +66,9 @@ Exit criteria:
   `code_item_lookup` / `code_item_edges`, and the direct
   `code_private_uncalled` payload while preserving zero incoming source-call
   paths for `traits`.
+- Expose the linked generated test entrypoint as a typed `call_test_entrypoints`
+  payload through the same DB, RAG, and TUI surfaces, instead of requiring
+  clients to scrape generic proof context rows.
 - Preserve fail-closed build-domain blockers when cfg/rustc evidence is
   incomplete; admitted axum cfg/rustc evidence should surface an unblocked
   domain summary.
@@ -79,7 +82,11 @@ links instead of proof-context text search, preserves zero incoming source-call
 paths, and reports the admitted axum library build domain without blocker
 reasons when cfg/rustc evidence is present. The direct
 `code_private_uncalled` tool now also returns those build-domain rows next to
-its entrypoint-summary proof rows.
+its entrypoint-summary proof rows. The follow-up typed entrypoint slice added
+`call_test_entrypoints` / `CallTestEntrypointInfo` through DB, RAG, exact
+lookup/edges, and `code_private_uncalled`, with real-corpus axum assertions
+that preserve the admitted generated test-harness metadata without fabricating
+source call edges.
 
 Previous completed bucket: callable trait-object runtime-dispatch blocker proof
 over real memchr boxed `dyn FnMut` path rows.
@@ -102,7 +109,7 @@ Do not revisit those families unless the implementation adds new proof input
 such as macro-expanded/generated source bodies, async poll/resume execution
 proof, interprocedural callable argument/value-flow, broader callable
 trait-object dispatch, additional source/sink policy annotation families, or
-build/test entrypoint summaries.
+build/test entrypoint execution-policy summaries.
 
 Previous completed bucket: persisted source/sink effect-policy proof
 annotations.

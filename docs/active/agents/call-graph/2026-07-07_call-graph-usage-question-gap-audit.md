@@ -28,7 +28,7 @@ inputs:
 - broader source/sink, cost, and policy annotations for
   security/performance/refactoring questions that need domain semantics beyond
   current `effect_seed` plus admitted owner `effect_policy` allowlists;
-- generated harness/build-entrypoint summaries for full binary/test/CI
+- generated harness/build-entrypoint execution policy for full binary/test/CI
   reachability beyond admitted proof-only entrypoint summaries.
 
 ## Usage Question Coverage
@@ -36,17 +36,17 @@ inputs:
 | Section | Current evidence | Status |
 | --- | --- | --- |
 | Impact analysis | `call_impact_for_target`, RAG `exact_call_impact_for_target`, `code_item_lookup`, and `code_item_edges` cover eventual callers, public callers, test/non-test buckets, direct callsites, source files/modules/crates, and callsite buckets. | Strong current surface. |
-| Dead code detection | `private_uncalled_nodes`, RAG `exact_private_uncalled_nodes`, and `code_private_uncalled` cover private zero-incoming nodes and cross-check empty impact reports. `code_private_uncalled` now also exposes admitted generated-entrypoint summaries and linked build-domain rows for returned nodes. | Strong for stored source call graph; generated harness reach remains proof-only and does not become a local call edge. |
+| Dead code detection | `private_uncalled_nodes`, RAG `exact_private_uncalled_nodes`, and `code_private_uncalled` cover private zero-incoming nodes and cross-check empty impact reports. `code_private_uncalled` now also exposes admitted generated-entrypoint summaries, typed `call_test_entrypoints`, and linked build-domain rows for returned nodes. | Strong for stored source call graph; generated harness reach remains proof-only and does not become a local call edge. |
 | Navigation | `callers_for_target`, `call_sites_for_target`, `call_context_for_owner`, `call_paths_*`, RAG exact paths, and `code_item_call_path` cover direct and multi-hop traversal. | Strong current surface. |
 | Security analysis | Reach/path/frontier queries can answer "can A reach B?" and expose unsafe/FFI/external frontier rows, including `abs(value)` and unsafe-block metadata. Reachable `effect_seed` facts plus caller-supplied or admitted-owner `effect_policy` allowlists can report policy violations such as the axum `tokio::spawn` `async_task_spawn` sink without fabricating local edges. | Partial: broader source/sink classification, policy-order checks, and domain-specific security semantics are not modeled. |
 | Performance work | Reach/path/frontier queries expose known helpers, external calls, cfgs, and argument shape. | Partial: hot-path/cost/blocking annotations are not modeled. |
 | Refactoring support | Impact, direct callsites, source files/modules/crates, boundary edges, and callsite buckets support migration planning. | Strong for caller inventory; move-safety/cycle prediction needs dependency-policy rules. |
-| Test planning | Impact test/non-test buckets, source metadata, and admitted generated test-harness entrypoint summaries identify stored test callers and proof-only generated entrypoints. | Partial: generated harness summaries are proof context, and CI test selection is not modeled. |
+| Test planning | Impact test/non-test buckets, source metadata, admitted generated test-harness entrypoint summaries, and typed `call_test_entrypoints` identify stored test callers and proof-only generated entrypoints. | Partial: generated harness summaries remain proof facts, and CI test selection is not modeled. |
 | Architecture review | `module_boundary_edges_from_owner`, reach `boundary_edges`, lookup/edges payloads, and source modules expose cross-module call edges. | Strong for module-boundary inventory; intended layer policies are not modeled. |
 | Debugging | Owner/target context, exact paths, frontier status buckets, proof context, and source spans map persisted edges/blockers back to source callsites. | Strong current surface. |
 | API understanding | Impact buckets, argument/generic argument counts, constructor relation kinds, path-shape counts, aliases/re-exports, and source crates show real target usage. | Strong current surface. |
 | Documentation and RAG | RAG exact call context, exact paths, impact/reach summaries, proof context, and tool payloads expose caller/callee context and fail-closed blockers. | Strong current surface. |
-| Build or deployment optimization | Source crates/modules/cfgs and component impact reports answer affected components and feature/platform-gated paths. Exact DB/RAG/tool build-domain summaries now expose linked admitted build/test domain proof metadata for generated test-entrypoint summaries without adding source call edges. | Partial: actual CI test selection policy is not modeled. |
+| Build or deployment optimization | Source crates/modules/cfgs and component impact reports answer affected components and feature/platform-gated paths. Exact DB/RAG/tool build-domain summaries and typed test-entrypoint summaries now expose linked admitted build/test proof metadata for generated test-entrypoint summaries without adding source call edges. | Partial: actual CI test selection policy is not modeled. |
 
 ## Concrete Existing Proof Points
 
@@ -59,9 +59,9 @@ inputs:
   `crates/ploke-db/tests/proof_graph_store/effect_policy.rs`.
 - TUI/tools: `code_item_call_path`, `code_item_lookup`, `code_item_edges`,
   `code_private_uncalled`, and targetless matrix integration tests under
-  `crates/ploke-tui/tests/integration/`. The private-uncalled tool now exposes
-  admitted generated-entrypoint summaries without fabricating source call
-  edges.
+  `crates/ploke-tui/tests/integration/`. The exact lookup/edges and
+  private-uncalled tools now expose admitted generated-entrypoint summaries
+  through typed payloads without fabricating source call edges.
 
 ## Selected Next Bucket
 
@@ -111,4 +111,5 @@ The next implementation bucket should therefore start with a genuinely new
 proof input instead of more breadth over those closed rows. Viable carriers are
 macro-expanded/generated source bodies, async poll/resume execution proof,
 interprocedural callable argument/value-flow, broader callable trait-object
-dispatch, source/sink policy annotations, or build/test entrypoint summaries.
+dispatch, source/sink policy annotations, or build/test entrypoint
+execution-policy summaries.
