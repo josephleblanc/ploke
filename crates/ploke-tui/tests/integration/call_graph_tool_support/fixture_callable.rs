@@ -8,6 +8,7 @@ pub(crate) struct CallableBlockerFixture {
     pub(crate) path: Vec<String>,
     pub(crate) candidates: Vec<Uuid>,
     pub(crate) build_domain: &'static str,
+    pub(crate) shape: CallableBlockerShape,
 }
 
 pub(crate) struct CallableParamResolvedFixture {
@@ -20,23 +21,50 @@ pub(crate) struct CallableParamResolvedFixture {
     pub(crate) build_domain: &'static str,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CallableBlockerShape {
+    Path,
+    Dynamic,
+    AmbiguousPath,
+    AmbiguousDynamic,
+}
+
 impl CallableBlockerFixture {
     pub(crate) async fn function_pointer_param() -> Self {
-        Self::new_for_owner("call_function_pointer_param", &["f"], 2).await
+        Self::new_for_owner(
+            "call_function_pointer_param",
+            &["f"],
+            CallableBlockerShape::Path,
+            2,
+        )
+        .await
     }
 
     pub(crate) async fn multi_conflicting_function_pointer_param() -> Self {
-        Self::new_for_owner("call_multi_conflicting_function_pointer_param", &["f"], 8).await
+        Self::new_for_owner(
+            "call_multi_conflicting_function_pointer_param",
+            &["f"],
+            CallableBlockerShape::AmbiguousPath,
+            8,
+        )
+        .await
     }
 
     pub(crate) async fn generic_fn_once_value_binding() -> Self {
-        Self::new_for_owner("call_generic_fn_once_value_binding", &["generic_f"], 2).await
+        Self::new_for_owner(
+            "call_generic_fn_once_value_binding",
+            &["generic_f"],
+            CallableBlockerShape::Path,
+            2,
+        )
+        .await
     }
 
     pub(crate) async fn multi_conflicting_generic_fn_once_param() -> Self {
         Self::new_for_owner(
             "call_multi_conflicting_generic_fn_once_param",
             &["generic_f"],
+            CallableBlockerShape::AmbiguousPath,
             8,
         )
         .await
@@ -46,7 +74,48 @@ impl CallableBlockerFixture {
         Self::new_for_owner(
             "call_multi_conflicting_named_field_function_param",
             &["holder", "callback"],
+            CallableBlockerShape::AmbiguousDynamic,
             8,
+        )
+        .await
+    }
+
+    pub(crate) async fn field_function_param() -> Self {
+        Self::new_for_owner(
+            "call_field_function_param",
+            &["holder", "callback"],
+            CallableBlockerShape::Dynamic,
+            2,
+        )
+        .await
+    }
+
+    pub(crate) async fn indexed_function_pointer() -> Self {
+        Self::new_for_owner(
+            "call_indexed_function_pointer",
+            &["funcs", "0"],
+            CallableBlockerShape::Dynamic,
+            2,
+        )
+        .await
+    }
+
+    pub(crate) async fn indexed_field_function_param() -> Self {
+        Self::new_for_owner(
+            "call_indexed_field_function_param",
+            &["holder", "callbacks", "0"],
+            CallableBlockerShape::Dynamic,
+            2,
+        )
+        .await
+    }
+
+    pub(crate) async fn indexed_tuple_field_function_param() -> Self {
+        Self::new_for_owner(
+            "call_indexed_tuple_field_function_param",
+            &["holder", "0", "0"],
+            CallableBlockerShape::Dynamic,
+            2,
         )
         .await
     }
@@ -54,6 +123,7 @@ impl CallableBlockerFixture {
     async fn new_for_owner(
         owner_name: &'static str,
         path: &[&str],
+        shape: CallableBlockerShape,
         expected_projection_count: usize,
     ) -> Self {
         let db = Arc::new(Database::new(
@@ -105,6 +175,7 @@ impl CallableBlockerFixture {
             path: path.iter().map(|part| (*part).to_string()).collect(),
             candidates,
             build_domain: "bd:fixture-call-graph",
+            shape,
         }
     }
 

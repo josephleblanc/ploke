@@ -14,14 +14,15 @@ use crate::call_graph_tool_support::{
     AxumErrorHandlingTraitsToolFixture, AxumExpandWithToolFixture, AxumHandlerCallToolFixture,
     AxumJsonFromBytesToolFixture, AxumParseAttrsToolFixture, AxumRequestExtractPathToolFixture,
     AxumRunUiTestsToolFixture, AxumTaskSpawnEffectToolFixture, CallGraphToolFixture,
-    CallableBlockerFixture, CallableParamResolvedFixture, ChronoAliasConstructorToolFixture,
-    ChronoNaiveUtcToolFixture, FixtureBranchReceiverToolFixture, FixtureDynamicCallableToolFixture,
-    FixtureSelfFieldReceiverToolFixture, assert_ambiguous_dynamic_candidates,
-    assert_ambiguous_path_candidates, assert_await_result_unwrap_context,
-    assert_await_result_unwrap_proof, assert_body_empty_dependency_root_proof,
-    assert_body_empty_impact_summary, assert_body_empty_incoming_context,
-    assert_boxed_into_route_incoming_context, assert_branch_receiver_context,
-    assert_branch_receiver_proof, assert_call_path_node, assert_chrono_naive_utc_incoming_context,
+    CallableBlockerFixture, CallableBlockerShape, CallableParamResolvedFixture,
+    ChronoAliasConstructorToolFixture, ChronoNaiveUtcToolFixture, FixtureBranchReceiverToolFixture,
+    FixtureDynamicCallableToolFixture, FixtureSelfFieldReceiverToolFixture,
+    assert_ambiguous_dynamic_candidates, assert_ambiguous_path_candidates,
+    assert_await_result_unwrap_context, assert_await_result_unwrap_proof,
+    assert_body_empty_dependency_root_proof, assert_body_empty_impact_summary,
+    assert_body_empty_incoming_context, assert_boxed_into_route_incoming_context,
+    assert_branch_receiver_context, assert_branch_receiver_proof, assert_call_path_node,
+    assert_chrono_naive_utc_incoming_context, assert_dynamic_context, assert_dynamic_proof,
     assert_expected_path_incoming_context, assert_fixture_extern_c_abs_effects,
     assert_handler_call_incoming_context, assert_incoming_context,
     assert_initialized_local_receiver_context, assert_initialized_local_receiver_proof,
@@ -471,6 +472,10 @@ async fn code_item_lookup_returns_function_pointer_param_blocker() {
         CallableBlockerFixture::generic_fn_once_value_binding().await,
         CallableBlockerFixture::multi_conflicting_generic_fn_once_param().await,
         CallableBlockerFixture::multi_conflicting_named_field_function_param().await,
+        CallableBlockerFixture::field_function_param().await,
+        CallableBlockerFixture::indexed_function_pointer().await,
+        CallableBlockerFixture::indexed_field_function_param().await,
+        CallableBlockerFixture::indexed_tuple_field_function_param().await,
     ] {
         let params = LookupParams {
             item_name: Cow::Borrowed(fixture.owner_name),
@@ -508,7 +513,14 @@ async fn code_item_lookup_returns_function_pointer_param_blocker() {
         //     functions;
         //     private `call_multi_conflicting_named_field_function_param(holder)`
         //     calls `(holder.callback)()`, but its local callers pass different
-        //     functions in that field.
+        //     functions in that field;
+        //     public `call_field_function_param(holder)` calls
+        //     `(holder.callback)()`;
+        //     public `call_indexed_function_pointer(funcs)` calls `funcs[0]()`;
+        //     public `call_indexed_field_function_param(holder)` calls
+        //     `holder.callbacks[0]()`;
+        //     public `call_indexed_tuple_field_function_param(holder)` calls
+        //     `holder.0[0]()`.
         //
         // Public opaque parameters stay blocked and targetless. Private
         // complete local caller sets with conflicting callable arguments expose
@@ -517,49 +529,70 @@ async fn code_item_lookup_returns_function_pointer_param_blocker() {
         let callee = CallCalleeInfo::Path {
             path: fixture.path.clone(),
         };
-        let is_conflicting = fixture.owner_name.contains("multi_conflicting");
-        let is_field = fixture.owner_name.contains("named_field");
-        let site_id = if is_conflicting && is_field {
-            assert_ambiguous_dynamic_candidates(
-                call_context,
-                fixture.owner,
-                &fixture.candidates,
-                label.as_str(),
-                "code_item_lookup",
-            )
-        } else if is_conflicting {
-            assert_ambiguous_path_candidates(
-                call_context,
-                fixture.owner,
-                &callee,
-                &fixture.candidates,
-                label.as_str(),
-                "code_item_lookup",
-            )
-        } else {
-            assert_path_context(
+        let site_id = match fixture.shape {
+            CallableBlockerShape::Path => assert_path_context(
                 call_context,
                 fixture.owner,
                 &callee,
                 &CallStatusKind::Unsupported,
                 label.as_str(),
                 "code_item_lookup",
-            )
+            ),
+            CallableBlockerShape::Dynamic => assert_dynamic_context(
+                call_context,
+                fixture.owner,
+                None,
+                label.as_str(),
+                "code_item_lookup",
+            ),
+            CallableBlockerShape::AmbiguousPath => assert_ambiguous_path_candidates(
+                call_context,
+                fixture.owner,
+                &callee,
+                &fixture.candidates,
+                label.as_str(),
+                "code_item_lookup",
+            ),
+            CallableBlockerShape::AmbiguousDynamic => assert_ambiguous_dynamic_candidates(
+                call_context,
+                fixture.owner,
+                &fixture.candidates,
+                label.as_str(),
+                "code_item_lookup",
+            ),
         };
-        assert_path_resolution_proof(
-            proof_context,
-            fixture.owner,
-            site_id,
-            fixture.build_domain,
-            if is_conflicting {
-                "ambiguous"
-            } else {
-                "blocked"
-            },
-            "type_resolution_missing",
-            label.as_str(),
-            "code_item_lookup",
-        );
+        match fixture.shape {
+            CallableBlockerShape::Path => assert_path_resolution_proof(
+                proof_context,
+                fixture.owner,
+                site_id,
+                fixture.build_domain,
+                "blocked",
+                "type_resolution_missing",
+                label.as_str(),
+                "code_item_lookup",
+            ),
+            CallableBlockerShape::Dynamic => assert_dynamic_proof(
+                proof_context,
+                fixture.owner,
+                site_id,
+                fixture.build_domain,
+                label.as_str(),
+                "code_item_lookup",
+            ),
+            CallableBlockerShape::AmbiguousPath | CallableBlockerShape::AmbiguousDynamic => {
+                assert_path_resolution_proof(
+                    proof_context,
+                    fixture.owner,
+                    site_id,
+                    fixture.build_domain,
+                    "ambiguous",
+                    "type_resolution_missing",
+                    label.as_str(),
+                    "code_item_lookup",
+                );
+            }
+        }
 
         let ui = result.ui_payload.as_ref().expect("ui payload");
         assert!(

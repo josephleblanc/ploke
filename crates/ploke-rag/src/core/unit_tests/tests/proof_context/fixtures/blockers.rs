@@ -57,7 +57,7 @@ async fn proof_context_collection_preserves_projected_blocker_rows() -> Result<(
     Ok(())
 }
 
-fn blocker_cases() -> [Case; 8] {
+fn blocker_cases() -> [Case; 12] {
     [
         Case {
             label: "String::new external blocker",
@@ -114,6 +114,34 @@ fn blocker_cases() -> [Case; 8] {
             owner: "call_parenthesized_boxed_dyn_fn_value_binding",
             expected_rows: 5,
             reasons: &["external_dependency_summary_missing"],
+        },
+        Case {
+            label: "callable field parameter dynamic blocker",
+            module_path: &["crate"],
+            owner: "call_field_function_param",
+            expected_rows: 2,
+            reasons: &["dynamic_dispatch_unbounded"],
+        },
+        Case {
+            label: "indexed function pointer dynamic blocker",
+            module_path: &["crate"],
+            owner: "call_indexed_function_pointer",
+            expected_rows: 2,
+            reasons: &["dynamic_dispatch_unbounded"],
+        },
+        Case {
+            label: "indexed callable field dynamic blocker",
+            module_path: &["crate"],
+            owner: "call_indexed_field_function_param",
+            expected_rows: 2,
+            reasons: &["dynamic_dispatch_unbounded"],
+        },
+        Case {
+            label: "indexed tuple-field callable dynamic blocker",
+            module_path: &["crate"],
+            owner: "call_indexed_tuple_field_function_param",
+            expected_rows: 2,
+            reasons: &["dynamic_dispatch_unbounded"],
         },
     ]
 }

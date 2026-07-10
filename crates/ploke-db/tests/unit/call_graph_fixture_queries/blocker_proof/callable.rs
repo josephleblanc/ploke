@@ -110,19 +110,47 @@ fn fixture_projection_marks_real_parenthesized_callable_dynamic_rows_without_edg
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let mut expected = Vec::new();
 
-    assert_projected_blockers(
-        &db,
-        &mut expected,
-        "call_parenthesized_generic_fn_once_value_binding",
-        &[TargetlessBlockerCase {
-            row: TargetlessRowCase::dynamic(
-                Some(&["generic_f"]),
-                CallStatusKind::Unsupported,
-                "parenthesized generic FnOnce dynamic proof setup",
-            ),
-            blocker_reason: "dynamic_dispatch_unbounded",
-        }],
-    )?;
+    for (owner_name, expected_path, label) in [
+        (
+            "call_parenthesized_generic_fn_once_value_binding",
+            &["generic_f"][..],
+            "parenthesized generic FnOnce dynamic proof setup",
+        ),
+        (
+            "call_field_function_param",
+            &["holder", "callback"][..],
+            "callable field parameter dynamic proof setup",
+        ),
+        (
+            "call_indexed_function_pointer",
+            &["funcs", "0"][..],
+            "indexed function pointer dynamic proof setup",
+        ),
+        (
+            "call_indexed_field_function_param",
+            &["holder", "callbacks", "0"][..],
+            "indexed field callable parameter dynamic proof setup",
+        ),
+        (
+            "call_indexed_tuple_field_function_param",
+            &["holder", "0", "0"][..],
+            "indexed tuple-field callable parameter dynamic proof setup",
+        ),
+    ] {
+        assert_projected_blockers(
+            &db,
+            &mut expected,
+            owner_name,
+            &[TargetlessBlockerCase {
+                row: TargetlessRowCase::dynamic(
+                    Some(expected_path),
+                    CallStatusKind::Unsupported,
+                    label,
+                ),
+                blocker_reason: "dynamic_dispatch_unbounded",
+            }],
+        )?;
+    }
 
     assert_targetless_blocker_proofs(
         &db,

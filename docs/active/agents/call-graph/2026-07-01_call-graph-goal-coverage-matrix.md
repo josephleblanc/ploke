@@ -50,7 +50,32 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: conflicting callable field-parameter candidate proof.
+Current bucket: public callable field/indexed blocker proof surfacing.
+
+Exit criteria:
+
+- Use the existing fixture source oracles for public callable field/indexed
+  API boundaries: `call_field_function_param`,
+  `call_indexed_function_pointer`, `call_indexed_field_function_param`, and
+  `call_indexed_tuple_field_function_param`.
+- Keep these rows targetless unsupported because public callers do not provide
+  complete source-visible callable values.
+- Assert the DB/RAG/TUI proof surfaces expose the
+  `dynamic_dispatch_unbounded` blocker and do not emit traversal edges.
+
+Status: completed for this checkpoint.
+
+Latest completed slice: public callable field/indexed blockers now have
+DB proof, RAG proof-context, and TUI lookup/edges proof payload coverage. This
+is proof-surface hardening, not semantic expansion.
+
+Next bucket: after focused verification and commit, re-check remaining
+unsupported semantic proof inputs before selecting another parser/resolver
+slice; likely candidates are async poll/resume proof, dependency-root source
+oracles, or missing trait visibility.
+
+Previous completed bucket: conflicting callable field-parameter candidate
+proof.
 
 Exit criteria:
 
@@ -64,7 +89,7 @@ Exit criteria:
 - Assert parser, DB context/proof, RAG collection, and TUI lookup/edges payloads
   for the candidate row.
 
-Status: completed for this checkpoint.
+Status: completed for that checkpoint.
 
 Latest completed slice: private complete-local conflicting named-field
 parameter proof now returns a candidate-only dynamic-call row for
@@ -85,10 +110,6 @@ Completed evidence:
 - `code_item_lookup_returns_function_pointer_param_blocker` and
   `code_item_edges_returns_function_pointer_param_blocker` now distinguish
   public blocked rows from private ambiguous path and dynamic candidate rows.
-
-Next bucket: re-check remaining unsupported semantic proof inputs before
-selecting another parser/resolver slice; likely candidates are async
-poll/resume proof, dependency-root source oracles, or missing trait visibility.
 
 Previous completed bucket: conflicting callable value-parameter candidate
 proof.
