@@ -81,7 +81,7 @@ fn fixture_proof_symbol_lookup_matches_ambiguous_dynamic_candidate_payloads() ->
     let callers = db.callers_for_target(target)?;
     assert_eq!(
         callers.len(),
-        AMBIGUOUS_DYNAMIC_OWNERS.len() + 1,
+        AMBIGUOUS_DYNAMIC_OWNERS.len() + 3,
         "other_target should be reachable through every ambiguous fixture candidate caller: {callers:#?}"
     );
     let context = db.call_context_for_owner(owner)?;
@@ -90,6 +90,22 @@ fn fixture_proof_symbol_lookup_matches_ambiguous_dynamic_candidate_payloads() ->
     let path_site = caller_by_owner_kind_path(&callers, path_owner, CallSiteKind::Path, &["f"])
         .site
         .id;
+    let conflicting_site = caller_by_owner_kind_path(
+        &callers,
+        function_id_by_name(&db, "call_multi_conflicting_function_pointer_param")?,
+        CallSiteKind::Path,
+        &["f"],
+    )
+    .site
+    .id;
+    let conflicting_generic_site = caller_by_owner_kind_path(
+        &callers,
+        function_id_by_name(&db, "call_multi_conflicting_generic_fn_once_param")?,
+        CallSiteKind::Path,
+        &["generic_f"],
+    )
+    .site
+    .id;
 
     let count = db.project_call_proof_facts_for_target(target, "bd:fixture-call-graph")?;
     assert_eq!(
@@ -102,6 +118,14 @@ fn fixture_proof_symbol_lookup_matches_ambiguous_dynamic_candidate_payloads() ->
     for (label, site) in [
         ("dynamic branch candidate", site),
         ("path initialized-binding candidate", path_site),
+        (
+            "conflicting function pointer parameter candidate",
+            conflicting_site,
+        ),
+        (
+            "conflicting generic FnOnce parameter candidate",
+            conflicting_generic_site,
+        ),
     ] {
         let site_rows = proof_rows_for_site(&rows, site);
         assert_eq!(

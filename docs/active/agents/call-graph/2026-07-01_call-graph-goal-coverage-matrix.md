@@ -50,7 +50,53 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: ambiguous branch-initialized path-call candidate proof.
+Current bucket: conflicting callable value-parameter candidate proof.
+
+Exit criteria:
+
+- Use fixture source oracles where private functions have complete local
+  callers but conflicting callable value arguments:
+  `call_multi_conflicting_function_pointer_param(f)` and
+  `call_multi_conflicting_generic_fn_once_param(generic_f)`.
+- Keep public/opaque callable parameters targetless unsupported.
+- Preserve the complete local candidate set as `Ambiguous` path-call rows with
+  `Function` candidate relations and `candidate_def_ids`; do not emit resolved
+  traversal edges or proof `call_edge` facts.
+- Assert parser, DB context/proof, RAG collection, and TUI lookup/edges payloads
+  for the candidate rows.
+
+Status: completed for this checkpoint.
+
+Latest completed slice: private complete-local conflicting value-parameter
+proof now returns candidate-only path-call rows for `f()` and `generic_f()`.
+The shared parameter resolver returns exact proof for single/same-target caller
+sets and ambiguous candidate proof for conflicting complete value-parameter
+sets. Field/index parameter conflicts remain targetless until a separate
+field-path candidate batch is selected.
+
+Completed evidence:
+
+- `fixture_call_graph_call_multi_conflicting_function_pointer_param_preserves_path_candidates`
+  and
+  `fixture_call_graph_call_multi_conflicting_generic_fn_once_param_preserves_path_candidates`
+  assert both candidate function IDs in the parser/resolver harness.
+- `fixture_context_reads_projected_conflicting_callable_value_candidates`,
+  `fixture_projection_marks_conflicting_callable_value_candidates`, and the
+  target-centered candidate/proof lookup tests assert DB rows,
+  `candidate_def_ids`, and no proof `call_edge`.
+- `call_context_collection_reads_real_fixture_callable_path_rows` asserts RAG
+  collection preserves the ambiguous candidate targets.
+- `code_item_lookup_returns_function_pointer_param_blocker` and
+  `code_item_edges_returns_function_pointer_param_blocker` now distinguish
+  public blocked rows from private ambiguous candidate rows.
+
+Next bucket: re-check remaining unsupported semantic proof inputs before
+selecting another parser/resolver slice; likely candidates are async
+poll/resume proof, dependency-root source oracles, field/index callable
+candidate proof, or missing trait visibility.
+
+Previous completed bucket: ambiguous branch-initialized path-call candidate
+proof.
 
 Exit criteria:
 
@@ -66,7 +112,7 @@ Exit criteria:
 
 Status: completed for this checkpoint.
 
-Latest completed slice: parser extraction now records an
+Previous completed slice: parser extraction now records an
 `AmbiguousInitializedValueBinding` path-call callee when a local callable
 binding is branch-initialized by multiple proven local function items. The
 resolver emits `Ambiguous` plus candidate `Function` relations only when every
@@ -88,11 +134,6 @@ Completed evidence:
 - `proof_projection_rejects_non_resolved_local_targets` and
   `target_centered_proof_projection_rejects_non_resolved_local_targets` still
   reject invalid non-resolved local-target rows.
-
-Next bucket: re-check remaining unsupported semantic proof inputs before
-selecting another parser/resolver slice; likely candidates are async
-poll/resume proof, dependency-root source oracles, or bounded local
-binding/type proof shapes not already covered.
 
 Previous completed bucket: generated-entrypoint summary proof for
 private-uncalled tools.

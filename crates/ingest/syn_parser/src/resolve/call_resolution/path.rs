@@ -22,6 +22,12 @@ pub(super) enum ParameterCallTarget {
     Closure(ExecutableBodyId),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum ParameterCallResolution {
+    Exact(ParameterCallTarget),
+    Ambiguous(Vec<ParameterCallTarget>),
+}
+
 #[derive(Debug, Clone, Copy)]
 enum ParameterProof<'a> {
     Value,
@@ -349,28 +355,26 @@ impl CallRelationResolver<'_> {
         relations: &mut Vec<CallRelation>,
         statuses: &mut Vec<CallResolutionStatus>,
     ) -> Result<bool, SynParserError> {
-        let Some(target) = self.resolve_parameter_value_call(call.owner, path)? else {
+        let Some(resolution) = self.resolve_parameter_value_call(call.owner, path)? else {
             return Ok(false);
         };
 
-        match target {
-            ParameterCallTarget::Function(target) => {
-                relations.push(CallRelation::Function {
-                    source: call.id,
-                    target,
+        let source = AnyCallSiteId::Path(call.id);
+        match resolution {
+            ParameterCallResolution::Exact(target) => {
+                push_path_parameter_target(call, target, relations);
+                statuses.push(CallResolutionStatus::Resolved {
+                    source,
+                    kind: CallResolutionKind::LocalExact,
                 });
             }
-            ParameterCallTarget::Closure(target) => {
-                relations.push(CallRelation::Closure {
-                    source: call.id,
-                    target,
-                });
+            ParameterCallResolution::Ambiguous(targets) => {
+                for target in targets {
+                    push_path_parameter_target(call, target, relations);
+                }
+                statuses.push(CallResolutionStatus::Ambiguous { source });
             }
         }
-        statuses.push(CallResolutionStatus::Resolved {
-            source: AnyCallSiteId::Path(call.id),
-            kind: CallResolutionKind::LocalExact,
-        });
         Ok(true)
     }
 
@@ -378,7 +382,7 @@ impl CallRelationResolver<'_> {
         &self,
         owner: CallBodyOwnerId,
         path: &[String],
-    ) -> Result<Option<ParameterCallTarget>, SynParserError> {
+    ) -> Result<Option<ParameterCallResolution>, SynParserError> {
         let [name] = path else {
             return Ok(None);
         };
@@ -390,7 +394,7 @@ impl CallRelationResolver<'_> {
         &self,
         owner: CallBodyOwnerId,
         path: &[String],
-    ) -> Result<Option<ParameterCallTarget>, SynParserError> {
+    ) -> Result<Option<ParameterCallResolution>, SynParserError> {
         let Some((name, field_path)) = path.split_first() else {
             return Ok(None);
         };
@@ -406,7 +410,7 @@ impl CallRelationResolver<'_> {
         owner: CallBodyOwnerId,
         name: &str,
         proof: ParameterProof<'_>,
-    ) -> Result<Option<ParameterCallTarget>, SynParserError> {
+    ) -> Result<Option<ParameterCallResolution>, SynParserError> {
         let Some(parameter_owner) = self.parameter_function_owner(owner)? else {
             return Ok(None);
         };
@@ -458,8 +462,11 @@ impl CallRelationResolver<'_> {
         targets.sort_unstable();
         targets.dedup();
 
-        Ok(match targets.as_slice() {
-            [target] => Some(*target),
+        Ok(match (proof, targets.as_slice()) {
+            (_, [target]) => Some(ParameterCallResolution::Exact(*target)),
+            (ParameterProof::Value, [_, _, ..]) => {
+                Some(ParameterCallResolution::Ambiguous(targets))
+            }
             _ => None,
         })
     }
@@ -648,6 +655,27 @@ impl CallRelationResolver<'_> {
             LocalFunctionPathResolution::Unresolved
             | LocalFunctionPathResolution::Ambiguous
             | LocalFunctionPathResolution::Unsupported => Ok(None),
+        }
+    }
+}
+
+fn push_path_parameter_target(
+    call: &PathCallNode,
+    target: ParameterCallTarget,
+    relations: &mut Vec<CallRelation>,
+) {
+    match target {
+        ParameterCallTarget::Function(target) => {
+            relations.push(CallRelation::Function {
+                source: call.id,
+                target,
+            });
+        }
+        ParameterCallTarget::Closure(target) => {
+            relations.push(CallRelation::Closure {
+                source: call.id,
+                target,
+            });
         }
     }
 }

@@ -60,5 +60,6 @@ fn is_ambiguous_path_candidate(target: &crate::call_graph::CallTargetRow) -> boo
         && matches!(
             (target.relation, target.target_kind),
             (CallRelationKind::Function, CallTargetKind::Function)
+                | (CallRelationKind::Closure, CallTargetKind::Closure)
         )
 }

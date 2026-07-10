@@ -6,6 +6,7 @@ pub(crate) struct CallableBlockerFixture {
     pub(crate) owner_name: &'static str,
     pub(crate) owner: Uuid,
     pub(crate) path: Vec<String>,
+    pub(crate) candidates: Vec<Uuid>,
     pub(crate) build_domain: &'static str,
 }
 
@@ -63,6 +64,21 @@ impl CallableBlockerFixture {
         .pop()
         .unwrap_or_else(|| panic!("{owner_name} row"))
         .id;
+        let mut candidates = vec![
+            function_id(
+                db.as_ref(),
+                file_path.as_path(),
+                &module_path,
+                "local_target",
+            ),
+            function_id(
+                db.as_ref(),
+                file_path.as_path(),
+                &module_path,
+                "other_target",
+            ),
+        ];
+        candidates.sort_unstable();
         assert_eq!(
             db.project_call_proof_facts_for_node(owner, "bd:fixture-call-graph")
                 .expect("project callable blocker proof facts"),
@@ -78,6 +94,7 @@ impl CallableBlockerFixture {
             owner_name,
             owner,
             path: path.iter().map(|part| (*part).to_string()).collect(),
+            candidates,
             build_domain: "bd:fixture-call-graph",
         }
     }
@@ -85,6 +102,19 @@ impl CallableBlockerFixture {
     pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
         ctx_for_state(&self.state, call_id)
     }
+}
+
+fn function_id(
+    db: &Database,
+    file_path: &std::path::Path,
+    module_path: &[String],
+    name: &str,
+) -> Uuid {
+    graph_resolve_exact(db, "function", file_path, module_path, name)
+        .unwrap_or_else(|err| panic!("resolve {name}: {err}"))
+        .pop()
+        .unwrap_or_else(|| panic!("{name} row"))
+        .id
 }
 
 impl CallableParamResolvedFixture {

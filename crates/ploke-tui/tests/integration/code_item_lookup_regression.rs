@@ -16,16 +16,17 @@ use crate::call_graph_tool_support::{
     AxumRunUiTestsToolFixture, AxumTaskSpawnEffectToolFixture, CallGraphToolFixture,
     CallableBlockerFixture, CallableParamResolvedFixture, ChronoAliasConstructorToolFixture,
     ChronoNaiveUtcToolFixture, FixtureBranchReceiverToolFixture, FixtureDynamicCallableToolFixture,
-    FixtureSelfFieldReceiverToolFixture, assert_await_result_unwrap_context,
-    assert_await_result_unwrap_proof, assert_body_empty_dependency_root_proof,
-    assert_body_empty_impact_summary, assert_body_empty_incoming_context,
-    assert_boxed_into_route_incoming_context, assert_branch_receiver_context,
-    assert_branch_receiver_proof, assert_call_path_node, assert_chrono_naive_utc_incoming_context,
-    assert_expected_path_incoming_context, assert_fixture_extern_c_abs_effects,
-    assert_handler_call_incoming_context, assert_incoming_context,
-    assert_initialized_local_receiver_context, assert_initialized_local_receiver_proof,
-    assert_json_from_bytes_incoming_context, assert_no_external_summary_need_for_site,
-    assert_parse_attrs_incoming_context, assert_path_blocker_proof, assert_path_context,
+    FixtureSelfFieldReceiverToolFixture, assert_ambiguous_path_candidates,
+    assert_await_result_unwrap_context, assert_await_result_unwrap_proof,
+    assert_body_empty_dependency_root_proof, assert_body_empty_impact_summary,
+    assert_body_empty_incoming_context, assert_boxed_into_route_incoming_context,
+    assert_branch_receiver_context, assert_branch_receiver_proof, assert_call_path_node,
+    assert_chrono_naive_utc_incoming_context, assert_expected_path_incoming_context,
+    assert_fixture_extern_c_abs_effects, assert_handler_call_incoming_context,
+    assert_incoming_context, assert_initialized_local_receiver_context,
+    assert_initialized_local_receiver_proof, assert_json_from_bytes_incoming_context,
+    assert_no_external_summary_need_for_site, assert_parse_attrs_incoming_context,
+    assert_path_blocker_proof, assert_path_context, assert_path_resolution_proof,
     assert_resolved_callable_param_proof, assert_resolved_path_context,
     assert_run_ui_tests_incoming_context, assert_runtime_dispatch_blocker,
     assert_self_field_receiver_context, assert_self_field_receiver_proof,
@@ -505,25 +506,43 @@ async fn code_item_lookup_returns_function_pointer_param_blocker() {
         //     also calls `generic_f()`, but its local callers pass different
         //     functions.
         //
-        // In all cases the tool must surface the path row and
-        // `type_resolution_missing` blocker without fabricating a callee edge.
+        // Public opaque parameters stay blocked and targetless. Private
+        // complete local caller sets with conflicting callable arguments expose
+        // candidate targets, but still do not fabricate a resolved call edge.
         let label = format!("{} callable parameter path call", fixture.owner_name);
         let callee = CallCalleeInfo::Path {
             path: fixture.path.clone(),
         };
-        let site_id = assert_path_context(
-            call_context,
-            fixture.owner,
-            &callee,
-            &CallStatusKind::Unsupported,
-            label.as_str(),
-            "code_item_lookup",
-        );
-        assert_path_blocker_proof(
+        let is_conflicting = fixture.owner_name.contains("multi_conflicting");
+        let site_id = if is_conflicting {
+            assert_ambiguous_path_candidates(
+                call_context,
+                fixture.owner,
+                &callee,
+                &fixture.candidates,
+                label.as_str(),
+                "code_item_lookup",
+            )
+        } else {
+            assert_path_context(
+                call_context,
+                fixture.owner,
+                &callee,
+                &CallStatusKind::Unsupported,
+                label.as_str(),
+                "code_item_lookup",
+            )
+        };
+        assert_path_resolution_proof(
             proof_context,
             fixture.owner,
             site_id,
             fixture.build_domain,
+            if is_conflicting {
+                "ambiguous"
+            } else {
+                "blocked"
+            },
             "type_resolution_missing",
             label.as_str(),
             "code_item_lookup",
@@ -535,7 +554,7 @@ async fn code_item_lookup_returns_function_pointer_param_blocker() {
                 .parse::<usize>()
                 .expect("outgoing count")
                 >= 1,
-            "code_item_lookup should surface the targetless callable parameter call"
+            "code_item_lookup should surface the callable parameter call"
         );
         assert_eq!(
             ui_field(ui, "proof_context"),

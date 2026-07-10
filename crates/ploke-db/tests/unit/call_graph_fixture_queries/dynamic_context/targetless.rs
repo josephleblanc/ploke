@@ -65,24 +65,6 @@ fn fixture_context_reads_projected_callable_value_path_failures_and_vec_external
                 )],
             },
             TargetlessOwnerCase {
-                owner: "call_multi_conflicting_function_pointer_param",
-                rows: &[TargetlessRowCase::path(
-                    &["f"],
-                    0,
-                    CallStatusKind::Unsupported,
-                    "call_multi_conflicting_function_pointer_param",
-                )],
-            },
-            TargetlessOwnerCase {
-                owner: "call_multi_conflicting_generic_fn_once_param",
-                rows: &[TargetlessRowCase::path(
-                    &["generic_f"],
-                    0,
-                    CallStatusKind::Unsupported,
-                    "call_multi_conflicting_generic_fn_once_param",
-                )],
-            },
-            TargetlessOwnerCase {
                 owner: "call_generic_fn_once_value_binding",
                 rows: &[TargetlessRowCase::path(
                     &["generic_f"],
@@ -102,6 +84,27 @@ fn fixture_context_reads_projected_callable_value_path_failures_and_vec_external
             },
         ],
     )?;
+
+    Ok(())
+}
+
+#[test]
+fn fixture_context_reads_projected_conflicting_callable_value_candidates() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let expected = dynamic_candidates(&db)?;
+
+    for (owner_name, expected_path) in [
+        ("call_multi_conflicting_function_pointer_param", &["f"][..]),
+        (
+            "call_multi_conflicting_generic_fn_once_param",
+            &["generic_f"][..],
+        ),
+    ] {
+        let owner = function_id_by_name(&db, owner_name)?;
+        let context = db.call_context_for_owner(owner)?;
+        assert_eq!(context.len(), 1, "{owner_name} context rows: {context:#?}");
+        assert_path_function_candidates(&context[0], owner, expected_path, &expected, owner_name);
+    }
 
     Ok(())
 }

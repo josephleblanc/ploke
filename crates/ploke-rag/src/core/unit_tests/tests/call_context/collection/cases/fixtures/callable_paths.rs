@@ -11,6 +11,7 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
     let make_bound = unique_id_by_name(&db, "function", "make_bound_closure")?;
     let make_alias = unique_id_by_name(&db, "function", "make_alias_bound_closure")?;
     let local_target = unique_id_by_name(&db, "function", "local_target")?;
+    let other_target = unique_id_by_name(&db, "function", "other_target")?;
     let returned_owner = one_uuid(
         &db,
         &function_in_module_query(&["crate"], "call_returned_function"),
@@ -363,11 +364,13 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
             path: vec!["f".to_string()],
         }
     );
-    assert_eq!(multi_conflicting_call.status, CallStatusKind::Unsupported);
+    assert_eq!(multi_conflicting_call.status, CallStatusKind::Ambiguous);
     assert!(multi_conflicting_call.resolution.is_none());
-    assert!(
-        multi_conflicting_call.targets.is_empty(),
-        "conflicting multi-caller function-pointer calls must not fabricate RAG targets: {multi_conflicting_call:#?}"
+    assert_conflicting_candidates(
+        multi_conflicting_call,
+        local_target,
+        other_target,
+        "conflicting multi-caller function-pointer",
     );
 
     let multi_conflicting_generic_context =
@@ -393,12 +396,14 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
     let multi_conflicting_generic_call = multi_conflicting_generic_matches[0];
     assert_eq!(
         multi_conflicting_generic_call.status,
-        CallStatusKind::Unsupported
+        CallStatusKind::Ambiguous
     );
     assert!(multi_conflicting_generic_call.resolution.is_none());
-    assert!(
-        multi_conflicting_generic_call.targets.is_empty(),
-        "conflicting multi-caller generic FnOnce calls must not fabricate RAG targets: {multi_conflicting_generic_call:#?}"
+    assert_conflicting_candidates(
+        multi_conflicting_generic_call,
+        local_target,
+        other_target,
+        "conflicting multi-caller generic FnOnce",
     );
 
     let single_parenthesized_param_context = call_context
@@ -518,6 +523,25 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
     );
 
     Ok(())
+}
+
+fn assert_conflicting_candidates(call: &CallContextInfo, first: Uuid, second: Uuid, label: &str) {
+    assert_eq!(call.targets.len(), 2, "{label}: {call:#?}");
+    assert!(
+        call.targets
+            .iter()
+            .all(|target| target.relation == CallTargetKind::Function),
+        "{label} should expose only function candidates: {call:#?}"
+    );
+    let mut actual = call
+        .targets
+        .iter()
+        .map(|target| target.target_id)
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    let mut expected = vec![first, second];
+    expected.sort_unstable();
+    assert_eq!(actual, expected, "{label} candidate targets");
 }
 
 #[tokio::test]

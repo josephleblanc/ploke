@@ -32,12 +32,13 @@ pub(in crate::unit) fn candidate_strings(candidates: &[Uuid]) -> Vec<String> {
 pub(in crate::unit) fn assert_path_function_candidates(
     row: &CallContextRow,
     owner: Uuid,
+    expected_path: &[&str],
     expected: &[Uuid],
     label: &str,
 ) {
     assert_eq!(row.site.owner_id, owner);
     assert_eq!(row.site.kind, CallSiteKind::Path);
-    assert_eq!(row.site.path.as_ref(), Some(&path(&["f"])));
+    assert_eq!(row.site.path.as_ref(), Some(&path(expected_path)));
     assert_eq!(row.site.arg_count, Some(0));
     assert_eq!(row.site.generic_arg_count, Some(0));
     assert_eq!(row.status.status, CallStatusKind::Ambiguous);

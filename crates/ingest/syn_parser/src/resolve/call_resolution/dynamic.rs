@@ -10,7 +10,10 @@ use crate::{
     },
 };
 
-use super::{CallRelationResolver, LocalFunctionPathResolution, path::ParameterCallTarget};
+use super::{
+    CallRelationResolver, LocalFunctionPathResolution,
+    path::{ParameterCallResolution, ParameterCallTarget},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DynamicPathResolution {
@@ -48,12 +51,10 @@ impl CallRelationResolver<'_> {
         if let DynamicCallCallee::IfBranchParameter { path }
         | DynamicCallCallee::MatchArmParameter { path } = &call.callee
         {
-            if let Some(target) = self.resolve_parameter_value_call(call.owner, path)? {
-                push_dynamic_parameter_target(call, target, relations);
-                statuses.push(CallResolutionStatus::Resolved {
-                    source,
-                    kind: CallResolutionKind::LocalExact,
-                });
+            if let Some(resolution) = self.resolve_parameter_value_call(call.owner, path)? {
+                statuses.push(push_dynamic_parameter_resolution(
+                    call, resolution, relations,
+                ));
             } else {
                 statuses.push(CallResolutionStatus::Unsupported { source });
             }
@@ -77,37 +78,33 @@ impl CallRelationResolver<'_> {
 
         if let DynamicCallCallee::LocalBinding { path }
         | DynamicCallCallee::FnPointerCastLocalBinding { path } = &call.callee
-            && let Some(target) = self.resolve_parameter_value_call(call.owner, path)?
         {
-            push_dynamic_parameter_target(call, target, relations);
-            statuses.push(CallResolutionStatus::Resolved {
-                source,
-                kind: CallResolutionKind::LocalExact,
-            });
-            return Ok(());
+            if let Some(resolution) = self.resolve_parameter_value_call(call.owner, path)? {
+                statuses.push(push_dynamic_parameter_resolution(
+                    call, resolution, relations,
+                ));
+                return Ok(());
+            }
         }
 
         if let DynamicCallCallee::AliasedLocalBinding { source_path, .. }
         | DynamicCallCallee::FnPointerCastAliasedLocalBinding { source_path, .. } = &call.callee
-            && let Some(target) = self.resolve_parameter_value_call(call.owner, source_path)?
         {
-            push_dynamic_parameter_target(call, target, relations);
-            statuses.push(CallResolutionStatus::Resolved {
-                source,
-                kind: CallResolutionKind::LocalExact,
-            });
-            return Ok(());
+            if let Some(resolution) = self.resolve_parameter_value_call(call.owner, source_path)? {
+                statuses.push(push_dynamic_parameter_resolution(
+                    call, resolution, relations,
+                ));
+                return Ok(());
+            }
         }
 
-        if let DynamicCallCallee::FieldLocalBinding { path } = &call.callee
-            && let Some(target) = self.resolve_parameter_field_call(call.owner, path)?
-        {
-            push_dynamic_parameter_target(call, target, relations);
-            statuses.push(CallResolutionStatus::Resolved {
-                source,
-                kind: CallResolutionKind::LocalExact,
-            });
-            return Ok(());
+        if let DynamicCallCallee::FieldLocalBinding { path } = &call.callee {
+            if let Some(resolution) = self.resolve_parameter_field_call(call.owner, path)? {
+                statuses.push(push_dynamic_parameter_resolution(
+                    call, resolution, relations,
+                ));
+                return Ok(());
+            }
         }
 
         if let DynamicCallCallee::ClosureBinding { closure_id, .. }
@@ -611,6 +608,29 @@ fn push_dynamic_parameter_target(
                 source: call.id,
                 target,
             });
+        }
+    }
+}
+
+fn push_dynamic_parameter_resolution(
+    call: &DynamicCallNode,
+    resolution: ParameterCallResolution,
+    relations: &mut Vec<CallRelation>,
+) -> CallResolutionStatus {
+    let source = AnyCallSiteId::Dynamic(call.id);
+    match resolution {
+        ParameterCallResolution::Exact(target) => {
+            push_dynamic_parameter_target(call, target, relations);
+            CallResolutionStatus::Resolved {
+                source,
+                kind: CallResolutionKind::LocalExact,
+            }
+        }
+        ParameterCallResolution::Ambiguous(targets) => {
+            for target in targets {
+                push_dynamic_parameter_target(call, target, relations);
+            }
+            CallResolutionStatus::Ambiguous { source }
         }
     }
 }

@@ -126,6 +126,7 @@ fn fixture_context_reads_projected_function_item_binding_calls() -> Result<(), D
     assert_path_function_candidates(
         &context[0],
         owner,
+        &["f"],
         &expected,
         "ambiguous branch-initialized function pointer binding",
     );
