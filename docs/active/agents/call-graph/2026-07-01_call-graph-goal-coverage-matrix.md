@@ -1535,8 +1535,12 @@ Completed evidence:
 - Verification passed:
   `cargo test -p ploke-rag shared_call_shape_matrix_rows_reach_rag_call_context -- --nocapture`
   (`1 passed; 0 failed`) and `cargo fmt --all --check`.
-- The current shared matrix rows remain unmarked for `TuiTool`, so this bucket
-  does not require a tool-specific adapter yet.
+- Follow-up coverage promoted the chrono guarded `self.queue.is_empty()`
+  external self-field frontier row to the shared exact TUI lookup/edges
+  adapter while leaving it out of the shared bounded RAG adapter. Exact chrono
+  RAG coverage already pins the row; the generic shared RAG adapter intentionally
+  exercises bounded owner collection, which truncates this late
+  `parse_next_item` callsite.
 
 Previously completed bucket: shared real-target DB call-shape matrix and
 call-graph corpus unsafe-block schema refresh.
