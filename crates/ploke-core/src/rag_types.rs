@@ -496,6 +496,14 @@ pub struct CallReachInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct ModuleBoundaryEdgeInfo {
+    pub edge: CallPathEdgeInfo,
+    pub caller: CallNodeInfo,
+    pub callee: CallNodeInfo,
+    pub site: CallContextInfo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct CallReachEffectInfo {
     pub effect_seed_id: String,
     pub effect_class: String,
@@ -757,6 +765,7 @@ impl From<ContextPart> for ConciseContext {
             call_reach_effects: Vec::new(),
             call_effect_policy_violations: Vec::new(),
             external_summary_needs: Vec::new(),
+            module_boundary_edges: Vec::new(),
             call_build_domains: Vec::new(),
             call_test_entrypoints: Vec::new(),
             proof_context: value.proof_context,
@@ -826,6 +835,8 @@ pub struct ConciseContext {
     pub call_effect_policy_violations: Vec<CallEffectPolicyViolationInfo>,
     #[serde(default)]
     pub external_summary_needs: Vec<ExternalSummaryNeedInfo>,
+    #[serde(default)]
+    pub module_boundary_edges: Vec<ModuleBoundaryEdgeInfo>,
     #[serde(default)]
     pub call_build_domains: Vec<CallBuildDomainInfo>,
     #[serde(default)]

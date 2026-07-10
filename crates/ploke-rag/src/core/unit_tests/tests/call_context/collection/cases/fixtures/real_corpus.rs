@@ -2276,6 +2276,108 @@ async fn call_reach_exact_reads_axum_usage_question_summary() -> Result<(), Erro
 }
 
 #[tokio::test]
+async fn module_boundary_edges_exact_reads_axum_request_extract_summary() -> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Architecture review:
+    //   "Which modules call across a boundary that should be one-way?"
+    //
+    // Source-oracle chain:
+    //   axum-core/src/ext_traits/request.rs:268
+    //     `RequestExt::extract` calls `self.extract_with_state(&())`.
+    //   axum-core/src/ext_traits/request.rs:279
+    //     `RequestExt::extract_with_state` calls `E::from_request(self, state)`.
+    //   axum-core/src/extract/mod.rs:85
+    //     defines the `FromRequest::from_request` trait method binding.
+    // Expected contract: RAG exposes the enriched module-boundary edge row,
+    // including the exact edge plus source-labeled caller, callee, and callsite
+    // metadata, so architecture-review tools do not have to manually rejoin
+    // `call_reach.boundary_edges` to node and site tables.
+    let start = method_id_by_file(
+        &db,
+        "extract",
+        "self.extract_with_state(&())",
+        "axum-core/src/ext_traits/request.rs",
+    )?;
+    let intermediate = method_id_by_file(
+        &db,
+        "extract_with_state",
+        "E::from_request(self, state)",
+        "axum-core/src/ext_traits/request.rs",
+    )?;
+    let target = method_id_by_trait_name(&db, "FromRequest", "from_request")?;
+
+    let rows = rag
+        .exact_module_boundary_edges_from_owner(
+            start,
+            CallPathOptions {
+                max_depth: 2,
+                max_paths: 16,
+            },
+        )?
+        .expect("call context enabled");
+    assert_eq!(
+        rows.len(),
+        1,
+        "RAG module-boundary rows should expose the transitive FromRequest boundary edge: {rows:#?}"
+    );
+
+    let row = &rows[0];
+    assert_eq!(row.edge.caller_id, intermediate);
+    assert_eq!(row.edge.callee_id, target);
+    assert_eq!(row.edge.source_kind, CallSiteKind::Path);
+    assert_eq!(row.edge.relation, CallTargetKind::AssociatedFunction);
+    assert_eq!(row.caller.id, intermediate);
+    assert_eq!(row.caller.name, "extract_with_state");
+    assert_eq!(
+        row.caller.module_path,
+        path(&["crate", "ext_traits", "request"])
+    );
+    assert!(
+        row.caller
+            .file_path
+            .as_ref()
+            .ends_with("axum-core/src/ext_traits/request.rs"),
+        "boundary caller should preserve source file metadata: {row:#?}"
+    );
+    assert_eq!(row.callee.id, target);
+    assert_eq!(row.callee.name, "from_request");
+    assert_eq!(row.callee.module_path, path(&["crate", "extract"]));
+    assert!(
+        row.callee
+            .file_path
+            .as_ref()
+            .ends_with("axum-core/src/extract/mod.rs"),
+        "boundary callee should preserve source file metadata: {row:#?}"
+    );
+    assert_eq!(row.site.owner_id, intermediate);
+    assert_eq!(row.site.kind, CallSiteKind::Path);
+    assert_eq!(row.site.status, CallStatusKind::Resolved);
+    assert_eq!(row.site.arg_count, Some(2));
+    assert!(
+        matches!(
+            &row.site.callee,
+            CallCalleeInfo::Path { path: call_path }
+                if call_path == &path(&["E", "from_request"])
+        ),
+        "boundary site should preserve the E::from_request path call: {row:#?}"
+    );
+    assert!(
+        row.site.targets.iter().any(|target_row| {
+            target_row.target_id == target
+                && target_row.relation == CallTargetKind::AssociatedFunction
+        }),
+        "boundary site should include the FromRequest::from_request target: {row:#?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn call_effects_exact_reads_axum_task_spawn_seed() -> Result<(), Error> {
     init_tracing_once();
     let (db, rag) = setup_axum_call_graph_rag()?;

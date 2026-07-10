@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use ploke_core::rag_types::{
     CallCalleeInfo, CallContextInfo, CallPathEdgeInfo, CallResolutionKind, CallSiteBucketInfo,
-    CallSiteKind, CallStatusKind, CallTargetKind, ProofContextInfo,
+    CallSiteKind, CallStatusKind, CallTargetKind, ModuleBoundaryEdgeInfo, ProofContextInfo,
 };
 use ploke_tui::tools::{
     Tool,
@@ -1184,6 +1184,10 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
         .get("source_modules")
         .and_then(serde_json::Value::as_array)
         .expect("call_reach source_modules array");
+    let module_boundary_edges = start_payload
+        .get("module_boundary_edges")
+        .and_then(serde_json::Value::as_array)
+        .expect("module_boundary_edges array");
 
     // Matrix:
     //   docs/active/agents/call-graph/
@@ -1286,6 +1290,51 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
     assert_eq!(boundary_edge.callee_id, fixture.target);
     assert_eq!(boundary_edge.source_kind, CallSiteKind::Path);
     assert_eq!(boundary_edge.relation, CallTargetKind::AssociatedFunction);
+    let module_edges = module_boundary_edges
+        .iter()
+        .map(|edge| serde_json::from_value::<ModuleBoundaryEdgeInfo>(edge.clone()))
+        .collect::<Result<Vec<_>, _>>()
+        .expect("typed module boundary rows");
+    assert_eq!(
+        module_edges.len(),
+        1,
+        "code_item_lookup should expose the enriched module-boundary row for architecture-review questions: {module_edges:#?}"
+    );
+    let module_edge = &module_edges[0];
+    assert_eq!(module_edge.edge.caller_id, fixture.intermediate);
+    assert_eq!(module_edge.edge.callee_id, fixture.target);
+    assert_eq!(module_edge.edge.source_kind, CallSiteKind::Path);
+    assert_eq!(
+        module_edge.edge.relation,
+        CallTargetKind::AssociatedFunction
+    );
+    assert_eq!(module_edge.caller.id, fixture.intermediate);
+    assert_eq!(module_edge.caller.name, "extract_with_state");
+    assert_eq!(
+        module_edge.caller.module_path,
+        vec![
+            "crate".to_string(),
+            "ext_traits".to_string(),
+            "request".to_string()
+        ]
+    );
+    assert_eq!(module_edge.callee.id, fixture.target);
+    assert_eq!(module_edge.callee.name, "from_request");
+    assert_eq!(
+        module_edge.callee.module_path,
+        vec!["crate".to_string(), "extract".to_string()]
+    );
+    assert_eq!(module_edge.site.owner_id, fixture.intermediate);
+    assert_eq!(module_edge.site.kind, CallSiteKind::Path);
+    assert_eq!(module_edge.site.status, CallStatusKind::Resolved);
+    assert_eq!(module_edge.site.arg_count, Some(2));
+    assert!(
+        matches!(
+            &module_edge.site.callee,
+            CallCalleeInfo::Path { path } if path == &vec!["E".to_string(), "from_request".to_string()]
+        ),
+        "code_item_lookup should preserve the E::from_request boundary callsite: {module_edge:#?}"
+    );
     assert_impact_node(
         reach_public_callees,
         fixture.target,
@@ -1384,6 +1433,10 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
     assert_eq!(
         ui_field(start_ui, "reach_boundary_edges"),
         boundary_edges.len().to_string()
+    );
+    assert_eq!(
+        ui_field(start_ui, "module_boundary_edges"),
+        module_edges.len().to_string()
     );
     assert!(
         ui_field(start_ui, "reach_public_callees")

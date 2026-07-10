@@ -17,7 +17,7 @@ use ploke_core::rag_types::{
     CallReachInfo, CallReceiverInfo, CallResolutionKind as RagCallResolutionKind,
     CallSiteBucketInfo, CallSiteKind as RagCallSiteKind, CallStatusKind as RagCallStatusKind,
     CallTargetInfo, CallTargetKind, CallTestEntrypointInfo, CanonPath, ExternalSummaryNeedInfo,
-    NodeFilepath, ProofContextInfo,
+    ModuleBoundaryEdgeInfo, NodeFilepath, ProofContextInfo,
 };
 use ploke_db::{
     CallBuildDomain as DbCallBuildDomain, CallContextCandidate, CallContextOptions,
@@ -26,8 +26,9 @@ use ploke_db::{
     CallImpactReport as DbCallImpactReport, CallNodeInfo as DbCallNodeInfo, CallPath as DbCallPath,
     CallPathEdge as DbCallPathEdge, CallPathOptions, CallReachEffect as DbCallReachEffect,
     CallReachReport as DbCallReachReport, CallReceiver, CallRelationKind, CallResolutionKind,
-    CallSiteKind, CallStatusKind as DbCallStatusKind, CallTargetKind as DbCallTargetKind,
-    CallTestEntrypoint as DbCallTestEntrypoint, ExternalSummaryNeed as DbExternalSummaryNeed,
+    CallSiteKind, CallSiteRow, CallStatusKind as DbCallStatusKind,
+    CallTargetKind as DbCallTargetKind, CallTestEntrypoint as DbCallTestEntrypoint,
+    ExternalSummaryNeed as DbExternalSummaryNeed, ModuleBoundaryEdge as DbModuleBoundaryEdge,
     ProofGraphContextRow, ProofGraphStore,
 };
 use ploke_embed::indexer::EmbeddingProcessor;
@@ -269,34 +270,7 @@ fn row_to_call_context(
     row: CallContextRow,
     max_targets: usize,
 ) -> Result<CallContextInfo, RagError> {
-    let callee = match row.site.kind {
-        CallSiteKind::Path => CallCalleeInfo::Path {
-            path: row.site.path.clone().ok_or_else(|| {
-                DbError::Cozo(format!(
-                    "path call site {} missing path payload",
-                    row.site.id
-                ))
-            })?,
-        },
-        CallSiteKind::Method => CallCalleeInfo::Method {
-            name: row.site.method.ok_or_else(|| {
-                DbError::Cozo(format!(
-                    "method call site {} missing method payload",
-                    row.site.id
-                ))
-            })?,
-            receiver: row.site.receiver.map(receiver_info),
-        },
-        CallSiteKind::Dynamic => CallCalleeInfo::Dynamic,
-        CallSiteKind::Macro => CallCalleeInfo::Macro {
-            name: row.site.macro_name.ok_or_else(|| {
-                DbError::Cozo(format!(
-                    "macro call site {} missing macro payload",
-                    row.site.id
-                ))
-            })?,
-        },
-    };
+    let callee = call_site_callee_info(&row.site)?;
 
     Ok(CallContextInfo {
         site_id: row.site.id,
@@ -318,6 +292,30 @@ fn row_to_call_context(
                 relation: target_kind(target.relation),
             })
             .collect(),
+    })
+}
+fn call_site_callee_info(site: &CallSiteRow) -> Result<CallCalleeInfo, RagError> {
+    Ok(match site.kind {
+        CallSiteKind::Path => CallCalleeInfo::Path {
+            path: site.path.clone().ok_or_else(|| {
+                DbError::Cozo(format!("path call site {} missing path payload", site.id))
+            })?,
+        },
+        CallSiteKind::Method => CallCalleeInfo::Method {
+            name: site.method.clone().ok_or_else(|| {
+                DbError::Cozo(format!(
+                    "method call site {} missing method payload",
+                    site.id
+                ))
+            })?,
+            receiver: site.receiver.clone().map(receiver_info),
+        },
+        CallSiteKind::Dynamic => CallCalleeInfo::Dynamic,
+        CallSiteKind::Macro => CallCalleeInfo::Macro {
+            name: site.macro_name.clone().ok_or_else(|| {
+                DbError::Cozo(format!("macro call site {} missing macro payload", site.id))
+            })?,
+        },
     })
 }
 fn path_info(db: &Database, path: DbCallPath) -> Result<CallPathInfo, RagError> {
@@ -550,6 +548,35 @@ fn external_summary_need_info(
         paths_to_owner,
         call_site: row_to_call_context(row.call_site, usize::MAX)?,
         blocker_reasons: row.blocker_reasons,
+    })
+}
+
+fn module_boundary_edge_info(
+    row: DbModuleBoundaryEdge,
+) -> Result<ModuleBoundaryEdgeInfo, RagError> {
+    let edge = row.edge;
+    let site = row.site;
+    let callee = call_site_callee_info(&site)?;
+    Ok(ModuleBoundaryEdgeInfo {
+        edge: edge_info(edge),
+        caller: call_node_info(row.caller),
+        callee: call_node_info(row.callee),
+        site: CallContextInfo {
+            site_id: site.id,
+            owner_id: site.owner_id,
+            kind: site_kind(site.kind),
+            span: site.span,
+            path: site.path,
+            arg_count: site.arg_count,
+            generic_arg_count: site.generic_arg_count,
+            callee,
+            status: RagCallStatusKind::Resolved,
+            resolution: Some(RagCallResolutionKind::LocalExact),
+            targets: vec![CallTargetInfo {
+                target_id: edge.callee_id,
+                relation: target_kind(edge.relation),
+            }],
+        },
     })
 }
 
@@ -1089,6 +1116,24 @@ impl RagService {
                 .external_summary_needs_for_owner(owner_id, options)?
                 .into_iter()
                 .map(|row| external_summary_need_info(self.db.as_ref(), row))
+                .collect::<Result<Vec<_>, RagError>>()?,
+        ))
+    }
+
+    pub fn exact_module_boundary_edges_from_owner(
+        &self,
+        owner_id: Uuid,
+        options: CallPathOptions,
+    ) -> Result<Option<Vec<ModuleBoundaryEdgeInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .module_boundary_edges_from_owner(owner_id, options)?
+                .into_iter()
+                .map(module_boundary_edge_info)
                 .collect::<Result<Vec<_>, RagError>>()?,
         ))
     }

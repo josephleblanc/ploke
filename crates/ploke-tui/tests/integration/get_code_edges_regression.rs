@@ -4,7 +4,7 @@ use ploke_core::{
     ArcStr,
     rag_types::{
         CallCalleeInfo, CallContextInfo, CallResolutionKind, CallSiteKind, CallStatusKind,
-        CallTargetKind, ProofContextInfo,
+        CallTargetKind, ModuleBoundaryEdgeInfo, ProofContextInfo,
     },
 };
 use ploke_db::helpers::{graph_resolve_edges, graph_resolve_exact, list_primary_nodes};
@@ -1984,6 +1984,11 @@ async fn code_item_edges_returns_real_corpus_two_hop_call_paths() {
         .get("source_modules")
         .and_then(serde_json::Value::as_array)
         .expect("node_info.call_reach.source_modules array");
+    let module_boundary_edges = start_payload
+        .get("node_info")
+        .and_then(|node| node.get("module_boundary_edges"))
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.module_boundary_edges array");
 
     // Matrix:
     //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
@@ -2059,6 +2064,51 @@ async fn code_item_edges_returns_real_corpus_two_hop_call_paths() {
         Some(target_id.as_str()),
         "code_item_edges reach boundary edge should target FromRequest::from_request: {boundary_edge:#?}"
     );
+    let module_edges = module_boundary_edges
+        .iter()
+        .map(|edge| serde_json::from_value::<ModuleBoundaryEdgeInfo>(edge.clone()))
+        .collect::<Result<Vec<_>, _>>()
+        .expect("typed module boundary rows");
+    assert_eq!(
+        module_edges.len(),
+        1,
+        "code_item_edges should expose the enriched module-boundary row for architecture-review questions: {module_edges:#?}"
+    );
+    let module_edge = &module_edges[0];
+    assert_eq!(module_edge.edge.caller_id, fixture.intermediate);
+    assert_eq!(module_edge.edge.callee_id, fixture.target);
+    assert_eq!(module_edge.edge.source_kind, CallSiteKind::Path);
+    assert_eq!(
+        module_edge.edge.relation,
+        CallTargetKind::AssociatedFunction
+    );
+    assert_eq!(module_edge.caller.id, fixture.intermediate);
+    assert_eq!(module_edge.caller.name, "extract_with_state");
+    assert_eq!(
+        module_edge.caller.module_path,
+        vec![
+            "crate".to_string(),
+            "ext_traits".to_string(),
+            "request".to_string()
+        ]
+    );
+    assert_eq!(module_edge.callee.id, fixture.target);
+    assert_eq!(module_edge.callee.name, "from_request");
+    assert_eq!(
+        module_edge.callee.module_path,
+        vec!["crate".to_string(), "extract".to_string()]
+    );
+    assert_eq!(module_edge.site.owner_id, fixture.intermediate);
+    assert_eq!(module_edge.site.kind, CallSiteKind::Path);
+    assert_eq!(module_edge.site.status, CallStatusKind::Resolved);
+    assert_eq!(module_edge.site.arg_count, Some(2));
+    assert!(
+        matches!(
+            &module_edge.site.callee,
+            CallCalleeInfo::Path { path } if path == &vec!["E".to_string(), "from_request".to_string()]
+        ),
+        "code_item_edges should preserve the E::from_request boundary callsite: {module_edge:#?}"
+    );
     assert_source_file_json(
         start_reach_source_files,
         "axum-core/src/ext_traits/request.rs",
@@ -2127,6 +2177,10 @@ async fn code_item_edges_returns_real_corpus_two_hop_call_paths() {
     assert_eq!(
         ui_field(start_ui, "reach_boundary_edges"),
         start_reach_boundary_edges.len().to_string()
+    );
+    assert_eq!(
+        ui_field(start_ui, "module_boundary_edges"),
+        module_edges.len().to_string()
     );
     assert_eq!(
         ui_field(start_ui, "reach_source_files"),

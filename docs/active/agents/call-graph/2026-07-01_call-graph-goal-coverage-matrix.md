@@ -61,8 +61,19 @@ Exit criteria:
 - Add one DB assertion, one RAG assertion if exposed downstream, one TUI/tool
   assertion if exposed downstream, and one consolidated doc note.
 
-Status: latest path-guard policy query slice implemented; focused verification
-is running.
+Status: enriched module-boundary exact downstream slice implemented; focused
+verification passed.
+
+Latest completed slice: enriched module-boundary edge downstream surface. The
+DB already exposed `module_boundary_edges_from_owner`; RAG now maps that helper
+through `exact_module_boundary_edges_from_owner` into typed
+`ModuleBoundaryEdgeInfo` rows containing the exact resolved edge plus caller,
+callee, and callsite metadata. Exact `code_item_lookup` and `code_item_edges`
+payloads now include `module_boundary_edges` and UI summary counts. Real-corpus
+axum tests use the existing RequestExt source oracle
+`RequestExt::extract -> extract_with_state -> FromRequest::from_request` to
+prove the DB/RAG boundary row, the exact lookup payload, and the edge-tool
+payload without adding new traversal semantics or layer-policy rules.
 
 Latest completed slice: exact path guard/intermediate policy reports. The DB
 now exposes `call_guard_report_between(source, target, guard, options)`, which

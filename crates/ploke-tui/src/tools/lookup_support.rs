@@ -3,7 +3,7 @@ use ploke_core::{
     rag_types::{
         CallBuildDomainInfo, CallContextInfo, CallEffectPolicyViolationInfo, CallImpactInfo,
         CallPathInfo, CallReachEffectInfo, CallReachInfo, CallTestEntrypointInfo,
-        ExternalSummaryNeedInfo, ProofContextInfo,
+        ExternalSummaryNeedInfo, ModuleBoundaryEdgeInfo, ProofContextInfo,
     },
     tool_types::ToolName,
 };
@@ -591,6 +591,25 @@ pub(super) fn external_summary_needs_for_node(
     }
 }
 
+pub(super) fn module_boundary_edges_for_node(
+    ctx: &super::Ctx,
+    node_id: Uuid,
+) -> Result<Vec<ModuleBoundaryEdgeInfo>, ploke_error::Error> {
+    use ploke_error::InternalError;
+
+    match ctx.state.rag.as_ref() {
+        Some(rag) if !rag.call_context_degraded() => Ok(rag
+            .exact_module_boundary_edges_from_owner(node_id, TOOL_CALL_PATH_OPTIONS)
+            .map_err(|err| {
+                ploke_error::Error::Internal(InternalError::CompilerError(format!(
+                    "failed to collect module boundary edges for code item {node_id}: {err}"
+                )))
+            })?
+            .unwrap_or_default()),
+        _ => Ok(Vec::new()),
+    }
+}
+
 pub(super) fn call_build_domains_for_node(
     ctx: &super::Ctx,
     node_id: Uuid,
@@ -676,6 +695,7 @@ pub(super) fn with_call_usage_fields(
     reach_effects: &[CallReachEffectInfo],
     policy_violations: &[CallEffectPolicyViolationInfo],
     summary_needs: &[ExternalSummaryNeedInfo],
+    module_boundary_edges: &[ModuleBoundaryEdgeInfo],
     build_domains: &[CallBuildDomainInfo],
     test_entrypoints: &[CallTestEntrypointInfo],
 ) -> super::ToolUiPayload {
@@ -787,6 +807,10 @@ pub(super) fn with_call_usage_fields(
             policy_violations.len().to_string(),
         )
         .with_field("external_summary_needs", summary_needs.len().to_string())
+        .with_field(
+            "module_boundary_edges",
+            module_boundary_edges.len().to_string(),
+        )
         .with_field("call_build_domains", build_domains.len().to_string())
         .with_field("call_test_entrypoints", test_entrypoints.len().to_string())
 }
