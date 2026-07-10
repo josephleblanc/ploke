@@ -1,7 +1,7 @@
 # Backup DB Fixtures
 
-Last reviewed: 2026-07-09
-Last updated: 2026-07-09
+Last reviewed: 2026-07-10
+Last updated: 2026-07-10
 
 This document is the current inventory for backup database fixtures under
 the shared DB snapshot fixture directory. It records which source targets
@@ -249,6 +249,22 @@ Post-regeneration verification:
 - Registry metadata now points at the 2026-07-09 axum call-graph snapshot so
   DB, RAG, and TUI real-corpus rows see the resolved
   `RequestPartsExt for Parts::extract_with_state` edge.
+
+## 2026-07-10 Active Corpus Seed Refresh
+
+The active fixture set was regenerated with
+`cargo run -p xtask --features call_graph -- fixtures regenerate --active`
+after the latest call-graph real-corpus refresh.
+
+Post-regeneration verification:
+
+- The regeneration command roundtripped all active checkout-local fixtures and
+  shared call-graph corpus snapshots successfully.
+- The regenerated shared call-graph corpus snapshots for memchr,
+  generic-array, chrono, and axum were copied into `tests/backup_dbs/` as the
+  committed seed artifacts.
+- `cargo run -p xtask --features call_graph -- verify-backup-dbs` passed for
+  all registered backup DB fixtures.
 
 ## 2026-06-27 Active Fixture Review
 
