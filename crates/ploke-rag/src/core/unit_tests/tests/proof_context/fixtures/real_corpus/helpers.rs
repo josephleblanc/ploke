@@ -2,6 +2,7 @@ use super::super::super::super::*;
 use ploke_db::multi_embedding::db_ext::{ANCESTOR_RULES_NOW, METHOD_NODE_ANCESTOR_RULE};
 
 pub(super) const AXUM_DOMAIN: &str = "bd:corpus-axum-call-graph";
+pub(super) const MEMCHR_DOMAIN: &str = "bd:corpus-memchr-call-graph";
 
 pub(super) struct ProofCase {
     pub(super) label: &'static str,
@@ -21,6 +22,17 @@ pub(super) fn axum_db() -> Result<Arc<Database>, Error> {
     assert!(
         db.has_call_graph_relations()?,
         "corpus_axum_call_graph must include call graph relations for proof-context tests"
+    );
+    Ok(db)
+}
+
+pub(super) fn memchr_db() -> Result<Arc<Database>, Error> {
+    let db = Arc::new(fresh_backup_fixture_db(
+        &ploke_test_utils::CORPUS_MEMCHR_CALL_GRAPH,
+    )?);
+    assert!(
+        db.has_call_graph_relations()?,
+        "corpus_memchr_call_graph must include call graph relations for proof-context tests"
     );
     Ok(db)
 }
@@ -387,13 +399,46 @@ pub(super) fn assert_site_blocker(
     reason: &str,
     label: &str,
 ) {
-    assert_site_resolution_blocker(rows, owner, site_id, "blocked", reason, label);
+    assert_site_blocker_in_domain(rows, owner, site_id, AXUM_DOMAIN, reason, label);
+}
+
+pub(super) fn assert_site_blocker_in_domain(
+    rows: &[ProofContextInfo],
+    owner: Uuid,
+    site_id: Uuid,
+    domain: &str,
+    reason: &str,
+    label: &str,
+) {
+    assert_site_resolution_blocker_in_domain(
+        rows, owner, site_id, domain, "blocked", reason, label,
+    );
 }
 
 pub(super) fn assert_site_resolution_blocker(
     rows: &[ProofContextInfo],
     owner: Uuid,
     site_id: Uuid,
+    state: &str,
+    reason: &str,
+    label: &str,
+) {
+    assert_site_resolution_blocker_in_domain(
+        rows,
+        owner,
+        site_id,
+        AXUM_DOMAIN,
+        state,
+        reason,
+        label,
+    );
+}
+
+pub(super) fn assert_site_resolution_blocker_in_domain(
+    rows: &[ProofContextInfo],
+    owner: Uuid,
+    site_id: Uuid,
+    domain: &str,
     state: &str,
     reason: &str,
     label: &str,
@@ -405,7 +450,7 @@ pub(super) fn assert_site_resolution_blocker(
             row.kind == "call_site"
                 && row.caller_def_id.as_deref() == Some(owner.as_str())
                 && row.call_site_id.as_deref() == Some(site_id.as_str())
-                && row.build_domain_id.as_deref() == Some(AXUM_DOMAIN)
+                && row.build_domain_id.as_deref() == Some(domain)
         }),
         "{label} proof context should include the blocked call_site fact: {rows:#?}"
     );

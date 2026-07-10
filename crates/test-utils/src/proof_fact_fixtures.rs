@@ -449,6 +449,21 @@ pub fn axum_callback_parameter_blocker(call_site_id: Uuid) -> serde_json::Value 
     })
 }
 
+pub fn memchr_callable_trait_object_runtime_dispatch_blocker(
+    call_site_id: Uuid,
+) -> serde_json::Value {
+    serde_json::json!({
+        "fact_kind": "proof_blocker",
+        "schema_version": "ploke-proof-facts.v1",
+        "blocker_id": format!("blocker:memchr-callable-trait-object-dispatch:{call_site_id}"),
+        "reason": "dynamic_dispatch_unbounded",
+        "status": "blocked",
+        "call_site_id": call_site_id.to_string(),
+        "detail": "memchr/src/tests/substring/mod.rs Runner.fwd/rev boxed dyn FnMut dispatch remains targetless until callable trait-object value-flow proof is modeled",
+        "evidence_use": "proof_only"
+    })
+}
+
 pub fn fixture_async_closure_poll_resume_blocker(
     call_site_id: Uuid,
     owner_name: &str,

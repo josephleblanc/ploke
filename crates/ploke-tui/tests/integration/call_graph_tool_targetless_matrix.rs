@@ -678,6 +678,7 @@ async fn code_item_lookup_returns_memchr_callable_trait_object_path_rows() {
             fixture.case.label,
             "lookup",
         );
+        assert_runtime_dispatch_blocker(proof_context, site_id, fixture.case.label, "lookup");
 
         let ui = result.ui_payload.as_ref().expect("ui payload");
         assert!(
@@ -1415,6 +1416,7 @@ async fn code_item_edges_returns_memchr_callable_trait_object_path_rows() {
             fixture.case.label,
             "edges",
         );
+        assert_runtime_dispatch_blocker(proof_context, site_id, fixture.case.label, "edges");
 
         let ui = result.ui_payload.as_ref().expect("ui payload");
         assert!(

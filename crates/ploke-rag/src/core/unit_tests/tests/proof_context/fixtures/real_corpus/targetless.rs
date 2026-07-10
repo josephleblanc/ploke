@@ -1,10 +1,10 @@
 use super::super::super::super::*;
 use super::super::super::helpers::assert_blocked_resolution;
 use super::helpers::{
-    AXUM_DOMAIN, assert_site_blocker, assert_site_resolution_blocker, await_result_unwrap_site,
-    axum_db, conn_limiter_accept_owner, dynamic_site, function_id, method_id_by_file,
-    method_id_by_name_and_body, targetless_method_site, targetless_method_site_with_status,
-    targetless_path_site,
+    AXUM_DOMAIN, MEMCHR_DOMAIN, assert_site_blocker, assert_site_blocker_in_domain,
+    assert_site_resolution_blocker, await_result_unwrap_site, axum_db, conn_limiter_accept_owner,
+    dynamic_site, function_id, memchr_db, method_id_by_file, method_id_by_name_and_body,
+    targetless_method_site, targetless_method_site_with_status, targetless_path_site,
 };
 use ploke_db::ProofGraphStore;
 use ploke_test_utils::{AXUM_STD_MEM_REPLACE_SUMMARY_ID, axum_std_mem_replace_summary_records};
@@ -857,6 +857,91 @@ async fn proof_context_collection_preserves_axum_callback_parameter_ambiguity() 
         }),
         "axum callback parameter proof context should not fabricate a call_edge: {rows:#?}"
     );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn proof_context_collection_preserves_memchr_callable_trait_object_blockers()
+-> Result<(), Error> {
+    init_tracing_once();
+    let db = memchr_db()?;
+
+    let owner = method_id_by_file(
+        &db,
+        "run",
+        "fwd(t.haystack.as_bytes(), t.needle.as_bytes())",
+        "src/tests/substring/mod.rs",
+    )?;
+    let projected = db.project_call_proof_facts_for_owner(owner, MEMCHR_DOMAIN)?;
+    assert!(
+        projected >= 4,
+        "Runner::run should project targetless fwd/rev callable trait-object proof rows"
+    );
+
+    let rag = init_test_rag_mock(Arc::clone(&db));
+    assert!(
+        !rag.proof_context_degraded(),
+        "projected memchr callable trait-object facts should enable RAG proof context"
+    );
+    let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+    let calls = call_context
+        .get(&owner)
+        .expect("Runner::run should receive outgoing call context");
+    let sites = [
+        (
+            targetless_path_site(
+                calls,
+                owner,
+                &["fwd"],
+                CallStatusKind::Unsupported,
+                "Runner::run fwd boxed dyn FnMut",
+            ),
+            "Runner::run fwd boxed dyn FnMut",
+        ),
+        (
+            targetless_path_site(
+                calls,
+                owner,
+                &["rev"],
+                CallStatusKind::Unsupported,
+                "Runner::run rev boxed dyn FnMut",
+            ),
+            "Runner::run rev boxed dyn FnMut",
+        ),
+    ];
+    db.upsert_proof_fact_values(&[
+        ploke_test_utils::memchr_callable_trait_object_runtime_dispatch_blocker(sites[0].0),
+        ploke_test_utils::memchr_callable_trait_object_runtime_dispatch_blocker(sites[1].0),
+    ])?;
+
+    let rows = rag.exact_proof_context(owner)?;
+
+    // Matrix: callable trait-object local binding row.
+    // Source chain:
+    //   docs/active/agents/call-graph/
+    //   2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //   memchr/src/tests/substring/mod.rs:67-71 defines boxed `fwd`/`rev`
+    //   `dyn FnMut` fields.
+    //   memchr/src/tests/substring/mod.rs:94 calls
+    //   `fwd(t.haystack.as_bytes(), t.needle.as_bytes())`.
+    //   memchr/src/tests/substring/mod.rs:110 calls
+    //   `rev(t.haystack.as_bytes(), t.needle.as_bytes())`.
+    // Expected proof traversal: owner-seeded proof context must include the
+    // structural path call_site and blocked call_resolution facts, plus an
+    // explicit dynamic-dispatch blocker. There are zero callee edges until
+    // callable trait-object value-flow proof is modeled.
+    for (site_id, label) in sites {
+        assert_site_blocker_in_domain(
+            &rows,
+            owner,
+            site_id,
+            MEMCHR_DOMAIN,
+            "type_resolution_missing",
+            label,
+        );
+        assert_explicit_proof_blocker(&rows, site_id, "dynamic_dispatch_unbounded", label);
+    }
 
     Ok(())
 }

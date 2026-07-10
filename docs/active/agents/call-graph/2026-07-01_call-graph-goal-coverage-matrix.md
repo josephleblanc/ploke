@@ -50,30 +50,29 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: persisted source/sink effect-policy proof annotations.
+Current bucket: callable trait-object runtime-dispatch blocker proof over real
+memchr boxed `dyn FnMut` path rows.
 
 Exit criteria:
 
-- Reuse the existing DB/RAG effect-policy query and axum source-oracle chain
-  `deserialize_error_status_codes -> TestClient::new -> spawn_service ->
-  tokio::spawn`.
-- Keep `tokio::spawn` an external targetless frontier; policy evaluation must
-  never fabricate a local traversal edge.
-- Add a strict `effect_policy` proof fact kind whose admitted rows carry the
-  owner definition's allowed effect set.
-- Assert DB and RAG stored-policy helpers report `async_task_spawn` as a
-  violation when the admitted owner policy allows only `ffi_boundary`, while
-  preserving the same targetless external `tokio::spawn` callsite payload and
-  resolved path to `spawn_service`.
+- Reuse the existing memchr source-oracle chain
+  `Runner::run -> fwd(...) / rev(...)`, where the local bindings are boxed
+  `dyn FnMut` fields populated by prior builder methods.
+- Keep the rows unsupported and targetless; do not fabricate edges to setter
+  closures without callable trait-object value-flow proof.
+- Attach explicit `dynamic_dispatch_unbounded` proof blockers to the real
+  callsite ids while preserving the existing fail-closed
+  `type_resolution_missing` call-resolution rows.
+- Assert DB, RAG exact proof context, and exact TUI lookup/edges payloads expose
+  both proof facts for the same real callsites.
 
 Status: completed for this checkpoint.
 
-Latest completed slice: proof graph storage now accepts strict
-`effect_policy` artifacts, validates required policy metadata and
-`allowed_effects`, and rejects ambiguous multiple admitted owner policies when
-the stored-policy usage query is evaluated. DB and RAG real-corpus tests prove
-the axum task-spawn sink is reported from the admitted owner policy without
-creating local edges for `tokio::spawn`.
+Latest completed slice: DB, RAG, and TUI tests now attach and preserve explicit
+`dynamic_dispatch_unbounded` proof blockers for
+`memchr/src/tests/substring/mod.rs:94,110` `Runner::run` boxed `dyn FnMut`
+`fwd(...)` / `rev(...)` path callsites. The rows remain unsupported,
+targetless, and edge-free until callable trait-object value-flow proof exists.
 
 Next bucket: choose another new proof-carrier slice only if it has fresh proof
 input. The 2026-07-10 inventory found that missing trait visibility proof,
@@ -82,11 +81,22 @@ axum-core `request_parts.rs:164` tuple-return receiver row, routing helper
 macro/generated rows, generated `IntoServiceFuture::new` rows, caller-supplied
 effect-policy allowlist queries, exact tool policy inputs, and persisted
 effect-policy proof annotations are now covered or intentionally fail-closed.
+The memchr boxed `dyn FnMut` rows are likewise covered as explicit blockers.
 Do not revisit those families unless the implementation adds new proof input
 such as macro-expanded/generated source bodies, async poll/resume execution
 proof, interprocedural callable argument/value-flow, broader callable
 trait-object dispatch, additional source/sink policy annotation families, or
 build/test entrypoint summaries.
+
+Previous completed bucket: persisted source/sink effect-policy proof
+annotations.
+
+Latest completed slice: proof graph storage now accepts strict
+`effect_policy` artifacts, validates required policy metadata and
+`allowed_effects`, and rejects ambiguous multiple admitted owner policies when
+the stored-policy usage query is evaluated. DB and RAG real-corpus tests prove
+the axum task-spawn sink is reported from the admitted owner policy without
+creating local edges for `tokio::spawn`.
 
 Previous completed bucket: exact tool-level source/sink effect-policy input.
 

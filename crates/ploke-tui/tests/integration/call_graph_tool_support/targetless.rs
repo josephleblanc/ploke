@@ -531,6 +531,19 @@ impl PathToolCase {
         None
     }
 
+    pub(crate) fn expects_runtime_dispatch_blocker(&self) -> bool {
+        matches!(self.corpus, DynamicToolCorpus::Memchr)
+            && matches!(self.path, ["fwd"] | ["rev"])
+            && matches!(
+                self.owner,
+                PathOwner::Method {
+                    type_name: "Runner",
+                    file_suffix: "src/tests/substring/mod.rs",
+                    ..
+                }
+            )
+    }
+
     pub(crate) fn owner_trait(&self) -> Option<&'static str> {
         match self.owner {
             PathOwner::Function { .. } => None,
@@ -706,6 +719,7 @@ impl PathToolFixture {
         );
         attach_admitted_external_summary_if_needed(&db, owner.id, &case);
         attach_admitted_macro_boundary_summary_if_needed(&db, owner.id, &case);
+        attach_path_runtime_dispatch_blocker_if_needed(&db, owner.id, &case);
         let state = axum_state_for_target(Arc::clone(&db), &owner, case.label).await;
 
         Self {
@@ -784,6 +798,36 @@ fn attach_admitted_macro_boundary_summary_if_needed(
 
     db.upsert_proof_fact_values(&(boundary.records)(site))
         .unwrap_or_else(|err| panic!("{} admitted macro summary insert: {err}", case.label));
+}
+
+fn attach_path_runtime_dispatch_blocker_if_needed(db: &Database, owner: Uuid, case: &PathToolCase) {
+    if !case.expects_runtime_dispatch_blocker() {
+        return;
+    }
+    let site = db
+        .call_context_for_owner(owner)
+        .unwrap_or_else(|err| panic!("{} call context lookup: {err}", case.label))
+        .into_iter()
+        .find(|row| {
+            row.site.path.as_ref().is_some_and(|path| {
+                path.iter()
+                    .map(String::as_str)
+                    .eq(case.path.iter().copied())
+            }) && row.status.status == case.db_status()
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "{} should expose the boxed dyn FnMut path callsite before blocker insertion",
+                case.label,
+            )
+        })
+        .site
+        .id;
+
+    db.upsert_proof_fact_values(&[
+        ploke_test_utils::memchr_callable_trait_object_runtime_dispatch_blocker(site),
+    ])
+    .unwrap_or_else(|err| panic!("{} runtime dispatch blocker insert: {err}", case.label));
 }
 
 pub(crate) fn assert_dynamic_context(

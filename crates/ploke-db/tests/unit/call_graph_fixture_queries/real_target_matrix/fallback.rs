@@ -489,12 +489,17 @@ fn memchr_callable_trait_object_field_calls_are_visible_targetless_path_rows() -
         CallStatusKind::Unsupported,
         "memchr/src/tests/substring/mod.rs:110 boxed rev dyn FnMut local binding",
     )?;
+    db.upsert_proof_fact_values(&[
+        ploke_test_utils::memchr_callable_trait_object_runtime_dispatch_blocker(fwd_site),
+        ploke_test_utils::memchr_callable_trait_object_runtime_dispatch_blocker(rev_site),
+    ])?;
 
     let projected = db.project_call_proof_facts_for_owner(owner, "bd:corpus-memchr-call-graph")?;
     assert!(
         projected >= 4,
         "memchr boxed dyn FnMut owner should project call_site and call_resolution rows for fwd/rev"
     );
+    let blockers = db.proof_blockers()?;
     for (site, label) in [
         (
             fwd_site,
@@ -512,6 +517,37 @@ fn memchr_callable_trait_object_field_calls_are_visible_targetless_path_rows() -
             "src/tests/substring/mod.rs",
             label,
         )?;
+        let site = site.to_string();
+        assert!(
+            blockers.iter().any(|proof| {
+                proof.call_site_id.as_deref() == Some(site.as_str())
+                    && proof.reason == "dynamic_dispatch_unbounded"
+                    && proof.status == "blocked"
+            }),
+            "{label} should expose an explicit dynamic dispatch proof blocker: {blockers:#?}"
+        );
+    }
+    let proof_rows = db.proof_graphrag_context("boxed dyn FnMut dispatch")?;
+    for (site, label) in [
+        (
+            fwd_site,
+            "memchr/src/tests/substring/mod.rs:94 boxed fwd dyn FnMut local binding",
+        ),
+        (
+            rev_site,
+            "memchr/src/tests/substring/mod.rs:110 boxed rev dyn FnMut local binding",
+        ),
+    ] {
+        let site = site.to_string();
+        assert!(
+            proof_rows.iter().any(|proof| {
+                proof.kind == "proof_blocker"
+                    && proof.call_site_id.as_deref() == Some(site.as_str())
+                    && proof.blocker_reason.as_deref() == Some("dynamic_dispatch_unbounded")
+                    && proof.status.as_deref() == Some("blocked")
+            }),
+            "{label} should be retrievable as explicit boxed dyn FnMut dispatch proof context: {proof_rows:#?}"
+        );
     }
 
     Ok(())
