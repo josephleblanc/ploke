@@ -50,7 +50,52 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: generated-entrypoint summary proof for private-uncalled tools.
+Current bucket: ambiguous branch-initialized path-call candidate proof.
+
+Exit criteria:
+
+- Use the fixture source oracle
+  `tests/fixture_crates/fixture_call_graph/src/lib.rs`, where
+  `call_if_ambiguous_initialized_function_item_binding(flag)` binds
+  `f: fn() -> i32 = if flag { local_target } else { other_target }; f()`.
+- Do not fabricate a resolved traversal edge; preserve the complete local
+  candidate set as an `Ambiguous` path-call row with `Function` candidate
+  relations and `candidate_def_ids`.
+- Assert owner-context, target-centered context, proof lookup, and cardinality
+  validation for the new path/function candidate carrier.
+
+Status: completed for this checkpoint.
+
+Latest completed slice: parser extraction now records an
+`AmbiguousInitializedValueBinding` path-call callee when a local callable
+binding is branch-initialized by multiple proven local function items. The
+resolver emits `Ambiguous` plus candidate `Function` relations only when every
+candidate path resolves locally; DB proof validation permits exactly that
+path/function candidate shape and still rejects other non-resolved local
+targets.
+
+Completed evidence:
+
+- `fixture_call_graph_call_if_ambiguous_initialized_function_item_binding_preserves_path_candidates_call_site`
+  asserts the structural callee carrier and both candidate function IDs.
+- `fixture_context_reads_projected_function_item_binding_calls` asserts the
+  owner-context row is ambiguous with path/function candidate targets.
+- `fixture_context_reads_projected_ambiguous_dynamic_candidates`,
+  `fixture_proof_symbol_lookup_matches_ambiguous_dynamic_candidate_payloads`,
+  and `fixture_projected_status_rows_match_relation_cardinality` assert
+  target-centered context, `candidate_def_ids`, no `call_edge`, and the narrow
+  candidate-bearing ambiguous cardinality invariant.
+- `proof_projection_rejects_non_resolved_local_targets` and
+  `target_centered_proof_projection_rejects_non_resolved_local_targets` still
+  reject invalid non-resolved local-target rows.
+
+Next bucket: re-check remaining unsupported semantic proof inputs before
+selecting another parser/resolver slice; likely candidates are async
+poll/resume proof, dependency-root source oracles, or bounded local
+binding/type proof shapes not already covered.
+
+Previous completed bucket: generated-entrypoint summary proof for
+private-uncalled tools.
 
 Exit criteria:
 

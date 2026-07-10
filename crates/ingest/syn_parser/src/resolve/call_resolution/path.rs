@@ -85,6 +85,10 @@ impl CallRelationResolver<'_> {
                 self.resolve_initialized_value_binding_call(call, init_path, relations, statuses)?;
                 return Ok(());
             }
+            PathCallCallee::AmbiguousInitializedValueBinding { init_paths, .. } => {
+                self.resolve_ambiguous_init_call(call, init_paths, relations, statuses)?;
+                return Ok(());
+            }
         }
 
         if self.is_external_path(&call.path)
@@ -226,19 +230,9 @@ impl CallRelationResolver<'_> {
     ) -> Result<(), SynParserError> {
         let source = AnyCallSiteId::Path(call.id);
 
-        if self.is_external_path(init_path)
-            || self.is_external_import_path(call.owner, init_path)?
-        {
+        let Some(resolution) = self.resolve_initialized_path(call.owner, init_path)? else {
             statuses.push(CallResolutionStatus::External { source });
             return Ok(());
-        }
-
-        let resolution = if self.is_unqualified_path(init_path) {
-            self.resolve_unqualified_local_function_path(call.owner, init_path)?
-        } else if self.is_explicit_local_path(init_path) {
-            self.resolve_local_function_path(call.owner, init_path)?
-        } else {
-            self.resolve_implicit_local_function_path(call.owner, init_path)?
         };
 
         match resolution {
@@ -264,6 +258,88 @@ impl CallRelationResolver<'_> {
         }
 
         Ok(())
+    }
+
+    fn resolve_ambiguous_init_call(
+        &self,
+        call: &PathCallNode,
+        init_paths: &[Vec<String>],
+        relations: &mut Vec<CallRelation>,
+        statuses: &mut Vec<CallResolutionStatus>,
+    ) -> Result<(), SynParserError> {
+        let source = AnyCallSiteId::Path(call.id);
+        let mut targets = Vec::new();
+
+        for init_path in init_paths {
+            let Some(resolution) = self.resolve_initialized_path(call.owner, init_path)? else {
+                statuses.push(CallResolutionStatus::Unsupported { source });
+                return Ok(());
+            };
+
+            match resolution {
+                LocalFunctionPathResolution::Resolved(target) => targets.push(target),
+                LocalFunctionPathResolution::Unresolved => {
+                    statuses.push(CallResolutionStatus::Unresolved { source });
+                    return Ok(());
+                }
+                LocalFunctionPathResolution::Ambiguous => {
+                    statuses.push(CallResolutionStatus::Ambiguous { source });
+                    return Ok(());
+                }
+                LocalFunctionPathResolution::Unsupported => {
+                    statuses.push(CallResolutionStatus::Unsupported { source });
+                    return Ok(());
+                }
+            }
+        }
+
+        targets.sort_unstable();
+        targets.dedup();
+
+        match targets.as_slice() {
+            [] => statuses.push(CallResolutionStatus::Unsupported { source }),
+            [target] => {
+                relations.push(CallRelation::Function {
+                    source: call.id,
+                    target: *target,
+                });
+                statuses.push(CallResolutionStatus::Resolved {
+                    source,
+                    kind: CallResolutionKind::LocalExact,
+                });
+            }
+            _ => {
+                for target in targets {
+                    relations.push(CallRelation::Function {
+                        source: call.id,
+                        target,
+                    });
+                }
+                statuses.push(CallResolutionStatus::Ambiguous { source });
+            }
+        }
+
+        Ok(())
+    }
+
+    fn resolve_initialized_path(
+        &self,
+        owner: CallBodyOwnerId,
+        init_path: &[String],
+    ) -> Result<Option<LocalFunctionPathResolution>, SynParserError> {
+        if self.is_external_path(init_path) || self.is_external_import_path(owner, init_path)? {
+            return Ok(None);
+        }
+
+        let resolution = if self.is_unqualified_path(init_path) {
+            self.resolve_unqualified_local_function_path(owner, init_path)?
+        } else if self.is_explicit_local_path(init_path) {
+            self.resolve_local_function_path(owner, init_path)?
+        } else {
+            self.resolve_implicit_local_function_path(owner, init_path)?
+        };
+
+        Ok(Some(resolution))
     }
 
     fn resolve_parameter_value_path_call(

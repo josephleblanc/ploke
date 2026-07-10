@@ -287,6 +287,12 @@ pub enum ExpectedPathCallee<'a> {
         path: &'a [&'a str],
         init_path: &'a [&'a str],
     },
+    /// The path call is a visible local binding branch-initialized by more
+    /// than one possible function item.
+    AmbiguousInitializedValueBinding {
+        path: &'a [&'a str],
+        init_paths: &'a [&'a [&'a str]],
+    },
     /// The path call is a visible local binding aliasing another value binding.
     AliasedValueBinding {
         path: &'a [&'a str],
@@ -323,6 +329,15 @@ impl ExpectedPathCallee<'_> {
                 PathCallCallee::InitializedValueBinding {
                     path: path.iter().copied().map(String::from).collect(),
                     init_path: init_path.iter().copied().map(String::from).collect(),
+                }
+            }
+            Self::AmbiguousInitializedValueBinding { path, init_paths } => {
+                PathCallCallee::AmbiguousInitializedValueBinding {
+                    path: path.iter().copied().map(String::from).collect(),
+                    init_paths: init_paths
+                        .iter()
+                        .map(|path| path.iter().copied().map(String::from).collect())
+                        .collect(),
                 }
             }
             Self::AliasedValueBinding { path, source_path } => {
@@ -626,6 +641,12 @@ pub enum ExpectedCallOutcome {
         first: FunctionNodeId,
         second: FunctionNodeId,
     },
+    /// Resolver should report `Ambiguous` while preserving proven path-call
+    /// function candidates.
+    AmbiguousPathFunctionCandidates {
+        first: FunctionNodeId,
+        second: FunctionNodeId,
+    },
     /// Resolver should report `Ambiguous` while preserving mixed dynamic
     /// function/closure candidates.
     AmbiguousDynamicMixedCandidates {
@@ -841,6 +862,29 @@ impl<'a> ExpectedCallSite<'a> {
             kind: ExpectedCallKind::Path {
                 path,
                 callee: ExpectedPathCallee::InitializedValueBinding { path, init_path },
+                arg_count,
+                generic_arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a path-call expectation through an ambiguous initialized binding.
+    pub const fn path_ambiguous_initialized_value_binding(
+        path: &'a [&'a str],
+        init_paths: &'a [&'a [&'a str]],
+        span: (usize, usize),
+        arg_count: usize,
+        generic_arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Path {
+                path,
+                callee: ExpectedPathCallee::AmbiguousInitializedValueBinding { path, init_paths },
                 arg_count,
                 generic_arg_count,
             },
@@ -1950,6 +1994,10 @@ fn assert_resolution_outcome(
             matches!(status, CallResolutionStatus::Ambiguous { source } if source == expected_id),
             "expected Ambiguous status for {expected_id:?}, got {status:?}"
         ),
+        ExpectedCallOutcome::AmbiguousPathFunctionCandidates { .. } => assert!(
+            matches!(status, CallResolutionStatus::Ambiguous { source } if source == expected_id),
+            "expected Ambiguous status for {expected_id:?}, got {status:?}"
+        ),
         ExpectedCallOutcome::AmbiguousDynamicMixedCandidates { .. } => assert!(
             matches!(status, CallResolutionStatus::Ambiguous { source } if source == expected_id),
             "expected Ambiguous status for {expected_id:?}, got {status:?}"
@@ -2021,6 +2069,35 @@ fn assert_resolution_outcome(
             assert_eq!(
                 actual, expected,
                 "ambiguous dynamic call site {expected_id:?} should preserve proven function candidates"
+            );
+        }
+        ExpectedCallOutcome::AmbiguousPathFunctionCandidates { first, second } => {
+            let source = match expected_id {
+                AnyCallSiteId::Path(source) => source,
+                other => {
+                    panic!(
+                        "ambiguous path-function candidates expected a path call-site ID, got {other:?}"
+                    )
+                }
+            };
+            let mut actual = relations
+                .iter()
+                .map(|relation| match relation {
+                    CallRelation::Function {
+                        source: actual_source,
+                        target,
+                    } if *actual_source == source => *target,
+                    other => panic!(
+                        "expected only Function candidate edges from {source:?}, got {other:?}"
+                    ),
+                })
+                .collect::<Vec<_>>();
+            let mut expected = vec![first, second];
+            actual.sort_unstable();
+            expected.sort_unstable();
+            assert_eq!(
+                actual, expected,
+                "ambiguous path call site {expected_id:?} should preserve proven function candidates"
             );
         }
         ExpectedCallOutcome::AmbiguousDynamicMixedCandidates { function, closure } => {

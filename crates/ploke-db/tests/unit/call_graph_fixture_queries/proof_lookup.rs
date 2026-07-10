@@ -77,15 +77,19 @@ fn fixture_proof_symbol_lookup_matches_ambiguous_dynamic_candidate_payloads() ->
     let target = function_id_by_name(&db, "other_target")?;
     let sibling = function_id_by_name(&db, "local_target")?;
     let owner = function_id_by_name(&db, "call_if_ambiguous_function_item")?;
+    let path_owner = function_id_by_name(&db, AMBIGUOUS_PATH_OWNER)?;
     let callers = db.callers_for_target(target)?;
     assert_eq!(
         callers.len(),
-        2,
-        "other_target should be reachable only through the two ambiguous dynamic fixture callers: {callers:#?}"
+        AMBIGUOUS_DYNAMIC_OWNERS.len() + 1,
+        "other_target should be reachable through every ambiguous fixture candidate caller: {callers:#?}"
     );
     let context = db.call_context_for_owner(owner)?;
     assert_eq!(context.len(), 1, "ambiguous owner context: {context:#?}");
     let site = context[0].site.id;
+    let path_site = caller_by_owner_kind_path(&callers, path_owner, CallSiteKind::Path, &["f"])
+        .site
+        .id;
 
     let count = db.project_call_proof_facts_for_target(target, "bd:fixture-call-graph")?;
     assert_eq!(
@@ -95,26 +99,31 @@ fn fixture_proof_symbol_lookup_matches_ambiguous_dynamic_candidate_payloads() ->
     );
 
     let rows = db.proof_symbol_lookup(&target.to_string())?;
-    let site_rows = proof_rows_for_site(&rows, site);
-    assert_eq!(
-        site_rows.len(),
-        2,
-        "ambiguous candidate lookup should include linked call_site and call_resolution facts without a resolved call_edge: {site_rows:#?}"
-    );
-    assert_eq!(proof_kind_count(&site_rows, "call_site"), 1);
-    assert_eq!(proof_kind_count(&site_rows, "call_resolution"), 1);
-    assert_eq!(proof_kind_count(&site_rows, "call_edge"), 0);
+    for (label, site) in [
+        ("dynamic branch candidate", site),
+        ("path initialized-binding candidate", path_site),
+    ] {
+        let site_rows = proof_rows_for_site(&rows, site);
+        assert_eq!(
+            site_rows.len(),
+            2,
+            "{label} lookup should include linked call_site and call_resolution facts without a resolved call_edge: {site_rows:#?}"
+        );
+        assert_eq!(proof_kind_count(&site_rows, "call_site"), 1);
+        assert_eq!(proof_kind_count(&site_rows, "call_resolution"), 1);
+        assert_eq!(proof_kind_count(&site_rows, "call_edge"), 0);
 
-    let resolution = proof_fact_for_kind(&site_rows, "call_resolution");
-    assert_eq!(resolution.resolution_state.as_deref(), Some("ambiguous"));
-    let mut actual = resolution.candidate_def_ids.clone();
-    actual.sort();
-    let mut expected = vec![target.to_string(), sibling.to_string()];
-    expected.sort();
-    assert_eq!(
-        actual, expected,
-        "symbol lookup should expose the full ambiguous candidate set"
-    );
+        let resolution = proof_fact_for_kind(&site_rows, "call_resolution");
+        assert_eq!(resolution.resolution_state.as_deref(), Some("ambiguous"));
+        let mut actual = resolution.candidate_def_ids.clone();
+        actual.sort();
+        let mut expected = vec![target.to_string(), sibling.to_string()];
+        expected.sort();
+        assert_eq!(
+            actual, expected,
+            "{label} should expose the full ambiguous candidate set"
+        );
+    }
 
     Ok(())
 }

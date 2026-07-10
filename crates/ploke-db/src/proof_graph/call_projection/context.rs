@@ -19,7 +19,7 @@ pub(super) fn validate_call_context(row: &CallContextRow) -> Result<(), DbError>
             )))
         }
         CallStatusKind::Ambiguous
-            if !row.targets.is_empty() && !is_ambiguous_dynamic_candidate_row(row) =>
+            if !row.targets.is_empty() && !is_ambiguous_candidate_row(row) =>
         {
             Err(DbError::Cozo(format!(
                 "non-resolved call site {} has local call_relation targets: {:?}",
@@ -28,6 +28,10 @@ pub(super) fn validate_call_context(row: &CallContextRow) -> Result<(), DbError>
         }
         _ => Ok(()),
     }
+}
+
+fn is_ambiguous_candidate_row(row: &CallContextRow) -> bool {
+    is_ambiguous_dynamic_candidate_row(row) || is_ambiguous_path_candidate_row(row)
 }
 
 fn is_ambiguous_dynamic_candidate_row(row: &CallContextRow) -> bool {
@@ -44,5 +48,17 @@ fn is_ambiguous_dynamic_candidate_target(target: &crate::call_graph::CallTargetR
             (target.relation, target.target_kind),
             (CallRelationKind::DynamicFunction, CallTargetKind::Function)
                 | (CallRelationKind::DynamicClosure, CallTargetKind::Closure)
+        )
+}
+
+fn is_ambiguous_path_candidate_row(row: &CallContextRow) -> bool {
+    row.site.kind == CallSiteKind::Path && row.targets.iter().all(is_ambiguous_path_candidate)
+}
+
+fn is_ambiguous_path_candidate(target: &crate::call_graph::CallTargetRow) -> bool {
+    target.source_kind == CallSiteKind::Path
+        && matches!(
+            (target.relation, target.target_kind),
+            (CallRelationKind::Function, CallTargetKind::Function)
         )
 }

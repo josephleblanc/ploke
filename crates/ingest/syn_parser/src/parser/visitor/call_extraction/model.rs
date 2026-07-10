@@ -16,6 +16,10 @@ pub(super) enum LocalBindingProof {
         name: String,
         init_path: Vec<String>,
     },
+    AmbiguousInitialized {
+        name: String,
+        init_paths: Vec<Vec<String>>,
+    },
     TupleReturn {
         name: String,
         path: Vec<String>,
@@ -76,6 +80,7 @@ impl LocalBindingProof {
             Self::Typed { name, .. }
             | Self::TraitObject { name, .. }
             | Self::Initialized { name, .. }
+            | Self::AmbiguousInitialized { name, .. }
             | Self::TupleReturn { name, .. }
             | Self::TupleMethodReturn { name, .. }
             | Self::Closure { name, .. }

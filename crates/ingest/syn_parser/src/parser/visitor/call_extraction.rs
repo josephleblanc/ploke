@@ -722,6 +722,12 @@ fn classify_path_callee(
                     init_path: init_path.clone(),
                 }
             }
+            LocalBindingProof::AmbiguousInitialized { init_paths, .. } => {
+                PathCallCallee::AmbiguousInitializedValueBinding {
+                    path: path.to_vec(),
+                    init_paths: init_paths.clone(),
+                }
+            }
             LocalBindingProof::TraitObject {
                 trait_path,
                 init_path: Some(init_path),
@@ -975,6 +981,14 @@ fn local_binding_proof(
                     })
                 })
                 .or_else(|| {
+                    ambiguous_branch_init_paths(init_expr, param_names, local_scopes).map(
+                        |init_paths| LocalBindingProof::AmbiguousInitialized {
+                            name: name.clone(),
+                            init_paths,
+                        },
+                    )
+                })
+                .or_else(|| {
                     value_alias_path(init_expr, param_names, local_scopes).map(|source_path| {
                         LocalBindingProof::ValueAlias {
                             name: name.clone(),
@@ -1046,12 +1060,22 @@ fn local_binding_proof(
                     type_path,
                     init_path,
                 }),
-                None => init_path
-                    .map(|init_path| LocalBindingProof::Initialized {
-                        name: name.clone(),
-                        init_path,
-                    })
-                    .or(Some(LocalBindingProof::Untyped { name })),
+                None => {
+                    let ambiguous =
+                        ambiguous_branch_init_paths(init_expr, param_names, local_scopes);
+                    init_path
+                        .map(|init_path| LocalBindingProof::Initialized {
+                            name: name.clone(),
+                            init_path,
+                        })
+                        .or_else(|| {
+                            ambiguous.map(|init_paths| LocalBindingProof::AmbiguousInitialized {
+                                name: name.clone(),
+                                init_paths,
+                            })
+                        })
+                        .or(Some(LocalBindingProof::Untyped { name }))
+                }
             }
         }
         _ => None,
@@ -1430,6 +1454,28 @@ fn branch_init_path(
     param_names: &[String],
     local_scopes: &[Vec<LocalBindingProof>],
 ) -> Option<Vec<String>> {
+    let targets = branch_init_targets(expr, param_names, local_scopes)?;
+
+    match targets.as_slice() {
+        [target] => Some(target.clone()),
+        _ => None,
+    }
+}
+
+fn ambiguous_branch_init_paths(
+    expr: Option<&syn::Expr>,
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<Vec<Vec<String>>> {
+    let targets = branch_init_targets(expr, param_names, local_scopes)?;
+    (targets.len() > 1).then_some(targets)
+}
+
+fn branch_init_targets(
+    expr: Option<&syn::Expr>,
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<Vec<Vec<String>>> {
     let expr = expr?;
     let branch_paths = match unparen_expr(expr) {
         syn::Expr::If(_) => if_branch_paths(expr, param_names, local_scopes)?,
@@ -1443,11 +1489,7 @@ fn branch_init_path(
         .collect::<Option<Vec<_>>>()?;
     targets.sort();
     targets.dedup();
-
-    match targets.as_slice() {
-        [target] => Some(target.clone()),
-        _ => None,
-    }
+    (!targets.is_empty()).then_some(targets)
 }
 
 fn constructed_init(
@@ -1787,6 +1829,7 @@ fn init_target_path(
             | LocalBindingProof::TraitObject {
                 init_path: None, ..
             }
+            | LocalBindingProof::AmbiguousInitialized { .. }
             | LocalBindingProof::TupleReturn { .. }
             | LocalBindingProof::TupleMethodReturn { .. }
             | LocalBindingProof::Closure { .. }

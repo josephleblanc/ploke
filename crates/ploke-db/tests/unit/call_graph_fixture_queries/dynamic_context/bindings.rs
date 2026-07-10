@@ -122,15 +122,12 @@ fn fixture_context_reads_projected_function_item_binding_calls() -> Result<(), D
         1,
         "ambiguous branch-initialized binding context rows: {context:#?}"
     );
-    assert_targetless_row(
-        &context,
+    let expected = dynamic_candidates(&db)?;
+    assert_path_function_candidates(
+        &context[0],
         owner,
-        TargetlessRowCase::path(
-            &["f"],
-            0,
-            CallStatusKind::Unsupported,
-            "ambiguous branch-initialized function pointer binding",
-        ),
+        &expected,
+        "ambiguous branch-initialized function pointer binding",
     );
 
     Ok(())

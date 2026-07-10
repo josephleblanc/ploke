@@ -17,8 +17,8 @@ fn fixture_context_reads_projected_ambiguous_dynamic_candidates() -> Result<(), 
     let context = db.call_context_for_target(target)?;
     assert_eq!(
         context.len(),
-        AMBIGUOUS_DYNAMIC_OWNERS.len(),
-        "other_target should expose every ambiguous dynamic caller: {context:#?}"
+        AMBIGUOUS_DYNAMIC_OWNERS.len() + 1,
+        "other_target should expose every ambiguous candidate caller: {context:#?}"
     );
 
     for owner_name in AMBIGUOUS_DYNAMIC_OWNERS {
@@ -31,6 +31,15 @@ fn fixture_context_reads_projected_ambiguous_dynamic_candidates() -> Result<(), 
             });
         assert_dynamic_candidates(row, owner, &expected, owner_name);
     }
+
+    let owner = function_id_by_name(&db, AMBIGUOUS_PATH_OWNER)?;
+    let row = context
+        .iter()
+        .find(|row| row.site.owner_id == owner)
+        .unwrap_or_else(|| {
+            panic!("target-centered context missing {AMBIGUOUS_PATH_OWNER}: {context:#?}")
+        });
+    assert_path_function_candidates(row, owner, &expected, AMBIGUOUS_PATH_OWNER);
 
     Ok(())
 }

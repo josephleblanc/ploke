@@ -8783,20 +8783,32 @@ paranoid_call_site_test!(
 );
 
 paranoid_call_site_test!(
-    fixture_call_graph_call_if_ambiguous_initialized_function_item_binding_fails_closed_path_call_site,
+    fixture_call_graph_call_if_ambiguous_initialized_function_item_binding_preserves_path_candidates_call_site,
     fixture: "fixture_call_graph",
     owner: function {
         module_path: &["crate"],
         name: "call_if_ambiguous_initialized_function_item_binding"
     },
-    expected: ExpectedCallSite::path_value_binding(
-        &["f"],
-        IF_AMBIGUOUS_INITIALIZED_FUNCTION_ITEM_BINDING_CALL_SPAN,
-        0,
-        0,
-        &[],
-        ExpectedCallOutcome::Unsupported,
-    ),
+    expected: {
+        let first_args = fixture_call_graph_function_args(&["crate"], "local_target");
+        let second_args = fixture_call_graph_function_args(&["crate"], "other_target");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let first_info = first_args.generate_pid(&parsed_graphs)?;
+        let second_info = second_args.generate_pid(&parsed_graphs)?;
+        let first = FunctionNodeId::try_from(first_info.test_pid())
+            .expect("local_target should regenerate a FunctionNodeId");
+        let second = FunctionNodeId::try_from(second_info.test_pid())
+            .expect("other_target should regenerate a FunctionNodeId");
+        ExpectedCallSite::path_ambiguous_initialized_value_binding(
+            &["f"],
+            &[&["local_target"], &["other_target"]],
+            IF_AMBIGUOUS_INITIALIZED_FUNCTION_ITEM_BINDING_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::AmbiguousPathFunctionCandidates { first, second },
+        )
+    },
 );
 
 paranoid_call_site_test!(

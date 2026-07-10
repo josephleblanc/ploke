@@ -48,6 +48,9 @@ pub(super) fn classify_method_receiver(
                             init_path: init_path.clone(),
                         }
                     }
+                    LocalBindingProof::AmbiguousInitialized { .. } => {
+                        MethodCallReceiver::Unsupported
+                    }
                     LocalBindingProof::TupleReturn { name, path, index } => {
                         MethodCallReceiver::TupleReturnBinding {
                             name: name.clone(),
@@ -215,7 +218,8 @@ fn borrowed_local_receiver(
                     init_path: init_path.clone(),
                 });
             }
-            LocalBindingProof::TupleReturn { .. }
+            LocalBindingProof::AmbiguousInitialized { .. }
+            | LocalBindingProof::TupleReturn { .. }
             | LocalBindingProof::TupleMethodReturn { .. }
             | LocalBindingProof::Closure { .. }
             | LocalBindingProof::LocalFunction { .. }
@@ -296,6 +300,9 @@ fn local_field_receiver(
                     init_path: init_path.clone(),
                     field_path,
                 })
+            }
+            LocalBindingProof::AmbiguousInitialized { .. } => {
+                Some(MethodCallReceiver::FieldLocalBinding { name, field_path })
             }
             LocalBindingProof::TupleReturn { .. } | LocalBindingProof::TupleMethodReturn { .. } => {
                 Some(MethodCallReceiver::FieldLocalBinding { name, field_path })

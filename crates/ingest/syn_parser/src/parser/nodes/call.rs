@@ -180,6 +180,12 @@ pub enum PathCallCallee {
         path: Vec<String>,
         init_path: Vec<String>,
     },
+    /// The callee path names a visible local binding whose branch initializer
+    /// proves more than one possible local function item.
+    AmbiguousInitializedValueBinding {
+        path: Vec<String>,
+        init_paths: Vec<Vec<String>>,
+    },
     /// The callee path names a visible local binding that aliases another
     /// visible local value binding or parameter.
     AliasedValueBinding {
