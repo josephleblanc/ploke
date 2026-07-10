@@ -470,6 +470,16 @@ pub enum MethodCallReceiver {
         /// Zero-based tuple element index bound to `name`.
         index: usize,
     },
+    /// The receiver is a local binding whose initializer was another method
+    /// call, such as `let iter = iter.into_iter(); iter.size_hint()`.
+    MethodResultLocalBinding {
+        /// Binding identifier used as the receiver expression.
+        name: String,
+        /// Method name used by the initializer call.
+        method_name: String,
+        /// Byte span of the initializer method call.
+        method_span: (usize, usize),
+    },
     /// The receiver is a borrowed local binding, such as `&value`.
     BorrowedLocalBinding {
         /// Binding identifier inside the borrow expression.

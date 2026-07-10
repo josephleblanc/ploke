@@ -22,6 +22,10 @@ async fn call_context_collection_reads_real_fixture_external_rows() -> Result<()
         &db,
         &function_in_module_query(&["crate"], "call_typed_vec_len_external"),
     )?;
+    let iter_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_iter_result_size_hint"),
+    )?;
     let rag = init_test_rag_mock(Arc::clone(&db));
     assert!(
         !rag.call_context_degraded(),
@@ -33,6 +37,7 @@ async fn call_context_collection_reads_real_fixture_external_rows() -> Result<()
         (default_bound_owner, 1.0),
         (literal_owner, 1.0),
         (vec_owner, 1.0),
+        (iter_owner, 1.0),
     ])?;
 
     let string_context = call_context
@@ -146,6 +151,36 @@ async fn call_context_collection_reads_real_fixture_external_rows() -> Result<()
     assert!(
         vec_len.targets.is_empty(),
         "external Vec::len calls must not fabricate RAG targets: {vec_len:#?}"
+    );
+
+    let iter_context = call_context
+        .get(&iter_owner)
+        .expect("method-result local binding owner should receive outgoing call context");
+    assert_eq!(
+        iter_context.len(),
+        2,
+        "method-result local binding owner context: {iter_context:#?}"
+    );
+    let size_hint = iter_context
+        .iter()
+        .find(|call| {
+            call.kind == CallSiteKind::Method
+                && call.callee
+                    == CallCalleeInfo::Method {
+                        name: "size_hint".to_string(),
+                        receiver: Some(CallReceiverInfo::MethodResultLocalBinding {
+                            name: "iter".to_string(),
+                            method_name: "into_iter".to_string(),
+                            method_span: (44177, 44193),
+                        }),
+                    }
+        })
+        .expect("method-result local binding size_hint call should stay visible");
+    assert_eq!(size_hint.status, CallStatusKind::External);
+    assert!(size_hint.resolution.is_none());
+    assert!(
+        size_hint.targets.is_empty(),
+        "external size_hint calls must not fabricate RAG targets: {size_hint:#?}"
     );
 
     Ok(())

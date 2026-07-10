@@ -58,6 +58,21 @@ impl CallRelationResolver<'_> {
             statuses.push(CallResolutionStatus::External { source });
             return Ok(());
         }
+        if let MethodCallReceiver::MethodResultLocalBinding {
+            method_name,
+            method_span,
+            ..
+        } = &call.receiver
+            && self.is_external_local_result_method(
+                call,
+                method_name,
+                *method_span,
+                type_relations,
+            )?
+        {
+            statuses.push(CallResolutionStatus::External { source });
+            return Ok(());
+        }
         if let MethodCallReceiver::TypedLocalBinding { type_path, .. }
         | MethodCallReceiver::BorrowedTypedLocalBinding { type_path, .. } = &call.receiver
             && self.is_external_type_path_method(call.owner, type_path, &call.method_name)?
@@ -142,6 +157,7 @@ impl CallRelationResolver<'_> {
             MethodCallReceiver::MethodCallResult { method_name } => {
                 self.resolve_method_result_method_call(call, method_name, type_relations)?
             }
+            MethodCallReceiver::MethodResultLocalBinding { .. } => AssocPathResolution::Unsupported,
             MethodCallReceiver::FieldTypedLocalBinding {
                 type_path,
                 field_path,
@@ -557,7 +573,7 @@ impl CallRelationResolver<'_> {
         if self.is_external_import_path(owner, path)? {
             return Ok(!self.trait_path_is_local(owner, path)?);
         }
-        if matches!(expected_trait, "Default" | "Into")
+        if matches!(expected_trait, "Default" | "Into" | "IntoIterator")
             && matches!(path, [segment] if segment == expected_trait)
         {
             return Ok(!self.trait_path_is_local(owner, path)?);
@@ -824,6 +840,104 @@ impl CallRelationResolver<'_> {
         }
 
         self.has_external_service_ext_import(owner)
+    }
+
+    fn is_external_local_result_method(
+        &self,
+        call: &MethodCallNode,
+        result_method: &str,
+        result_span: (usize, usize),
+        type_relations: &[TypeRelation],
+    ) -> Result<bool, SynParserError> {
+        if result_method != "into_iter" || call.method_name != "size_hint" {
+            return Ok(false);
+        }
+
+        let Some(init_call) = self.method_call_by_span(call.owner, result_method, result_span)
+        else {
+            return Ok(false);
+        };
+        let MethodCallReceiver::LocalBinding { name } = &init_call.receiver else {
+            return Ok(false);
+        };
+
+        self.param_has_external_bound(call.owner, name, "IntoIterator", type_relations)
+    }
+
+    fn param_has_external_bound(
+        &self,
+        owner: CallBodyOwnerId,
+        name: &str,
+        expected_trait: &str,
+        type_relations: &[TypeRelation],
+    ) -> Result<bool, SynParserError> {
+        let Some(parameters) = self.owner_parameters(owner)? else {
+            return Ok(false);
+        };
+
+        for param in parameters
+            .iter()
+            .filter(|param| !param.is_self && param.name.as_deref() == Some(name))
+        {
+            if let Some(target) = self.single_ordinary_target(param.type_id, type_relations)?
+                && let Ok(param_id) = TypeGenericParamNodeId::try_from(target)
+            {
+                let sources =
+                    self.generic_bound_sources(owner, target, Some(param_id), type_relations)?;
+                for source in sources {
+                    if self.is_external_trait_bound(owner, source, expected_trait)? {
+                        return Ok(true);
+                    }
+                }
+            }
+
+            let Some(type_segment) = self.type_use_single_segment(param.type_id)? else {
+                continue;
+            };
+            for scope in self.generic_bound_scopes(owner)? {
+                for generic_param in scope.params {
+                    if generic_param.kind.name() != Some(type_segment.as_str()) {
+                        continue;
+                    }
+                    let Some(bounds) = generic_param.kind.bounds() else {
+                        continue;
+                    };
+                    for bound in bounds {
+                        if self.is_external_trait_bound(owner, *bound, expected_trait)? {
+                            return Ok(true);
+                        }
+                    }
+                }
+
+                for predicate in scope.predicates {
+                    if !self.type_path_matches_segment(predicate.subject, &type_segment)? {
+                        continue;
+                    }
+                    for bound in &predicate.bounds {
+                        if self.is_external_trait_bound(owner, *bound, expected_trait)? {
+                            return Ok(true);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(false)
+    }
+
+    fn type_use_single_segment(
+        &self,
+        type_id: OrdinaryTypeUseId,
+    ) -> Result<Option<String>, SynParserError> {
+        match self.type_node(type_id)? {
+            TypeNode::Named(node) => Ok(match node.path.as_slice() {
+                [segment] => Some(segment.clone()),
+                _ => None,
+            }),
+            TypeNode::Reference(node) => self.type_use_single_segment(node.referenced),
+            TypeNode::Paren(node) => self.type_use_single_segment(node.inner),
+            _ => Ok(None),
+        }
     }
 
     fn is_external_path_result_method(
@@ -1380,6 +1494,33 @@ impl CallRelationResolver<'_> {
         }
     }
 
+    fn method_call_by_span(
+        &self,
+        owner: CallBodyOwnerId,
+        method_name: &str,
+        span: (usize, usize),
+    ) -> Option<&MethodCallNode> {
+        let candidates = self
+            .graph
+            .call_sites()
+            .iter()
+            .filter_map(|candidate| match candidate {
+                CallNode::MethodCall(call)
+                    if call.owner == owner
+                        && call.method_name == method_name
+                        && call.span == span =>
+                {
+                    Some(call)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        match candidates.as_slice() {
+            [call] => Some(*call),
+            _ => None,
+        }
+    }
+
     fn direct_receiver_path_call(
         &self,
         call: &MethodCallNode,
@@ -1476,6 +1617,9 @@ impl CallRelationResolver<'_> {
             }
             MethodCallReceiver::MethodCallResult { method_name } => {
                 self.resolve_method_result_method_call(call, method_name, type_relations)
+            }
+            MethodCallReceiver::MethodResultLocalBinding { .. } => {
+                Ok(AssocPathResolution::Unsupported)
             }
             MethodCallReceiver::FieldTypedLocalBinding {
                 type_path,

@@ -1,5 +1,7 @@
 use super::*;
 
+const ITER_RESULT_INTO_ITER_CALL_SPAN: (usize, usize) = (44177, 44193);
+
 #[test]
 fn fixture_context_reads_projected_external_and_shadowed_method_calls() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
@@ -91,6 +93,51 @@ fn fixture_context_reads_projected_external_and_shadowed_method_calls() -> Resul
             CallStatusKind::External,
             "borrowed parameter Vec::len",
         ),
+    );
+
+    let owner = function_id_by_name(&db, "call_iter_result_size_hint")?;
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(
+        context.len(),
+        2,
+        "method-result local binding external context rows: {context:#?}"
+    );
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:1925-1926:
+    // `let iter = iter.into_iter(); iter.size_hint()` should preserve the
+    // initializer method proof and classify the iterator frontier as external.
+    let init_receiver = CallReceiver::LocalBinding {
+        name: "iter".to_string(),
+    };
+    assert_targetless_method_row(
+        &context,
+        owner,
+        TargetlessMethodCase::method(
+            "into_iter",
+            &init_receiver,
+            CallStatusKind::Unsupported,
+            "generic IntoIterator::into_iter initializer",
+        ),
+    );
+
+    let receiver = CallReceiver::MethodResultLocalBinding {
+        name: "iter".to_string(),
+        method_name: "into_iter".to_string(),
+        method_span: ITER_RESULT_INTO_ITER_CALL_SPAN,
+    };
+    let row = assert_targetless_method_row(
+        &context,
+        owner,
+        TargetlessMethodCase::method(
+            "size_hint",
+            &receiver,
+            CallStatusKind::External,
+            "IntoIterator::IntoIter::size_hint frontier",
+        ),
+    );
+    assert!(
+        relations_for_site(&db, row.site.id)?.rows.is_empty(),
+        "method-result local binding external row must not fabricate call_relation targets"
     );
 
     let owner = function_id_by_name(&db, "call_imported_external_type_alias_initialized_method")?;

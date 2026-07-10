@@ -686,6 +686,22 @@ fn method_receiver_to_cozo(receiver: &MethodCallReceiver) -> (cozo::DataValue, c
                 string_list(&encoded),
             )
         }
+        MethodCallReceiver::MethodResultLocalBinding {
+            name,
+            method_name,
+            method_span,
+        } => {
+            let encoded = vec![
+                name.clone(),
+                method_name.clone(),
+                method_span.0.to_string(),
+                method_span.1.to_string(),
+            ];
+            (
+                cozo::DataValue::from("MethodResultLocalBinding"),
+                string_list(&encoded),
+            )
+        }
         MethodCallReceiver::BorrowedLocalBinding { name } => (
             cozo::DataValue::from("BorrowedLocalBinding"),
             string_list(std::slice::from_ref(name)),

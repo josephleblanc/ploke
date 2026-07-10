@@ -56,6 +56,15 @@ fn context_for_owner_decodes_raw_method_receivers() -> Result<(), DbError> {
             },
         ),
         raw_receiver(
+            "MethodResultLocalBinding",
+            list(&["iter", "into_iter", "44177", "44193"]),
+            CallReceiver::MethodResultLocalBinding {
+                name: "iter".to_string(),
+                method_name: "into_iter".to_string(),
+                method_span: (44177, 44193),
+            },
+        ),
+        raw_receiver(
             "PathCallResult",
             list(&["make_local_assoc"]),
             CallReceiver::PathCallResult {

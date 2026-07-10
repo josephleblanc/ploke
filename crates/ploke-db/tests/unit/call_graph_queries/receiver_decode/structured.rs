@@ -54,6 +54,15 @@ fn context_for_owner_decodes_structured_method_receivers() -> Result<(), DbError
             },
         ),
         structured_receiver(
+            "MethodResultLocalBinding",
+            vec!["iter", "into_iter", "44177", "44193"],
+            CallReceiver::MethodResultLocalBinding {
+                name: "iter".to_string(),
+                method_name: "into_iter".to_string(),
+                method_span: (44177, 44193),
+            },
+        ),
+        structured_receiver(
             "BorrowedTypedLocalBinding",
             vec!["borrowed", "LocalAssoc"],
             CallReceiver::BorrowedTypedLocalBinding {

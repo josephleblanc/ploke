@@ -128,6 +128,31 @@ impl CallReceiver {
                     ))),
                 }
             }
+            "MethodResultLocalBinding" => {
+                let path = to_string_list(path)?;
+                match path.as_slice() {
+                    [name, method_name, start, end] => {
+                        let start = start.parse::<usize>().map_err(|err| {
+                            DbError::Cozo(format!(
+                                "method-result local binding receiver should store a usize span start, got {start:?}: {err}"
+                            ))
+                        })?;
+                        let end = end.parse::<usize>().map_err(|err| {
+                            DbError::Cozo(format!(
+                                "method-result local binding receiver should store a usize span end, got {end:?}: {err}"
+                            ))
+                        })?;
+                        Ok(Some(Self::MethodResultLocalBinding {
+                            name: name.clone(),
+                            method_name: method_name.clone(),
+                            method_span: (start, end),
+                        }))
+                    }
+                    other => Err(DbError::Cozo(format!(
+                        "method-result local binding receiver should store a name, method name, and method span, got {other:?}"
+                    ))),
+                }
+            }
             "BorrowedLocalBinding" => {
                 let path = to_string_list(path)?;
                 match path.as_slice() {

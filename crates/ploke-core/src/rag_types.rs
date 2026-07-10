@@ -204,6 +204,11 @@ pub enum CallReceiverInfo {
         method_span: (usize, usize),
         index: usize,
     },
+    MethodResultLocalBinding {
+        name: String,
+        method_name: String,
+        method_span: (usize, usize),
+    },
     BorrowedLocalBinding {
         name: String,
     },

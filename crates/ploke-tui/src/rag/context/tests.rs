@@ -1330,6 +1330,37 @@ call_context: 1 call site(s)
 }
 
 #[test]
+fn format_call_context_block_renders_method_result_local_binding_receiver() {
+    let calls = vec![CallContextInfo {
+        site_id: Uuid::from_u128(0x708),
+        owner_id: Uuid::from_u128(0x708),
+        kind: CallSiteKind::Method,
+        span: (44199, 44215),
+        path: None,
+        arg_count: Some(0),
+        generic_arg_count: Some(0),
+        callee: CallCalleeInfo::Method {
+            name: "size_hint".to_string(),
+            receiver: Some(CallReceiverInfo::MethodResultLocalBinding {
+                name: "iter".to_string(),
+                method_name: "into_iter".to_string(),
+                method_span: (44177, 44193),
+            }),
+        },
+        status: CallStatusKind::External,
+        resolution: None,
+        targets: Vec::new(),
+    }];
+
+    let rendered = format_call_context_block(&calls, "  ", 8);
+    let expected = "\
+call_context: 1 call site(s)
+  - Method @ 44199..44215: method size_hint on iter = into_iter() => External, targets [], owner 00000000-0000-0000-0000-000000000708";
+
+    assert_eq!(rendered, expected);
+}
+
+#[test]
 fn format_call_context_block_renders_trait_dispatch_initialized_local_receiver() {
     let target = Uuid::from_u128(0xa01);
     let calls = vec![CallContextInfo {

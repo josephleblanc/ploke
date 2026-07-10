@@ -713,6 +713,15 @@ fn receiver_info(receiver: CallReceiver) -> CallReceiverInfo {
             method_span,
             index,
         },
+        CallReceiver::MethodResultLocalBinding {
+            name,
+            method_name,
+            method_span,
+        } => CallReceiverInfo::MethodResultLocalBinding {
+            name,
+            method_name,
+            method_span,
+        },
         CallReceiver::BorrowedLocalBinding { name } => {
             CallReceiverInfo::BorrowedLocalBinding { name }
         }

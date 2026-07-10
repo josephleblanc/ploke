@@ -316,6 +316,8 @@ const AWAITED_ASYNC_CLOSURE_FUTURE_BLOCK_ALIAS_BODY_LOCAL_TARGET_CALL_SPAN: (usi
 const AWAITED_ASYNC_CLOSURE_FUTURE_ALIAS_CHAIN_CALL_SPAN: (usize, usize) = (43969, 43978);
 const AWAITED_ASYNC_CLOSURE_FUTURE_ALIAS_CHAIN_BODY_LOCAL_TARGET_CALL_SPAN: (usize, usize) =
     (43936, 43950);
+const ITER_RESULT_INTO_ITER_CALL_SPAN: (usize, usize) = (44177, 44193);
+const ITER_RESULT_SIZE_HINT_CALL_SPAN: (usize, usize) = (44199, 44215);
 const NAMED_FIELD_FUNCTION_DYNAMIC_CALL_SPAN: (usize, usize) = (17945, 17964);
 const ALIASED_NAMED_FIELD_FUNCTION_DYNAMIC_CALL_SPAN: (usize, usize) = (18134, 18152);
 const INDEXED_FIELD_FUNCTION_PARAM_DYNAMIC_CALL_SPAN: (usize, usize) = (18239, 18260);
@@ -3492,6 +3494,28 @@ paranoid_call_site_test!(
         "len",
         ExpectedMethodReceiver::LocalBinding { name: "value" },
         BORROWED_PARAM_VEC_LEN_CALL_SPAN,
+        0,
+        0,
+        &[],
+        ExpectedCallOutcome::External,
+    ),
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_iter_result_size_hint_records_method_result_receiver_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_iter_result_size_hint"
+    },
+    expected: ExpectedCallSite::method(
+        "size_hint",
+        ExpectedMethodReceiver::MethodResultLocalBinding {
+            name: "iter",
+            method_name: "into_iter",
+            method_span: ITER_RESULT_INTO_ITER_CALL_SPAN,
+        },
+        ITER_RESULT_SIZE_HINT_CALL_SPAN,
         0,
         0,
         &[],

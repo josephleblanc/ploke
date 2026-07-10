@@ -69,6 +69,15 @@ pub(super) fn classify_method_receiver(
                         method_span: *method_span,
                         index: *index,
                     },
+                    LocalBindingProof::MethodResult {
+                        name,
+                        method_name,
+                        method_span,
+                    } => MethodCallReceiver::MethodResultLocalBinding {
+                        name: name.clone(),
+                        method_name: method_name.clone(),
+                        method_span: *method_span,
+                    },
                     LocalBindingProof::Constructed {
                         name, type_path, ..
                     } => MethodCallReceiver::InitializedLocalBinding {
@@ -221,6 +230,7 @@ fn borrowed_local_receiver(
             LocalBindingProof::AmbiguousInitialized { .. }
             | LocalBindingProof::TupleReturn { .. }
             | LocalBindingProof::TupleMethodReturn { .. }
+            | LocalBindingProof::MethodResult { .. }
             | LocalBindingProof::Closure { .. }
             | LocalBindingProof::LocalFunction { .. }
             | LocalBindingProof::ValueAlias { .. }
@@ -304,7 +314,9 @@ fn local_field_receiver(
             LocalBindingProof::AmbiguousInitialized { .. } => {
                 Some(MethodCallReceiver::FieldLocalBinding { name, field_path })
             }
-            LocalBindingProof::TupleReturn { .. } | LocalBindingProof::TupleMethodReturn { .. } => {
+            LocalBindingProof::TupleReturn { .. }
+            | LocalBindingProof::TupleMethodReturn { .. }
+            | LocalBindingProof::MethodResult { .. } => {
                 Some(MethodCallReceiver::FieldLocalBinding { name, field_path })
             }
             LocalBindingProof::Constructed {

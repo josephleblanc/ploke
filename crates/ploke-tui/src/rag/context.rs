@@ -710,6 +710,11 @@ fn format_receiver(receiver: &CallReceiverInfo) -> String {
         } => {
             format!("{name} = {method_name}().{index}")
         }
+        CallReceiverInfo::MethodResultLocalBinding {
+            name, method_name, ..
+        } => {
+            format!("{name} = {method_name}()")
+        }
         CallReceiverInfo::BorrowedLocalBinding { name } => format!("&{name}"),
         CallReceiverInfo::BorrowedTypedLocalBinding { name, type_path } => {
             format!("&{name}: {}", type_path.join("::"))

@@ -1917,3 +1917,11 @@ pub async fn call_awaited_async_closure_future_alias_chain_with_body_call() {
     let second = alias;
     second.await;
 }
+
+pub fn call_iter_result_size_hint<I>(iter: I) -> (usize, Option<usize>)
+where
+    I: IntoIterator<Item = i32>,
+{
+    let iter = iter.into_iter();
+    iter.size_hint()
+}

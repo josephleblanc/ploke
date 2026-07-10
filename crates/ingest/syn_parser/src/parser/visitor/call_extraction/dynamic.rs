@@ -80,6 +80,7 @@ pub(super) fn classify_dynamic_callee(
                     | LocalBindingProof::AmbiguousInitialized { .. }
                     | LocalBindingProof::TupleReturn { .. }
                     | LocalBindingProof::TupleMethodReturn { .. }
+                    | LocalBindingProof::MethodResult { .. }
                     | LocalBindingProof::Constructed { .. }
                     | LocalBindingProof::Array { .. }
                     | LocalBindingProof::Referenced { .. }
@@ -256,6 +257,7 @@ fn classify_dynamic_path_expr(
                 | LocalBindingProof::AmbiguousInitialized { .. }
                 | LocalBindingProof::TupleReturn { .. }
                 | LocalBindingProof::TupleMethodReturn { .. }
+                | LocalBindingProof::MethodResult { .. }
                 | LocalBindingProof::Constructed { .. }
                 | LocalBindingProof::Array { .. }
                 | LocalBindingProof::Referenced { .. }
@@ -567,6 +569,7 @@ fn dereferenced_local_binding_callee(
         | LocalBindingProof::AmbiguousInitialized { .. }
         | LocalBindingProof::TupleReturn { .. }
         | LocalBindingProof::TupleMethodReturn { .. }
+        | LocalBindingProof::MethodResult { .. }
         | LocalBindingProof::Constructed { .. }
         | LocalBindingProof::Array { .. }
         | LocalBindingProof::Referenced { .. }

@@ -776,6 +776,7 @@ fn classify_path_callee(
             | LocalBindingProof::TraitObject { .. }
             | LocalBindingProof::TupleReturn { .. }
             | LocalBindingProof::TupleMethodReturn { .. }
+            | LocalBindingProof::MethodResult { .. }
             | LocalBindingProof::Constructed { .. }
             | LocalBindingProof::Array { .. }
             | LocalBindingProof::Referenced { .. }
@@ -973,6 +974,15 @@ fn local_binding_proof(
                         })
                 })
                 .or_else(|| {
+                    method_result_init(init_expr).map(|(method_name, method_span)| {
+                        LocalBindingProof::MethodResult {
+                            name: name.clone(),
+                            method_name,
+                            method_span,
+                        }
+                    })
+                })
+                .or_else(|| {
                     branch_init_path(init_expr, param_names, local_scopes).map(|init_path| {
                         LocalBindingProof::Initialized {
                             name: name.clone(),
@@ -1080,6 +1090,14 @@ fn local_binding_proof(
         }
         _ => None,
     }
+}
+
+fn method_result_init(init_expr: Option<&syn::Expr>) -> Option<(String, (usize, usize))> {
+    let syn::Expr::MethodCall(call) = unparen_expr(init_expr?) else {
+        return None;
+    };
+    let byte_range = call.span().byte_range();
+    Some((call.method.to_string(), (byte_range.start, byte_range.end)))
 }
 
 fn local_binding_proofs(
@@ -1832,6 +1850,7 @@ fn init_target_path(
             | LocalBindingProof::AmbiguousInitialized { .. }
             | LocalBindingProof::TupleReturn { .. }
             | LocalBindingProof::TupleMethodReturn { .. }
+            | LocalBindingProof::MethodResult { .. }
             | LocalBindingProof::Closure { .. }
             | LocalBindingProof::LocalFunction { .. }
             | LocalBindingProof::ValueAlias { .. }

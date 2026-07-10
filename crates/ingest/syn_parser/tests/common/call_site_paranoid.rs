@@ -76,6 +76,12 @@ pub enum ExpectedMethodReceiver<'a> {
         method_span: (usize, usize),
         index: usize,
     },
+    /// The receiver expression is a named local binding initialized by a method call.
+    MethodResultLocalBinding {
+        name: &'a str,
+        method_name: &'a str,
+        method_span: (usize, usize),
+    },
     /// The receiver expression is a borrowed named local binding.
     BorrowedLocalBinding { name: &'a str },
     /// The receiver expression is a borrowed named local binding with an explicit type.
@@ -177,6 +183,15 @@ impl ExpectedMethodReceiver<'_> {
                 method_name: method_name.to_string(),
                 method_span,
                 index,
+            },
+            Self::MethodResultLocalBinding {
+                name,
+                method_name,
+                method_span,
+            } => MethodCallReceiver::MethodResultLocalBinding {
+                name: name.to_string(),
+                method_name: method_name.to_string(),
+                method_span,
             },
             Self::BorrowedLocalBinding { name } => MethodCallReceiver::BorrowedLocalBinding {
                 name: name.to_string(),

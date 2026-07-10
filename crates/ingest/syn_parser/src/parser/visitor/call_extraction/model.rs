@@ -31,6 +31,11 @@ pub(super) enum LocalBindingProof {
         method_span: (usize, usize),
         index: usize,
     },
+    MethodResult {
+        name: String,
+        method_name: String,
+        method_span: (usize, usize),
+    },
     Closure {
         name: String,
         closure_id: ExecutableBodyId,
@@ -83,6 +88,7 @@ impl LocalBindingProof {
             | Self::AmbiguousInitialized { name, .. }
             | Self::TupleReturn { name, .. }
             | Self::TupleMethodReturn { name, .. }
+            | Self::MethodResult { name, .. }
             | Self::Closure { name, .. }
             | Self::LocalFunction { name, .. }
             | Self::ValueAlias { name, .. }
