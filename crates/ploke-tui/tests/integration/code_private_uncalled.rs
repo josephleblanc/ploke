@@ -66,6 +66,20 @@ async fn code_private_uncalled_lists_real_corpus_private_zero_caller_target() {
         }),
         "entrypoint summary should preserve the generated test-harness proof row: {entrypoint:#?}"
     );
+    assert_eq!(
+        entrypoint.build_domains.len(),
+        1,
+        "entrypoint summary should preserve the linked build-domain row: {entrypoint:#?}"
+    );
+    let domain = &entrypoint.build_domains[0];
+    assert_eq!(domain.build_domain_id, "bd:corpus-axum-call-graph");
+    assert_eq!(domain.target_kind.as_deref(), Some("library"));
+    assert_eq!(domain.target_name.as_deref(), Some("axum"));
+    assert_eq!(domain.target_root.as_deref(), Some("axum/src/lib.rs"));
+    assert!(
+        domain.blocker_reasons.is_empty(),
+        "admitted axum build-domain evidence should not add blockers: {entrypoint:#?}"
+    );
 
     assert!(payload.total >= payload.returned);
     assert_eq!(payload.truncated, payload.total > payload.returned);
@@ -77,4 +91,5 @@ async fn code_private_uncalled_lists_real_corpus_private_zero_caller_target() {
         ui_field(ui, "entrypoint_summaries"),
         payload.entrypoint_summaries.len().to_string()
     );
+    assert_eq!(ui_field(ui, "entrypoint_build_domains"), "1");
 }

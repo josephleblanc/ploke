@@ -1,7 +1,7 @@
 use std::ops::Deref;
 
 use ploke_core::{
-    rag_types::{CallNodeInfo, ProofContextInfo},
+    rag_types::{CallBuildDomainInfo, CallNodeInfo, ProofContextInfo},
     tool_descriptions::ToolDescription,
     tool_types::ToolName,
 };
@@ -45,6 +45,8 @@ pub struct PrivateUncalledParamsOwned {
 pub struct PrivateEntrypointSummary {
     pub node_id: Uuid,
     pub proof_context: Vec<ProofContextInfo>,
+    #[serde(default)]
+    pub build_domains: Vec<CallBuildDomainInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -155,10 +157,20 @@ impl Tool for CodePrivateUncalled {
                                 && row.status.as_deref() == Some("admitted")
                         })
                         .collect::<Vec<_>>();
-                    if !proof_context.is_empty() {
+                    let build_domains = rag
+                        .exact_call_build_domains_for_node(node.id)
+                        .map_err(|err| {
+                            ploke_error::Error::Internal(InternalError::CompilerError(format!(
+                                "failed to collect build domains for private uncalled node {}: {err}",
+                                node.id
+                            )))
+                        })?
+                        .unwrap_or_default();
+                    if !proof_context.is_empty() || !build_domains.is_empty() {
                         summaries.push(PrivateEntrypointSummary {
                             node_id: node.id,
                             proof_context,
+                            build_domains,
                         });
                     }
                 }
@@ -173,6 +185,11 @@ impl Tool for CodePrivateUncalled {
             nodes: returned_nodes,
             entrypoint_summaries,
         };
+        let entrypoint_build_domains = result
+            .entrypoint_summaries
+            .iter()
+            .map(|summary| summary.build_domains.len())
+            .sum::<usize>();
         let summary = format!("Found {} private uncalled node(s)", result.total);
         let ui_payload = super::ToolUiPayload::new(Self::name(), ctx.call_id.clone(), summary)
             .with_field("total", result.total.to_string())
@@ -182,6 +199,10 @@ impl Tool for CodePrivateUncalled {
             .with_field(
                 "entrypoint_summaries",
                 result.entrypoint_summaries.len().to_string(),
+            )
+            .with_field(
+                "entrypoint_build_domains",
+                entrypoint_build_domains.to_string(),
             );
         let content = serde_json::to_string(&result).map_err(|err| {
             ploke_error::Error::Internal(InternalError::CompilerError(format!(

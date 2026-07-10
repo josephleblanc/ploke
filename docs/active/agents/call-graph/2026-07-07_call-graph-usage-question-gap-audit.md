@@ -36,7 +36,7 @@ inputs:
 | Section | Current evidence | Status |
 | --- | --- | --- |
 | Impact analysis | `call_impact_for_target`, RAG `exact_call_impact_for_target`, `code_item_lookup`, and `code_item_edges` cover eventual callers, public callers, test/non-test buckets, direct callsites, source files/modules/crates, and callsite buckets. | Strong current surface. |
-| Dead code detection | `private_uncalled_nodes`, RAG `exact_private_uncalled_nodes`, and `code_private_uncalled` cover private zero-incoming nodes and cross-check empty impact reports. `code_private_uncalled` now also exposes admitted generated-entrypoint summaries for returned nodes. | Strong for stored source call graph; generated harness reach remains proof-only and does not become a local call edge. |
+| Dead code detection | `private_uncalled_nodes`, RAG `exact_private_uncalled_nodes`, and `code_private_uncalled` cover private zero-incoming nodes and cross-check empty impact reports. `code_private_uncalled` now also exposes admitted generated-entrypoint summaries and linked build-domain rows for returned nodes. | Strong for stored source call graph; generated harness reach remains proof-only and does not become a local call edge. |
 | Navigation | `callers_for_target`, `call_sites_for_target`, `call_context_for_owner`, `call_paths_*`, RAG exact paths, and `code_item_call_path` cover direct and multi-hop traversal. | Strong current surface. |
 | Security analysis | Reach/path/frontier queries can answer "can A reach B?" and expose unsafe/FFI/external frontier rows, including `abs(value)` and unsafe-block metadata. Reachable `effect_seed` facts plus caller-supplied or admitted-owner `effect_policy` allowlists can report policy violations such as the axum `tokio::spawn` `async_task_spawn` sink without fabricating local edges. | Partial: broader source/sink classification, policy-order checks, and domain-specific security semantics are not modeled. |
 | Performance work | Reach/path/frontier queries expose known helpers, external calls, cfgs, and argument shape. | Partial: hot-path/cost/blocking annotations are not modeled. |
@@ -46,7 +46,7 @@ inputs:
 | Debugging | Owner/target context, exact paths, frontier status buckets, proof context, and source spans map persisted edges/blockers back to source callsites. | Strong current surface. |
 | API understanding | Impact buckets, argument/generic argument counts, constructor relation kinds, path-shape counts, aliases/re-exports, and source crates show real target usage. | Strong current surface. |
 | Documentation and RAG | RAG exact call context, exact paths, impact/reach summaries, proof context, and tool payloads expose caller/callee context and fail-closed blockers. | Strong current surface. |
-| Build or deployment optimization | Source crates/modules/cfgs and component impact reports answer affected components and feature/platform-gated paths. | Partial: actual build-target and CI-test selection requires build-domain/test-entrypoint summaries. |
+| Build or deployment optimization | Source crates/modules/cfgs and component impact reports answer affected components and feature/platform-gated paths. Exact DB/RAG/tool build-domain summaries now expose linked admitted build/test domain proof metadata for generated test-entrypoint summaries without adding source call edges. | Partial: actual CI test selection policy is not modeled. |
 
 ## Concrete Existing Proof Points
 
