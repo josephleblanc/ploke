@@ -8,8 +8,9 @@ use cozo::DataValue;
 use ploke_core::{
     ArcStr,
     rag_types::{
-        CallCalleeInfo, CallContextInfo, CallPathInfo, CallReceiverInfo, CallResolutionKind,
-        CallSiteBucketInfo, CallSiteKind, CallStatusKind, CallTargetKind, ProofContextInfo,
+        CallCalleeInfo, CallContextInfo, CallPathInfo, CallReachEffectInfo, CallReceiverInfo,
+        CallResolutionKind, CallSiteBucketInfo, CallSiteKind, CallStatusKind, CallTargetKind,
+        ProofContextInfo,
     },
 };
 use ploke_db::{

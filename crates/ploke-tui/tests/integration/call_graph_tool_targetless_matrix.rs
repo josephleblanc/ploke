@@ -10,12 +10,13 @@ use uuid::Uuid;
 
 use crate::call_graph_tool_support::{
     DynamicToolCase, DynamicToolFixture, PathToolCase, PathToolFixture, ReceiverToolCase,
-    ReceiverToolFixture, assert_admitted_external_summary_proof,
-    assert_admitted_macro_boundary_summary_proof, assert_dynamic_context, assert_dynamic_proof,
-    assert_method_context, assert_method_proof, assert_path_blocker_proof, assert_path_context,
-    assert_path_context_absent, assert_path_context_count, assert_path_resolution_proof,
-    assert_resolved_method_context, assert_resolved_method_proof, assert_runtime_dispatch_blocker,
-    request_parts_extract_target, ui_field,
+    ReceiverToolFixture, assert_admitted_external_summary_effect,
+    assert_admitted_external_summary_proof, assert_admitted_macro_boundary_summary_proof,
+    assert_dynamic_context, assert_dynamic_proof, assert_method_context, assert_method_proof,
+    assert_path_blocker_proof, assert_path_context, assert_path_context_absent,
+    assert_path_context_count, assert_path_resolution_proof, assert_resolved_method_context,
+    assert_resolved_method_proof, assert_runtime_dispatch_blocker, request_parts_extract_target,
+    ui_field,
 };
 
 #[tokio::test]
@@ -549,6 +550,10 @@ async fn code_item_lookup_returns_request_builder_alias_external_path_rows() {
             .get("external_summary_needs")
             .and_then(serde_json::Value::as_array)
             .expect("external_summary_needs array");
+        let reach_effects = payload
+            .get("call_reach_effects")
+            .and_then(serde_json::Value::as_array)
+            .expect("call_reach_effects array");
 
         // Matrix:
         //   docs/active/agents/call-graph/
@@ -581,6 +586,14 @@ async fn code_item_lookup_returns_request_builder_alias_external_path_rows() {
                 "lookup",
             );
             assert_no_external_summary_need(summary_needs, site_id, fixture.case.label, "lookup");
+            assert_admitted_external_summary_effect(
+                reach_effects,
+                fixture.owner,
+                site_id,
+                summary,
+                fixture.case.label,
+                "lookup",
+            );
         } else {
             assert_path_blocker_proof(
                 proof_context,
@@ -613,6 +626,10 @@ async fn code_item_lookup_returns_request_builder_alias_external_path_rows() {
         assert_eq!(
             ui_field(ui, "external_summary_needs"),
             summary_needs.len().to_string()
+        );
+        assert_eq!(
+            ui_field(ui, "reach_effects"),
+            reach_effects.len().to_string()
         );
     }
 }
@@ -1315,6 +1332,11 @@ async fn code_item_edges_returns_request_builder_alias_external_path_rows() {
             .and_then(|node| node.get("external_summary_needs"))
             .and_then(serde_json::Value::as_array)
             .expect("node_info.external_summary_needs array");
+        let reach_effects = payload
+            .get("node_info")
+            .and_then(|node| node.get("call_reach_effects"))
+            .and_then(serde_json::Value::as_array)
+            .expect("node_info.call_reach_effects array");
 
         // Same real-corpus external-frontier oracles as the lookup test above,
         // exercised through the edge-oriented payload.
@@ -1337,6 +1359,14 @@ async fn code_item_edges_returns_request_builder_alias_external_path_rows() {
                 "edges",
             );
             assert_no_external_summary_need(summary_needs, site_id, fixture.case.label, "edges");
+            assert_admitted_external_summary_effect(
+                reach_effects,
+                fixture.owner,
+                site_id,
+                summary,
+                fixture.case.label,
+                "edges",
+            );
         } else {
             assert_path_blocker_proof(
                 proof_context,
@@ -1363,6 +1393,10 @@ async fn code_item_edges_returns_request_builder_alias_external_path_rows() {
         assert_eq!(
             ui_field(ui, "external_summary_needs"),
             summary_needs.len().to_string()
+        );
+        assert_eq!(
+            ui_field(ui, "reach_effects"),
+            reach_effects.len().to_string()
         );
     }
 }

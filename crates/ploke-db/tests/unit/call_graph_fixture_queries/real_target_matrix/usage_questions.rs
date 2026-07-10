@@ -741,6 +741,89 @@ fn axum_usage_questions_list_external_summary_need_for_feature_gated_json_fronti
 }
 
 #[test]
+fn axum_usage_questions_report_admitted_external_summary_as_reachable_effect() -> Result<(), DbError>
+{
+    let db = setup_axum_call_graph_db()?;
+    let domain_id = "bd:corpus-axum-call-graph";
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Security/performance:
+    //   "Which reviewed external frontiers are reachable from this owner?"
+    //   "Which trusted boundary effects are covered by an admitted summary?"
+    //
+    // Source oracle:
+    //   axum/src/response/sse.rs:445 defines `EventDataWriter::write_buf`.
+    //   axum/src/response/sse.rs:449 calls
+    //     `std::mem::replace(&mut self.data_written, true)`.
+    // Expected contract: admitting an external summary for that targetless
+    // frontier makes its allowed `external_summary_boundary` effect visible in
+    // reach/effect queries without creating a local call edge.
+    let owner = method_id_by_name_and_body_substring(&db, "write_buf", "std::mem::replace")?;
+    let context = db.call_context_for_owner(owner)?;
+    let replace = row_by_path(&context, &["std", "mem", "replace"]);
+    assert_external_targetless(replace);
+    let projected = db.project_call_proof_facts_for_owner(owner, domain_id)?;
+    assert!(
+        projected >= 2,
+        "EventDataWriter::write_buf should project call_site and call_resolution proof rows: {projected}"
+    );
+
+    let options = CallPathOptions {
+        max_depth: 1,
+        max_paths: 16,
+    };
+    let before = db.call_effects_reachable_from_owner(owner, options)?;
+    assert!(
+        before
+            .iter()
+            .all(|effect| effect.call_site.site.id != replace.site.id
+                || !effect
+                    .effect_seed_id
+                    .contains(ploke_test_utils::AXUM_STD_MEM_REPLACE_SUMMARY_ID)),
+        "std::mem::replace should not expose a summary-derived effect before admission: {before:#?}"
+    );
+
+    db.upsert_proof_fact_values(&ploke_test_utils::axum_std_mem_replace_summary_records(
+        replace.site.id,
+    ))?;
+
+    let effects = db.call_effects_reachable_from_owner(owner, options)?;
+    let summary_id = ploke_test_utils::AXUM_STD_MEM_REPLACE_SUMMARY_ID;
+    let effect_id = format!("summary-effect:{summary_id}:external_summary_boundary");
+    let effect = effects
+        .iter()
+        .find(|effect| effect.effect_seed_id == effect_id)
+        .unwrap_or_else(|| {
+            panic!(
+                "reachable effects should include admitted std::mem::replace summary: {effects:#?}"
+            )
+        });
+    assert_eq!(effect.effect_class, "external_summary_boundary");
+    assert_eq!(effect.confidence.as_deref(), Some("source-oracle-review"));
+    assert_eq!(effect.blocker_if_unresolved, Some(false));
+    assert_eq!(effect.call_site.site.id, replace.site.id);
+    assert_eq!(effect.call_site.status.status, CallStatusKind::External);
+    assert!(
+        effect.paths_to_owner.is_empty(),
+        "direct std::mem::replace frontier should not need an intermediate path: {effect:#?}"
+    );
+    assert!(
+        effect.blocker_reasons.is_empty(),
+        "admitted summary should discharge the missing-summary blocker for the derived effect: {effect:#?}"
+    );
+    assert!(
+        relations_for_site(&db, effect.call_site.site.id)?
+            .rows
+            .is_empty(),
+        "summary-derived reach effects must not fabricate local call edges"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn axum_usage_questions_preserve_argument_shape_for_external_frontier() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 

@@ -7,7 +7,7 @@ use crate::{
     Database, DbError,
     database::{to_string, to_string_list, to_uuid},
     multi_embedding::db_ext::{ANCESTOR_RULES_NOW, METHOD_NODE_ANCESTOR_RULE},
-    proof_graph::ProofGraphStore,
+    proof_graph::{ProofGraphContextRow, ProofGraphStore},
 };
 
 use super::super::{
@@ -185,6 +185,7 @@ impl Database {
         let paths = self.call_paths_from_owner(owner_id, options)?;
         let context_by_site = reachable_callsite_context_rows(self, owner_id, &paths)?;
         let blockers_by_site = proof_blockers_by_call_site(self, context_by_site.keys())?;
+        let proof_rows = ProofGraphStore::proof_graphrag_context(self, "")?;
         let mut paths_by_owner = BTreeMap::<Uuid, Vec<CallPath>>::new();
         for path in &paths {
             paths_by_owner
@@ -194,8 +195,8 @@ impl Database {
         }
 
         let mut effects = Vec::new();
-        for proof in ProofGraphStore::proof_graphrag_context(self, "")?
-            .into_iter()
+        for proof in proof_rows
+            .iter()
             .filter(|proof| proof.kind == "effect_seed")
         {
             let Some(call_site_id) = proof.call_site_id.as_deref() else {
@@ -208,13 +209,13 @@ impl Database {
                 continue;
             };
 
-            let effect_seed_id = proof.effect_seed_id.ok_or_else(|| {
+            let effect_seed_id = proof.effect_seed_id.clone().ok_or_else(|| {
                 DbError::Cozo(format!(
                     "stored effect_seed proof row {} is missing effect_seed_id",
                     proof.fact_id
                 ))
             })?;
-            let effect_class = proof.effect_class.ok_or_else(|| {
+            let effect_class = proof.effect_class.clone().ok_or_else(|| {
                 DbError::Cozo(format!(
                     "stored effect_seed proof row {effect_seed_id} is missing effect_class"
                 ))
@@ -229,7 +230,7 @@ impl Database {
             effects.push(CallReachEffect {
                 effect_seed_id,
                 effect_class,
-                confidence: proof.confidence,
+                confidence: proof.confidence.clone(),
                 blocker_if_unresolved: proof.blocker_if_unresolved,
                 paths_to_owner: paths_by_owner
                     .get(&call_site.site.owner_id)
@@ -239,6 +240,12 @@ impl Database {
                 blocker_reasons,
             });
         }
+        effects.extend(summary_effects_for_reachable_sites(
+            &proof_rows,
+            &context_by_site,
+            &blockers_by_site,
+            &paths_by_owner,
+        )?);
 
         effects.sort_by_key(|effect| {
             (
@@ -639,6 +646,73 @@ fn cached_call_site(
         })?;
     cache.insert(edge.call_site_id, site.clone());
     Ok(site)
+}
+
+fn summary_effects_for_reachable_sites(
+    rows: &[ProofGraphContextRow],
+    context: &BTreeMap<Uuid, CallContextRow>,
+    blockers: &BTreeMap<String, Vec<String>>,
+    paths: &BTreeMap<Uuid, Vec<CallPath>>,
+) -> Result<Vec<CallReachEffect>, DbError> {
+    let mut summaries = BTreeMap::<String, &ProofGraphContextRow>::new();
+    for row in rows.iter().filter(|row| {
+        row.kind == "external_summary"
+            && row.status.as_deref() == Some("admitted")
+            && row.blocker_reason.is_none()
+            && !row.allowed_effects.is_empty()
+    }) {
+        if let Some(id) = row.external_summary_id.as_ref() {
+            summaries.entry(id.clone()).or_insert(row);
+        }
+    }
+
+    let mut effects = BTreeMap::<(Uuid, String, String), CallReachEffect>::new();
+    for link in rows.iter().filter(|row| {
+        row.kind == "call_resolution"
+            && row.resolution_state.as_deref() == Some("externally_summarized")
+            && row.blocker_reason.is_none()
+    }) {
+        let Some(summary_id) = link.external_summary_id.as_ref() else {
+            continue;
+        };
+        let Some(summary) = summaries.get(summary_id) else {
+            continue;
+        };
+        let Some(raw_site) = link.call_site_id.as_deref() else {
+            continue;
+        };
+        let Ok(site_id) = Uuid::parse_str(raw_site) else {
+            continue;
+        };
+        let Some(call_site) = context.get(&site_id) else {
+            continue;
+        };
+
+        let mut reasons = blockers.get(raw_site).cloned().unwrap_or_default();
+        reasons.retain(|reason| reason != "external_dependency_summary_missing");
+        reasons.sort();
+        reasons.dedup();
+
+        for effect_class in &summary.allowed_effects {
+            let effect_id = format!("summary-effect:{summary_id}:{effect_class}");
+            effects
+                .entry((site_id, summary_id.clone(), effect_class.clone()))
+                .or_insert_with(|| CallReachEffect {
+                    effect_seed_id: effect_id,
+                    effect_class: effect_class.clone(),
+                    confidence: summary.review_method.clone(),
+                    blocker_if_unresolved: Some(false),
+                    paths_to_owner: paths
+                        .get(&call_site.site.owner_id)
+                        .cloned()
+                        .unwrap_or_default(),
+                    call_site: call_site.clone(),
+                    blocker_reasons: reasons.clone(),
+                });
+        }
+    }
+
+    Ok(effects.into_values().collect())
 }
 
 fn reachable_callsite_context_rows(

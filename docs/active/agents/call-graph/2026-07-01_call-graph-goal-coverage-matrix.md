@@ -61,8 +61,22 @@ Exit criteria:
 - Add one DB assertion, one RAG assertion if exposed downstream, one TUI/tool
   assertion if exposed downstream, and one consolidated doc note.
 
-Status: latest one-hop holder-field forwarding slice completed and focused
-verification is green; ready for the next proof-carrier selection.
+Status: latest admitted external-summary derived-effect slice completed and
+focused verification is green; ready for the next proof-carrier selection.
+
+Latest completed slice: admitted external-summary effects in reach/policy
+queries. `call_effects_reachable_from_owner` now derives reachable
+`external_summary_boundary` effects from admitted `external_summary` proof
+rows, but only when a reachable callsite has an externally summarized
+`call_resolution` row linked to that summary. The real-corpus source oracle is
+`axum/src/response/sse.rs:449`
+`std::mem::replace(&mut self.data_written, true)` in
+`EventDataWriter::write_buf`: DB, RAG, and exact `code_item_lookup` /
+`code_item_edges` tests prove the admitted summary appears as a trusted
+reachable effect while the callsite remains `External`, targetless, and
+edge-free. This is a proof/query slice only; it does not infer external effects
+automatically, traverse external dependencies, or loosen missing-summary
+frontier semantics.
 
 Latest completed slice: one-hop private holder-field forwarding proof. The
 resolver now extends the same complete-private-caller-set rule from callable
