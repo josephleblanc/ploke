@@ -4,6 +4,7 @@ struct DynamicCase {
     label: &'static str,
     method: &'static str,
     body: &'static str,
+    expected_path: &'static [&'static str],
 }
 
 struct MemchrDynamicCase {
@@ -53,21 +54,25 @@ async fn call_context_collection_reads_axum_dynamic_callable_field_gaps() -> Res
             label: "axum/src/boxed.rs:85 MakeErasedHandler::into_route callable field",
             method: "into_route",
             body: "(self.into_route)(self.handler, state)",
+            expected_path: &["self", "into_route"],
         },
         DynamicCase {
             label: "axum/src/boxed.rs:120 MakeErasedRouter::into_route callable field",
             method: "into_route",
             body: "(self.into_route)(self.router, state)",
+            expected_path: &["self", "into_route"],
         },
         DynamicCase {
             label: "axum/src/boxed.rs:159 Map::into_route layer trait object",
             method: "into_route",
             body: "(self.layer)(self.inner.into_route(state))",
+            expected_path: &["self", "layer"],
         },
         DynamicCase {
             label: "axum/src/serve/listener.rs:236 TapIo::accept callable field",
             method: "accept",
             body: "(self.tap_fn)(&mut io)",
+            expected_path: &["self", "tap_fn"],
         },
     ];
 
@@ -92,6 +97,14 @@ async fn call_context_collection_reads_axum_dynamic_callable_field_gaps() -> Res
 
         let call = dynamic[0];
         assert_eq!(call.owner_id, owner);
+        assert!(
+            call.path.as_ref().is_some_and(|path| path
+                .iter()
+                .map(String::as_str)
+                .eq(case.expected_path.iter().copied())),
+            "{} should preserve the dynamic self-field callee path: {call:#?}",
+            case.label
+        );
         assert_eq!(call.status, CallStatusKind::Unsupported);
         assert_eq!(call.resolution, None);
         assert!(

@@ -551,6 +551,7 @@ async fn code_item_lookup_returns_function_pointer_param_blocker() {
                 call_context,
                 fixture.owner,
                 None,
+                None,
                 label.as_str(),
                 "code_item_lookup",
             ),

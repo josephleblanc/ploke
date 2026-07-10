@@ -48,6 +48,7 @@ fn expanded_rag_part_displays_call_context_details() {
                     owner_id: Uuid::from_u128(0x601),
                     kind: CallSiteKind::Path,
                     span: (10, 12),
+                    path: None,
                     arg_count: None,
                     generic_arg_count: None,
                     callee: CallCalleeInfo::Path {
@@ -62,6 +63,7 @@ fn expanded_rag_part_displays_call_context_details() {
                     owner_id: Uuid::from_u128(0x602),
                     kind: CallSiteKind::Path,
                     span: (13, 28),
+                    path: None,
                     arg_count: None,
                     generic_arg_count: None,
                     callee: CallCalleeInfo::Path {
@@ -79,6 +81,7 @@ fn expanded_rag_part_displays_call_context_details() {
                     owner_id: Uuid::from_u128(0x603),
                     kind: CallSiteKind::Method,
                     span: (13, 46),
+                    path: None,
                     arg_count: None,
                     generic_arg_count: None,
                     callee: CallCalleeInfo::Method {
@@ -99,6 +102,7 @@ fn expanded_rag_part_displays_call_context_details() {
                     owner_id: Uuid::from_u128(0x604),
                     kind: CallSiteKind::Path,
                     span: (50, 62),
+                    path: None,
                     arg_count: None,
                     generic_arg_count: None,
                     callee: CallCalleeInfo::Path {
@@ -116,6 +120,7 @@ fn expanded_rag_part_displays_call_context_details() {
                     owner_id: Uuid::from_u128(0x605),
                     kind: CallSiteKind::Path,
                     span: (64, 74),
+                    path: None,
                     arg_count: None,
                     generic_arg_count: None,
                     callee: CallCalleeInfo::Path {
@@ -133,6 +138,7 @@ fn expanded_rag_part_displays_call_context_details() {
                     owner_id: Uuid::from_u128(0x606),
                     kind: CallSiteKind::Path,
                     span: (75, 99),
+                    path: None,
                     arg_count: None,
                     generic_arg_count: None,
                     callee: CallCalleeInfo::Path {
@@ -150,6 +156,7 @@ fn expanded_rag_part_displays_call_context_details() {
                     owner_id: Uuid::from_u128(0x608),
                     kind: CallSiteKind::Macro,
                     span: (120, 144),
+                    path: None,
                     arg_count: None,
                     generic_arg_count: None,
                     callee: CallCalleeInfo::Macro {
@@ -164,6 +171,7 @@ fn expanded_rag_part_displays_call_context_details() {
                     owner_id: Uuid::from_u128(0x609),
                     kind: CallSiteKind::Method,
                     span: (145, 160),
+                    path: None,
                     arg_count: None,
                     generic_arg_count: None,
                     callee: CallCalleeInfo::Method {
@@ -181,6 +189,7 @@ fn expanded_rag_part_displays_call_context_details() {
                     owner_id: Uuid::from_u128(0x607),
                     kind: CallSiteKind::Dynamic,
                     span: (100, 119),
+                    path: None,
                     arg_count: None,
                     generic_arg_count: None,
                     callee: CallCalleeInfo::Dynamic,
@@ -365,6 +374,7 @@ fn expanded_rag_part_displays_external_call_context_details() {
                     owner_id: Uuid::from_u128(0x901),
                     kind: CallSiteKind::Path,
                     span: (10, 23),
+                    path: None,
                     arg_count: None,
                     generic_arg_count: None,
                     callee: CallCalleeInfo::Path {
@@ -379,6 +389,7 @@ fn expanded_rag_part_displays_external_call_context_details() {
                     owner_id: Uuid::from_u128(0x902),
                     kind: CallSiteKind::Method,
                     span: (24, 45),
+                    path: None,
                     arg_count: None,
                     generic_arg_count: None,
                     callee: CallCalleeInfo::Method {
@@ -394,6 +405,7 @@ fn expanded_rag_part_displays_external_call_context_details() {
                     owner_id: Uuid::from_u128(0x903),
                     kind: CallSiteKind::Method,
                     span: (46, 57),
+                    path: None,
                     arg_count: None,
                     generic_arg_count: None,
                     callee: CallCalleeInfo::Method {
@@ -485,6 +497,7 @@ fn expanded_rag_part_displays_trait_dispatch_call_context_details() {
                 owner_id: site_id,
                 kind: CallSiteKind::Method,
                 span: (20, 39),
+                path: None,
                 arg_count: None,
                 generic_arg_count: None,
                 callee: CallCalleeInfo::Method {
@@ -567,6 +580,7 @@ fn expanded_rag_part_displays_callable_path_call_context_details() {
                     owner_id: Uuid::from_u128(0x913),
                     kind: CallSiteKind::Path,
                     span: (10, 19),
+                    path: None,
                     arg_count: None,
                     generic_arg_count: None,
                     callee: CallCalleeInfo::Path {
@@ -584,6 +598,7 @@ fn expanded_rag_part_displays_callable_path_call_context_details() {
                     owner_id: Uuid::from_u128(0x914),
                     kind: CallSiteKind::Dynamic,
                     span: (10, 21),
+                    path: None,
                     arg_count: None,
                     generic_arg_count: None,
                     callee: CallCalleeInfo::Dynamic,
@@ -596,6 +611,7 @@ fn expanded_rag_part_displays_callable_path_call_context_details() {
                     owner_id: Uuid::from_u128(0x915),
                     kind: CallSiteKind::Path,
                     span: (30, 33),
+                    path: None,
                     arg_count: None,
                     generic_arg_count: None,
                     callee: CallCalleeInfo::Path {
@@ -610,6 +626,7 @@ fn expanded_rag_part_displays_callable_path_call_context_details() {
                     owner_id: Uuid::from_u128(0x916),
                     kind: CallSiteKind::Path,
                     span: (40, 51),
+                    path: None,
                     arg_count: None,
                     generic_arg_count: None,
                     callee: CallCalleeInfo::Path {
@@ -624,6 +641,7 @@ fn expanded_rag_part_displays_callable_path_call_context_details() {
                     owner_id: Uuid::from_u128(0x917),
                     kind: CallSiteKind::Path,
                     span: (60, 68),
+                    path: None,
                     arg_count: None,
                     generic_arg_count: None,
                     callee: CallCalleeInfo::Path {
@@ -638,6 +656,7 @@ fn expanded_rag_part_displays_callable_path_call_context_details() {
                     owner_id: Uuid::from_u128(0x918),
                     kind: CallSiteKind::Path,
                     span: (70, 85),
+                    path: None,
                     arg_count: None,
                     generic_arg_count: None,
                     callee: CallCalleeInfo::Path {
@@ -652,6 +671,7 @@ fn expanded_rag_part_displays_callable_path_call_context_details() {
                     owner_id: Uuid::from_u128(0x919),
                     kind: CallSiteKind::Path,
                     span: (90, 100),
+                    path: None,
                     arg_count: None,
                     generic_arg_count: None,
                     callee: CallCalleeInfo::Path {

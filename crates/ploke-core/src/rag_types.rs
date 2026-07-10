@@ -373,6 +373,8 @@ pub struct CallContextInfo {
     pub kind: CallSiteKind,
     pub span: (u32, u32),
     #[serde(default)]
+    pub path: Option<Vec<String>>,
+    #[serde(default)]
     pub arg_count: Option<u32>,
     #[serde(default)]
     pub generic_arg_count: Option<u32>,

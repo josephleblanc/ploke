@@ -13,6 +13,7 @@ struct DynamicCase {
     label: &'static str,
     method: &'static str,
     body: &'static str,
+    expected_path: &'static [&'static str],
 }
 
 struct MethodCase {
@@ -974,21 +975,25 @@ async fn proof_context_collection_preserves_axum_dynamic_callable_blockers() -> 
             label: "MakeErasedHandler::into_route callable field",
             method: "into_route",
             body: "(self.into_route)(self.handler, state)",
+            expected_path: &["self", "into_route"],
         },
         DynamicCase {
             label: "MakeErasedRouter::into_route callable field",
             method: "into_route",
             body: "(self.into_route)(self.router, state)",
+            expected_path: &["self", "into_route"],
         },
         DynamicCase {
             label: "Map::into_route layer trait object",
             method: "into_route",
             body: "(self.layer)(self.inner.into_route(state))",
+            expected_path: &["self", "layer"],
         },
         DynamicCase {
             label: "TapIo::accept callable field",
             method: "accept",
             body: "(self.tap_fn)(&mut io)",
+            expected_path: &["self", "tap_fn"],
         },
     ];
 
@@ -1015,7 +1020,7 @@ async fn proof_context_collection_preserves_axum_dynamic_callable_blockers() -> 
         let calls = call_context
             .get(&owner)
             .unwrap_or_else(|| panic!("{} should receive outgoing call context", case.label));
-        let site_id = dynamic_site(calls, owner, case.label);
+        let site_id = dynamic_site(calls, owner, case.expected_path, case.label);
 
         let proof_context = rag.collect_proof_context(&[(owner, 1.0)])?;
         let rows = proof_context

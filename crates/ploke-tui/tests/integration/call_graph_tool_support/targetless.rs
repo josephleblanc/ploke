@@ -7,6 +7,7 @@ pub(crate) struct DynamicToolCase {
     pub(crate) owner_type: &'static str,
     pub(crate) file_suffix: &'static str,
     pub(crate) body: &'static str,
+    pub(crate) expected_path: Option<&'static [&'static str]>,
     pub(crate) expected_arg_count: Option<u32>,
     corpus: DynamicToolCorpus,
 }
@@ -106,6 +107,7 @@ impl DynamicToolCase {
             owner_type: "MakeErasedHandler",
             file_suffix: "axum/src/boxed.rs",
             body: "(self.into_route)(self.handler, state)",
+            expected_path: Some(&["self", "into_route"]),
             expected_arg_count: None,
             corpus: DynamicToolCorpus::Axum,
         },
@@ -115,6 +117,7 @@ impl DynamicToolCase {
             owner_type: "MakeErasedRouter",
             file_suffix: "axum/src/boxed.rs",
             body: "(self.into_route)(self.router, state)",
+            expected_path: Some(&["self", "into_route"]),
             expected_arg_count: None,
             corpus: DynamicToolCorpus::Axum,
         },
@@ -124,6 +127,7 @@ impl DynamicToolCase {
             owner_type: "Map",
             file_suffix: "axum/src/boxed.rs",
             body: "(self.layer)(self.inner.into_route(state))",
+            expected_path: Some(&["self", "layer"]),
             expected_arg_count: None,
             corpus: DynamicToolCorpus::Axum,
         },
@@ -133,6 +137,7 @@ impl DynamicToolCase {
             owner_type: "TapIo",
             file_suffix: "axum/src/serve/listener.rs",
             body: "(self.tap_fn)(&mut io)",
+            expected_path: Some(&["self", "tap_fn"]),
             expected_arg_count: None,
             corpus: DynamicToolCorpus::Axum,
         },
@@ -145,6 +150,7 @@ impl DynamicToolCase {
             owner_type: "Searcher",
             file_suffix: "src/memmem/searcher.rs",
             body: "(self.call)(self, prestate, haystack, needle)",
+            expected_path: None,
             expected_arg_count: Some(4),
             corpus: DynamicToolCorpus::Memchr,
         },
@@ -154,6 +160,7 @@ impl DynamicToolCase {
             owner_type: "Prefilter",
             file_suffix: "src/memmem/searcher.rs",
             body: "(self.call)(self, haystack)",
+            expected_path: None,
             expected_arg_count: Some(2),
             corpus: DynamicToolCorpus::Memchr,
         },
@@ -833,6 +840,7 @@ fn attach_path_runtime_dispatch_blocker_if_needed(db: &Database, owner: Uuid, ca
 pub(crate) fn assert_dynamic_context(
     calls: &[serde_json::Value],
     owner: Uuid,
+    expected_path: Option<&[&str]>,
     expected_arg_count: Option<u32>,
     label: &str,
     tool: &str,
@@ -852,6 +860,14 @@ pub(crate) fn assert_dynamic_context(
         "{tool} should return exactly one dynamic targetless row for {label}: {calls:#?}"
     );
     let call = &matching[0];
+    if let Some(expected) = expected_path {
+        assert!(
+            call.path
+                .as_ref()
+                .is_some_and(|path| path.iter().map(String::as_str).eq(expected.iter().copied())),
+            "{tool} should preserve dynamic callee path for {label}: {call:#?}"
+        );
+    }
     if let Some(expected) = expected_arg_count {
         assert_eq!(
             call.arg_count,

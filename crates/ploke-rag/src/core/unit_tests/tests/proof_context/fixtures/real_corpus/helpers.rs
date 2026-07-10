@@ -372,7 +372,12 @@ pub(super) fn targetless_path_site(
     matching[0].site_id
 }
 
-pub(super) fn dynamic_site(calls: &[CallContextInfo], owner: Uuid, label: &str) -> Uuid {
+pub(super) fn dynamic_site(
+    calls: &[CallContextInfo],
+    owner: Uuid,
+    expected_path: &[&str],
+    label: &str,
+) -> Uuid {
     let matching = calls
         .iter()
         .filter(|call| {
@@ -389,7 +394,15 @@ pub(super) fn dynamic_site(calls: &[CallContextInfo], owner: Uuid, label: &str) 
         1,
         "{label} should expose one targetless dynamic call row: {calls:#?}"
     );
-    matching[0].site_id
+    let call = matching[0];
+    assert!(
+        call.path.as_ref().is_some_and(|path| path
+            .iter()
+            .map(String::as_str)
+            .eq(expected_path.iter().copied())),
+        "{label} should preserve the dynamic callee path: {call:#?}"
+    );
+    call.site_id
 }
 
 pub(super) fn assert_site_blocker(

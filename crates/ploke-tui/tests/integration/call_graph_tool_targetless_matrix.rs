@@ -69,6 +69,7 @@ async fn code_item_lookup_returns_dynamic_targetless_real_corpus_rows() {
         let site_id = assert_dynamic_context(
             call_context,
             fixture.owner,
+            fixture.case.expected_path,
             fixture.case.expected_arg_count,
             fixture.case.label,
             "lookup",
@@ -852,6 +853,7 @@ async fn code_item_edges_returns_dynamic_targetless_real_corpus_rows() {
         let site_id = assert_dynamic_context(
             call_context,
             fixture.owner,
+            fixture.case.expected_path,
             fixture.case.expected_arg_count,
             fixture.case.label,
             "edges",

@@ -146,6 +146,7 @@ fn reformat_context_to_system_includes_call_context_details() {
             owner_id: Uuid::from_u128(40),
             kind: CallSiteKind::Dynamic,
             span: (20, 29),
+            path: None,
             arg_count: None,
             generic_arg_count: None,
             callee: CallCalleeInfo::Dynamic,
@@ -798,6 +799,7 @@ fn format_call_context_block_renders_fixture_derived_rows() {
             owner_id: Uuid::from_u128(0x601),
             kind: CallSiteKind::Path,
             span: (10, 12),
+            path: None,
             arg_count: None,
             generic_arg_count: None,
             callee: CallCalleeInfo::Path {
@@ -812,6 +814,7 @@ fn format_call_context_block_renders_fixture_derived_rows() {
             owner_id: Uuid::from_u128(0x602),
             kind: CallSiteKind::Path,
             span: (13, 28),
+            path: None,
             arg_count: None,
             generic_arg_count: None,
             callee: CallCalleeInfo::Path {
@@ -829,6 +832,7 @@ fn format_call_context_block_renders_fixture_derived_rows() {
             owner_id: Uuid::from_u128(0x603),
             kind: CallSiteKind::Method,
             span: (13, 46),
+            path: None,
             arg_count: None,
             generic_arg_count: None,
             callee: CallCalleeInfo::Method {
@@ -849,6 +853,7 @@ fn format_call_context_block_renders_fixture_derived_rows() {
             owner_id: Uuid::from_u128(0x604),
             kind: CallSiteKind::Path,
             span: (50, 62),
+            path: None,
             arg_count: None,
             generic_arg_count: None,
             callee: CallCalleeInfo::Path {
@@ -866,6 +871,7 @@ fn format_call_context_block_renders_fixture_derived_rows() {
             owner_id: Uuid::from_u128(0x606),
             kind: CallSiteKind::Path,
             span: (64, 74),
+            path: None,
             arg_count: None,
             generic_arg_count: None,
             callee: CallCalleeInfo::Path {
@@ -883,6 +889,7 @@ fn format_call_context_block_renders_fixture_derived_rows() {
             owner_id: Uuid::from_u128(0x607),
             kind: CallSiteKind::Path,
             span: (75, 99),
+            path: None,
             arg_count: None,
             generic_arg_count: None,
             callee: CallCalleeInfo::Path {
@@ -900,6 +907,7 @@ fn format_call_context_block_renders_fixture_derived_rows() {
             owner_id: Uuid::from_u128(0x608),
             kind: CallSiteKind::Macro,
             span: (120, 144),
+            path: None,
             arg_count: None,
             generic_arg_count: None,
             callee: CallCalleeInfo::Macro {
@@ -914,6 +922,7 @@ fn format_call_context_block_renders_fixture_derived_rows() {
             owner_id: Uuid::from_u128(0x609),
             kind: CallSiteKind::Method,
             span: (145, 160),
+            path: None,
             arg_count: None,
             generic_arg_count: None,
             callee: CallCalleeInfo::Method {
@@ -931,6 +940,7 @@ fn format_call_context_block_renders_fixture_derived_rows() {
             owner_id: Uuid::from_u128(0x605),
             kind: CallSiteKind::Dynamic,
             span: (100, 119),
+            path: None,
             arg_count: None,
             generic_arg_count: None,
             callee: CallCalleeInfo::Dynamic,
@@ -973,6 +983,7 @@ fn format_call_context_block_renders_self_field_receiver() {
         owner_id: Uuid::from_u128(0x610),
         kind: CallSiteKind::Method,
         span: (204, 231),
+        path: None,
         arg_count: None,
         generic_arg_count: None,
         callee: CallCalleeInfo::Method {
@@ -1009,6 +1020,7 @@ fn format_call_context_block_renders_external_rows() {
             owner_id: Uuid::from_u128(0x701),
             kind: CallSiteKind::Path,
             span: (10, 23),
+            path: None,
             arg_count: None,
             generic_arg_count: None,
             callee: CallCalleeInfo::Path {
@@ -1023,6 +1035,7 @@ fn format_call_context_block_renders_external_rows() {
             owner_id: Uuid::from_u128(0x702),
             kind: CallSiteKind::Method,
             span: (24, 45),
+            path: None,
             arg_count: None,
             generic_arg_count: None,
             callee: CallCalleeInfo::Method {
@@ -1038,6 +1051,7 @@ fn format_call_context_block_renders_external_rows() {
             owner_id: Uuid::from_u128(0x703),
             kind: CallSiteKind::Method,
             span: (46, 57),
+            path: None,
             arg_count: None,
             generic_arg_count: None,
             callee: CallCalleeInfo::Method {
@@ -1056,6 +1070,7 @@ fn format_call_context_block_renders_external_rows() {
             owner_id: Uuid::from_u128(0x704),
             kind: CallSiteKind::Method,
             span: (58, 119),
+            path: None,
             arg_count: None,
             generic_arg_count: None,
             callee: CallCalleeInfo::Method {
@@ -1088,6 +1103,7 @@ fn format_call_context_block_renders_callable_path_rows() {
             owner_id: Uuid::from_u128(0x801),
             kind: CallSiteKind::Path,
             span: (10, 19),
+            path: None,
             arg_count: None,
             generic_arg_count: None,
             callee: CallCalleeInfo::Path {
@@ -1105,6 +1121,7 @@ fn format_call_context_block_renders_callable_path_rows() {
             owner_id: Uuid::from_u128(0x802),
             kind: CallSiteKind::Dynamic,
             span: (10, 21),
+            path: None,
             arg_count: None,
             generic_arg_count: None,
             callee: CallCalleeInfo::Dynamic,
@@ -1117,6 +1134,7 @@ fn format_call_context_block_renders_callable_path_rows() {
             owner_id: Uuid::from_u128(0x803),
             kind: CallSiteKind::Path,
             span: (30, 33),
+            path: None,
             arg_count: None,
             generic_arg_count: None,
             callee: CallCalleeInfo::Path {
@@ -1131,6 +1149,7 @@ fn format_call_context_block_renders_callable_path_rows() {
             owner_id: Uuid::from_u128(0x804),
             kind: CallSiteKind::Path,
             span: (40, 51),
+            path: None,
             arg_count: None,
             generic_arg_count: None,
             callee: CallCalleeInfo::Path {
@@ -1145,6 +1164,7 @@ fn format_call_context_block_renders_callable_path_rows() {
             owner_id: Uuid::from_u128(0x805),
             kind: CallSiteKind::Path,
             span: (60, 68),
+            path: None,
             arg_count: None,
             generic_arg_count: None,
             callee: CallCalleeInfo::Path {
@@ -1159,6 +1179,7 @@ fn format_call_context_block_renders_callable_path_rows() {
             owner_id: Uuid::from_u128(0x806),
             kind: CallSiteKind::Path,
             span: (70, 85),
+            path: None,
             arg_count: None,
             generic_arg_count: None,
             callee: CallCalleeInfo::Path {
@@ -1173,6 +1194,7 @@ fn format_call_context_block_renders_callable_path_rows() {
             owner_id: Uuid::from_u128(0x807),
             kind: CallSiteKind::Path,
             span: (90, 100),
+            path: None,
             arg_count: None,
             generic_arg_count: None,
             callee: CallCalleeInfo::Path {
@@ -1208,6 +1230,7 @@ fn format_call_context_block_renders_if_branch_receiver() {
         owner_id: Uuid::from_u128(0x705),
         kind: CallSiteKind::Method,
         span: (120, 180),
+        path: None,
         arg_count: Some(0),
         generic_arg_count: Some(0),
         callee: CallCalleeInfo::Method {
@@ -1243,6 +1266,7 @@ fn format_call_context_block_renders_tuple_return_receiver() {
         owner_id: Uuid::from_u128(0x706),
         kind: CallSiteKind::Method,
         span: (140, 162),
+        path: None,
         arg_count: Some(0),
         generic_arg_count: Some(0),
         callee: CallCalleeInfo::Method {
@@ -1277,6 +1301,7 @@ fn format_call_context_block_renders_tuple_method_return_receiver() {
         owner_id: Uuid::from_u128(0x707),
         kind: CallSiteKind::Method,
         span: (170, 191),
+        path: None,
         arg_count: Some(0),
         generic_arg_count: Some(0),
         callee: CallCalleeInfo::Method {
@@ -1312,6 +1337,7 @@ fn format_call_context_block_renders_trait_dispatch_initialized_local_receiver()
         owner_id: Uuid::from_u128(0xa02),
         kind: CallSiteKind::Method,
         span: (20, 39),
+        path: None,
         arg_count: None,
         generic_arg_count: None,
         callee: CallCalleeInfo::Method {
@@ -1347,6 +1373,7 @@ fn format_call_context_block_renders_aliased_local_receiver() {
         owner_id: Uuid::from_u128(0xa13),
         kind: CallSiteKind::Method,
         span: (42, 64),
+        path: None,
         arg_count: None,
         generic_arg_count: None,
         callee: CallCalleeInfo::Method {
@@ -1382,6 +1409,7 @@ fn format_call_context_block_renders_borrowed_initialized_local_receiver() {
         owner_id: Uuid::from_u128(0xb03),
         kind: CallSiteKind::Method,
         span: (20, 45),
+        path: None,
         arg_count: None,
         generic_arg_count: None,
         callee: CallCalleeInfo::Method {

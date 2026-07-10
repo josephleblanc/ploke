@@ -271,7 +271,7 @@ fn row_to_call_context(
 ) -> Result<CallContextInfo, RagError> {
     let callee = match row.site.kind {
         CallSiteKind::Path => CallCalleeInfo::Path {
-            path: row.site.path.ok_or_else(|| {
+            path: row.site.path.clone().ok_or_else(|| {
                 DbError::Cozo(format!(
                     "path call site {} missing path payload",
                     row.site.id
@@ -303,6 +303,7 @@ fn row_to_call_context(
         owner_id: row.site.owner_id,
         kind: site_kind(row.site.kind),
         span: row.site.span,
+        path: row.site.path,
         arg_count: row.site.arg_count,
         generic_arg_count: row.site.generic_arg_count,
         callee,

@@ -47,6 +47,7 @@ fn serde_roundtrip_request_code_context() {
             owner_id: Uuid::from_u128(4),
             kind: CallSiteKind::Method,
             span: (11, 32),
+            path: None,
             arg_count: None,
             generic_arg_count: None,
             callee: CallCalleeInfo::Method {
@@ -67,6 +68,7 @@ fn serde_roundtrip_request_code_context() {
             owner_id: Uuid::from_u128(14),
             kind: CallSiteKind::Method,
             span: (34, 53),
+            path: None,
             arg_count: None,
             generic_arg_count: None,
             callee: CallCalleeInfo::Method {
@@ -88,6 +90,10 @@ fn serde_roundtrip_request_code_context() {
             owner_id: Uuid::from_u128(16),
             kind: CallSiteKind::Path,
             span: (54, 92),
+            path: Some(vec![
+                "LocalAssocFunctionTrait".to_string(),
+                "trait_make".to_string(),
+            ]),
             arg_count: None,
             generic_arg_count: None,
             callee: CallCalleeInfo::Path {
@@ -108,6 +114,7 @@ fn serde_roundtrip_request_code_context() {
             owner_id: Uuid::from_u128(18),
             kind: CallSiteKind::Path,
             span: (94, 142),
+            path: None,
             arg_count: None,
             generic_arg_count: None,
             callee: CallCalleeInfo::Path {
@@ -128,6 +135,7 @@ fn serde_roundtrip_request_code_context() {
             owner_id: Uuid::from_u128(6),
             kind: CallSiteKind::Dynamic,
             span: (40, 57),
+            path: Some(vec!["self".to_string(), "into_route".to_string()]),
             arg_count: None,
             generic_arg_count: None,
             callee: CallCalleeInfo::Dynamic,
@@ -143,6 +151,7 @@ fn serde_roundtrip_request_code_context() {
             owner_id: Uuid::from_u128(8),
             kind: CallSiteKind::Path,
             span: (60, 72),
+            path: None,
             arg_count: None,
             generic_arg_count: None,
             callee: CallCalleeInfo::Path {
@@ -160,6 +169,7 @@ fn serde_roundtrip_request_code_context() {
             owner_id: Uuid::from_u128(10),
             kind: CallSiteKind::Path,
             span: (74, 98),
+            path: None,
             arg_count: None,
             generic_arg_count: None,
             callee: CallCalleeInfo::Path {
@@ -177,6 +187,7 @@ fn serde_roundtrip_request_code_context() {
             owner_id: Uuid::from_u128(11),
             kind: CallSiteKind::Macro,
             span: (100, 124),
+            path: None,
             arg_count: None,
             generic_arg_count: None,
             callee: CallCalleeInfo::Macro {
@@ -191,6 +202,7 @@ fn serde_roundtrip_request_code_context() {
             owner_id: Uuid::from_u128(12),
             kind: CallSiteKind::Method,
             span: (126, 140),
+            path: None,
             arg_count: None,
             generic_arg_count: None,
             callee: CallCalleeInfo::Method {
@@ -208,6 +220,7 @@ fn serde_roundtrip_request_code_context() {
             owner_id: Uuid::from_u128(13),
             kind: CallSiteKind::Method,
             span: (142, 153),
+            path: None,
             arg_count: None,
             generic_arg_count: None,
             callee: CallCalleeInfo::Method {
@@ -309,6 +322,7 @@ fn serde_roundtrip_request_code_context() {
         owner_id: path_site,
         kind: CallSiteKind::Path,
         span: (160, 181),
+        path: Some(vec!["crate".to_string(), "local_target".to_string()]),
         arg_count: None,
         generic_arg_count: None,
         callee: CallCalleeInfo::Path {
