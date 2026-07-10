@@ -3,6 +3,8 @@ use serde_json::json;
 
 #[path = "proof_graph_store/dependency_root.rs"]
 mod dependency_root;
+#[path = "proof_graph_store/effect_policy.rs"]
+mod effect_policy;
 #[path = "proof_graph_store/entrypoint_summary.rs"]
 mod entrypoint_summary;
 #[path = "proof_graph_store/evidence_use.rs"]
@@ -278,6 +280,23 @@ fn external_summary_record() -> serde_json::Value {
         "required_containment": "none",
         "invalidation_conditions": "artifact hash or proof policy changes",
         "status": "blocked",
+        "evidence_use": "proof_only"
+    })
+}
+
+fn effect_policy_record() -> serde_json::Value {
+    json!({
+        "fact_kind": "effect_policy",
+        "schema_version": PROOF_FACT_SCHEMA_VERSION,
+        "effect_policy_id": "effect-policy:def-launch",
+        "build_domain_id": "bd:main",
+        "definition_id": "def:launch",
+        "proof_policy_version": "proof-policy-test",
+        "review_method": "manual-review",
+        "scope_of_validity": "def:launch under bd:main",
+        "allowed_effects": ["ffi_boundary"],
+        "invalidation_conditions": "definition body or proof policy changes",
+        "status": "admitted",
         "evidence_use": "proof_only"
     })
 }

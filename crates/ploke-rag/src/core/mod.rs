@@ -964,6 +964,24 @@ impl RagService {
         ))
     }
 
+    pub fn exact_call_effect_policy_violations_for_stored_owner_policy(
+        &self,
+        owner_id: Uuid,
+        options: CallPathOptions,
+    ) -> Result<Option<Vec<CallEffectPolicyViolationInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .call_effect_policy_violations_for_stored_owner_policy(owner_id, options)?
+                .into_iter()
+                .map(|row| effect_policy_violation_info(self.db.as_ref(), row))
+                .collect::<Result<Vec<_>, RagError>>()?,
+        ))
+    }
+
     pub fn exact_external_summary_needs_for_owner(
         &self,
         owner_id: Uuid,

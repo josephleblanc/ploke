@@ -38,6 +38,7 @@ fn fact_samples_with_evidence_use() -> Vec<(&'static str, serde_json::Value)> {
             externally_summarized_resolution(Some("external-summary:dep:serde")),
         ),
         ("external_summary", external_summary_record()),
+        ("effect_policy", effect_policy_record()),
         ("effect_seed", proof_record("effect_seed")),
         ("authority", authority_record()),
         ("proof_blocker", proof_record("proof_blocker")),

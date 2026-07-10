@@ -14,6 +14,7 @@ pub(super) fn fact_id(value: &Value, kind: &str) -> Result<String, DbError> {
         "call_edge" => "call_edge_id",
         "call_resolution" => "call_site_id",
         "effect_seed" => "effect_seed_id",
+        "effect_policy" => "effect_policy_id",
         "authority" => "authority_fact_id",
         "proof_blocker" => "blocker_id",
         other => {

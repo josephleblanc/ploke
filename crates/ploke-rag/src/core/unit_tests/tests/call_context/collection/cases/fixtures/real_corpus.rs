@@ -66,6 +66,40 @@ fn setup_memchr_call_graph_rag() -> Result<(Arc<Database>, RagService), Error> {
     Ok((db, rag))
 }
 
+fn spawn_effect_seed(call_site_id: impl ToString, effect_seed_id: &str) -> serde_json::Value {
+    json!({
+        "fact_kind": "effect_seed",
+        "schema_version": "ploke-proof-facts.v1",
+        "effect_seed_id": effect_seed_id,
+        "call_site_id": call_site_id.to_string(),
+        "effect_class": "async_task_spawn",
+        "confidence": "source-oracle",
+        "blocker_if_unresolved": false,
+        "evidence_use": "proof_only"
+    })
+}
+
+fn owner_effect_policy(
+    owner_id: impl ToString,
+    effect_policy_id: &str,
+    allowed_effects: &[&str],
+) -> serde_json::Value {
+    json!({
+        "fact_kind": "effect_policy",
+        "schema_version": "ploke-proof-facts.v1",
+        "effect_policy_id": effect_policy_id,
+        "build_domain_id": "bd:axum-call-graph",
+        "definition_id": owner_id.to_string(),
+        "proof_policy_version": "axum-real-corpus-call-graph-test",
+        "review_method": "source-oracle",
+        "scope_of_validity": "axum deserialize_error_status_codes call graph fixture",
+        "allowed_effects": allowed_effects,
+        "invalidation_conditions": "call graph fixture source or proof policy changes",
+        "status": "admitted",
+        "evidence_use": "proof_only"
+    })
+}
+
 #[tokio::test]
 async fn call_context_exact_reads_axum_body_empty_incoming_callers() -> Result<(), Error> {
     init_tracing_once();
@@ -2162,16 +2196,10 @@ async fn call_effects_exact_reads_axum_task_spawn_seed() -> Result<(), Error> {
         "tokio::spawn should remain an external frontier, not a local edge: {raw_relations:#?}"
     );
 
-    db.upsert_proof_fact_values(&[json!({
-        "fact_kind": "effect_seed",
-        "schema_version": "ploke-proof-facts.v1",
-        "effect_seed_id": "effect:axum-rag-test-client-task-spawn",
-        "call_site_id": spawn_row.site.id.to_string(),
-        "effect_class": "async_task_spawn",
-        "confidence": "source-oracle",
-        "blocker_if_unresolved": false,
-        "evidence_use": "proof_only"
-    })])?;
+    db.upsert_proof_fact_values(&[spawn_effect_seed(
+        spawn_row.site.id,
+        "effect:axum-rag-test-client-task-spawn",
+    )])?;
 
     let effects = rag
         .exact_call_effects_reachable_from_owner(
@@ -2274,16 +2302,10 @@ async fn call_effect_policy_violations_exact_reads_axum_task_spawn_sink() -> Res
         "tokio::spawn should stay targetless in DB call context: {spawn_row:#?}"
     );
 
-    db.upsert_proof_fact_values(&[json!({
-        "fact_kind": "effect_seed",
-        "schema_version": "ploke-proof-facts.v1",
-        "effect_seed_id": "effect:axum-rag-test-client-task-spawn-policy",
-        "call_site_id": spawn_row.site.id.to_string(),
-        "effect_class": "async_task_spawn",
-        "confidence": "source-oracle",
-        "blocker_if_unresolved": false,
-        "evidence_use": "proof_only"
-    })])?;
+    db.upsert_proof_fact_values(&[spawn_effect_seed(
+        spawn_row.site.id,
+        "effect:axum-rag-test-client-task-spawn-policy",
+    )])?;
 
     let violations = rag
         .exact_call_effect_policy_violations_for_owner(
@@ -2334,6 +2356,109 @@ async fn call_effect_policy_violations_exact_reads_axum_task_spawn_sink() -> Res
     assert!(
         allowed.is_empty(),
         "allowing async_task_spawn should clear the RAG policy violation: {allowed:#?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn stored_effect_policy_exact_reads_axum_task_spawn_sink() -> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Security/performance:
+    //   "Can this entrypoint reach a sensitive sink that is outside its
+    //   admitted stored effect policy?"
+    //
+    // Source-oracle chain:
+    //   axum/src/form.rs:262
+    //     `deserialize_error_status_codes` calls `TestClient::new(app)`.
+    //   axum/src/test_helpers/test_client.rs:36
+    //     `TestClient::new` calls `spawn_service(svc)`.
+    //   axum/src/test_helpers/test_client.rs:23
+    //     `spawn_service` calls `tokio::spawn(...)`.
+    // Expected contract: RAG reads the admitted owner policy from proof facts
+    // through the DB helper and reports the disallowed `async_task_spawn`
+    // frontier while preserving the resolved path to the sink owner.
+    let start = function_id_by_name_in_module(
+        &db,
+        &["crate", "form", "tests"],
+        "deserialize_error_status_codes",
+    )?;
+    let spawn_owner = function_id_by_name_in_module(
+        &db,
+        &["crate", "test_helpers", "test_client"],
+        "spawn_service",
+    )?;
+    let spawn_context = db.call_context_for_owner(spawn_owner)?;
+    let spawn_row = spawn_context
+        .iter()
+        .find(|row| {
+            row.site
+                .path
+                .as_ref()
+                .is_some_and(|call_path| call_path == &path(&["tokio", "spawn"]))
+        })
+        .unwrap_or_else(|| {
+            panic!("spawn_service should expose the tokio::spawn frontier: {spawn_context:#?}")
+        });
+    assert_eq!(spawn_row.status.status, DbCallStatusKind::External);
+    assert!(
+        spawn_row.targets.is_empty(),
+        "tokio::spawn should stay targetless in DB call context: {spawn_row:#?}"
+    );
+
+    db.upsert_proof_fact_values(&[
+        spawn_effect_seed(
+            spawn_row.site.id,
+            "effect:axum-rag-test-client-task-spawn-stored-policy",
+        ),
+        owner_effect_policy(
+            start,
+            "effect-policy:axum-rag-test-client:stored-policy",
+            &["ffi_boundary"],
+        ),
+    ])?;
+
+    let violations = rag
+        .exact_call_effect_policy_violations_for_stored_owner_policy(
+            start,
+            CallPathOptions {
+                max_depth: 3,
+                max_paths: 16,
+            },
+        )?
+        .expect("call context enabled");
+    let violation = violations
+        .iter()
+        .find(|violation| {
+            violation.effect.effect_seed_id
+                == "effect:axum-rag-test-client-task-spawn-stored-policy"
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "RAG should expose the stored-policy async_task_spawn violation: {violations:#?}"
+            )
+        });
+    assert_eq!(violation.allowed_effects, vec!["ffi_boundary".to_string()]);
+    assert_eq!(violation.effect.effect_class, "async_task_spawn");
+    assert_eq!(violation.effect.call_site.site_id, spawn_row.site.id);
+    assert_eq!(violation.effect.call_site.owner_id, spawn_owner);
+    assert_eq!(violation.effect.call_site.status, CallStatusKind::External);
+    assert!(
+        violation
+            .effect
+            .paths_to_owner
+            .iter()
+            .any(|path| path.start_id == start && path.end_id == spawn_owner && path.depth == 2),
+        "RAG stored-policy violation should preserve the resolved path to spawn_service: {violation:#?}"
+    );
+    assert!(
+        violation.effect.call_site.targets.is_empty(),
+        "stored policy violations must not fabricate RAG target rows: {violation:#?}"
     );
 
     Ok(())

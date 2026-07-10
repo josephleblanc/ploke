@@ -25,8 +25,9 @@ inputs:
 - value-flow and binding proof for unsupported receiver/dynamic callsites;
 - external dependency summaries for frontier rows that should become trusted
   external effects;
-- source/sink and policy annotations for security/performance/refactoring
-  questions that need domain semantics beyond caller/callee reachability;
+- broader source/sink, cost, and policy annotations for
+  security/performance/refactoring questions that need domain semantics beyond
+  current `effect_seed` plus admitted owner `effect_policy` allowlists;
 - generated harness/build-entrypoint summaries for full binary/test/CI
   reachability beyond admitted proof-only entrypoint summaries.
 
@@ -37,7 +38,7 @@ inputs:
 | Impact analysis | `call_impact_for_target`, RAG `exact_call_impact_for_target`, `code_item_lookup`, and `code_item_edges` cover eventual callers, public callers, test/non-test buckets, direct callsites, source files/modules/crates, and callsite buckets. | Strong current surface. |
 | Dead code detection | `private_uncalled_nodes`, RAG `exact_private_uncalled_nodes`, and `code_private_uncalled` cover private zero-incoming nodes and cross-check empty impact reports. `code_private_uncalled` now also exposes admitted generated-entrypoint summaries for returned nodes. | Strong for stored source call graph; generated harness reach remains proof-only and does not become a local call edge. |
 | Navigation | `callers_for_target`, `call_sites_for_target`, `call_context_for_owner`, `call_paths_*`, RAG exact paths, and `code_item_call_path` cover direct and multi-hop traversal. | Strong current surface. |
-| Security analysis | Reach/path/frontier queries can answer "can A reach B?" and expose unsafe/FFI/external frontier rows, including `abs(value)` and unsafe-block metadata. | Partial: source/sink classification and policy-order checks are not modeled. |
+| Security analysis | Reach/path/frontier queries can answer "can A reach B?" and expose unsafe/FFI/external frontier rows, including `abs(value)` and unsafe-block metadata. Reachable `effect_seed` facts plus caller-supplied or admitted-owner `effect_policy` allowlists can report policy violations such as the axum `tokio::spawn` `async_task_spawn` sink without fabricating local edges. | Partial: broader source/sink classification, policy-order checks, and domain-specific security semantics are not modeled. |
 | Performance work | Reach/path/frontier queries expose known helpers, external calls, cfgs, and argument shape. | Partial: hot-path/cost/blocking annotations are not modeled. |
 | Refactoring support | Impact, direct callsites, source files/modules/crates, boundary edges, and callsite buckets support migration planning. | Strong for caller inventory; move-safety/cycle prediction needs dependency-policy rules. |
 | Test planning | Impact test/non-test buckets, source metadata, and admitted generated test-harness entrypoint summaries identify stored test callers and proof-only generated entrypoints. | Partial: generated harness summaries are proof context, and CI test selection is not modeled. |
@@ -54,6 +55,8 @@ inputs:
 - RAG: real-corpus exact path, impact, reach, frontier, and private-uncalled
   tests in
   `crates/ploke-rag/src/core/unit_tests/tests/call_context/collection/cases/fixtures/real_corpus.rs`.
+- Proof graph: strict `effect_policy` storage/projection tests in
+  `crates/ploke-db/tests/proof_graph_store/effect_policy.rs`.
 - TUI/tools: `code_item_call_path`, `code_item_lookup`, `code_item_edges`,
   `code_private_uncalled`, and targetless matrix integration tests under
   `crates/ploke-tui/tests/integration/`. The private-uncalled tool now exposes

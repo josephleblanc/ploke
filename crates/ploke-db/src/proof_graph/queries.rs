@@ -182,6 +182,49 @@ impl Database {
         let rows = self.fetch_proof_rows()?;
         Ok(evaluate_proof_invariants(&rows))
     }
+
+    pub(crate) fn admitted_effect_policy_allowed_effects_for_definition(
+        &self,
+        definition_id: &str,
+    ) -> Result<Option<Vec<String>>, DbError> {
+        if definition_id.is_empty() {
+            return Err(DbError::QueryConstruction(
+                "effect policy lookup requires non-empty definition_id".to_string(),
+            ));
+        }
+
+        let mut policies = self
+            .fetch_proof_rows()?
+            .into_iter()
+            .filter(|row| row.kind == "effect_policy")
+            .filter(|row| row.definition_id.as_deref() == Some(definition_id))
+            .filter(|row| row.status.as_deref() == Some("admitted"))
+            .filter(|row| {
+                matches!(
+                    row.evidence_use.as_deref(),
+                    Some("proof_only" | "proof_and_navigation")
+                )
+            })
+            .collect::<Vec<_>>();
+        policies.sort_by(|left, right| left.fact_id.cmp(&right.fact_id));
+
+        match policies.len() {
+            0 => Ok(None),
+            1 => {
+                let policy = policies.remove(0);
+                if policy.allowed_effects.is_empty() {
+                    return Err(DbError::Cozo(format!(
+                        "admitted effect_policy {} has no allowed_effects",
+                        policy.fact_id
+                    )));
+                }
+                Ok(Some(policy.allowed_effects))
+            }
+            _ => Err(DbError::Cozo(format!(
+                "multiple admitted effect_policy proof rows for definition {definition_id}"
+            ))),
+        }
+    }
 }
 
 fn explicit_blocker_row(row: &ProofFactRow) -> Option<ProofBlockerRow> {

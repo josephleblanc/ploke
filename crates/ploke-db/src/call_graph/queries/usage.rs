@@ -289,6 +289,28 @@ impl Database {
         Ok(violations)
     }
 
+    /// Lists reachable effect annotations outside the owner's admitted stored policy.
+    ///
+    /// The policy is read from an admitted `effect_policy` proof fact keyed by
+    /// the owner definition id. Missing or ambiguous admitted policies fail
+    /// loudly instead of defaulting to an empty or permissive allowlist.
+    pub fn call_effect_policy_violations_for_stored_owner_policy(
+        &self,
+        owner_id: Uuid,
+        options: CallPathOptions,
+    ) -> Result<Vec<CallEffectPolicyViolation>, DbError> {
+        let owner = owner_id.to_string();
+        let allowed_effects = self
+            .admitted_effect_policy_allowed_effects_for_definition(&owner)?
+            .ok_or_else(|| {
+                DbError::Cozo(format!(
+                    "no admitted effect_policy proof row for owner definition {owner}"
+                ))
+            })?;
+
+        self.call_effect_policy_violations_for_owner(owner_id, options, &allowed_effects)
+    }
+
     /// Lists active external-summary blockers attached to callsites reachable from `owner_id`.
     ///
     /// This is a proof-authoring helper: it reports targetless frontier sites

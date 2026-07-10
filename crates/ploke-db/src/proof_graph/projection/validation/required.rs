@@ -178,6 +178,23 @@ pub(in crate::proof_graph::projection) fn validate_required_fields(
             )?;
             require_json_bool(value, "blocker_if_unresolved")
         }
+        "effect_policy" => {
+            require_fields(
+                value,
+                &[
+                    "effect_policy_id",
+                    "build_domain_id",
+                    "definition_id",
+                    "proof_policy_version",
+                    "review_method",
+                    "scope_of_validity",
+                    "invalidation_conditions",
+                    "status",
+                    "evidence_use",
+                ],
+            )?;
+            require_json_string_array(value, "allowed_effects")
+        }
         "authority" => {
             require_fields(
                 value,
