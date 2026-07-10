@@ -11,8 +11,8 @@ use crate::{
 };
 
 use super::super::{
-    CallContextRow, CallEffectPolicyViolation, CallImpactReport, CallNodeInfo, CallPath,
-    CallPathEdge, CallPathOptions, CallReachEffect, CallReachReport, CallRelationKind,
+    CallBuildDomain, CallContextRow, CallEffectPolicyViolation, CallImpactReport, CallNodeInfo,
+    CallPath, CallPathEdge, CallPathOptions, CallReachEffect, CallReachReport, CallRelationKind,
     CallSiteBucket, CallSiteKind, CallSiteRow, CallStatusKind, ExternalSummaryNeed,
     ModuleBoundaryEdge,
 };
@@ -367,6 +367,51 @@ impl Database {
             )
         });
         Ok(needs)
+    }
+
+    /// Lists build/test domain proof metadata linked to a call-graph node.
+    ///
+    /// This is a proof-context summary for build/deployment questions. It
+    /// reads existing proof facts only; it does not infer build targets from
+    /// source paths or promote generated/test reachability into source call
+    /// edges.
+    pub fn call_build_domains_for_node(
+        &self,
+        node_id: Uuid,
+    ) -> Result<Vec<CallBuildDomain>, DbError> {
+        let rows = self.proof_build_domain_rows_for_definition(&node_id.to_string())?;
+        let mut domains = BTreeMap::<String, CallBuildDomain>::new();
+
+        for row in rows.into_iter().filter(|row| row.kind == "build_domain") {
+            let Some(build_domain_id) = row.build_domain_id else {
+                continue;
+            };
+            let entry = domains
+                .entry(build_domain_id.clone())
+                .or_insert_with(|| CallBuildDomain {
+                    build_domain_id,
+                    target_kind: row.target_kind.clone(),
+                    target_name: row.target_name.clone(),
+                    target_root: row.target_root.clone(),
+                    profile: row.profile.clone(),
+                    rustc_version: row.rustc_version.clone(),
+                    proof_policy_version: row.proof_policy_version.clone(),
+                    active_cfg_hash: row.active_cfg_hash.clone(),
+                    evidence_use: row.evidence_use.clone(),
+                    blocker_reasons: Vec::new(),
+                });
+            if let Some(reason) = row.blocker_reason {
+                entry.blocker_reasons.push(reason);
+            }
+        }
+
+        let mut values = domains.into_values().collect::<Vec<_>>();
+        for domain in &mut values {
+            domain.blocker_reasons.sort();
+            domain.blocker_reasons.dedup();
+        }
+        values.sort_by(|left, right| left.build_domain_id.cmp(&right.build_domain_id));
+        Ok(values)
     }
 
     /// Lists private executable call-graph nodes with no direct resolved incoming call edge.

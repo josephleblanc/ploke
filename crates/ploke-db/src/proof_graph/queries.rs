@@ -225,6 +225,64 @@ impl Database {
             ))),
         }
     }
+
+    pub(crate) fn proof_build_domain_rows_for_definition(
+        &self,
+        definition_id: &str,
+    ) -> Result<Vec<ProofGraphContextRow>, DbError> {
+        if definition_id.is_empty() {
+            return Err(DbError::QueryConstruction(
+                "build domain lookup requires non-empty definition_id".to_string(),
+            ));
+        }
+
+        let rows = self.fetch_proof_rows()?;
+        let build_domains = rows
+            .iter()
+            .filter(|row| proof_row_links_definition(row, definition_id))
+            .filter_map(|row| row.build_domain_id.clone())
+            .collect::<BTreeSet<_>>();
+        if build_domains.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let all_rows = rows.clone();
+        let mut domains = rows
+            .into_iter()
+            .filter(|row| {
+                row.kind == "build_domain"
+                    && row
+                        .build_domain_id
+                        .as_ref()
+                        .is_some_and(|id| build_domains.contains(id))
+            })
+            .flat_map(|row| proof_context_rows(row, &all_rows))
+            .collect::<Vec<_>>();
+        domains.sort_by(|left, right| {
+            (
+                left.build_domain_id.as_deref(),
+                left.blocker_reason.as_deref(),
+                left.fact_id.as_str(),
+            )
+                .cmp(&(
+                    right.build_domain_id.as_deref(),
+                    right.blocker_reason.as_deref(),
+                    right.fact_id.as_str(),
+                ))
+        });
+        Ok(domains)
+    }
+}
+
+fn proof_row_links_definition(row: &ProofFactRow, definition_id: &str) -> bool {
+    row.definition_id.as_deref() == Some(definition_id)
+        || row.caller_def_id.as_deref() == Some(definition_id)
+        || row.callee_def_id.as_deref() == Some(definition_id)
+        || row.resolved_def_id.as_deref() == Some(definition_id)
+        || row
+            .candidate_def_ids
+            .iter()
+            .any(|candidate| candidate == definition_id)
 }
 
 fn explicit_blocker_row(row: &ProofFactRow) -> Option<ProofBlockerRow> {

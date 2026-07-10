@@ -240,3 +240,18 @@ pub struct ExternalSummaryNeed {
     pub call_site: CallContextRow,
     pub blocker_reasons: Vec<String>,
 }
+
+/// Build/test domain proof metadata linked to a call-graph node.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CallBuildDomain {
+    pub build_domain_id: String,
+    pub target_kind: Option<String>,
+    pub target_name: Option<String>,
+    pub target_root: Option<String>,
+    pub profile: Option<String>,
+    pub rustc_version: Option<String>,
+    pub proof_policy_version: Option<String>,
+    pub active_cfg_hash: Option<String>,
+    pub evidence_use: Option<String>,
+    pub blocker_reasons: Vec<String>,
+}

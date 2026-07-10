@@ -1856,11 +1856,51 @@ async fn code_item_lookup_reports_private_target_without_incoming_callers() {
         }),
         "code_item_lookup should expose the generated test-harness entrypoint proof summary without source callers: {proof_context:#?}"
     );
+    let build_domains = payload
+        .get("call_build_domains")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_build_domains array");
+    assert_eq!(
+        build_domains.len(),
+        1,
+        "code_item_lookup should expose one generated-test build domain: {build_domains:#?}"
+    );
+    let domain = build_domains[0]
+        .as_object()
+        .expect("call_build_domains object");
+    assert_eq!(
+        domain
+            .get("build_domain_id")
+            .and_then(serde_json::Value::as_str),
+        Some("bd:corpus-axum-call-graph")
+    );
+    assert_eq!(
+        domain
+            .get("target_kind")
+            .and_then(serde_json::Value::as_str),
+        Some("library")
+    );
+    assert_eq!(
+        domain
+            .get("target_name")
+            .and_then(serde_json::Value::as_str),
+        Some("axum")
+    );
+    assert_eq!(
+        domain
+            .get("target_root")
+            .and_then(serde_json::Value::as_str),
+        Some("axum/src/lib.rs")
+    );
 
     let ui = result.ui_payload.as_ref().expect("ui payload");
     assert_eq!(
         ui_field(ui, "proof_context"),
         proof_context.len().to_string()
+    );
+    assert_eq!(
+        ui_field(ui, "call_build_domains"),
+        build_domains.len().to_string()
     );
     assert_eq!(ui_field(ui, "call_context_incoming"), "0");
     assert_eq!(ui_field(ui, "call_paths_to_target"), "0");

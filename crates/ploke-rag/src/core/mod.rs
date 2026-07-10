@@ -11,15 +11,16 @@ mod unit_tests;
 use super::*;
 use ploke_core::rag_types::AssembledContext;
 use ploke_core::rag_types::{
-    CallCalleeInfo, CallContextInfo, CallEffectPolicyViolationInfo, CallEndpointKind,
-    CallExpansionInfo, CallExpansionKind, CallImpactInfo, CallNodeInfo, CallPathEdgeInfo,
-    CallPathInfo, CallPathNodeInfo, CallReachEffectInfo, CallReachInfo, CallReceiverInfo,
-    CallResolutionKind as RagCallResolutionKind, CallSiteBucketInfo,
+    CallBuildDomainInfo, CallCalleeInfo, CallContextInfo, CallEffectPolicyViolationInfo,
+    CallEndpointKind, CallExpansionInfo, CallExpansionKind, CallImpactInfo, CallNodeInfo,
+    CallPathEdgeInfo, CallPathInfo, CallPathNodeInfo, CallReachEffectInfo, CallReachInfo,
+    CallReceiverInfo, CallResolutionKind as RagCallResolutionKind, CallSiteBucketInfo,
     CallSiteKind as RagCallSiteKind, CallStatusKind as RagCallStatusKind, CallTargetInfo,
     CallTargetKind, CanonPath, ExternalSummaryNeedInfo, NodeFilepath, ProofContextInfo,
 };
 use ploke_db::{
-    CallContextCandidate, CallContextOptions, CallContextRelation, CallContextRow, CallContextSeed,
+    CallBuildDomain as DbCallBuildDomain, CallContextCandidate, CallContextOptions,
+    CallContextRelation, CallContextRow, CallContextSeed,
     CallEffectPolicyViolation as DbCallEffectPolicyViolation,
     CallImpactReport as DbCallImpactReport, CallNodeInfo as DbCallNodeInfo, CallPath as DbCallPath,
     CallPathEdge as DbCallPathEdge, CallPathOptions, CallReachEffect as DbCallReachEffect,
@@ -537,6 +538,21 @@ fn effect_policy_violation_info(
     })
 }
 
+fn build_domain_info(row: DbCallBuildDomain) -> CallBuildDomainInfo {
+    CallBuildDomainInfo {
+        build_domain_id: row.build_domain_id,
+        target_kind: row.target_kind,
+        target_name: row.target_name,
+        target_root: row.target_root,
+        profile: row.profile,
+        rustc_version: row.rustc_version,
+        proof_policy_version: row.proof_policy_version,
+        active_cfg_hash: row.active_cfg_hash,
+        evidence_use: row.evidence_use,
+        blocker_reasons: row.blocker_reasons,
+    }
+}
+
 fn call_node_info(row: DbCallNodeInfo) -> CallNodeInfo {
     CallNodeInfo {
         id: row.id,
@@ -997,6 +1013,23 @@ impl RagService {
                 .into_iter()
                 .map(|row| external_summary_need_info(self.db.as_ref(), row))
                 .collect::<Result<Vec<_>, RagError>>()?,
+        ))
+    }
+
+    pub fn exact_call_build_domains_for_node(
+        &self,
+        node_id: Uuid,
+    ) -> Result<Option<Vec<CallBuildDomainInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .call_build_domains_for_node(node_id)?
+                .into_iter()
+                .map(build_domain_info)
+                .collect(),
         ))
     }
 

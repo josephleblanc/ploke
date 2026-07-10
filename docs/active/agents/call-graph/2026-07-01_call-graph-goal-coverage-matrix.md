@@ -50,23 +50,36 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: callable trait-object runtime-dispatch blocker proof over real
-memchr boxed `dyn FnMut` path rows.
+Current bucket: build/test-domain summary surface for generated test-entrypoint
+proof.
 
 Exit criteria:
 
-- Reuse the existing memchr source-oracle chain
-  `Runner::run -> fwd(...) / rev(...)`, where the local bindings are boxed
-  `dyn FnMut` fields populated by prior builder methods.
-- Keep the rows unsupported and targetless; do not fabricate edges to setter
-  closures without callable trait-object value-flow proof.
-- Attach explicit `dynamic_dispatch_unbounded` proof blockers to the real
-  callsite ids while preserving the existing fail-closed
-  `type_resolution_missing` call-resolution rows.
-- Assert DB, RAG exact proof context, and exact TUI lookup/edges payloads expose
-  both proof facts for the same real callsites.
+- Reuse the existing axum source oracle
+  `axum/src/error_handling/mod.rs:257 #[test] fn traits()`, where the generated
+  test harness is represented by an admitted proof-only `entrypoint_summary`
+  rather than a persisted source call edge.
+- Read existing strict `build_domain` proof facts linked through exact
+  definition/caller/callee proof fields; do not infer build targets from source
+  paths or proof-context text search.
+- Expose the linked build/test domain through DB, RAG, and exact
+  `code_item_lookup` / `code_item_edges` payloads while preserving zero
+  incoming source-call paths for `traits`.
+- Preserve fail-closed build-domain blockers when cfg/rustc evidence is
+  incomplete; admitted axum cfg/rustc evidence should surface an unblocked
+  domain summary.
 
 Status: completed for this checkpoint.
+
+Latest completed slice: DB, RAG, and exact TUI lookup/edges surfaces now expose
+linked `build_domain` proof metadata for the axum generated test-harness
+`entrypoint_summary` on `error_handling::traits`. The query reads exact proof
+links instead of proof-context text search, preserves zero incoming source-call
+paths, and reports the admitted axum library build domain without blocker
+reasons when cfg/rustc evidence is present.
+
+Previous completed bucket: callable trait-object runtime-dispatch blocker proof
+over real memchr boxed `dyn FnMut` path rows.
 
 Latest completed slice: DB, RAG, and TUI tests now attach and preserve explicit
 `dynamic_dispatch_unbounded` proof blockers for

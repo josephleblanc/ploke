@@ -1632,7 +1632,9 @@ async fn call_impact_exact_reports_private_target_without_incoming_callers() -> 
     );
 
     let domain_id = "bd:corpus-axum-call-graph";
-    db.upsert_proof_fact_values(&[ploke_test_utils::axum_entrypoint_record(domain_id, target)])?;
+    let mut records = ploke_test_utils::axum_call_graph_domain_records(domain_id);
+    records.push(ploke_test_utils::axum_entrypoint_record(domain_id, target));
+    db.upsert_proof_fact_values(&records)?;
     let target_id = target.to_string();
     let proof_rag = init_test_rag_mock(Arc::clone(&db));
     assert!(
@@ -1650,6 +1652,19 @@ async fn call_impact_exact_reports_private_target_without_incoming_callers() -> 
                 && row.status.as_deref() == Some("admitted")
         }),
         "RAG exact proof context should expose the generated test-harness summary without adding call impact edges: {proof:#?}"
+    );
+    let domains = proof_rag
+        .exact_call_build_domains_for_node(target)?
+        .expect("call context enabled");
+    assert_eq!(domains.len(), 1, "{domains:#?}");
+    let domain = &domains[0];
+    assert_eq!(domain.build_domain_id, domain_id);
+    assert_eq!(domain.target_kind.as_deref(), Some("library"));
+    assert_eq!(domain.target_name.as_deref(), Some("axum"));
+    assert_eq!(domain.target_root.as_deref(), Some("axum/src/lib.rs"));
+    assert!(
+        domain.blocker_reasons.is_empty(),
+        "RAG build-domain summary should preserve admitted cfg/rustc evidence: {domains:#?}"
     );
 
     Ok(())

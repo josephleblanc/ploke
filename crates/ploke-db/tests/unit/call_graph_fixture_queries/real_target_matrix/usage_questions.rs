@@ -1274,6 +1274,24 @@ fn axum_usage_questions_list_private_nodes_without_incoming_callers() -> Result<
         }),
         "generated test-harness reachability should be represented as proof context, not source call edges: {proof_rows:#?}"
     );
+    let domains = db.call_build_domains_for_node(traits)?;
+    assert_eq!(domains.len(), 1, "{domains:#?}");
+    let domain = &domains[0];
+    assert_eq!(domain.build_domain_id, domain_id);
+    assert_eq!(domain.target_kind.as_deref(), Some("library"));
+    assert_eq!(domain.target_name.as_deref(), Some("axum"));
+    assert_eq!(domain.target_root.as_deref(), Some("axum/src/lib.rs"));
+    assert_eq!(domain.profile.as_deref(), Some("dev"));
+    assert_eq!(domain.active_cfg_hash.as_deref(), Some("sha256:axum-cfg"));
+    assert_eq!(domain.rustc_version.as_deref(), Some("rustc fixture"));
+    assert_eq!(
+        domain.proof_policy_version.as_deref(),
+        Some("proof-policy-test")
+    );
+    assert!(
+        domain.blocker_reasons.is_empty(),
+        "admitted cfg/rustc evidence should leave the build domain unblocked: {domains:#?}"
+    );
 
     Ok(())
 }

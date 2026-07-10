@@ -326,6 +326,8 @@ for a more fuzzy search."#
         )?;
         let external_summary_needs =
             lookup_support::external_summary_needs_for_node(&ctx, resolved_item_id)?;
+        let call_build_domains =
+            lookup_support::call_build_domains_for_node(&ctx, resolved_item_id)?;
         let tool_results = ctx
             .state
             .io_handle
@@ -366,6 +368,7 @@ for a more fuzzy search."#
             call_reach_effects,
             call_effect_policy_violations,
             external_summary_needs,
+            call_build_domains,
             proof_context: carriers.proof_context,
         };
         let call_counts =
@@ -397,6 +400,7 @@ for a more fuzzy search."#
             &concise_context.call_reach_effects,
             &concise_context.call_effect_policy_violations,
             &concise_context.external_summary_needs,
+            &concise_context.call_build_domains,
         )
         .with_field(
             "proof_context",
