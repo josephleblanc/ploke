@@ -159,14 +159,31 @@ fn fixture_context_reads_function_pointer_param_cast_path_without_target() -> Re
 fn fixture_context_reads_projected_macro_statuses_without_targets() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let cases = [
-        ("call_crate_scoped_macro", "crate::crate_scoped_macro"),
-        ("call_vec_macro", "vec"),
-        ("call_imported_macro_alias", "imported_macro_alias"),
-        ("call_item_macro_inside_body", "call_graph_item_macro"),
+        (
+            &["crate"][..],
+            "call_crate_scoped_macro",
+            "crate::crate_scoped_macro",
+        ),
+        (&["crate"][..], "call_vec_macro", "vec"),
+        (
+            &["crate"][..],
+            "call_imported_macro_alias",
+            "imported_macro_alias",
+        ),
+        (
+            &["crate"][..],
+            "call_item_macro_inside_body",
+            "call_graph_item_macro",
+        ),
+        (
+            &["crate", "call_graph_tests"][..],
+            "assert_eq_macro_call",
+            "assert_eq",
+        ),
     ];
 
-    for (owner_name, macro_name) in cases {
-        let owner = function_id_by_name(&db, owner_name)?;
+    for (module_path, owner_name, macro_name) in cases {
+        let owner = function_id_by_name_in_module(&db, module_path, owner_name)?;
         let context = db.call_context_for_owner(owner)?;
         assert_eq!(context.len(), 1, "{owner_name} context rows: {context:#?}");
 

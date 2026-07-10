@@ -66,7 +66,7 @@ async fn request_code_context_returns_fixture_blocker_proof_context() -> color_e
     Ok(())
 }
 
-fn blocker_cases() -> [Case; 8] {
+fn blocker_cases() -> [Case; 9] {
     [
         Case {
             label: "String::new external blocker",
@@ -86,6 +86,13 @@ fn blocker_cases() -> [Case; 8] {
             label: "crate macro blocker",
             module_path: &["crate"],
             owner: "call_crate_scoped_macro",
+            expected_rows: 2,
+            reasons: &["macro_expansion_not_available"],
+        },
+        Case {
+            label: "test-body assert_eq macro blocker",
+            module_path: &["crate", "call_graph_tests"],
+            owner: "assert_eq_macro_call",
             expected_rows: 2,
             reasons: &["macro_expansion_not_available"],
         },
@@ -136,6 +143,7 @@ fn resolve_case(db: &Database, case: Case) -> color_eyre::Result<ResolvedCase> {
             "call_prelude_string_new" => "string_new_blocker_proof_context",
             "call_external_default_bound_assoc" => "default_bound_blocker_proof_context",
             "call_crate_scoped_macro" => "macro_blocker_proof_context",
+            "assert_eq_macro_call" => "assert_eq_macro_blocker_proof_context",
             "call_ambiguous_trait_method" => "ambiguous_method_blocker_proof_context",
             "call_unimported_trait_method" => "unimported_trait_method_blocker_proof_context",
             "call_function_pointer_param" => "fn_pointer_blocker_proof_context",

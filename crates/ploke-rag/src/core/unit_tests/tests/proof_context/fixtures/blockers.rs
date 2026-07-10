@@ -28,7 +28,14 @@ async fn proof_context_collection_preserves_projected_blocker_rows() -> Result<(
         );
     }
 
-    let rag = init_test_rag_mock(Arc::clone(&db));
+    let mut cfg = crate::RagConfig::default();
+    cfg.proof_context.max_seed_hits = cases.len();
+    let rag = RagService::new_full(
+        Arc::clone(&db),
+        runtime_for(&db, EmbeddingProcessor::new_mock()),
+        IoManagerHandle::new(),
+        cfg,
+    )?;
     assert!(
         !rag.proof_context_degraded(),
         "projected blocker proof facts should enable RAG proof context"
@@ -57,7 +64,7 @@ async fn proof_context_collection_preserves_projected_blocker_rows() -> Result<(
     Ok(())
 }
 
-fn blocker_cases() -> [Case; 12] {
+fn blocker_cases() -> [Case; 13] {
     [
         Case {
             label: "String::new external blocker",
@@ -77,6 +84,13 @@ fn blocker_cases() -> [Case; 12] {
             label: "crate macro blocker",
             module_path: &["crate"],
             owner: "call_crate_scoped_macro",
+            expected_rows: 2,
+            reasons: &["macro_expansion_not_available"],
+        },
+        Case {
+            label: "test-body assert_eq macro blocker",
+            module_path: &["crate", "call_graph_tests"],
+            owner: "assert_eq_macro_call",
             expected_rows: 2,
             reasons: &["macro_expansion_not_available"],
         },

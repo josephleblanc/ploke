@@ -50,8 +50,35 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: async closure callee evidence and proof-only poll/resume
-blockers.
+Current bucket: fixture test-body macro blocker proof propagation.
+
+Exit criteria:
+
+- Use the existing fixture source oracle for
+  `call_graph_tests::assert_eq_macro_call`, where the `#[cfg(test)]` body calls
+  `assert_eq!(1 + 1, 2)`.
+- Keep the macro call targetless unsupported because macro expansion bodies and
+  generated call edges are not modeled as source call graph edges.
+- Assert DB context/proof, RAG proof-context, and TUI proof payload surfaces
+  expose the `macro_expansion_not_available` blocker without traversal edges.
+- Regenerate and verify active call-graph fixtures.
+
+Status: completed for this checkpoint.
+
+Latest completed slice: the fixture test-body `assert_eq!` macro row is now
+covered beyond the parser harness. DB call-context/proof queries, RAG
+proof-context collection, and TUI request-code-context proof payloads all
+preserve the targetless macro blocker row.
+
+Next bucket: re-check remaining unsupported semantic proof inputs before
+selecting another parser/resolver slice; likely candidates are a reviewed
+dependency-root source oracle, missing trait visibility proof, or a new
+bounded local binding/type proof carrier. Do not keep polishing macro blocker
+rows unless there is new macro expansion evidence beyond the proof-only
+blocker.
+
+Previous completed bucket: async closure callee evidence and proof-only
+poll/resume blockers.
 
 Exit criteria:
 
@@ -73,13 +100,6 @@ poll/resume blockers from that evidence for non-awaited async closure calls,
 while awaited async closure rows remain normal resolved traversal candidates.
 The active call-graph fixtures and committed real-corpus seeds were
 regenerated/reviewed with the new relation.
-
-Next bucket: re-check remaining unsupported semantic proof inputs before
-selecting another parser/resolver slice; likely candidates are a reviewed
-dependency-root source oracle, missing trait visibility proof, or a new
-bounded local binding/type proof carrier. Do not keep polishing async
-poll/resume rows unless there is new execution evidence beyond the proof-only
-blocker.
 
 Previous completed bucket: public callable field/indexed blocker proof
 surfacing.

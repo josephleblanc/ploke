@@ -444,7 +444,8 @@ should prevent future resumes from reselecting already-covered shapes.
 Status checkpoint: 2026-07-10 after conflicting callable value and named-field
 candidate proof batches passed parser, DB, RAG, and TUI focused verification,
 with public callable field/indexed blocker proof surfacing and async closure
-callee-evidence proof blockers now complete.
+callee-evidence proof blockers now complete. Downstream DB/RAG/TUI proof
+coverage also includes the fixture test-body `assert_eq!` macro call.
 
 The focused parser call-site suite has a small remaining set of
 `ExpectedCallOutcome::Unsupported` rows. These should not be treated as the
@@ -452,7 +453,7 @@ next implementation target unless the missing proof input below is supplied.
 
 | Group | Representative tests | Why it remains fail-closed |
 | --- | --- | --- |
-| Macro calls | `fixture_nodes_use_imported_items_records_documented_macro_call_site`, `fixture_macros_use_local_macro_records_local_macro_call_site`, `fixture_call_graph_assert_eq_macro_call_records_test_body_macro_call_site` | Macro expansion bodies and generated call edges are not modeled as source call graph edges. |
+| Macro calls | `fixture_nodes_use_imported_items_records_documented_macro_call_site`, `fixture_macros_use_local_macro_records_local_macro_call_site`, `fixture_call_graph_assert_eq_macro_call_records_test_body_macro_call_site` | Macro expansion bodies and generated call edges are not modeled as source call graph edges. The fixture test-body `assert_eq!` row now has downstream DB/RAG/TUI `macro_expansion_not_available` proof coverage without traversal edges. |
 | Public callable parameters | `call_function_pointer_param`, `call_parenthesized_function_pointer_param`, `call_function_pointer_param_cast`, `call_generic_fn_once_value_binding`, `call_parenthesized_generic_fn_once_value_binding` | Public API callers do not give a complete source-visible argument set, so no local callee can be proven. |
 | Public callable fields and arrays | `call_field_function_param`, `call_indexed_field_function_param`, `call_indexed_tuple_field_function_param`, `call_indexed_function_pointer` | Parameter field/index values lack exact single-caller or initializer proof at public API boundaries. These rows should expose `dynamic_dispatch_unbounded` proof blockers without traversal edges. |
 | Non-awaited async callable values | `call_async_closure_binding_without_await_with_body_call`, `call_async_closure_future_binding_without_await_with_body_call` | Constructing an async-closure future does not prove poll/resume execution. These rows now have persisted callee evidence and derived proof-only `dynamic_dispatch_unbounded` blockers, but still must not emit traversal edges. |
