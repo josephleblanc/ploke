@@ -371,6 +371,7 @@ fn serde_roundtrip_request_code_context() {
         call_impact: None,
         call_reach: None,
         call_reach_effects: Vec::new(),
+        call_effect_policy_violations: Vec::new(),
         external_summary_needs: Vec::new(),
         proof_context,
     };
@@ -388,6 +389,7 @@ fn serde_roundtrip_request_code_context() {
         call_impact: None,
         call_reach: None,
         call_reach_effects: Vec::new(),
+        call_effect_policy_violations: Vec::new(),
         external_summary_needs: Vec::new(),
         proof_context: Vec::new(),
     };

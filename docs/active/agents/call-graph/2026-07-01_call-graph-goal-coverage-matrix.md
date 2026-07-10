@@ -50,45 +50,55 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: explicit source/sink effect-policy query over reachable
-effect seeds.
+Current bucket: exact tool-level source/sink effect-policy input.
 
 Exit criteria:
 
-- Reuse the existing axum source-oracle chain
+- Reuse the existing DB/RAG effect-policy query and axum source-oracle chain
   `deserialize_error_status_codes -> TestClient::new -> spawn_service ->
   tokio::spawn`.
 - Keep `tokio::spawn` an external targetless frontier; policy evaluation must
   never fabricate a local traversal edge.
-- Add an explicit caller-supplied allowlist query over existing reachable
-  `effect_seed` facts, without adding a proof fact kind or hard-coded default
-  policy.
-- Assert DB and RAG exact APIs report `async_task_spawn` as a violation when
-  only `ffi_boundary` is allowed, and report no violation when
-  `async_task_spawn` is allowed.
-- Do not change TUI/tool payloads until a tool-level policy input contract
-  exists.
+- Add optional `allowed_effects` input to exact lookup/edges tools. When it is
+  omitted, policy violations remain empty; when it is supplied, the tool
+  payload reports reachable `effect_seed` rows whose effect class is outside
+  the explicit allowlist.
+- Assert exact `code_item_lookup` and `code_item_edges` report
+  `async_task_spawn` as a violation when only `ffi_boundary` is allowed while
+  preserving the same targetless external `tokio::spawn` callsite payload.
 
 Status: completed for this checkpoint.
 
-Latest completed slice: `Database::call_effect_policy_violations_for_owner`
-and `RagService::exact_call_effect_policy_violations_for_owner` now evaluate a
-caller-supplied effect allowlist over existing reachable effect seeds. The axum
-task-spawn oracle proves `async_task_spawn` is reported as a policy violation
-from the upstream test owner while the original `tokio::spawn` callsite stays
-external, targetless, and edge-free.
+Latest completed slice: `code_item_lookup` and `code_item_edges` now accept an
+optional `allowed_effects` array and expose
+`call_effect_policy_violations` / `node_info.call_effect_policy_violations`
+through the existing exact payloads. The axum task-spawn tool tests prove
+`async_task_spawn` is reported outside an explicit `ffi_boundary` allowlist
+while the original `tokio::spawn` row stays external, targetless, and
+edge-free.
 
 Next bucket: choose another new proof-carrier slice only if it has fresh proof
 input. The 2026-07-10 inventory found that missing trait visibility proof,
 public callable parameter blockers, fixture test-body macro blockers, the
 axum-core `request_parts.rs:164` tuple-return receiver row, routing helper
 macro/generated rows, generated `IntoServiceFuture::new` rows, and current
-effect-policy allowlist queries are now covered or intentionally fail-closed.
-Do not revisit those families unless the implementation adds new proof input
-such as macro-expanded/generated source bodies, async poll/resume execution
-proof, interprocedural callable argument/value-flow, broader callable
-trait-object dispatch, persisted policy annotations, or build/test entrypoint
-summaries.
+effect-policy allowlist queries and exact tool inputs are now covered or
+intentionally fail-closed. Do not revisit those families unless the
+implementation adds new proof input such as macro-expanded/generated source
+bodies, async poll/resume execution proof, interprocedural callable
+argument/value-flow, broader callable trait-object dispatch, persisted policy
+annotations, or build/test entrypoint summaries.
+
+Previous completed bucket: explicit source/sink effect-policy query over
+reachable effect seeds.
+
+Latest completed slice for that bucket:
+`Database::call_effect_policy_violations_for_owner` and
+`RagService::exact_call_effect_policy_violations_for_owner` evaluate a
+caller-supplied effect allowlist over existing reachable effect seeds. The axum
+task-spawn oracle proves `async_task_spawn` is reported as a policy violation
+from the upstream test owner while the original `tokio::spawn` callsite stays
+external, targetless, and edge-free.
 
 Previous completed bucket: public callable parameter blocker proof propagation.
 
@@ -2231,7 +2241,7 @@ Completed bucket, 2026-07-07: chrono Option ok_or try receiver proof.
 | Dead-code / private zero-incoming | Met for now | `private_uncalled_nodes` lists axum `error_handling::traits`, excludes called `parse_attrs`, and exact impact reports no incoming source calls | `exact_private_uncalled_nodes` preserves the same DB dead-code list through RAG, and exact impact reports the same private target with empty caller/path/bucket sets | `code_private_uncalled` lists the same private zero-caller axum target directly; `code_item_lookup` and `code_item_edges` report zero incoming paths, empty source-caller impact counts, and the admitted generated test-harness `entrypoint_summary` proof row | axum | Switch buckets; do not widen to generated/dynamic reachability here. |
 | DB usage summaries | Strong current surface | `call_impact_for_target`, `call_reach_for_owner`, paths, owner-scoped module-boundary edges, owner-recursion cycle paths, source files/modules/crates/cfgs, buckets, boundary/frontier rows; real-corpus usage-question tests now prove impact, navigation, dead-code, public/test caller bucketing, architecture boundary edges, external/unsupported/unresolved frontier rows, proc-macro entrypoint impact, Body::empty component/source-module/source-crate impact, axum listener `#[cfg(unix)]` reach source-cfg preservation, axum `Json::from_bytes` `#[cfg(feature = "json")]` reach/callsite cfg preservation through parent module declarations, and `std::any::type_name::<K>()` API argument-shape preservation over the regenerated axum fixture; fixture-backed usage-question coverage now proves FFI `abs(value)` remains an external frontier in owner reach summaries; `call_effect_policy_violations_for_owner` evaluates caller-supplied effect allowlists over existing reachable `effect_seed` facts and proves the axum `tokio::spawn` `async_task_spawn` sink is reported as disallowed without fabricating a local edge; reach summaries split full nonresolved frontier rows into external, unsupported, unresolved, and ambiguous subsets without promoting them into traversal edges | N/A | N/A | axum plus local fixture fallback | Add fields only when they answer a matrix question, not opportunistically. |
 | RAG usage summaries | Strong current surface | N/A | Exact call paths, owner-recursion cycle paths, impact, reach, source metadata; real-corpus reach summaries now preserve external, unsupported, unresolved, and ambiguous frontier subsets from DB, including the axum generated `IntoServiceFuture::new` unresolved frontier, the regenerated `Body::empty` component/source-module/source-crate impact, the axum listener `#[cfg(unix)]` source-cfg reach summary, the axum `Json::from_bytes` `feature = "json"` reach summary, the axum `type_name::<K>()` generic-argument call shape, the axum-core `request_parts.rs:164` resolved turbofish tuple-method-return receiver shape, and fixture-backed FFI `abs(value)` external-frontier reach; `exact_call_effect_policy_violations_for_owner` preserves the same caller-supplied effect allowlist result and the path to the reachable sink owner | N/A | axum plus local fixture fallback | Add only when DB bucket already has proof. |
-| TUI/tool usage summaries | Strong current surface | N/A | N/A | `code_item_lookup`, `code_item_edges`, and exact call-path tool coverage; `code_item_edges` now carries the same existing impact/reach summaries in `node_info` that lookup exposes, with real-corpus assertions for paths, owner-recursion cycle paths, boundary edges, direct callsites, callsite buckets, source files/modules/crates/cfgs, frontier status counts, safety-boundary metadata, proof context, and UI counts; lookup/edges `Body::empty` tool tests assert the regenerated component-impact callsite buckets, path-shape counts, source file/module/crate carriers, and test/non-test impact partition; lookup/edges generated-constructor tests assert unresolved frontier payload/count propagation; lookup/edges generated test-harness tests assert the `entrypoint_summary` proof row without incoming source edges; lookup/edges `Json::from_bytes` tests assert the inherited `feature = "json"` reach source-cfg payload/count; lookup coverage asserts the axum `type_name::<K>()` generic-argument call shape; lookup/edges targetless matrix tests assert the axum-core `request_parts.rs:164` resolved turbofish tuple-method-return receiver row; lookup/edges executable-owner tests assert the real-corpus axum `Handler::call` async-block owner targetless rows and blocker proof payloads; edge-tool safety tests assert fixture-backed unsafe target impact metadata and extern-C external frontier reach without inventing local traversal | axum plus local fixture fallback | Keep tool changes thin; do not invent semantics outside RAG/DB. |
+| TUI/tool usage summaries | Strong current surface | N/A | N/A | `code_item_lookup`, `code_item_edges`, and exact call-path tool coverage; `code_item_edges` now carries the same existing impact/reach summaries in `node_info` that lookup exposes, with real-corpus assertions for paths, owner-recursion cycle paths, boundary edges, direct callsites, callsite buckets, source files/modules/crates/cfgs, frontier status counts, safety-boundary metadata, proof context, and UI counts; lookup/edges `Body::empty` tool tests assert the regenerated component-impact callsite buckets, path-shape counts, source file/module/crate carriers, and test/non-test impact partition; lookup/edges generated-constructor tests assert unresolved frontier payload/count propagation; lookup/edges generated test-harness tests assert the `entrypoint_summary` proof row without incoming source edges; lookup/edges `Json::from_bytes` tests assert the inherited `feature = "json"` reach source-cfg payload/count; lookup coverage asserts the axum `type_name::<K>()` generic-argument call shape; lookup/edges targetless matrix tests assert the axum-core `request_parts.rs:164` resolved turbofish tuple-method-return receiver row; lookup/edges executable-owner tests assert the real-corpus axum `Handler::call` async-block owner targetless rows and blocker proof payloads; edge-tool safety tests assert fixture-backed unsafe target impact metadata and extern-C external frontier reach without inventing local traversal; exact lookup/edges task-spawn tests pass `allowed_effects = [ffi_boundary]` and assert `call_effect_policy_violations` reports the reachable axum `async_task_spawn` sink without fabricating a target | axum plus local fixture fallback | Keep tool changes thin; do not invent semantics outside RAG/DB. |
 
 Update 2026-07-09: the request-parts notes in the matrix row above are
 superseded by the current tuple-return summary slice. The axum-core

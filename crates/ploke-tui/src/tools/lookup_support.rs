@@ -1,8 +1,8 @@
 use ploke_core::{
     io_types::EmbeddingData,
     rag_types::{
-        CallContextInfo, CallImpactInfo, CallPathInfo, CallReachEffectInfo, CallReachInfo,
-        ExternalSummaryNeedInfo, ProofContextInfo,
+        CallContextInfo, CallEffectPolicyViolationInfo, CallImpactInfo, CallPathInfo,
+        CallReachEffectInfo, CallReachInfo, ExternalSummaryNeedInfo, ProofContextInfo,
     },
     tool_types::ToolName,
 };
@@ -590,11 +590,40 @@ pub(super) fn external_summary_needs_for_node(
     }
 }
 
+pub(super) fn call_effect_policy_violations_for_node(
+    ctx: &super::Ctx,
+    node_id: Uuid,
+    allowed_effects: &[String],
+) -> Result<Vec<CallEffectPolicyViolationInfo>, ploke_error::Error> {
+    use ploke_error::InternalError;
+
+    if allowed_effects.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    match ctx.state.rag.as_ref() {
+        Some(rag) if !rag.call_context_degraded() => Ok(rag
+            .exact_call_effect_policy_violations_for_owner(
+                node_id,
+                TOOL_CALL_PATH_OPTIONS,
+                allowed_effects,
+            )
+            .map_err(|err| {
+                ploke_error::Error::Internal(InternalError::CompilerError(format!(
+                    "failed to collect effect policy violations for code item {node_id}: {err}"
+                )))
+            })?
+            .unwrap_or_default()),
+        _ => Ok(Vec::new()),
+    }
+}
+
 pub(super) fn with_call_usage_fields(
     payload: super::ToolUiPayload,
     impact: Option<&CallImpactInfo>,
     reach: Option<&CallReachInfo>,
     reach_effects: &[CallReachEffectInfo],
+    policy_violations: &[CallEffectPolicyViolationInfo],
     summary_needs: &[ExternalSummaryNeedInfo],
 ) -> super::ToolUiPayload {
     payload
@@ -700,6 +729,10 @@ pub(super) fn with_call_usage_fields(
             count(reach.map(|info| info.source_modules.len())),
         )
         .with_field("reach_effects", reach_effects.len().to_string())
+        .with_field(
+            "effect_policy_violations",
+            policy_violations.len().to_string(),
+        )
         .with_field("external_summary_needs", summary_needs.len().to_string())
 }
 

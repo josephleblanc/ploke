@@ -2074,6 +2074,95 @@ pub(crate) fn assert_task_spawn_effects(
     );
 }
 
+pub(crate) fn assert_task_spawn_policy_violation(
+    violations: &[serde_json::Value],
+    fixture: &AxumTaskSpawnEffectToolFixture,
+    label: &str,
+) {
+    let spawn_owner = fixture.spawn_owner.to_string();
+    let spawn_site = fixture.spawn_site.to_string();
+    let violation = violations
+        .iter()
+        .find(|violation| {
+            violation
+                .get("effect")
+                .and_then(|effect| effect.get("effect_seed_id"))
+                .and_then(serde_json::Value::as_str)
+                == Some("effect:axum-tui-test-client-task-spawn")
+        })
+        .unwrap_or_else(|| {
+            panic!("{label} should include the axum task-spawn policy violation: {violations:#?}")
+        });
+    assert_eq!(
+        violation
+            .get("allowed_effects")
+            .and_then(serde_json::Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .collect::<Vec<_>>()
+            }),
+        Some(vec!["ffi_boundary"]),
+        "{label} should preserve the caller-supplied allowlist: {violation:#?}"
+    );
+
+    let effect = violation
+        .get("effect")
+        .and_then(serde_json::Value::as_object)
+        .unwrap_or_else(|| {
+            panic!("{label} violation should include effect payload: {violation:#?}")
+        });
+    assert_eq!(
+        effect
+            .get("effect_class")
+            .and_then(serde_json::Value::as_str),
+        Some("async_task_spawn")
+    );
+    let call_site = effect
+        .get("call_site")
+        .and_then(serde_json::Value::as_object)
+        .unwrap_or_else(|| panic!("{label} effect should include call_site: {effect:#?}"));
+    assert_eq!(
+        call_site.get("site_id").and_then(serde_json::Value::as_str),
+        Some(spawn_site.as_str())
+    );
+    assert_eq!(
+        call_site
+            .get("owner_id")
+            .and_then(serde_json::Value::as_str),
+        Some(spawn_owner.as_str())
+    );
+    assert_eq!(
+        call_site.get("status").and_then(serde_json::Value::as_str),
+        Some("external")
+    );
+    assert!(
+        call_site
+            .get("targets")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|targets| targets.is_empty()),
+        "{label} policy violation must not fabricate targets: {call_site:#?}"
+    );
+
+    let owner = fixture.owner.to_string();
+    let paths = effect
+        .get("paths_to_owner")
+        .and_then(serde_json::Value::as_array)
+        .unwrap_or_else(|| {
+            panic!("{label} policy violation should include paths_to_owner: {effect:#?}")
+        });
+    assert!(
+        paths.iter().any(|path| {
+            path.get("start_id").and_then(serde_json::Value::as_str) == Some(owner.as_str())
+                && path.get("end_id").and_then(serde_json::Value::as_str)
+                    == Some(spawn_owner.as_str())
+                && path.get("depth").and_then(serde_json::Value::as_u64) == Some(2)
+        }),
+        "{label} policy violation should preserve the path to spawn_service: {effect:#?}"
+    );
+}
+
 pub(crate) fn assert_fixture_extern_c_abs_effects(
     effects: &[serde_json::Value],
     expected: &ExpectedCallSite,

@@ -52,6 +52,11 @@ lazy_static::lazy_static! {
                 "type": "string",
                 "description": lookup_support::PARENT_NAME_DESC
             },
+            "allowed_effects": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Optional exact effect allowlist. When supplied, node_info includes call_effect_policy_violations for reachable effect_seed rows whose effect_class is not in this list."
+            },
         },
         "required": ["item_name", "file_path", "node_kind", "module_path"],
         "additionalProperties": false
@@ -74,6 +79,8 @@ pub struct EdgesParams<'a> {
     pub owner_type: Option<std::borrow::Cow<'a, str>>,
     #[serde(default, borrow)]
     pub parent_name: Option<std::borrow::Cow<'a, str>>,
+    #[serde(default)]
+    pub allowed_effects: Vec<std::borrow::Cow<'a, str>>,
 }
 
 impl<'a> ValidatesAbolutePath for EdgesParams<'a> {
@@ -92,6 +99,7 @@ pub struct EdgesParamsOwned {
     pub owner_trait: Option<String>,
     pub owner_type: Option<String>,
     pub parent_name: Option<String>,
+    pub allowed_effects: Vec<String>,
 }
 
 pub struct CodeItemEdges;
@@ -152,6 +160,11 @@ impl Tool for CodeItemEdges {
             owner_trait: params.owner_trait.as_ref().map(|value| value.to_string()),
             owner_type: params.owner_type.as_ref().map(|value| value.to_string()),
             parent_name: params.parent_name.as_ref().map(|value| value.to_string()),
+            allowed_effects: params
+                .allowed_effects
+                .iter()
+                .map(|effect| effect.to_string())
+                .collect(),
         }
     }
 
@@ -306,6 +319,16 @@ for a more fuzzy search."#
         let call_reach = lookup_support::call_reach_for_node(&ctx, resolved_item_id)?;
         let call_reach_effects =
             lookup_support::call_reach_effects_for_node(&ctx, resolved_item_id)?;
+        let allowed_effects = params
+            .allowed_effects
+            .iter()
+            .map(|effect| effect.to_string())
+            .collect::<Vec<_>>();
+        let call_effect_policy_violations = lookup_support::call_effect_policy_violations_for_node(
+            &ctx,
+            resolved_item_id,
+            &allowed_effects,
+        )?;
         let external_summary_needs =
             lookup_support::external_summary_needs_for_node(&ctx, resolved_item_id)?;
         let call_path_nodes =
@@ -374,6 +397,7 @@ for a more fuzzy search."#
             call_impact,
             call_reach,
             call_reach_effects,
+            call_effect_policy_violations,
             external_summary_needs,
             proof_context: carriers.proof_context,
         };
@@ -429,6 +453,7 @@ for a more fuzzy search."#
             node_edge_info.node_info.call_impact.as_ref(),
             node_edge_info.node_info.call_reach.as_ref(),
             &node_edge_info.node_info.call_reach_effects,
+            &node_edge_info.node_info.call_effect_policy_violations,
             &node_edge_info.node_info.external_summary_needs,
         )
         .with_field(

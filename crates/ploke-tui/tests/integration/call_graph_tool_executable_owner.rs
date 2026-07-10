@@ -30,6 +30,7 @@ async fn code_item_lookup_accepts_local_item_body_owner() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        allowed_effects: Vec::new(),
     };
 
     let result = CodeItemLookup::execute(params, fixture.ctx("local-item-lookup"))
@@ -85,6 +86,7 @@ async fn code_item_lookup_rejects_ambiguous_local_item_body_owner_without_parent
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        allowed_effects: Vec::new(),
     };
 
     let err =
@@ -114,6 +116,7 @@ async fn code_item_lookup_parent_qualifies_repeated_local_item_body_owner() {
         owner_trait: None,
         owner_type: None,
         parent_name: Some(Cow::Borrowed("test_from_extractor")),
+        allowed_effects: Vec::new(),
     };
 
     let result = CodeItemLookup::execute(params, fixture.ctx("parent-local-item-lookup"))
@@ -169,6 +172,7 @@ async fn code_item_edges_accepts_local_item_body_owner() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        allowed_effects: Vec::new(),
     };
 
     let result = CodeItemEdges::execute(params, fixture.ctx("local-item-edges"))
@@ -227,6 +231,7 @@ async fn code_item_edges_parent_qualifies_repeated_local_item_body_owner() {
         owner_trait: None,
         owner_type: None,
         parent_name: Some(Cow::Borrowed("test_from_extractor")),
+        allowed_effects: Vec::new(),
     };
 
     let result = CodeItemEdges::execute(params, fixture.ctx("parent-local-item-edges"))
@@ -281,6 +286,7 @@ async fn code_item_lookup_accepts_real_corpus_async_block_body_owner() {
         owner_trait: None,
         owner_type: None,
         parent_name: Some(Cow::Borrowed("call")),
+        allowed_effects: Vec::new(),
     };
 
     let result = CodeItemLookup::execute(params, fixture.ctx("async-block-lookup"))
@@ -345,6 +351,7 @@ async fn code_item_edges_accepts_real_corpus_async_block_body_owner() {
         owner_trait: None,
         owner_type: None,
         parent_name: Some(Cow::Borrowed("call")),
+        allowed_effects: Vec::new(),
     };
 
     let result = CodeItemEdges::execute(params, fixture.ctx("async-block-edges"))
@@ -414,6 +421,7 @@ async fn code_item_lookup_accepts_axum_callback_closure_owner() {
         owner_trait: None,
         owner_type: None,
         parent_name: Some(Cow::Borrowed("expand_attr_with")),
+        allowed_effects: Vec::new(),
     };
 
     let result = CodeItemLookup::execute(params, fixture.ctx("callback-closure-lookup"))
@@ -472,6 +480,7 @@ async fn code_item_edges_accepts_axum_callback_closure_owner() {
         owner_trait: None,
         owner_type: None,
         parent_name: Some(Cow::Borrowed("expand_attr_with")),
+        allowed_effects: Vec::new(),
     };
 
     let result = CodeItemEdges::execute(params, fixture.ctx("callback-closure-edges"))

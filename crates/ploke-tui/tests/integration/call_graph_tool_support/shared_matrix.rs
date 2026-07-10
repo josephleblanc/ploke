@@ -98,6 +98,7 @@ impl SharedCallShapeToolFixture {
             owner_trait: self.query.owner_trait.map(Cow::Borrowed),
             owner_type: self.query.owner_type.map(Cow::Borrowed),
             parent_name: None,
+            allowed_effects: Vec::new(),
         }
     }
 
@@ -110,6 +111,7 @@ impl SharedCallShapeToolFixture {
             owner_trait: self.query.owner_trait.map(Cow::Borrowed),
             owner_type: self.query.owner_type.map(Cow::Borrowed),
             parent_name: None,
+            allowed_effects: Vec::new(),
         }
     }
 

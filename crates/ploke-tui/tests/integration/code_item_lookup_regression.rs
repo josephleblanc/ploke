@@ -32,7 +32,8 @@ use crate::call_graph_tool_support::{
     assert_resolved_path_context, assert_run_ui_tests_incoming_context,
     assert_runtime_dispatch_blocker, assert_self_field_receiver_context,
     assert_self_field_receiver_proof, assert_serde_json_summary_proof, assert_target_proof,
-    assert_task_spawn_effects, assert_two_hop_call_path, ui_field,
+    assert_task_spawn_effects, assert_task_spawn_policy_violation, assert_two_hop_call_path,
+    ui_field,
 };
 
 #[tokio::test]
@@ -46,6 +47,7 @@ async fn code_item_lookup_returns_call_and_proof_context_for_call_graph_item() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        allowed_effects: Vec::new(),
     };
 
     let result = CodeItemLookup::execute(params, fixture.ctx("call-graph-lookup"))
@@ -110,6 +112,7 @@ async fn code_item_lookup_marks_unsafe_function_targets_in_call_impact() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        allowed_effects: Vec::new(),
     };
 
     let result = CodeItemLookup::execute(params, fixture.ctx("unsafe-target-lookup"))
@@ -168,6 +171,7 @@ async fn code_item_lookup_surfaces_extern_c_effect_seed() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        allowed_effects: Vec::new(),
     };
 
     let result = CodeItemLookup::execute(params, fixture.ctx("extern-c-effect-lookup"))
@@ -206,6 +210,7 @@ async fn code_item_lookup_returns_recursive_cycle_paths() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        allowed_effects: Vec::new(),
     };
 
     let result = CodeItemLookup::execute(params, fixture.ctx("recursive-lookup-cycles"))
@@ -317,6 +322,7 @@ async fn code_item_lookup_returns_branch_receiver_method_context() {
             owner_trait: None,
             owner_type: None,
             parent_name: None,
+            allowed_effects: Vec::new(),
         };
 
         let result = CodeItemLookup::execute(params, fixture.ctx("branch-receiver-lookup"))
@@ -374,6 +380,7 @@ async fn code_item_lookup_returns_branch_initialized_receiver_method_context() {
             owner_trait: None,
             owner_type: None,
             parent_name: None,
+            allowed_effects: Vec::new(),
         };
 
         let result = CodeItemLookup::execute(params, fixture.ctx("branch-init-receiver-lookup"))
@@ -431,6 +438,7 @@ async fn code_item_lookup_returns_nested_self_field_method_context() {
         owner_trait: None,
         owner_type: Some(Cow::Borrowed(fixture.owner_type)),
         parent_name: None,
+        allowed_effects: Vec::new(),
     };
 
     let result = CodeItemLookup::execute(params, fixture.ctx("nested-self-field-lookup"))
@@ -485,6 +493,7 @@ async fn code_item_lookup_returns_function_pointer_param_blocker() {
             owner_trait: None,
             owner_type: None,
             parent_name: None,
+            allowed_effects: Vec::new(),
         };
 
         let result = CodeItemLookup::execute(params, fixture.ctx("fn-pointer-param-lookup"))
@@ -632,6 +641,7 @@ async fn code_item_lookup_returns_non_awaited_async_closure_poll_resume_blockers
             owner_trait: None,
             owner_type: None,
             parent_name: None,
+            allowed_effects: Vec::new(),
         };
 
         let result = CodeItemLookup::execute(params, fixture.ctx("async-closure-blocker-lookup"))
@@ -715,6 +725,7 @@ async fn code_item_lookup_returns_multi_caller_function_pointer_param_target() {
             owner_trait: None,
             owner_type: None,
             parent_name: None,
+            allowed_effects: Vec::new(),
         };
 
         let result = CodeItemLookup::execute(params, fixture.ctx("multi-callable-param-lookup"))
@@ -780,6 +791,7 @@ async fn assert_resolved_dynamic_callable_lookup(owner_name: &'static str) {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        allowed_effects: Vec::new(),
     };
 
     let result = CodeItemLookup::execute(params, fixture.ctx("dynamic-callable-lookup"))
@@ -881,6 +893,7 @@ async fn code_item_lookup_returns_real_corpus_reachable_effects() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        allowed_effects: vec![Cow::Borrowed("ffi_boundary")],
     };
 
     let result = CodeItemLookup::execute(params, fixture.ctx("axum-task-spawn-effect-lookup"))
@@ -892,12 +905,17 @@ async fn code_item_lookup_returns_real_corpus_reachable_effects() {
         .get("call_reach_effects")
         .and_then(serde_json::Value::as_array)
         .expect("call_reach_effects array");
+    let policy_violations = payload
+        .get("call_effect_policy_violations")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_effect_policy_violations array");
 
     // Usage questions:
     //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
     //
     // Security/performance:
     //   "Can this entrypoint reach a sensitive sink?"
+    //   "Is the reachable sink outside the caller's explicit effect policy?"
     //   "Which call chain reaches a task-spawn point?"
     //
     // Source-oracle chain:
@@ -908,6 +926,11 @@ async fn code_item_lookup_returns_real_corpus_reachable_effects() {
     //   axum/src/test_helpers/test_client.rs:23
     //     `spawn_service` calls `tokio::spawn(...)`.
     assert_task_spawn_effects(effects, &fixture, "code_item_lookup call_reach_effects");
+    assert_task_spawn_policy_violation(
+        policy_violations,
+        &fixture,
+        "code_item_lookup call_effect_policy_violations",
+    );
     let owner = fixture.owner.to_string();
     assert_eq!(
         payload.get("id").and_then(serde_json::Value::as_str),
@@ -916,6 +939,10 @@ async fn code_item_lookup_returns_real_corpus_reachable_effects() {
     );
     let ui = result.ui_payload.as_ref().expect("ui payload");
     assert_eq!(ui_field(ui, "reach_effects"), effects.len().to_string());
+    assert_eq!(
+        ui_field(ui, "effect_policy_violations"),
+        policy_violations.len().to_string()
+    );
 }
 
 #[tokio::test]
@@ -930,6 +957,7 @@ async fn code_item_lookup_returns_real_corpus_await_receiver_targetless_row() {
         owner_trait: None,
         owner_type: Some(Cow::Borrowed("ConnLimiter")),
         parent_name: None,
+        allowed_effects: Vec::new(),
     };
 
     let result = CodeItemLookup::execute(params, fixture.ctx("axum-await-lookup"))
@@ -1019,6 +1047,7 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
         owner_trait: None,
         owner_type: Some(Cow::Borrowed("Request")),
         parent_name: None,
+        allowed_effects: Vec::new(),
     };
 
     let start_result = CodeItemLookup::execute(
@@ -1315,6 +1344,7 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
         owner_trait: None,
         owner_type: Some(Cow::Borrowed("Request")),
         parent_name: None,
+        allowed_effects: Vec::new(),
     };
     let boundary_result = CodeItemLookup::execute(
         boundary_params,
@@ -1377,6 +1407,7 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
         owner_trait: Some(Cow::Borrowed("FromRequest")),
         owner_type: None,
         parent_name: None,
+        allowed_effects: Vec::new(),
     };
     let target_result =
         CodeItemLookup::execute(target_params, fixture.ctx("axum-from-request-lookup-paths"))
@@ -1597,6 +1628,7 @@ async fn code_item_lookup_surfaces_proc_macro_impact_callers() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        allowed_effects: Vec::new(),
     };
 
     let result = CodeItemLookup::execute(params, fixture.ctx("axum-expand-with-impact-lookup"))
@@ -1727,6 +1759,7 @@ async fn code_item_lookup_reports_private_target_without_incoming_callers() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        allowed_effects: Vec::new(),
     };
 
     let result = CodeItemLookup::execute(params, fixture.ctx("axum-traits-zero-impact-lookup"))
@@ -1850,6 +1883,7 @@ async fn code_item_lookup_returns_incoming_callers_for_call_graph_target() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        allowed_effects: Vec::new(),
     };
 
     let result = CodeItemLookup::execute(params, fixture.ctx("call-graph-target-lookup"))
@@ -1904,6 +1938,7 @@ async fn code_item_lookup_returns_real_corpus_body_empty_callers() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        allowed_effects: Vec::new(),
     };
 
     let result = CodeItemLookup::execute(params, fixture.ctx("axum-body-empty-lookup"))
@@ -2017,6 +2052,7 @@ async fn code_item_lookup_returns_real_corpus_parse_attrs_callers() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        allowed_effects: Vec::new(),
     };
 
     let result = CodeItemLookup::execute(params, fixture.ctx("axum-parse-attrs-lookup"))
@@ -2078,6 +2114,7 @@ async fn code_item_lookup_returns_real_corpus_parse_attrs_callers() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        allowed_effects: Vec::new(),
     };
     let turbofish_result = CodeItemLookup::execute(
         turbofish_params,
@@ -2144,6 +2181,7 @@ async fn code_item_lookup_returns_real_corpus_json_from_bytes_callers() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        allowed_effects: Vec::new(),
     };
 
     let result = CodeItemLookup::execute(params, fixture.ctx("axum-json-from-bytes-lookup"))
@@ -2344,6 +2382,7 @@ async fn code_item_lookup_returns_real_corpus_boxed_into_route_constructor_calle
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        allowed_effects: Vec::new(),
     };
 
     let result = CodeItemLookup::execute(params, fixture.ctx("axum-boxed-into-route-lookup"))
@@ -2408,6 +2447,7 @@ async fn code_item_lookup_returns_real_corpus_chrono_alias_constructor_callers()
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        allowed_effects: Vec::new(),
     };
 
     let result = CodeItemLookup::execute(params, fixture.ctx("chrono-alias-constructor-lookup"))
@@ -2473,6 +2513,7 @@ async fn code_item_lookup_returns_real_corpus_chrono_option_ok_or_try_receiver_c
         owner_trait: None,
         owner_type: Some(Cow::Borrowed("DateTime")),
         parent_name: None,
+        allowed_effects: Vec::new(),
     };
 
     let result = CodeItemLookup::execute(params, fixture.ctx("chrono-naive-utc-lookup"))
@@ -2536,6 +2577,7 @@ async fn code_item_lookup_returns_real_corpus_run_ui_tests_callers() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        allowed_effects: Vec::new(),
     };
 
     let result = CodeItemLookup::execute(params, fixture.ctx("axum-run-ui-tests-lookup"))
@@ -2607,6 +2649,7 @@ async fn code_item_lookup_disambiguates_real_corpus_handler_call_by_owner_trait(
             owner_trait: None,
             owner_type: None,
             parent_name: None,
+            allowed_effects: Vec::new(),
         },
         fixture.ctx("axum-handler-call-ambiguous-lookup"),
     )
@@ -2627,6 +2670,7 @@ async fn code_item_lookup_disambiguates_real_corpus_handler_call_by_owner_trait(
             owner_trait: Some(Cow::Borrowed("Handler")),
             owner_type: None,
             parent_name: None,
+            allowed_effects: Vec::new(),
         },
         fixture.ctx("axum-handler-call-lookup"),
     )

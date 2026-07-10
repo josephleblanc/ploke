@@ -675,6 +675,7 @@ impl From<ContextPart> for ConciseContext {
             call_impact: None,
             call_reach: None,
             call_reach_effects: Vec::new(),
+            call_effect_policy_violations: Vec::new(),
             external_summary_needs: Vec::new(),
             proof_context: value.proof_context,
         }
@@ -739,6 +740,8 @@ pub struct ConciseContext {
     pub call_reach: Option<CallReachInfo>,
     #[serde(default)]
     pub call_reach_effects: Vec<CallReachEffectInfo>,
+    #[serde(default)]
+    pub call_effect_policy_violations: Vec<CallEffectPolicyViolationInfo>,
     #[serde(default)]
     pub external_summary_needs: Vec<ExternalSummaryNeedInfo>,
     #[serde(default)]
