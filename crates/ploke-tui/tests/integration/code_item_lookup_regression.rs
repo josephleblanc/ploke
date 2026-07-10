@@ -1892,6 +1892,54 @@ async fn code_item_lookup_reports_private_target_without_incoming_callers() {
             .and_then(serde_json::Value::as_str),
         Some("axum/src/lib.rs")
     );
+    let entrypoints = payload
+        .get("call_test_entrypoints")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_test_entrypoints array");
+    assert_eq!(
+        entrypoints.len(),
+        1,
+        "code_item_lookup should expose one generated-test entrypoint summary: {entrypoints:#?}"
+    );
+    let entrypoint = entrypoints[0]
+        .as_object()
+        .expect("call_test_entrypoints object");
+    assert_eq!(
+        entrypoint
+            .get("entrypoint_summary_id")
+            .and_then(serde_json::Value::as_str),
+        Some("entrypoint-summary:axum-error-handling-traits-test")
+    );
+    assert_eq!(
+        entrypoint
+            .get("definition_id")
+            .and_then(serde_json::Value::as_str),
+        Some(target_id.as_str())
+    );
+    assert_eq!(
+        entrypoint
+            .get("target_kind")
+            .and_then(serde_json::Value::as_str),
+        Some("test")
+    );
+    assert_eq!(
+        entrypoint
+            .get("target_name")
+            .and_then(serde_json::Value::as_str),
+        Some("generated-test-harness")
+    );
+    assert_eq!(
+        entrypoint
+            .get("summary_class")
+            .and_then(serde_json::Value::as_str),
+        Some("analyzed_source")
+    );
+    assert_eq!(
+        entrypoint
+            .get("required_containment")
+            .and_then(serde_json::Value::as_str),
+        Some("rust-test-harness")
+    );
 
     let ui = result.ui_payload.as_ref().expect("ui payload");
     assert_eq!(
@@ -1901,6 +1949,10 @@ async fn code_item_lookup_reports_private_target_without_incoming_callers() {
     assert_eq!(
         ui_field(ui, "call_build_domains"),
         build_domains.len().to_string()
+    );
+    assert_eq!(
+        ui_field(ui, "call_test_entrypoints"),
+        entrypoints.len().to_string()
     );
     assert_eq!(ui_field(ui, "call_context_incoming"), "0");
     assert_eq!(ui_field(ui, "call_paths_to_target"), "0");

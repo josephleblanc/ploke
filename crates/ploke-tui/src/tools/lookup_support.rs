@@ -2,8 +2,8 @@ use ploke_core::{
     io_types::EmbeddingData,
     rag_types::{
         CallBuildDomainInfo, CallContextInfo, CallEffectPolicyViolationInfo, CallImpactInfo,
-        CallPathInfo, CallReachEffectInfo, CallReachInfo, ExternalSummaryNeedInfo,
-        ProofContextInfo,
+        CallPathInfo, CallReachEffectInfo, CallReachInfo, CallTestEntrypointInfo,
+        ExternalSummaryNeedInfo, ProofContextInfo,
     },
     tool_types::ToolName,
 };
@@ -610,6 +610,25 @@ pub(super) fn call_build_domains_for_node(
     }
 }
 
+pub(super) fn call_test_entrypoints_for_node(
+    ctx: &super::Ctx,
+    node_id: Uuid,
+) -> Result<Vec<CallTestEntrypointInfo>, ploke_error::Error> {
+    use ploke_error::InternalError;
+
+    match ctx.state.rag.as_ref() {
+        Some(rag) if !rag.call_context_degraded() => Ok(rag
+            .exact_call_test_entrypoints_for_node(node_id)
+            .map_err(|err| {
+                ploke_error::Error::Internal(InternalError::CompilerError(format!(
+                    "failed to collect test entrypoints for code item {node_id}: {err}"
+                )))
+            })?
+            .unwrap_or_default()),
+        _ => Ok(Vec::new()),
+    }
+}
+
 pub(super) fn call_effect_policy_violations_for_node(
     ctx: &super::Ctx,
     node_id: Uuid,
@@ -646,6 +665,7 @@ pub(super) fn with_call_usage_fields(
     policy_violations: &[CallEffectPolicyViolationInfo],
     summary_needs: &[ExternalSummaryNeedInfo],
     build_domains: &[CallBuildDomainInfo],
+    test_entrypoints: &[CallTestEntrypointInfo],
 ) -> super::ToolUiPayload {
     payload
         .with_field(
@@ -756,6 +776,7 @@ pub(super) fn with_call_usage_fields(
         )
         .with_field("external_summary_needs", summary_needs.len().to_string())
         .with_field("call_build_domains", build_domains.len().to_string())
+        .with_field("call_test_entrypoints", test_entrypoints.len().to_string())
 }
 
 fn count(value: Option<usize>) -> String {

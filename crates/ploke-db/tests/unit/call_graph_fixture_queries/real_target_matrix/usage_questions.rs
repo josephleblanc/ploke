@@ -1292,6 +1292,37 @@ fn axum_usage_questions_list_private_nodes_without_incoming_callers() -> Result<
         domain.blocker_reasons.is_empty(),
         "admitted cfg/rustc evidence should leave the build domain unblocked: {domains:#?}"
     );
+    let entrypoints = db.call_test_entrypoints_for_node(traits)?;
+    assert_eq!(
+        entrypoints.len(),
+        1,
+        "generated test-harness entrypoint should have one typed summary: {entrypoints:#?}"
+    );
+    let entrypoint = &entrypoints[0];
+    assert_eq!(
+        entrypoint.entrypoint_summary_id,
+        "entrypoint-summary:axum-error-handling-traits-test"
+    );
+    assert_eq!(entrypoint.build_domain_id.as_deref(), Some(domain_id));
+    assert_eq!(
+        entrypoint.definition_id.as_deref(),
+        Some(traits_id.as_str())
+    );
+    assert_eq!(entrypoint.target_kind.as_deref(), Some("test"));
+    assert_eq!(
+        entrypoint.target_name.as_deref(),
+        Some("generated-test-harness")
+    );
+    assert_eq!(entrypoint.summary_class.as_deref(), Some("analyzed_source"));
+    assert_eq!(
+        entrypoint.required_containment.as_deref(),
+        Some("rust-test-harness")
+    );
+    assert_eq!(entrypoint.status.as_deref(), Some("admitted"));
+    assert!(
+        entrypoint.blocker_reasons.is_empty(),
+        "admitted entrypoint proof should not add blockers: {entrypoints:#?}"
+    );
 
     Ok(())
 }

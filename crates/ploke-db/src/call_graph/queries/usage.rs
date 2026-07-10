@@ -13,8 +13,8 @@ use crate::{
 use super::super::{
     CallBuildDomain, CallContextRow, CallEffectPolicyViolation, CallImpactReport, CallNodeInfo,
     CallPath, CallPathEdge, CallPathOptions, CallReachEffect, CallReachReport, CallRelationKind,
-    CallSiteBucket, CallSiteKind, CallSiteRow, CallStatusKind, ExternalSummaryNeed,
-    ModuleBoundaryEdge,
+    CallSiteBucket, CallSiteKind, CallSiteRow, CallStatusKind, CallTestEntrypoint,
+    ExternalSummaryNeed, ModuleBoundaryEdge,
 };
 use super::metadata::{call_node_info_rank, call_node_infos, decode_call_node_info};
 
@@ -411,6 +411,57 @@ impl Database {
             domain.blocker_reasons.dedup();
         }
         values.sort_by(|left, right| left.build_domain_id.cmp(&right.build_domain_id));
+        Ok(values)
+    }
+
+    /// Lists generated/test entrypoint proof metadata linked to a call-graph node.
+    ///
+    /// This summarizes explicit proof rows only. It keeps generated test
+    /// harness coverage separate from source call traversal, so private
+    /// uncalled queries can report proof coverage without inventing call edges.
+    pub fn call_test_entrypoints_for_node(
+        &self,
+        node_id: Uuid,
+    ) -> Result<Vec<CallTestEntrypoint>, DbError> {
+        let rows = self.proof_entrypoint_summary_rows_for_definition(&node_id.to_string())?;
+        let mut entrypoints = BTreeMap::<String, CallTestEntrypoint>::new();
+
+        for row in rows
+            .into_iter()
+            .filter(|row| row.kind == "entrypoint_summary")
+        {
+            let entrypoint_summary_id = row.fact_id.clone();
+            let entry = entrypoints
+                .entry(entrypoint_summary_id.clone())
+                .or_insert_with(|| CallTestEntrypoint {
+                    entrypoint_summary_id,
+                    build_domain_id: row.build_domain_id.clone(),
+                    definition_id: row.definition_id.clone(),
+                    target_kind: row.target_kind.clone(),
+                    target_name: row.target_name.clone(),
+                    target_root: row.target_root.clone(),
+                    summary_class: row.summary_class.clone(),
+                    artifact_hash: row.artifact_hash.clone(),
+                    summary_version: row.summary_version.clone(),
+                    review_method: row.review_method.clone(),
+                    scope_of_validity: row.scope_of_validity.clone(),
+                    required_containment: row.required_containment.clone(),
+                    invalidation_conditions: row.invalidation_conditions.clone(),
+                    status: row.status.clone(),
+                    evidence_use: row.evidence_use.clone(),
+                    blocker_reasons: Vec::new(),
+                });
+            if let Some(reason) = row.blocker_reason {
+                entry.blocker_reasons.push(reason);
+            }
+        }
+
+        let mut values = entrypoints.into_values().collect::<Vec<_>>();
+        for entrypoint in &mut values {
+            entrypoint.blocker_reasons.sort();
+            entrypoint.blocker_reasons.dedup();
+        }
+        values.sort_by(|left, right| left.entrypoint_summary_id.cmp(&right.entrypoint_summary_id));
         Ok(values)
     }
 

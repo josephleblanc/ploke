@@ -328,6 +328,8 @@ for a more fuzzy search."#
             lookup_support::external_summary_needs_for_node(&ctx, resolved_item_id)?;
         let call_build_domains =
             lookup_support::call_build_domains_for_node(&ctx, resolved_item_id)?;
+        let call_test_entrypoints =
+            lookup_support::call_test_entrypoints_for_node(&ctx, resolved_item_id)?;
         let tool_results = ctx
             .state
             .io_handle
@@ -369,6 +371,7 @@ for a more fuzzy search."#
             call_effect_policy_violations,
             external_summary_needs,
             call_build_domains,
+            call_test_entrypoints,
             proof_context: carriers.proof_context,
         };
         let call_counts =
@@ -401,6 +404,7 @@ for a more fuzzy search."#
             &concise_context.call_effect_policy_violations,
             &concise_context.external_summary_needs,
             &concise_context.call_build_domains,
+            &concise_context.call_test_entrypoints,
         )
         .with_field(
             "proof_context",

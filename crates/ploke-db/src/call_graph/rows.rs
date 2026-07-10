@@ -255,3 +255,24 @@ pub struct CallBuildDomain {
     pub evidence_use: Option<String>,
     pub blocker_reasons: Vec<String>,
 }
+
+/// Generated or external test/build entrypoint proof metadata linked to a node.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CallTestEntrypoint {
+    pub entrypoint_summary_id: String,
+    pub build_domain_id: Option<String>,
+    pub definition_id: Option<String>,
+    pub target_kind: Option<String>,
+    pub target_name: Option<String>,
+    pub target_root: Option<String>,
+    pub summary_class: Option<String>,
+    pub artifact_hash: Option<String>,
+    pub summary_version: Option<String>,
+    pub review_method: Option<String>,
+    pub scope_of_validity: Option<String>,
+    pub required_containment: Option<String>,
+    pub invalidation_conditions: Option<String>,
+    pub status: Option<String>,
+    pub evidence_use: Option<String>,
+    pub blocker_reasons: Vec<String>,
+}

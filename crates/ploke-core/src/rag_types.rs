@@ -528,6 +528,41 @@ pub struct CallBuildDomainInfo {
     pub blocker_reasons: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct CallTestEntrypointInfo {
+    pub entrypoint_summary_id: String,
+    #[serde(default)]
+    pub build_domain_id: Option<String>,
+    #[serde(default)]
+    pub definition_id: Option<String>,
+    #[serde(default)]
+    pub target_kind: Option<String>,
+    #[serde(default)]
+    pub target_name: Option<String>,
+    #[serde(default)]
+    pub target_root: Option<String>,
+    #[serde(default)]
+    pub summary_class: Option<String>,
+    #[serde(default)]
+    pub artifact_hash: Option<String>,
+    #[serde(default)]
+    pub summary_version: Option<String>,
+    #[serde(default)]
+    pub review_method: Option<String>,
+    #[serde(default)]
+    pub scope_of_validity: Option<String>,
+    #[serde(default)]
+    pub required_containment: Option<String>,
+    #[serde(default)]
+    pub invalidation_conditions: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub evidence_use: Option<String>,
+    #[serde(default)]
+    pub blocker_reasons: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialOrd, Ord, Hash, PartialEq)]
 pub struct ProofContextInfo {
     pub fact_id: String,
@@ -701,6 +736,7 @@ impl From<ContextPart> for ConciseContext {
             call_effect_policy_violations: Vec::new(),
             external_summary_needs: Vec::new(),
             call_build_domains: Vec::new(),
+            call_test_entrypoints: Vec::new(),
             proof_context: value.proof_context,
         }
     }
@@ -770,6 +806,8 @@ pub struct ConciseContext {
     pub external_summary_needs: Vec<ExternalSummaryNeedInfo>,
     #[serde(default)]
     pub call_build_domains: Vec<CallBuildDomainInfo>,
+    #[serde(default)]
+    pub call_test_entrypoints: Vec<CallTestEntrypointInfo>,
     #[serde(default)]
     pub proof_context: Vec<ProofContextInfo>,
 }

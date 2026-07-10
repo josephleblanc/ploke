@@ -80,6 +80,38 @@ async fn code_private_uncalled_lists_real_corpus_private_zero_caller_target() {
         domain.blocker_reasons.is_empty(),
         "admitted axum build-domain evidence should not add blockers: {entrypoint:#?}"
     );
+    assert_eq!(
+        entrypoint.test_entrypoints.len(),
+        1,
+        "entrypoint summary should include the typed generated-test entrypoint row: {entrypoint:#?}"
+    );
+    let test_entrypoint = &entrypoint.test_entrypoints[0];
+    assert_eq!(
+        test_entrypoint.entrypoint_summary_id,
+        "entrypoint-summary:axum-error-handling-traits-test"
+    );
+    assert_eq!(
+        test_entrypoint.definition_id.as_deref(),
+        Some(target_id.as_str())
+    );
+    assert_eq!(test_entrypoint.target_kind.as_deref(), Some("test"));
+    assert_eq!(
+        test_entrypoint.target_name.as_deref(),
+        Some("generated-test-harness")
+    );
+    assert_eq!(
+        test_entrypoint.summary_class.as_deref(),
+        Some("analyzed_source")
+    );
+    assert_eq!(
+        test_entrypoint.required_containment.as_deref(),
+        Some("rust-test-harness")
+    );
+    assert_eq!(test_entrypoint.status.as_deref(), Some("admitted"));
+    assert!(
+        test_entrypoint.blocker_reasons.is_empty(),
+        "admitted generated-test entrypoint should not add blockers: {entrypoint:#?}"
+    );
 
     assert!(payload.total >= payload.returned);
     assert_eq!(payload.truncated, payload.total > payload.returned);
@@ -92,4 +124,5 @@ async fn code_private_uncalled_lists_real_corpus_private_zero_caller_target() {
         payload.entrypoint_summaries.len().to_string()
     );
     assert_eq!(ui_field(ui, "entrypoint_build_domains"), "1");
+    assert_eq!(ui_field(ui, "entrypoint_test_summaries"), "1");
 }

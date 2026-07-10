@@ -16,7 +16,8 @@ use ploke_core::rag_types::{
     CallPathEdgeInfo, CallPathInfo, CallPathNodeInfo, CallReachEffectInfo, CallReachInfo,
     CallReceiverInfo, CallResolutionKind as RagCallResolutionKind, CallSiteBucketInfo,
     CallSiteKind as RagCallSiteKind, CallStatusKind as RagCallStatusKind, CallTargetInfo,
-    CallTargetKind, CanonPath, ExternalSummaryNeedInfo, NodeFilepath, ProofContextInfo,
+    CallTargetKind, CallTestEntrypointInfo, CanonPath, ExternalSummaryNeedInfo, NodeFilepath,
+    ProofContextInfo,
 };
 use ploke_db::{
     CallBuildDomain as DbCallBuildDomain, CallContextCandidate, CallContextOptions,
@@ -26,7 +27,8 @@ use ploke_db::{
     CallPathEdge as DbCallPathEdge, CallPathOptions, CallReachEffect as DbCallReachEffect,
     CallReachReport as DbCallReachReport, CallReceiver, CallRelationKind, CallResolutionKind,
     CallSiteKind, CallStatusKind as DbCallStatusKind, CallTargetKind as DbCallTargetKind,
-    ExternalSummaryNeed as DbExternalSummaryNeed, ProofGraphContextRow, ProofGraphStore,
+    CallTestEntrypoint as DbCallTestEntrypoint, ExternalSummaryNeed as DbExternalSummaryNeed,
+    ProofGraphContextRow, ProofGraphStore,
 };
 use ploke_embed::indexer::EmbeddingProcessor;
 use ploke_embed::runtime::EmbeddingRuntime;
@@ -553,6 +555,27 @@ fn build_domain_info(row: DbCallBuildDomain) -> CallBuildDomainInfo {
     }
 }
 
+fn test_entrypoint_info(row: DbCallTestEntrypoint) -> CallTestEntrypointInfo {
+    CallTestEntrypointInfo {
+        entrypoint_summary_id: row.entrypoint_summary_id,
+        build_domain_id: row.build_domain_id,
+        definition_id: row.definition_id,
+        target_kind: row.target_kind,
+        target_name: row.target_name,
+        target_root: row.target_root,
+        summary_class: row.summary_class,
+        artifact_hash: row.artifact_hash,
+        summary_version: row.summary_version,
+        review_method: row.review_method,
+        scope_of_validity: row.scope_of_validity,
+        required_containment: row.required_containment,
+        invalidation_conditions: row.invalidation_conditions,
+        status: row.status,
+        evidence_use: row.evidence_use,
+        blocker_reasons: row.blocker_reasons,
+    }
+}
+
 fn call_node_info(row: DbCallNodeInfo) -> CallNodeInfo {
     CallNodeInfo {
         id: row.id,
@@ -1029,6 +1052,23 @@ impl RagService {
                 .call_build_domains_for_node(node_id)?
                 .into_iter()
                 .map(build_domain_info)
+                .collect(),
+        ))
+    }
+
+    pub fn exact_call_test_entrypoints_for_node(
+        &self,
+        node_id: Uuid,
+    ) -> Result<Option<Vec<CallTestEntrypointInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .call_test_entrypoints_for_node(node_id)?
+                .into_iter()
+                .map(test_entrypoint_info)
                 .collect(),
         ))
     }
