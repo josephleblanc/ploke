@@ -11,10 +11,10 @@ use crate::{
 };
 
 use super::super::{
-    CallBuildDomain, CallContextRow, CallEffectPolicyViolation, CallImpactReport, CallNodeInfo,
-    CallPath, CallPathEdge, CallPathOptions, CallReachEffect, CallReachReport, CallRelationKind,
-    CallSiteBucket, CallSiteKind, CallSiteRow, CallStatusKind, CallTestEntrypoint,
-    ExternalSummaryNeed, ModuleBoundaryEdge,
+    CallBuildDomain, CallContextRow, CallEffectPolicyViolation, CallGuardReport, CallImpactReport,
+    CallNodeInfo, CallPath, CallPathEdge, CallPathOptions, CallReachEffect, CallReachReport,
+    CallRelationKind, CallSiteBucket, CallSiteKind, CallSiteRow, CallStatusKind,
+    CallTestEntrypoint, ExternalSummaryNeed, ModuleBoundaryEdge,
 };
 use super::metadata::{call_node_info_rank, call_node_infos, decode_call_node_info};
 
@@ -168,6 +168,51 @@ impl Database {
             source_crates: sources.crates,
             source_cfgs,
             source_modules: sources.modules,
+        })
+    }
+
+    /// Classifies source-to-target paths by whether they pass through `guard_id`.
+    ///
+    /// This is a resolved-path-only policy helper. It does not infer missing
+    /// guards from targetless frontier rows, and it treats no resolved path as
+    /// not proven guarded.
+    pub fn call_guard_report_between(
+        &self,
+        source_id: Uuid,
+        target_id: Uuid,
+        guard_id: Uuid,
+        options: CallPathOptions,
+    ) -> Result<CallGuardReport, DbError> {
+        let source = self.call_node_info(source_id)?.ok_or_else(|| {
+            DbError::Cozo(format!(
+                "missing call graph node metadata for guard source {source_id}"
+            ))
+        })?;
+        let target = self.call_node_info(target_id)?.ok_or_else(|| {
+            DbError::Cozo(format!(
+                "missing call graph node metadata for guard target {target_id}"
+            ))
+        })?;
+        let guard = self.call_node_info(guard_id)?.ok_or_else(|| {
+            DbError::Cozo(format!(
+                "missing call graph node metadata for guard node {guard_id}"
+            ))
+        })?;
+        let paths = self.call_paths_between(source_id, target_id, options)?;
+        let violations = paths
+            .iter()
+            .filter(|path| !path_has_guard(path, guard_id, target_id))
+            .cloned()
+            .collect::<Vec<_>>();
+        let guarded = !paths.is_empty() && violations.is_empty();
+
+        Ok(CallGuardReport {
+            source,
+            target,
+            guard,
+            guarded,
+            paths,
+            violations,
         })
     }
 
@@ -646,6 +691,17 @@ fn cached_call_site(
         })?;
     cache.insert(edge.call_site_id, site.clone());
     Ok(site)
+}
+
+fn path_has_guard(path: &CallPath, guard_id: Uuid, target_id: Uuid) -> bool {
+    let mut nodes = Vec::with_capacity(path.edges.len() + 1);
+    nodes.push(path.start_id);
+    nodes.extend(path.edges.iter().map(|edge| edge.callee_id));
+
+    let Some(target_pos) = nodes.iter().position(|id| *id == target_id) else {
+        return false;
+    };
+    nodes[..target_pos].iter().any(|id| *id == guard_id)
 }
 
 fn summary_effects_for_reachable_sites(

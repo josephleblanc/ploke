@@ -24,6 +24,10 @@ lazy_static::lazy_static! {
         "properties": {
             "source": { "$ref": "#/$defs/code_item_endpoint", "description": ITEM_DESC },
             "target": { "$ref": "#/$defs/code_item_endpoint", "description": ITEM_DESC },
+            "guard": {
+                "$ref": "#/$defs/code_item_endpoint",
+                "description": "Optional exact code item that must appear before target on every resolved path."
+            },
             "max_depth": { "type": "integer", "minimum": 1, "description": MAX_DEPTH_DESC },
             "max_paths": { "type": "integer", "minimum": 1, "description": MAX_PATHS_DESC }
         },
@@ -84,6 +88,8 @@ pub struct CodeItemCallPathParams<'a> {
     pub source: CodeItemCallPathEndpoint<'a>,
     #[serde(borrow)]
     pub target: CodeItemCallPathEndpoint<'a>,
+    #[serde(default, borrow)]
+    pub guard: Option<CodeItemCallPathEndpoint<'a>>,
     #[serde(default)]
     pub max_depth: Option<u32>,
     #[serde(default)]
@@ -107,6 +113,8 @@ pub struct CodeItemCallPathEndpointOwned {
 pub struct CodeItemCallPathParamsOwned {
     pub source: CodeItemCallPathEndpointOwned,
     pub target: CodeItemCallPathEndpointOwned,
+    #[serde(default)]
+    pub guard: Option<CodeItemCallPathEndpointOwned>,
     pub max_depth: Option<u32>,
     pub max_paths: Option<usize>,
 }
@@ -115,12 +123,20 @@ pub struct CodeItemCallPathParamsOwned {
 pub struct CodeItemCallPathResult {
     pub source_id: uuid::Uuid,
     pub target_id: uuid::Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guard_id: Option<uuid::Uuid>,
     pub source_file_path: NodeFilepath,
     pub target_file_path: NodeFilepath,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guard_file_path: Option<NodeFilepath>,
     pub reachable: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guarded: Option<bool>,
     pub max_depth: u32,
     pub max_paths: usize,
     pub paths: Vec<CallPathInfo>,
+    #[serde(default)]
+    pub violations: Vec<CallPathInfo>,
     pub source_files: Vec<NodeFilepath>,
     pub proof_context: Vec<ProofContextInfo>,
 }
@@ -178,6 +194,7 @@ impl Tool for CodeItemCallPath {
         CodeItemCallPathParamsOwned {
             source: endpoint_to_owned(&params.source),
             target: endpoint_to_owned(&params.target),
+            guard: params.guard.as_ref().map(endpoint_to_owned),
             max_depth: params.max_depth,
             max_paths: params.max_paths,
         }
@@ -191,6 +208,9 @@ impl Tool for CodeItemCallPath {
             })?;
         lookup_support::validate_module_path(Self::name(), params.source.module_path.as_ref())?;
         lookup_support::validate_module_path(Self::name(), params.target.module_path.as_ref())?;
+        if let Some(guard) = params.guard.as_ref() {
+            lookup_support::validate_module_path(Self::name(), guard.module_path.as_ref())?;
+        }
         Ok(params)
     }
 
@@ -203,6 +223,9 @@ impl Tool for CodeItemCallPath {
         ctx.state.is_stale_err().await?;
         validate_endpoint("source", &params.source)?;
         validate_endpoint("target", &params.target)?;
+        if let Some(guard) = params.guard.as_ref() {
+            validate_endpoint("guard", guard)?;
+        }
 
         let max_depth = params.max_depth.unwrap_or(3);
         let max_paths = params.max_paths.unwrap_or(64);
@@ -229,35 +252,62 @@ impl Tool for CodeItemCallPath {
 
         let source = resolve_endpoint(&ctx, &primary_root, &policy, &params.source)?;
         let target = resolve_endpoint(&ctx, &primary_root, &policy, &params.target)?;
-        let paths = match ctx.state.rag.as_ref() {
-            Some(rag) if !rag.call_context_degraded() => rag
-                .exact_call_paths_between(
-                    source.id,
-                    target.id,
-                    CallPathOptions {
-                        max_depth,
-                        max_paths,
-                    },
-                )
-                .map_err(|err| {
-                    ploke_error::Error::Internal(InternalError::CompilerError(format!(
-                        "failed to collect call paths between {} and {}: {err}",
-                        source.id, target.id
-                    )))
-                })?,
-            _ => Vec::new(),
+        let guard = params
+            .guard
+            .as_ref()
+            .map(|endpoint| resolve_endpoint(&ctx, &primary_root, &policy, endpoint))
+            .transpose()?;
+        let options = CallPathOptions {
+            max_depth,
+            max_paths,
         };
-        let proof_context = proof_context_for_paths(&ctx, source.id, target.id, &paths)?;
-        let source_files = source_files_for_paths(&source, &target, &paths);
+        let (paths, guarded, violations) = match (ctx.state.rag.as_ref(), guard.as_ref()) {
+            (Some(rag), Some(guard)) if !rag.call_context_degraded() => {
+                let report = rag
+                    .exact_call_guard_report_between(source.id, target.id, guard.id, options)
+                    .map_err(|err| {
+                        ploke_error::Error::Internal(InternalError::CompilerError(format!(
+                            "failed to collect guarded call paths between {} and {} through {}: {err}",
+                            source.id, target.id, guard.id
+                        )))
+                    })?;
+                match report {
+                    Some(report) => (report.paths, Some(report.guarded), report.violations),
+                    None => (Vec::new(), Some(false), Vec::new()),
+                }
+            }
+            (Some(rag), None) if !rag.call_context_degraded() => (
+                rag.exact_call_paths_between(source.id, target.id, options)
+                    .map_err(|err| {
+                        ploke_error::Error::Internal(InternalError::CompilerError(format!(
+                            "failed to collect call paths between {} and {}: {err}",
+                            source.id, target.id
+                        )))
+                    })?,
+                None,
+                Vec::new(),
+            ),
+            (_, Some(_)) => (Vec::new(), Some(false), Vec::new()),
+            _ => (Vec::new(), None, Vec::new()),
+        };
+        let guard_id = guard.as_ref().map(|guard| guard.id);
+        let proof_context = proof_context_for_paths(&ctx, source.id, target.id, guard_id, &paths)?;
+        let source_files = source_files_for_paths(&source, &target, guard.as_ref(), &paths);
         let result = CodeItemCallPathResult {
             source_id: source.id,
             target_id: target.id,
+            guard_id,
             source_file_path: NodeFilepath::new(source.rel_path.display().to_string()),
             target_file_path: NodeFilepath::new(target.rel_path.display().to_string()),
+            guard_file_path: guard
+                .as_ref()
+                .map(|guard| NodeFilepath::new(guard.rel_path.display().to_string())),
             reachable: !paths.is_empty(),
+            guarded,
             max_depth,
             max_paths,
             paths,
+            violations,
             source_files,
             proof_context,
         };
@@ -275,6 +325,14 @@ impl Tool for CodeItemCallPath {
             .with_field("proof_context", result.proof_context.len().to_string())
             .with_field("max_depth", result.max_depth.to_string())
             .with_field("max_paths", result.max_paths.to_string());
+        let ui_payload = if let Some(guard_id) = result.guard_id {
+            ui_payload
+                .with_field("guard_id", guard_id.to_string())
+                .with_field("guarded", result.guarded.unwrap_or(false).to_string())
+                .with_field("violations", result.violations.len().to_string())
+        } else {
+            ui_payload
+        };
         let content = serde_json::to_string(&result).map_err(|err| {
             ploke_error::Error::Internal(InternalError::CompilerError(format!(
                 "failed to serialize CodeItemCallPathResult: {err}. This indicates an error in the ploke application itself, not due to incorrect search terms. Please consider filing an issue on the ploke github."
@@ -344,11 +402,15 @@ fn resolve_endpoint(
 fn source_files_for_paths(
     source: &lookup_support::ResolvedToolItem,
     target: &lookup_support::ResolvedToolItem,
+    guard: Option<&lookup_support::ResolvedToolItem>,
     paths: &[CallPathInfo],
 ) -> Vec<NodeFilepath> {
     let mut files = BTreeSet::new();
     files.insert(source.rel_path.display().to_string());
     files.insert(target.rel_path.display().to_string());
+    if let Some(guard) = guard {
+        files.insert(guard.rel_path.display().to_string());
+    }
     for path in paths {
         for node in &path.nodes {
             files.insert(node.file_path.as_ref().to_string());
@@ -361,6 +423,7 @@ fn proof_context_for_paths(
     ctx: &super::Ctx,
     source_id: uuid::Uuid,
     target_id: uuid::Uuid,
+    guard_id: Option<uuid::Uuid>,
     paths: &[CallPathInfo],
 ) -> Result<Vec<ProofContextInfo>, ploke_error::Error> {
     use ploke_error::InternalError;
@@ -375,6 +438,9 @@ fn proof_context_for_paths(
     let mut ids = BTreeMap::new();
     ids.insert(source_id, ());
     ids.insert(target_id, ());
+    if let Some(guard_id) = guard_id {
+        ids.insert(guard_id, ());
+    }
     for path in paths {
         ids.insert(path.start_id, ());
         ids.insert(path.end_id, ());

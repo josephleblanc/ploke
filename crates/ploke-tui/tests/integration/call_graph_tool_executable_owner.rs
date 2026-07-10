@@ -545,6 +545,7 @@ async fn code_item_call_path_accepts_local_item_body_owner_endpoint() {
     let params = CodeItemCallPathParams {
         source: endpoint.clone(),
         target: endpoint,
+        guard: None,
         max_depth: Some(1),
         max_paths: Some(4),
     };

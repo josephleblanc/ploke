@@ -61,8 +61,24 @@ Exit criteria:
 - Add one DB assertion, one RAG assertion if exposed downstream, one TUI/tool
   assertion if exposed downstream, and one consolidated doc note.
 
-Status: latest admitted external-summary derived-effect slice completed and
-focused verification is green; ready for the next proof-carrier selection.
+Status: latest path-guard policy query slice implemented; focused verification
+is running.
+
+Latest completed slice: exact path guard/intermediate policy reports. The DB
+now exposes `call_guard_report_between(source, target, guard, options)`, which
+classifies existing resolved source-to-target paths into guarded paths and
+violations without inventing targetless traversal edges. RAG maps the same
+report through `exact_call_guard_report_between`, and the exact
+`code_item_call_path` tool accepts an optional `guard` endpoint and returns
+`guarded` plus `violations` when supplied. Real-corpus axum tests use the
+existing two-hop chains as source oracles: `RequestExt::extract ->
+extract_with_state -> FromRequest::from_request` proves the DB/RAG guarded
+method path and `from_request::expand ->
+impl_struct_by_extracting_each_field -> extract_fields` proves the TUI tool
+surface. The missing-guard negative case uses real unrelated axum-macros
+function `parse_single_generic_type_on_struct` and reports every returned
+resolved path as a violation. This is a usage-query slice only; it does not add
+authorization semantics, source/sink labels, or new resolver edges.
 
 Latest completed slice: admitted external-summary effects in reach/policy
 queries. `call_effects_reachable_from_owner` now derives reachable

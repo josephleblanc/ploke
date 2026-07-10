@@ -862,6 +862,96 @@ async fn call_paths_exact_reads_axum_request_extract_two_hop_trait_path() -> Res
 }
 
 #[tokio::test]
+async fn call_guard_exact_classifies_axum_request_extract_path_policy() -> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Security analysis / Architecture review:
+    //   "Are authorization checks always called before protected state
+    //   mutations?"
+    //   "Do any call chains bypass the intended abstraction layer?"
+    //
+    // Source-oracle chain:
+    //   axum-core/src/ext_traits/request.rs:268
+    //     `RequestExt::extract` calls `self.extract_with_state(&())`.
+    //   axum-core/src/ext_traits/request.rs:279
+    //     `RequestExt::extract_with_state` calls `E::from_request(self, state)`.
+    //   axum-core/src/extract/mod.rs:85
+    //     defines the `FromRequest::from_request` trait method binding.
+    let start = method_id_by_file(
+        &db,
+        "extract",
+        "self.extract_with_state(&())",
+        "axum-core/src/ext_traits/request.rs",
+    )?;
+    let intermediate = method_id_by_file(
+        &db,
+        "extract_with_state",
+        "E::from_request(self, state)",
+        "axum-core/src/ext_traits/request.rs",
+    )?;
+    let target = method_id_by_trait_name(&db, "FromRequest", "from_request")?;
+    let options = CallPathOptions {
+        max_depth: 2,
+        max_paths: 16,
+    };
+
+    let guarded = rag
+        .exact_call_guard_report_between(start, target, intermediate, options)?
+        .expect("call context enabled");
+    assert_eq!(guarded.source.id, start);
+    assert_eq!(guarded.target.id, target);
+    assert_eq!(guarded.guard.id, intermediate);
+    assert!(
+        guarded.guarded,
+        "RAG guard report should classify the known intermediate as covering every path: {guarded:#?}"
+    );
+    assert!(
+        guarded.violations.is_empty(),
+        "RAG guard report should not invent violations for the known intermediate: {guarded:#?}"
+    );
+    let path = guarded
+        .paths
+        .iter()
+        .find(|path| path.start_id == start && path.end_id == target && path.depth == 2)
+        .unwrap_or_else(|| panic!("expected guarded two-hop path: {guarded:#?}"));
+    assert_call_path_node(
+        path,
+        intermediate,
+        "::extract_with_state",
+        "axum-core/src/ext_traits/request.rs",
+        "RAG guarded path",
+    );
+
+    // Real unrelated node for the missing-guard case:
+    //   axum-macros/src/from_request/mod.rs:230 defines
+    //   `parse_single_generic_type_on_struct`, which is not on the
+    //   RequestExt::extract -> FromRequest::from_request path.
+    let unrelated = function_id_by_name_in_module(
+        &db,
+        &["crate", "from_request"],
+        "parse_single_generic_type_on_struct",
+    )?;
+    let unguarded = rag
+        .exact_call_guard_report_between(start, target, unrelated, options)?
+        .expect("call context enabled");
+    assert!(
+        !unguarded.guarded,
+        "RAG guard report should fail closed when the required guard is absent: {unguarded:#?}"
+    );
+    assert_eq!(
+        unguarded.violations.len(),
+        unguarded.paths.len(),
+        "RAG guard report should preserve every unguarded resolved path as a violation: {unguarded:#?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn call_paths_exact_reads_axum_from_request_free_function_two_hop_path() -> Result<(), Error>
 {
     init_tracing_once();

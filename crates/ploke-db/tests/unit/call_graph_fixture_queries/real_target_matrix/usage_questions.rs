@@ -214,6 +214,99 @@ fn axum_usage_questions_answer_direct_reachability_between_known_symbols() -> Re
 }
 
 #[test]
+fn axum_usage_questions_classify_guarded_and_unguarded_call_paths() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Security analysis / Architecture review:
+    //   "Are authorization checks always called before protected state
+    //   mutations?"
+    //   "Do any call chains bypass the intended abstraction layer?"
+    //
+    // Source-oracle chain:
+    //   axum-core/src/ext_traits/request.rs:268
+    //     `RequestExt::extract` calls `self.extract_with_state(&())`.
+    //   axum-core/src/ext_traits/request.rs:279
+    //     `RequestExt::extract_with_state` calls `E::from_request(self, state)`.
+    //   axum-core/src/extract/mod.rs:85
+    //     defines the `FromRequest::from_request` trait method binding.
+    //
+    // `extract_with_state` is used here as the required guard/intermediate:
+    // every resolved path from `extract` to `FromRequest::from_request` must
+    // pass through it before reaching the trait method binding.
+    let start = method_id_by_name_body_and_file_suffix(
+        &db,
+        "extract",
+        "self.extract_with_state(&())",
+        "axum-core/src/ext_traits/request.rs",
+    )?;
+    let intermediate = method_id_by_name_body_and_file_suffix(
+        &db,
+        "extract_with_state",
+        "E::from_request(self, state)",
+        "axum-core/src/ext_traits/request.rs",
+    )?;
+    let target = method_id_by_trait_name(&db, "FromRequest", "from_request")?;
+    let options = CallPathOptions {
+        max_depth: 2,
+        max_paths: 16,
+    };
+
+    let guarded = db.call_guard_report_between(start, target, intermediate, options)?;
+    assert_eq!(guarded.source.id, start);
+    assert_eq!(guarded.target.id, target);
+    assert_eq!(guarded.guard.id, intermediate);
+    assert!(
+        guarded.guarded,
+        "expected all paths to pass guard: {guarded:#?}"
+    );
+    assert!(
+        guarded.violations.is_empty(),
+        "guarded path report should not include violating paths: {guarded:#?}"
+    );
+    assert_path_depths(
+        &guarded
+            .paths
+            .iter()
+            .map(|path| (path.end_id, path.depth))
+            .collect::<Vec<_>>(),
+        &[(target, 2)],
+        "guarded RequestExt::extract path report",
+    );
+
+    // Real unrelated node for the missing-guard case:
+    //   axum-macros/src/from_request/mod.rs:230 defines
+    //   `parse_single_generic_type_on_struct`, which is not on the
+    //   RequestExt::extract -> FromRequest::from_request path.
+    let unrelated = function_id_by_name_in_module(
+        &db,
+        &["crate", "from_request"],
+        "parse_single_generic_type_on_struct",
+    )?;
+    let unguarded = db.call_guard_report_between(start, target, unrelated, options)?;
+    assert!(
+        !unguarded.guarded,
+        "unrelated guard should not satisfy the path policy: {unguarded:#?}"
+    );
+    assert_eq!(
+        unguarded.violations.len(),
+        unguarded.paths.len(),
+        "every reachable path should be reported as a violation when the required guard is absent: {unguarded:#?}"
+    );
+    assert!(
+        unguarded
+            .violations
+            .iter()
+            .all(|path| path.end_id == target),
+        "violating paths should still be ordinary resolved source-to-target paths: {unguarded:#?}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn axum_usage_questions_summarize_owner_reach_for_navigation() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 

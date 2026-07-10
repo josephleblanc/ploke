@@ -13,8 +13,8 @@ pub use kinds::{
 pub use receiver::CallReceiver;
 pub use rows::{
     CallBuildDomain, CallCallerRow, CallContextCandidate, CallContextOptions, CallContextRelation,
-    CallContextRow, CallContextSeed, CallEffectPolicyViolation, CallImpactReport, CallNodeContext,
-    CallNodeInfo, CallPath, CallPathEdge, CallPathOptions, CallReachEffect, CallReachReport,
-    CallResolutionRow, CallSiteBucket, CallSiteRow, CallTargetRow, CallTestEntrypoint,
-    ExternalSummaryNeed, ModuleBoundaryEdge,
+    CallContextRow, CallContextSeed, CallEffectPolicyViolation, CallGuardReport, CallImpactReport,
+    CallNodeContext, CallNodeInfo, CallPath, CallPathEdge, CallPathOptions, CallReachEffect,
+    CallReachReport, CallResolutionRow, CallSiteBucket, CallSiteRow, CallTargetRow,
+    CallTestEntrypoint, ExternalSummaryNeed, ModuleBoundaryEdge,
 };

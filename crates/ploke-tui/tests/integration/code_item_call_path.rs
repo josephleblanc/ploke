@@ -32,6 +32,7 @@ async fn code_item_call_path_returns_real_corpus_two_hop_reachability() {
             owner_type: None,
             parent_name: None,
         },
+        guard: None,
         max_depth: Some(2),
         max_paths: Some(16),
     };
@@ -146,6 +147,149 @@ fn assert_source_file(files: &[serde_json::Value], suffix: &str, label: &str) {
 }
 
 #[tokio::test]
+async fn code_item_call_path_classifies_required_guard_paths() {
+    let fixture = AxumFromRequestFreeFunctionPathToolFixture::new().await;
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Security analysis / Architecture review:
+    //   "Are authorization checks always called before protected state
+    //   mutations?"
+    //   "Do any call chains bypass the intended abstraction layer?"
+    //
+    // Source-oracle chain:
+    //   axum-macros/src/from_request/mod.rs:145
+    //     `from_request::expand` calls `impl_struct_by_extracting_each_field(...)`.
+    //   axum-macros/src/from_request/mod.rs:342
+    //     `impl_struct_by_extracting_each_field` calls `extract_fields(...)`.
+    //   axum-macros/src/from_request/mod.rs:412
+    //     defines `extract_fields`.
+    let base_source = CodeItemCallPathEndpoint {
+        item_name: Cow::Borrowed("expand"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("function"),
+        module_path: Cow::Owned(fixture.module_path_arg()),
+        owner_trait: None,
+        owner_type: None,
+        parent_name: None,
+    };
+    let base_target = CodeItemCallPathEndpoint {
+        item_name: Cow::Borrowed("extract_fields"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("function"),
+        module_path: Cow::Owned(fixture.module_path_arg()),
+        owner_trait: None,
+        owner_type: None,
+        parent_name: None,
+    };
+    let guarded_params = CodeItemCallPathParams {
+        source: base_source.clone(),
+        target: base_target.clone(),
+        guard: Some(CodeItemCallPathEndpoint {
+            item_name: Cow::Borrowed("impl_struct_by_extracting_each_field"),
+            file_path: Cow::Owned(fixture.file_path.display().to_string()),
+            node_kind: Cow::Borrowed("function"),
+            module_path: Cow::Owned(fixture.module_path_arg()),
+            owner_trait: None,
+            owner_type: None,
+            parent_name: None,
+        }),
+        max_depth: Some(2),
+        max_paths: Some(128),
+    };
+
+    let result = CodeItemCallPath::execute(
+        guarded_params,
+        fixture.ctx("axum-free-function-guarded-call-path"),
+    )
+    .await
+    .expect("guarded tool execution");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize guarded result");
+    assert_eq!(
+        payload.get("guard_id").and_then(serde_json::Value::as_str),
+        Some(fixture.intermediate.to_string().as_str())
+    );
+    assert_eq!(
+        payload.get("guarded").and_then(serde_json::Value::as_bool),
+        Some(true),
+        "known intermediate should guard every returned path: {payload:#?}"
+    );
+    let paths = payload
+        .get("paths")
+        .and_then(serde_json::Value::as_array)
+        .expect("guarded paths array");
+    assert_two_hop_call_path(
+        paths,
+        fixture.start,
+        fixture.intermediate,
+        fixture.target,
+        "guarded code_item_call_path paths",
+    );
+    assert!(
+        payload
+            .get("violations")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(Vec::is_empty),
+        "known intermediate should not produce violating paths: {payload:#?}"
+    );
+    let ui = result.ui_payload.as_ref().expect("guarded ui payload");
+    assert_eq!(ui_field(ui, "guard_id"), fixture.intermediate.to_string());
+    assert_eq!(ui_field(ui, "guarded"), "true");
+    assert_eq!(ui_field(ui, "violations"), "0");
+
+    // Real unrelated node for the missing-guard case:
+    //   axum-macros/src/from_request/mod.rs:230 defines
+    //   `parse_single_generic_type_on_struct`, which is not on the
+    //   from_request::expand -> extract_fields path.
+    let unguarded_params = CodeItemCallPathParams {
+        source: base_source,
+        target: base_target,
+        guard: Some(CodeItemCallPathEndpoint {
+            item_name: Cow::Borrowed("parse_single_generic_type_on_struct"),
+            file_path: Cow::Owned(fixture.file_path.display().to_string()),
+            node_kind: Cow::Borrowed("function"),
+            module_path: Cow::Owned(fixture.module_path_arg()),
+            owner_trait: None,
+            owner_type: None,
+            parent_name: None,
+        }),
+        max_depth: Some(2),
+        max_paths: Some(128),
+    };
+    let result = CodeItemCallPath::execute(
+        unguarded_params,
+        fixture.ctx("axum-free-function-unguarded-call-path"),
+    )
+    .await
+    .expect("unguarded tool execution");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize unguarded result");
+    assert_eq!(
+        payload.get("guarded").and_then(serde_json::Value::as_bool),
+        Some(false),
+        "unrelated guard should fail the path policy: {payload:#?}"
+    );
+    let paths = payload
+        .get("paths")
+        .and_then(serde_json::Value::as_array)
+        .expect("unguarded paths array");
+    let violations = payload
+        .get("violations")
+        .and_then(serde_json::Value::as_array)
+        .expect("violations array");
+    assert_eq!(
+        violations.len(),
+        paths.len(),
+        "every returned path should be reported as a violation when guard is absent: {payload:#?}"
+    );
+    let ui = result.ui_payload.as_ref().expect("unguarded ui payload");
+    assert_eq!(ui_field(ui, "guarded"), "false");
+    assert_eq!(ui_field(ui, "violations"), violations.len().to_string());
+}
+
+#[tokio::test]
 async fn code_item_call_path_returns_real_corpus_free_function_two_hop_reachability() {
     let fixture = AxumFromRequestFreeFunctionPathToolFixture::new().await;
     let params = CodeItemCallPathParams {
@@ -167,6 +311,7 @@ async fn code_item_call_path_returns_real_corpus_free_function_two_hop_reachabil
             owner_type: None,
             parent_name: None,
         },
+        guard: None,
         max_depth: Some(2),
         max_paths: Some(128),
     };

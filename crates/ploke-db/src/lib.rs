@@ -23,12 +23,12 @@ pub mod workspace;
 pub mod multi_embedding;
 pub use call_graph::{
     CallBuildDomain, CallCallerRow, CallContextCandidate, CallContextOptions, CallContextRelation,
-    CallContextRow, CallContextSeed, CallEffectPolicyViolation, CallImpactReport, CallNodeContext,
-    CallNodeInfo, CallNodeKind, CallPath, CallPathEdge, CallPathOptions, CallReachEffect,
-    CallReachReport, CallReceiver, CallRelationKind, CallResolutionKind, CallResolutionRow,
-    CallSiteBucket, CallSiteKind, CallSiteRow, CallStatusKind, CallTargetKind, CallTargetRow,
-    CallTestEntrypoint, ExternalSummaryNeed, ModuleBoundaryEdge, call_target_endpoint_relation,
-    valid_call_target_family,
+    CallContextRow, CallContextSeed, CallEffectPolicyViolation, CallGuardReport, CallImpactReport,
+    CallNodeContext, CallNodeInfo, CallNodeKind, CallPath, CallPathEdge, CallPathOptions,
+    CallReachEffect, CallReachReport, CallReceiver, CallRelationKind, CallResolutionKind,
+    CallResolutionRow, CallSiteBucket, CallSiteKind, CallSiteRow, CallStatusKind, CallTargetKind,
+    CallTargetRow, CallTestEntrypoint, ExternalSummaryNeed, ModuleBoundaryEdge,
+    call_target_endpoint_relation, valid_call_target_family,
 };
 pub use database::RestoredEmbeddingSet;
 pub use database::{

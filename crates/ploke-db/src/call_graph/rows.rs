@@ -146,6 +146,17 @@ pub struct CallPath {
     pub edges: Vec<CallPathEdge>,
 }
 
+/// Resolved source-to-target paths classified by a required guard node.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CallGuardReport {
+    pub source: CallNodeInfo,
+    pub target: CallNodeInfo,
+    pub guard: CallNodeInfo,
+    pub guarded: bool,
+    pub paths: Vec<CallPath>,
+    pub violations: Vec<CallPath>,
+}
+
 /// Resolved direct call edge whose caller and callee live in different modules.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ModuleBoundaryEdge {
