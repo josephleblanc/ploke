@@ -61,7 +61,17 @@ Exit criteria:
 - Add one DB assertion, one RAG assertion if exposed downstream, one TUI/tool
   assertion if exposed downstream, and one consolidated doc note.
 
-Status: ready for selection; no implementation slice is currently selected.
+Status: latest execution-policy summary slice completed and verified; ready
+for the next proof-carrier selection.
+
+Latest completed slice: build/test entrypoint execution-policy summaries.
+`call_test_entrypoints_for_node` now attaches `allowed_effects` from the
+single admitted `effect_policy` linked to the same definition, but only after
+an `entrypoint_summary` exists. DB, RAG, exact `code_item_lookup`, exact
+`code_item_edges`, and `code_private_uncalled` real-corpus axum assertions now
+prove that the generated test-harness entrypoint for `error_handling::traits`
+carries `ffi_boundary` execution-policy metadata while still preserving zero
+incoming source-call paths and no synthetic traversal edge.
 
 Latest completed slice: dynamic self-field callee evidence and downstream
 call-context path payloads. Parser, transform, DB, RAG, and exact TUI tests now
@@ -106,14 +116,14 @@ public callable parameter blockers, fixture test-body macro blockers, dynamic
 self-field evidence payloads, the axum-core `request_parts.rs:164` tuple-return
 receiver row, routing helper macro/generated rows, generated
 `IntoServiceFuture::new` rows, caller-supplied effect-policy allowlist queries,
-exact tool policy inputs, generated test entrypoint payloads, and persisted
-effect-policy proof annotations are now covered or intentionally fail-closed.
-The memchr boxed `dyn FnMut` rows are likewise covered as explicit blockers.
-Do not revisit those families unless the implementation adds new proof input
-such as macro-expanded/generated source bodies, async poll/resume execution
-proof, interprocedural callable argument/value-flow, broader callable
-trait-object dispatch, additional source/sink policy annotation families, or
-build/test entrypoint execution-policy summaries.
+exact tool policy inputs, generated test entrypoint payloads, build/test
+entrypoint execution-policy summaries, and persisted effect-policy proof
+annotations are now covered or intentionally fail-closed. The memchr boxed
+`dyn FnMut` rows are likewise covered as explicit blockers. Do not revisit
+those families unless the implementation adds new proof input such as
+macro-expanded/generated source bodies, async poll/resume execution proof,
+interprocedural callable argument/value-flow, broader callable trait-object
+dispatch, or additional source/sink policy annotation families.
 
 Previous completed bucket: persisted source/sink effect-policy proof
 annotations.

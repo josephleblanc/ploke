@@ -108,6 +108,10 @@ async fn code_private_uncalled_lists_real_corpus_private_zero_caller_target() {
         Some("rust-test-harness")
     );
     assert_eq!(test_entrypoint.status.as_deref(), Some("admitted"));
+    assert_eq!(
+        test_entrypoint.allowed_effects,
+        vec!["ffi_boundary".to_string()]
+    );
     assert!(
         test_entrypoint.blocker_reasons.is_empty(),
         "admitted generated-test entrypoint should not add blockers: {entrypoint:#?}"

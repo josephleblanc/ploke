@@ -119,6 +119,27 @@ pub fn axum_entrypoint_record(domain_id: &str, definition_id: Uuid) -> serde_jso
     })
 }
 
+pub fn axum_entrypoint_effect_policy_record(
+    domain_id: &str,
+    definition_id: Uuid,
+    allowed_effects: &[&str],
+) -> serde_json::Value {
+    serde_json::json!({
+        "fact_kind": "effect_policy",
+        "schema_version": "ploke-proof-facts.v1",
+        "effect_policy_id": "effect-policy:axum-error-handling-traits-test",
+        "build_domain_id": domain_id,
+        "definition_id": definition_id.to_string(),
+        "proof_policy_version": "axum-call-graph-test-entrypoint-policy-v1",
+        "review_method": "source-oracle-review",
+        "scope_of_validity": "axum error_handling::traits generated #[test] harness execution policy in corpus_axum_call_graph",
+        "allowed_effects": allowed_effects,
+        "invalidation_conditions": "source oracle, fixture hash, or proof policy changes",
+        "status": "admitted",
+        "evidence_use": "proof_only"
+    })
+}
+
 pub fn axum_request_builder_summary_records(call_site_id: Uuid) -> Vec<serde_json::Value> {
     let site = call_site_id.to_string();
     let mut records = axum_call_graph_domain_records(AXUM_CALL_GRAPH_DOMAIN_ID);

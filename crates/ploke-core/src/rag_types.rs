@@ -562,6 +562,8 @@ pub struct CallTestEntrypointInfo {
     #[serde(default)]
     pub evidence_use: Option<String>,
     #[serde(default)]
+    pub allowed_effects: Vec<String>,
+    #[serde(default)]
     pub blocker_reasons: Vec<String>,
 }
 

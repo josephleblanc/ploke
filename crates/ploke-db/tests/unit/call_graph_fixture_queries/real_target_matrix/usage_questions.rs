@@ -1260,6 +1260,11 @@ fn axum_usage_questions_list_private_nodes_without_incoming_callers() -> Result<
     let domain_id = "bd:corpus-axum-call-graph";
     let mut records = axum_domain_records(domain_id);
     records.push(ploke_test_utils::axum_entrypoint_record(domain_id, traits));
+    records.push(ploke_test_utils::axum_entrypoint_effect_policy_record(
+        domain_id,
+        traits,
+        &["ffi_boundary"],
+    ));
     db.upsert_proof_fact_values(&records)?;
     let traits_id = traits.to_string();
     let proof_rows = db.proof_symbol_lookup(&traits_id)?;
@@ -1319,6 +1324,7 @@ fn axum_usage_questions_list_private_nodes_without_incoming_callers() -> Result<
         Some("rust-test-harness")
     );
     assert_eq!(entrypoint.status.as_deref(), Some("admitted"));
+    assert_eq!(entrypoint.allowed_effects, vec!["ffi_boundary".to_string()]);
     assert!(
         entrypoint.blocker_reasons.is_empty(),
         "admitted entrypoint proof should not add blockers: {entrypoints:#?}"

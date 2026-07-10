@@ -274,5 +274,6 @@ pub struct CallTestEntrypoint {
     pub invalidation_conditions: Option<String>,
     pub status: Option<String>,
     pub evidence_use: Option<String>,
+    pub allowed_effects: Vec<String>,
     pub blocker_reasons: Vec<String>,
 }

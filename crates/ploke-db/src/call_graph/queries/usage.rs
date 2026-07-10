@@ -419,11 +419,21 @@ impl Database {
     /// This summarizes explicit proof rows only. It keeps generated test
     /// harness coverage separate from source call traversal, so private
     /// uncalled queries can report proof coverage without inventing call edges.
+    /// When the same definition has a single admitted `effect_policy` row, the
+    /// policy's allowed effects are included as execution-policy metadata.
     pub fn call_test_entrypoints_for_node(
         &self,
         node_id: Uuid,
     ) -> Result<Vec<CallTestEntrypoint>, DbError> {
-        let rows = self.proof_entrypoint_summary_rows_for_definition(&node_id.to_string())?;
+        let definition_id = node_id.to_string();
+        let rows = self.proof_entrypoint_summary_rows_for_definition(&definition_id)?;
+        if !rows.iter().any(|row| row.kind == "entrypoint_summary") {
+            return Ok(Vec::new());
+        }
+
+        let allowed_effects = self
+            .admitted_effect_policy_allowed_effects_for_definition(&definition_id)?
+            .unwrap_or_default();
         let mut entrypoints = BTreeMap::<String, CallTestEntrypoint>::new();
 
         for row in rows
@@ -449,6 +459,7 @@ impl Database {
                     invalidation_conditions: row.invalidation_conditions.clone(),
                     status: row.status.clone(),
                     evidence_use: row.evidence_use.clone(),
+                    allowed_effects: allowed_effects.clone(),
                     blocker_reasons: Vec::new(),
                 });
             if let Some(reason) = row.blocker_reason {

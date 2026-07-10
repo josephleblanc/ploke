@@ -37,7 +37,7 @@ pub use proof_fact_fixtures::{
     AXUM_SERDE_JSON_FROM_SLICE_SUMMARY_ID, AXUM_STD_MEM_REPLACE_SUMMARY_ID,
     axum_body_empty_dependency_record, axum_body_empty_reexport_dependency_record,
     axum_call_graph_domain_records, axum_callback_parameter_blocker, axum_dependency_record,
-    axum_dyn_future_poll_blocker, axum_entrypoint_record,
+    axum_dyn_future_poll_blocker, axum_entrypoint_effect_policy_record, axum_entrypoint_record,
     axum_handler_async_block_poll_resume_blocker, axum_opaque_future_boundary_id,
     axum_opaque_future_macro_summary_records, axum_request_builder_summary_records,
     axum_router_new_dependency_record, axum_routing_post_boundary_id,

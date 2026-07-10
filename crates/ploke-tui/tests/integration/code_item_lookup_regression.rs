@@ -1941,6 +1941,17 @@ async fn code_item_lookup_reports_private_target_without_incoming_callers() {
             .and_then(serde_json::Value::as_str),
         Some("rust-test-harness")
     );
+    let allowed_effects = entrypoint
+        .get("allowed_effects")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_test_entrypoints.allowed_effects array");
+    assert_eq!(
+        allowed_effects
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .collect::<Vec<_>>(),
+        vec!["ffi_boundary"]
+    );
 
     let ui = result.ui_payload.as_ref().expect("ui payload");
     assert_eq!(

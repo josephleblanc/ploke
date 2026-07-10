@@ -573,6 +573,7 @@ fn test_entrypoint_info(row: DbCallTestEntrypoint) -> CallTestEntrypointInfo {
         invalidation_conditions: row.invalidation_conditions,
         status: row.status,
         evidence_use: row.evidence_use,
+        allowed_effects: row.allowed_effects,
         blocker_reasons: row.blocker_reasons,
     }
 }

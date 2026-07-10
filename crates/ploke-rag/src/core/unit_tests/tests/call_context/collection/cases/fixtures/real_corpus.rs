@@ -1634,6 +1634,11 @@ async fn call_impact_exact_reports_private_target_without_incoming_callers() -> 
     let domain_id = "bd:corpus-axum-call-graph";
     let mut records = ploke_test_utils::axum_call_graph_domain_records(domain_id);
     records.push(ploke_test_utils::axum_entrypoint_record(domain_id, target));
+    records.push(ploke_test_utils::axum_entrypoint_effect_policy_record(
+        domain_id,
+        target,
+        &["ffi_boundary"],
+    ));
     db.upsert_proof_fact_values(&records)?;
     let target_id = target.to_string();
     let proof_rag = init_test_rag_mock(Arc::clone(&db));
@@ -1695,6 +1700,7 @@ async fn call_impact_exact_reports_private_target_without_incoming_callers() -> 
         Some("rust-test-harness")
     );
     assert_eq!(entrypoint.status.as_deref(), Some("admitted"));
+    assert_eq!(entrypoint.allowed_effects, vec!["ffi_boundary".to_string()]);
     assert!(
         entrypoint.blocker_reasons.is_empty(),
         "RAG admitted entrypoint summary should remain unblocked: {entrypoints:#?}"

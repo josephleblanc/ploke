@@ -585,6 +585,11 @@ impl AxumErrorHandlingTraitsToolFixture {
         records.push(ploke_test_utils::axum_entrypoint_record(
             domain_id, target.id,
         ));
+        records.push(ploke_test_utils::axum_entrypoint_effect_policy_record(
+            domain_id,
+            target.id,
+            &["ffi_boundary"],
+        ));
         db.upsert_proof_fact_values(&records)
             .expect("admit generated test-harness entrypoint summary");
         let state = axum_state_for_target(Arc::clone(&db), &target, "error_handling::traits").await;
