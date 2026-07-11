@@ -34,7 +34,8 @@ enum ParameterProof<'a> {
     Field(&'a [String]),
 }
 
-const PARAMETER_FORWARDING_DEPTH: usize = 1;
+// Bound interprocedural callable-parameter proof to explicit private forwarding chains.
+const PARAMETER_FORWARDING_DEPTH: usize = 2;
 
 impl CallRelationResolver<'_> {
     pub(super) fn resolve_path_call(

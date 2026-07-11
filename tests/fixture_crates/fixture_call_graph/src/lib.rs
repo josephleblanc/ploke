@@ -2000,3 +2000,39 @@ pub fn call_forwarded_conflicting_named_field_param_with_other_target() -> i32 {
         callback: other_target,
     })
 }
+
+fn call_two_hop_forwarded_function_pointer_leaf(f: fn() -> i32) -> i32 {
+    f()
+}
+
+fn call_two_hop_forwarded_function_pointer_middle(f: fn() -> i32) -> i32 {
+    call_two_hop_forwarded_function_pointer_leaf(f)
+}
+
+fn call_two_hop_forwarded_function_pointer_wrapper(f: fn() -> i32) -> i32 {
+    call_two_hop_forwarded_function_pointer_middle(f)
+}
+
+pub fn call_two_hop_forwarded_function_pointer_param_with_local_target() -> i32 {
+    call_two_hop_forwarded_function_pointer_wrapper(local_target)
+}
+
+fn call_two_hop_forwarded_conflicting_function_pointer_leaf(f: fn() -> i32) -> i32 {
+    f()
+}
+
+fn call_two_hop_forwarded_conflicting_function_pointer_middle(f: fn() -> i32) -> i32 {
+    call_two_hop_forwarded_conflicting_function_pointer_leaf(f)
+}
+
+fn call_two_hop_forwarded_conflicting_function_pointer_wrapper(f: fn() -> i32) -> i32 {
+    call_two_hop_forwarded_conflicting_function_pointer_middle(f)
+}
+
+pub fn call_two_hop_forwarded_conflicting_function_pointer_param_with_local_target() -> i32 {
+    call_two_hop_forwarded_conflicting_function_pointer_wrapper(local_target)
+}
+
+pub fn call_two_hop_forwarded_conflicting_function_pointer_param_with_other_target() -> i32 {
+    call_two_hop_forwarded_conflicting_function_pointer_wrapper(other_target)
+}

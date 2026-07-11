@@ -226,6 +226,10 @@ impl CallableParamResolvedFixture {
         Self::new_for_owner("call_forwarded_function_pointer_leaf", &["f"], 6).await
     }
 
+    pub(crate) async fn two_hop_forwarded_function_pointer_leaf() -> Self {
+        Self::new_for_owner("call_two_hop_forwarded_function_pointer_leaf", &["f"], 6).await
+    }
+
     pub(crate) async fn multi_generic_fn_once_param() -> Self {
         Self::new_for_owner("call_multi_generic_fn_once_param", &["generic_f"], 9).await
     }

@@ -1376,6 +1376,10 @@ async fn code_item_edges_returns_multi_caller_function_pointer_param_target() {
     //   tests/fixture_crates/fixture_call_graph/src/lib.rs:1942-1951
     //     private `call_forwarded_function_pointer_leaf(f)` resolves through a
     //     private wrapper whose complete caller set passes `local_target`.
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:2004-2018
+    //     private `call_two_hop_forwarded_function_pointer_leaf(f)` resolves
+    //     through two private forwarding helpers whose complete caller set
+    //     passes `local_target`.
     //   tests/fixture_crates/fixture_call_graph/src/lib.rs:1764-1768
     //     private `call_multi_generic_fn_once_param(generic_f)` calls
     //     `generic_f()`.
@@ -1384,6 +1388,7 @@ async fn code_item_edges_returns_multi_caller_function_pointer_param_target() {
     for fixture in [
         CallableParamResolvedFixture::multi_function_pointer_param().await,
         CallableParamResolvedFixture::forwarded_function_pointer_leaf().await,
+        CallableParamResolvedFixture::two_hop_forwarded_function_pointer_leaf().await,
         CallableParamResolvedFixture::multi_generic_fn_once_param().await,
     ] {
         let params = EdgesParams {

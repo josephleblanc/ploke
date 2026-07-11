@@ -61,11 +61,25 @@ Exit criteria:
 - Add one DB assertion, one RAG assertion if exposed downstream, one TUI/tool
   assertion if exposed downstream, and one consolidated doc note.
 
-Status: generic-array method-result local receiver fixture/oracle refresh
-completed for DB coverage. The resolver already classifies
+Status: bounded two-hop private callable-parameter forwarding completed for
+fixture-backed parser, DB, RAG, and exact TUI surfaces. The resolver now follows
+complete private function-pointer parameter forwarding through two explicit
+private helper calls. The positive source oracle
+`call_two_hop_forwarded_function_pointer_param_with_local_target ->
+call_two_hop_forwarded_function_pointer_wrapper ->
+call_two_hop_forwarded_function_pointer_middle ->
+call_two_hop_forwarded_function_pointer_leaf -> local_target` traverses as four
+ordinary function edges. The conflicting paired source oracle still preserves
+`local_target` and `other_target` as ambiguous path candidates on the leaf and
+does not create a resolved caller-to-target path. This slice does not add
+arbitrary interprocedural value-flow, public API caller inference, field-holder
+two-hop forwarding, or callable trait-object dispatch.
+
+Previous status: generic-array method-result local receiver fixture/oracle
+refresh completed for DB coverage. The resolver already classifies
 `let iter = iter.into_iter(); iter.size_hint()` as an external targetless
 frontier when the initializer parameter has a visible external `IntoIterator`
-bound; this slice refreshed the real-corpus fixture and shared matrix from the
+bound; that slice refreshed the real-corpus fixture and shared matrix from the
 old unsupported oracle to that exact receiver proof. Verification passed for
 `corpus_generic_array_call_graph`, `corpus_chrono_call_graph`, and
 `corpus_memchr_call_graph` backup checks, plus the DB shared matrix and focused

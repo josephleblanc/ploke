@@ -447,6 +447,112 @@ fn fixture_context_resolves_one_hop_forwarded_function_pointer_parameter() -> Re
 }
 
 #[test]
+fn fixture_context_resolves_two_hop_forwarded_function_pointer_parameter() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let leaf = function_id_by_name(&db, "call_two_hop_forwarded_function_pointer_leaf")?;
+    let middle = function_id_by_name(&db, "call_two_hop_forwarded_function_pointer_middle")?;
+    let wrapper = function_id_by_name(&db, "call_two_hop_forwarded_function_pointer_wrapper")?;
+    let caller = function_id_by_name(
+        &db,
+        "call_two_hop_forwarded_function_pointer_param_with_local_target",
+    )?;
+    let target = function_id_by_name(&db, "local_target")?;
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:2004-2018:
+    // `leaf(f) { f() }` receives `f` through two private forwarding helpers.
+    // The complete local caller set still supplies `local_target`, so the
+    // bounded two-hop value-forwarding proof can emit a real traversal path.
+    let context = db.call_context_for_owner(leaf)?;
+    assert_eq!(
+        context.len(),
+        1,
+        "two-hop forwarded leaf context rows: {context:#?}"
+    );
+    let row = row_by_path(&context, &["f"]);
+    assert_eq!(row.site.owner_id, leaf);
+    assert_eq!(row.site.arg_count, Some(0));
+    assert_resolved_target(
+        row,
+        target,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
+
+    let middle_context = db.call_context_for_owner(middle)?;
+    let leaf_call = row_by_path(
+        &middle_context,
+        &["call_two_hop_forwarded_function_pointer_leaf"],
+    );
+    assert_resolved_target(
+        leaf_call,
+        leaf,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
+
+    let wrapper_context = db.call_context_for_owner(wrapper)?;
+    let middle_call = row_by_path(
+        &wrapper_context,
+        &["call_two_hop_forwarded_function_pointer_middle"],
+    );
+    assert_resolved_target(
+        middle_call,
+        middle,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
+
+    let caller_context = db.call_context_for_owner(caller)?;
+    let wrapper_call = row_by_path(
+        &caller_context,
+        &["call_two_hop_forwarded_function_pointer_wrapper"],
+    );
+    assert_resolved_target(
+        wrapper_call,
+        wrapper,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
+
+    let paths = db.call_paths_between(
+        caller,
+        target,
+        CallPathOptions {
+            max_depth: 4,
+            max_paths: 8,
+        },
+    )?;
+    let path = paths
+        .iter()
+        .find(|path| path.start_id == caller && path.end_id == target && path.depth == 4)
+        .unwrap_or_else(|| {
+            panic!(
+                "two-hop forwarded caller should traverse caller -> wrapper -> middle -> leaf -> target: {paths:#?}"
+            )
+        });
+    assert_eq!(path.edges[0].caller_id, caller);
+    assert_eq!(path.edges[0].callee_id, wrapper);
+    assert_eq!(path.edges[1].caller_id, wrapper);
+    assert_eq!(path.edges[1].callee_id, middle);
+    assert_eq!(path.edges[2].caller_id, middle);
+    assert_eq!(path.edges[2].callee_id, leaf);
+    assert_eq!(path.edges[3].caller_id, leaf);
+    assert_eq!(path.edges[3].callee_id, target);
+    assert!(
+        path.edges
+            .iter()
+            .all(|edge| edge.relation == CallRelationKind::Function),
+        "two-hop forwarded path should be ordinary function traversal edges: {path:#?}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn fixture_context_resolves_one_hop_forwarded_named_field_parameter() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let leaf = function_id_by_name(&db, "call_forwarded_named_field_leaf")?;
@@ -567,6 +673,90 @@ fn fixture_context_preserves_forwarded_conflicting_function_pointer_candidates()
         CallRelationKind::Function,
         CallSiteKind::Path,
         CallTargetKind::Function,
+    );
+
+    Ok(())
+}
+
+#[test]
+fn fixture_context_preserves_two_hop_forwarded_conflicting_function_pointer_candidates()
+-> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let expected = dynamic_candidates(&db)?;
+    let leaf = function_id_by_name(
+        &db,
+        "call_two_hop_forwarded_conflicting_function_pointer_leaf",
+    )?;
+    let middle = function_id_by_name(
+        &db,
+        "call_two_hop_forwarded_conflicting_function_pointer_middle",
+    )?;
+    let wrapper = function_id_by_name(
+        &db,
+        "call_two_hop_forwarded_conflicting_function_pointer_wrapper",
+    )?;
+    let caller = function_id_by_name(
+        &db,
+        "call_two_hop_forwarded_conflicting_function_pointer_param_with_local_target",
+    )?;
+    let target = function_id_by_name(&db, "local_target")?;
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:2020-2038:
+    // the leaf receives `f` through two private forwarding helpers, but the
+    // wrapper's complete local caller set supplies both `local_target` and
+    // `other_target`. The leaf keeps candidate proof and does not become a
+    // resolved traversal edge.
+    let context = db.call_context_for_owner(leaf)?;
+    assert_eq!(
+        context.len(),
+        1,
+        "two-hop forwarded conflicting leaf context rows: {context:#?}"
+    );
+    assert_path_function_candidates(
+        &context[0],
+        leaf,
+        &["f"],
+        &expected,
+        "two-hop forwarded conflicting function-pointer leaf",
+    );
+
+    let middle_context = db.call_context_for_owner(middle)?;
+    let leaf_call = row_by_path(
+        &middle_context,
+        &["call_two_hop_forwarded_conflicting_function_pointer_leaf"],
+    );
+    assert_resolved_target(
+        leaf_call,
+        leaf,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
+
+    let wrapper_context = db.call_context_for_owner(wrapper)?;
+    let middle_call = row_by_path(
+        &wrapper_context,
+        &["call_two_hop_forwarded_conflicting_function_pointer_middle"],
+    );
+    assert_resolved_target(
+        middle_call,
+        middle,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
+
+    let paths = db.call_paths_between(
+        caller,
+        target,
+        CallPathOptions {
+            max_depth: 4,
+            max_paths: 8,
+        },
+    )?;
+    assert!(
+        paths.is_empty(),
+        "ambiguous two-hop forwarded candidates must not become a resolved caller -> target path: {paths:#?}"
     );
 
     Ok(())

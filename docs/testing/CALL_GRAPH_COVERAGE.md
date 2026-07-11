@@ -51,7 +51,7 @@ The most useful companion documents are:
 | Method calls | `self.method()`, typed/local/initialized/borrowed/dereferenced receiver methods | Structural receiver payload and exact local method or trait-impl target when proven | Covered for bounded local proof shapes |
 | Associated functions | `Self::make()`, `Type::make()`, trait associated function paths, imported aliases | Associated-function relation to exact method target | Covered for visible local proof shapes |
 | Constructors | Tuple struct and tuple enum variant constructor syntax, including module-qualified local tuple constructors such as `private::ServeFuture(...)` | Refined constructor relation only for proven callable constructors | Covered |
-| Dynamic calls | Parenthesized paths, initialized callable bindings, branch/match callees, callable fields, closure literals, returned callables | Exact dynamic function or closure edges only with finite proof; ambiguous candidates preserved without resolved edge | Broad partial coverage |
+| Dynamic calls | Parenthesized paths, initialized callable bindings, branch/match callees, callable fields, closure literals, returned callables, bounded private callable forwarding | Exact dynamic function or closure edges only with finite proof; ambiguous candidates preserved without resolved edge | Broad partial coverage |
 | Closures and local items | Closure bodies, async closures, async blocks, local const/static/fn/impl method bodies | Nested calls are owned by executable owners and not flattened into enclosing functions | Covered for current fixture and selected axum rows |
 | Macro calls | Expression, statement, imported, crate-qualified, item macro invocations | Macro callsites persist as structural unsupported rows unless expanded source is parsed | Covered structurally |
 | External/frontier rows | `std`, dependency roots, extern C, external receiver methods | External rows remain targetless unless proof-summary semantics explicitly admit a summary | Covered as fail-closed/frontier rows |
@@ -80,7 +80,7 @@ The most useful companion documents are:
 | Proc-macro body owners | axum-macros | Public proc-macro entrypoints traverse to local helpers such as `expand_with` and `expand_attr_with`. |
 | Local executable owners | axum | Closure, async-block, local const/static/fn, and local impl method owners are exact-addressable where persisted. |
 | External frontiers | axum, chrono, local fixture | External dependency, std-root, extern C, and external receiver rows stay targetless unless explicitly summarized. |
-| Dynamic/callable fallbacks | axum, memchr | Callable fields, callback parameters, boxed dyn callable rows, and arbitrary expression dynamic callees remain visible blockers unless exact local proof exists. |
+| Dynamic/callable fallbacks | axum, memchr | Callable fields, callback parameters, boxed dyn callable rows, and arbitrary expression dynamic callees remain visible blockers unless exact local proof exists. Fixture coverage includes complete private callable-parameter forwarding through two explicit helper calls, with conflicting caller targets kept ambiguous and edge-free. |
 | Source metadata and usage questions | axum | Source files/modules/crates/cfgs, public/test buckets, architecture boundaries, dead-code, and effect seeds are covered by usage-question tests. |
 
 ## RAG and TUI Coverage
@@ -100,7 +100,7 @@ The most useful companion documents are:
 These are intentionally not claimed as solved:
 
 - Broad Rust method resolution, autoderef/autoref, and complete trait selection.
-- Arbitrary interprocedural callable value flow.
+- Arbitrary interprocedural callable value flow beyond bounded complete-private-caller forwarding.
 - Callable trait-object dispatch without exact initializer or complete private-caller proof.
 - General async poll/resume, returned futures, and non-immediate future value flow.
 - Macro-expanded generated source bodies as normal parsed call graph nodes.

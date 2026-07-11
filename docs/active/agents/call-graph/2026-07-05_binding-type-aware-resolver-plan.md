@@ -464,11 +464,12 @@ The nearby completed positive rows already cover private complete caller sets,
 same-target multi-caller sets, branch/match same-parameter forms, typed local
 function items, boxed callable initializers, returned closures, exact local
 receiver proof, ambiguous local callable initialization with candidate-only
-proof, conflicting complete value-parameter candidate proof, and conflicting
-complete named-field candidate proof. The next semantic slice should therefore
-introduce a new proof carrier, or add one
-explicitly sourced real-corpus/dependency-root oracle, rather than reworking
-these fail-closed parser rows.
+proof, conflicting complete value-parameter candidate proof, conflicting
+complete named-field candidate proof, and bounded two-hop private
+function-pointer parameter forwarding with conflicting two-hop candidates kept
+ambiguous and edge-free. The next semantic slice should therefore introduce a
+new proof carrier, or add one explicitly sourced real-corpus/dependency-root
+oracle, rather than reworking these fail-closed parser rows.
 
 ## Implementation Order
 
