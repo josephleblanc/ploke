@@ -153,6 +153,21 @@ passed:
 - `cargo test -p ploke-tui request_code_context_returns_result_field_receiver_call_context --lib -- --nocapture`
 - `cargo test -p ploke-tui request_code_context_returns_result_field_receiver_proof_context --lib -- --nocapture`
 
+On 2026-07-11 active fixtures were regenerated after adding the
+fixture-backed awaited local async method-result receiver proof for
+`source.ready_assoc().await.instance_value()`. Verification passed:
+
+- `cargo run -p xtask --features call_graph -- fixtures regenerate --active`
+- `cargo test -p syn_parser --features call_graph fixture_call_graph_call_await_method_result_instance_method_resolves_awaited_method_receiver_call_site -- --nocapture`
+- `cargo test -p ploke-db fixture_context_reads_projected_result_receiver_method_chains --test mod -- --nocapture`
+- `cargo test -p ploke-db fixture_projection_stores_real_result_and_field_receiver_method_call_proof_facts --test mod -- --nocapture`
+- `cargo test -p ploke-db fixture_projection_stores_real_target_centered_method_call_proof_facts --test mod -- --nocapture`
+- `cargo test -p ploke-db fixture_callers_for_target_reads_method_and_associated_callers --test mod -- --nocapture`
+- `cargo test -p ploke-rag call_context_collection_reads_real_result_field_receiver_rows --lib -- --nocapture`
+- `cargo test -p ploke-rag proof_context_collection_preserves_projected_result_field_receiver_rows --lib -- --nocapture`
+- `cargo test -p ploke-tui request_code_context_returns_result_field_receiver_call_context --lib -- --nocapture`
+- `cargo test -p ploke-tui request_code_context_returns_result_field_receiver_proof_context --lib -- --nocapture`
+
 On 2026-07-10 the call graph schema added `call_callee_evidence` to preserve
 typed parser callee evidence for async closure bindings. Active fixtures were
 regenerated and the real-corpus committed call-graph seeds were refreshed from

@@ -48,6 +48,8 @@ fn fixture_context_preserves_path_result_owner_order_and_targets() -> Result<(),
 fn fixture_context_reads_projected_result_receiver_method_chains() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let method_target = method_id_by_impl_self_type_name(&db, "LocalAssoc", "instance_value")?;
+    let ready_method_target =
+        method_id_by_impl_self_type_name(&db, "AwaitLocalAssocMethodResultSource", "ready_assoc")?;
 
     let owner = function_id_by_name(&db, "call_method_result_instance_method")?;
     let clone_target = method_id_by_impl_self_type_name(&db, "LocalAssoc", "clone_assoc")?;
@@ -203,6 +205,39 @@ fn fixture_context_reads_projected_result_receiver_method_chains() -> Result<(),
         path: path(&["make_ready_local_assoc"]),
     };
     let row = row_by_method_receiver(&context, "instance_value", &await_receiver);
+    assert_resolved_target(
+        row,
+        method_target,
+        CallRelationKind::Method,
+        CallSiteKind::Method,
+        CallTargetKind::Method,
+    );
+
+    let owner = function_id_by_name(&db, "call_await_method_result_instance_method")?;
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(
+        context.len(),
+        2,
+        "await-method-result context rows: {context:#?}"
+    );
+
+    let inner_receiver = CallReceiver::InitializedLocalBinding {
+        name: "source".to_string(),
+        init_path: path(&["AwaitLocalAssocMethodResultSource"]),
+    };
+    let row = row_by_method_receiver(&context, "ready_assoc", &inner_receiver);
+    assert_resolved_target(
+        row,
+        ready_method_target,
+        CallRelationKind::Method,
+        CallSiteKind::Method,
+        CallTargetKind::Method,
+    );
+
+    let await_method_receiver = CallReceiver::AwaitMethodCallResult {
+        method_name: "ready_assoc".to_string(),
+    };
+    let row = row_by_method_receiver(&context, "instance_value", &await_method_receiver);
     assert_resolved_target(
         row,
         method_target,

@@ -44,6 +44,10 @@ async fn request_code_context_returns_result_field_receiver_call_context() -> co
         &db,
         &function_in_module_query(&["crate"], "make_ready_local_assoc"),
     )?;
+    let ready_method_target = one_uuid(
+        &db,
+        &method_by_impl_self_query("AwaitLocalAssocMethodResultSource", "ready_assoc"),
+    )?;
     let tuple_target = one_uuid(
         &db,
         &struct_in_module_query(&["crate"], "TupleFieldMethodReceiver"),
@@ -209,6 +213,41 @@ async fn request_code_context_returns_result_field_receiver_call_context() -> co
                         "instance_value",
                         CallReceiverInfo::AwaitPathCallResult {
                             path: path(&["make_ready_local_assoc"]),
+                        },
+                    ),
+                    target: method_target,
+                    relation: CallTargetKind::Method,
+                },
+            ],
+        },
+        Case {
+            label: "await method-call result receiver",
+            search_term: "call_await_method_result_instance_method",
+            top_k: 1,
+            call_id: "await_method_result_receiver_call_context",
+            owner: one_uuid(
+                &db,
+                &function_in_module_query(&["crate"], "call_await_method_result_instance_method"),
+            )?,
+            calls: vec![
+                ExpectedCall {
+                    kind: CallSiteKind::Method,
+                    callee: method_call(
+                        "ready_assoc",
+                        CallReceiverInfo::InitializedLocalBinding {
+                            name: "source".to_string(),
+                            init_path: path(&["AwaitLocalAssocMethodResultSource"]),
+                        },
+                    ),
+                    target: ready_method_target,
+                    relation: CallTargetKind::Method,
+                },
+                ExpectedCall {
+                    kind: CallSiteKind::Method,
+                    callee: method_call(
+                        "instance_value",
+                        CallReceiverInfo::AwaitMethodCallResult {
+                            method_name: "ready_assoc".to_string(),
                         },
                     ),
                     target: method_target,

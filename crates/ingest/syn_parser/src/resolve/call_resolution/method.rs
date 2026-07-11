@@ -145,7 +145,9 @@ impl CallRelationResolver<'_> {
             MethodCallReceiver::AwaitPathCallResult { path } => {
                 self.resolve_path_result_method_call(call, path, type_relations)?
             }
-            MethodCallReceiver::AwaitMethodCallResult { .. } => AssocPathResolution::Unsupported,
+            MethodCallReceiver::AwaitMethodCallResult { method_name } => {
+                self.resolve_await_method_result_method_call(call, method_name, type_relations)?
+            }
             MethodCallReceiver::TryPathCallResult { path } => {
                 self.resolve_try_path_result_method_call(call, path, type_relations)?
             }
@@ -1474,6 +1476,32 @@ impl CallRelationResolver<'_> {
         }
     }
 
+    fn resolve_await_method_result_method_call(
+        &self,
+        call: &MethodCallNode,
+        inner_method_name: &str,
+        type_relations: &[TypeRelation],
+    ) -> Result<AssocPathResolution, SynParserError> {
+        let Some(inner_call) = self.direct_inner_method_call(call, inner_method_name) else {
+            return Ok(AssocPathResolution::Unsupported);
+        };
+
+        let inner_resolution = self.resolve_method_call_target(inner_call, type_relations)?;
+        match inner_resolution {
+            AssocPathResolution::Resolved(method_id) if self.method_is_async(method_id)? => self
+                .resolve_method_return_type_method(
+                    call.owner,
+                    method_id,
+                    &call.method_name,
+                    type_relations,
+                ),
+            AssocPathResolution::Resolved(_) => Ok(AssocPathResolution::Unsupported),
+            AssocPathResolution::Unresolved => Ok(AssocPathResolution::Unresolved),
+            AssocPathResolution::Ambiguous => Ok(AssocPathResolution::Ambiguous),
+            AssocPathResolution::Unsupported => Ok(AssocPathResolution::Unsupported),
+        }
+    }
+
     fn resolve_local_result_method_call(
         &self,
         call: &MethodCallNode,
@@ -1729,8 +1757,8 @@ impl CallRelationResolver<'_> {
             MethodCallReceiver::AwaitPathCallResult { path } => {
                 self.resolve_path_result_method_call(call, path, type_relations)
             }
-            MethodCallReceiver::AwaitMethodCallResult { .. } => {
-                Ok(AssocPathResolution::Unsupported)
+            MethodCallReceiver::AwaitMethodCallResult { method_name } => {
+                self.resolve_await_method_result_method_call(call, method_name, type_relations)
             }
             MethodCallReceiver::TryPathCallResult { path } => {
                 self.resolve_try_path_result_method_call(call, path, type_relations)

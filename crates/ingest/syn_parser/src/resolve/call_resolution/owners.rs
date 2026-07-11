@@ -136,6 +136,35 @@ impl CallRelationResolver<'_> {
         }
     }
 
+    pub(super) fn method_is_async(&self, method_id: MethodNodeId) -> Result<bool, SynParserError> {
+        let mut async_values = self
+            .graph
+            .impls()
+            .iter()
+            .flat_map(|node| node.methods.iter())
+            .chain(
+                self.graph
+                    .traits()
+                    .iter()
+                    .flat_map(|node| node.methods.iter()),
+            )
+            .filter(|method| method.id == method_id)
+            .map(|method| method.is_async)
+            .collect::<Vec<_>>();
+        async_values.sort_unstable();
+        async_values.dedup();
+
+        match async_values.as_slice() {
+            [is_async] => Ok(*is_async),
+            [] => Err(SynParserError::InternalState(format!(
+                "call resolution found awaited method result to missing method {method_id}"
+            ))),
+            _ => Err(SynParserError::InternalState(format!(
+                "call resolution found conflicting async flags for method {method_id}"
+            ))),
+        }
+    }
+
     pub(super) fn owner_parameters(
         &self,
         owner: CallBodyOwnerId,

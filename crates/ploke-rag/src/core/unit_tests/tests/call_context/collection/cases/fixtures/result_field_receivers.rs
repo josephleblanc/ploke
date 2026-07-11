@@ -29,6 +29,10 @@ async fn call_context_collection_reads_real_result_field_receiver_rows() -> Resu
         &db,
         &function_in_module_query(&["crate"], "make_ready_local_assoc"),
     )?;
+    let ready_method_target = one_uuid(
+        &db,
+        &method_by_impl_self_query("AwaitLocalAssocMethodResultSource", "ready_assoc"),
+    )?;
     let tuple_target = one_uuid(
         &db,
         &struct_in_module_query(&["crate"], "TupleFieldMethodReceiver"),
@@ -213,6 +217,38 @@ async fn call_context_collection_reads_real_result_field_receiver_rows() -> Resu
                         "instance_value",
                         CallReceiverInfo::AwaitPathCallResult {
                             path: path(&["make_ready_local_assoc"]),
+                        },
+                    ),
+                    target: method_target,
+                    relation: CallTargetKind::Method,
+                },
+            ],
+        },
+        CallCase {
+            label: "await method-call result receiver",
+            owner: one_uuid(
+                &db,
+                &function_in_module_query(&["crate"], "call_await_method_result_instance_method"),
+            )?,
+            calls: vec![
+                ExpectedCall {
+                    kind: CallSiteKind::Method,
+                    callee: method_call(
+                        "ready_assoc",
+                        CallReceiverInfo::InitializedLocalBinding {
+                            name: "source".to_string(),
+                            init_path: path(&["AwaitLocalAssocMethodResultSource"]),
+                        },
+                    ),
+                    target: ready_method_target,
+                    relation: CallTargetKind::Method,
+                },
+                ExpectedCall {
+                    kind: CallSiteKind::Method,
+                    callee: method_call(
+                        "instance_value",
+                        CallReceiverInfo::AwaitMethodCallResult {
+                            method_name: "ready_assoc".to_string(),
                         },
                     ),
                     target: method_target,

@@ -2084,3 +2084,16 @@ pub fn call_method_result_binding_instance_method() -> i32 {
     let cloned = value.clone_assoc();
     cloned.instance_value()
 }
+
+pub struct AwaitLocalAssocMethodResultSource;
+
+impl AwaitLocalAssocMethodResultSource {
+    pub async fn ready_assoc(&self) -> LocalAssoc {
+        LocalAssoc
+    }
+}
+
+pub async fn call_await_method_result_instance_method() -> i32 {
+    let source = AwaitLocalAssocMethodResultSource;
+    source.ready_assoc().await.instance_value()
+}

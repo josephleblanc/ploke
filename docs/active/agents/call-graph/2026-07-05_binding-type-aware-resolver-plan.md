@@ -267,7 +267,23 @@ should prevent future resumes from reselecting already-covered shapes.
    - Opaque external `?` chains and method-result receivers without exact inner
      method return-type proof remain targetless or unsupported.
 
-13. Immediate awaited async-closure binding proof - completed:
+13. Bounded awaited local method-result receiver proof - completed:
+   - `call_await_method_result_instance_method()` records
+     `source.ready_assoc().await.instance_value()` as an awaited method-result
+     chain where the outer receiver is
+     `AwaitMethodCallResult { method_name: "ready_assoc" }`.
+   - The resolver first resolves the direct inner `ready_assoc` method, requires
+     that method target to be declared `async`, reads its declared `LocalAssoc`
+     return type, and then reuses exact local instance-method lookup for
+     `instance_value`.
+   - Non-async methods that merely return future-like values, external awaited
+     method results, unresolved/ambiguous inner calls, and broader poll/resume
+     semantics remain targetless or unsupported.
+   - Parser, DB context/proof, target-centered caller proof, RAG call/proof
+     context, exact `request_code_context` assertions, and active fixture
+     regeneration cover the fixture-backed positive row.
+
+14. Immediate awaited async-closure binding proof - completed:
    - Parser local binding proof now records whether a visible closure binding
      is async, so `closure()` can fail closed when the returned future is not
      immediately awaited.
@@ -456,8 +472,9 @@ should prevent future resumes from reselecting already-covered shapes.
 
 ## Remaining Focused Unsupported Inventory
 
-Status checkpoint: 2026-07-11 after method-result local-binding receiver proof
-passed fixture-backed parser, DB, RAG, and TUI focused verification. Earlier
+Status checkpoint: 2026-07-11 after bounded awaited local method-result receiver
+proof passed active fixture regeneration and fixture-backed parser, DB, RAG, and
+TUI focused verification. Earlier method-result local-binding receiver proof,
 bounded two-hop private holder-field forwarding, conflicting callable value and
 named-field candidate proof batches, public callable field/indexed blocker
 proof surfacing, and async closure callee-evidence proof blockers remain
@@ -486,8 +503,9 @@ complete named-field candidate proof, bounded two-hop private function-pointer
 parameter forwarding, and bounded two-hop private named holder-field forwarding
 with conflicting two-hop candidates kept ambiguous and edge-free, plus
 method-result local bindings that point at an exact same-owner method
-initializer call. The next semantic slice should therefore introduce a new
-proof carrier, or add one
+initializer call and awaited method-result chains whose inner method resolves to
+an exact local async method. The next semantic slice should therefore introduce a
+new proof carrier, or add one
 explicitly sourced real-corpus/dependency-root oracle, rather than reworking
 these fail-closed parser rows.
 

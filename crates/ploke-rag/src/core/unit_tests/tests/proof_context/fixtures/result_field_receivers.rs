@@ -28,6 +28,10 @@ async fn proof_context_collection_preserves_projected_result_field_receiver_rows
         &db,
         &function_in_module_query(&["crate"], "make_ready_local_assoc"),
     )?;
+    let ready_method_target = one_uuid(
+        &db,
+        &method_by_impl_self_query("AwaitLocalAssocMethodResultSource", "ready_assoc"),
+    )?;
     let tuple_target = one_uuid(
         &db,
         &struct_in_module_query(&["crate"], "TupleFieldMethodReceiver"),
@@ -91,6 +95,15 @@ async fn proof_context_collection_preserves_projected_result_field_receiver_rows
                 &function_in_module_query(&["crate"], "call_await_result_instance_method"),
             )?,
             targets: vec![ready_target, method_target],
+            fact_count: 6,
+        },
+        Case {
+            label: "await method-call result receiver",
+            owner: one_uuid(
+                &db,
+                &function_in_module_query(&["crate"], "call_await_method_result_instance_method"),
+            )?,
+            targets: vec![ready_method_target, method_target],
             fact_count: 6,
         },
         Case {

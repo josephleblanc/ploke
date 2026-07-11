@@ -198,6 +198,11 @@ Implemented/scaffolded:
     type when the nested call occurrence, inner target, and outer method target
     are all proven exactly; `Self` returns are interpreted through the inner
     method's owning impl.
+  - awaited method-call result receivers such as
+    `source.ready_assoc().await.method()` resolve through the exact local async
+    inner method's declared return type when the awaited method target and outer
+    method target are both proven exactly; non-async future-returning methods
+    and external awaited method results remain targetless/unsupported.
   - local bindings initialized by exact method-call results, such as
     `let cloned = value.clone_assoc(); cloned.method()`, resolve through the
     recorded initializer method span and that inner method's exact local return
@@ -954,7 +959,8 @@ Post-gate evidence, 2026-06-23:
   constrained-generic-self, and blanket trait method proof edge projection.
 - `cargo test -p ploke-db --features call_graph result_and_field_receiver_method_call_proof -- --nocapture`
   passed with `1 passed` for real resolved path/method/await result receiver
-  method chains and tuple-field receiver method proof edge projection.
+  method chains, including awaited local async method-result receivers, and
+  tuple-field receiver method proof edge projection.
 - `cargo test -p ploke-db --features call_graph target_centered_call_proof -- --nocapture`
   passed with `1 passed` for target-centered proof projection from the real
   `try_local_assoc` incoming caller edge. `cargo test -p ploke-db --features call_graph target_centered_method_call_proof -- --nocapture`
