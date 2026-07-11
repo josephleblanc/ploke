@@ -143,7 +143,7 @@ impl AxumRemainingTarget {
             Self::PositionFirst => 1,
             Self::HandleErrorNew => 2,
             Self::RequestExtExtract => 1,
-            Self::RequestPartsExtExtract => 2,
+            Self::RequestPartsExtExtract => 3,
             Self::FromRequest => 2,
             Self::FromRequestParts => 4,
             Self::FromRef => 4,
@@ -517,6 +517,17 @@ fn supported_receiver_info(
         Some(ploke_db::CallReceiver::LocalBinding { name }) => {
             Some(CallReceiverInfo::LocalBinding { name })
         }
+        Some(ploke_db::CallReceiver::TupleMethodReturn {
+            name,
+            method_name,
+            method_span,
+            index,
+        }) => Some(CallReceiverInfo::TupleMethodReturn {
+            name,
+            method_name,
+            method_span,
+            index,
+        }),
         other => {
             panic!("{label} remaining supported method caller has unexpected receiver {other:?}")
         }

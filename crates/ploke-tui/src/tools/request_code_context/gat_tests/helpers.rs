@@ -14,6 +14,8 @@ use std::sync::Arc;
 use tokio::time::{Duration, sleep};
 use uuid::Uuid;
 
+const DEFAULT_CALL_CONTEXT_HITS: usize = 64;
+
 pub(in super::super) async fn execute_fixture_request(
     db: &Arc<Database>,
     search_term: &str,
@@ -24,15 +26,50 @@ pub(in super::super) async fn execute_fixture_request(
     Ok(serde_json::from_str(&tool_result.content)?)
 }
 
+pub(in super::super) async fn execute_fixture_request_with_max_caller_hits(
+    db: &Arc<Database>,
+    search_term: &str,
+    top_k: usize,
+    call_id: &'static str,
+    max_caller_hits: usize,
+) -> color_eyre::Result<RequestCodeContextResult> {
+    let tool_result = execute_fixture_tool_request_with_max_caller_hits(
+        db,
+        search_term,
+        top_k,
+        call_id,
+        max_caller_hits,
+    )
+    .await?;
+    Ok(serde_json::from_str(&tool_result.content)?)
+}
+
 pub(in super::super) async fn execute_fixture_tool_request(
     db: &Arc<Database>,
     search_term: &str,
     top_k: usize,
     call_id: &'static str,
 ) -> color_eyre::Result<ToolResult> {
+    execute_fixture_tool_request_with_max_caller_hits(
+        db,
+        search_term,
+        top_k,
+        call_id,
+        DEFAULT_CALL_CONTEXT_HITS,
+    )
+    .await
+}
+
+pub(in super::super) async fn execute_fixture_tool_request_with_max_caller_hits(
+    db: &Arc<Database>,
+    search_term: &str,
+    top_k: usize,
+    call_id: &'static str,
+    max_caller_hits: usize,
+) -> color_eyre::Result<ToolResult> {
     let mut rag_config = RagConfig::default();
-    rag_config.call_context.max_owner_hits = 64;
-    rag_config.call_context.max_caller_hits = 64;
+    rag_config.call_context.max_owner_hits = DEFAULT_CALL_CONTEXT_HITS;
+    rag_config.call_context.max_caller_hits = max_caller_hits;
     rag_config.proof_context.max_rows_per_part = 64;
     let rt = TestRuntime::new_with_embedding_processor_and_rag_config(
         db,
@@ -47,8 +84,8 @@ pub(in super::super) async fn execute_fixture_tool_request(
         cfg.rag.strategy = RetrievalStrategyUser::Sparse { strict: true };
         cfg.rag.top_k = top_k;
         cfg.rag.per_part_max_tokens = 4096;
-        cfg.rag.call_context.max_owner_hits = 64;
-        cfg.rag.call_context.max_caller_hits = 64;
+        cfg.rag.call_context.max_owner_hits = DEFAULT_CALL_CONTEXT_HITS;
+        cfg.rag.call_context.max_caller_hits = max_caller_hits;
         cfg.token_limit = 65_536;
     }
     let rag = state

@@ -1,7 +1,8 @@
 use super::*;
 
 use super::helpers::{
-    assert_result_ok, execute_fixture_request, execute_fixture_tool_request, ui_field,
+    assert_result_ok, execute_fixture_request, execute_fixture_request_with_max_caller_hits,
+    execute_fixture_tool_request, execute_fixture_tool_request_with_max_caller_hits, ui_field,
 };
 use ploke_core::rag_types::{
     CallCalleeInfo, CallContextInfo, CallExpansionKind, CallReceiverInfo, CallResolutionKind,

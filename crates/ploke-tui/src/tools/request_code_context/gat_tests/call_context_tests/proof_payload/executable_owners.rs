@@ -38,7 +38,7 @@ async fn request_code_context_returns_async_block_owner_projected_proof_context(
         &function_in_module_query(&["crate"], "async_block_call_is_not_outer_call_site"),
     )?;
     let async_body = async_block_owner_for_parent(&db, outer)?;
-    assert_owner_projected_proof_context(
+    assert_owner_projected_proof_context_with_max_caller_hits(
         &db,
         target,
         async_body,
@@ -46,6 +46,7 @@ async fn request_code_context_returns_async_block_owner_projected_proof_context(
         "pub fn local_target",
         &["local_target"],
         "async_block_owner_projected_proof_context",
+        1024,
     )
     .await
 }
@@ -149,13 +150,43 @@ async fn assert_owner_projected_proof_context(
     callee_path: &[&str],
     request_label: &'static str,
 ) -> color_eyre::Result<()> {
+    assert_owner_projected_proof_context_with_max_caller_hits(
+        db,
+        target,
+        owner,
+        label,
+        search_term,
+        callee_path,
+        request_label,
+        64,
+    )
+    .await
+}
+
+async fn assert_owner_projected_proof_context_with_max_caller_hits(
+    db: &Arc<Database>,
+    target: Uuid,
+    owner: Uuid,
+    label: &str,
+    search_term: &str,
+    callee_path: &[&str],
+    request_label: &'static str,
+    max_caller_hits: usize,
+) -> color_eyre::Result<()> {
     assert_eq!(
         db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?,
         3,
         "{label} owner should project call_site, call_edge, and call_resolution facts"
     );
 
-    let tool_result = execute_fixture_tool_request(db, search_term, 1, request_label).await?;
+    let tool_result = execute_fixture_tool_request_with_max_caller_hits(
+        db,
+        search_term,
+        1,
+        request_label,
+        max_caller_hits,
+    )
+    .await?;
     let result: RequestCodeContextResult = serde_json::from_str(&tool_result.content)?;
     assert_result_ok(&result, search_term, 1, "fixture_call_graph");
     assert!(

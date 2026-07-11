@@ -70,8 +70,14 @@ async fn request_code_context_returns_async_block_owner_call_context_for_local_t
     )?;
     let async_body = async_block_owner_for_parent(&db, outer)?;
 
-    let result =
-        execute_fixture_request(&db, "pub fn local_target", 1, "async_block_call_context").await?;
+    let result = execute_fixture_request_with_max_caller_hits(
+        &db,
+        "pub fn local_target",
+        1,
+        "async_block_call_context",
+        1024,
+    )
+    .await?;
     assert_result_ok(&result, "pub fn local_target", 1, "fixture_call_graph");
 
     assert!(

@@ -23,8 +23,8 @@ async fn request_code_context_preserves_ambiguous_target_candidate_proof_context
     let site_id = context[0].site.id.to_string();
     assert_eq!(
         db.project_call_proof_facts_for_target(target, "bd:fixture-call-graph")?,
-        4,
-        "two ambiguous dynamic callers should each project call_site and call_resolution facts"
+        16,
+        "ambiguous target candidates should project the current fixture call_site and call_resolution facts"
     );
 
     let tool_result =
