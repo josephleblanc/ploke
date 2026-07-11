@@ -18,7 +18,7 @@ use ploke_core::rag_types::{
     CallResolutionKind as RagCallResolutionKind, CallSiteBucketInfo,
     CallSiteKind as RagCallSiteKind, CallStatusKind as RagCallStatusKind, CallTargetInfo,
     CallTargetKind, CallTestEntrypointInfo, CanonPath, ExternalSummaryNeedInfo,
-    ModuleBoundaryEdgeInfo, NodeFilepath, ProofContextInfo,
+    ModuleBoundaryEdgeInfo, ModuleBoundaryPolicyViolationInfo, NodeFilepath, ProofContextInfo,
 };
 use ploke_db::{
     CallBuildDomain as DbCallBuildDomain, CallContextCandidate, CallContextOptions,
@@ -32,7 +32,9 @@ use ploke_db::{
     CallSiteKind, CallSiteRow, CallStatusKind as DbCallStatusKind,
     CallTargetKind as DbCallTargetKind, CallTestEntrypoint as DbCallTestEntrypoint,
     ExternalSummaryNeed as DbExternalSummaryNeed, ModuleBoundaryEdge as DbModuleBoundaryEdge,
-    ProofGraphContextRow, ProofGraphStore,
+    ModuleBoundaryPolicyRule as DbModuleBoundaryPolicyRule,
+    ModuleBoundaryPolicyViolation as DbModuleBoundaryPolicyViolation, ProofGraphContextRow,
+    ProofGraphStore,
 };
 use ploke_embed::indexer::EmbeddingProcessor;
 use ploke_embed::runtime::EmbeddingRuntime;
@@ -605,6 +607,15 @@ fn module_boundary_edge_info(
                 relation: target_kind(edge.relation),
             }],
         },
+    })
+}
+
+fn module_boundary_policy_violation_info(
+    row: DbModuleBoundaryPolicyViolation,
+) -> Result<ModuleBoundaryPolicyViolationInfo, RagError> {
+    Ok(ModuleBoundaryPolicyViolationInfo {
+        rule_id: row.rule_id,
+        edge: module_boundary_edge_info(row.edge)?,
     })
 }
 
@@ -1219,6 +1230,25 @@ impl RagService {
                 .module_boundary_edges_from_owner(owner_id, options)?
                 .into_iter()
                 .map(module_boundary_edge_info)
+                .collect::<Result<Vec<_>, RagError>>()?,
+        ))
+    }
+
+    pub fn exact_module_boundary_policy_violations_from_owner(
+        &self,
+        owner_id: Uuid,
+        options: CallPathOptions,
+        rules: &[DbModuleBoundaryPolicyRule],
+    ) -> Result<Option<Vec<ModuleBoundaryPolicyViolationInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .module_boundary_policy_violations_from_owner(owner_id, options, rules)?
+                .into_iter()
+                .map(module_boundary_policy_violation_info)
                 .collect::<Result<Vec<_>, RagError>>()?,
         ))
     }

@@ -166,6 +166,21 @@ pub struct ModuleBoundaryEdge {
     pub site: CallSiteRow,
 }
 
+/// Caller-supplied architecture rule that marks a module boundary as forbidden.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ModuleBoundaryPolicyRule {
+    pub rule_id: String,
+    pub caller_module_prefix: Vec<String>,
+    pub callee_module_prefix: Vec<String>,
+}
+
+/// Resolved module-boundary edge that matched a forbidden architecture rule.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ModuleBoundaryPolicyViolation {
+    pub rule_id: String,
+    pub edge: ModuleBoundaryEdge,
+}
+
 /// Stable source metadata for a node that participates in call-graph queries.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CallNodeInfo {

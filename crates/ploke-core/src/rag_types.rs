@@ -516,6 +516,12 @@ pub struct ModuleBoundaryEdgeInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct ModuleBoundaryPolicyViolationInfo {
+    pub rule_id: String,
+    pub edge: ModuleBoundaryEdgeInfo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct CallReachEffectInfo {
     pub effect_seed_id: String,
     pub effect_class: String,

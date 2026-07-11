@@ -15,7 +15,7 @@ use super::super::{
     CallGuardReport, CallImpactReport, CallNodeInfo, CallPath, CallPathEdge, CallPathOptions,
     CallProofInvariantFinding, CallReachEffect, CallReachReport, CallRelationKind, CallSiteBucket,
     CallSiteKind, CallSiteRow, CallStatusKind, CallTestEntrypoint, ExternalSummaryNeed,
-    ModuleBoundaryEdge,
+    ModuleBoundaryEdge, ModuleBoundaryPolicyRule, ModuleBoundaryPolicyViolation,
 };
 use super::metadata::{call_node_info_rank, call_node_infos, decode_call_node_info};
 
@@ -755,6 +755,84 @@ incoming[id] := *call_relation {{ target_id: id @ 'NOW' }}
         });
         Ok(edges)
     }
+
+    /// Lists resolved module-boundary edges that match forbidden architecture rules.
+    ///
+    /// Rules use module-path prefixes over the same resolved-only boundary
+    /// edges returned by [`Self::module_boundary_edges_from_owner`]. This
+    /// helper does not infer intended layers from source paths and does not
+    /// promote targetless frontier rows into architecture-policy evidence.
+    pub fn module_boundary_policy_violations_from_owner(
+        &self,
+        owner_id: Uuid,
+        options: CallPathOptions,
+        rules: &[ModuleBoundaryPolicyRule],
+    ) -> Result<Vec<ModuleBoundaryPolicyViolation>, DbError> {
+        validate_module_boundary_policy_rules(rules)?;
+
+        let mut violations = Vec::new();
+        for edge in self.module_boundary_edges_from_owner(owner_id, options)? {
+            for rule in rules {
+                if module_path_has_prefix(&edge.caller.module_path, &rule.caller_module_prefix)
+                    && module_path_has_prefix(&edge.callee.module_path, &rule.callee_module_prefix)
+                {
+                    violations.push(ModuleBoundaryPolicyViolation {
+                        rule_id: rule.rule_id.clone(),
+                        edge: edge.clone(),
+                    });
+                }
+            }
+        }
+
+        violations.sort_by(|left, right| {
+            (
+                left.rule_id.as_str(),
+                left.edge.caller.module_path.as_slice(),
+                left.edge.callee.module_path.as_slice(),
+                left.edge.edge.call_site_id.as_u128(),
+            )
+                .cmp(&(
+                    right.rule_id.as_str(),
+                    right.edge.caller.module_path.as_slice(),
+                    right.edge.callee.module_path.as_slice(),
+                    right.edge.edge.call_site_id.as_u128(),
+                ))
+        });
+        Ok(violations)
+    }
+}
+
+fn validate_module_boundary_policy_rules(
+    rules: &[ModuleBoundaryPolicyRule],
+) -> Result<(), DbError> {
+    for rule in rules {
+        if rule.rule_id.is_empty() {
+            return Err(DbError::QueryConstruction(
+                "module boundary policy rule requires non-empty rule_id".to_string(),
+            ));
+        }
+        if rule.caller_module_prefix.is_empty() {
+            return Err(DbError::QueryConstruction(format!(
+                "module boundary policy rule {} requires non-empty caller_module_prefix",
+                rule.rule_id
+            )));
+        }
+        if rule.callee_module_prefix.is_empty() {
+            return Err(DbError::QueryConstruction(format!(
+                "module boundary policy rule {} requires non-empty callee_module_prefix",
+                rule.rule_id
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn module_path_has_prefix(path: &[String], prefix: &[String]) -> bool {
+    path.len() >= prefix.len()
+        && path
+            .iter()
+            .zip(prefix.iter())
+            .all(|(segment, expected)| segment == expected)
 }
 
 fn cached_node_info(

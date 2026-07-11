@@ -50,18 +50,30 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: select the next proof-carrier slice.
+Current bucket: caller-supplied module-boundary policy checks over existing
+resolved boundary edges.
 
 Exit criteria:
 
-- Choose a row that has new source evidence or proof payload not already covered
-  by the completed buckets below.
-- Keep unsupported rows fail-closed unless the selected proof carrier can prove
-  an exact local target.
-- Add one DB assertion, one RAG assertion if exposed downstream, one TUI/tool
-  assertion if exposed downstream, and one consolidated doc note.
+- Add a DB helper and real-corpus assertion that reports forbidden
+  caller/callee module-prefix crossings without inventing targetless traversal
+  edges.
+- Add a RAG exact helper if the DB row is exposed downstream.
+- Do not change exact TUI tool inputs in this chunk unless a tool accepts
+  architecture rules.
+- Add one consolidated doc note.
 
-Status: bounded two-hop private callable-parameter forwarding completed for
+Status: DB `module_boundary_policy_violations_from_owner` and RAG
+`exact_module_boundary_policy_violations_from_owner` now evaluate
+caller-supplied forbidden module-prefix rules over existing resolved-only
+boundary edges. The axum source oracle is
+`RequestExt::extract -> extract_with_state -> FromRequest::from_request`;
+the helper flags `crate::ext_traits::* -> crate::extract::*` and rejects empty
+module-prefix rules fail-closed. Exact TUI policy inputs are not implemented in
+this slice because existing lookup/edges tools expose boundary inventory but do
+not accept architecture rules.
+
+Previous completed slice: bounded two-hop private callable-parameter forwarding completed for
 fixture-backed parser, DB, RAG, and exact TUI surfaces. The resolver now follows
 complete private function-pointer parameter forwarding through two explicit
 private helper calls. The positive source oracle

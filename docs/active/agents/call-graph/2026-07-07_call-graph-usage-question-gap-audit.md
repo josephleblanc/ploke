@@ -28,7 +28,7 @@ inputs:
 - broader source/sink, cost, and policy annotations for
   security/performance/refactoring questions that need domain semantics beyond
   current `effect_seed`, admitted owner `effect_policy` allowlists, and
-  caller-supplied effect guard reports;
+  caller-supplied effect guard or module-boundary policy reports;
 - generated harness/build-entrypoint execution policy for full binary/test/CI
   reachability beyond admitted proof-only entrypoint summaries.
 
@@ -43,7 +43,7 @@ inputs:
 | Performance work | Reach/path/frontier queries expose known helpers, external calls, cfgs, and argument shape. | Partial: hot-path/cost/blocking annotations are not modeled. |
 | Refactoring support | Impact, direct callsites, source files/modules/crates, boundary edges, and callsite buckets support migration planning. | Strong for caller inventory; move-safety/cycle prediction needs dependency-policy rules. |
 | Test planning | Impact test/non-test buckets, source metadata, admitted generated test-harness entrypoint summaries, and typed `call_test_entrypoints` identify stored test callers and proof-only generated entrypoints. | Partial: generated harness summaries remain proof facts, and CI test selection is not modeled. |
-| Architecture review | `module_boundary_edges_from_owner`, RAG `exact_module_boundary_edges_from_owner`, reach `boundary_edges`, lookup/edges `module_boundary_edges` payloads, and source modules expose cross-module call edges with caller/callee/site metadata. | Strong for module-boundary inventory; intended layer policies are not modeled. |
+| Architecture review | `module_boundary_edges_from_owner`, RAG `exact_module_boundary_edges_from_owner`, reach `boundary_edges`, lookup/edges `module_boundary_edges` payloads, and source modules expose cross-module call edges with caller/callee/site metadata. DB `module_boundary_policy_violations_from_owner` and RAG `exact_module_boundary_policy_violations_from_owner` now evaluate caller-supplied forbidden module-prefix rules over resolved-only boundary edges. | Strong for module-boundary inventory and exact DB/RAG module-prefix policy checks; broader dependency-policy semantics and exact TUI policy inputs are not modeled. |
 | Debugging | Owner/target context, exact paths, frontier status buckets, proof context, and source spans map persisted edges/blockers back to source callsites. | Strong current surface. |
 | API understanding | Impact buckets, argument/generic argument counts, constructor relation kinds, path-shape counts, aliases/re-exports, and source crates show real target usage. | Strong current surface. |
 | Documentation and RAG | RAG exact call context, exact paths, impact/reach summaries, proof context, and tool payloads expose caller/callee context and fail-closed blockers. | Strong current surface. |
@@ -56,8 +56,8 @@ inputs:
 - DB/RAG/TUI metadata propagation: fixture-backed async item metadata tests for
   `make_ready_local_assoc` and `call_await_result_instance_method`, plus
   unsafe item metadata tests for `unsafe_target`.
-- RAG: real-corpus exact path, impact, reach, module-boundary, effect-guard,
-  frontier, and
+- RAG: real-corpus exact path, impact, reach, module-boundary, module-boundary
+  policy, effect-guard, frontier, and
   private-uncalled tests in
   `crates/ploke-rag/src/core/unit_tests/tests/call_context/collection/cases/fixtures/real_corpus.rs`.
 - Proof graph: strict `effect_policy` storage/projection tests in

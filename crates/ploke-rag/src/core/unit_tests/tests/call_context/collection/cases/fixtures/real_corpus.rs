@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use cozo::{DataValue, UuidWrapper};
 use ploke_db::multi_embedding::db_ext::{ANCESTOR_RULES_NOW, METHOD_NODE_ANCESTOR_RULE};
-use ploke_db::{CallStatusKind as DbCallStatusKind, ProofGraphStore};
+use ploke_db::{CallStatusKind as DbCallStatusKind, ModuleBoundaryPolicyRule, ProofGraphStore};
 use serde_json::json;
 
 use super::super::super::super::super::*;
@@ -2372,6 +2372,101 @@ async fn module_boundary_edges_exact_reads_axum_request_extract_summary() -> Res
                 && target_row.relation == CallTargetKind::AssociatedFunction
         }),
         "boundary site should include the FromRequest::from_request target: {row:#?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn module_boundary_policy_exact_flags_axum_request_extract_boundary() -> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Architecture review:
+    //   "Which modules call across a boundary that should be one-way?"
+    //
+    // Source-oracle chain:
+    //   axum-core/src/ext_traits/request.rs:268
+    //     `RequestExt::extract` calls `self.extract_with_state(&())`.
+    //   axum-core/src/ext_traits/request.rs:279
+    //     `RequestExt::extract_with_state` calls `E::from_request(self, state)`.
+    //   axum-core/src/extract/mod.rs:85
+    //     defines the `FromRequest::from_request` trait method binding.
+    // Expected contract: RAG can answer caller-supplied architecture policy
+    // questions over resolved module-boundary edges without rejoining the DB
+    // tables manually.
+    let start = method_id_by_file(
+        &db,
+        "extract",
+        "self.extract_with_state(&())",
+        "axum-core/src/ext_traits/request.rs",
+    )?;
+    let intermediate = method_id_by_file(
+        &db,
+        "extract_with_state",
+        "E::from_request(self, state)",
+        "axum-core/src/ext_traits/request.rs",
+    )?;
+    let target = method_id_by_trait_name(&db, "FromRequest", "from_request")?;
+
+    let rows = rag
+        .exact_module_boundary_policy_violations_from_owner(
+            start,
+            CallPathOptions {
+                max_depth: 2,
+                max_paths: 16,
+            },
+            &[ModuleBoundaryPolicyRule {
+                rule_id: "ext-traits-must-not-call-extract".to_string(),
+                caller_module_prefix: path(&["crate", "ext_traits"]),
+                callee_module_prefix: path(&["crate", "extract"]),
+            }],
+        )?
+        .expect("call context enabled");
+    assert_eq!(
+        rows.len(),
+        1,
+        "policy helper should flag the transitive FromRequest boundary edge: {rows:#?}"
+    );
+
+    let row = &rows[0];
+    assert_eq!(row.rule_id, "ext-traits-must-not-call-extract");
+    assert_eq!(row.edge.edge.caller_id, intermediate);
+    assert_eq!(row.edge.edge.callee_id, target);
+    assert_eq!(
+        row.edge.caller.module_path,
+        path(&["crate", "ext_traits", "request"])
+    );
+    assert_eq!(row.edge.callee.module_path, path(&["crate", "extract"]));
+    assert!(
+        matches!(
+            &row.edge.site.callee,
+            CallCalleeInfo::Path { path: call_path }
+                if call_path == &path(&["E", "from_request"])
+        ),
+        "policy violation should preserve the source callsite path: {row:#?}"
+    );
+
+    let reverse_rows = rag
+        .exact_module_boundary_policy_violations_from_owner(
+            start,
+            CallPathOptions {
+                max_depth: 2,
+                max_paths: 16,
+            },
+            &[ModuleBoundaryPolicyRule {
+                rule_id: "extract-must-not-call-ext-traits".to_string(),
+                caller_module_prefix: path(&["crate", "extract"]),
+                callee_module_prefix: path(&["crate", "ext_traits"]),
+            }],
+        )?
+        .expect("call context enabled");
+    assert!(
+        reverse_rows.is_empty(),
+        "reverse policy should not match this axum call chain: {reverse_rows:#?}"
     );
 
     Ok(())

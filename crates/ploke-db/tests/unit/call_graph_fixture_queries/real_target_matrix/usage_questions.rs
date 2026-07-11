@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use ploke_db::{
     CallContextRelation, CallContextSeed, CallNodeKind, CallPathOptions, CallRelationKind,
-    ProofGraphStore,
+    ModuleBoundaryPolicyRule, ProofGraphStore,
 };
 use serde_json::json;
 
@@ -553,6 +553,112 @@ fn axum_usage_questions_list_module_boundary_edges_for_architecture_review() -> 
             .iter()
             .any(|edge| edge.call_site_id == boundary.edge.call_site_id),
         "owner-centered reach boundary edges should agree with the owner-scoped module-boundary helper: {reach:#?}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn axum_usage_questions_report_module_boundary_policy_violations() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Architecture review:
+    //   "Which modules call across a boundary that should be one-way?"
+    //   "Do any call chains bypass the intended abstraction layer?"
+    //
+    // Source-oracle chain:
+    //   axum-core/src/ext_traits/request.rs:268
+    //     `RequestExt::extract` calls `self.extract_with_state(&())`.
+    //   axum-core/src/ext_traits/request.rs:279
+    //     `RequestExt::extract_with_state` calls `E::from_request(self, state)`.
+    //   axum-core/src/extract/mod.rs:85
+    //     defines the `FromRequest::from_request` trait method in the
+    //     separate `crate::extract` module.
+    // Expected policy contract: a caller-supplied forbidden boundary rule
+    // reports the resolved `ext_traits::request -> extract` edge without
+    // inventing edges for same-module calls or targetless frontiers.
+    let start = method_id_by_name_body_and_file_suffix(
+        &db,
+        "extract",
+        "self.extract_with_state(&())",
+        "axum-core/src/ext_traits/request.rs",
+    )?;
+    let intermediate = method_id_by_name_body_and_file_suffix(
+        &db,
+        "extract_with_state",
+        "E::from_request(self, state)",
+        "axum-core/src/ext_traits/request.rs",
+    )?;
+    let target = method_id_by_trait_name(&db, "FromRequest", "from_request")?;
+    let options = CallPathOptions {
+        max_depth: 2,
+        max_paths: 16,
+    };
+
+    let violations = db.module_boundary_policy_violations_from_owner(
+        start,
+        options,
+        &[ModuleBoundaryPolicyRule {
+            rule_id: "ext-traits-must-not-call-extract".to_string(),
+            caller_module_prefix: path(&["crate", "ext_traits"]),
+            callee_module_prefix: path(&["crate", "extract"]),
+        }],
+    )?;
+    assert_eq!(
+        violations.len(),
+        1,
+        "policy should flag exactly the inspected cross-module edge: {violations:#?}"
+    );
+    let violation = &violations[0];
+    assert_eq!(violation.rule_id, "ext-traits-must-not-call-extract");
+    assert_eq!(violation.edge.edge.caller_id, intermediate);
+    assert_eq!(violation.edge.edge.callee_id, target);
+    assert_eq!(
+        violation.edge.caller.module_path,
+        path(&["crate", "ext_traits", "request"])
+    );
+    assert_eq!(
+        violation.edge.callee.module_path,
+        path(&["crate", "extract"])
+    );
+    assert_eq!(
+        violation.edge.site.path.as_ref(),
+        Some(&path(&["E", "from_request"]))
+    );
+
+    let allowed = db.module_boundary_policy_violations_from_owner(
+        start,
+        options,
+        &[ModuleBoundaryPolicyRule {
+            rule_id: "extract-must-not-call-ext-traits".to_string(),
+            caller_module_prefix: path(&["crate", "extract"]),
+            callee_module_prefix: path(&["crate", "ext_traits"]),
+        }],
+    )?;
+    assert!(
+        allowed.is_empty(),
+        "nonmatching boundary policy should not report violations: {allowed:#?}"
+    );
+
+    let empty_prefix = db
+        .module_boundary_policy_violations_from_owner(
+            start,
+            options,
+            &[ModuleBoundaryPolicyRule {
+                rule_id: "invalid-empty-prefix".to_string(),
+                caller_module_prefix: Vec::new(),
+                callee_module_prefix: path(&["crate", "extract"]),
+            }],
+        )
+        .expect_err("empty module prefixes should fail closed");
+    assert!(
+        empty_prefix
+            .to_string()
+            .contains("non-empty caller_module_prefix"),
+        "empty-prefix error should explain the invalid rule: {empty_prefix}"
     );
 
     Ok(())
