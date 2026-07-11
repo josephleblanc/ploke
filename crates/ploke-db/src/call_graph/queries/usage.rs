@@ -11,10 +11,11 @@ use crate::{
 };
 
 use super::super::{
-    CallBuildDomain, CallContextRow, CallEffectPolicyViolation, CallGuardReport, CallImpactReport,
-    CallNodeInfo, CallPath, CallPathEdge, CallPathOptions, CallProofInvariantFinding,
-    CallReachEffect, CallReachReport, CallRelationKind, CallSiteBucket, CallSiteKind, CallSiteRow,
-    CallStatusKind, CallTestEntrypoint, ExternalSummaryNeed, ModuleBoundaryEdge,
+    CallBuildDomain, CallContextRow, CallEffectGuardReport, CallEffectPolicyViolation,
+    CallGuardReport, CallImpactReport, CallNodeInfo, CallPath, CallPathEdge, CallPathOptions,
+    CallProofInvariantFinding, CallReachEffect, CallReachReport, CallRelationKind, CallSiteBucket,
+    CallSiteKind, CallSiteRow, CallStatusKind, CallTestEntrypoint, ExternalSummaryNeed,
+    ModuleBoundaryEdge,
 };
 use super::metadata::{call_node_info_rank, call_node_infos, decode_call_node_info};
 
@@ -339,6 +340,56 @@ impl Database {
             )
         });
         Ok(violations)
+    }
+
+    /// Classifies reachable proof effect annotations by a required guard node.
+    ///
+    /// This composes resolved paths to the owner that contains the effect
+    /// callsite with existing `effect_seed` proof facts. It never treats the
+    /// targetless effect callsite itself as a local traversal edge.
+    pub fn call_effect_guard_report_for_owner(
+        &self,
+        owner_id: Uuid,
+        guard_id: Uuid,
+        effect_class: &str,
+        options: CallPathOptions,
+    ) -> Result<CallEffectGuardReport, DbError> {
+        if effect_class.is_empty() {
+            return Err(DbError::QueryConstruction(
+                "effect guard report requires non-empty effect_class".to_string(),
+            ));
+        }
+
+        let owner = self.call_node_info(owner_id)?.ok_or_else(|| {
+            DbError::Cozo(format!(
+                "missing call graph node metadata for effect guard owner {owner_id}"
+            ))
+        })?;
+        let guard = self.call_node_info(guard_id)?.ok_or_else(|| {
+            DbError::Cozo(format!(
+                "missing call graph node metadata for effect guard node {guard_id}"
+            ))
+        })?;
+        let effects = self
+            .call_effects_reachable_from_owner(owner_id, options)?
+            .into_iter()
+            .filter(|effect| effect.effect_class == effect_class)
+            .collect::<Vec<_>>();
+        let violations = effects
+            .iter()
+            .filter(|effect| !effect_is_guarded(effect, owner_id, guard_id))
+            .cloned()
+            .collect::<Vec<_>>();
+        let guarded = !effects.is_empty() && violations.is_empty();
+
+        Ok(CallEffectGuardReport {
+            owner,
+            guard,
+            effect_class: effect_class.to_string(),
+            guarded,
+            effects,
+            violations,
+        })
     }
 
     /// Lists reachable effect annotations outside the owner's admitted stored policy.
@@ -762,6 +813,19 @@ fn path_has_guard(path: &CallPath, guard_id: Uuid, target_id: Uuid) -> bool {
         return false;
     };
     nodes[..target_pos].iter().any(|id| *id == guard_id)
+}
+
+fn effect_is_guarded(effect: &CallReachEffect, owner_id: Uuid, guard_id: Uuid) -> bool {
+    let effect_owner = effect.call_site.site.owner_id;
+    if owner_id == guard_id || effect_owner == guard_id {
+        return true;
+    }
+
+    !effect.paths_to_owner.is_empty()
+        && effect
+            .paths_to_owner
+            .iter()
+            .all(|path| path_has_guard(path, guard_id, effect_owner))
 }
 
 fn summary_effects_for_reachable_sites(

@@ -11,10 +11,10 @@ mod unit_tests;
 use super::*;
 use ploke_core::rag_types::AssembledContext;
 use ploke_core::rag_types::{
-    CallBuildDomainInfo, CallCalleeInfo, CallContextInfo, CallEffectPolicyViolationInfo,
-    CallEndpointKind, CallExpansionInfo, CallExpansionKind, CallGuardInfo, CallImpactInfo,
-    CallNodeInfo, CallPathEdgeInfo, CallPathInfo, CallPathNodeInfo, CallProofInvariantFindingInfo,
-    CallReachEffectInfo, CallReachInfo, CallReceiverInfo,
+    CallBuildDomainInfo, CallCalleeInfo, CallContextInfo, CallEffectGuardInfo,
+    CallEffectPolicyViolationInfo, CallEndpointKind, CallExpansionInfo, CallExpansionKind,
+    CallGuardInfo, CallImpactInfo, CallNodeInfo, CallPathEdgeInfo, CallPathInfo, CallPathNodeInfo,
+    CallProofInvariantFindingInfo, CallReachEffectInfo, CallReachInfo, CallReceiverInfo,
     CallResolutionKind as RagCallResolutionKind, CallSiteBucketInfo,
     CallSiteKind as RagCallSiteKind, CallStatusKind as RagCallStatusKind, CallTargetInfo,
     CallTargetKind, CallTestEntrypointInfo, CanonPath, ExternalSummaryNeedInfo,
@@ -23,6 +23,7 @@ use ploke_core::rag_types::{
 use ploke_db::{
     CallBuildDomain as DbCallBuildDomain, CallContextCandidate, CallContextOptions,
     CallContextRelation, CallContextRow, CallContextSeed,
+    CallEffectGuardReport as DbCallEffectGuardReport,
     CallEffectPolicyViolation as DbCallEffectPolicyViolation, CallGuardReport as DbCallGuardReport,
     CallImpactReport as DbCallImpactReport, CallNodeInfo as DbCallNodeInfo, CallPath as DbCallPath,
     CallPathEdge as DbCallPathEdge, CallPathOptions,
@@ -421,6 +422,31 @@ fn guard_info(db: &Database, report: DbCallGuardReport) -> Result<CallGuardInfo,
         guard: call_node_info(report.guard),
         guarded: report.guarded,
         paths,
+        violations,
+    })
+}
+
+fn effect_guard_info(
+    db: &Database,
+    report: DbCallEffectGuardReport,
+) -> Result<CallEffectGuardInfo, RagError> {
+    let effects = report
+        .effects
+        .into_iter()
+        .map(|row| reach_effect_info(db, row))
+        .collect::<Result<Vec<_>, RagError>>()?;
+    let violations = report
+        .violations
+        .into_iter()
+        .map(|row| reach_effect_info(db, row))
+        .collect::<Result<Vec<_>, RagError>>()?;
+
+    Ok(CallEffectGuardInfo {
+        owner: call_node_info(report.owner),
+        guard: call_node_info(report.guard),
+        effect_class: report.effect_class,
+        guarded: report.guarded,
+        effects,
         violations,
     })
 }
@@ -1081,6 +1107,28 @@ impl RagService {
                 .map(|row| reach_effect_info(self.db.as_ref(), row))
                 .collect::<Result<Vec<_>, RagError>>()?,
         ))
+    }
+
+    pub fn exact_call_effect_guard_report_for_owner(
+        &self,
+        owner_id: Uuid,
+        guard_id: Uuid,
+        effect_class: &str,
+        options: CallPathOptions,
+    ) -> Result<Option<CallEffectGuardInfo>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(effect_guard_info(
+            self.db.as_ref(),
+            self.db.call_effect_guard_report_for_owner(
+                owner_id,
+                guard_id,
+                effect_class,
+                options,
+            )?,
+        )?))
     }
 
     pub fn exact_call_effect_policy_violations_for_owner<S: AsRef<str>>(

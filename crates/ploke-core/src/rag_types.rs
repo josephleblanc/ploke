@@ -469,6 +469,16 @@ pub struct CallGuardInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct CallEffectGuardInfo {
+    pub owner: CallNodeInfo,
+    pub guard: CallNodeInfo,
+    pub effect_class: String,
+    pub guarded: bool,
+    pub effects: Vec<CallReachEffectInfo>,
+    pub violations: Vec<CallReachEffectInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct CallReachInfo {
     pub owner: CallNodeInfo,
     pub paths: Vec<CallPathInfo>,

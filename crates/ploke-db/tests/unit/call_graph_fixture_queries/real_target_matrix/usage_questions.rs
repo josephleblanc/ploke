@@ -1791,6 +1791,103 @@ fn axum_usage_questions_report_reachable_effect_policy_violation() -> Result<(),
 }
 
 #[test]
+fn axum_usage_questions_classify_reachable_effect_guard_paths() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Security analysis:
+    //   "Can this entrypoint reach a sensitive sink without passing through
+    //   the reviewed guard?"
+    //
+    // Source-oracle chain:
+    //   axum/src/form.rs:262
+    //     `deserialize_error_status_codes` calls `TestClient::new(app)`.
+    //   axum/src/test_helpers/test_client.rs:36
+    //     `TestClient::new` calls `spawn_service(svc)`.
+    //   axum/src/test_helpers/test_client.rs:23
+    //     `spawn_service` calls `tokio::spawn(...)`.
+    // Expected contract: the guard report classifies the resolved path to the
+    // owner that contains the external targetless `tokio::spawn` effect. It
+    // must not fabricate a call edge to `tokio::spawn` itself.
+    let start = function_id_by_name_in_module(
+        &db,
+        &["crate", "form", "tests"],
+        "deserialize_error_status_codes",
+    )?;
+    let guard = method_id_by_name_and_body_substring(&db, "new", "spawn_service(svc)")?;
+    let spawn_owner = function_id_by_name_in_module(
+        &db,
+        &["crate", "test_helpers", "test_client"],
+        "spawn_service",
+    )?;
+    let spawn_context = db.call_context_for_owner(spawn_owner)?;
+    let spawn_row = row_by_path(&spawn_context, &["tokio", "spawn"]);
+    assert_external_targetless(spawn_row);
+
+    db.upsert_proof_fact_values(&[spawn_effect_seed(
+        spawn_row.site.id,
+        "effect:axum-test-client-task-spawn-guard",
+    )])?;
+
+    let options = CallPathOptions {
+        max_depth: 3,
+        max_paths: 16,
+    };
+    let report =
+        db.call_effect_guard_report_for_owner(start, guard, "async_task_spawn", options)?;
+    assert_eq!(report.owner.id, start);
+    assert_eq!(report.guard.id, guard);
+    assert_eq!(report.effect_class, "async_task_spawn");
+    assert!(
+        report.guarded,
+        "TestClient::new should guard every resolved path to the spawn effect owner: {report:#?}"
+    );
+    assert_eq!(report.effects.len(), 1);
+    assert!(
+        report.violations.is_empty(),
+        "guarded report should not contain violations: {report:#?}"
+    );
+    let effect = &report.effects[0];
+    assert_eq!(
+        effect.effect_seed_id,
+        "effect:axum-test-client-task-spawn-guard"
+    );
+    assert_eq!(effect.call_site.site.id, spawn_row.site.id);
+    assert!(
+        effect
+            .paths_to_owner
+            .iter()
+            .any(|path| path.start_id == start && path.end_id == spawn_owner && path.depth == 2),
+        "guarded effect should preserve the resolved path to spawn_service: {effect:#?}"
+    );
+    assert!(
+        relations_for_site(&db, effect.call_site.site.id)?
+            .rows
+            .is_empty(),
+        "effect guard report must not fabricate local call edges"
+    );
+
+    let unrelated = method_id_by_name_and_body_substring(&db, "new", "default_fallback: true")?;
+    let unguarded =
+        db.call_effect_guard_report_for_owner(start, unrelated, "async_task_spawn", options)?;
+    assert!(
+        !unguarded.guarded,
+        "unrelated MethodRouter::new should not guard the spawn effect: {unguarded:#?}"
+    );
+    assert_eq!(unguarded.effects.len(), 1);
+    assert_eq!(
+        unguarded.violations.len(),
+        1,
+        "unguarded report should return the reachable effect as a violation: {unguarded:#?}"
+    );
+    assert_eq!(unguarded.violations[0].call_site.site.id, spawn_row.site.id);
+
+    Ok(())
+}
+
+#[test]
 fn axum_usage_questions_report_stored_effect_policy_violation() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 

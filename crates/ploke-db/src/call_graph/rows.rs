@@ -243,6 +243,17 @@ pub struct CallEffectPolicyViolation {
     pub effect: CallReachEffect,
 }
 
+/// Reachable proof effect annotations classified by a required guard node.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CallEffectGuardReport {
+    pub owner: CallNodeInfo,
+    pub guard: CallNodeInfo,
+    pub effect_class: String,
+    pub guarded: bool,
+    pub effects: Vec<CallReachEffect>,
+    pub violations: Vec<CallReachEffect>,
+}
+
 /// Proof invariant finding scoped to callsites reachable from an owner.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CallProofInvariantFinding {
