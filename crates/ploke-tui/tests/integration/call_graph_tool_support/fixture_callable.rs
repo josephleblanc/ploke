@@ -60,6 +60,30 @@ impl CallableBlockerFixture {
         .await
     }
 
+    pub(crate) async fn returned_conflicting_function_pointer_local() -> Self {
+        Self::returned_conflicting_function_pointer(
+            "call_returned_conflicting_forwarded_function_pointer_param_with_local_target",
+        )
+        .await
+    }
+
+    pub(crate) async fn returned_conflicting_function_pointer_other() -> Self {
+        Self::returned_conflicting_function_pointer(
+            "call_returned_conflicting_forwarded_function_pointer_param_with_other_target",
+        )
+        .await
+    }
+
+    async fn returned_conflicting_function_pointer(owner_name: &'static str) -> Self {
+        Self::new_for_owner(
+            owner_name,
+            &["return_conflicting_forwarded_function_pointer"],
+            CallableBlockerShape::AmbiguousDynamic,
+            5,
+        )
+        .await
+    }
+
     pub(crate) async fn forwarded_conflicting_named_field_leaf() -> Self {
         Self::new_for_owner(
             "call_forwarded_conflicting_named_field_leaf",

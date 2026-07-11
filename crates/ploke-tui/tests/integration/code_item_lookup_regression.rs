@@ -628,6 +628,23 @@ async fn code_item_lookup_returns_forwarded_named_field_param_blocker() {
     .await;
 }
 
+#[tokio::test]
+async fn code_item_lookup_returns_returned_conflicting_function_pointer_candidates() {
+    // Source oracle:
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:2109-2118:
+    //     `return_conflicting_forwarded_function_pointer(f)` returns `f`, and
+    //     two local callers immediately invoke the returned callable with
+    //     different function items: `local_target` and `other_target`.
+    // The tool payload must preserve candidate-only ambiguity and avoid
+    // fabricating a resolved edge for either caller.
+    for fixture in [
+        CallableBlockerFixture::returned_conflicting_function_pointer_local().await,
+        CallableBlockerFixture::returned_conflicting_function_pointer_other().await,
+    ] {
+        assert_callable_blocker_lookup(fixture).await;
+    }
+}
+
 async fn assert_callable_blocker_lookup(fixture: CallableBlockerFixture) {
     let params = LookupParams {
         item_name: Cow::Borrowed(fixture.owner_name),
