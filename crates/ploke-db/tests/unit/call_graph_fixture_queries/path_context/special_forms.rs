@@ -223,6 +223,78 @@ fn fixture_context_reads_projected_generic_unsafe_extern_and_chained_calls() -> 
 }
 
 #[test]
+fn fixture_context_marks_async_function_node_metadata() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+
+    let owner = function_id_by_name(&db, "call_await_result_instance_method")?;
+    let target = function_id_by_name(&db, "make_ready_local_assoc")?;
+    let sync_target = function_id_by_name(&db, "local_target")?;
+    let context = db.call_context_for_owner(owner)?;
+    let row = row_by_path(&context, &["make_ready_local_assoc"]);
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Source oracle:
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:581 defines
+    //   `pub async fn make_ready_local_assoc()`.
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:585 defines
+    //   `pub async fn call_await_result_instance_method()`.
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:586 calls
+    //   `make_ready_local_assoc().await.instance_value()`.
+    assert_resolved_target(
+        row,
+        target,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
+
+    let owner_info = db
+        .call_node_info(owner)?
+        .expect("call_await_result_instance_method should have call node metadata");
+    let target_info = db
+        .call_node_info(target)?
+        .expect("make_ready_local_assoc should have call node metadata");
+    let sync_info = db
+        .call_node_info(sync_target)?
+        .expect("local_target should have call node metadata");
+    assert!(
+        owner_info.is_async,
+        "async caller metadata should reflect its own signature: {owner_info:#?}"
+    );
+    assert!(
+        target_info.is_async,
+        "async function item metadata should be visible on the call target: {target_info:#?}"
+    );
+    assert!(
+        !sync_info.is_async,
+        "sync function item metadata should remain false: {sync_info:#?}"
+    );
+
+    let impact = db.call_impact_for_target(
+        target,
+        CallPathOptions {
+            max_depth: 1,
+            max_paths: 16,
+        },
+    )?;
+    assert!(
+        impact.target.is_async,
+        "impact summaries should mark async function item targets: {impact:#?}"
+    );
+    assert!(
+        impact
+            .direct_callers
+            .iter()
+            .any(|caller| caller.id == owner && caller.is_async),
+        "async target impact should preserve the async direct caller metadata: {impact:#?}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn fixture_reach_surfaces_extern_c_call_as_external_frontier() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let owner = function_id_by_name(&db, "call_extern_c_function")?;

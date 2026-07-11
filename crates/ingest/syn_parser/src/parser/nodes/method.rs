@@ -18,6 +18,7 @@ pub struct MethodNode {
     pub span: (usize, usize),
     pub visibility: VisibilityKind,
     pub is_unsafe: bool,
+    pub is_async: bool,
     pub parameters: Vec<ParamData>,
     pub return_type: Option<OrdinaryTypeUseId>,
     pub generic_params: Vec<GenericParamNode>,

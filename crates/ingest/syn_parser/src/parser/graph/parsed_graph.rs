@@ -1281,6 +1281,7 @@ mod tests {
             span: (0, 1),
             visibility: VisibilityKind::Inherited,
             is_unsafe: false,
+            is_async: false,
             parameters: Vec::new(),
             return_type: None,
             generic_params: Vec::new(),

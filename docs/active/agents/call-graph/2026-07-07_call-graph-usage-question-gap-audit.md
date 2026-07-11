@@ -15,9 +15,9 @@ The core query surface is now substantially implemented. DB tests cover real
 axum usage questions for paths, impact, reach, module-boundary edges,
 frontiers, source files/modules/crates/cfgs, argument shape, test/non-test
 caller buckets, public caller buckets, private zero-incoming nodes, generated
-entrypoint-summary proof context, and proc-macro entrypoint impact. RAG and
-tool tests preserve the same major surfaces through exact APIs and tool
-payloads.
+entrypoint-summary proof context, proc-macro entrypoint impact, and callable
+item metadata such as unsafe and async function qualifiers. RAG and tool tests
+preserve the same major surfaces through exact APIs and tool payloads.
 
 The remaining gaps are mostly not missing query helpers. They are missing proof
 inputs:
@@ -39,7 +39,7 @@ inputs:
 | Impact analysis | `call_impact_for_target`, RAG `exact_call_impact_for_target`, `code_item_lookup`, and `code_item_edges` cover eventual callers, public callers, test/non-test buckets, direct callsites, source files/modules/crates, and callsite buckets. | Strong current surface. |
 | Dead code detection | `private_uncalled_nodes`, RAG `exact_private_uncalled_nodes`, and `code_private_uncalled` cover private zero-incoming nodes and cross-check empty impact reports. `code_private_uncalled` now also exposes admitted generated-entrypoint summaries, typed `call_test_entrypoints`, and linked build-domain rows for returned nodes. | Strong for stored source call graph; generated harness reach remains proof-only and does not become a local call edge. |
 | Navigation | `callers_for_target`, `call_sites_for_target`, `call_context_for_owner`, `call_paths_*`, RAG exact paths, and `code_item_call_path` cover direct and multi-hop traversal. | Strong current surface. |
-| Security analysis | Reach/path/frontier queries can answer "can A reach B?" and expose unsafe/FFI/external frontier rows, including `abs(value)` and unsafe-block metadata. Reachable `effect_seed` facts plus caller-supplied or admitted-owner `effect_policy` allowlists can report policy violations such as the axum `tokio::spawn` `async_task_spawn` sink without fabricating local edges. DB `call_effect_guard_report_for_owner`, RAG `exact_call_effect_guard_report_for_owner`, and exact TUI `code_item_effect_guard` now classify whether resolved paths to a reachable effect owner pass through a caller-supplied guard, proving the axum `deserialize_error_status_codes -> TestClient::new -> spawn_service -> tokio::spawn` effect is guarded by `TestClient::new` and violated by an unrelated guard. Owner-scoped `call_proof_invariant_findings` exposes blocked detached-process proof obligations for reachable process-effect callsites through DB, RAG, and exact tool payloads. | Partial: broader source/sink classification and domain-specific security semantics are not modeled; effect guard reports currently cover explicit guard nodes over reachable `effect_seed` rows through DB/RAG/TUI exact APIs; the process-invariant downstream proof is fixture-backed because active real-corpus backups do not include process bench/build targets. |
+| Security analysis | Reach/path/frontier queries can answer "can A reach B?" and expose unsafe/FFI/external frontier rows, including `abs(value)` and unsafe-block metadata. Async callable item metadata is also exposed on function/method nodes so target-centered summaries can distinguish async and sync callable definitions without inferring poll/resume behavior. Reachable `effect_seed` facts plus caller-supplied or admitted-owner `effect_policy` allowlists can report policy violations such as the axum `tokio::spawn` `async_task_spawn` sink without fabricating local edges. DB `call_effect_guard_report_for_owner`, RAG `exact_call_effect_guard_report_for_owner`, and exact TUI `code_item_effect_guard` now classify whether resolved paths to a reachable effect owner pass through a caller-supplied guard, proving the axum `deserialize_error_status_codes -> TestClient::new -> spawn_service -> tokio::spawn` effect is guarded by `TestClient::new` and violated by an unrelated guard. Owner-scoped `call_proof_invariant_findings` exposes blocked detached-process proof obligations for reachable process-effect callsites through DB, RAG, and exact tool payloads. | Partial: broader source/sink classification and domain-specific security semantics are not modeled; async item metadata is a qualifier only and does not model poll/resume or future value-flow; effect guard reports currently cover explicit guard nodes over reachable `effect_seed` rows through DB/RAG/TUI exact APIs; the process-invariant downstream proof is fixture-backed because active real-corpus backups do not include process bench/build targets. |
 | Performance work | Reach/path/frontier queries expose known helpers, external calls, cfgs, and argument shape. | Partial: hot-path/cost/blocking annotations are not modeled. |
 | Refactoring support | Impact, direct callsites, source files/modules/crates, boundary edges, and callsite buckets support migration planning. | Strong for caller inventory; move-safety/cycle prediction needs dependency-policy rules. |
 | Test planning | Impact test/non-test buckets, source metadata, admitted generated test-harness entrypoint summaries, and typed `call_test_entrypoints` identify stored test callers and proof-only generated entrypoints. | Partial: generated harness summaries remain proof facts, and CI test selection is not modeled. |
@@ -53,6 +53,9 @@ inputs:
 
 - DB: `axum_usage_questions_*` in
   `crates/ploke-db/tests/unit/call_graph_fixture_queries/real_target_matrix/usage_questions.rs`.
+- DB/RAG/TUI metadata propagation: fixture-backed async item metadata tests for
+  `make_ready_local_assoc` and `call_await_result_instance_method`, plus
+  unsafe item metadata tests for `unsafe_target`.
 - RAG: real-corpus exact path, impact, reach, module-boundary, effect-guard,
   frontier, and
   private-uncalled tests in

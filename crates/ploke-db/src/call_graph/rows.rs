@@ -175,6 +175,7 @@ pub struct CallNodeInfo {
     pub visibility: String,
     pub is_public: bool,
     pub is_unsafe: bool,
+    pub is_async: bool,
     pub module_path: Vec<String>,
     pub file_path: String,
 }

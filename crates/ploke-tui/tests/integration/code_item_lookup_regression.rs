@@ -160,6 +160,64 @@ async fn code_item_lookup_marks_unsafe_function_targets_in_call_impact() {
 }
 
 #[tokio::test]
+async fn code_item_lookup_marks_async_function_targets_in_call_impact() {
+    let fixture = CallGraphToolFixture::new().await;
+    let params = LookupParams {
+        item_name: Cow::Borrowed("make_ready_local_assoc"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("function"),
+        module_path: Cow::Borrowed("crate"),
+        owner_trait: None,
+        owner_type: None,
+        parent_name: None,
+        allowed_effects: Vec::new(),
+    };
+
+    let result = CodeItemLookup::execute(params, fixture.ctx("async-target-lookup"))
+        .await
+        .expect("make_ready_local_assoc lookup");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize ConciseContext");
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Source oracle:
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:581 defines
+    //   `pub async fn make_ready_local_assoc()`.
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:585 defines
+    //   `pub async fn call_await_result_instance_method()`.
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:586 calls
+    //   `make_ready_local_assoc().await.instance_value()`.
+    let impact = payload
+        .get("call_impact")
+        .and_then(serde_json::Value::as_object)
+        .expect("call_impact object");
+    let target = impact
+        .get("target")
+        .and_then(serde_json::Value::as_object)
+        .expect("call_impact target object");
+    assert_eq!(
+        target.get("is_async").and_then(serde_json::Value::as_bool),
+        Some(true),
+        "code_item_lookup should serialize async function item metadata: {impact:#?}"
+    );
+
+    let direct_callers = impact
+        .get("direct_callers")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_impact direct_callers array");
+    assert!(
+        direct_callers.iter().any(|caller| {
+            caller.get("name").and_then(serde_json::Value::as_str)
+                == Some("call_await_result_instance_method")
+                && caller.get("is_async").and_then(serde_json::Value::as_bool) == Some(true)
+        }),
+        "code_item_lookup should preserve async direct caller metadata: {direct_callers:#?}"
+    );
+}
+
+#[tokio::test]
 async fn code_item_lookup_surfaces_extern_c_effect_seed() {
     let fixture = CallGraphToolFixture::new().await;
     let expected = fixture.seed_extern_c_abs_effect();

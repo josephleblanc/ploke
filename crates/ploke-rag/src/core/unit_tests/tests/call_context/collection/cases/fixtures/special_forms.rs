@@ -150,3 +150,69 @@ async fn call_context_collection_preserves_unsafe_function_node_metadata() -> Re
 
     Ok(())
 }
+
+#[tokio::test]
+async fn call_context_collection_preserves_async_function_node_metadata() -> Result<(), Error> {
+    init_tracing_once();
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_await_result_instance_method"),
+    )?;
+    let target = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "make_ready_local_assoc"),
+    )?;
+    let sync_target = one_uuid(&db, &function_in_module_query(&["crate"], "local_target"))?;
+    let rag = init_test_rag_mock(Arc::clone(&db));
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Source oracle:
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:581 defines
+    //   `pub async fn make_ready_local_assoc()`.
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:585 defines
+    //   `pub async fn call_await_result_instance_method()`.
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:586 calls
+    //   `make_ready_local_assoc().await.instance_value()`.
+    let impact = rag
+        .exact_call_impact_for_target(
+            target,
+            ploke_db::CallPathOptions {
+                max_depth: 1,
+                max_paths: 16,
+            },
+        )?
+        .expect("make_ready_local_assoc impact should be available");
+
+    assert!(
+        impact.target.is_async,
+        "RAG impact should mark async function item targets: {impact:#?}"
+    );
+    assert!(
+        impact
+            .direct_callers
+            .iter()
+            .any(|caller| caller.id == owner && caller.is_async),
+        "RAG impact should preserve async direct caller metadata: {impact:#?}"
+    );
+
+    let sync_info = rag
+        .exact_call_impact_for_target(
+            sync_target,
+            ploke_db::CallPathOptions {
+                max_depth: 1,
+                max_paths: 16,
+            },
+        )?
+        .expect("local_target impact should be available");
+    assert!(
+        !sync_info.target.is_async,
+        "RAG impact should not mark sync function item targets async: {sync_info:#?}"
+    );
+
+    Ok(())
+}

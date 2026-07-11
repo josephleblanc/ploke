@@ -118,6 +118,10 @@ pub(super) fn process_methods(
         schema.is_unsafe().to_string(),
         DataValue::Bool(method.is_unsafe),
     );
+    params.insert(
+        schema.is_async().to_string(),
+        DataValue::Bool(method.is_async),
+    );
     params.insert(schema.owner_id().to_string(), imple_any_id.to_cozo_uuid());
     params
 }

@@ -15,6 +15,7 @@ define_schema!(MethodNodeSchema {
     vis_kind: "String",
     vis_path: "[String]?",
     is_unsafe: "Bool",
+    is_async: "Bool",
     docstring: "String?",
     body: "String?",
     tracking_hash: "Uuid",

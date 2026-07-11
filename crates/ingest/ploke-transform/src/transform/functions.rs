@@ -144,6 +144,10 @@ fn process_func(
             schema.is_unsafe().to_string(),
             DataValue::Bool(function.is_unsafe),
         ),
+        (
+            schema.is_async().to_string(),
+            DataValue::Bool(function.is_async),
+        ),
         // Kind of awkward, might want to visibility its own entity. Maybe just visibility
         // path?
         (schema.vis_kind().to_string(), vis_kind),

@@ -18,6 +18,7 @@ define_schema!(FunctionNodeSchema {
     vis_kind: "String",
     vis_path: "[String]?",
     is_unsafe: "Bool",
+    is_async: "Bool",
     span: "[Int; 2]",
     tracking_hash: "Uuid",
     cfgs: "[String]",

@@ -648,8 +648,8 @@ module_has_file_mod[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
 file_owner_for_module[mod_id, file_owner_id] := module_has_file_mod[mod_id], file_owner_id = mod_id
 file_owner_for_module[mod_id, file_owner_id] := ancestor[mod_id, parent], module_has_file_mod[parent], file_owner_id = parent
 
-private_node[id, kind, name, vis_kind, is_unsafe, module_path, file_path] :=
-  *function{{ id, name, vis_kind, is_unsafe @ 'NOW' }},
+private_node[id, kind, name, vis_kind, is_unsafe, is_async, module_path, file_path] :=
+  *function{{ id, name, vis_kind, is_unsafe, is_async @ 'NOW' }},
   vis_kind != "public",
   kind = "Function",
   ancestor[id, mod_id],
@@ -657,18 +657,19 @@ private_node[id, kind, name, vis_kind, is_unsafe, module_path, file_path] :=
   file_owner_for_module[mod_id, file_owner_id],
   *file_mod{{ owner_id: file_owner_id, file_path @ 'NOW' }}
 
-private_node[id, kind, name, vis_kind, is_unsafe, module_path, file_path] :=
+private_node[id, kind, name, vis_kind, is_unsafe, is_async, module_path, file_path] :=
   *macro{{ id, name, vis_kind @ 'NOW' }},
   vis_kind != "public",
   kind = "Macro",
   is_unsafe = false,
+  is_async = false,
   ancestor[id, mod_id],
   *module{{ id: mod_id, path: module_path @ 'NOW' }},
   file_owner_for_module[mod_id, file_owner_id],
   *file_mod{{ owner_id: file_owner_id, file_path @ 'NOW' }}
 
-private_node[id, kind, name, vis_kind, is_unsafe, module_path, file_path] :=
-  *method{{ id, owner_id: method_owner_id, name, vis_kind, is_unsafe @ 'NOW' }},
+private_node[id, kind, name, vis_kind, is_unsafe, is_async, module_path, file_path] :=
+  *method{{ id, owner_id: method_owner_id, name, vis_kind, is_unsafe, is_async @ 'NOW' }},
   vis_kind != "public",
   kind = "Method",
   ancestor[id, mod_id],
@@ -678,8 +679,8 @@ private_node[id, kind, name, vis_kind, is_unsafe, module_path, file_path] :=
 
 incoming[id] := *call_relation {{ target_id: id @ 'NOW' }}
 
-?[id, kind, name, vis_kind, is_unsafe, module_path, file_path] :=
-  private_node[id, kind, name, vis_kind, is_unsafe, module_path, file_path],
+?[id, kind, name, vis_kind, is_unsafe, is_async, module_path, file_path] :=
+  private_node[id, kind, name, vis_kind, is_unsafe, is_async, module_path, file_path],
   not incoming[id]
 
 :sort kind, file_path, module_path, name, id

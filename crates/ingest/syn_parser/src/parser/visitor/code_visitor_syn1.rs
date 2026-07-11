@@ -933,6 +933,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 span,
                 visibility: convert_visibility_syn1(&func.vis),
                 is_unsafe: func.sig.unsafety.is_some(),
+                is_async: func.sig.asyncness.is_some(),
                 parameters,
                 return_type,
                 generic_params,
@@ -1928,6 +1929,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                     span: method.extract_span_bytes(),
                     visibility: convert_visibility_syn1(&method.vis),
                     is_unsafe: method.sig.unsafety.is_some(),
+                    is_async: method.sig.asyncness.is_some(),
                     parameters,
                     return_type,
                     generic_params,
@@ -2143,6 +2145,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                     span: method.extract_span_bytes(),
                     visibility: convert_visibility_syn1(&item_trait.vis), // Trait items inherit trait visibility
                     is_unsafe: method.sig.unsafety.is_some(),
+                    is_async: method.sig.asyncness.is_some(),
                     parameters,
                     return_type,
                     generic_params,
