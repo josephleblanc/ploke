@@ -363,6 +363,16 @@ async fn code_item_lookup_returns_resolved_dynamic_callable_context() {
 }
 
 #[tokio::test]
+async fn code_item_lookup_returns_private_referenced_dyn_fn_param_callable_context() {
+    // Fixture source:
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:2156-2161
+    //     a private `&dyn Fn` parameter helper has one local caller passing
+    //     `&local_target`, then calls `(f)()`.
+    assert_resolved_dynamic_callable_lookup("call_single_parenthesized_referenced_dyn_fn_param")
+        .await;
+}
+
+#[tokio::test]
 async fn code_item_lookup_returns_mut_referenced_dyn_fnmut_callable_context() {
     // Fixture source:
     //   tests/fixture_crates/fixture_call_graph/src/lib.rs:2131-2134

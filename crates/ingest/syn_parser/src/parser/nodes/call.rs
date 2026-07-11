@@ -117,6 +117,8 @@ pub struct PathCallNode {
 pub enum CallArgument {
     /// The argument expression is a path such as `local_target`.
     Path { path: Vec<String> },
+    /// The argument expression is a reference to a path such as `&local_target`.
+    ReferencedPath { path: Vec<String> },
     /// The argument expression is an inline non-async closure literal with a
     /// known executable body owner.
     Closure { closure_id: ExecutableBodyId },

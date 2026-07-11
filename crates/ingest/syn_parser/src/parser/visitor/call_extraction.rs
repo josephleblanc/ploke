@@ -667,9 +667,25 @@ fn call_argument(
                 closure_id: ExecutableBodyId::Closure(generate_closure_body_id(owner, span, cfgs)),
             }
         }
+        syn::Expr::Reference(reference) => referenced_path_argument(reference),
         _ => array_argument(arg, param_names, local_scopes)
             .or_else(|| constructed_argument(arg, param_names, local_scopes))
             .unwrap_or(CallArgument::Other),
+    }
+}
+
+fn referenced_path_argument(reference: &syn::ExprReference) -> CallArgument {
+    let syn::Expr::Path(path) = unparen_expr(reference.expr.as_ref()) else {
+        return CallArgument::Other;
+    };
+    if path.qself.is_some() {
+        return CallArgument::Other;
+    }
+    let path = path_segments(&path.path);
+    if path.is_empty() {
+        CallArgument::Other
+    } else {
+        CallArgument::ReferencedPath { path }
     }
 }
 

@@ -2144,3 +2144,19 @@ pub fn call_const_item_macro_generated_const_initializer() -> i32 {
     call_graph_const_item_macro!();
     0
 }
+
+fn call_single_referenced_dyn_fn_param(f: &dyn Fn() -> i32) -> i32 {
+    f()
+}
+
+pub fn call_single_referenced_dyn_fn_param_with_local_target() -> i32 {
+    call_single_referenced_dyn_fn_param(&local_target)
+}
+
+fn call_single_parenthesized_referenced_dyn_fn_param(f: &dyn Fn() -> i32) -> i32 {
+    (f)()
+}
+
+pub fn call_single_parenthesized_referenced_dyn_fn_param_with_local_target() -> i32 {
+    call_single_parenthesized_referenced_dyn_fn_param(&local_target)
+}

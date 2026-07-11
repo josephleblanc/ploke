@@ -562,10 +562,24 @@ impl CallRelationResolver<'_> {
             (ParameterProof::Value, TypeNode::Named(node)) => {
                 self.type_parameter_has_callable_bound(function_id, &node.path)
             }
+            (ParameterProof::Value, TypeNode::Reference(node)) => {
+                self.referenced_callable_type(node.referenced)
+            }
             (ParameterProof::Field(_), TypeNode::Named(_)) => Ok(true),
             (ParameterProof::Field(field_path), TypeNode::Array(_)) => {
                 Ok(field_path_index(field_path).is_some())
             }
+            _ => Ok(false),
+        }
+    }
+
+    fn referenced_callable_type(
+        &self,
+        type_id: crate::parser::nodes::OrdinaryTypeUseId,
+    ) -> Result<bool, SynParserError> {
+        match self.type_node(type_id)? {
+            TypeNode::TraitObject(node) => self.bounds_include_callable_trait(&node.bounds),
+            TypeNode::Reference(node) => self.referenced_callable_type(node.referenced),
             _ => Ok(false),
         }
     }
@@ -648,7 +662,8 @@ impl CallRelationResolver<'_> {
         depth: usize,
     ) -> Result<Option<ParameterCallResolution>, SynParserError> {
         match (proof, arg) {
-            (ParameterProof::Value, CallArgument::Path { path }) => {
+            (ParameterProof::Value, CallArgument::Path { path })
+            | (ParameterProof::Value, CallArgument::ReferencedPath { path }) => {
                 if let Some(target) = self.resolve_argument_path(site.owner, path)? {
                     return Ok(Some(ParameterCallResolution::Exact(
                         ParameterCallTarget::Function(target),

@@ -947,6 +947,88 @@ async fn call_context_collection_resolves_private_single_caller_generic_fn_once_
 }
 
 #[tokio::test]
+async fn call_context_collection_resolves_private_single_caller_referenced_callable_parameter()
+-> Result<(), Error> {
+    init_tracing_once();
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let local_target = unique_id_by_name(&db, "function", "local_target")?;
+    let rag = init_test_rag_mock(Arc::clone(&db));
+
+    struct Case {
+        owner: &'static str,
+        source: &'static str,
+        kind: CallSiteKind,
+        callee: CallCalleeInfo,
+        relation: CallTargetKind,
+    }
+
+    let cases = [
+        Case {
+            owner: "call_single_referenced_dyn_fn_param",
+            source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:2148-2153 `f()` with `&dyn Fn` parameter",
+            kind: CallSiteKind::Path,
+            callee: CallCalleeInfo::Path {
+                path: vec!["f".to_string()],
+            },
+            relation: CallTargetKind::Function,
+        },
+        Case {
+            owner: "call_single_parenthesized_referenced_dyn_fn_param",
+            source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:2156-2161 `(f)()` with `&dyn Fn` parameter",
+            kind: CallSiteKind::Dynamic,
+            callee: CallCalleeInfo::Dynamic,
+            relation: CallTargetKind::DynamicFunction,
+        },
+    ];
+    let owners = cases
+        .iter()
+        .map(|case| {
+            one_uuid(&db, &function_in_module_query(&["crate"], case.owner)).map(|id| (id, 1.0))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let call_context = rag.collect_call_context(&owners)?;
+
+    for (case, (owner, _score)) in cases.iter().zip(owners.iter().copied()) {
+        let context = call_context.get(&owner).unwrap_or_else(|| {
+            panic!(
+                "{} referenced callable owner should receive outgoing call context",
+                case.owner
+            )
+        });
+        let call = context
+            .iter()
+            .find(|call| {
+                call.kind == case.kind
+                    && call.callee == case.callee
+                    && call
+                        .targets
+                        .iter()
+                        .any(|target| target.target_id == local_target)
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "{} should include resolved referenced callable parameter call -> local_target from {}: {context:#?}",
+                    case.owner, case.source
+                )
+            });
+
+        // These private helpers each have one local caller that supplies
+        // `&local_target`, so this is exact referenced-argument proof, not
+        // broad callable trait-object dispatch.
+        assert_eq!(call.status, CallStatusKind::Resolved);
+        assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(call.targets.len(), 1);
+        assert_eq!(call.targets[0].target_id, local_target);
+        assert_eq!(call.targets[0].relation, case.relation);
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn call_context_collection_resolves_private_single_caller_branch_parameter_calls()
 -> Result<(), Error> {
     init_tracing_once();

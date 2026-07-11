@@ -301,6 +301,10 @@ const TWO_HOP_FORWARDED_CONFLICTING_NAMED_FIELD_LOCAL_CALLER_SPAN: (usize, usize
 const TWO_HOP_FORWARDED_CONFLICTING_NAMED_FIELD_OTHER_CALLER_SPAN: (usize, usize) = (48969, 49079);
 const SINGLE_FUNCTION_POINTER_PARAM_CAST_CALL_SPAN: (usize, usize) = (34806, 34826);
 const SINGLE_FUNCTION_POINTER_PARAM_CAST_CALLER_SPAN: (usize, usize) = (34910, 34963);
+const SINGLE_REFERENCED_DYN_FN_PARAM_CALL_SPAN: (usize, usize) = (51019, 51022);
+const SINGLE_REFERENCED_DYN_FN_CALLER_SPAN: (usize, usize) = (51102, 51152);
+const SINGLE_PARENTHESIZED_REFERENCED_DYN_FN_PARAM_CALL_SPAN: (usize, usize) = (51243, 51248);
+const SINGLE_PARENTHESIZED_REFERENCED_DYN_FN_CALLER_SPAN: (usize, usize) = (51342, 51406);
 const SINGLE_NAMED_FIELD_FUNCTION_PARAM_CALL_SPAN: (usize, usize) = (35452, 35471);
 const SINGLE_NAMED_FIELD_FUNCTION_CALLER_SPAN: (usize, usize) = (35554, 35648);
 const MULTI_NAMED_FIELD_FUNCTION_PARAM_CALL_SPAN: (usize, usize) = (42259, 42278);
@@ -7130,6 +7134,55 @@ paranoid_call_site_test!(
 );
 
 paranoid_call_site_test!(
+    fixture_call_graph_call_single_referenced_dyn_fn_param_resolves_single_caller_argument,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_single_referenced_dyn_fn_param"
+    },
+    expected: {
+        let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("local_target should regenerate a FunctionNodeId");
+        ExpectedCallSite::path_value_binding(
+            &["f"],
+            SINGLE_REFERENCED_DYN_FN_PARAM_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_single_referenced_dyn_fn_param_with_local_target_resolves_helper_call,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_single_referenced_dyn_fn_param_with_local_target"
+    },
+    expected: {
+        let target_args =
+            fixture_call_graph_function_args(&["crate"], "call_single_referenced_dyn_fn_param");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("call_single_referenced_dyn_fn_param should regenerate a FunctionNodeId");
+        ExpectedCallSite::path(
+            &["call_single_referenced_dyn_fn_param"],
+            SINGLE_REFERENCED_DYN_FN_CALLER_SPAN,
+            1,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
     fixture_call_graph_call_multi_function_pointer_param_resolves_same_target_multi_caller_argument,
     fixture: "fixture_call_graph",
     owner: function {
@@ -8994,6 +9047,56 @@ paranoid_call_site_test!(
         &[],
         ExpectedCallOutcome::Unsupported,
     ),
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_single_parenthesized_referenced_dyn_fn_param_resolves_single_caller_argument,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_single_parenthesized_referenced_dyn_fn_param"
+    },
+    expected: {
+        let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("local_target should regenerate a FunctionNodeId");
+        ExpectedCallSite::dynamic_local_binding(
+            &["f"],
+            SINGLE_PARENTHESIZED_REFERENCED_DYN_FN_PARAM_CALL_SPAN,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_single_parenthesized_referenced_dyn_fn_param_with_local_target_resolves_helper_call,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_single_parenthesized_referenced_dyn_fn_param_with_local_target"
+    },
+    expected: {
+        let target_args = fixture_call_graph_function_args(
+            &["crate"],
+            "call_single_parenthesized_referenced_dyn_fn_param",
+        );
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("call_single_parenthesized_referenced_dyn_fn_param should regenerate a FunctionNodeId");
+        ExpectedCallSite::path(
+            &["call_single_parenthesized_referenced_dyn_fn_param"],
+            SINGLE_PARENTHESIZED_REFERENCED_DYN_FN_CALLER_SPAN,
+            1,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
+        )
+    },
 );
 
 paranoid_call_site_test!(
