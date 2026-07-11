@@ -8,10 +8,12 @@ use syn::spanned::Spanned;
 use syn::visit::{self, Visit};
 
 mod dynamic;
+mod macro_expansion;
 mod model;
 mod receiver;
 
 use dynamic::classify_dynamic_callee;
+pub(super) use macro_expansion::MacroExpansionContext;
 use model::{ConstructedFields, FieldInitProof, LocalBindingProof};
 use receiver::classify_method_receiver;
 
@@ -34,6 +36,7 @@ pub(super) fn extract_body_call_sites(
     block: &syn::Block,
     cfgs: &[String],
     receiver_names: &[String],
+    macro_expansions: &MacroExpansionContext,
 ) -> (
     Vec<CallNode>,
     Vec<CallSiteRelation>,
@@ -43,6 +46,7 @@ pub(super) fn extract_body_call_sites(
         owner,
         cfgs,
         param_names: receiver_names,
+        macro_expansions,
         local_scopes: Vec::new(),
         calls: Vec::new(),
         relations: Vec::new(),
@@ -64,10 +68,12 @@ pub(super) fn extract_expr_call_sites(
     Vec<CallSiteRelation>,
     Vec<ExecutableBodyNode>,
 ) {
+    let macro_expansions = MacroExpansionContext::default();
     let mut visitor = BodyCallVisitor {
         owner,
         cfgs,
         param_names: &[],
+        macro_expansions: &macro_expansions,
         local_scopes: Vec::new(),
         calls: Vec::new(),
         relations: Vec::new(),
@@ -83,6 +89,7 @@ struct BodyCallVisitor<'a> {
     owner: CallBodyOwnerId,
     cfgs: &'a [String],
     param_names: &'a [String],
+    macro_expansions: &'a MacroExpansionContext,
     local_scopes: Vec<Vec<LocalBindingProof>>,
     calls: Vec<CallNode>,
     relations: Vec<CallSiteRelation>,
@@ -274,6 +281,10 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
 
     fn visit_stmt_macro(&mut self, call: &'ast syn::StmtMacro) {
         self.record_macro_call(&call.mac);
+        if let Some(item_fn) = self.macro_expansions.single_local_fn_for(&call.mac) {
+            let byte_range = call.mac.span().byte_range();
+            self.record_local_fn_item(item_fn, (byte_range.start, byte_range.end));
+        }
         visit::visit_stmt_macro(self, call);
     }
 
@@ -339,6 +350,7 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
             owner,
             cfgs: self.cfgs,
             param_names: &[],
+            macro_expansions: self.macro_expansions,
             local_scopes: Vec::new(),
             calls: Vec::new(),
             relations: Vec::new(),
@@ -352,35 +364,7 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
 
     fn visit_item_fn(&mut self, item_fn: &'ast syn::ItemFn) {
         let byte_range = item_fn.span().byte_range();
-        let span = (byte_range.start, byte_range.end);
-        let name = item_fn.sig.ident.to_string();
-        let label = format!("local_fn:{name}");
-        let owner = self.record_local_item_owner(span, &label);
-        let CallBodyOwnerId::Executable(body_id @ ExecutableBodyId::LocalItem(_)) = owner else {
-            unreachable!("record_local_item_owner must return a local-item executable owner")
-        };
-
-        if let Some(scope) = self.local_scopes.last_mut() {
-            scope.push(LocalBindingProof::LocalFunction {
-                name: name.clone(),
-                body_id,
-            });
-        }
-
-        let params = local_fn_param_names(item_fn);
-        let mut visitor = BodyCallVisitor {
-            owner,
-            cfgs: self.cfgs,
-            param_names: &params,
-            local_scopes: vec![vec![LocalBindingProof::LocalFunction { name, body_id }]],
-            calls: Vec::new(),
-            relations: Vec::new(),
-            executable_bodies: Vec::new(),
-            awaited_call_spans: Vec::new(),
-            unsafe_depth: 0,
-        };
-        visitor.visit_block(item_fn.block.as_ref());
-        self.append_child(visitor);
+        self.record_local_fn_item(item_fn, (byte_range.start, byte_range.end));
     }
 
     fn visit_item_impl(&mut self, item_impl: &'ast syn::ItemImpl) {
@@ -398,6 +382,7 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
                 owner,
                 cfgs: self.cfgs,
                 param_names: &params,
+                macro_expansions: self.macro_expansions,
                 local_scopes: Vec::new(),
                 calls: Vec::new(),
                 relations: Vec::new(),
@@ -435,6 +420,7 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
             owner,
             cfgs: self.cfgs,
             param_names: &params,
+            macro_expansions: self.macro_expansions,
             local_scopes: Vec::new(),
             calls: Vec::new(),
             relations: Vec::new(),
@@ -466,6 +452,7 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
             owner,
             cfgs: self.cfgs,
             param_names: &[],
+            macro_expansions: self.macro_expansions,
             local_scopes: Vec::new(),
             calls: Vec::new(),
             relations: Vec::new(),
@@ -489,6 +476,7 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
             owner,
             cfgs: self.cfgs,
             param_names: &[],
+            macro_expansions: self.macro_expansions,
             local_scopes: Vec::new(),
             calls: Vec::new(),
             relations: Vec::new(),
@@ -502,6 +490,37 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
 }
 
 impl BodyCallVisitor<'_> {
+    fn record_local_fn_item(&mut self, item_fn: &syn::ItemFn, span: (usize, usize)) {
+        let name = item_fn.sig.ident.to_string();
+        let label = format!("local_fn:{name}");
+        let owner = self.record_local_item_owner(span, &label);
+        let CallBodyOwnerId::Executable(body_id @ ExecutableBodyId::LocalItem(_)) = owner else {
+            unreachable!("record_local_item_owner must return a local-item executable owner")
+        };
+
+        if let Some(scope) = self.local_scopes.last_mut() {
+            scope.push(LocalBindingProof::LocalFunction {
+                name: name.clone(),
+                body_id,
+            });
+        }
+
+        let params = local_fn_param_names(item_fn);
+        let mut visitor = BodyCallVisitor {
+            owner,
+            cfgs: self.cfgs,
+            param_names: &params,
+            macro_expansions: self.macro_expansions,
+            local_scopes: vec![vec![LocalBindingProof::LocalFunction { name, body_id }]],
+            calls: Vec::new(),
+            relations: Vec::new(),
+            executable_bodies: Vec::new(),
+            awaited_call_spans: Vec::new(),
+            unsafe_depth: 0,
+        };
+        visitor.visit_block(item_fn.block.as_ref());
+        self.append_child(visitor);
+    }
     fn record_local_item_owner(&mut self, span: (usize, usize), label: &str) -> CallBodyOwnerId {
         let body_id = generate_local_item_body_id(self.owner, span, self.cfgs);
         let owner = CallBodyOwnerId::Executable(ExecutableBodyId::LocalItem(body_id));

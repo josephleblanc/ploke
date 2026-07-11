@@ -335,6 +335,8 @@ const TRAIT_DEFAULT_REQUIRED_METHOD_CALL_SPAN: (usize, usize) = (16264, 16279);
 const IMPORTED_MACRO_ALIAS_CALL_SPAN: (usize, usize) = (16502, 16525);
 const EXPLICIT_DROP_METHOD_CALL_SPAN: (usize, usize) = (16722, 16734);
 const ITEM_MACRO_INSIDE_BODY_CALL_SPAN: (usize, usize) = (16918, 16942);
+const GENERATED_ITEM_MACRO_CALL_SPAN: (usize, usize) = (50435, 50459);
+const GENERATED_ITEM_MACRO_FUNCTION_CALL_SPAN: (usize, usize) = (50465, 50490);
 const PARENTHESIZED_GENERIC_FN_ONCE_DYNAMIC_CALL_SPAN: (usize, usize) = (17069, 17082);
 const PARENTHESIZED_BOXED_DYN_FN_BOX_NEW_CALL_SPAN: (usize, usize) = (17191, 17213);
 const PARENTHESIZED_BOXED_DYN_FN_DYNAMIC_CALL_SPAN: (usize, usize) = (17219, 17231);
@@ -2722,6 +2724,67 @@ paranoid_call_site_test!(
         &[],
         ExpectedCallOutcome::Unsupported,
     ),
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_item_macro_generated_function_records_macro_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_item_macro_generated_function"
+    },
+    expected: ExpectedCallSite::macro_call(
+        "call_graph_item_macro",
+        GENERATED_ITEM_MACRO_CALL_SPAN,
+        &[],
+        ExpectedCallOutcome::Unsupported,
+    ),
+);
+
+#[test]
+fn fixture_call_graph_item_macro_generated_function_records_local_fn_owner() {
+    let (graph, _tree) = crate::common::build_tree_for_tests("fixture_call_graph");
+    let owner = crate::common::call_site_paranoid::function_owner_context(
+        &graph,
+        &["crate"],
+        "call_item_macro_generated_function",
+    );
+
+    assert_executable_body_label_at_span(
+        &graph,
+        &owner,
+        ExecutableBodyKind::LocalItem,
+        GENERATED_ITEM_MACRO_CALL_SPAN,
+        Some("local_fn:generated_by_item_macro"),
+    );
+}
+
+paranoid_call_site_test!(
+    fixture_call_graph_item_macro_generated_function_resolves_local_function_path_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_item_macro_generated_function"
+    },
+    expected: {
+        let (graph, _tree) = crate::common::build_tree_for_tests("fixture_call_graph");
+        let owner = crate::common::call_site_paranoid::function_owner_context(
+            &graph,
+            &["crate"],
+            "call_item_macro_generated_function",
+        );
+        let local_fn =
+            local_item_body_with_label(&graph, &owner, "local_fn:generated_by_item_macro");
+        ExpectedCallSite::path_local_function_binding(
+            &["generated_by_item_macro"],
+            local_fn,
+            GENERATED_ITEM_MACRO_FUNCTION_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedLocalFunctionLocalExact { target: local_fn },
+        )
+    },
 );
 
 paranoid_call_site_test!(
@@ -6436,6 +6499,29 @@ fn local_item_body_containing_span(
         bodies.len(),
         1,
         "expected one local-item body owned by {} containing {span:?}, found {bodies:#?}",
+        owner.label
+    );
+    bodies[0].id
+}
+
+fn local_item_body_with_label(
+    graph: &impl GraphAccess,
+    owner: &CallOwnerContext,
+    label: &str,
+) -> ExecutableBodyId {
+    let bodies = graph
+        .executable_bodies()
+        .iter()
+        .filter(|body| {
+            body.parent == owner.id
+                && body.kind == ExecutableBodyKind::LocalItem
+                && body.label.as_deref() == Some(label)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        bodies.len(),
+        1,
+        "expected one local-item body owned by {} with label {label}, found {bodies:#?}",
         owner.label
     );
     bodies[0].id

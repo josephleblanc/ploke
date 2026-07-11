@@ -2647,6 +2647,14 @@ when the direct inner `ready_assoc` call is an exact local async method returnin
 `LocalAssoc`. The same tests keep non-async future-like method results and
 external awaited method-result receivers out of local traversal.
 
+Update 2026-07-11: the closures / executable-local body ownership row now has a
+bounded generated-source positive. A unique, already-seen no-arg
+`macro_rules!` item macro that expands to exactly one local `fn` is modeled as
+an executable `LocalItem` owner, and a later source-visible
+`generated_by_item_macro()` path call resolves to that owner through the
+existing `LocalFunction` relation. The macro invocation row itself remains
+targetless `Unsupported`; this is not general macro expansion.
+
 Update 2026-07-09: the request-parts notes in the matrix row above are
 superseded by the current tuple-return summary slice. The axum-core
 `request_parts.rs:164`

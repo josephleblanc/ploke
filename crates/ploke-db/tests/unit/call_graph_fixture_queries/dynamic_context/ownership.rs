@@ -133,15 +133,51 @@ fn fixture_context_projects_forward_outer_local_fn_call_to_local_item_target() -
     assert_outer_local_fn_call_to_local_item(&db, "local_fn_forward_call_resolves_local_item")
 }
 
+#[test]
+fn fixture_context_projects_macro_generated_local_fn_call_to_local_item_target()
+-> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let owner_name = "call_item_macro_generated_function";
+    let outer = function_id_by_name(&db, owner_name)?;
+    let context = db.call_context_for_owner(outer)?;
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:
+    // call_item_macro_generated_function invokes call_graph_item_macro!(), which
+    // expands to a block-local `fn generated_by_item_macro()`, then calls it.
+    // The call edge should target the generated local-item body while the macro
+    // invocation row itself remains targetless and unsupported.
+    assert_targetless_macro_row(
+        &context,
+        outer,
+        TargetlessMacroCase::macro_call("call_graph_item_macro", owner_name),
+    );
+
+    assert_outer_local_fn_call_to_named_local_item(
+        &db,
+        owner_name,
+        "local_fn:generated_by_item_macro",
+        &["generated_by_item_macro"],
+    )
+}
+
 fn assert_outer_local_fn_call_to_local_item(
     db: &Database,
     owner_name: &str,
 ) -> Result<(), DbError> {
+    assert_outer_local_fn_call_to_named_local_item(db, owner_name, "local_fn:inner", &["inner"])
+}
+
+fn assert_outer_local_fn_call_to_named_local_item(
+    db: &Database,
+    owner_name: &str,
+    label: &str,
+    call_path: &[&str],
+) -> Result<(), DbError> {
     let outer = function_id_by_name(db, owner_name)?;
-    let local_fn = local_item_owner_for_parent_with_label(db, outer, "local_fn:inner")?;
+    let local_fn = local_item_owner_for_parent_with_label(db, outer, label)?;
 
     let outer_context = db.call_context_for_owner(outer)?;
-    let row = row_by_path(&outer_context, &["inner"]);
+    let row = row_by_path(&outer_context, call_path);
     assert_eq!(row.site.owner_id, outer);
     assert_resolved_target(
         row,
@@ -152,7 +188,7 @@ fn assert_outer_local_fn_call_to_local_item(
     );
 
     let callers = db.callers_for_target(local_fn)?;
-    let caller = caller_by_owner_kind_path(&callers, outer, CallSiteKind::Path, &["inner"]);
+    let caller = caller_by_owner_kind_path(&callers, outer, CallSiteKind::Path, call_path);
     assert_eq!(caller.status.status, CallStatusKind::Resolved);
     assert_eq!(
         caller.status.resolution,
@@ -171,7 +207,7 @@ fn assert_outer_local_fn_call_to_local_item(
     let path = paths
         .iter()
         .find(|path| path.start_id == outer && path.end_id == local_fn && path.depth == 1)
-        .unwrap_or_else(|| panic!("outer owner should have a one-hop path to local_fn:inner"));
+        .unwrap_or_else(|| panic!("outer owner should have a one-hop path to {label}"));
     assert_eq!(path.edges[0].caller_id, outer);
     assert_eq!(path.edges[0].callee_id, local_fn);
     assert_eq!(path.edges[0].relation, CallRelationKind::LocalFunction);

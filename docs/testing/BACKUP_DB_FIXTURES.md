@@ -234,6 +234,24 @@ Post-regeneration verification:
   `private::ServeFuture(...)` rows now resolve to the tuple struct
   `ServeFuture` at `axum/src/serve/mod.rs:672`.
 
+## 2026-07-11 Generated Local Item Macro Refresh
+
+The active fixture set was regenerated with
+`cargo run -p xtask --features call_graph -- fixtures regenerate --active`
+after adding the fixture-backed bounded generated local-item macro case.
+
+Post-regeneration verification:
+
+- The regenerated shared call-graph corpus snapshots for memchr,
+  generic-array, chrono, and axum were copied into `tests/backup_dbs/` as the
+  committed seed artifacts.
+- `cargo run -p xtask --features call_graph -- verify-backup-dbs` passed for all
+  registered active fixtures.
+- The local `fixture_call_graph` in-memory DB test
+  `fixture_context_projects_macro_generated_local_fn_call_to_local_item_target`
+  proves the generated local `fn` owner is traversable while the macro
+  invocation remains targetless and unsupported.
+
 ## 2026-07-11 Generic Array Method-Result Receiver Refresh
 
 The `corpus_generic_array_call_graph` fixture was recreated with

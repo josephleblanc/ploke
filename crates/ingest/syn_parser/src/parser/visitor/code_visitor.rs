@@ -9,7 +9,9 @@
 // fn visit_impl_item_const(&mut self, i: &'ast syn::ImplItemConst)
 
 use super::attribute_processing::{extract_attributes, extract_cfg_strings, extract_docstring};
-use super::call_extraction::{extract_body_call_sites, extract_expr_call_sites};
+use super::call_extraction::{
+    MacroExpansionContext, extract_body_call_sites, extract_expr_call_sites,
+};
 use super::state::VisitorState;
 use super::type_processing::{
     get_or_create_trait_bound_type, get_or_create_trait_type, get_or_create_type,
@@ -250,8 +252,10 @@ impl<'a> CodeVisitor<'a> {
         cfgs: &[String],
         receiver_names: &[String],
     ) {
+        let macro_expansions =
+            MacroExpansionContext::from_macro_nodes(&self.state.code_graph.macros);
         let (mut calls, mut relations, mut executable_bodies) =
-            extract_body_call_sites(owner, block, cfgs, receiver_names);
+            extract_body_call_sites(owner, block, cfgs, receiver_names, &macro_expansions);
         self.annotate_local_impl_method_scopes(owner, block, cfgs, &mut executable_bodies);
         self.state.code_graph.call_sites.append(&mut calls);
         self.state

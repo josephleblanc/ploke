@@ -2122,3 +2122,8 @@ pub fn call_parenthesized_referenced_dyn_fn_value_binding() -> i32 {
     let referenced_fn: &dyn Fn() -> i32 = &local_target;
     (referenced_fn)()
 }
+
+pub fn call_item_macro_generated_function() -> i32 {
+    call_graph_item_macro!();
+    generated_by_item_macro()
+}

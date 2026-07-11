@@ -9313,6 +9313,7 @@ dependencies = [
  "ploke-common",
  "ploke-core",
  "ploke-error",
+ "ploke-mbe",
  "ploke-test-macros",
  "proc-macro2",
  "quote",

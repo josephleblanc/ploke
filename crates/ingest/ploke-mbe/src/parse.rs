@@ -7,6 +7,7 @@ use crate::error::MbeError;
 use crate::ir::{
     DeclarativeMacro, MacroInvocation, MetaTemplate, MetaVarKind, Op, RepeatKind, Rule, Separator,
 };
+use crate::structural::parse_expanded_items;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -51,6 +52,19 @@ pub fn parse_macro_rules_tokens(
     })
 }
 
+pub fn parse_no_arg_macro_rule_items(
+    tokens: TokenStream,
+) -> Result<Option<Vec<syn::Item>>, MbeError> {
+    for rule in split_rules(tokens)? {
+        let (matcher_tokens, transcriber_tokens) = split_rule_tokens(rule)?;
+        if matcher_accepts_empty_invocation(&matcher_tokens) {
+            return parse_transcriber_items(transcriber_tokens).map(Some);
+        }
+    }
+
+    Ok(None)
+}
+
 pub fn parse_invocation(item: &syn::ItemMacro) -> MacroInvocation {
     MacroInvocation {
         path: item.mac.path.to_token_stream().to_string(),
@@ -84,6 +98,15 @@ fn split_rules(tokens: TokenStream) -> Result<Vec<TokenStream>, MbeError> {
 }
 
 fn parse_rule(tokens: TokenStream) -> Result<Rule, MbeError> {
+    let (matcher_tokens, transcriber_tokens) = split_rule_tokens(tokens)?;
+
+    Ok(Rule {
+        matcher: parse_template(matcher_tokens, Mode::Pattern)?,
+        transcriber: parse_template(transcriber_tokens, Mode::Template)?,
+    })
+}
+
+fn split_rule_tokens(tokens: TokenStream) -> Result<(TokenStream, TokenStream), MbeError> {
     let mut iter = tokens.into_iter().peekable();
     let matcher_tokens = collect_until_fat_arrow(&mut iter)?;
     let transcriber_tokens: TokenStream = iter.collect();
@@ -94,10 +117,30 @@ fn parse_rule(tokens: TokenStream) -> Result<Rule, MbeError> {
         });
     }
 
-    Ok(Rule {
-        matcher: parse_template(matcher_tokens, Mode::Pattern)?,
-        transcriber: parse_template(transcriber_tokens, Mode::Template)?,
-    })
+    Ok((matcher_tokens, transcriber_tokens))
+}
+
+fn matcher_accepts_empty_invocation(tokens: &TokenStream) -> bool {
+    let mut iter = tokens.clone().into_iter();
+    let Some(TokenTree::Group(group)) = iter.next() else {
+        return false;
+    };
+
+    group.stream().is_empty() && iter.next().is_none()
+}
+
+fn parse_transcriber_items(tokens: TokenStream) -> Result<Vec<syn::Item>, MbeError> {
+    parse_expanded_items(transcriber_file_tokens(tokens))
+}
+
+fn transcriber_file_tokens(tokens: TokenStream) -> TokenStream {
+    let mut iter = tokens.clone().into_iter();
+    match (iter.next(), iter.next()) {
+        (Some(TokenTree::Group(group)), None) if group.delimiter() == Delimiter::Brace => {
+            group.stream()
+        }
+        _ => tokens,
+    }
 }
 
 fn collect_until_fat_arrow(
