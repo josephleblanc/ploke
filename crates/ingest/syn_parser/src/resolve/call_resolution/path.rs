@@ -494,6 +494,7 @@ impl CallRelationResolver<'_> {
             let Some(resolution) = self.resolve_call_argument(
                 site,
                 &site.arguments[index],
+                param_type,
                 proof,
                 expected_type,
                 depth,
@@ -559,6 +560,9 @@ impl CallRelationResolver<'_> {
     ) -> Result<bool, SynParserError> {
         match (proof, param_type) {
             (ParameterProof::Value, TypeNode::Function(_)) => Ok(true),
+            (ParameterProof::Value, param_type) if self.boxed_callable_type(param_type)? => {
+                Ok(true)
+            }
             (ParameterProof::Value, TypeNode::Named(node)) => {
                 self.type_parameter_has_callable_bound(function_id, &node.path)
             }
@@ -569,6 +573,22 @@ impl CallRelationResolver<'_> {
             (ParameterProof::Field(field_path), TypeNode::Array(_)) => {
                 Ok(field_path_index(field_path).is_some())
             }
+            _ => Ok(false),
+        }
+    }
+
+    fn boxed_callable_type(&self, param_type: &TypeNode) -> Result<bool, SynParserError> {
+        let TypeNode::Named(node) = param_type else {
+            return Ok(false);
+        };
+        if !node.path.last().is_some_and(|name| name == "Box") {
+            return Ok(false);
+        }
+        let [argument] = node.arguments.as_slice() else {
+            return Ok(false);
+        };
+        match self.type_node(*argument)? {
+            TypeNode::TraitObject(node) => self.bounds_include_callable_trait(&node.bounds),
             _ => Ok(false),
         }
     }
@@ -657,6 +677,7 @@ impl CallRelationResolver<'_> {
         &self,
         site: &PathCallNode,
         arg: &CallArgument,
+        param_type: &TypeNode,
         proof: ParameterProof<'_>,
         expected_type: Option<&[String]>,
         depth: usize,
@@ -673,6 +694,13 @@ impl CallRelationResolver<'_> {
                     return Ok(None);
                 }
                 self.resolve_parameter_value_call_with_depth(site.owner, path, depth - 1)
+            }
+            (ParameterProof::Value, CallArgument::BoxedPath { path })
+                if self.boxed_callable_type(param_type)? =>
+            {
+                Ok(self.resolve_argument_path(site.owner, path)?.map(|target| {
+                    ParameterCallResolution::Exact(ParameterCallTarget::Function(target))
+                }))
             }
             (ParameterProof::Value, CallArgument::Closure { closure_id }) => Ok(Some(
                 ParameterCallResolution::Exact(ParameterCallTarget::Closure(*closure_id)),

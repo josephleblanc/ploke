@@ -373,6 +373,20 @@ async fn code_item_lookup_returns_private_referenced_dyn_fn_param_callable_conte
 }
 
 #[tokio::test]
+async fn code_item_lookup_returns_private_boxed_dyn_fn_param_callable_context() {
+    // Fixture source:
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs EOF
+    //     private `Box<dyn Fn>` helpers have one local caller passing
+    //     `Box::new(local_target)`, then call `f()` and `(f)()`.
+    assert_callable_param_lookup(
+        CallableParamResolvedFixture::single_boxed_dyn_fn_param().await,
+        "private boxed dyn Fn parameter",
+    )
+    .await;
+    assert_resolved_dynamic_callable_lookup("call_single_parenthesized_boxed_dyn_fn_param").await;
+}
+
+#[tokio::test]
 async fn code_item_lookup_returns_mut_referenced_dyn_fnmut_callable_context() {
     // Fixture source:
     //   tests/fixture_crates/fixture_call_graph/src/lib.rs:2131-2134

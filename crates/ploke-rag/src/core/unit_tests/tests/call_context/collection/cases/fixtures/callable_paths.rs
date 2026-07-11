@@ -965,7 +965,7 @@ async fn call_context_collection_resolves_private_single_caller_generic_fn_once_
 }
 
 #[tokio::test]
-async fn call_context_collection_resolves_private_single_caller_referenced_callable_parameter()
+async fn call_context_collection_resolves_private_single_caller_callable_trait_object_parameters()
 -> Result<(), Error> {
     init_tracing_once();
     let db = Arc::new(Database::new(setup_db_full_multi_embedding(
@@ -980,6 +980,7 @@ async fn call_context_collection_resolves_private_single_caller_referenced_calla
         kind: CallSiteKind,
         callee: CallCalleeInfo,
         relation: CallTargetKind,
+        proof_note: &'static str,
     }
 
     let cases = [
@@ -991,6 +992,7 @@ async fn call_context_collection_resolves_private_single_caller_referenced_calla
                 path: vec!["f".to_string()],
             },
             relation: CallTargetKind::Function,
+            proof_note: "caller supplies `&local_target`",
         },
         Case {
             owner: "call_single_parenthesized_referenced_dyn_fn_param",
@@ -998,6 +1000,25 @@ async fn call_context_collection_resolves_private_single_caller_referenced_calla
             kind: CallSiteKind::Dynamic,
             callee: CallCalleeInfo::Dynamic,
             relation: CallTargetKind::DynamicFunction,
+            proof_note: "caller supplies `&local_target`",
+        },
+        Case {
+            owner: "call_single_boxed_dyn_fn_param",
+            source: "tests/fixture_crates/fixture_call_graph/src/lib.rs EOF `f()` with `Box<dyn Fn>` parameter",
+            kind: CallSiteKind::Path,
+            callee: CallCalleeInfo::Path {
+                path: vec!["f".to_string()],
+            },
+            relation: CallTargetKind::Function,
+            proof_note: "caller supplies `Box::new(local_target)`",
+        },
+        Case {
+            owner: "call_single_parenthesized_boxed_dyn_fn_param",
+            source: "tests/fixture_crates/fixture_call_graph/src/lib.rs EOF `(f)()` with `Box<dyn Fn>` parameter",
+            kind: CallSiteKind::Dynamic,
+            callee: CallCalleeInfo::Dynamic,
+            relation: CallTargetKind::DynamicFunction,
+            proof_note: "caller supplies `Box::new(local_target)`",
         },
     ];
     let owners = cases
@@ -1012,7 +1033,7 @@ async fn call_context_collection_resolves_private_single_caller_referenced_calla
     for (case, (owner, _score)) in cases.iter().zip(owners.iter().copied()) {
         let context = call_context.get(&owner).unwrap_or_else(|| {
             panic!(
-                "{} referenced callable owner should receive outgoing call context",
+                "{} callable trait-object owner should receive outgoing call context",
                 case.owner
             )
         });
@@ -1028,14 +1049,16 @@ async fn call_context_collection_resolves_private_single_caller_referenced_calla
             })
             .unwrap_or_else(|| {
                 panic!(
-                    "{} should include resolved referenced callable parameter call -> local_target from {}: {context:#?}",
-                    case.owner, case.source
+                    "{} should include resolved callable trait-object parameter call -> local_target from {} ({note}): {context:#?}",
+                    case.owner,
+                    case.source,
+                    note = case.proof_note
                 )
             });
 
         // These private helpers each have one local caller that supplies
-        // `&local_target`, so this is exact referenced-argument proof, not
-        // broad callable trait-object dispatch.
+        // the exact callable target, so this is complete private-caller proof,
+        // not broad callable trait-object dispatch.
         assert_eq!(call.status, CallStatusKind::Resolved);
         assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
         assert_eq!(call.targets.len(), 1);

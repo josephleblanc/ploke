@@ -668,7 +668,8 @@ fn call_argument(
             }
         }
         syn::Expr::Reference(reference) => referenced_path_argument(reference),
-        _ => array_argument(arg, param_names, local_scopes)
+        _ => boxed_path_argument(arg, param_names, local_scopes)
+            .or_else(|| array_argument(arg, param_names, local_scopes))
             .or_else(|| constructed_argument(arg, param_names, local_scopes))
             .unwrap_or(CallArgument::Other),
     }
@@ -687,6 +688,15 @@ fn referenced_path_argument(reference: &syn::ExprReference) -> CallArgument {
     } else {
         CallArgument::ReferencedPath { path }
     }
+}
+
+fn boxed_path_argument(
+    arg: &syn::Expr,
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<CallArgument> {
+    boxed_init_path(Some(arg), param_names, local_scopes)
+        .map(|path| CallArgument::BoxedPath { path })
 }
 
 fn array_argument(

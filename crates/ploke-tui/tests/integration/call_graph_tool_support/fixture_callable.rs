@@ -262,6 +262,10 @@ impl CallableParamResolvedFixture {
         Self::new_for_owner("call_two_hop_forwarded_referenced_dyn_fn_leaf", &["f"], 6).await
     }
 
+    pub(crate) async fn single_boxed_dyn_fn_param() -> Self {
+        Self::new_for_owner("call_single_boxed_dyn_fn_param", &["f"], 6).await
+    }
+
     pub(crate) async fn multi_generic_fn_once_param() -> Self {
         Self::new_for_owner("call_multi_generic_fn_once_param", &["generic_f"], 9).await
     }

@@ -114,6 +114,14 @@ should prevent future resumes from reselecting already-covered shapes.
      through ordinary `CallRelation::Function` edges; broader callable
      trait-object dispatch without exact private-caller proof remains
      targetless.
+   - The same complete-private-caller boundary now admits one adjacent boxed
+     callable trait-object argument proof when the helper takes `f: Box<dyn
+     Fn() -> i32>` and every local caller supplies `Box::new(local_target)`.
+     The path `f()` form resolves through `CallRelation::Function`, and the
+     parenthesized `(f)()` form resolves through `CallRelation::DynamicFunction`.
+     This is still an exact constructed-argument proof, not public callable
+     parameter inference, arbitrary boxed value-flow, field-held boxed
+     trait-object dispatch, or the real memchr boxed `dyn FnMut` runtime case.
    - The same complete-local-caller boundary now has one adjacent constructed
      argument proof for private indexed field-parameter calls:
      `call_single_indexed_field_function_param(holder: CallbackArrayHolder)

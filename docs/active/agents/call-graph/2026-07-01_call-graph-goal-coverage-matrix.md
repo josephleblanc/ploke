@@ -147,6 +147,20 @@ callable trait-object reference. DB/RAG assertions prove the path `f()` edge to
 This does not add public callable-parameter inference, arbitrary callable
 value-flow, or general trait-object runtime dispatch.
 
+Latest completed slice: private boxed callable trait-object parameter proof.
+The fixture-backed source oracle
+`call_single_boxed_dyn_fn_param(f: Box<dyn Fn() -> i32>) { f() }` and
+`call_single_parenthesized_boxed_dyn_fn_param(f: Box<dyn Fn() -> i32>) {
+(f)() }` each have one local caller passing `Box::new(local_target)`.
+Parser argument capture preserves that constructed boxed path as proof input;
+the resolver admits it only when the callee parameter type is `Box<dyn
+Fn/FnMut/FnOnce...>` and the complete private caller set proves one local
+target. Parser, DB, RAG, and exact TUI lookup/edges tests cover the resolved
+`Function` and `DynamicFunction` edges. This still does not add public
+callable-parameter inference, field-held boxed callable value-flow, arbitrary
+boxed trait-object dispatch, or the real memchr boxed `dyn FnMut` object-field
+runtime cases.
+
 Previous completed slice: caller-supplied module-boundary policy checks over
 existing resolved boundary edges. DB `module_boundary_policy_violations_from_owner`, RAG
 `exact_module_boundary_policy_violations_from_owner`, and exact TUI

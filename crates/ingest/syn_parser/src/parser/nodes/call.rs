@@ -119,6 +119,8 @@ pub enum CallArgument {
     Path { path: Vec<String> },
     /// The argument expression is a reference to a path such as `&local_target`.
     ReferencedPath { path: Vec<String> },
+    /// The argument expression boxes a path such as `Box::new(local_target)`.
+    BoxedPath { path: Vec<String> },
     /// The argument expression is an inline non-async closure literal with a
     /// known executable body owner.
     Closure { closure_id: ExecutableBodyId },

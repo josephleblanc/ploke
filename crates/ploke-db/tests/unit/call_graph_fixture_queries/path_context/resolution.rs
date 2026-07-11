@@ -1638,102 +1638,153 @@ fn fixture_context_resolves_single_caller_referenced_callable_trait_object_param
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let target = function_id_by_name(&db, "local_target")?;
 
-    struct Case {
-        owner: &'static str,
-        caller: &'static str,
-        source: &'static str,
-        site_kind: CallSiteKind,
-        relation: CallRelationKind,
-        target_kind: CallTargetKind,
-    }
-
     let cases = [
-        Case {
+        CallableParamCase {
             owner: "call_single_referenced_dyn_fn_param",
             caller: "call_single_referenced_dyn_fn_param_with_local_target",
             source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:2148-2153 `f()` with `&dyn Fn` parameter",
+            callee_path: &["f"],
             site_kind: CallSiteKind::Path,
             relation: CallRelationKind::Function,
             target_kind: CallTargetKind::Function,
+            proof_note: "private `&dyn Fn` helper whose only local caller passes `&local_target`",
         },
-        Case {
+        CallableParamCase {
             owner: "call_single_parenthesized_referenced_dyn_fn_param",
             caller: "call_single_parenthesized_referenced_dyn_fn_param_with_local_target",
             source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:2156-2161 `(f)()` with `&dyn Fn` parameter",
+            callee_path: &["f"],
             site_kind: CallSiteKind::Dynamic,
             relation: CallRelationKind::DynamicFunction,
             target_kind: CallTargetKind::Function,
+            proof_note: "private `&dyn Fn` helper whose only local caller passes `&local_target`",
         },
     ];
 
     for case in cases {
-        let owner = function_id_by_name(&db, case.owner)?;
-        let caller = function_id_by_name(&db, case.caller)?;
-        let helper = function_id_by_name(&db, case.owner)?;
-
-        // These private helpers take `f: &dyn Fn() -> i32`; their only local
-        // caller passes `&local_target`. This admits exact referenced
-        // trait-object argument proof without generalizing runtime trait-object
-        // dispatch or public callable parameters.
-        let context = db.call_context_for_owner(owner)?;
-        assert_eq!(
-            context.len(),
-            1,
-            "{} referenced callable parameter context rows from {}: {context:#?}",
-            case.owner,
-            case.source
-        );
-        let row = row_by_kind_path(&context, case.site_kind, &["f"]);
-        assert_eq!(row.site.owner_id, owner);
-        assert_eq!(row.site.arg_count, Some(0));
-        assert_eq!(
-            row.site.generic_arg_count,
-            match case.site_kind {
-                CallSiteKind::Path => Some(0),
-                CallSiteKind::Dynamic => None,
-                _ => unreachable!("referenced callable case should be path or dynamic"),
-            }
-        );
-        assert_resolved_target(row, target, case.relation, case.site_kind, case.target_kind);
-
-        let callers = db.callers_for_target(target)?;
-        let caller_row = caller_by_owner_kind_path(&callers, owner, case.site_kind, &["f"]);
-        assert_eq!(caller_row.status.status, CallStatusKind::Resolved);
-        assert_eq!(
-            caller_row.status.resolution,
-            Some(CallResolutionKind::LocalExact)
-        );
-        assert_eq!(caller_row.target.target_id, target);
-        assert_eq!(caller_row.target.relation, case.relation);
-
-        let paths = db.call_paths_from_owner(
-            owner,
-            CallPathOptions {
-                max_depth: 1,
-                max_paths: 8,
-            },
-        )?;
-        let path = paths
-            .iter()
-            .find(|path| path.start_id == owner && path.end_id == target && path.depth == 1)
-            .unwrap_or_else(|| panic!("{} should have a one-hop path to local_target", case.owner));
-        assert_eq!(path.edges[0].caller_id, owner);
-        assert_eq!(path.edges[0].callee_id, target);
-        assert_eq!(path.edges[0].relation, case.relation);
-
-        // The caller remains an ordinary direct call to the private helper; the
-        // referenced argument proof only affects the helper body's `f` call.
-        let caller_context = db.call_context_for_owner(caller)?;
-        let helper_call = row_by_path(&caller_context, &[case.owner]);
-        assert_eq!(helper_call.site.arg_count, Some(1));
-        assert_resolved_target(
-            helper_call,
-            helper,
-            CallRelationKind::Function,
-            CallSiteKind::Path,
-            CallTargetKind::Function,
-        );
+        assert_callable_case(&db, target, case)?;
     }
+
+    Ok(())
+}
+
+#[test]
+fn fixture_context_resolves_single_caller_boxed_callable_trait_object_parameter()
+-> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let target = function_id_by_name(&db, "local_target")?;
+
+    let cases = [
+        CallableParamCase {
+            owner: "call_single_boxed_dyn_fn_param",
+            caller: "call_single_boxed_dyn_fn_param_with_local_target",
+            source: "tests/fixture_crates/fixture_call_graph/src/lib.rs EOF `f()` with `Box<dyn Fn>` parameter",
+            callee_path: &["f"],
+            site_kind: CallSiteKind::Path,
+            relation: CallRelationKind::Function,
+            target_kind: CallTargetKind::Function,
+            proof_note: "private `Box<dyn Fn>` helper whose only local caller passes `Box::new(local_target)`",
+        },
+        CallableParamCase {
+            owner: "call_single_parenthesized_boxed_dyn_fn_param",
+            caller: "call_single_parenthesized_boxed_dyn_fn_param_with_local_target",
+            source: "tests/fixture_crates/fixture_call_graph/src/lib.rs EOF `(f)()` with `Box<dyn Fn>` parameter",
+            callee_path: &["f"],
+            site_kind: CallSiteKind::Dynamic,
+            relation: CallRelationKind::DynamicFunction,
+            target_kind: CallTargetKind::Function,
+            proof_note: "private `Box<dyn Fn>` helper whose only local caller passes `Box::new(local_target)`",
+        },
+    ];
+
+    for case in cases {
+        assert_callable_case(&db, target, case)?;
+    }
+
+    Ok(())
+}
+
+struct CallableParamCase {
+    owner: &'static str,
+    caller: &'static str,
+    source: &'static str,
+    callee_path: &'static [&'static str],
+    site_kind: CallSiteKind,
+    relation: CallRelationKind,
+    target_kind: CallTargetKind,
+    proof_note: &'static str,
+}
+
+fn assert_callable_case(
+    db: &Database,
+    target: Uuid,
+    case: CallableParamCase,
+) -> Result<(), DbError> {
+    let owner = function_id_by_name(db, case.owner)?;
+    let caller = function_id_by_name(db, case.caller)?;
+    let helper = function_id_by_name(db, case.owner)?;
+
+    // This is exact complete-private-caller proof. It must not generalize to
+    // public callable parameters or unbounded runtime trait-object dispatch.
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(
+        context.len(),
+        1,
+        "{} callable parameter context rows from {} ({note}): {context:#?}",
+        case.owner,
+        case.source,
+        note = case.proof_note
+    );
+    let row = row_by_kind_path(&context, case.site_kind, case.callee_path);
+    assert_eq!(row.site.owner_id, owner);
+    assert_eq!(row.site.arg_count, Some(0));
+    assert_eq!(
+        row.site.generic_arg_count,
+        match case.site_kind {
+            CallSiteKind::Path => Some(0),
+            CallSiteKind::Dynamic => None,
+            _ => unreachable!("callable parameter case should be path or dynamic"),
+        }
+    );
+    assert_resolved_target(row, target, case.relation, case.site_kind, case.target_kind);
+
+    let callers = db.callers_for_target(target)?;
+    let caller_row = caller_by_owner_kind_path(&callers, owner, case.site_kind, case.callee_path);
+    assert_eq!(caller_row.status.status, CallStatusKind::Resolved);
+    assert_eq!(
+        caller_row.status.resolution,
+        Some(CallResolutionKind::LocalExact)
+    );
+    assert_eq!(caller_row.target.target_id, target);
+    assert_eq!(caller_row.target.relation, case.relation);
+
+    let paths = db.call_paths_from_owner(
+        owner,
+        CallPathOptions {
+            max_depth: 1,
+            max_paths: 8,
+        },
+    )?;
+    let path = paths
+        .iter()
+        .find(|path| path.start_id == owner && path.end_id == target && path.depth == 1)
+        .unwrap_or_else(|| panic!("{} should have a one-hop path to local_target", case.owner));
+    assert_eq!(path.edges[0].caller_id, owner);
+    assert_eq!(path.edges[0].callee_id, target);
+    assert_eq!(path.edges[0].relation, case.relation);
+
+    // The caller remains an ordinary direct call to the private helper; argument
+    // proof only affects the helper body's callable-parameter invocation.
+    let caller_context = db.call_context_for_owner(caller)?;
+    let helper_call = row_by_path(&caller_context, &[case.owner]);
+    assert_eq!(helper_call.site.arg_count, Some(1));
+    assert_resolved_target(
+        helper_call,
+        helper,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
 
     Ok(())
 }

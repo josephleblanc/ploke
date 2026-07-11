@@ -2161,6 +2161,22 @@ pub fn call_single_parenthesized_referenced_dyn_fn_param_with_local_target() -> 
     call_single_parenthesized_referenced_dyn_fn_param(&local_target)
 }
 
+fn call_single_boxed_dyn_fn_param(f: Box<dyn Fn() -> i32>) -> i32 {
+    f()
+}
+
+pub fn call_single_boxed_dyn_fn_param_with_local_target() -> i32 {
+    call_single_boxed_dyn_fn_param(Box::new(local_target))
+}
+
+fn call_single_parenthesized_boxed_dyn_fn_param(f: Box<dyn Fn() -> i32>) -> i32 {
+    (f)()
+}
+
+pub fn call_single_parenthesized_boxed_dyn_fn_param_with_local_target() -> i32 {
+    call_single_parenthesized_boxed_dyn_fn_param(Box::new(local_target))
+}
+
 fn call_forwarded_referenced_dyn_fn_leaf(f: &dyn Fn() -> i32) -> i32 {
     f()
 }
