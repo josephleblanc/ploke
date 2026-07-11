@@ -217,6 +217,23 @@ impl Drop for FixtureRestoreGuard {
 | `corpus_axum_openrouter_embeddings_2026-05-17.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | OpenRouter-searchable workspace-member corpus backup for type-context matrix tests | 2026-05-17 |
 | `ploke-db_af8e3a20-728d-5967-8523-da8a5ccdae45` | `crates/ploke-db` | currently orphaned snapshot | 2026-03-20 |
 
+## 2026-07-11 Axum Module-Qualified Constructor Refresh
+
+The active fixture set was regenerated with
+`cargo run -p xtask --features call_graph -- fixtures regenerate --active`
+after local constructor resolution started using module-qualified type paths
+such as `private::ServeFuture(...)`.
+
+Post-regeneration verification:
+
+- `corpus_axum_call_graph_2026-07-11.sqlite` was copied from the regenerated
+  shared snapshot into `tests/backup_dbs/` as the committed seed artifact.
+- `cargo run -p xtask --features call_graph -- verify-backup-dbs --fixture corpus_axum_call_graph`
+  passed.
+- Axum `axum/src/serve/mod.rs:389` and `:541`
+  `private::ServeFuture(...)` rows now resolve to the tuple struct
+  `ServeFuture` at `axum/src/serve/mod.rs:672`.
+
 ## 2026-07-11 Generic Array Method-Result Receiver Refresh
 
 The `corpus_generic_array_call_graph` fixture was recreated with

@@ -33,6 +33,7 @@ pub(super) fn query_for_target(target: &TargetInfo, expected: CallExpected) -> M
     let (item_name, node_kind) = match expected {
         CallExpected::Resolved { target, .. } => match target {
             CallTargetSelector::FunctionInModule { name, .. } => (name, "function"),
+            CallTargetSelector::Struct { name } => (name, "struct"),
             CallTargetSelector::Variant { variant_name, .. } => (variant_name, "variant"),
         },
         CallExpected::Targetless { .. } => unreachable!("target query requires resolved case"),

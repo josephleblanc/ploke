@@ -18,6 +18,7 @@ use crate::{
 pub enum CallShapeKind {
     FreeFunctionPath,
     AliasConstructorPath,
+    ModuleQualifiedConstructorPath,
     GeneratedConstructorFrontier,
     DynamicCallableField,
     FunctionPointerField,
@@ -91,6 +92,9 @@ pub enum CallReceiverSelector {
 pub enum CallTargetSelector {
     FunctionInModule {
         module_path: &'static [&'static str],
+        name: &'static str,
+    },
+    Struct {
         name: &'static str,
     },
     Variant {
@@ -235,6 +239,31 @@ static CALL_SHAPE_CASES: &[CallShapeCase] = &[
             CallPipelineCoverage::RagApi,
             CallPipelineCoverage::TuiTool,
         ],
+    },
+    CallShapeCase {
+        name: "axum_private_serve_future_constructor",
+        kind: CallShapeKind::ModuleQualifiedConstructorPath,
+        fixture: CallCorpusFixture::Axum,
+        source: "axum/src/serve/mod.rs:389 private::ServeFuture(Box::pin(async move { self.run().await }))",
+        owner: CallOwnerSelector::MethodByBody {
+            name: "into_future",
+            body: "private::ServeFuture(Box::pin(async move { self.run().await }))",
+            owner_type: Some("Serve"),
+            owner_trait: Some("IntoFuture"),
+        },
+        site: CallSiteSelector::Path {
+            segments: &["private", "ServeFuture"],
+            arg_count: Some(1),
+        },
+        expected: CallExpected::Resolved {
+            target: CallTargetSelector::Struct {
+                name: "ServeFuture",
+            },
+            relation: CallRelationKind::TupleStructConstructor,
+            target_kind: CallTargetKind::Struct,
+            edge_count: 1,
+        },
+        coverage: &[CallPipelineCoverage::Db, CallPipelineCoverage::RagApi],
     },
     CallShapeCase {
         name: "axum_generated_into_service_future_new",

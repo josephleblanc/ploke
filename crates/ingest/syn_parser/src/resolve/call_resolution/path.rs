@@ -99,9 +99,11 @@ impl CallRelationResolver<'_> {
             }
         }
 
-        if self.is_external_path(&call.path)
-            || self.is_external_import_path(call.owner, &call.path)?
-        {
+        let external_path = self.is_external_path(&call.path);
+        let generic_root = self.path_starts_with_owner_generic_param(call.owner, &call.path)?;
+        let external_import =
+            !generic_root && self.is_external_import_path(call.owner, &call.path)?;
+        if external_path || external_import {
             statuses.push(CallResolutionStatus::External { source });
             return Ok(());
         }
@@ -227,6 +229,17 @@ impl CallRelationResolver<'_> {
         }
 
         Ok(())
+    }
+
+    fn path_starts_with_owner_generic_param(
+        &self,
+        owner: CallBodyOwnerId,
+        path: &[String],
+    ) -> Result<bool, SynParserError> {
+        let Some(type_segment) = path.first() else {
+            return Ok(false);
+        };
+        self.owner_has_generic_param_named(owner, type_segment)
     }
 
     fn resolve_initialized_value_binding_call(

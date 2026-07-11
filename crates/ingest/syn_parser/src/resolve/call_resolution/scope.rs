@@ -993,36 +993,27 @@ impl<'a> CallRelationResolver<'a> {
             return Ok(LocalModulePathResolution::Unresolved);
         }
 
-        let Some(mut module_id) = self.containing_module(import_node.id.as_any()) else {
-            return Ok(LocalModulePathResolution::Unresolved);
-        };
-        module_id = self.import_scope_module(module_id)?;
-        self.resolve_module_path_from_module(module_id, import_node.source_path())
+        let candidates = self
+            .graph
+            .modules()
+            .iter()
+            .filter(|module| module.path == import_node.source_path())
+            .map(|module| self.import_scope_module(module.id))
+            .collect::<Result<Vec<_>, _>>()?;
+        Self::local_module_resolution(candidates)
     }
 
-    fn resolve_module_path_from_module(
-        &self,
-        mut current_module: ModuleNodeId,
-        path: &[String],
+    fn local_module_resolution(
+        mut candidates: Vec<ModuleNodeId>,
     ) -> Result<LocalModulePathResolution, SynParserError> {
-        let start_idx = self.start_segment_index(path, &mut current_module)?;
-        if start_idx >= path.len() {
-            return Ok(LocalModulePathResolution::Resolved(current_module));
-        }
+        candidates.sort_unstable();
+        candidates.dedup();
 
-        for segment in &path[start_idx..] {
-            current_module = match self.resolve_module_segment(current_module, segment)? {
-                LocalModulePathResolution::Resolved(module_id) => module_id,
-                LocalModulePathResolution::Unresolved => {
-                    return Ok(LocalModulePathResolution::Unresolved);
-                }
-                LocalModulePathResolution::Ambiguous => {
-                    return Ok(LocalModulePathResolution::Ambiguous);
-                }
-            };
-        }
-
-        Ok(LocalModulePathResolution::Resolved(current_module))
+        Ok(match candidates.as_slice() {
+            [module_id] => LocalModulePathResolution::Resolved(*module_id),
+            [] => LocalModulePathResolution::Unresolved,
+            _ => LocalModulePathResolution::Ambiguous,
+        })
     }
 
     fn visit_ancestor_glob_candidates(

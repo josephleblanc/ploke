@@ -571,12 +571,12 @@ impl CallRelationResolver<'_> {
         if self.is_external_path(path) {
             return Ok(true);
         }
-        if self.is_external_import_path(owner, path)? {
-            return Ok(!self.trait_path_is_local(owner, path)?);
-        }
         if matches!(expected_trait, "Default" | "Into" | "IntoIterator")
             && matches!(path, [segment] if segment == expected_trait)
         {
+            return Ok(!self.has_direct_local_trait_named(owner, expected_trait)?);
+        }
+        if self.is_external_import_path(owner, path)? {
             return Ok(!self.trait_path_is_local(owner, path)?);
         }
 
@@ -610,6 +610,33 @@ impl CallRelationResolver<'_> {
             self.resolve_local_trait_segment(owner, segment)?,
             LocalTraitResolution::Unresolved
         ))
+    }
+
+    fn has_direct_local_trait_named(
+        &self,
+        owner: CallBodyOwnerId,
+        trait_name: &str,
+    ) -> Result<bool, SynParserError> {
+        let Some(owner_module) = self.containing_module_for_owner(owner) else {
+            return Ok(false);
+        };
+        let owner_module = self.import_scope_module(owner_module)?;
+
+        for trait_node in self
+            .graph
+            .traits()
+            .iter()
+            .filter(|node| node.name == trait_name)
+        {
+            let Some(trait_module) = self.module_for_node(trait_node.id.as_any()) else {
+                continue;
+            };
+            if self.import_scope_module(trait_module)? == owner_module {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
     }
 
     fn is_external_executable_self_field_method(

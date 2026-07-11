@@ -366,6 +366,12 @@ persisted self-field callsite paths `["self", "into_route"]`,
 Exact TUI `code_item_lookup` and `code_item_edges` tests assert the same four
 owner-seeded targetless rows, blocked proof facts, and path payloads.
 
+## Axum Module-Qualified Constructor Oracle
+
+| Target / case | Callsites | Definition or binding | Evidence chain |
+| --- | --- | --- | --- |
+| `private::ServeFuture(...)` tuple constructor | `axum/src/serve/mod.rs:389,541` | `axum/src/serve/mod.rs:672` `pub struct ServeFuture<T = Infallible>(...)` inside `mod private` | Both `IntoFuture` impl methods construct the local `private::ServeFuture` tuple struct. The regenerated `corpus_axum_call_graph` fixture now resolves both rows as `TupleStructConstructor` edges to `ServeFuture`; the shared call-shape matrix pins the `Serve::into_future` row as the representative DB/RAG traversal case. |
+
 ## Fallback Fixture Oracle Matrix
 
 These rows extend the axum matrix with registered source-pinned call-graph

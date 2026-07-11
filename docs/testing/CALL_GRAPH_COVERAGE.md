@@ -50,7 +50,7 @@ The most useful companion documents are:
 | Path calls | `callee()`, `crate::m::callee()`, `self::m::callee()`, `super::callee()` | Structural path rows and exact local function resolution when proven | Covered |
 | Method calls | `self.method()`, typed/local/initialized/borrowed/dereferenced receiver methods | Structural receiver payload and exact local method or trait-impl target when proven | Covered for bounded local proof shapes |
 | Associated functions | `Self::make()`, `Type::make()`, trait associated function paths, imported aliases | Associated-function relation to exact method target | Covered for visible local proof shapes |
-| Constructors | Tuple struct and tuple enum variant constructor syntax | Refined constructor relation only for proven callable constructors | Covered |
+| Constructors | Tuple struct and tuple enum variant constructor syntax, including module-qualified local tuple constructors such as `private::ServeFuture(...)` | Refined constructor relation only for proven callable constructors | Covered |
 | Dynamic calls | Parenthesized paths, initialized callable bindings, branch/match callees, callable fields, closure literals, returned callables | Exact dynamic function or closure edges only with finite proof; ambiguous candidates preserved without resolved edge | Broad partial coverage |
 | Closures and local items | Closure bodies, async closures, async blocks, local const/static/fn/impl method bodies | Nested calls are owned by executable owners and not flattened into enclosing functions | Covered for current fixture and selected axum rows |
 | Macro calls | Expression, statement, imported, crate-qualified, item macro invocations | Macro callsites persist as structural unsupported rows unless expanded source is parsed | Covered structurally |
@@ -75,7 +75,7 @@ The most useful companion documents are:
 | --- | --- | --- |
 | Regular free functions | axum | One-hop and multi-hop function chains are covered, including `from_request::expand -> impl_struct_by_extracting_each_field -> extract_fields`. |
 | Method and trait-method traversal | axum | Covered for representative multi-hop paths and exact local/external-trait receiver proof shapes. |
-| Import/re-export/glob paths | axum, chrono | Covered for selected source-visible imports, re-exports, glob imports, aliases, and generated-frontier fail-closed rows. |
+| Import/re-export/glob paths | axum, chrono | Covered for selected source-visible imports, re-exports, glob imports, aliases, module-qualified local constructor paths, and generated-frontier fail-closed rows. |
 | Generated and macro frontiers | axum | Generated constructor and generated handler frontiers remain targetless; proof summaries explain generated boundaries without adding local edges. |
 | Proc-macro body owners | axum-macros | Public proc-macro entrypoints traverse to local helpers such as `expand_with` and `expand_attr_with`. |
 | Local executable owners | axum | Closure, async-block, local const/static/fn, and local impl method owners are exact-addressable where persisted. |

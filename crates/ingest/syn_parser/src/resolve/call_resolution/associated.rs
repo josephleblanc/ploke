@@ -58,6 +58,9 @@ impl CallRelationResolver<'_> {
         if matches!(type_segment.as_str(), "Self" | "crate" | "self" | "super") {
             return Ok(false);
         }
+        if self.owner_has_generic_param_named(owner, type_segment)? {
+            return Ok(false);
+        }
 
         if self.local_type_target_alias_is_external(owner, type_segment, type_relations)? {
             return Ok(true);
@@ -141,6 +144,24 @@ impl CallRelationResolver<'_> {
             LocalTypeResolution::Unresolved => Ok(false),
             LocalTypeResolution::Ambiguous => Ok(false),
         }
+    }
+
+    pub(super) fn owner_has_generic_param_named(
+        &self,
+        owner: CallBodyOwnerId,
+        type_segment: &str,
+    ) -> Result<bool, SynParserError> {
+        for scope in self.generic_bound_scopes(owner)? {
+            if scope
+                .params
+                .iter()
+                .any(|param| param.kind.name() == Some(type_segment))
+            {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
     }
 
     pub(super) fn workspace_type_target_alias_is_external(

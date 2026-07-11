@@ -115,6 +115,16 @@ fn axum_real_target_supported_callers_are_one_hop_traversable() -> Result<(), Db
             expected_traversal_candidates: 3,
         },
         ResolvedTraversalCase {
+            // axum/src/serve/mod.rs:389 and :541 call the module-qualified
+            // tuple-struct constructor `private::ServeFuture(...)` from the
+            // two `IntoFuture` impl bodies. Callee binding:
+            // axum/src/serve/mod.rs:672.
+            label: "axum private::ServeFuture tuple constructor",
+            target: struct_id_by_name(&db, "ServeFuture")?,
+            expected_call_edges: 2,
+            expected_traversal_candidates: 2,
+        },
+        ResolvedTraversalCase {
             // axum-macros/src/with_position.rs:92 calls the enum variant
             // constructor `Position::First(item)`. Callee binding:
             // axum-macros/src/with_position.rs:66.
@@ -337,6 +347,14 @@ fn axum_real_target_supported_callers_match_oracle_shape_counts() -> Result<(), 
             label: "axum BoxedIntoRoute tuple constructor",
             target: struct_id_by_name(&db, "BoxedIntoRoute")?,
             expected: vec![("path:BoxedIntoRoute", 1), ("path:Self", 2)],
+        },
+        ResolvedShapeCase {
+            // Callers: axum/src/serve/mod.rs:389 and :541
+            // private::ServeFuture(...). Callee binding:
+            // axum/src/serve/mod.rs:672 tuple struct.
+            label: "axum private::ServeFuture tuple constructor",
+            target: struct_id_by_name(&db, "ServeFuture")?,
+            expected: vec![("path:private::ServeFuture", 2)],
         },
         ResolvedShapeCase {
             // Caller: axum-macros/src/with_position.rs:92 Position::First(item).

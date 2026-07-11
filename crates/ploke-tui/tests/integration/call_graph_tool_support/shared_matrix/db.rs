@@ -27,6 +27,7 @@ pub(super) fn resolve_target(db: &Database, target: CallTargetSelector) -> Targe
         CallTargetSelector::FunctionInModule { module_path, name } => {
             function_by_name_in_module(db, module_path, name, name)
         }
+        CallTargetSelector::Struct { name } => struct_by_name(db, name),
         CallTargetSelector::Variant {
             enum_name,
             variant_name,
@@ -274,6 +275,34 @@ file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_f
         db.raw_query_params(&script, params)
             .unwrap_or_else(|err| panic!("query variant {enum_name}::{variant_name}: {err}")),
         variant_name,
+    )
+}
+
+fn struct_by_name(db: &Database, name: &str) -> TargetInfo {
+    let mut params = BTreeMap::new();
+    params.insert("name".to_string(), DataValue::from(name));
+
+    let script = format!(
+        r#"
+ancestor[desc, desc] := *module{{ id: desc @ 'NOW' }}
+{ANCESTOR_RULES_NOW}
+
+module_has_file[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_id] := module_has_file[mod_id], file_id = mod_id
+file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_file[parent], file_id = parent
+
+?[id, file_path, mod_path] :=
+    *struct {{ id, name: $name @ 'NOW' }},
+    ancestor[id, module_id],
+    *module{{ id: module_id, path: mod_path @ 'NOW' }},
+    file_owner_for_module[module_id, file_id],
+    *file_mod{{ owner_id: file_id, file_path @ 'NOW' }}
+"#
+    );
+    one_target_info(
+        db.raw_query_params(&script, params)
+            .unwrap_or_else(|err| panic!("query struct {name}: {err}")),
+        name,
     )
 }
 
