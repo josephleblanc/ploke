@@ -99,6 +99,7 @@ const RETURNED_CONFLICTING_FUNCTION_POINTER_LOCAL_DYNAMIC_CALL_SPAN: (usize, usi
 const RETURNED_CONFLICTING_FUNCTION_POINTER_OTHER_INNER_CALL_SPAN: (usize, usize) = (50162, 50221);
 const RETURNED_CONFLICTING_FUNCTION_POINTER_OTHER_DYNAMIC_CALL_SPAN: (usize, usize) =
     (50162, 50223);
+const REFERENCED_DYN_FN_DYNAMIC_CALL_SPAN: (usize, usize) = (50357, 50374);
 const MAKE_CLOSURE_INNER_CALL_SPAN: (usize, usize) = (31561, 31575);
 const MAKE_CLOSURE_RETURNED_CLOSURE_SPAN: (usize, usize) = (31508, 31513);
 const RETURNED_CLOSURE_DYNAMIC_CALL_SPAN: (usize, usize) = (31561, 31577);
@@ -9325,6 +9326,30 @@ paranoid_call_site_test!(
             &["boxed_fn"],
             &["local_target"],
             DEREFERENCED_BOXED_DYN_FN_DYNAMIC_CALL_SPAN,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_parenthesized_referenced_dyn_fn_value_binding_resolves_dynamic_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_parenthesized_referenced_dyn_fn_value_binding"
+    },
+    expected: {
+        let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("local_target should regenerate a FunctionNodeId");
+        ExpectedCallSite::dynamic_initialized_local_binding(
+            &["referenced_fn"],
+            &["local_target"],
+            REFERENCED_DYN_FN_DYNAMIC_CALL_SPAN,
             0,
             &[],
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },

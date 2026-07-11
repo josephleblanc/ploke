@@ -36,6 +36,13 @@ async fn call_context_collection_reads_real_fixture_dynamic_rows() -> Result<(),
         &db,
         &function_in_module_query(&["crate"], "call_parenthesized_boxed_dyn_fn_value_binding"),
     )?;
+    let referenced_owner = one_uuid(
+        &db,
+        &function_in_module_query(
+            &["crate"],
+            "call_parenthesized_referenced_dyn_fn_value_binding",
+        ),
+    )?;
     let dereferenced_boxed_owner = one_uuid(
         &db,
         &function_in_module_query(&["crate"], "call_dereferenced_boxed_dyn_fn_value_binding"),
@@ -120,6 +127,7 @@ async fn call_context_collection_reads_real_fixture_dynamic_rows() -> Result<(),
         (block_owner, 1.0),
         (guarded_owner, 1.0),
         (boxed_owner, 1.0),
+        (referenced_owner, 1.0),
         (dereferenced_boxed_owner, 1.0),
         (closure_binding_owner, 1.0),
         (closure_cast_owner, 1.0),
@@ -167,6 +175,7 @@ async fn call_context_collection_reads_real_fixture_dynamic_rows() -> Result<(),
         ("branch-initialized", branch_owner),
         ("block-initialized", block_owner),
         ("guarded-match", guarded_owner),
+        ("referenced dyn Fn", referenced_owner),
     ] {
         let context = call_context.get(&owner).unwrap_or_else(|| {
             panic!("{label} dynamic owner should receive outgoing call context")

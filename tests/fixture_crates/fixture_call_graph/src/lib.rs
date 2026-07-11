@@ -2117,3 +2117,8 @@ pub fn call_returned_conflicting_forwarded_function_pointer_param_with_local_tar
 pub fn call_returned_conflicting_forwarded_function_pointer_param_with_other_target() -> i32 {
     return_conflicting_forwarded_function_pointer(other_target)()
 }
+
+pub fn call_parenthesized_referenced_dyn_fn_value_binding() -> i32 {
+    let referenced_fn: &dyn Fn() -> i32 = &local_target;
+    (referenced_fn)()
+}

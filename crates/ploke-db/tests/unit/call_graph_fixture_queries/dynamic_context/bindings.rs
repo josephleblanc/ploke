@@ -94,6 +94,26 @@ fn fixture_context_reads_projected_function_item_binding_calls() -> Result<(), D
         CallTargetKind::Function,
     );
 
+    let owner = function_id_by_name(&db, "call_parenthesized_referenced_dyn_fn_value_binding")?;
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(
+        context.len(),
+        1,
+        "referenced dyn Fn binding context rows: {context:#?}"
+    );
+    let row = row_by_kind_path(&context, CallSiteKind::Dynamic, &["referenced_fn"]);
+    assert_eq!(row.site.owner_id, owner);
+    assert_eq!(row.site.kind, CallSiteKind::Dynamic);
+    assert_eq!(row.site.path.as_ref(), Some(&path(&["referenced_fn"])));
+    assert_eq!(row.site.arg_count, Some(0));
+    assert_resolved_target(
+        row,
+        local_target,
+        CallRelationKind::DynamicFunction,
+        CallSiteKind::Dynamic,
+        CallTargetKind::Function,
+    );
+
     let owner = function_id_by_name(&db, "call_shadowed_local_target_binding")?;
     let context = db.call_context_for_owner(owner)?;
     assert_eq!(
@@ -275,6 +295,11 @@ fn fixture_context_reads_projected_parenthesized_binding_dynamic_calls() -> Resu
             owner: "call_parenthesized_boxed_dyn_fn_value_binding",
             path: &["boxed_fn"],
             expected_rows: 2,
+        },
+        ResolvedDynamicContextCase {
+            owner: "call_parenthesized_referenced_dyn_fn_value_binding",
+            path: &["referenced_fn"],
+            expected_rows: 1,
         },
         ResolvedDynamicContextCase {
             owner: "call_dereferenced_boxed_dyn_fn_value_binding",

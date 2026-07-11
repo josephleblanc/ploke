@@ -26,6 +26,13 @@ async fn call_context_expansion_excludes_closure_async_outer_owners_for_local_ta
         &db,
         &function_in_module_query(&["crate"], "call_dereferenced_boxed_dyn_fn_value_binding"),
     )?;
+    let referenced_dynamic_owner = one_uuid(
+        &db,
+        &function_in_module_query(
+            &["crate"],
+            "call_parenthesized_referenced_dyn_fn_value_binding",
+        ),
+    )?;
     let forbidden_owners = [
         one_uuid(
             &db,
@@ -74,6 +81,10 @@ async fn call_context_expansion_excludes_closure_async_outer_owners_for_local_ta
     assert!(
         expanded_ids.contains(&dereferenced_boxed_dynamic_owner),
         "local_target expansion should materialize dereferenced boxed dyn Fn dynamic callers; expanded: {expanded:#?}"
+    );
+    assert!(
+        expanded_ids.contains(&referenced_dynamic_owner),
+        "local_target expansion should materialize referenced dyn Fn dynamic callers; expanded: {expanded:#?}"
     );
     assert!(
         forbidden_owners
