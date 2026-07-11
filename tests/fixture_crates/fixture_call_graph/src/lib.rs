@@ -2036,3 +2036,45 @@ pub fn call_two_hop_forwarded_conflicting_function_pointer_param_with_local_targ
 pub fn call_two_hop_forwarded_conflicting_function_pointer_param_with_other_target() -> i32 {
     call_two_hop_forwarded_conflicting_function_pointer_wrapper(other_target)
 }
+
+fn call_two_hop_forwarded_named_field_leaf(holder: CallbackHolder) -> i32 {
+    (holder.callback)()
+}
+
+fn call_two_hop_forwarded_named_field_middle(holder: CallbackHolder) -> i32 {
+    call_two_hop_forwarded_named_field_leaf(holder)
+}
+
+fn call_two_hop_forwarded_named_field_wrapper(holder: CallbackHolder) -> i32 {
+    call_two_hop_forwarded_named_field_middle(holder)
+}
+
+pub fn call_two_hop_forwarded_named_field_param_with_local_target() -> i32 {
+    call_two_hop_forwarded_named_field_wrapper(CallbackHolder {
+        callback: local_target,
+    })
+}
+
+fn call_two_hop_forwarded_conflicting_named_field_leaf(holder: CallbackHolder) -> i32 {
+    (holder.callback)()
+}
+
+fn call_two_hop_forwarded_conflicting_named_field_middle(holder: CallbackHolder) -> i32 {
+    call_two_hop_forwarded_conflicting_named_field_leaf(holder)
+}
+
+fn call_two_hop_forwarded_conflicting_named_field_wrapper(holder: CallbackHolder) -> i32 {
+    call_two_hop_forwarded_conflicting_named_field_middle(holder)
+}
+
+pub fn call_two_hop_forwarded_conflicting_named_field_param_with_local_target() -> i32 {
+    call_two_hop_forwarded_conflicting_named_field_wrapper(CallbackHolder {
+        callback: local_target,
+    })
+}
+
+pub fn call_two_hop_forwarded_conflicting_named_field_param_with_other_target() -> i32 {
+    call_two_hop_forwarded_conflicting_named_field_wrapper(CallbackHolder {
+        callback: other_target,
+    })
+}

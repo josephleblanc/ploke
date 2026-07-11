@@ -74,6 +74,22 @@ module-prefix rules fail-closed. The TUI tool follows the same dedicated exact
 policy-tool pattern as `code_item_effect_guard` instead of adding broad optional
 policy parameters to lookup/edges.
 
+Latest completed slice: bounded two-hop private holder-field forwarding proof.
+No resolver code change was needed in this chunk; the existing bounded
+complete-private-caller forwarding recursion already covered the shape once the
+fixture exposed it. The positive source oracle
+`call_two_hop_forwarded_named_field_param_with_local_target ->
+call_two_hop_forwarded_named_field_wrapper ->
+call_two_hop_forwarded_named_field_middle ->
+call_two_hop_forwarded_named_field_leaf -> local_target` traverses as four
+edges, with the final `(holder.callback)()` edge stored as `DynamicFunction`.
+The conflicting paired oracle preserves `local_target` and `other_target` as
+ambiguous dynamic candidates on the leaf and still emits no resolved edge.
+Parser, DB, RAG exact call-context, and exact TUI lookup/edges tests cover the
+positive and ambiguous rows. This slice does not add arbitrary interprocedural
+value-flow, public API caller inference, indexed-field two-hop forwarding, or
+callable trait-object dispatch.
+
 Previous completed slice: bounded two-hop private callable-parameter forwarding completed for
 fixture-backed parser, DB, RAG, and exact TUI surfaces. The resolver now follows
 complete private function-pointer parameter forwarding through two explicit
@@ -85,8 +101,8 @@ call_two_hop_forwarded_function_pointer_leaf -> local_target` traverses as four
 ordinary function edges. The conflicting paired source oracle still preserves
 `local_target` and `other_target` as ambiguous path candidates on the leaf and
 does not create a resolved caller-to-target path. This slice does not add
-arbitrary interprocedural value-flow, public API caller inference, field-holder
-two-hop forwarding, or callable trait-object dispatch.
+arbitrary interprocedural value-flow, public API caller inference, holder-field
+proof itself, or callable trait-object dispatch.
 
 Previous status: generic-array method-result local receiver fixture/oracle
 refresh completed for DB coverage. The resolver already classifies

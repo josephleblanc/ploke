@@ -36,6 +36,33 @@ pub(super) fn assert_expected_call(
     assert_eq!(call.targets[0].relation, expected.relation);
 }
 
+pub(super) fn assert_ambiguous_call_candidates(
+    call: &CallContextInfo,
+    first: Uuid,
+    second: Uuid,
+    relation: CallTargetKind,
+    label: &str,
+) {
+    assert_eq!(call.status, CallStatusKind::Ambiguous, "{label}");
+    assert!(call.resolution.is_none(), "{label}: {call:#?}");
+    assert_eq!(call.targets.len(), 2, "{label}: {call:#?}");
+    assert!(
+        call.targets
+            .iter()
+            .all(|target| target.relation == relation),
+        "{label} should expose only {relation:?} candidates: {call:#?}"
+    );
+    let mut actual = call
+        .targets
+        .iter()
+        .map(|target| target.target_id)
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    let mut expected = vec![first, second];
+    expected.sort_unstable();
+    assert_eq!(actual, expected, "{label} candidate targets");
+}
+
 pub(super) fn path_call(segments: &[&str]) -> CallCalleeInfo {
     CallCalleeInfo::Path {
         path: path(segments),

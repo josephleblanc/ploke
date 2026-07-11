@@ -441,12 +441,13 @@ should prevent future resumes from reselecting already-covered shapes.
 
 ## Remaining Focused Unsupported Inventory
 
-Status checkpoint: 2026-07-10 after conflicting callable value and named-field
-candidate proof batches passed parser, DB, RAG, and TUI focused verification,
-with public callable field/indexed blocker proof surfacing and async closure
-callee-evidence proof blockers now complete. Downstream DB/RAG/TUI proof
-coverage also includes the fixture test-body `assert_eq!` macro call and the
-remaining public callable-parameter blocker variants.
+Status checkpoint: 2026-07-11 after bounded two-hop private holder-field
+forwarding proof passed fixture-backed parser, DB, RAG, and TUI focused
+verification. Earlier conflicting callable value and named-field candidate
+proof batches, public callable field/indexed blocker proof surfacing, and async
+closure callee-evidence proof blockers remain complete. Downstream DB/RAG/TUI
+proof coverage also includes the fixture test-body `assert_eq!` macro call and
+the remaining public callable-parameter blocker variants.
 
 The focused parser call-site suite has a small remaining set of
 `ExpectedCallOutcome::Unsupported` rows. These should not be treated as the
@@ -465,11 +466,12 @@ same-target multi-caller sets, branch/match same-parameter forms, typed local
 function items, boxed callable initializers, returned closures, exact local
 receiver proof, ambiguous local callable initialization with candidate-only
 proof, conflicting complete value-parameter candidate proof, conflicting
-complete named-field candidate proof, and bounded two-hop private
-function-pointer parameter forwarding with conflicting two-hop candidates kept
-ambiguous and edge-free. The next semantic slice should therefore introduce a
-new proof carrier, or add one explicitly sourced real-corpus/dependency-root
-oracle, rather than reworking these fail-closed parser rows.
+complete named-field candidate proof, bounded two-hop private function-pointer
+parameter forwarding, and bounded two-hop private named holder-field forwarding
+with conflicting two-hop candidates kept ambiguous and edge-free. The next
+semantic slice should therefore introduce a new proof carrier, or add one
+explicitly sourced real-corpus/dependency-root oracle, rather than reworking
+these fail-closed parser rows.
 
 ## Implementation Order
 

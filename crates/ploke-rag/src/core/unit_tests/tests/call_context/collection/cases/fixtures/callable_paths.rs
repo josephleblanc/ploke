@@ -1,5 +1,6 @@
 use super::super::super::super::super::*;
 use super::super::super::helpers::*;
+use super::expected::assert_ambiguous_call_candidates;
 #[tokio::test]
 async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Result<(), Error> {
     init_tracing_once();
@@ -438,7 +439,7 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
     );
     assert_eq!(multi_conflicting_call.status, CallStatusKind::Ambiguous);
     assert!(multi_conflicting_call.resolution.is_none());
-    assert_conflicting_candidates(
+    assert_ambiguous_call_candidates(
         multi_conflicting_call,
         local_target,
         other_target,
@@ -468,7 +469,7 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
     let forwarded_conflicting_call = forwarded_conflicting_matches[0];
     assert_eq!(forwarded_conflicting_call.status, CallStatusKind::Ambiguous);
     assert!(forwarded_conflicting_call.resolution.is_none());
-    assert_conflicting_candidates(
+    assert_ambiguous_call_candidates(
         forwarded_conflicting_call,
         local_target,
         other_target,
@@ -501,7 +502,7 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
         CallStatusKind::Ambiguous
     );
     assert!(two_hop_forwarded_conflicting_call.resolution.is_none());
-    assert_conflicting_candidates(
+    assert_ambiguous_call_candidates(
         two_hop_forwarded_conflicting_call,
         local_target,
         other_target,
@@ -535,7 +536,7 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
         CallStatusKind::Ambiguous
     );
     assert!(multi_conflicting_generic_call.resolution.is_none());
-    assert_conflicting_candidates(
+    assert_ambiguous_call_candidates(
         multi_conflicting_generic_call,
         local_target,
         other_target,
@@ -565,7 +566,7 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
         CallStatusKind::Ambiguous
     );
     assert!(multi_conflicting_field_call.resolution.is_none());
-    assert_conflicting_candidates(
+    assert_ambiguous_call_candidates(
         multi_conflicting_field_call,
         local_target,
         other_target,
@@ -595,7 +596,7 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
         CallStatusKind::Ambiguous
     );
     assert!(forwarded_conflicting_field_call.resolution.is_none());
-    assert_conflicting_candidates(
+    assert_ambiguous_call_candidates(
         forwarded_conflicting_field_call,
         local_target,
         other_target,
@@ -720,31 +721,6 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
     );
 
     Ok(())
-}
-
-fn assert_conflicting_candidates(
-    call: &CallContextInfo,
-    first: Uuid,
-    second: Uuid,
-    relation: CallTargetKind,
-    label: &str,
-) {
-    assert_eq!(call.targets.len(), 2, "{label}: {call:#?}");
-    assert!(
-        call.targets
-            .iter()
-            .all(|target| target.relation == relation),
-        "{label} should expose only {relation:?} candidates: {call:#?}"
-    );
-    let mut actual = call
-        .targets
-        .iter()
-        .map(|target| target.target_id)
-        .collect::<Vec<_>>();
-    actual.sort_unstable();
-    let mut expected = vec![first, second];
-    expected.sort_unstable();
-    assert_eq!(actual, expected, "{label} candidate targets");
 }
 
 #[tokio::test]

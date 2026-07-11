@@ -818,6 +818,18 @@ async fn code_item_edges_returns_forwarded_named_field_dynamic_callable_context(
     assert_resolved_dynamic_callable_edges("call_forwarded_named_field_leaf").await;
 }
 
+#[tokio::test]
+async fn code_item_edges_returns_two_hop_forwarded_named_field_dynamic_callable_context() {
+    // Fixture source:
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs EOF
+    //     private `call_two_hop_forwarded_named_field_leaf(holder)` resolves
+    //     through two private helpers whose complete caller set constructs a
+    //     holder with `callback: local_target`.
+    // This pins the bounded two-hop holder-field proof at the edge-tool
+    // boundary without broadening to arbitrary callable value-flow.
+    assert_resolved_dynamic_callable_edges("call_two_hop_forwarded_named_field_leaf").await;
+}
+
 async fn assert_resolved_dynamic_callable_edges(owner_name: &'static str) {
     let fixture = FixtureDynamicCallableToolFixture::new_for_owner(owner_name).await;
     let params = EdgesParams {

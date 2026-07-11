@@ -1,6 +1,8 @@
 use super::super::super::super::super::*;
 use super::super::super::helpers::*;
-use super::expected::{CallCase, ExpectedCall, assert_expected_call, path_call};
+use super::expected::{
+    CallCase, ExpectedCall, assert_ambiguous_call_candidates, assert_expected_call, path_call,
+};
 
 #[tokio::test]
 async fn call_context_collection_reads_real_field_dynamic_rows() -> Result<(), Error> {
@@ -65,6 +67,12 @@ async fn call_context_collection_reads_real_field_dynamic_rows() -> Result<(), E
         )?,
         private_parameter_case(
             &db,
+            "two-hop forwarded named-field function parameter",
+            "call_two_hop_forwarded_named_field_leaf",
+            dynamic_target,
+        )?,
+        private_parameter_case(
+            &db,
             "single-caller indexed function-pointer parameter",
             "call_single_indexed_function_pointer_param",
             dynamic_target,
@@ -117,6 +125,85 @@ async fn call_context_collection_reads_real_field_dynamic_rows() -> Result<(), E
             assert_expected_call(context, expected, case.label);
         }
     }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn call_context_collection_resolves_two_hop_forwarded_field_parameter() -> Result<(), Error> {
+    init_tracing_once();
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let dynamic_target = one_uuid(&db, &function_in_module_query(&["crate"], "local_target"))?;
+    let case = private_parameter_case(
+        &db,
+        "two-hop forwarded named-field function parameter",
+        "call_two_hop_forwarded_named_field_leaf",
+        dynamic_target,
+    )?;
+    let rag = init_test_rag_mock(Arc::clone(&db));
+
+    let call_context = rag.collect_call_context(&[(case.owner, 1.0)])?;
+    let context = call_context
+        .get(&case.owner)
+        .unwrap_or_else(|| panic!("{} owner should receive outgoing call context", case.label));
+    assert_eq!(
+        context.len(),
+        case.calls.len(),
+        "{} owner context: {context:#?}",
+        case.label
+    );
+    for expected in &case.calls {
+        assert_expected_call(context, expected, case.label);
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn call_context_collection_preserves_two_hop_forwarded_field_ambiguity() -> Result<(), Error>
+{
+    init_tracing_once();
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let local_target = one_uuid(&db, &function_in_module_query(&["crate"], "local_target"))?;
+    let other_target = one_uuid(&db, &function_in_module_query(&["crate"], "other_target"))?;
+    let owner = one_uuid(
+        &db,
+        &function_in_module_query(
+            &["crate"],
+            "call_two_hop_forwarded_conflicting_named_field_leaf",
+        ),
+    )?;
+    let rag = init_test_rag_mock(Arc::clone(&db));
+
+    let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+    let context = call_context
+        .get(&owner)
+        .expect("two-hop forwarded conflicting field leaf should receive outgoing call context");
+    let call = context
+        .iter()
+        .find(|call| {
+            call.owner_id == owner
+                && call.kind == CallSiteKind::Dynamic
+                && call.callee == CallCalleeInfo::Dynamic
+        })
+        .unwrap_or_else(|| {
+            panic!("two-hop forwarded conflicting field leaf context: {context:#?}")
+        });
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:2058-2079:
+    // two public callers pass different callback fields through the same
+    // wrapper -> middle -> leaf chain, so the leaf must stay ambiguous.
+    assert_ambiguous_call_candidates(
+        call,
+        local_target,
+        other_target,
+        CallTargetKind::DynamicFunction,
+        "two-hop forwarded conflicting field",
+    );
 
     Ok(())
 }

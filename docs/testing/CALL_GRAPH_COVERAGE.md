@@ -81,7 +81,7 @@ The most useful companion documents are:
 | Proc-macro body owners | axum-macros | Public proc-macro entrypoints traverse to local helpers such as `expand_with` and `expand_attr_with`. |
 | Local executable owners | axum | Closure, async-block, local const/static/fn, and local impl method owners are exact-addressable where persisted. |
 | External frontiers | axum, chrono, local fixture | External dependency, std-root, extern C, and external receiver rows stay targetless unless explicitly summarized. |
-| Dynamic/callable fallbacks | axum, memchr | Callable fields, callback parameters, boxed dyn callable rows, and arbitrary expression dynamic callees remain visible blockers unless exact local proof exists. Fixture coverage includes complete private callable-parameter forwarding through two explicit helper calls, with conflicting caller targets kept ambiguous and edge-free. |
+| Dynamic/callable fallbacks | axum, memchr | Callable fields, callback parameters, boxed dyn callable rows, and arbitrary expression dynamic callees remain visible blockers unless exact local proof exists. Fixture coverage includes complete private callable-parameter and named holder-field forwarding through two explicit helper calls, with conflicting caller targets kept ambiguous and edge-free. |
 | Source metadata and usage questions | axum | Source files/modules/crates/cfgs, public/test buckets, architecture boundaries, dead-code, and effect seeds are covered by usage-question tests. |
 
 ## RAG and TUI Coverage
