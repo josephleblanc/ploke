@@ -119,18 +119,22 @@ thin `code_item_lookup` / `code_item_edges` assertions preserve the same
 `DynamicFunction` edge. This is exact initializer proof only; unproven boxed or
 field-held callable trait objects remain targetless/blocker rows.
 
-Latest completed slice: bounded macro-generated local const initializer owner.
+Latest completed slice: bounded macro-generated local const/static initializer owners.
 A unique, already-seen no-arg `macro_rules!` item macro that expands to exactly
-one local `const` is now modeled as an executable `LocalItem` owner with label
-`local_const`. The fixture-backed oracle
+one local `const` or one local `static` is now modeled as an executable
+`LocalItem` owner with label `local_const` or `local_static`. The
+fixture-backed const oracle
 `call_const_item_macro_generated_const_initializer` invokes
 `call_graph_const_item_macro!()`, whose generated initializer calls
-`assoc_const_value()`. Parser assertions prove the macro invocation remains a
-targetless `Unsupported` macro row while the initializer call belongs to the
-generated `local_const` owner, not the enclosing function. Active fixtures were
+`assoc_const_value()`. The fixture-backed static oracle
+`call_static_item_macro_generated_static_initializer` invokes
+`call_graph_static_item_macro!()` with the same initializer call. Parser
+assertions prove each macro invocation remains a targetless `Unsupported` macro
+row while the initializer call belongs to the generated `local_const` or
+`local_static` owner, not the enclosing function. Active fixtures were
 regenerated with `--features call_graph`; DB, RAG, and exact TUI lookup/edges
-tests prove the local-item owner can be queried and traversed as a one-hop
-`Function` edge to `assoc_const_value`. This is still a bounded single-item
+tests prove the local-item owners can be queried and traversed as one-hop
+`Function` edges to `assoc_const_value`. This is still a bounded single-item
 local macro expansion case, not general macro expansion or proc-macro body
 modeling.
 

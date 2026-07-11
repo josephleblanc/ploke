@@ -378,14 +378,28 @@ impl CallGraphToolFixture {
 
 impl LocalItemToolFixture {
     pub(crate) async fn fixture_macro_generated_local_const() -> Self {
+        Self::fixture_macro_local_item(
+            "call_const_item_macro_generated_const_initializer",
+            "local_const",
+        )
+        .await
+    }
+
+    pub(crate) async fn fixture_macro_generated_local_static() -> Self {
+        Self::fixture_macro_local_item(
+            "call_static_item_macro_generated_static_initializer",
+            "local_static",
+        )
+        .await
+    }
+
+    async fn fixture_macro_local_item(parent_name: &str, item_name: &str) -> Self {
         let db = Arc::new(Database::new(
             setup_db_full_multi_embedding("fixture_call_graph").expect("fixture_call_graph db"),
         ));
         let crate_root = workspace_root().join("tests/fixture_crates/fixture_call_graph");
         let module_path = vec!["crate".to_string()];
         let file_path = crate_root.join("src/lib.rs");
-        let item_name = "local_const";
-        let parent_name = "call_const_item_macro_generated_const_initializer";
         let exact = graph_resolve_exact_call_body_owner_for_parent(
             db.as_ref(),
             file_path.as_path(),
@@ -394,17 +408,19 @@ impl LocalItemToolFixture {
             "LocalItem",
             parent_name,
         )
-        .expect("resolve macro-generated local_const owner");
+        .unwrap_or_else(|err| panic!("resolve macro-generated {item_name} owner: {err}"));
         assert_eq!(
             exact.len(),
             1,
-            "parent_name should disambiguate the macro-generated local_const owner"
+            "parent_name should disambiguate the macro-generated {item_name} owner"
         );
         assert!(
             db.project_call_proof_facts_for_node(exact[0].id, "bd:fixture-call-graph")
-                .expect("project macro-generated local const proof facts")
+                .unwrap_or_else(|err| {
+                    panic!("project macro-generated {item_name} proof facts: {err}")
+                })
                 >= 1,
-            "macro-generated local_const should project node-scoped proof rows"
+            "macro-generated {item_name} should project node-scoped proof rows"
         );
         let state = app_state_with_rag(db, crate_root).await;
 

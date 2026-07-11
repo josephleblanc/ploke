@@ -222,22 +222,47 @@ async fn code_item_edges_accepts_local_item_body_owner() {
 #[tokio::test]
 async fn code_item_lookup_accepts_macro_generated_local_const_owner() {
     let fixture = LocalItemToolFixture::fixture_macro_generated_local_const().await;
+    assert_macro_local_lookup(
+        fixture,
+        "local_const",
+        "call_const_item_macro_generated_const_initializer",
+        "macro-local-const-lookup",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn code_item_lookup_accepts_macro_generated_local_static_owner() {
+    let fixture = LocalItemToolFixture::fixture_macro_generated_local_static().await;
+    assert_macro_local_lookup(
+        fixture,
+        "local_static",
+        "call_static_item_macro_generated_static_initializer",
+        "macro-local-static-lookup",
+    )
+    .await;
+}
+
+async fn assert_macro_local_lookup(
+    fixture: LocalItemToolFixture,
+    item_name: &'static str,
+    parent_name: &'static str,
+    ctx_name: &'static str,
+) {
     let params = LookupParams {
-        item_name: Cow::Borrowed("local_const"),
+        item_name: Cow::Borrowed(item_name),
         file_path: Cow::Owned(fixture.file_path.display().to_string()),
         node_kind: Cow::Borrowed("local_item"),
         module_path: Cow::Owned(fixture.module_path_arg()),
         owner_trait: None,
         owner_type: None,
-        parent_name: Some(Cow::Borrowed(
-            "call_const_item_macro_generated_const_initializer",
-        )),
+        parent_name: Some(Cow::Borrowed(parent_name)),
         allowed_effects: Vec::new(),
     };
 
-    let result = CodeItemLookup::execute(params, fixture.ctx("macro-local-const-lookup"))
+    let result = CodeItemLookup::execute(params, fixture.ctx(ctx_name))
         .await
-        .expect("code_item_lookup should accept macro-generated local const owners");
+        .unwrap_or_else(|err| panic!("code_item_lookup should accept {item_name}: {err}"));
     let payload: serde_json::Value =
         serde_json::from_str(&result.content).expect("deserialize ConciseContext");
     let call_context = payload
@@ -263,22 +288,47 @@ async fn code_item_lookup_accepts_macro_generated_local_const_owner() {
 #[tokio::test]
 async fn code_item_edges_accepts_macro_generated_local_const_owner() {
     let fixture = LocalItemToolFixture::fixture_macro_generated_local_const().await;
+    assert_macro_local_edges(
+        fixture,
+        "local_const",
+        "call_const_item_macro_generated_const_initializer",
+        "macro-local-const-edges",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn code_item_edges_accepts_macro_generated_local_static_owner() {
+    let fixture = LocalItemToolFixture::fixture_macro_generated_local_static().await;
+    assert_macro_local_edges(
+        fixture,
+        "local_static",
+        "call_static_item_macro_generated_static_initializer",
+        "macro-local-static-edges",
+    )
+    .await;
+}
+
+async fn assert_macro_local_edges(
+    fixture: LocalItemToolFixture,
+    item_name: &'static str,
+    parent_name: &'static str,
+    ctx_name: &'static str,
+) {
     let params = EdgesParams {
-        item_name: Cow::Borrowed("local_const"),
+        item_name: Cow::Borrowed(item_name),
         file_path: Cow::Owned(fixture.file_path.display().to_string()),
         node_kind: Cow::Borrowed("local_item"),
         module_path: Cow::Owned(fixture.module_path_arg()),
         owner_trait: None,
         owner_type: None,
-        parent_name: Some(Cow::Borrowed(
-            "call_const_item_macro_generated_const_initializer",
-        )),
+        parent_name: Some(Cow::Borrowed(parent_name)),
         allowed_effects: Vec::new(),
     };
 
-    let result = CodeItemEdges::execute(params, fixture.ctx("macro-local-const-edges"))
+    let result = CodeItemEdges::execute(params, fixture.ctx(ctx_name))
         .await
-        .expect("code_item_edges should accept macro-generated local const owners");
+        .unwrap_or_else(|err| panic!("code_item_edges should accept {item_name}: {err}"));
     let payload: serde_json::Value =
         serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
     let call_context = payload
@@ -315,7 +365,7 @@ async fn code_item_edges_accepts_macro_generated_local_const_owner() {
                 && path.edges[0].call_site_id == row.site_id
                 && path.edges[0].relation == CallTargetKind::Function
         }),
-        "macro-generated local const should expose one-hop assoc_const_value traversal: {paths:#?}"
+        "{item_name} should expose one-hop assoc_const_value traversal: {paths:#?}"
     );
 
     let ui = result.ui_payload.as_ref().expect("ui payload");

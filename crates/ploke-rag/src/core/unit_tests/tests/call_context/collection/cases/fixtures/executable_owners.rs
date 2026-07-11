@@ -788,6 +788,18 @@ async fn call_context_collection_reads_local_item_owner_rows() -> Result<(), Err
                 ),
             )?,
         ),
+        // tests/fixture_crates/fixture_call_graph/src/lib.rs:2220
+        (
+            "local_static",
+            2220,
+            one_uuid(
+                &db,
+                &function_in_module_query(
+                    &["crate"],
+                    "call_static_item_macro_generated_static_initializer",
+                ),
+            )?,
+        ),
     ];
     let mut seeds = Vec::new();
     for (label, _, outer) in cases {

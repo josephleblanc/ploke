@@ -72,6 +72,11 @@ const LOCAL_ITEM_CASES: &[LocalItemCase] = &[
         label: "local_const",
         source_line: 2143,
     },
+    LocalItemCase {
+        owner_name: "call_static_item_macro_generated_static_initializer",
+        label: "local_static",
+        source_line: 2220,
+    },
 ];
 
 #[test]
@@ -169,9 +174,6 @@ fn fixture_context_projects_macro_generated_local_fn_call_to_local_item_target()
 fn fixture_context_projects_macro_generated_local_const_initializer_to_local_item_owner()
 -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
-    let owner_name = "call_const_item_macro_generated_const_initializer";
-    let outer = function_id_by_name(&db, owner_name)?;
-    let context = db.call_context_for_owner(outer)?;
 
     // tests/fixture_crates/fixture_call_graph/src/lib.rs:
     // call_const_item_macro_generated_const_initializer invokes
@@ -179,19 +181,58 @@ fn fixture_context_projects_macro_generated_local_const_initializer_to_local_ite
     // initializer that calls assoc_const_value(). The initializer call should
     // belong to the generated local-item owner while the macro invocation row
     // itself remains targetless and unsupported.
+    assert_macro_local_initializer(
+        &db,
+        "call_const_item_macro_generated_const_initializer",
+        "call_graph_const_item_macro",
+        "local_const",
+        2143,
+    )
+}
+
+#[test]
+fn fixture_context_projects_macro_generated_local_static_initializer_to_local_item_owner()
+-> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:
+    // call_static_item_macro_generated_static_initializer invokes
+    // call_graph_static_item_macro!(), which expands to a block-local static
+    // initializer that calls assoc_const_value(). The initializer call should
+    // belong to the generated local-item owner while the macro invocation row
+    // itself remains targetless and unsupported.
+    assert_macro_local_initializer(
+        &db,
+        "call_static_item_macro_generated_static_initializer",
+        "call_graph_static_item_macro",
+        "local_static",
+        2220,
+    )
+}
+
+fn assert_macro_local_initializer(
+    db: &Database,
+    owner_name: &'static str,
+    macro_name: &'static str,
+    label: &'static str,
+    source_line: u32,
+) -> Result<(), DbError> {
+    let outer = function_id_by_name(db, owner_name)?;
+    let context = db.call_context_for_owner(outer)?;
+
     assert_targetless_macro_row(
         &context,
         outer,
-        TargetlessMacroCase::macro_call("call_graph_const_item_macro", owner_name),
+        TargetlessMacroCase::macro_call(macro_name, owner_name),
     );
 
-    let target = function_id_by_name(&db, "assoc_const_value")?;
+    let target = function_id_by_name(db, "assoc_const_value")?;
     assert_local_item_initializer_owner(
-        &db,
+        db,
         &LocalItemCase {
             owner_name,
-            label: "local_const",
-            source_line: 2143,
+            label,
+            source_line,
         },
         target,
     )

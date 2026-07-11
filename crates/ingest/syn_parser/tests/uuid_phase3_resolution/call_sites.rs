@@ -347,6 +347,7 @@ const ITEM_MACRO_INSIDE_BODY_CALL_SPAN: (usize, usize) = (16918, 16942);
 const GENERATED_ITEM_MACRO_CALL_SPAN: (usize, usize) = (50435, 50459);
 const GENERATED_ITEM_MACRO_FUNCTION_CALL_SPAN: (usize, usize) = (50465, 50490);
 const GENERATED_CONST_ITEM_MACRO_CALL_SPAN: (usize, usize) = (50905, 50935);
+const GENERATED_STATIC_ITEM_MACRO_CALL_SPAN: (usize, usize) = (53112, 53143);
 const PARENTHESIZED_GENERIC_FN_ONCE_DYNAMIC_CALL_SPAN: (usize, usize) = (17069, 17082);
 const PARENTHESIZED_BOXED_DYN_FN_BOX_NEW_CALL_SPAN: (usize, usize) = (17191, 17213);
 const PARENTHESIZED_BOXED_DYN_FN_DYNAMIC_CALL_SPAN: (usize, usize) = (17219, 17231);
@@ -2852,6 +2853,62 @@ fn fixture_call_graph_const_item_macro_generated_const_initializer_owns_initiali
         &owner,
         ExecutableBodyKind::LocalItem,
         Some("local_const"),
+        &["assoc_const_value"],
+    );
+}
+
+paranoid_call_site_test!(
+    fixture_call_graph_static_item_macro_generated_static_initializer_records_macro_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_static_item_macro_generated_static_initializer"
+    },
+    expected: ExpectedCallSite::macro_call(
+        "call_graph_static_item_macro",
+        GENERATED_STATIC_ITEM_MACRO_CALL_SPAN,
+        &[],
+        ExpectedCallOutcome::Unsupported,
+    ),
+);
+
+#[test]
+fn fixture_call_graph_static_item_macro_generated_static_initializer_records_local_static_owner() {
+    let (graph, _tree) = crate::common::build_tree_for_tests("fixture_call_graph");
+    let owner = crate::common::call_site_paranoid::function_owner_context(
+        &graph,
+        &["crate"],
+        "call_static_item_macro_generated_static_initializer",
+    );
+
+    assert_executable_body_label_at_span(
+        &graph,
+        &owner,
+        ExecutableBodyKind::LocalItem,
+        GENERATED_STATIC_ITEM_MACRO_CALL_SPAN,
+        Some("local_static"),
+    );
+}
+
+#[test]
+fn fixture_call_graph_static_item_macro_generated_static_initializer_owns_initializer_call() {
+    let (graph, _tree) = crate::common::build_tree_for_tests("fixture_call_graph");
+    let owner = crate::common::call_site_paranoid::function_owner_context(
+        &graph,
+        &["crate"],
+        "call_static_item_macro_generated_static_initializer",
+    );
+
+    // The generated static initializer is parsed from the stored macro body
+    // string, so its interior token spans are synthetic. Assert the ownership
+    // and path fact directly instead of treating the macro definition body span
+    // as source provenance for the expanded call.
+    assert_no_path_call_owned_by_path(&graph, &owner, &["assoc_const_value"]);
+    assert_executable_body_path_call_owned_by_label(
+        &graph,
+        &owner,
+        ExecutableBodyKind::LocalItem,
+        Some("local_static"),
         &["assoc_const_value"],
     );
 }

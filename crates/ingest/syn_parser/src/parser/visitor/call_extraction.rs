@@ -454,22 +454,7 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
     fn visit_item_static(&mut self, item_static: &'ast syn::ItemStatic) {
         let byte_range = item_static.span().byte_range();
         let span = (byte_range.start, byte_range.end);
-        let owner = self.record_local_item_owner(span, "local_static");
-
-        let mut visitor = BodyCallVisitor {
-            owner,
-            cfgs: self.cfgs,
-            param_names: &[],
-            macro_expansions: self.macro_expansions,
-            local_scopes: Vec::new(),
-            calls: Vec::new(),
-            relations: Vec::new(),
-            executable_bodies: Vec::new(),
-            awaited_call_spans: Vec::new(),
-            unsafe_depth: 0,
-        };
-        visitor.visit_expr(item_static.expr.as_ref());
-        self.append_child(visitor);
+        self.record_local_static_item(item_static, span);
     }
 }
 
@@ -478,6 +463,7 @@ impl BodyCallVisitor<'_> {
         match item {
             syn::Item::Fn(item_fn) => self.record_local_fn_item(item_fn, span),
             syn::Item::Const(item_const) => self.record_local_const_item(item_const, span),
+            syn::Item::Static(item_static) => self.record_local_static_item(item_static, span),
             _ => {}
         }
     }
@@ -498,6 +484,25 @@ impl BodyCallVisitor<'_> {
             unsafe_depth: 0,
         };
         visitor.visit_expr(item_const.expr.as_ref());
+        self.append_child(visitor);
+    }
+
+    fn record_local_static_item(&mut self, item_static: &syn::ItemStatic, span: (usize, usize)) {
+        let owner = self.record_local_item_owner(span, "local_static");
+
+        let mut visitor = BodyCallVisitor {
+            owner,
+            cfgs: self.cfgs,
+            param_names: &[],
+            macro_expansions: self.macro_expansions,
+            local_scopes: Vec::new(),
+            calls: Vec::new(),
+            relations: Vec::new(),
+            executable_bodies: Vec::new(),
+            awaited_call_spans: Vec::new(),
+            unsafe_depth: 0,
+        };
+        visitor.visit_expr(item_static.expr.as_ref());
         self.append_child(visitor);
     }
 

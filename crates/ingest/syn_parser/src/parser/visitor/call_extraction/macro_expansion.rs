@@ -60,5 +60,8 @@ impl MacroExpansionContext {
 }
 
 fn is_supported_local_item_expansion(items: &[syn::Item]) -> bool {
-    matches!(items, [syn::Item::Fn(_) | syn::Item::Const(_)])
+    matches!(
+        items,
+        [syn::Item::Fn(_) | syn::Item::Const(_) | syn::Item::Static(_)]
+    )
 }

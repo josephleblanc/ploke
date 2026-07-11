@@ -2210,3 +2210,14 @@ pub async fn call_awaited_async_closure_future_tuple_field_with_body_call() {
     let futures = (closure(),);
     futures.0.await;
 }
+
+macro_rules! call_graph_static_item_macro {
+    () => {
+        static GENERATED_BY_STATIC_ITEM_MACRO: i32 = assoc_const_value();
+    };
+}
+
+pub fn call_static_item_macro_generated_static_initializer() -> i32 {
+    call_graph_static_item_macro!();
+    0
+}
