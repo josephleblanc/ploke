@@ -51,7 +51,7 @@ struct CallTargetFamily {
     target_relation: &'static str,
 }
 
-const VALID_CALL_TARGET_FAMILIES: [CallTargetFamily; 9] = [
+const VALID_CALL_TARGET_FAMILIES: [CallTargetFamily; 11] = [
     CallTargetFamily {
         relation: CallRelationKind::Function,
         source: CallSiteKind::Path,
@@ -79,6 +79,18 @@ const VALID_CALL_TARGET_FAMILIES: [CallTargetFamily; 9] = [
     CallTargetFamily {
         relation: CallRelationKind::DynamicClosure,
         source: CallSiteKind::Dynamic,
+        target: CallTargetKind::Closure,
+        target_relation: "call_body_owner",
+    },
+    CallTargetFamily {
+        relation: CallRelationKind::MethodCallbackFunction,
+        source: CallSiteKind::Method,
+        target: CallTargetKind::Function,
+        target_relation: "function",
+    },
+    CallTargetFamily {
+        relation: CallRelationKind::MethodCallbackClosure,
+        source: CallSiteKind::Method,
         target: CallTargetKind::Closure,
         target_relation: "call_body_owner",
     },

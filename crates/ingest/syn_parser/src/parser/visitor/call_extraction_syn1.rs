@@ -140,6 +140,7 @@ impl ExprCallVisitor<'_> {
                 .turbofish
                 .as_ref()
                 .map_or(0, |turbofish| turbofish.args.len()),
+            arguments: Vec::new(),
         }));
         self.relations.push(CallSiteRelation::BodyContainsCall {
             source: self.owner,

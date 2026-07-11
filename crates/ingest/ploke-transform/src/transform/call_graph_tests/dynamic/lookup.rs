@@ -17,6 +17,8 @@ pub(super) fn find_dynamic_relation(
             }
             CallRelation::Function { .. }
             | CallRelation::DynamicClosure { .. }
+            | CallRelation::MethodCallbackFunction { .. }
+            | CallRelation::MethodCallbackClosure { .. }
             | CallRelation::Closure { .. }
             | CallRelation::LocalFunction { .. }
             | CallRelation::Method { .. }

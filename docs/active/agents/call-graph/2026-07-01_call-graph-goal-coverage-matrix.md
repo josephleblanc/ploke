@@ -50,21 +50,33 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: returned callable-parameter tool proof surface.
+Current bucket: real-corpus method-callback candidate proof surface.
 
 Exit criteria:
 
-- Reuse the existing parser, DB, and RAG proof for
-  `return_forwarded_function_pointer(local_target)()` and the conflicting
-  `return_conflicting_forwarded_function_pointer(...)()` pair.
-- Prove exact `code_item_lookup` and `code_item_edges` payloads expose the
-  outer returned callable invocation as a resolved `DynamicFunction` edge.
-- Prove the conflicting returned callable pair remains candidate-only
-  ambiguous and does not fabricate resolved traversal edges.
-- Keep the slice bounded to direct returned function-pointer parameter proof;
-  do not add arbitrary interprocedural value-flow or public API inference.
+- Use the axum `expand_with` source oracle:
+  `derive_from_ref -> expand_with(item, from_ref::expand)` and the three
+  closure-passing `expand_with(...)` callers feed
+  `syn::parse(input).and_then(f)` in `expand_with`.
+- Project finite candidate rows for `and_then(f)` without fabricating a
+  resolved traversal edge.
+- Keep the slice bounded to method-callback candidates for this real-corpus
+  helper; do not add arbitrary interprocedural callback body traversal.
+- Prove DB proof/context rows and RAG payload propagation.
 
-Status: implemented. Exact TUI lookup and edge-tool tests now pin
+Status: implemented. Parser method-call rows now retain structural argument
+paths, and the resolver recognizes the bounded `and_then(f)` callback setup
+inside axum `expand_with`. Transform/DB/RAG/TUI enums now include
+`MethodCallbackFunction` and `MethodCallbackClosure` relation families. The
+regenerated `corpus_axum_call_graph_2026-07-11.sqlite` fixture projects four
+ambiguous candidates for `axum-macros/src/lib.rs:724`: the function item
+`from_ref::expand` from `lib.rs:715` plus the three closure arguments from
+`lib.rs:377,426,665`. DB proof/context and RAG collection tests assert the
+candidate set, while traversal expansion remains empty for the ambiguous
+callsite.
+
+Previous completed slice: returned callable-parameter tool proof surface.
+Exact TUI lookup and edge-tool tests now pin
 `call_returned_forwarded_function_pointer_param_with_local_target`, whose
 fixture source at `tests/fixture_crates/fixture_call_graph/src/lib.rs:2101-2107`
 returns a private function-pointer parameter and immediately invokes it. This

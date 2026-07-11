@@ -3,8 +3,8 @@ use crate::{
     parser::{
         graph::GraphAccess,
         nodes::{
-            AnyCallSiteId, AsAnyNodeId, CallBodyOwnerId, CallNode, FieldNode, FunctionNodeId,
-            MethodCallNode, MethodCallReceiver, MethodNodeId, OrdinaryTypeSourceId,
+            AnyCallSiteId, AsAnyNodeId, CallArgument, CallBodyOwnerId, CallNode, FieldNode,
+            FunctionNodeId, MethodCallNode, MethodCallReceiver, MethodNodeId, OrdinaryTypeSourceId,
             OrdinaryTypeTargetId, OrdinaryTypeUseId, PathCallNode, StructNodeId, TraitTypeSourceId,
             TypeAliasNodeId, TypeGenericParamNodeId,
         },
@@ -15,7 +15,9 @@ use crate::{
 
 use super::{
     AssocPathResolution, CallRelationResolver, LocalFunctionPathResolution, LocalTraitResolution,
-    LocalTypeResolution, WorkspaceTypeResolution, trait_declares_instance_method,
+    LocalTypeResolution, WorkspaceTypeResolution,
+    path::{ParameterCallResolution, ParameterCallTarget},
+    trait_declares_instance_method,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -214,11 +216,28 @@ impl CallRelationResolver<'_> {
                 statuses.push(CallResolutionStatus::Ambiguous { source });
             }
             AssocPathResolution::Unsupported => {
-                statuses.push(CallResolutionStatus::Unsupported { source });
+                if let Some(resolution) = self.resolve_method_callback_argument_call(call)? {
+                    statuses.push(push_method_callback_resolution(call, resolution, relations));
+                } else {
+                    statuses.push(CallResolutionStatus::Unsupported { source });
+                }
             }
         }
 
         Ok(())
+    }
+
+    fn resolve_method_callback_argument_call(
+        &self,
+        call: &MethodCallNode,
+    ) -> Result<Option<ParameterCallResolution>, SynParserError> {
+        if call.method_name != "and_then" || call.arg_count != 1 {
+            return Ok(None);
+        }
+        let Some(CallArgument::Path { path }) = call.arguments.first() else {
+            return Ok(None);
+        };
+        self.resolve_parameter_value_call(call.owner, path)
     }
 
     fn is_external_literal_method(method_name: &str) -> bool {
@@ -2101,5 +2120,50 @@ impl CallRelationResolver<'_> {
             field_name,
             &struct_node.name,
         ))
+    }
+}
+
+fn push_method_callback_resolution(
+    call: &MethodCallNode,
+    resolution: ParameterCallResolution,
+    relations: &mut Vec<CallRelation>,
+) -> CallResolutionStatus {
+    match resolution {
+        ParameterCallResolution::Exact(target) => {
+            push_method_callback_target(call, target, relations);
+            CallResolutionStatus::Resolved {
+                source: AnyCallSiteId::Method(call.id),
+                kind: CallResolutionKind::LocalExact,
+            }
+        }
+        ParameterCallResolution::Ambiguous(targets) => {
+            for target in targets {
+                push_method_callback_target(call, target, relations);
+            }
+            CallResolutionStatus::Ambiguous {
+                source: AnyCallSiteId::Method(call.id),
+            }
+        }
+    }
+}
+
+fn push_method_callback_target(
+    call: &MethodCallNode,
+    target: ParameterCallTarget,
+    relations: &mut Vec<CallRelation>,
+) {
+    match target {
+        ParameterCallTarget::Function(target) => {
+            relations.push(CallRelation::MethodCallbackFunction {
+                source: call.id,
+                target,
+            });
+        }
+        ParameterCallTarget::Closure(target) => {
+            relations.push(CallRelation::MethodCallbackClosure {
+                source: call.id,
+                target,
+            });
+        }
     }
 }

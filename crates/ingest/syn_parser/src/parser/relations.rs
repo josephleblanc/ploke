@@ -210,6 +210,26 @@ pub enum CallRelation {
         source: DynamicCallSiteId,
         target: ExecutableBodyId,
     },
+    /// A method-style call site whose externally-defined method may invoke a
+    /// local function argument proven by caller evidence.
+    ///
+    /// ```text
+    /// MethodCallbackFunction ⊆ MethodCallSiteId × FunctionNodeId
+    /// ```
+    MethodCallbackFunction {
+        source: MethodCallSiteId,
+        target: FunctionNodeId,
+    },
+    /// A method-style call site whose externally-defined method may invoke a
+    /// local closure argument proven by caller evidence.
+    ///
+    /// ```text
+    /// MethodCallbackClosure ⊆ MethodCallSiteId × ExecutableBodyId
+    /// ```
+    MethodCallbackClosure {
+        source: MethodCallSiteId,
+        target: ExecutableBodyId,
+    },
     /// A method-call site resolved to a local method definition.
     ///
     /// ```text
@@ -258,6 +278,8 @@ impl CallRelation {
             Self::Closure { .. } => "Closure",
             Self::LocalFunction { .. } => "LocalFunction",
             Self::DynamicClosure { .. } => "DynamicClosure",
+            Self::MethodCallbackFunction { .. } => "MethodCallbackFunction",
+            Self::MethodCallbackClosure { .. } => "MethodCallbackClosure",
             Self::Method { .. } => "Method",
             Self::AssociatedFunction { .. } => "AssociatedFunction",
             Self::TupleStructConstructor { .. } => "TupleStructConstructor",
@@ -275,7 +297,9 @@ impl CallRelation {
             | Self::TupleStructConstructor { .. }
             | Self::EnumVariantConstructor { .. } => "Path",
             Self::DynamicFunction { .. } | Self::DynamicClosure { .. } => "Dynamic",
-            Self::Method { .. } => "Method",
+            Self::Method { .. }
+            | Self::MethodCallbackFunction { .. }
+            | Self::MethodCallbackClosure { .. } => "Method",
         }
     }
 
@@ -283,7 +307,10 @@ impl CallRelation {
     pub fn target_kind_str(&self) -> &'static str {
         match self {
             Self::Function { .. } | Self::DynamicFunction { .. } => "Function",
-            Self::Closure { .. } | Self::DynamicClosure { .. } => "Closure",
+            Self::MethodCallbackFunction { .. } => "Function",
+            Self::Closure { .. }
+            | Self::DynamicClosure { .. }
+            | Self::MethodCallbackClosure { .. } => "Closure",
             Self::LocalFunction { .. } => "LocalItem",
             Self::Method { .. } | Self::AssociatedFunction { .. } => "Method",
             Self::TupleStructConstructor { .. } => "Struct",

@@ -216,6 +216,11 @@ pub struct MethodCallNode {
     pub arg_count: usize,
     /// Number of explicit generic arguments on the method call.
     pub generic_arg_count: usize,
+    /// Conservative argument summaries used only for exact local value-flow
+    /// proof. Missing or unsupported argument shapes are represented as
+    /// `Other`; arity remains authoritative in `arg_count`.
+    #[serde(default)]
+    pub arguments: Vec<CallArgument>,
 }
 
 /// Structural record for an expression-call occurrence whose callee is dynamic

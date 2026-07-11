@@ -215,6 +215,13 @@ impl BodyCallVisitor<'_> {
                 .turbofish
                 .as_ref()
                 .map_or(0, |turbofish| turbofish.args.len()),
+            arguments: call_arguments(
+                &call.args,
+                self.owner,
+                self.cfgs,
+                self.param_names,
+                &self.local_scopes,
+            ),
         }));
         self.relations.push(CallSiteRelation::BodyContainsCall {
             source: self.owner,

@@ -53,6 +53,8 @@ fn test_call_graph_projection_for_const_initializer_call() -> Result<(), Box<dyn
             }
             CallRelation::DynamicFunction { .. }
             | CallRelation::DynamicClosure { .. }
+            | CallRelation::MethodCallbackFunction { .. }
+            | CallRelation::MethodCallbackClosure { .. }
             | CallRelation::Closure { .. }
             | CallRelation::LocalFunction { .. }
             | CallRelation::Method { .. }
@@ -171,6 +173,8 @@ fn test_call_graph_projection_for_resolved_path_call() -> Result<(), Box<dyn std
             }
             CallRelation::DynamicFunction { .. }
             | CallRelation::DynamicClosure { .. }
+            | CallRelation::MethodCallbackFunction { .. }
+            | CallRelation::MethodCallbackClosure { .. }
             | CallRelation::Closure { .. }
             | CallRelation::LocalFunction { .. }
             | CallRelation::Method { .. }
@@ -339,6 +343,8 @@ fn test_call_graph_projection_for_method_edge_and_external_path_call()
             CallRelation::Function { .. }
             | CallRelation::DynamicFunction { .. }
             | CallRelation::DynamicClosure { .. }
+            | CallRelation::MethodCallbackFunction { .. }
+            | CallRelation::MethodCallbackClosure { .. }
             | CallRelation::Closure { .. }
             | CallRelation::LocalFunction { .. }
             | CallRelation::AssociatedFunction { .. }
@@ -385,7 +391,9 @@ fn test_call_graph_projection_for_method_edge_and_external_path_call()
             CallRelation::DynamicFunction { .. } | CallRelation::DynamicClosure { .. } => true,
             CallRelation::TupleStructConstructor { source, .. }
             | CallRelation::EnumVariantConstructor { source, .. } => *source != pathbuf_call_id,
-            CallRelation::Method { .. } => true,
+            CallRelation::Method { .. }
+            | CallRelation::MethodCallbackFunction { .. }
+            | CallRelation::MethodCallbackClosure { .. } => true,
         }),
         "PathBuf::new() should not have a fabricated call_relation before DB projection"
     );

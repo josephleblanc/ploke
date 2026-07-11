@@ -363,6 +363,10 @@ fn rag_relation_kind(relation: ploke_db::CallRelationKind) -> CallTargetKind {
         ploke_db::CallRelationKind::Closure => CallTargetKind::Closure,
         ploke_db::CallRelationKind::LocalFunction => CallTargetKind::LocalFunction,
         ploke_db::CallRelationKind::DynamicClosure => CallTargetKind::DynamicClosure,
+        ploke_db::CallRelationKind::MethodCallbackFunction => {
+            CallTargetKind::MethodCallbackFunction
+        }
+        ploke_db::CallRelationKind::MethodCallbackClosure => CallTargetKind::MethodCallbackClosure,
         ploke_db::CallRelationKind::Method => CallTargetKind::Method,
         ploke_db::CallRelationKind::AssociatedFunction => CallTargetKind::AssociatedFunction,
         ploke_db::CallRelationKind::TupleStructConstructor => {

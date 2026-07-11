@@ -31,7 +31,9 @@ pub(super) fn validate_call_context(row: &CallContextRow) -> Result<(), DbError>
 }
 
 fn is_ambiguous_candidate_row(row: &CallContextRow) -> bool {
-    is_ambiguous_dynamic_candidate_row(row) || is_ambiguous_path_candidate_row(row)
+    is_ambiguous_dynamic_candidate_row(row)
+        || is_ambiguous_path_candidate_row(row)
+        || is_ambiguous_method_candidate_row(row)
 }
 
 fn is_ambiguous_dynamic_candidate_row(row: &CallContextRow) -> bool {
@@ -61,5 +63,23 @@ fn is_ambiguous_path_candidate(target: &crate::call_graph::CallTargetRow) -> boo
             (target.relation, target.target_kind),
             (CallRelationKind::Function, CallTargetKind::Function)
                 | (CallRelationKind::Closure, CallTargetKind::Closure)
+        )
+}
+
+fn is_ambiguous_method_candidate_row(row: &CallContextRow) -> bool {
+    row.site.kind == CallSiteKind::Method && row.targets.iter().all(is_ambiguous_method_candidate)
+}
+
+fn is_ambiguous_method_candidate(target: &crate::call_graph::CallTargetRow) -> bool {
+    target.source_kind == CallSiteKind::Method
+        && matches!(
+            (target.relation, target.target_kind),
+            (
+                CallRelationKind::MethodCallbackFunction,
+                CallTargetKind::Function
+            ) | (
+                CallRelationKind::MethodCallbackClosure,
+                CallTargetKind::Closure
+            )
         )
 }

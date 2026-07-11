@@ -340,9 +340,9 @@ Route receiver rows and blocked proof facts.
 | `(self.into_route)(...)` router | `axum/src/boxed.rs:120` | `MakeErasedRouter::into_route` | field `into_route: fn(Router<S>, S) -> Route` at `boxed.rs:108`; construction site not found in selected `axum/src`; unsupported/fail-closed. |
 | `(self.layer)(...)` | `axum/src/boxed.rs:159,163` | `Map::into_route`; `Map::call_with_state` | field `layer: Box<dyn LayerFn<E, E2>>` at `boxed.rs:142`; boxed from `BoxedIntoRoute::map(self, f)` at `:31-40`; `LayerFn` blanket impl `:167-173`; dynamic trait-object callable. |
 | `(self.tap_fn)(...)` | `axum/src/serve/listener.rs:236` | `TapIo<L, F>::accept` | field `tap_fn: F` at `listener.rs:212`; set by `ListenerExt::tap_io(self, tap_fn)` at `:116-123`; bound `F: FnMut(&mut L::Io)` at `:118,229`; example closure passed at `serve/mod.rs:566`. |
-| `and_then(f)` | `axum-macros/src/lib.rs:724` | `expand_with` | parameter `f: F` at `:718`; bound `F: FnOnce(I) -> syn::Result<K>` at `:720`; callback passed into external `and_then`, no concrete callee in this owner. |
-| `expand_with(item, from_ref::expand)` | `axum-macros/src/lib.rs:715` | `derive_from_ref` | proc-macro owner now resolves the direct `expand_with(...)` helper edge; function item `from_ref::expand` at `from_ref.rs:11` still requires interprocedural callback proof before resolving `and_then(f)`. |
-| other `expand_with(...)` callers | `axum-macros/src/lib.rs:377,426,665` | derive macro entrypoints | proc-macro owners now resolve direct `expand_with(...)` helper edges; closure bodies passed to `expand_with` remain unsupported as callback bodies. |
+| `and_then(f)` | `axum-macros/src/lib.rs:724` | `expand_with` | parameter `f: F` at `:718`; bound `F: FnOnce(I) -> syn::Result<K>` at `:720`; callback passed into external `and_then`; current fixture projects four finite ambiguous method-callback candidates and still admits no resolved traversal edge. |
+| `expand_with(item, from_ref::expand)` | `axum-macros/src/lib.rs:715` | `derive_from_ref` | proc-macro owner now resolves the direct `expand_with(...)` helper edge; function item `from_ref::expand` at `from_ref.rs:11` appears as the `MethodCallbackFunction` candidate for `and_then(f)`, not as a resolved traversal target. |
+| other `expand_with(...)` callers | `axum-macros/src/lib.rs:377,426,665` | derive macro entrypoints | proc-macro owners now resolve direct `expand_with(...)` helper edges; closure arguments passed to `expand_with` appear as the three `MethodCallbackClosure` candidates for `and_then(f)`, but callback body traversal remains unresolved. |
 | direct callable parameter `f(attr,input)` | `axum-macros/src/lib.rs:737` | closure owner under `expand_attr_with` | parameter `f: F` at `:727`; bound `F: FnOnce(A, I) -> K` at `:729`; closure body captures `f`, so the persisted row is a path call to an opaque value binding with no traversal target. |
 | `expand_attr_with(...)` callers | `axum-macros/src/lib.rs:581,637,655` | `debug_handler`; `debug_middleware`; `__private_axum_test` | active proc-macro owners at `:581` and `:637` now resolve direct `expand_attr_with(...)` helper edges; `:655` is cfg-inactive in the current fixture profile; resolving `f(...)` still requires interprocedural callback proof. |
 | `debug_handler::expand(...)` callback rows | `axum-macros/src/lib.rs:581,637` | closure callbacks passed to `expand_attr_with` | regenerated fixture owns both callback body path calls under closure executable owners; they traverse to `debug_handler::expand` without making the enclosing macro owners direct callers. |
@@ -354,15 +354,18 @@ dynamic callable-field rows, the `expand_with` callback setup, the
 row, and the `from_request::expand` enum-state IIFE row. The regenerated axum
 fixture resolves the IIFE dynamic rows to their closure owners with
 `DynamicClosure` edges while leaving callable-parameter calls such as
-`f(attr, input)` opaque and targetless.
-It also asserts that proc-macro callback arguments such as `from_ref::expand` and
-`axum_test::expand` are not fabricated as ordinary path-call edges before
-interprocedural callback proof exists. RAG call-context and proof-context tests
-now preserve the four currently projected dynamic callable-field blockers in
-`axum/src/boxed.rs:{85,120,159}` and `axum/src/serve/listener.rs:236`, including
-zero traversal targets, `dynamic_dispatch_unbounded` proof rows, and the
-persisted self-field callsite paths `["self", "into_route"]`,
-`["self", "layer"]`, and `["self", "tap_fn"]` through `CallContextInfo.path`.
+`f(attr, input)` ambiguous and non-traversable until exact callback proof exists.
+It also asserts that proc-macro callback arguments are not fabricated as resolved
+ordinary path-call edges before interprocedural callback proof exists. The
+`expand_with` `and_then(f)` row now preserves four finite ambiguous
+method-callback candidates: `from_ref::expand` plus the three closure arguments
+passed by the other proc-macro callers. RAG call-context and proof-context tests
+now preserve those candidates, the four currently projected dynamic
+callable-field blockers in `axum/src/boxed.rs:{85,120,159}` and
+`axum/src/serve/listener.rs:236`, including zero traversal targets,
+`dynamic_dispatch_unbounded` proof rows, and the persisted self-field callsite
+paths `["self", "into_route"]`, `["self", "layer"]`, and
+`["self", "tap_fn"]` through `CallContextInfo.path`.
 Exact TUI `code_item_lookup` and `code_item_edges` tests assert the same four
 owner-seeded targetless rows, blocked proof facts, and path payloads.
 

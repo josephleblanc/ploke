@@ -2337,6 +2337,8 @@ fn relation_source(relation: CallRelation) -> AnyCallSiteId {
         CallRelation::DynamicClosure { source, .. } => source.into(),
         CallRelation::Closure { source, .. } => source.into(),
         CallRelation::LocalFunction { source, .. } => source.into(),
+        CallRelation::MethodCallbackFunction { source, .. } => source.into(),
+        CallRelation::MethodCallbackClosure { source, .. } => source.into(),
         CallRelation::Method { source, .. } => source.into(),
         CallRelation::AssociatedFunction { source, .. } => source.into(),
         CallRelation::TupleStructConstructor { source, .. } => source.into(),

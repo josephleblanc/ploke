@@ -262,6 +262,78 @@ async fn call_context_collection_reads_memchr_callable_trait_object_path_gaps() 
 }
 
 #[tokio::test]
+async fn call_context_collection_reads_axum_expand_with_method_callback_candidates()
+-> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    let owner = function_id_by_name_in_module(&db, &["crate"], "expand_with")?;
+    let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+    let context = call_context
+        .get(&owner)
+        .expect("expand_with should receive outgoing RAG call context");
+    let and_then = context
+        .iter()
+        .filter(|call| {
+            call.owner_id == owner
+                && call.kind == CallSiteKind::Method
+                && call.callee
+                    == CallCalleeInfo::Method {
+                        name: "and_then".to_string(),
+                        receiver: Some(CallReceiverInfo::PathCallResult {
+                            path: path(&["syn", "parse"]),
+                        }),
+                    }
+        })
+        .collect::<Vec<_>>();
+
+    // Matrix:
+    //   docs/active/agents/call-graph/
+    //   2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //
+    // Source chain:
+    //   axum-macros/src/lib.rs:715 passes `from_ref::expand` to
+    //   `expand_with(item, from_ref::expand)`.
+    //   axum-macros/src/lib.rs:377,426,665 pass closures to `expand_with`.
+    //   axum-macros/src/lib.rs:724 calls
+    //   `expand(syn::parse(input).and_then(f))` inside `expand_with`.
+    // Expected traversal: the `and_then(f)` method call exposes the finite
+    // caller-derived callback candidate set for RAG payloads, but remains
+    // ambiguous and does not become a resolved traversal edge.
+    assert_eq!(
+        and_then.len(),
+        1,
+        "expand_with should expose one syn::parse(...).and_then(f) call row: {context:#?}"
+    );
+    assert_eq!(and_then[0].arg_count, Some(1));
+    assert_eq!(and_then[0].status, CallStatusKind::Ambiguous);
+    assert_eq!(and_then[0].resolution, None);
+    assert_eq!(
+        and_then[0].targets.len(),
+        4,
+        "and_then(f) should expose four finite method-callback candidates: {and_then:#?}"
+    );
+    assert!(
+        and_then
+            .iter()
+            .flat_map(|call| call.targets.iter())
+            .any(|target| target.relation == CallTargetKind::MethodCallbackFunction),
+        "and_then(f) should include the from_ref::expand function candidate: {and_then:#?}"
+    );
+    assert_eq!(
+        and_then
+            .iter()
+            .flat_map(|call| call.targets.iter())
+            .filter(|target| target.relation == CallTargetKind::MethodCallbackClosure)
+            .count(),
+        3,
+        "and_then(f) should include the three closure candidates from expand_with callers: {and_then:#?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn call_context_collection_reads_axum_captured_callback_parameter_gap() -> Result<(), Error> {
     init_tracing_once();
     let (db, rag) = setup_axum_call_graph_rag()?;

@@ -891,6 +891,8 @@ fn target_kind(kind: CallRelationKind) -> CallTargetKind {
         CallRelationKind::Closure => CallTargetKind::Closure,
         CallRelationKind::LocalFunction => CallTargetKind::LocalFunction,
         CallRelationKind::DynamicClosure => CallTargetKind::DynamicClosure,
+        CallRelationKind::MethodCallbackFunction => CallTargetKind::MethodCallbackFunction,
+        CallRelationKind::MethodCallbackClosure => CallTargetKind::MethodCallbackClosure,
         CallRelationKind::Method => CallTargetKind::Method,
         CallRelationKind::AssociatedFunction => CallTargetKind::AssociatedFunction,
         CallRelationKind::TupleStructConstructor => CallTargetKind::TupleStructConstructor,

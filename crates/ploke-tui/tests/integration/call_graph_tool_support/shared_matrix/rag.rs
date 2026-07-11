@@ -75,6 +75,8 @@ pub(super) fn rag_relation_kind(relation: CallRelationKind) -> RagCallTargetKind
         CallRelationKind::Closure => RagCallTargetKind::Closure,
         CallRelationKind::LocalFunction => RagCallTargetKind::LocalFunction,
         CallRelationKind::DynamicClosure => RagCallTargetKind::DynamicClosure,
+        CallRelationKind::MethodCallbackFunction => RagCallTargetKind::MethodCallbackFunction,
+        CallRelationKind::MethodCallbackClosure => RagCallTargetKind::MethodCallbackClosure,
         CallRelationKind::Method => RagCallTargetKind::Method,
         CallRelationKind::AssociatedFunction => RagCallTargetKind::AssociatedFunction,
         CallRelationKind::TupleStructConstructor => RagCallTargetKind::TupleStructConstructor,

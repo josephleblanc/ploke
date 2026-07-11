@@ -209,10 +209,12 @@ fn axum_macro_callback_rows_are_visible_or_explicitly_absent() -> Result<(), DbE
     //   axum-macros/src/from_request/mod.rs:200-203 immediately invokes an
     //   IIFE closure while deriving enum state.
     // Current model contract: the `syn::parse` path and `and_then(f)` receiver
-    // are projected in `expand_with`; `expand_attr_with` projects its IIFE
-    // dynamic call as a closure target, and the closure-owned callable-parameter
-    // call `f(attr, input)` is visible as an ambiguous finite closure-candidate
-    // row without admitting resolved traversal. The `from_request::expand`
+    // are projected in `expand_with`. The `and_then(f)` call exposes finite
+    // method-callback candidates from known `expand_with` callers without
+    // admitting resolved traversal. `expand_attr_with` projects its IIFE dynamic
+    // call as a closure target, and the closure-owned callable-parameter call
+    // `f(attr, input)` is visible as an ambiguous finite closure-candidate row
+    // without admitting resolved traversal. The `from_request::expand`
     // enum-state IIFE also resolves to its closure target.
     let expand_with = function_id_by_name_in_module(&db, &["crate"], "expand_with")?;
     let expand_with_context = db.call_context_for_owner(expand_with)?;
@@ -233,10 +235,40 @@ fn axum_macro_callback_rows_are_visible_or_explicitly_absent() -> Result<(), DbE
             path: path(&["syn", "parse"]),
         },
     );
-    assert_targetless_status(and_then, CallStatusKind::Unsupported);
+    assert_eq!(and_then.status.status, CallStatusKind::Ambiguous);
+    assert_eq!(and_then.status.resolution, None);
+    assert_eq!(
+        and_then.targets.len(),
+        4,
+        "axum-macros/src/lib.rs:724 and_then(f) should expose four finite method-callback candidates: {and_then:#?}"
+    );
+    let from_ref_expand = function_id_by_name_in_module(&db, &["crate", "from_ref"], "expand")?;
     assert!(
-        relations_for_site(&db, and_then.site.id)?.rows.is_empty(),
-        "axum-macros/src/lib.rs:724 and_then(f) should have zero persisted call edges"
+        and_then.targets.iter().any(|target| {
+            target.relation == CallRelationKind::MethodCallbackFunction
+                && target.source_kind == CallSiteKind::Method
+                && target.target_kind == CallTargetKind::Function
+                && target.target_id == from_ref_expand
+        }),
+        "axum-macros/src/lib.rs:724 and_then(f) should include from_ref::expand from lib.rs:715: {and_then:#?}"
+    );
+    assert_eq!(
+        and_then
+            .targets
+            .iter()
+            .filter(|target| {
+                target.relation == CallRelationKind::MethodCallbackClosure
+                    && target.source_kind == CallSiteKind::Method
+                    && target.target_kind == CallTargetKind::Closure
+            })
+            .count(),
+        3,
+        "axum-macros/src/lib.rs:724 and_then(f) should include the three closure arguments from lib.rs:377,426,665: {and_then:#?}"
+    );
+    assert_eq!(
+        relations_for_site(&db, and_then.site.id)?.rows.len(),
+        4,
+        "axum-macros/src/lib.rs:724 and_then(f) should persist four ambiguous method-callback candidates"
     );
     assert_no_traversal_candidates_for_site(
         &db,
@@ -244,6 +276,26 @@ fn axum_macro_callback_rows_are_visible_or_explicitly_absent() -> Result<(), DbE
         and_then.site.id,
         "axum-macros/src/lib.rs:724 and_then(f)",
     )?;
+    let expand_with_facts =
+        db.call_proof_facts_for_owner(expand_with, "bd:corpus-axum-call-graph")?;
+    let and_then_site = and_then.site.id.to_string();
+    let and_then_resolution = expand_with_facts
+        .iter()
+        .find(|fact| {
+            fact.get("fact_kind") == Some(&serde_json::json!("call_resolution"))
+                && fact.get("call_site_id") == Some(&serde_json::json!(and_then_site))
+        })
+        .unwrap_or_else(|| {
+            panic!("axum-macros/src/lib.rs:724 and_then(f) should project a call_resolution proof fact: {expand_with_facts:#?}")
+        });
+    assert!(
+        and_then_resolution.get("resolution_state") == Some(&serde_json::json!("ambiguous"))
+            && and_then_resolution
+                .get("candidate_def_ids")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|candidates| candidates.len() == 4),
+        "axum-macros/src/lib.rs:724 and_then(f) should project an ambiguous proof row with four candidates: {and_then_resolution:#?}"
+    );
 
     let expand_attr_with = function_id_by_name_in_module(&db, &["crate"], "expand_attr_with")?;
     let expand_attr_context = db.call_context_for_owner(expand_attr_with)?;

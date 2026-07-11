@@ -292,6 +292,8 @@ fn assert_executable_body_projection(
             }
             CallRelation::DynamicFunction { .. }
             | CallRelation::DynamicClosure { .. }
+            | CallRelation::MethodCallbackFunction { .. }
+            | CallRelation::MethodCallbackClosure { .. }
             | CallRelation::Closure { .. }
             | CallRelation::LocalFunction { .. }
             | CallRelation::Method { .. }
