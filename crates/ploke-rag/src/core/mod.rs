@@ -13,10 +13,11 @@ use ploke_core::rag_types::AssembledContext;
 use ploke_core::rag_types::{
     CallBuildDomainInfo, CallCalleeInfo, CallContextInfo, CallEffectPolicyViolationInfo,
     CallEndpointKind, CallExpansionInfo, CallExpansionKind, CallGuardInfo, CallImpactInfo,
-    CallNodeInfo, CallPathEdgeInfo, CallPathInfo, CallPathNodeInfo, CallReachEffectInfo,
-    CallReachInfo, CallReceiverInfo, CallResolutionKind as RagCallResolutionKind,
-    CallSiteBucketInfo, CallSiteKind as RagCallSiteKind, CallStatusKind as RagCallStatusKind,
-    CallTargetInfo, CallTargetKind, CallTestEntrypointInfo, CanonPath, ExternalSummaryNeedInfo,
+    CallNodeInfo, CallPathEdgeInfo, CallPathInfo, CallPathNodeInfo, CallProofInvariantFindingInfo,
+    CallReachEffectInfo, CallReachInfo, CallReceiverInfo,
+    CallResolutionKind as RagCallResolutionKind, CallSiteBucketInfo,
+    CallSiteKind as RagCallSiteKind, CallStatusKind as RagCallStatusKind, CallTargetInfo,
+    CallTargetKind, CallTestEntrypointInfo, CanonPath, ExternalSummaryNeedInfo,
     ModuleBoundaryEdgeInfo, NodeFilepath, ProofContextInfo,
 };
 use ploke_db::{
@@ -24,7 +25,8 @@ use ploke_db::{
     CallContextRelation, CallContextRow, CallContextSeed,
     CallEffectPolicyViolation as DbCallEffectPolicyViolation, CallGuardReport as DbCallGuardReport,
     CallImpactReport as DbCallImpactReport, CallNodeInfo as DbCallNodeInfo, CallPath as DbCallPath,
-    CallPathEdge as DbCallPathEdge, CallPathOptions, CallReachEffect as DbCallReachEffect,
+    CallPathEdge as DbCallPathEdge, CallPathOptions,
+    CallProofInvariantFinding as DbCallProofInvariantFinding, CallReachEffect as DbCallReachEffect,
     CallReachReport as DbCallReachReport, CallReceiver, CallRelationKind, CallResolutionKind,
     CallSiteKind, CallSiteRow, CallStatusKind as DbCallStatusKind,
     CallTargetKind as DbCallTargetKind, CallTestEntrypoint as DbCallTestEntrypoint,
@@ -590,6 +592,22 @@ fn effect_policy_violation_info(
     })
 }
 
+fn proof_invariant_finding_info(
+    row: DbCallProofInvariantFinding,
+) -> Result<CallProofInvariantFindingInfo, RagError> {
+    let call_site = row
+        .call_site
+        .map(|site| row_to_call_context(site, usize::MAX))
+        .transpose()?;
+    Ok(CallProofInvariantFindingInfo {
+        invariant: row.invariant,
+        status: row.status,
+        reason: row.reason,
+        call_site_id: row.call_site_id,
+        call_site,
+    })
+}
+
 fn build_domain_info(row: DbCallBuildDomain) -> CallBuildDomainInfo {
     CallBuildDomainInfo {
         build_domain_id: row.build_domain_id,
@@ -1098,6 +1116,24 @@ impl RagService {
                 .call_effect_policy_violations_for_stored_owner_policy(owner_id, options)?
                 .into_iter()
                 .map(|row| effect_policy_violation_info(self.db.as_ref(), row))
+                .collect::<Result<Vec<_>, RagError>>()?,
+        ))
+    }
+
+    pub fn exact_call_proof_invariant_findings_for_owner(
+        &self,
+        owner_id: Uuid,
+        options: CallPathOptions,
+    ) -> Result<Option<Vec<CallProofInvariantFindingInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .call_proof_invariant_findings_for_owner(owner_id, options)?
+                .into_iter()
+                .map(proof_invariant_finding_info)
                 .collect::<Result<Vec<_>, RagError>>()?,
         ))
     }

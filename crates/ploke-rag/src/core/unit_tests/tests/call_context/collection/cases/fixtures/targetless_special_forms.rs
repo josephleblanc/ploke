@@ -1,7 +1,24 @@
 use ploke_db::{CallPathOptions, ProofGraphStore};
+use serde_json::json;
 
 use super::super::super::super::super::*;
 use super::super::super::helpers::*;
+
+fn process_create_effect_seed(
+    call_site_id: impl ToString,
+    effect_seed_id: &str,
+) -> serde_json::Value {
+    json!({
+        "fact_kind": "effect_seed",
+        "schema_version": "ploke-proof-facts.v1",
+        "effect_seed_id": effect_seed_id,
+        "call_site_id": call_site_id.to_string(),
+        "effect_class": "operating_system_process_create",
+        "confidence": "fixture-source-oracle",
+        "blocker_if_unresolved": true,
+        "evidence_use": "proof_only"
+    })
+}
 
 #[tokio::test]
 async fn call_context_collection_reads_real_targetless_special_form_rows() -> Result<(), Error> {
@@ -257,6 +274,112 @@ async fn call_reach_exact_preserves_extern_c_external_frontier() -> Result<(), E
             .iter()
             .any(|reason| reason == "external_dependency_summary_missing"),
         "RAG extern C effect should preserve the external-summary blocker reason: {effect:#?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn proof_invariant_findings_exact_preserves_extern_c_process_obligation() -> Result<(), Error>
+{
+    init_tracing_once();
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let extern_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_extern_c_function"),
+    )?;
+    let rag = init_test_rag_mock(Arc::clone(&db));
+    assert!(
+        !rag.call_context_degraded(),
+        "fresh fixture call_graph schema should enable exact proof invariant findings"
+    );
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Security/process lifetime review:
+    //   "Which reachable process-spawn proof obligations are still blocked?"
+    //
+    // Source oracle:
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:844 declares
+    //   `abs(value)` inside an `unsafe extern "C"` block and calls it from
+    //   `call_extern_c_function`. The process-create proof row is explicit
+    //   test evidence; the external callsite remains targetless.
+    let report = rag
+        .exact_call_reach_for_owner(
+            extern_owner,
+            CallPathOptions {
+                max_depth: 2,
+                max_paths: 16,
+            },
+        )?
+        .expect("call context enabled");
+    let external_call = report
+        .external_frontier_calls
+        .iter()
+        .find(|call| {
+            call.owner_id == extern_owner
+                && call.kind == CallSiteKind::Path
+                && call.status == CallStatusKind::External
+                && call.callee
+                    == CallCalleeInfo::Path {
+                        path: vec!["abs".to_string()],
+                    }
+        })
+        .unwrap_or_else(|| {
+            panic!("RAG extern C reach should expose abs(value) as external: {report:#?}")
+        });
+    assert!(
+        external_call.targets.is_empty(),
+        "extern C process frontier should remain targetless: {external_call:#?}"
+    );
+    assert!(
+        db.project_call_proof_facts_for_owner(extern_owner, "bd:fixture-call-graph")? >= 2,
+        "extern C owner should project targetless proof rows"
+    );
+
+    db.upsert_proof_fact_values(&[process_create_effect_seed(
+        external_call.site_id,
+        "effect:fixture-rag-extern-c-process-create",
+    )])?;
+
+    let findings = rag
+        .exact_call_proof_invariant_findings_for_owner(
+            extern_owner,
+            CallPathOptions {
+                max_depth: 2,
+                max_paths: 16,
+            },
+        )?
+        .expect("call context enabled");
+    let finding = findings
+        .iter()
+        .find(|finding| {
+            finding.invariant == "detached_process_successor_handoff"
+                && finding.call_site_id.as_deref()
+                    == Some(external_call.site_id.to_string().as_str())
+        })
+        .unwrap_or_else(|| {
+            panic!("RAG should expose the fixture process invariant finding: {findings:#?}")
+        });
+    assert_eq!(finding.status, "blocked");
+    assert!(
+        finding
+            .reason
+            .contains("external_dependency_summary_missing"),
+        "RAG invariant finding should preserve the external-summary blocker: {finding:#?}"
+    );
+    let Some(call_site) = finding.call_site.as_ref() else {
+        panic!("RAG invariant finding should include the linked callsite: {finding:#?}");
+    };
+    assert_eq!(call_site.site_id, external_call.site_id);
+    assert_eq!(call_site.owner_id, extern_owner);
+    assert_eq!(call_site.status, CallStatusKind::External);
+    assert!(
+        call_site.targets.is_empty(),
+        "proof invariant findings must not fabricate RAG target rows: {finding:#?}"
     );
 
     Ok(())

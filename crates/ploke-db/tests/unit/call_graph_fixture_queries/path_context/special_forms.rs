@@ -1,6 +1,23 @@
-use ploke_db::CallPathOptions;
+use ploke_db::{CallPathOptions, ProofGraphStore};
+use serde_json::json;
 
 use super::*;
+
+fn process_create_effect_seed(
+    call_site_id: impl ToString,
+    effect_seed_id: &str,
+) -> serde_json::Value {
+    json!({
+        "fact_kind": "effect_seed",
+        "schema_version": "ploke-proof-facts.v1",
+        "effect_seed_id": effect_seed_id,
+        "call_site_id": call_site_id.to_string(),
+        "effect_class": "operating_system_process_create",
+        "confidence": "fixture-source-oracle",
+        "blocker_if_unresolved": true,
+        "evidence_use": "proof_only"
+    })
+}
 
 #[test]
 fn fixture_context_reads_projected_generic_unsafe_extern_and_chained_calls() -> Result<(), DbError>
@@ -303,6 +320,86 @@ fn fixture_reach_surfaces_extern_c_call_as_external_frontier() -> Result<(), DbE
             .iter()
             .any(|reason| reason == "external_dependency_summary_missing"),
         "extern C effect should preserve the external-summary blocker reason: {effect:#?}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn fixture_reach_scopes_proof_invariant_findings_to_reachable_process_effects()
+-> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let owner = function_id_by_name(&db, "call_extern_c_function")?;
+    let context = db.call_context_for_owner(owner)?;
+    let frontier = assert_targetless_row(
+        &context,
+        owner,
+        TargetlessRowCase::path(&["abs"], 1, CallStatusKind::External, "extern C abs"),
+    );
+    assert!(
+        relations_for_site(&db, frontier.site.id)?.rows.is_empty(),
+        "extern C frontier must not fabricate call edges: {frontier:#?}"
+    );
+    assert!(
+        db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")? >= 2,
+        "extern C owner should project targetless proof rows"
+    );
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Security/process lifetime review:
+    //   "Which reachable process-spawn proof obligations are still blocked?"
+    //
+    // Source oracle:
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:844 declares
+    //   `abs(value)` inside an `unsafe extern "C"` block and calls it from
+    //   `call_extern_c_function`. This test deliberately marks the external
+    //   callsite with an OS process-create proof seed so the detached-process
+    //   invariant has a scoped finding to expose; the callsite itself remains
+    //   targetless.
+    db.upsert_proof_fact_values(&[process_create_effect_seed(
+        frontier.site.id,
+        "effect:fixture-extern-c-process-create",
+    )])?;
+
+    let findings = db.call_proof_invariant_findings_for_owner(
+        owner,
+        CallPathOptions {
+            max_depth: 2,
+            max_paths: 16,
+        },
+    )?;
+    let finding = findings
+        .iter()
+        .find(|finding| {
+            finding.invariant == "detached_process_successor_handoff"
+                && finding.call_site_id.as_deref() == Some(frontier.site.id.to_string().as_str())
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "owner-scoped invariant query should report the reachable process effect: {findings:#?}"
+            )
+        });
+    assert_eq!(finding.status, "blocked");
+    assert!(
+        finding
+            .reason
+            .contains("external_dependency_summary_missing"),
+        "external process frontier should remain blocked on summary evidence: {finding:#?}"
+    );
+    let Some(call_site) = finding.call_site.as_ref() else {
+        panic!("scoped invariant finding should preserve the source callsite: {finding:#?}");
+    };
+    assert_eq!(call_site.site.id, frontier.site.id);
+    assert_eq!(call_site.status.status, CallStatusKind::External);
+    assert!(
+        call_site.targets.is_empty(),
+        "proof invariant findings must not fabricate local targets: {finding:#?}"
+    );
+    assert!(
+        relations_for_site(&db, frontier.site.id)?.rows.is_empty(),
+        "invariant projection must not fabricate local call edges"
     );
 
     Ok(())

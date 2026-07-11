@@ -61,8 +61,26 @@ Exit criteria:
 - Add one DB assertion, one RAG assertion if exposed downstream, one TUI/tool
   assertion if exposed downstream, and one consolidated doc note.
 
-Status: enriched module-boundary exact downstream slice implemented; focused
+Status: owner-scoped proof-invariant downstream slice implemented; focused
 verification passed.
+
+Latest completed slice: owner-scoped proof invariant findings downstream
+surface. The DB now exposes `call_proof_invariant_findings_for_owner`, a
+derived owner-centered view over existing `proof_invariant_findings()` that
+filters findings to callsites already visible in the owner's reachable callsite
+context. RAG maps that helper through
+`exact_call_proof_invariant_findings_for_owner` into typed
+`CallProofInvariantFindingInfo` rows, and exact `code_item_lookup` /
+`code_item_edges` payloads now include `call_proof_invariant_findings` plus UI
+summary counts. The fixture-backed source oracle is
+`call_extern_c_function -> abs(value)` in
+`tests/fixture_crates/fixture_call_graph/src/lib.rs`; the test attaches an
+explicit `operating_system_process_create` effect seed, preserves the active
+`external_dependency_summary_missing` blocker as a blocked
+`detached_process_successor_handoff` finding, and reasserts that the external
+frontier remains targetless and edge-free. The active axum backup DB does not
+include the bench/build process targets (`install_rewrk`, serde build scripts),
+so this slice is fixture-backed rather than real-corpus-positive.
 
 Latest completed slice: enriched module-boundary edge downstream surface. The
 DB already exposed `module_boundary_edges_from_owner`; RAG now maps that helper

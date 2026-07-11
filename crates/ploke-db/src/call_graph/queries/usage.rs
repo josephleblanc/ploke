@@ -7,14 +7,14 @@ use crate::{
     Database, DbError,
     database::{to_string, to_string_list, to_uuid},
     multi_embedding::db_ext::{ANCESTOR_RULES_NOW, METHOD_NODE_ANCESTOR_RULE},
-    proof_graph::{ProofGraphContextRow, ProofGraphStore},
+    proof_graph::{ProofGraphContextRow, ProofGraphStore, ProofInvariantStatus},
 };
 
 use super::super::{
     CallBuildDomain, CallContextRow, CallEffectPolicyViolation, CallGuardReport, CallImpactReport,
-    CallNodeInfo, CallPath, CallPathEdge, CallPathOptions, CallReachEffect, CallReachReport,
-    CallRelationKind, CallSiteBucket, CallSiteKind, CallSiteRow, CallStatusKind,
-    CallTestEntrypoint, ExternalSummaryNeed, ModuleBoundaryEdge,
+    CallNodeInfo, CallPath, CallPathEdge, CallPathOptions, CallProofInvariantFinding,
+    CallReachEffect, CallReachReport, CallRelationKind, CallSiteBucket, CallSiteKind, CallSiteRow,
+    CallStatusKind, CallTestEntrypoint, ExternalSummaryNeed, ModuleBoundaryEdge,
 };
 use super::metadata::{call_node_info_rank, call_node_infos, decode_call_node_info};
 
@@ -363,6 +363,58 @@ impl Database {
         self.call_effect_policy_violations_for_owner(owner_id, options, &allowed_effects)
     }
 
+    /// Lists proof invariant findings attached to callsites reachable from `owner_id`.
+    ///
+    /// This is an owner-scoped projection of the proof invariant layer. It
+    /// does not create call edges for targetless frontier rows; it only returns
+    /// findings whose `call_site_id` is already present in the same reachable
+    /// callsite context used by the effect and external-summary helpers.
+    pub fn call_proof_invariant_findings_for_owner(
+        &self,
+        owner_id: Uuid,
+        options: CallPathOptions,
+    ) -> Result<Vec<CallProofInvariantFinding>, DbError> {
+        let paths = self.call_paths_from_owner(owner_id, options)?;
+        let context_by_site = reachable_callsite_context_rows(self, owner_id, &paths)?;
+        let mut rows = Vec::new();
+
+        for finding in self.proof_invariant_findings()? {
+            let Some(call_site_id) = finding.call_site_id.as_deref() else {
+                continue;
+            };
+            let Ok(site_id) = Uuid::parse_str(call_site_id) else {
+                continue;
+            };
+            let Some(call_site) = context_by_site.get(&site_id).cloned() else {
+                continue;
+            };
+
+            rows.push(CallProofInvariantFinding {
+                invariant: finding.invariant,
+                status: proof_invariant_status_label(finding.status).to_string(),
+                reason: finding.reason,
+                call_site_id: finding.call_site_id,
+                call_site: Some(call_site),
+            });
+        }
+
+        rows.sort_by(|left, right| {
+            (
+                left.invariant.as_str(),
+                left.status.as_str(),
+                left.call_site_id.as_deref().unwrap_or_default(),
+                left.reason.as_str(),
+            )
+                .cmp(&(
+                    right.invariant.as_str(),
+                    right.status.as_str(),
+                    right.call_site_id.as_deref().unwrap_or_default(),
+                    right.reason.as_str(),
+                ))
+        });
+        Ok(rows)
+    }
+
     /// Lists active external-summary blockers attached to callsites reachable from `owner_id`.
     ///
     /// This is a proof-authoring helper: it reports targetless frontier sites
@@ -691,6 +743,14 @@ fn cached_call_site(
         })?;
     cache.insert(edge.call_site_id, site.clone());
     Ok(site)
+}
+
+fn proof_invariant_status_label(status: ProofInvariantStatus) -> &'static str {
+    match status {
+        ProofInvariantStatus::Pass => "pass",
+        ProofInvariantStatus::Fail => "fail",
+        ProofInvariantStatus::Blocked => "blocked",
+    }
 }
 
 fn path_has_guard(path: &CallPath, guard_id: Uuid, target_id: Uuid) -> bool {

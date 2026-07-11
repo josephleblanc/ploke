@@ -324,6 +324,8 @@ for a more fuzzy search."#
             resolved_item_id,
             &allowed_effects,
         )?;
+        let call_proof_invariant_findings =
+            lookup_support::call_proof_invariant_findings_for_node(&ctx, resolved_item_id)?;
         let external_summary_needs =
             lookup_support::external_summary_needs_for_node(&ctx, resolved_item_id)?;
         let module_boundary_edges =
@@ -371,6 +373,7 @@ for a more fuzzy search."#
             call_reach,
             call_reach_effects,
             call_effect_policy_violations,
+            call_proof_invariant_findings,
             external_summary_needs,
             module_boundary_edges,
             call_build_domains,
@@ -405,6 +408,7 @@ for a more fuzzy search."#
             concise_context.call_reach.as_ref(),
             &concise_context.call_reach_effects,
             &concise_context.call_effect_policy_violations,
+            &concise_context.call_proof_invariant_findings,
             &concise_context.external_summary_needs,
             &concise_context.module_boundary_edges,
             &concise_context.call_build_domains,

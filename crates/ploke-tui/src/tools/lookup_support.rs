@@ -2,8 +2,8 @@ use ploke_core::{
     io_types::EmbeddingData,
     rag_types::{
         CallBuildDomainInfo, CallContextInfo, CallEffectPolicyViolationInfo, CallImpactInfo,
-        CallPathInfo, CallReachEffectInfo, CallReachInfo, CallTestEntrypointInfo,
-        ExternalSummaryNeedInfo, ModuleBoundaryEdgeInfo, ProofContextInfo,
+        CallPathInfo, CallProofInvariantFindingInfo, CallReachEffectInfo, CallReachInfo,
+        CallTestEntrypointInfo, ExternalSummaryNeedInfo, ModuleBoundaryEdgeInfo, ProofContextInfo,
     },
     tool_types::ToolName,
 };
@@ -688,12 +688,32 @@ pub(super) fn call_effect_policy_violations_for_node(
     }
 }
 
+pub(super) fn call_proof_invariant_findings_for_node(
+    ctx: &super::Ctx,
+    node_id: Uuid,
+) -> Result<Vec<CallProofInvariantFindingInfo>, ploke_error::Error> {
+    use ploke_error::InternalError;
+
+    match ctx.state.rag.as_ref() {
+        Some(rag) if !rag.call_context_degraded() => Ok(rag
+            .exact_call_proof_invariant_findings_for_owner(node_id, TOOL_CALL_PATH_OPTIONS)
+            .map_err(|err| {
+                ploke_error::Error::Internal(InternalError::CompilerError(format!(
+                    "failed to collect proof invariant findings for code item {node_id}: {err}"
+                )))
+            })?
+            .unwrap_or_default()),
+        _ => Ok(Vec::new()),
+    }
+}
+
 pub(super) fn with_call_usage_fields(
     payload: super::ToolUiPayload,
     impact: Option<&CallImpactInfo>,
     reach: Option<&CallReachInfo>,
     reach_effects: &[CallReachEffectInfo],
     policy_violations: &[CallEffectPolicyViolationInfo],
+    invariant_findings: &[CallProofInvariantFindingInfo],
     summary_needs: &[ExternalSummaryNeedInfo],
     module_boundary_edges: &[ModuleBoundaryEdgeInfo],
     build_domains: &[CallBuildDomainInfo],
@@ -805,6 +825,10 @@ pub(super) fn with_call_usage_fields(
         .with_field(
             "effect_policy_violations",
             policy_violations.len().to_string(),
+        )
+        .with_field(
+            "proof_invariant_findings",
+            invariant_findings.len().to_string(),
         )
         .with_field("external_summary_needs", summary_needs.len().to_string())
         .with_field(

@@ -28,12 +28,12 @@ use crate::call_graph_tool_support::{
     assert_initialized_local_receiver_context, assert_initialized_local_receiver_proof,
     assert_json_from_bytes_incoming_context, assert_no_external_summary_need_for_site,
     assert_parse_attrs_incoming_context, assert_path_blocker_proof, assert_path_context,
-    assert_path_resolution_proof, assert_resolved_callable_param_proof,
-    assert_resolved_path_context, assert_run_ui_tests_incoming_context,
-    assert_runtime_dispatch_blocker, assert_self_field_receiver_context,
-    assert_self_field_receiver_proof, assert_serde_json_summary_proof, assert_target_proof,
-    assert_task_spawn_effects, assert_task_spawn_policy_violation, assert_two_hop_call_path,
-    ui_field,
+    assert_path_resolution_proof, assert_process_invariant_findings,
+    assert_resolved_callable_param_proof, assert_resolved_path_context,
+    assert_run_ui_tests_incoming_context, assert_runtime_dispatch_blocker,
+    assert_self_field_receiver_context, assert_self_field_receiver_proof,
+    assert_serde_json_summary_proof, assert_target_proof, assert_task_spawn_effects,
+    assert_task_spawn_policy_violation, assert_two_hop_call_path, ui_field,
 };
 
 #[tokio::test]
@@ -1019,6 +1019,58 @@ async fn code_item_lookup_uses_stored_effect_policy_when_allowlist_omitted() {
         policy_violations,
         &fixture,
         "code_item_lookup stored-policy call_effect_policy_violations",
+    );
+}
+
+#[tokio::test]
+async fn code_item_lookup_returns_fixture_process_invariant_findings() {
+    let fixture = CallGraphToolFixture::new().await;
+    let expected = fixture.seed_extern_c_process_invariant();
+    let params = LookupParams {
+        item_name: Cow::Borrowed("call_extern_c_function"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("function"),
+        module_path: Cow::Borrowed("crate"),
+        owner_trait: None,
+        owner_type: None,
+        parent_name: None,
+        allowed_effects: Vec::new(),
+    };
+
+    let result = CodeItemLookup::execute(params, fixture.ctx("extern-c-process-invariant-lookup"))
+        .await
+        .expect("call_extern_c_function lookup");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize ConciseContext");
+    let findings = payload
+        .get("call_proof_invariant_findings")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_proof_invariant_findings array");
+
+    // Source oracle:
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:839-844 declares
+    //   foreign function `abs(input)` inside an `unsafe extern "C"` block and
+    //   calls `abs(value)` from `call_extern_c_function`.
+    //
+    // The fixture marks the external `abs(value)` frontier as an
+    // `operating_system_process_create` effect. The exact lookup payload should
+    // expose the blocked detached-process invariant without inventing a local
+    // target for `abs`.
+    assert_process_invariant_findings(
+        findings,
+        &expected,
+        "code_item_lookup call_proof_invariant_findings",
+    );
+    let owner = expected.owner.to_string();
+    assert_eq!(
+        payload.get("id").and_then(serde_json::Value::as_str),
+        Some(owner.as_str()),
+        "code_item_lookup should resolve the fixture extern C owner: {payload:#?}"
+    );
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert_eq!(
+        ui_field(ui, "proof_invariant_findings"),
+        findings.len().to_string()
     );
 }
 

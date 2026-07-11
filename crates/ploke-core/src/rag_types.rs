@@ -525,6 +525,17 @@ pub struct CallEffectPolicyViolationInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct CallProofInvariantFindingInfo {
+    pub invariant: String,
+    pub status: String,
+    pub reason: String,
+    #[serde(default)]
+    pub call_site_id: Option<String>,
+    #[serde(default)]
+    pub call_site: Option<CallContextInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct ExternalSummaryNeedInfo {
     #[serde(default)]
     pub paths_to_owner: Vec<CallPathInfo>,
@@ -764,6 +775,7 @@ impl From<ContextPart> for ConciseContext {
             call_reach: None,
             call_reach_effects: Vec::new(),
             call_effect_policy_violations: Vec::new(),
+            call_proof_invariant_findings: Vec::new(),
             external_summary_needs: Vec::new(),
             module_boundary_edges: Vec::new(),
             call_build_domains: Vec::new(),
@@ -833,6 +845,8 @@ pub struct ConciseContext {
     pub call_reach_effects: Vec<CallReachEffectInfo>,
     #[serde(default)]
     pub call_effect_policy_violations: Vec<CallEffectPolicyViolationInfo>,
+    #[serde(default)]
+    pub call_proof_invariant_findings: Vec<CallProofInvariantFindingInfo>,
     #[serde(default)]
     pub external_summary_needs: Vec<ExternalSummaryNeedInfo>,
     #[serde(default)]

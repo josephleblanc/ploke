@@ -209,7 +209,7 @@ impl CallGraphToolFixture {
         ctx_for_state(&self.state, call_id)
     }
 
-    pub(crate) fn seed_extern_c_abs_effect(&self) -> ExpectedCallSite {
+    fn extern_c_abs_callsite(&self) -> ExpectedCallSite {
         let module_path = vec!["crate".to_string()];
         let owner = graph_resolve_exact(
             self.state.db.as_ref(),
@@ -238,7 +238,6 @@ impl CallGraphToolFixture {
             row.targets.is_empty(),
             "abs(value) should stay targetless before tool execution: {row:#?}"
         );
-
         assert!(
             self.state
                 .db
@@ -247,17 +246,27 @@ impl CallGraphToolFixture {
                 >= 2,
             "call_extern_c_function should project targetless proof rows"
         );
+
+        ExpectedCallSite {
+            owner,
+            site: row.site.id,
+            path: vec!["abs".to_string()],
+        }
+    }
+
+    pub(crate) fn seed_extern_c_abs_effect(&self) -> ExpectedCallSite {
+        let expected = self.extern_c_abs_callsite();
         self.state
             .db
             .upsert_proof_fact_values(&[ploke_test_utils::fixture_extern_c_abs_effect_record(
-                row.site.id,
+                expected.site,
             )])
             .expect("upsert extern C FFI effect seed");
         let effects = self
             .state
             .db
             .call_effects_reachable_from_owner(
-                owner,
+                expected.owner,
                 ploke_db::CallPathOptions {
                     max_depth: 2,
                     max_paths: 16,
@@ -271,11 +280,45 @@ impl CallGraphToolFixture {
             "fixture should prove the FFI effect is reachable before tool execution: {effects:#?}"
         );
 
-        ExpectedCallSite {
-            owner,
-            site: row.site.id,
-            path: vec!["abs".to_string()],
-        }
+        expected
+    }
+
+    pub(crate) fn seed_extern_c_process_invariant(&self) -> ExpectedCallSite {
+        let expected = self.extern_c_abs_callsite();
+        self.state
+            .db
+            .upsert_proof_fact_values(&[json!({
+                "fact_kind": "effect_seed",
+                "schema_version": "ploke-proof-facts.v1",
+                "effect_seed_id": "effect:fixture-tui-extern-c-process-create",
+                "call_site_id": expected.site.to_string(),
+                "effect_class": "operating_system_process_create",
+                "confidence": "fixture-source-oracle",
+                "blocker_if_unresolved": true,
+                "evidence_use": "proof_only"
+            })])
+            .expect("upsert extern C process effect seed");
+        let findings = self
+            .state
+            .db
+            .call_proof_invariant_findings_for_owner(
+                expected.owner,
+                ploke_db::CallPathOptions {
+                    max_depth: 2,
+                    max_paths: 16,
+                },
+            )
+            .expect("reachable extern C process invariant finding");
+        assert!(
+            findings.iter().any(|finding| {
+                finding.invariant == "detached_process_successor_handoff"
+                    && finding.status == "blocked"
+                    && finding.call_site_id.as_deref() == Some(expected.site.to_string().as_str())
+            }),
+            "fixture should prove the process invariant is reachable before tool execution: {findings:#?}"
+        );
+
+        expected
     }
 
     pub(crate) fn async_closure_blocker(&self, owner_name: &'static str) -> ExpectedCallSite {
@@ -2177,6 +2220,77 @@ pub(crate) fn assert_task_spawn_policy_violation(
                 && path.get("depth").and_then(serde_json::Value::as_u64) == Some(2)
         }),
         "{label} policy violation should preserve the path to spawn_service: {effect:#?}"
+    );
+}
+
+pub(crate) fn assert_process_invariant_findings(
+    findings: &[serde_json::Value],
+    expected: &ExpectedCallSite,
+    label: &str,
+) {
+    let owner = expected.owner.to_string();
+    let site = expected.site.to_string();
+    let finding = findings
+        .iter()
+        .find(|finding| {
+            finding.get("invariant").and_then(serde_json::Value::as_str)
+                == Some("detached_process_successor_handoff")
+                && finding
+                    .get("call_site_id")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(site.as_str())
+        })
+        .unwrap_or_else(|| {
+            panic!("{label} should include the axum process invariant finding: {findings:#?}")
+        });
+    assert_eq!(
+        finding.get("status").and_then(serde_json::Value::as_str),
+        Some("blocked")
+    );
+    assert!(
+        finding
+            .get("reason")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|reason| reason.contains("external_dependency_summary_missing")),
+        "{label} should preserve the external-summary blocker reason: {finding:#?}"
+    );
+    let call_site = finding
+        .get("call_site")
+        .and_then(serde_json::Value::as_object)
+        .unwrap_or_else(|| panic!("{label} finding should include call_site: {finding:#?}"));
+    assert_eq!(
+        call_site
+            .get("owner_id")
+            .and_then(serde_json::Value::as_str),
+        Some(owner.as_str())
+    );
+    assert_eq!(
+        call_site.get("site_id").and_then(serde_json::Value::as_str),
+        Some(site.as_str())
+    );
+    assert_eq!(
+        call_site.get("status").and_then(serde_json::Value::as_str),
+        Some("external")
+    );
+    assert!(
+        call_site
+            .get("targets")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|targets| targets.is_empty()),
+        "{label} invariant callsite must remain targetless: {finding:#?}"
+    );
+    assert!(
+        call_site
+            .get("callee")
+            .and_then(|callee| callee.get("path"))
+            .and_then(|path_variant| path_variant.get("path"))
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|path| {
+                path.iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .eq(expected.path.iter().map(String::as_str))
+            }),
+        "{label} invariant callsite should preserve the expected callee path: {finding:#?}"
     );
 }
 

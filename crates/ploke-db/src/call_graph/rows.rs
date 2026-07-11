@@ -243,6 +243,18 @@ pub struct CallEffectPolicyViolation {
     pub effect: CallReachEffect,
 }
 
+/// Proof invariant finding scoped to callsites reachable from an owner.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CallProofInvariantFinding {
+    pub invariant: String,
+    pub status: String,
+    pub reason: String,
+    #[serde(default)]
+    pub call_site_id: Option<String>,
+    #[serde(default)]
+    pub call_site: Option<CallContextRow>,
+}
+
 /// Active external-summary blocker reachable from an owner.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ExternalSummaryNeed {
