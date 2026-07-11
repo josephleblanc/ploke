@@ -65,6 +65,10 @@ Current matrix posture:
   `Router::clone` rows and axum-core
   `parts.extract_with_state(state)` imported external receiver proof across DB,
   RAG, and TUI.
+- Associated-constructor initialized local receiver methods: real-corpus axum
+  `CountingCloneableState::new() -> state.clone()/state.setup_done()` now uses
+  the local constructor's `Self` return type as receiver proof and resolves six
+  routing-test method rows through DB traversal.
 - Borrowed initialized local receiver methods: fixture-backed
   `let value = LocalAssoc; (&value).instance_value()` now carries initializer
   proof through parser, DB/proof projection, RAG, and TUI formatting.

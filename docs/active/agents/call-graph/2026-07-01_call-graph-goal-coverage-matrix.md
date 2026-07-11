@@ -10,7 +10,7 @@ Related planning files:
 - [`2026-06-28_real-corpus-call-site-oracle-matrices.md`](2026-06-28_real-corpus-call-site-oracle-matrices.md)
 - [`2026-07-07_call-graph-usage-question-gap-audit.md`](2026-07-07_call-graph-usage-question-gap-audit.md)
 
-Status date: 2026-07-10
+Status date: 2026-07-11
 Baseline HEAD when created: `19860cc40`
 
 ## Operating Rule
@@ -61,9 +61,24 @@ Exit criteria:
 - Add one DB assertion, one RAG assertion if exposed downstream, one TUI/tool
   assertion if exposed downstream, and one consolidated doc note.
 
-Status: async callable item metadata slice implemented through parser,
-transform, DB, exact RAG, and exact TUI tool payloads; focused verification
-passed in the current worktree.
+Status: associated-constructor initialized local receiver proof implemented for
+the real axum routing `CountingCloneableState` rows and committed as
+`785c0e5be`. The slice regenerated the axum call-graph fixture, proved DB
+traversal for `CountingCloneableState::new()`, `state.clone()`, and
+`state.setup_done()`, and kept unknown callable-field/value-flow rows
+fail-closed.
+
+Latest completed slice: associated-constructor initialized receiver proof.
+Parser resolution now checks whether an initialized local receiver's initializer
+path corresponds to an earlier path call in the same owner, resolves that path
+as an associated function, and uses the associated function return type to prove
+the receiver's later method target. The real-corpus source oracle is
+`CountingCloneableState::new()` followed by `state.clone()` and
+`state.setup_done()` in three axum routing tests. DB real-target assertions
+prove one constructor edge and six local method receiver edges over the
+regenerated `corpus_axum_call_graph_2026-07-11.sqlite` fixture. This slice does
+not add context-sensitive callable argument flow, callable-field dispatch, or
+trait-object runtime dispatch.
 
 Latest completed slice: async callable item metadata for usage summaries.
 Parser `FunctionNode` and `MethodNode` now store source signature asyncness,
