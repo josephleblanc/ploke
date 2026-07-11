@@ -158,7 +158,16 @@ impl CallRelationResolver<'_> {
             MethodCallReceiver::MethodCallResult { method_name } => {
                 self.resolve_method_result_method_call(call, method_name, type_relations)?
             }
-            MethodCallReceiver::MethodResultLocalBinding { .. } => AssocPathResolution::Unsupported,
+            MethodCallReceiver::MethodResultLocalBinding {
+                method_name,
+                method_span,
+                ..
+            } => self.resolve_local_result_method_call(
+                call,
+                method_name,
+                *method_span,
+                type_relations,
+            )?,
             MethodCallReceiver::FieldTypedLocalBinding {
                 type_path,
                 field_path,
@@ -1465,6 +1474,32 @@ impl CallRelationResolver<'_> {
         }
     }
 
+    fn resolve_local_result_method_call(
+        &self,
+        call: &MethodCallNode,
+        result_method: &str,
+        result_span: (usize, usize),
+        type_relations: &[TypeRelation],
+    ) -> Result<AssocPathResolution, SynParserError> {
+        let Some(init_call) = self.method_call_by_span(call.owner, result_method, result_span)
+        else {
+            return Ok(AssocPathResolution::Unsupported);
+        };
+
+        let inner_resolution = self.resolve_method_call_target(init_call, type_relations)?;
+        match inner_resolution {
+            AssocPathResolution::Resolved(method_id) => self.resolve_method_return_type_method(
+                call.owner,
+                method_id,
+                &call.method_name,
+                type_relations,
+            ),
+            AssocPathResolution::Unresolved => Ok(AssocPathResolution::Unresolved),
+            AssocPathResolution::Ambiguous => Ok(AssocPathResolution::Ambiguous),
+            AssocPathResolution::Unsupported => Ok(AssocPathResolution::Unsupported),
+        }
+    }
+
     fn resolve_try_method_result_method_call(
         &self,
         call: &MethodCallNode,
@@ -1709,9 +1744,16 @@ impl CallRelationResolver<'_> {
             MethodCallReceiver::MethodCallResult { method_name } => {
                 self.resolve_method_result_method_call(call, method_name, type_relations)
             }
-            MethodCallReceiver::MethodResultLocalBinding { .. } => {
-                Ok(AssocPathResolution::Unsupported)
-            }
+            MethodCallReceiver::MethodResultLocalBinding {
+                method_name,
+                method_span,
+                ..
+            } => self.resolve_local_result_method_call(
+                call,
+                method_name,
+                *method_span,
+                type_relations,
+            ),
             MethodCallReceiver::FieldTypedLocalBinding {
                 type_path,
                 field_path,

@@ -57,6 +57,17 @@ async fn request_code_context_returns_result_field_receiver_proof_context() -> c
             fact_count: 6,
         },
         Case {
+            label: "method-result local-binding receiver",
+            search_term: "call_method_result_binding_instance_method",
+            call_id: "method_result_binding_receiver_proof_context",
+            owner: one_uuid(
+                &db,
+                &function_in_module_query(&["crate"], "call_method_result_binding_instance_method"),
+            )?,
+            targets: vec![clone_target, method_target],
+            fact_count: 6,
+        },
+        Case {
             label: "self-field method-call result receiver",
             search_term: "call_self_field_method_result_instance_method",
             call_id: "self_field_method_result_receiver_proof_context",

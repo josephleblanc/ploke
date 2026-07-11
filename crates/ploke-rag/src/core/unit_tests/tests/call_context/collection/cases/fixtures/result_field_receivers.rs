@@ -93,6 +93,40 @@ async fn call_context_collection_reads_real_result_field_receiver_rows() -> Resu
             ],
         },
         CallCase {
+            label: "method-result local-binding receiver",
+            owner: one_uuid(
+                &db,
+                &function_in_module_query(&["crate"], "call_method_result_binding_instance_method"),
+            )?,
+            calls: vec![
+                ExpectedCall {
+                    kind: CallSiteKind::Method,
+                    callee: method_call(
+                        "clone_assoc",
+                        CallReceiverInfo::TypedLocalBinding {
+                            name: "value".to_string(),
+                            type_path: path(&["LocalAssoc"]),
+                        },
+                    ),
+                    target: clone_target,
+                    relation: CallTargetKind::Method,
+                },
+                ExpectedCall {
+                    kind: CallSiteKind::Method,
+                    callee: method_call(
+                        "instance_value",
+                        CallReceiverInfo::MethodResultLocalBinding {
+                            name: "cloned".to_string(),
+                            method_name: "clone_assoc".to_string(),
+                            method_span: (49201, 49220),
+                        },
+                    ),
+                    target: method_target,
+                    relation: CallTargetKind::Method,
+                },
+            ],
+        },
+        CallCase {
             label: "borrowed-parameter method-call result receiver",
             owner: one_uuid(
                 &db,

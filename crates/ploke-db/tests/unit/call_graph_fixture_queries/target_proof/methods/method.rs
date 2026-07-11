@@ -10,6 +10,8 @@ fn fixture_projection_stores_real_target_centered_method_call_proof_facts() -> R
         &db,
         "call_borrowed_value_param_method_result_instance_method",
     )?;
+    let local_result_owner =
+        function_id_by_name(&db, "call_method_result_binding_instance_method")?;
     let self_field_owner = method_id_by_impl_self_type_name(
         &db,
         "SelfFieldAssocOwner",
@@ -36,6 +38,11 @@ fn fixture_projection_stores_real_target_centered_method_call_proof_facts() -> R
     let method_result_receiver = CallReceiver::MethodCallResult {
         method_name: "clone_assoc".to_string(),
     };
+    let local_result_receiver = CallReceiver::MethodResultLocalBinding {
+        name: "cloned".to_string(),
+        method_name: "clone_assoc".to_string(),
+        method_span: (49201, 49220),
+    };
     let self_field_receiver = CallReceiver::SelfField {
         path: path(&["value"]),
     };
@@ -51,7 +58,7 @@ fn fixture_projection_stores_real_target_centered_method_call_proof_facts() -> R
         init_path: path(&["LocalAssoc"]),
     };
     let callers = db.callers_for_target(target)?;
-    assert_resolved_target_callers(&callers, target, 10, "target-centered method")?;
+    assert_resolved_target_callers(&callers, target, 11, "target-centered method")?;
     let mut expected = assert_proof_method_cases(
         &db,
         &callers,
@@ -63,6 +70,7 @@ fn fixture_projection_stores_real_target_centered_method_call_proof_facts() -> R
                 "instance_value",
                 &method_result_receiver,
             ),
+            ProofMethodCase::method(local_result_owner, "instance_value", &local_result_receiver),
             ProofMethodCase::method(self_field_owner, "instance_value", &self_field_receiver),
             ProofMethodCase::method(
                 nested_self_field_owner,

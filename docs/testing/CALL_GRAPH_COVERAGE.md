@@ -138,6 +138,21 @@ resolved-only boundary edges:
 - `cargo test -p ploke-rag module_boundary_policy_exact_flags_axum_request_extract_boundary --lib -- --nocapture`
 - `cargo test -p ploke-tui --test integration code_item_boundary_policy_flags_real_corpus_request_extract_boundary -- --nocapture`
 
+On 2026-07-11 active fixtures were regenerated after adding the
+fixture-backed `MethodResultLocalBinding` positive receiver proof for
+`let cloned = value.clone_assoc(); cloned.instance_value()`. Verification
+passed:
+
+- `cargo run -p xtask --features call_graph -- fixtures regenerate --active`
+- `cargo test -p syn_parser --features call_graph fixture_call_graph_call_method_result_binding_instance_method_resolves_returned_type_method_call_site -- --nocapture`
+- `cargo test -p ploke-db fixture_context_reads_projected_result_receiver_method_chains --test mod -- --nocapture`
+- `cargo test -p ploke-db fixture_projection_stores_real_result_and_field_receiver_method_call_proof_facts --test mod -- --nocapture`
+- `cargo test -p ploke-db fixture_projection_stores_real_target_centered_method_call_proof_facts --test mod -- --nocapture`
+- `cargo test -p ploke-rag call_context_collection_reads_real_result_field_receiver_rows --lib -- --nocapture`
+- `cargo test -p ploke-rag proof_context_collection_preserves_projected_result_field_receiver_rows --lib -- --nocapture`
+- `cargo test -p ploke-tui request_code_context_returns_result_field_receiver_call_context --lib -- --nocapture`
+- `cargo test -p ploke-tui request_code_context_returns_result_field_receiver_proof_context --lib -- --nocapture`
+
 On 2026-07-10 the call graph schema added `call_callee_evidence` to preserve
 typed parser callee evidence for async closure bindings. Active fixtures were
 regenerated and the real-corpus committed call-graph seeds were refreshed from

@@ -114,6 +114,43 @@ async fn request_code_context_returns_result_field_receiver_call_context() -> co
             ],
         },
         Case {
+            label: "method-result local-binding receiver",
+            search_term: "call_method_result_binding_instance_method",
+            top_k: 1,
+            call_id: "method_result_binding_receiver_call_context",
+            owner: one_uuid(
+                &db,
+                &function_in_module_query(&["crate"], "call_method_result_binding_instance_method"),
+            )?,
+            calls: vec![
+                ExpectedCall {
+                    kind: CallSiteKind::Method,
+                    callee: method_call(
+                        "clone_assoc",
+                        CallReceiverInfo::TypedLocalBinding {
+                            name: "value".to_string(),
+                            type_path: path(&["LocalAssoc"]),
+                        },
+                    ),
+                    target: clone_target,
+                    relation: CallTargetKind::Method,
+                },
+                ExpectedCall {
+                    kind: CallSiteKind::Method,
+                    callee: method_call(
+                        "instance_value",
+                        CallReceiverInfo::MethodResultLocalBinding {
+                            name: "cloned".to_string(),
+                            method_name: "clone_assoc".to_string(),
+                            method_span: (49201, 49220),
+                        },
+                    ),
+                    target: method_target,
+                    relation: CallTargetKind::Method,
+                },
+            ],
+        },
+        Case {
             label: "self-field method-call result receiver",
             search_term: "call_self_field_method_result_instance_method",
             top_k: 1,

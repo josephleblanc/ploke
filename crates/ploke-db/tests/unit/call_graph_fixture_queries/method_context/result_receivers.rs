@@ -79,6 +79,41 @@ fn fixture_context_reads_projected_result_receiver_method_chains() -> Result<(),
         CallTargetKind::Method,
     );
 
+    let owner = function_id_by_name(&db, "call_method_result_binding_instance_method")?;
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(
+        context.len(),
+        2,
+        "method-result local binding context rows: {context:#?}"
+    );
+
+    let clone_receiver = CallReceiver::TypedLocalBinding {
+        name: "value".to_string(),
+        type_path: path(&["LocalAssoc"]),
+    };
+    let row = row_by_method_receiver(&context, "clone_assoc", &clone_receiver);
+    assert_resolved_target(
+        row,
+        clone_target,
+        CallRelationKind::Method,
+        CallSiteKind::Method,
+        CallTargetKind::Method,
+    );
+
+    let result_receiver = CallReceiver::MethodResultLocalBinding {
+        name: "cloned".to_string(),
+        method_name: "clone_assoc".to_string(),
+        method_span: (49201, 49220),
+    };
+    let row = row_by_method_receiver(&context, "instance_value", &result_receiver);
+    assert_resolved_target(
+        row,
+        method_target,
+        CallRelationKind::Method,
+        CallSiteKind::Method,
+        CallTargetKind::Method,
+    );
+
     let owner = function_id_by_name(
         &db,
         "call_borrowed_value_param_method_result_instance_method",

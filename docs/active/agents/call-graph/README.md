@@ -198,6 +198,10 @@ Implemented/scaffolded:
     type when the nested call occurrence, inner target, and outer method target
     are all proven exactly; `Self` returns are interpreted through the inner
     method's owning impl.
+  - local bindings initialized by exact method-call results, such as
+    `let cloned = value.clone_assoc(); cloned.method()`, resolve through the
+    recorded initializer method span and that inner method's exact local return
+    type.
   - parenthesized method receivers such as `(value).instance_value()` reuse the
     same exact local binding proof as `value.instance_value()`.
   - typed local method receivers whose annotation is a Rust type-alias chain

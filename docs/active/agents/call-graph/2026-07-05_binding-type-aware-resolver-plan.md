@@ -439,15 +439,31 @@ should prevent future resumes from reselecting already-covered shapes.
    - Active call-graph fixtures plus the committed axum/chrono/generic-array/
      memchr call-graph seeds were regenerated/reviewed with the new relation.
 
+25. Method-result local-binding receiver proof - completed:
+   - `call_method_result_binding_instance_method()` records
+     `let cloned = value.clone_assoc(); cloned.instance_value()` as a
+     `MethodResultLocalBinding` receiver with the exact initializer
+     `clone_assoc` method span.
+   - The resolver reuses the existing direct `MethodCallResult` proof shape:
+     it resolves the recorded initializer method occurrence, reads that exact
+     local method target's return type, and then resolves the outer receiver
+     method from that type.
+   - The proof stays bounded to the recorded same-owner method-call
+     initializer span. If that initializer call is missing, unresolved,
+     ambiguous, external, or unsupported, the outer row remains fail-closed.
+   - Parser, DB context/proof, RAG call-context, and exact
+     `request_code_context` assertions cover the fixture-backed positive row.
+
 ## Remaining Focused Unsupported Inventory
 
-Status checkpoint: 2026-07-11 after bounded two-hop private holder-field
-forwarding proof passed fixture-backed parser, DB, RAG, and TUI focused
-verification. Earlier conflicting callable value and named-field candidate
-proof batches, public callable field/indexed blocker proof surfacing, and async
-closure callee-evidence proof blockers remain complete. Downstream DB/RAG/TUI
-proof coverage also includes the fixture test-body `assert_eq!` macro call and
-the remaining public callable-parameter blocker variants.
+Status checkpoint: 2026-07-11 after method-result local-binding receiver proof
+passed fixture-backed parser, DB, RAG, and TUI focused verification. Earlier
+bounded two-hop private holder-field forwarding, conflicting callable value and
+named-field candidate proof batches, public callable field/indexed blocker
+proof surfacing, and async closure callee-evidence proof blockers remain
+complete. Downstream DB/RAG/TUI proof coverage also includes the fixture
+test-body `assert_eq!` macro call and the remaining public callable-parameter
+blocker variants.
 
 The focused parser call-site suite has a small remaining set of
 `ExpectedCallOutcome::Unsupported` rows. These should not be treated as the
@@ -468,8 +484,10 @@ receiver proof, ambiguous local callable initialization with candidate-only
 proof, conflicting complete value-parameter candidate proof, conflicting
 complete named-field candidate proof, bounded two-hop private function-pointer
 parameter forwarding, and bounded two-hop private named holder-field forwarding
-with conflicting two-hop candidates kept ambiguous and edge-free. The next
-semantic slice should therefore introduce a new proof carrier, or add one
+with conflicting two-hop candidates kept ambiguous and edge-free, plus
+method-result local bindings that point at an exact same-owner method
+initializer call. The next semantic slice should therefore introduce a new
+proof carrier, or add one
 explicitly sourced real-corpus/dependency-root oracle, rather than reworking
 these fail-closed parser rows.
 

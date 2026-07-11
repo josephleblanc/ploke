@@ -2078,3 +2078,9 @@ pub fn call_two_hop_forwarded_conflicting_named_field_param_with_other_target() 
         callback: other_target,
     })
 }
+
+pub fn call_method_result_binding_instance_method() -> i32 {
+    let value: LocalAssoc = LocalAssoc;
+    let cloned = value.clone_assoc();
+    cloned.instance_value()
+}

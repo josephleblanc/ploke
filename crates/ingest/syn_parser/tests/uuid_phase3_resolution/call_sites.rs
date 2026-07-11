@@ -190,6 +190,8 @@ const PRELUDE_STRING_NEW_CALL_SPAN: (usize, usize) = (11091, 11104);
 const PRELUDE_VEC_NEW_CALL_SPAN: (usize, usize) = (11156, 11166);
 const PATH_RESULT_INSTANCE_CALL_SPAN: (usize, usize) = (11514, 11549);
 const METHOD_RESULT_INSTANCE_CALL_SPAN: (usize, usize) = (11650, 11686);
+const METHOD_RESULT_BINDING_CLONE_CALL_SPAN: (usize, usize) = (49201, 49220);
+const METHOD_RESULT_BINDING_INSTANCE_CALL_SPAN: (usize, usize) = (49226, 49249);
 const TUPLE_FIELD_INSTANCE_CALL_SPAN: (usize, usize) = (11853, 11877);
 const PARAM_FIELD_INSTANCE_CALL_SPAN: (usize, usize) = (41185, 41214);
 const MATCH_ARM_INITIALIZED_RECEIVER_GUARD_CALL_SPAN: (usize, usize) = (41337, 41359);
@@ -3098,6 +3100,35 @@ paranoid_call_site_test!(
                 method_name: "clone_assoc",
             },
             METHOD_RESULT_INSTANCE_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedMethodLocalExact {
+                target: target_info.test_method_id(),
+            },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_method_result_binding_instance_method_resolves_returned_type_method_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_method_result_binding_instance_method"
+    },
+    expected: {
+        let target_args = fixture_call_graph_instance_method_args("instance_value");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_method_pid(&parsed_graphs)?;
+        ExpectedCallSite::method(
+            "instance_value",
+            ExpectedMethodReceiver::MethodResultLocalBinding {
+                name: "cloned",
+                method_name: "clone_assoc",
+                method_span: METHOD_RESULT_BINDING_CLONE_CALL_SPAN,
+            },
+            METHOD_RESULT_BINDING_INSTANCE_CALL_SPAN,
             0,
             0,
             &[],

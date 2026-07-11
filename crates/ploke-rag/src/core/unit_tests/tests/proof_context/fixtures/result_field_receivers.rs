@@ -52,6 +52,15 @@ async fn proof_context_collection_preserves_projected_result_field_receiver_rows
             fact_count: 6,
         },
         Case {
+            label: "method-result local-binding receiver",
+            owner: one_uuid(
+                &db,
+                &function_in_module_query(&["crate"], "call_method_result_binding_instance_method"),
+            )?,
+            targets: vec![clone_target, method_target],
+            fact_count: 6,
+        },
+        Case {
             label: "borrowed-parameter method-call result receiver",
             owner: one_uuid(
                 &db,
