@@ -107,33 +107,9 @@ fn axum_generated_constructor_macro_boundary_accepts_summary_proof() -> Result<(
         "generated constructor callsite should remain blocked until the generated method exists: {blockers:#?}"
     );
 
-    records = axum_domain_records(domain_id);
-    records.extend([
-        json!({
-            "fact_kind": "expansion_boundary",
-            "schema_version": "ploke-proof-facts.v1",
-            "boundary_id": boundary_id.clone(),
-            "build_domain_id": domain_id,
-            "boundary_kind": "macro_rules_invocation",
-            "expansion_state": "externally_summarized",
-            "external_summary_id": summary_id,
-            "source_span": {
-                "file": "axum/src/handler/future.rs",
-                "start_byte": 285,
-                "end_byte": 506
-            },
-            "evidence_use": "proof_only"
-        }),
-        admitted_summary(AdmittedSummary {
-            id: summary_id,
-            domain_id,
-            artifact_hash: "sha256:axum-opaque-future-summary",
-            version: "axum-opaque-future-summary-v1",
-            scope: "axum opaque_future macro boundary for IntoServiceFuture",
-            effect: "external_summary_boundary",
-        }),
-    ]);
-    db.upsert_proof_fact_values(&records)?;
+    db.upsert_proof_fact_values(&ploke_test_utils::axum_opaque_future_macro_summary_records(
+        row.site.id,
+    ))?;
 
     let blockers = db.proof_blockers()?;
     assert!(
@@ -166,6 +142,16 @@ fn axum_generated_constructor_macro_boundary_accepts_summary_proof() -> Result<(
                 && proof.blocker_reason.is_none()
         }),
         "summary-id lookup should expose the summarized macro boundary without a blocker: {summary_rows:#?}"
+    );
+    assert!(
+        summary_rows.iter().any(|proof| {
+            proof.kind == "expanded_item"
+                && proof.expanded_item_id.as_deref() == Some("expanded:item:axum-opaque-future-new")
+                && proof.boundary_id.as_deref() == Some(boundary_id.as_str())
+                && proof.definition_id.as_deref()
+                    == Some("def:axum::future::IntoServiceFuture::new")
+        }),
+        "summary-id lookup should expose the generated IntoServiceFuture::new item linkage: {summary_rows:#?}"
     );
 
     let context_after = db.call_context_for_owner(owner)?;

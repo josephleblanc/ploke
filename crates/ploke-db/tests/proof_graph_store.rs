@@ -525,6 +525,7 @@ fn proof_graphrag_context_matches_json_only_expansion_boundary_fields() {
     db.ensure_proof_graph_schema().expect("proof graph schema");
     let mut records = proof_records();
     records.push(expansion_boundary_record());
+    records.push(expanded_item_record());
     db.upsert_proof_fact_values(&records)
         .expect("import proof facts");
 
@@ -542,6 +543,15 @@ fn proof_graphrag_context_matches_json_only_expansion_boundary_fields() {
                 && row.detail.as_deref() == Some("macro_rules_invocation")
         }),
         "GraphRAG proof lookup should match JSON-only boundary_kind fields: {rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|row| {
+            row.kind == "expanded_item"
+                && row.fact_id == "expanded:item:macro"
+                && row.boundary_id.as_deref() == Some("boundary:macro-rules")
+                && row.definition_id.as_deref() == Some("def:expanded-macro-item")
+        }),
+        "GraphRAG proof lookup should keep expanded items linked by boundary_id: {rows:#?}"
     );
 }
 

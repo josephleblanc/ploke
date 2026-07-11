@@ -552,6 +552,16 @@ async fn proof_context_collection_preserves_axum_generated_constructor_frontier(
         }),
         "RAG proof context should expose the admitted opaque_future summary artifact: {rows:#?}"
     );
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "expanded_item"
+                && proof.expanded_item_id.as_deref() == Some("expanded:item:axum-opaque-future-new")
+                && proof.boundary_id.as_deref() == Some(boundary_id.as_str())
+                && proof.definition_id.as_deref()
+                    == Some("def:axum::future::IntoServiceFuture::new")
+        }),
+        "RAG proof context should expose the generated IntoServiceFuture::new item linkage: {rows:#?}"
+    );
 
     Ok(())
 }
@@ -634,6 +644,15 @@ async fn proof_context_collection_preserves_axum_generated_post_frontier() -> Re
                 && proof.allowed_effects == ["external_summary_boundary".to_string()]
         }),
         "RAG proof context should expose the admitted routing::post summary artifact: {rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "expanded_item"
+                && proof.expanded_item_id.as_deref() == Some("expanded:item:axum-routing-post")
+                && proof.boundary_id.as_deref() == Some(boundary_id.as_str())
+                && proof.definition_id.as_deref() == Some("def:axum::routing::method_routing::post")
+        }),
+        "RAG proof context should expose the generated routing::post item linkage: {rows:#?}"
     );
 
     Ok(())

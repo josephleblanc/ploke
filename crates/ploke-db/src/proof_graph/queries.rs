@@ -372,6 +372,21 @@ fn linked_context_rows(
         })
         .filter_map(|row| row.external_summary_id.clone())
         .collect::<BTreeSet<_>>();
+    let linked_boundaries = rows
+        .iter()
+        .filter(|row| {
+            is_seed(row)
+                || row
+                    .call_site_id
+                    .as_ref()
+                    .is_some_and(|id| linked_call_sites.contains(id))
+                || row
+                    .external_summary_id
+                    .as_ref()
+                    .is_some_and(|id| linked_external_summaries.contains(id))
+        })
+        .filter_map(|row| row.boundary_id.clone())
+        .collect::<BTreeSet<_>>();
     let all_rows = rows.clone();
 
     rows.into_iter()
@@ -386,6 +401,10 @@ fn linked_context_rows(
                         .external_summary_id
                         .as_ref()
                         .is_some_and(|id| linked_external_summaries.contains(id)))
+                || row
+                    .boundary_id
+                    .as_ref()
+                    .is_some_and(|id| linked_boundaries.contains(id))
         })
         .flat_map(|row| proof_context_rows(row, &all_rows))
         .collect()

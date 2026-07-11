@@ -7,6 +7,10 @@ pub const AXUM_REQUEST_BUILDER_SUMMARY_ID: &str = "external-summary:axum-request
 pub const AXUM_STD_MEM_REPLACE_SUMMARY_ID: &str = "external-summary:axum-std-mem-replace";
 pub const AXUM_SERDE_JSON_FROM_SLICE_SUMMARY_ID: &str =
     "external-summary:axum-serde-json-from-slice";
+const AXUM_OPAQUE_FUTURE_EXPANDED_ITEM_ID: &str = "expanded:item:axum-opaque-future-new";
+const AXUM_ROUTING_POST_EXPANDED_ITEM_ID: &str = "expanded:item:axum-routing-post";
+const AXUM_OPAQUE_FUTURE_DEFINITION_ID: &str = "def:axum::future::IntoServiceFuture::new";
+const AXUM_ROUTING_POST_DEFINITION_ID: &str = "def:axum::routing::method_routing::post";
 
 pub fn axum_opaque_future_boundary_id(call_site_id: Uuid) -> String {
     format!("boundary:{call_site_id}:opaque_future")
@@ -20,7 +24,7 @@ pub fn axum_opaque_future_macro_summary_records(call_site_id: Uuid) -> Vec<serde
         serde_json::json!({
             "fact_kind": "expansion_boundary",
             "schema_version": "ploke-proof-facts.v1",
-            "boundary_id": boundary_id,
+            "boundary_id": boundary_id.clone(),
             "build_domain_id": AXUM_CALL_GRAPH_DOMAIN_ID,
             "call_site_id": site,
             "boundary_kind": "macro_rules_invocation",
@@ -30,6 +34,20 @@ pub fn axum_opaque_future_macro_summary_records(call_site_id: Uuid) -> Vec<serde
                 "file": "axum/src/handler/future.rs",
                 "start_byte": 285,
                 "end_byte": 506
+            },
+            "evidence_use": "proof_only"
+        }),
+        serde_json::json!({
+            "fact_kind": "expanded_item",
+            "schema_version": "ploke-proof-facts.v1",
+            "expanded_item_id": AXUM_OPAQUE_FUTURE_EXPANDED_ITEM_ID,
+            "boundary_id": boundary_id.clone(),
+            "build_domain_id": AXUM_CALL_GRAPH_DOMAIN_ID,
+            "definition_id": AXUM_OPAQUE_FUTURE_DEFINITION_ID,
+            "source_span": {
+                "file": "axum/src/macros.rs",
+                "start_byte": 483,
+                "end_byte": 523
             },
             "evidence_use": "proof_only"
         }),
@@ -65,12 +83,26 @@ pub fn axum_routing_post_macro_summary_records(call_site_id: Uuid) -> Vec<serde_
         serde_json::json!({
             "fact_kind": "expansion_boundary",
             "schema_version": "ploke-proof-facts.v1",
-            "boundary_id": boundary_id,
+            "boundary_id": boundary_id.clone(),
             "build_domain_id": AXUM_CALL_GRAPH_DOMAIN_ID,
             "call_site_id": site,
             "boundary_kind": "macro_rules_invocation",
             "expansion_state": "externally_summarized",
             "external_summary_id": AXUM_ROUTING_POST_SUMMARY_ID,
+            "source_span": {
+                "file": "axum/src/routing/method_routing.rs",
+                "start_byte": 12752,
+                "end_byte": 12786
+            },
+            "evidence_use": "proof_only"
+        }),
+        serde_json::json!({
+            "fact_kind": "expanded_item",
+            "schema_version": "ploke-proof-facts.v1",
+            "expanded_item_id": AXUM_ROUTING_POST_EXPANDED_ITEM_ID,
+            "boundary_id": boundary_id.clone(),
+            "build_domain_id": AXUM_CALL_GRAPH_DOMAIN_ID,
+            "definition_id": AXUM_ROUTING_POST_DEFINITION_ID,
             "source_span": {
                 "file": "axum/src/routing/method_routing.rs",
                 "start_byte": 12752,

@@ -1208,6 +1208,15 @@ fn axum_real_target_generated_post_function_is_documented_gap() -> Result<(), Db
         }),
         "summary-id lookup should expose the summarized routing::post macro boundary without a blocker: {summary_rows:#?}"
     );
+    assert!(
+        summary_rows.iter().any(|proof| {
+            proof.kind == "expanded_item"
+                && proof.expanded_item_id.as_deref() == Some("expanded:item:axum-routing-post")
+                && proof.boundary_id.as_deref() == Some(boundary_id.as_str())
+                && proof.definition_id.as_deref() == Some("def:axum::routing::method_routing::post")
+        }),
+        "summary-id lookup should expose the generated routing::post item linkage: {summary_rows:#?}"
+    );
     let context_after = db.call_context_for_owner(json_owner)?;
     let post_after = row_by_path(&context_after, &["post"]);
     assert_targetless_status(post_after, CallStatusKind::Unsupported);

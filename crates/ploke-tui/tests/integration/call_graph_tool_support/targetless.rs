@@ -310,6 +310,8 @@ pub(crate) struct MacroBoundaryCase {
     pub(crate) boundary_id: fn(Uuid) -> String,
     pub(crate) records: fn(Uuid) -> Vec<serde_json::Value>,
     pub(crate) summary_id: &'static str,
+    pub(crate) expanded_item_id: &'static str,
+    pub(crate) expanded_definition_id: &'static str,
     pub(crate) expected_state: &'static str,
     pub(crate) callsite_label: &'static str,
 }
@@ -512,6 +514,8 @@ impl PathToolCase {
                 boundary_id: axum_opaque_future_boundary_id,
                 records: axum_opaque_future_macro_summary_records,
                 summary_id: AXUM_OPAQUE_FUTURE_SUMMARY_ID,
+                expanded_item_id: "expanded:item:axum-opaque-future-new",
+                expanded_definition_id: "def:axum::future::IntoServiceFuture::new",
                 expected_state: "unresolved",
                 callsite_label: "generated constructor",
             });
@@ -530,6 +534,8 @@ impl PathToolCase {
                 boundary_id: axum_routing_post_boundary_id,
                 records: axum_routing_post_macro_summary_records,
                 summary_id: AXUM_ROUTING_POST_SUMMARY_ID,
+                expanded_item_id: "expanded:item:axum-routing-post",
+                expanded_definition_id: "def:axum::routing::method_routing::post",
                 expected_state: "blocked",
                 callsite_label: "generated routing::post",
             });
@@ -1484,6 +1490,15 @@ pub(crate) fn assert_admitted_macro_boundary_summary_proof(
                 && proof.allowed_effects == vec!["external_summary_boundary".to_string()]
         }),
         "{tool} should return the admitted macro-boundary summary artifact for {label}: {proofs:#?}"
+    );
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "expanded_item"
+                && proof.expanded_item_id.as_deref() == Some(boundary.expanded_item_id)
+                && proof.boundary_id.as_deref() == Some(boundary_id.as_str())
+                && proof.definition_id.as_deref() == Some(boundary.expanded_definition_id)
+        }),
+        "{tool} should return the expanded generated-item linkage for {label}: {proofs:#?}"
     );
 }
 
