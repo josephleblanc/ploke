@@ -210,6 +210,63 @@ fn fixture_context_projects_macro_generated_local_static_initializer_to_local_it
     )
 }
 
+#[test]
+fn fixture_context_projects_macro_generated_expr_path_call_to_outer_owner() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let owner_name = "call_expr_macro_generated_path_call";
+    let outer = function_id_by_name(&db, owner_name)?;
+    let context = db.call_context_for_owner(outer)?;
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:2276
+    // call_expr_macro_generated_path_call invokes call_graph_expr_path_macro!(),
+    // which expands to `local_target();`. The macro invocation stays visible
+    // as a targetless unsupported row, while the generated path call is
+    // represented as a resolved source-body call owned by the enclosing
+    // function.
+    assert_targetless_macro_row(
+        &context,
+        outer,
+        TargetlessMacroCase::macro_call("call_graph_expr_path_macro", owner_name),
+    );
+
+    let target = function_id_by_name(&db, "local_target")?;
+    let row = row_by_path(&context, &["local_target"]);
+    assert_eq!(row.site.owner_id, outer);
+    assert_resolved_target(
+        row,
+        target,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
+
+    let callers = db.callers_for_target(target)?;
+    let caller = caller_by_owner_kind_path(&callers, outer, CallSiteKind::Path, &["local_target"]);
+    assert_eq!(caller.status.status, CallStatusKind::Resolved);
+    assert_eq!(
+        caller.status.resolution,
+        Some(CallResolutionKind::LocalExact)
+    );
+
+    let paths = db.call_paths_from_owner(
+        outer,
+        CallPathOptions {
+            max_depth: 1,
+            max_paths: 8,
+        },
+    )?;
+    let path = paths
+        .iter()
+        .find(|path| path.start_id == outer && path.end_id == target && path.depth == 1)
+        .unwrap_or_else(|| {
+            panic!("macro-generated path call should expose a one-hop path to local_target")
+        });
+    assert_eq!(path.edges[0].relation, CallRelationKind::Function);
+    assert_eq!(path.edges[0].target_kind, CallTargetKind::Function);
+
+    Ok(())
+}
+
 fn assert_macro_local_initializer(
     db: &Database,
     owner_name: &'static str,

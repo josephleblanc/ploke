@@ -124,6 +124,52 @@ impl BodyCallVisitor<'_> {
         });
     }
 
+    fn record_macro_path_expr_call(&mut self, expr: &syn::Expr, span: (usize, usize)) {
+        let syn::Expr::Call(call) = expr else {
+            return;
+        };
+        let syn::Expr::Path(callee) = call.func.as_ref() else {
+            return;
+        };
+
+        let path = path_call_segments(callee);
+        if path.is_empty() {
+            return;
+        }
+
+        let id = generate_path_call_site_id(self.owner, &path, span, self.cfgs);
+        let target = id.into();
+
+        self.calls.push(CallNode::PathCall(PathCallNode {
+            id,
+            owner: self.owner,
+            span,
+            cfgs: self.cfgs.to_vec(),
+            unsafe_block: self.unsafe_depth > 0,
+            callee: classify_path_callee(
+                &path,
+                callee,
+                self.param_names,
+                &self.local_scopes,
+                false,
+            ),
+            path,
+            arg_count: call.args.len(),
+            generic_arg_count: path_generic_arg_count(&callee.path),
+            arguments: call_arguments(
+                &call.args,
+                self.owner,
+                self.cfgs,
+                self.param_names,
+                &self.local_scopes,
+            ),
+        }));
+        self.relations.push(CallSiteRelation::BodyContainsCall {
+            source: self.owner,
+            target,
+        });
+    }
+
     fn record_path_call(&mut self, call: &syn::ExprCall) {
         let syn::Expr::Path(callee) = call.func.as_ref() else {
             return;
@@ -281,9 +327,12 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
 
     fn visit_stmt_macro(&mut self, call: &'ast syn::StmtMacro) {
         self.record_macro_call(&call.mac);
+        let byte_range = call.mac.span().byte_range();
+        let span = (byte_range.start, byte_range.end);
         if let Some(item) = self.macro_expansions.single_local_item_for(&call.mac) {
-            let byte_range = call.mac.span().byte_range();
-            self.record_macro_local_item(item, (byte_range.start, byte_range.end));
+            self.record_macro_local_item(item, span);
+        } else if let Some(expr) = self.macro_expansions.single_path_expr_for(&call.mac) {
+            self.record_macro_path_expr_call(expr, span);
         }
         visit::visit_stmt_macro(self, call);
     }

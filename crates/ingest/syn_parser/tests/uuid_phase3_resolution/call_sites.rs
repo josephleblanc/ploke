@@ -351,6 +351,7 @@ const GENERATED_ITEM_MACRO_CALL_SPAN: (usize, usize) = (50435, 50459);
 const GENERATED_ITEM_MACRO_FUNCTION_CALL_SPAN: (usize, usize) = (50465, 50490);
 const GENERATED_CONST_ITEM_MACRO_CALL_SPAN: (usize, usize) = (50905, 50935);
 const GENERATED_STATIC_ITEM_MACRO_CALL_SPAN: (usize, usize) = (53112, 53143);
+const GENERATED_EXPR_PATH_MACRO_CALL_SPAN: (usize, usize) = (54665, 54694);
 const PARENTHESIZED_GENERIC_FN_ONCE_DYNAMIC_CALL_SPAN: (usize, usize) = (17069, 17082);
 const PARENTHESIZED_BOXED_DYN_FN_BOX_NEW_CALL_SPAN: (usize, usize) = (17191, 17213);
 const PARENTHESIZED_BOXED_DYN_FN_DYNAMIC_CALL_SPAN: (usize, usize) = (17219, 17231);
@@ -2915,6 +2916,45 @@ fn fixture_call_graph_static_item_macro_generated_static_initializer_owns_initia
         &["assoc_const_value"],
     );
 }
+
+paranoid_call_site_test!(
+    fixture_call_graph_expr_macro_generated_path_call_records_macro_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_expr_macro_generated_path_call"
+    },
+    expected: ExpectedCallSite::macro_call(
+        "call_graph_expr_path_macro",
+        GENERATED_EXPR_PATH_MACRO_CALL_SPAN,
+        &[],
+        ExpectedCallOutcome::Unsupported,
+    ),
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_expr_macro_generated_path_call_resolves_generated_path_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_expr_macro_generated_path_call"
+    },
+    expected: {
+        let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("local_target should regenerate a FunctionNodeId");
+        ExpectedCallSite::path(
+            &["local_target"],
+            GENERATED_EXPR_PATH_MACRO_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
+        )
+    },
+);
 
 paranoid_call_site_test!(
     fixture_call_graph_call_borrowed_typed_local_instance_method_resolves_borrowed_typed_local_binding_method_call_site,

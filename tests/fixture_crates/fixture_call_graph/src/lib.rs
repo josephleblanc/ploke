@@ -2265,3 +2265,13 @@ pub fn call_forwarded_conflicting_boxed_dyn_fn_with_local_target() -> i32 {
 pub fn call_forwarded_conflicting_boxed_dyn_fn_with_other_target() -> i32 {
     call_forwarded_conflicting_boxed_dyn_fn_wrapper(Box::new(other_target))
 }
+
+macro_rules! call_graph_expr_path_macro {
+    () => {
+        local_target();
+    };
+}
+
+pub fn call_expr_macro_generated_path_call() {
+    call_graph_expr_path_macro!();
+}

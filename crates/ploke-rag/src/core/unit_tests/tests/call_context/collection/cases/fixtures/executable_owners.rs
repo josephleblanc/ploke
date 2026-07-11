@@ -874,3 +874,63 @@ async fn call_context_collection_reads_local_item_owner_rows() -> Result<(), Err
 
     Ok(())
 }
+
+#[tokio::test]
+async fn call_context_collection_reads_macro_generated_expr_path_call() -> Result<(), Error> {
+    init_tracing_once();
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_expr_macro_generated_path_call"),
+    )?;
+    let target = unique_id_by_name(&db, "function", "local_target")?;
+
+    let rag = init_test_rag_mock(Arc::clone(&db));
+    assert!(
+        !rag.call_context_degraded(),
+        "fresh fixture call_graph schema should enable macro-generated expression context"
+    );
+
+    let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+    let context = call_context
+        .get(&owner)
+        .expect("macro expression owner should receive outgoing call context");
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:2276:
+    // `call_graph_expr_path_macro!()` expands to `local_target();`. RAG
+    // should keep the macro row targetless and expose the generated path call
+    // as a resolved edge owned by the enclosing function.
+    let macro_call = context
+        .iter()
+        .find(|call| {
+            call.kind == CallSiteKind::Macro
+                && call.callee
+                    == CallCalleeInfo::Macro {
+                        name: "call_graph_expr_path_macro".to_string(),
+                    }
+        })
+        .expect("macro invocation should stay visible in RAG context");
+    assert_eq!(macro_call.status, CallStatusKind::Unsupported);
+    assert!(macro_call.targets.is_empty());
+
+    let path_call = context
+        .iter()
+        .find(|call| {
+            call.kind == CallSiteKind::Path
+                && call.callee
+                    == CallCalleeInfo::Path {
+                        path: vec!["local_target".to_string()],
+                    }
+        })
+        .expect("generated local_target() path call should be visible in RAG context");
+    assert_eq!(path_call.owner_id, owner);
+    assert_eq!(path_call.status, CallStatusKind::Resolved);
+    assert_eq!(path_call.resolution, Some(CallResolutionKind::LocalExact));
+    assert_eq!(path_call.targets.len(), 1);
+    assert_eq!(path_call.targets[0].target_id, target);
+    assert_eq!(path_call.targets[0].relation, CallTargetKind::Function);
+
+    Ok(())
+}

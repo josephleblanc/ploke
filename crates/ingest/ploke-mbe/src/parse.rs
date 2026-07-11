@@ -1,7 +1,7 @@
 use std::iter::Peekable;
 
 use proc_macro2::{Delimiter, Group, Ident, Punct, Spacing, TokenStream, TokenTree};
-use quote::ToTokens;
+use quote::{ToTokens, quote};
 
 use crate::error::MbeError;
 use crate::ir::{
@@ -59,6 +59,19 @@ pub fn parse_no_arg_macro_rule_items(
         let (matcher_tokens, transcriber_tokens) = split_rule_tokens(rule)?;
         if matcher_accepts_empty_invocation(&matcher_tokens) {
             return parse_transcriber_items(transcriber_tokens).map(Some);
+        }
+    }
+
+    Ok(None)
+}
+
+pub fn parse_no_arg_macro_rule_stmts(
+    tokens: TokenStream,
+) -> Result<Option<Vec<syn::Stmt>>, MbeError> {
+    for rule in split_rules(tokens)? {
+        let (matcher_tokens, transcriber_tokens) = split_rule_tokens(rule)?;
+        if matcher_accepts_empty_invocation(&matcher_tokens) {
+            return parse_transcriber_stmts(transcriber_tokens).map(Some);
         }
     }
 
@@ -131,6 +144,15 @@ fn matcher_accepts_empty_invocation(tokens: &TokenStream) -> bool {
 
 fn parse_transcriber_items(tokens: TokenStream) -> Result<Vec<syn::Item>, MbeError> {
     parse_expanded_items(transcriber_file_tokens(tokens))
+}
+
+fn parse_transcriber_stmts(tokens: TokenStream) -> Result<Vec<syn::Stmt>, MbeError> {
+    let tokens = transcriber_file_tokens(tokens);
+    syn::parse2::<syn::Block>(quote!({ #tokens }))
+        .map(|block| block.stmts)
+        .map_err(|err| MbeError::StructuralParse {
+            message: err.to_string(),
+        })
 }
 
 fn transcriber_file_tokens(tokens: TokenStream) -> TokenStream {

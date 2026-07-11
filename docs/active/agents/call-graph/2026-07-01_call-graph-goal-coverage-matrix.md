@@ -119,7 +119,22 @@ thin `code_item_lookup` / `code_item_edges` assertions preserve the same
 `DynamicFunction` edge. This is exact initializer proof only; unproven boxed or
 field-held callable trait objects remain targetless/blocker rows.
 
-Latest completed slice: bounded macro-generated local const/static initializer owners.
+Latest completed slice: bounded macro-generated path-call statement expansion.
+A unique, already-seen no-arg `macro_rules!` item macro that expands to exactly
+one statement containing one path call is now projected as a normal source-body
+path call owned by the enclosing executable owner. The fixture-backed oracle
+`call_expr_macro_generated_path_call` invokes
+`call_graph_expr_path_macro!()`, whose generated statement calls
+`local_target()`. Parser assertions prove the macro invocation remains a
+targetless `Unsupported` macro row while the generated path call resolves as a
+one-hop `Function` edge from the enclosing function to `local_target`. Active
+fixtures were regenerated with `--features call_graph`; DB, RAG, and exact TUI
+lookup/edges tests prove the generated path call appears in outgoing context,
+incoming callers, and owner path traversal. This is still a bounded single-path
+statement expansion case, not general expression expansion, nested generated
+owners, statement-sequence expansion, or proc-macro body modeling.
+
+Previous completed slice: bounded macro-generated local const/static initializer owners.
 A unique, already-seen no-arg `macro_rules!` item macro that expands to exactly
 one local `const` or one local `static` is now modeled as an executable
 `LocalItem` owner with label `local_const` or `local_static`. The
@@ -2738,6 +2753,13 @@ one local `const` expansion. The macro invocation remains targetless and
 unsupported, but the generated const initializer is addressable as a
 `local_const` executable owner, and `assoc_const_value()` is exposed from that
 owner through parser, DB, RAG, and exact TUI lookup/edges tests.
+
+Update 2026-07-11: the closures / executable-local body ownership row now also
+has a bounded generated-source statement positive. A unique, already-seen no-arg
+`macro_rules!` item macro that expands to exactly one path-call statement keeps
+the original macro invocation as targetless `Unsupported`, while the generated
+`local_target()` path call is projected as a resolved one-hop `Function` edge
+owned by the enclosing source function. This is not general macro expansion.
 
 Update 2026-07-11: the dynamic callable-value row now includes one-hop and
 two-hop private forwarding proof for referenced callable trait-object
