@@ -383,6 +383,22 @@ async fn code_item_lookup_returns_two_hop_forwarded_named_field_dynamic_callable
 }
 
 #[tokio::test]
+async fn code_item_lookup_returns_returned_function_pointer_param_dynamic_callable_context() {
+    // Fixture source:
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:2101-2107
+    //     `return_forwarded_function_pointer(f)` returns the function-pointer
+    //     parameter directly, and its only local caller passes `local_target`
+    //     before invoking the returned callable as
+    //     `return_forwarded_function_pointer(local_target)()`.
+    // Parser/DB/RAG already prove the outer call as an exact DynamicFunction
+    // edge; this pins the same returned-parameter proof at the lookup boundary.
+    assert_resolved_dynamic_callable_lookup(
+        "call_returned_forwarded_function_pointer_param_with_local_target",
+    )
+    .await;
+}
+
+#[tokio::test]
 async fn code_item_lookup_returns_branch_receiver_method_context() {
     // Fixture source:
     //   tests/fixture_crates/fixture_call_graph/src/lib.rs:

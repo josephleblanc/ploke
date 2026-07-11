@@ -830,6 +830,23 @@ async fn code_item_edges_returns_two_hop_forwarded_named_field_dynamic_callable_
     assert_resolved_dynamic_callable_edges("call_two_hop_forwarded_named_field_leaf").await;
 }
 
+#[tokio::test]
+async fn code_item_edges_returns_returned_function_pointer_param_dynamic_callable_context() {
+    // Fixture source:
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:2101-2107
+    //     `return_forwarded_function_pointer(f)` returns the function-pointer
+    //     parameter directly, and its only local caller passes `local_target`
+    //     before invoking the returned callable as
+    //     `return_forwarded_function_pointer(local_target)()`.
+    // Parser/DB/RAG already prove the outer call as an exact DynamicFunction
+    // edge; this pins the same returned-parameter proof at the edge-tool
+    // boundary.
+    assert_resolved_dynamic_callable_edges(
+        "call_returned_forwarded_function_pointer_param_with_local_target",
+    )
+    .await;
+}
+
 async fn assert_resolved_dynamic_callable_edges(owner_name: &'static str) {
     let fixture = FixtureDynamicCallableToolFixture::new_for_owner(owner_name).await;
     let params = EdgesParams {
