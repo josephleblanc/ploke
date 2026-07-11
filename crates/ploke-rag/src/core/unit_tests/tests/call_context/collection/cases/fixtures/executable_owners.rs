@@ -611,6 +611,16 @@ async fn call_context_collection_resolves_awaited_async_closure_future_tuple_fie
     .await
 }
 
+#[tokio::test]
+async fn call_context_collection_resolves_awaited_async_closure_future_named_field_rows()
+-> Result<(), Error> {
+    assert_awaited_async_closure_future_context(
+        "call_awaited_async_closure_future_named_field_with_body_call",
+        "awaited async-closure future named field",
+    )
+    .await
+}
+
 async fn assert_awaited_async_closure_future_context(
     owner_name: &str,
     label: &str,
@@ -645,9 +655,10 @@ async fn assert_awaited_async_closure_future_context(
     // tests/fixture_crates/fixture_call_graph/src/lib.rs EOF:
     // `future = closure(); alias = future; alias.await;` and
     // `future = closure(); alias = { future }; alias.await;` and the two-step
-    // `future = closure(); alias = future; second = alias; second.await;` and
-    // `futures = (closure(),); futures.0.await;` prove the original closure()
-    // call is polled through bounded same-block evidence.
+    // `future = closure(); alias = future; second = alias; second.await;`,
+    // `futures = (closure(),); futures.0.await;`, and `holder =
+    // AsyncFutureHolder { future: closure() }; holder.future.await;` prove the
+    // original closure() call is polled through bounded same-block evidence.
     let closure_call = outer_context
         .iter()
         .find(|call| {

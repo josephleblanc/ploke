@@ -881,7 +881,29 @@ async fn code_item_lookup_returns_non_awaited_async_closure_poll_resume_blockers
 
 #[tokio::test]
 async fn code_item_lookup_returns_awaited_async_closure_future_tuple_field_context() {
-    let fixture = AsyncFutureToolFixture::tuple_field().await;
+    assert_awaited_async_closure_future_lookup(
+        AsyncFutureToolFixture::tuple_field().await,
+        "awaited async closure future tuple field",
+        "async-future-tuple-lookup",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn code_item_lookup_returns_awaited_async_closure_future_named_field_context() {
+    assert_awaited_async_closure_future_lookup(
+        AsyncFutureToolFixture::named_field().await,
+        "awaited async closure future named field",
+        "async-future-named-lookup",
+    )
+    .await;
+}
+
+async fn assert_awaited_async_closure_future_lookup(
+    fixture: AsyncFutureToolFixture,
+    label: &'static str,
+    ctx_name: &'static str,
+) {
     let params = LookupParams {
         item_name: Cow::Borrowed(fixture.owner_name),
         file_path: Cow::Owned(fixture.file_path.display().to_string()),
@@ -893,9 +915,9 @@ async fn code_item_lookup_returns_awaited_async_closure_future_tuple_field_conte
         allowed_effects: Vec::new(),
     };
 
-    let result = CodeItemLookup::execute(params, fixture.ctx("async-future-tuple-lookup"))
+    let result = CodeItemLookup::execute(params, fixture.ctx(ctx_name))
         .await
-        .expect("awaited async closure tuple-field lookup");
+        .unwrap_or_else(|err| panic!("{label} lookup should succeed: {err}"));
     let payload: serde_json::Value =
         serde_json::from_str(&result.content).expect("deserialize ConciseContext");
     let call_context = payload
@@ -907,11 +929,13 @@ async fn code_item_lookup_returns_awaited_async_closure_future_tuple_field_conte
         .and_then(serde_json::Value::as_array)
         .expect("proof_context array");
 
-    // Fixture source:
+    // Fixture sources:
     //   tests/fixture_crates/fixture_call_graph/src/lib.rs EOF
     //     `let futures = (closure(),); futures.0.await;`
-    //   proves the tuple field future is polled without adding returned-future
-    //   or arbitrary future value-flow semantics.
+    //     `let holder = AsyncFutureHolder { future: closure() };
+    //      holder.future.await;`
+    //   prove the stored future is polled without adding returned-future or
+    //   arbitrary future value-flow semantics.
     let callee = CallCalleeInfo::Path {
         path: vec!["closure".to_string()],
     };
@@ -921,15 +945,10 @@ async fn code_item_lookup_returns_awaited_async_closure_future_tuple_field_conte
         &callee,
         fixture.closure,
         CallTargetKind::Closure,
-        "awaited async closure future tuple field",
+        label,
         "code_item_lookup",
     );
-    assert_target_proof(
-        proof_context,
-        fixture.owner,
-        fixture.closure,
-        "awaited async closure future tuple field",
-    );
+    assert_target_proof(proof_context, fixture.owner, fixture.closure, label);
 
     let ui = result.ui_payload.as_ref().expect("ui payload");
     assert!(
@@ -937,7 +956,7 @@ async fn code_item_lookup_returns_awaited_async_closure_future_tuple_field_conte
             .parse::<usize>()
             .expect("outgoing count")
             >= 1,
-        "code_item_lookup should surface the tuple-field awaited closure call"
+        "code_item_lookup should surface the {label} closure call"
     );
 }
 

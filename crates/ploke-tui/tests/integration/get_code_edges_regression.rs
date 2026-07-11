@@ -1455,7 +1455,29 @@ async fn code_item_edges_returns_non_awaited_async_closure_poll_resume_blockers(
 
 #[tokio::test]
 async fn code_item_edges_returns_awaited_async_closure_future_tuple_field_context() {
-    let fixture = AsyncFutureToolFixture::tuple_field().await;
+    assert_awaited_async_closure_future_edges(
+        AsyncFutureToolFixture::tuple_field().await,
+        "awaited async closure future tuple field",
+        "async-future-tuple-edges",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn code_item_edges_returns_awaited_async_closure_future_named_field_context() {
+    assert_awaited_async_closure_future_edges(
+        AsyncFutureToolFixture::named_field().await,
+        "awaited async closure future named field",
+        "async-future-named-edges",
+    )
+    .await;
+}
+
+async fn assert_awaited_async_closure_future_edges(
+    fixture: AsyncFutureToolFixture,
+    label: &'static str,
+    ctx_name: &'static str,
+) {
     let params = EdgesParams {
         item_name: Cow::Borrowed(fixture.owner_name),
         file_path: Cow::Owned(fixture.file_path.display().to_string()),
@@ -1467,9 +1489,9 @@ async fn code_item_edges_returns_awaited_async_closure_future_tuple_field_contex
         allowed_effects: Vec::new(),
     };
 
-    let result = CodeItemEdges::execute(params, fixture.ctx("async-future-tuple-edges"))
+    let result = CodeItemEdges::execute(params, fixture.ctx(ctx_name))
         .await
-        .expect("awaited async closure tuple-field edges");
+        .unwrap_or_else(|err| panic!("{label} edges should succeed: {err}"));
     let payload: serde_json::Value =
         serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
     let call_context = payload
@@ -1483,8 +1505,9 @@ async fn code_item_edges_returns_awaited_async_closure_future_tuple_field_contex
         .and_then(serde_json::Value::as_array)
         .expect("node_info.proof_context array");
 
-    // Same fixture oracle as lookup: `let futures = (closure(),);
-    // futures.0.await;` proves the exact tuple-field future is polled.
+    // Same fixture oracles as lookup: `let futures = (closure(),);
+    // futures.0.await;` and `holder = AsyncFutureHolder { future: closure() };
+    // holder.future.await;` prove the exact stored future is polled.
     let callee = CallCalleeInfo::Path {
         path: vec!["closure".to_string()],
     };
@@ -1494,15 +1517,10 @@ async fn code_item_edges_returns_awaited_async_closure_future_tuple_field_contex
         &callee,
         fixture.closure,
         CallTargetKind::Closure,
-        "awaited async closure future tuple field",
+        label,
         "code_item_edges",
     );
-    assert_target_proof(
-        proof_context,
-        fixture.owner,
-        fixture.closure,
-        "awaited async closure future tuple field",
-    );
+    assert_target_proof(proof_context, fixture.owner, fixture.closure, label);
 
     let ui = result.ui_payload.as_ref().expect("ui payload");
     assert!(
@@ -1510,7 +1528,7 @@ async fn code_item_edges_returns_awaited_async_closure_future_tuple_field_contex
             .parse::<usize>()
             .expect("outgoing count")
             >= 1,
-        "code_item_edges should surface the tuple-field awaited closure call"
+        "code_item_edges should surface the {label} closure call"
     );
 }
 

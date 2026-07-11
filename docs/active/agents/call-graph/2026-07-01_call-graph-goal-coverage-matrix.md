@@ -195,7 +195,21 @@ still bounded complete-private-caller proof, not arbitrary boxed value-flow,
 public callable-parameter inference, field-held callable trait-object
 dispatch, or runtime vtable modeling.
 
-Latest completed slice: same-block tuple-field awaited async-closure future
+Latest completed slice: same-block named-field awaited async-closure future
+proof. The fixture-backed source oracle
+`call_awaited_async_closure_future_named_field_with_body_call` binds
+`closure = async || local_target()`, stores `closure()` in
+`AsyncFutureHolder { future: closure() }`, and awaits `holder.future`. Parser
+extraction records the original `closure()` call as awaited through exact
+same-block named-field evidence, so the existing resolver projects a `Closure`
+edge from the outer function to the `async_closure` executable owner, while the
+body `local_target()` call remains owned by that async-closure owner. Parser,
+DB, RAG, and exact TUI lookup/edges tests cover the two-hop traversal. This is
+the named-field sibling of the existing tuple-field proof; it still does not
+model returned futures, arbitrary aggregate future flow, async callable trait
+objects, or general poll/resume semantics.
+
+Previous completed slice: same-block tuple-field awaited async-closure future
 proof. The fixture-backed source oracle
 `call_awaited_async_closure_future_tuple_field_with_body_call` binds
 `closure = async || local_target()`, stores `closure()` in a one-element tuple,
@@ -2760,6 +2774,12 @@ has a bounded generated-source statement positive. A unique, already-seen no-arg
 the original macro invocation as targetless `Unsupported`, while the generated
 `local_target()` path call is projected as a resolved one-hop `Function` edge
 owned by the enclosing source function. This is not general macro expansion.
+
+Update 2026-07-11: the dynamic callable-value row now has a bounded same-block
+async poll proof for named-field storage. `AsyncFutureHolder { future:
+closure() }; holder.future.await;` marks only the original `closure()` call as
+awaited and resolves it to the async-closure owner. Returned futures, arbitrary
+aggregate future flow, and general poll/resume semantics remain out of scope.
 
 Update 2026-07-11: the dynamic callable-value row now includes one-hop and
 two-hop private forwarding proof for referenced callable trait-object

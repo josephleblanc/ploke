@@ -2275,3 +2275,13 @@ macro_rules! call_graph_expr_path_macro {
 pub fn call_expr_macro_generated_path_call() {
     call_graph_expr_path_macro!();
 }
+
+struct AsyncFutureHolder<F> {
+    future: F,
+}
+
+pub async fn call_awaited_async_closure_future_named_field_with_body_call() {
+    let closure = async || local_target();
+    let holder = AsyncFutureHolder { future: closure() };
+    holder.future.await;
+}

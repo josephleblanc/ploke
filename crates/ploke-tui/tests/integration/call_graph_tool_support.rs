@@ -740,13 +740,20 @@ impl AxumFromRequestFreeFunctionPathToolFixture {
 
 impl AsyncFutureToolFixture {
     pub(crate) async fn tuple_field() -> Self {
+        Self::for_owner("call_awaited_async_closure_future_tuple_field_with_body_call").await
+    }
+
+    pub(crate) async fn named_field() -> Self {
+        Self::for_owner("call_awaited_async_closure_future_named_field_with_body_call").await
+    }
+
+    async fn for_owner(owner_name: &'static str) -> Self {
         let db = Arc::new(Database::new(
             setup_db_full_multi_embedding("fixture_call_graph").expect("fixture_call_graph db"),
         ));
         let crate_root = workspace_root().join("tests/fixture_crates/fixture_call_graph");
         let module_path = vec!["crate".to_string()];
         let file_path = crate_root.join("src/lib.rs");
-        let owner_name = "call_awaited_async_closure_future_tuple_field_with_body_call";
         let owner = graph_resolve_exact(
             db.as_ref(),
             "function",
@@ -754,9 +761,9 @@ impl AsyncFutureToolFixture {
             &module_path,
             owner_name,
         )
-        .expect("resolve awaited async closure future tuple-field owner")
+        .expect("resolve awaited async closure future owner")
         .pop()
-        .expect("awaited async closure future tuple-field owner")
+        .expect("awaited async closure future owner")
         .id;
         let exact = graph_resolve_exact_call_body_owner_for_parent(
             db.as_ref(),
@@ -766,23 +773,23 @@ impl AsyncFutureToolFixture {
             "Closure",
             owner_name,
         )
-        .expect("resolve tuple-field async closure owner");
+        .expect("resolve async closure owner");
         assert_eq!(
             exact.len(),
             1,
-            "parent_name should disambiguate the tuple-field async closure owner"
+            "parent_name should disambiguate the async closure owner"
         );
         assert!(
             db.project_call_proof_facts_for_node(owner, "bd:fixture-call-graph")
-                .expect("project tuple-field async future owner proof facts")
+                .expect("project async future owner proof facts")
                 >= 3,
-            "tuple-field async future owner should project call/proof rows"
+            "async future owner should project call/proof rows"
         );
         assert!(
             db.project_call_proof_facts_for_node(exact[0].id, "bd:fixture-call-graph")
-                .expect("project tuple-field async closure proof facts")
+                .expect("project async closure proof facts")
                 >= 3,
-            "tuple-field async closure should project body call/proof rows"
+            "async closure should project body call/proof rows"
         );
 
         let state = app_state_with_rag(db, crate_root).await;

@@ -1469,6 +1469,8 @@ fn awaited_future_spans(block: &syn::Block) -> Vec<(usize, usize)> {
             future_bindings.push(binding);
         } else if let Some(bindings) = future_tuple_bindings(stmt) {
             future_bindings.extend(bindings);
+        } else if let Some(bindings) = future_struct_bindings(stmt) {
+            future_bindings.extend(bindings);
         } else if let Some((name, source)) = future_alias_binding(stmt)
             && let Some(binding) = future_bindings
                 .iter()
@@ -1545,6 +1547,47 @@ fn future_tuple_bindings(stmt: &syn::Stmt) -> Option<Vec<FutureBinding>> {
     (!bindings.is_empty()).then_some(bindings)
 }
 
+fn future_struct_bindings(stmt: &syn::Stmt) -> Option<Vec<FutureBinding>> {
+    let syn::Stmt::Local(local) = stmt else {
+        return None;
+    };
+    let name = pat_ident_name(&local.pat)?;
+    let init_expr = local.init.as_ref()?.expr.as_ref();
+    let syn::Expr::Struct(expr) = unparen_expr(init_expr) else {
+        return None;
+    };
+    if expr.qself.is_some() || expr.rest.is_some() {
+        return None;
+    }
+    let type_path = path_segments(&expr.path);
+    if type_path.len() != 1 {
+        return None;
+    }
+
+    let bindings = expr
+        .fields
+        .iter()
+        .filter_map(|field| {
+            let syn::Expr::Call(call) = unparen_expr(&field.expr) else {
+                return None;
+            };
+            let syn::Expr::Path(path) = unparen_expr(call.func.as_ref()) else {
+                return None;
+            };
+            if path.qself.is_some() || path.path.segments.len() != 1 {
+                return None;
+            }
+            let byte_range = call.span().byte_range();
+            Some(FutureBinding {
+                path: vec![name.clone(), member_name(&field.member)],
+                span: (byte_range.start, byte_range.end),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    (!bindings.is_empty()).then_some(bindings)
+}
+
 fn future_alias_binding(stmt: &syn::Stmt) -> Option<(String, String)> {
     let syn::Stmt::Local(local) = stmt else {
         return None;
@@ -1599,10 +1642,7 @@ fn await_expr_path(expr: &syn::Expr) -> Option<Vec<String>> {
             let [name] = segments.as_slice() else {
                 return None;
             };
-            let syn::Member::Unnamed(index) = &field.member else {
-                return None;
-            };
-            Some(vec![name.clone(), index.index.to_string()])
+            Some(vec![name.clone(), member_name(&field.member)])
         }
         _ => None,
     }
