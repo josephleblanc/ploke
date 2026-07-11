@@ -220,6 +220,110 @@ async fn code_item_edges_accepts_local_item_body_owner() {
 }
 
 #[tokio::test]
+async fn code_item_lookup_accepts_macro_generated_local_const_owner() {
+    let fixture = LocalItemToolFixture::fixture_macro_generated_local_const().await;
+    let params = LookupParams {
+        item_name: Cow::Borrowed("local_const"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("local_item"),
+        module_path: Cow::Owned(fixture.module_path_arg()),
+        owner_trait: None,
+        owner_type: None,
+        parent_name: Some(Cow::Borrowed(
+            "call_const_item_macro_generated_const_initializer",
+        )),
+        allowed_effects: Vec::new(),
+    };
+
+    let result = CodeItemLookup::execute(params, fixture.ctx("macro-local-const-lookup"))
+        .await
+        .expect("code_item_lookup should accept macro-generated local const owners");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize ConciseContext");
+    let call_context = payload
+        .get("call_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_context array");
+    let calls = call_context
+        .iter()
+        .map(|value| {
+            serde_json::from_value::<CallContextInfo>(value.clone()).expect("call context row")
+        })
+        .collect::<Vec<_>>();
+    let row = local_item_assoc_const_value_call(&calls, &fixture);
+    assert_eq!(row.status, CallStatusKind::Resolved);
+    assert_eq!(row.resolution, Some(CallResolutionKind::LocalExact));
+    assert_eq!(row.targets.len(), 1, "{row:#?}");
+    assert_eq!(row.targets[0].relation, CallTargetKind::Function);
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert_eq!(ui_field(ui, "call_context_outgoing"), "1");
+}
+
+#[tokio::test]
+async fn code_item_edges_accepts_macro_generated_local_const_owner() {
+    let fixture = LocalItemToolFixture::fixture_macro_generated_local_const().await;
+    let params = EdgesParams {
+        item_name: Cow::Borrowed("local_const"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("local_item"),
+        module_path: Cow::Owned(fixture.module_path_arg()),
+        owner_trait: None,
+        owner_type: None,
+        parent_name: Some(Cow::Borrowed(
+            "call_const_item_macro_generated_const_initializer",
+        )),
+        allowed_effects: Vec::new(),
+    };
+
+    let result = CodeItemEdges::execute(params, fixture.ctx("macro-local-const-edges"))
+        .await
+        .expect("code_item_edges should accept macro-generated local const owners");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
+    let call_context = payload
+        .get("node_info")
+        .and_then(|node| node.get("call_context"))
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.call_context array");
+    let calls = call_context
+        .iter()
+        .map(|value| {
+            serde_json::from_value::<CallContextInfo>(value.clone()).expect("call context row")
+        })
+        .collect::<Vec<_>>();
+    let row = local_item_assoc_const_value_call(&calls, &fixture);
+    assert_eq!(row.status, CallStatusKind::Resolved);
+    assert_eq!(row.resolution, Some(CallResolutionKind::LocalExact));
+    assert_eq!(row.targets.len(), 1, "{row:#?}");
+    assert_eq!(row.targets[0].relation, CallTargetKind::Function);
+
+    let target = row.targets[0].target_id;
+    let paths = payload
+        .get("call_paths_from_owner")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_paths_from_owner array")
+        .iter()
+        .map(|value| serde_json::from_value::<CallPathInfo>(value.clone()).expect("call path row"))
+        .collect::<Vec<_>>();
+    assert!(
+        paths.iter().any(|path| {
+            path.start_id == fixture.owner
+                && path.end_id == target
+                && path.depth == 1
+                && path.edges.len() == 1
+                && path.edges[0].call_site_id == row.site_id
+                && path.edges[0].relation == CallTargetKind::Function
+        }),
+        "macro-generated local const should expose one-hop assoc_const_value traversal: {paths:#?}"
+    );
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert_eq!(ui_field(ui, "call_context_outgoing"), "1");
+    assert_eq!(ui_field(ui, "call_paths_from_owner"), "1");
+}
+
+#[tokio::test]
 async fn code_item_edges_parent_qualifies_repeated_local_item_body_owner() {
     let fixture =
         LocalItemToolFixture::axum_from_extractor_from_request_parts_local_impl_method().await;
@@ -609,6 +713,25 @@ fn local_item_secret_from_ref_call<'a>(
             panic!(
                 "expected local_impl_method:from_request_parts to expose Secret::from_ref() call: {calls:#?}"
             )
+        })
+}
+
+fn local_item_assoc_const_value_call<'a>(
+    calls: &'a [CallContextInfo],
+    fixture: &LocalItemToolFixture,
+) -> &'a CallContextInfo {
+    calls
+        .iter()
+        .find(|call| {
+            call.owner_id == fixture.owner
+                && call.kind == CallSiteKind::Path
+                && call.callee
+                    == CallCalleeInfo::Path {
+                        path: vec!["assoc_const_value".to_string()],
+                    }
+        })
+        .unwrap_or_else(|| {
+            panic!("expected local_const to expose assoc_const_value() call: {calls:#?}")
         })
 }
 

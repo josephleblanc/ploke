@@ -2133,3 +2133,14 @@ pub fn call_parenthesized_mut_referenced_dyn_fnmut_value_binding() -> i32 {
     let mut referenced_fn: &mut dyn FnMut() -> i32 = &mut target;
     (referenced_fn)()
 }
+
+macro_rules! call_graph_const_item_macro {
+    () => {
+        const GENERATED_BY_CONST_ITEM_MACRO: i32 = assoc_const_value();
+    };
+}
+
+pub fn call_const_item_macro_generated_const_initializer() -> i32 {
+    call_graph_const_item_macro!();
+    0
+}

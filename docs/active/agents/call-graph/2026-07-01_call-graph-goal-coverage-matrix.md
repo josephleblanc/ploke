@@ -119,6 +119,21 @@ thin `code_item_lookup` / `code_item_edges` assertions preserve the same
 `DynamicFunction` edge. This is exact initializer proof only; unproven boxed or
 field-held callable trait objects remain targetless/blocker rows.
 
+Latest completed slice: bounded macro-generated local const initializer owner.
+A unique, already-seen no-arg `macro_rules!` item macro that expands to exactly
+one local `const` is now modeled as an executable `LocalItem` owner with label
+`local_const`. The fixture-backed oracle
+`call_const_item_macro_generated_const_initializer` invokes
+`call_graph_const_item_macro!()`, whose generated initializer calls
+`assoc_const_value()`. Parser assertions prove the macro invocation remains a
+targetless `Unsupported` macro row while the initializer call belongs to the
+generated `local_const` owner, not the enclosing function. Active fixtures were
+regenerated with `--features call_graph`; DB, RAG, and exact TUI lookup/edges
+tests prove the local-item owner can be queried and traversed as a one-hop
+`Function` edge to `assoc_const_value`. This is still a bounded single-item
+local macro expansion case, not general macro expansion or proc-macro body
+modeling.
+
 Previous completed slice: caller-supplied module-boundary policy checks over
 existing resolved boundary edges. DB `module_boundary_policy_violations_from_owner`, RAG
 `exact_module_boundary_policy_violations_from_owner`, and exact TUI
@@ -2658,6 +2673,12 @@ an executable `LocalItem` owner, and a later source-visible
 `generated_by_item_macro()` path call resolves to that owner through the
 existing `LocalFunction` relation. The macro invocation row itself remains
 targetless `Unsupported`; this is not general macro expansion.
+
+Update 2026-07-11: the same bounded generated-source local-item path now covers
+one local `const` expansion. The macro invocation remains targetless and
+unsupported, but the generated const initializer is addressable as a
+`local_const` executable owner, and `assoc_const_value()` is exposed from that
+owner through parser, DB, RAG, and exact TUI lookup/edges tests.
 
 Update 2026-07-09: the request-parts notes in the matrix row above are
 superseded by the current tuple-return summary slice. The axum-core

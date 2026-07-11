@@ -43,7 +43,7 @@ impl MacroExpansionContext {
         Self { items_by_macro }
     }
 
-    pub(super) fn single_local_fn_for(&self, mac: &syn::Macro) -> Option<&syn::ItemFn> {
+    pub(super) fn single_local_item_for(&self, mac: &syn::Macro) -> Option<&syn::Item> {
         if !mac.tokens.is_empty() {
             return None;
         }
@@ -52,13 +52,13 @@ impl MacroExpansionContext {
         if segments.next().is_some() {
             return None;
         }
-        let [syn::Item::Fn(item_fn)] = self.items_by_macro.get(&name)?.as_slice() else {
+        let [item] = self.items_by_macro.get(&name)?.as_slice() else {
             return None;
         };
-        Some(item_fn)
+        Some(item)
     }
 }
 
 fn is_supported_local_item_expansion(items: &[syn::Item]) -> bool {
-    matches!(items, [syn::Item::Fn(_)])
+    matches!(items, [syn::Item::Fn(_) | syn::Item::Const(_)])
 }

@@ -368,6 +368,45 @@ impl CallGraphToolFixture {
 }
 
 impl LocalItemToolFixture {
+    pub(crate) async fn fixture_macro_generated_local_const() -> Self {
+        let db = Arc::new(Database::new(
+            setup_db_full_multi_embedding("fixture_call_graph").expect("fixture_call_graph db"),
+        ));
+        let crate_root = workspace_root().join("tests/fixture_crates/fixture_call_graph");
+        let module_path = vec!["crate".to_string()];
+        let file_path = crate_root.join("src/lib.rs");
+        let item_name = "local_const";
+        let parent_name = "call_const_item_macro_generated_const_initializer";
+        let exact = graph_resolve_exact_call_body_owner_for_parent(
+            db.as_ref(),
+            file_path.as_path(),
+            &module_path,
+            item_name,
+            "LocalItem",
+            parent_name,
+        )
+        .expect("resolve macro-generated local_const owner");
+        assert_eq!(
+            exact.len(),
+            1,
+            "parent_name should disambiguate the macro-generated local_const owner"
+        );
+        assert!(
+            db.project_call_proof_facts_for_node(exact[0].id, "bd:fixture-call-graph")
+                .expect("project macro-generated local const proof facts")
+                >= 1,
+            "macro-generated local_const should project node-scoped proof rows"
+        );
+        let state = app_state_with_rag(db, crate_root).await;
+
+        Self {
+            state,
+            file_path,
+            module_path,
+            owner: exact[0].id,
+        }
+    }
+
     pub(crate) async fn axum_path_deserialize_local_impl_method() -> Self {
         let db = axum_call_graph_db();
         let target = axum_call_body_owner_target_by_label(

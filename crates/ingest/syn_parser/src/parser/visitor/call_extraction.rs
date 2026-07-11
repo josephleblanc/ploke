@@ -281,9 +281,9 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
 
     fn visit_stmt_macro(&mut self, call: &'ast syn::StmtMacro) {
         self.record_macro_call(&call.mac);
-        if let Some(item_fn) = self.macro_expansions.single_local_fn_for(&call.mac) {
+        if let Some(item) = self.macro_expansions.single_local_item_for(&call.mac) {
             let byte_range = call.mac.span().byte_range();
-            self.record_local_fn_item(item_fn, (byte_range.start, byte_range.end));
+            self.record_macro_local_item(item, (byte_range.start, byte_range.end));
         }
         visit::visit_stmt_macro(self, call);
     }
@@ -343,23 +343,7 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
 
     fn visit_item_const(&mut self, item_const: &'ast syn::ItemConst) {
         let byte_range = item_const.span().byte_range();
-        let span = (byte_range.start, byte_range.end);
-        let owner = self.record_local_item_owner(span, "local_const");
-
-        let mut visitor = BodyCallVisitor {
-            owner,
-            cfgs: self.cfgs,
-            param_names: &[],
-            macro_expansions: self.macro_expansions,
-            local_scopes: Vec::new(),
-            calls: Vec::new(),
-            relations: Vec::new(),
-            executable_bodies: Vec::new(),
-            awaited_call_spans: Vec::new(),
-            unsafe_depth: 0,
-        };
-        visitor.visit_expr(item_const.expr.as_ref());
-        self.append_child(visitor);
+        self.record_local_const_item(item_const, (byte_range.start, byte_range.end));
     }
 
     fn visit_item_fn(&mut self, item_fn: &'ast syn::ItemFn) {
@@ -490,6 +474,33 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
 }
 
 impl BodyCallVisitor<'_> {
+    fn record_macro_local_item(&mut self, item: &syn::Item, span: (usize, usize)) {
+        match item {
+            syn::Item::Fn(item_fn) => self.record_local_fn_item(item_fn, span),
+            syn::Item::Const(item_const) => self.record_local_const_item(item_const, span),
+            _ => {}
+        }
+    }
+
+    fn record_local_const_item(&mut self, item_const: &syn::ItemConst, span: (usize, usize)) {
+        let owner = self.record_local_item_owner(span, "local_const");
+
+        let mut visitor = BodyCallVisitor {
+            owner,
+            cfgs: self.cfgs,
+            param_names: &[],
+            macro_expansions: self.macro_expansions,
+            local_scopes: Vec::new(),
+            calls: Vec::new(),
+            relations: Vec::new(),
+            executable_bodies: Vec::new(),
+            awaited_call_spans: Vec::new(),
+            unsafe_depth: 0,
+        };
+        visitor.visit_expr(item_const.expr.as_ref());
+        self.append_child(visitor);
+    }
+
     fn record_local_fn_item(&mut self, item_fn: &syn::ItemFn, span: (usize, usize)) {
         let name = item_fn.sig.ident.to_string();
         let label = format!("local_fn:{name}");

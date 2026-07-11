@@ -164,6 +164,16 @@ async fn call_context_expansion_adds_local_item_owner_for_assoc_const_value() ->
                 ),
             )?,
         ),
+        (
+            "local_const",
+            one_uuid(
+                &db,
+                &function_in_module_query(
+                    &["crate"],
+                    "call_const_item_macro_generated_const_initializer",
+                ),
+            )?,
+        ),
     ];
 
     let mut rag = init_test_rag_mock(Arc::clone(&db));

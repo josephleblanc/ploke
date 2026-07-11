@@ -338,6 +338,7 @@ const EXPLICIT_DROP_METHOD_CALL_SPAN: (usize, usize) = (16722, 16734);
 const ITEM_MACRO_INSIDE_BODY_CALL_SPAN: (usize, usize) = (16918, 16942);
 const GENERATED_ITEM_MACRO_CALL_SPAN: (usize, usize) = (50435, 50459);
 const GENERATED_ITEM_MACRO_FUNCTION_CALL_SPAN: (usize, usize) = (50465, 50490);
+const GENERATED_CONST_ITEM_MACRO_CALL_SPAN: (usize, usize) = (50905, 50935);
 const PARENTHESIZED_GENERIC_FN_ONCE_DYNAMIC_CALL_SPAN: (usize, usize) = (17069, 17082);
 const PARENTHESIZED_BOXED_DYN_FN_BOX_NEW_CALL_SPAN: (usize, usize) = (17191, 17213);
 const PARENTHESIZED_BOXED_DYN_FN_DYNAMIC_CALL_SPAN: (usize, usize) = (17219, 17231);
@@ -2787,6 +2788,62 @@ paranoid_call_site_test!(
         )
     },
 );
+
+paranoid_call_site_test!(
+    fixture_call_graph_const_item_macro_generated_const_initializer_records_macro_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_const_item_macro_generated_const_initializer"
+    },
+    expected: ExpectedCallSite::macro_call(
+        "call_graph_const_item_macro",
+        GENERATED_CONST_ITEM_MACRO_CALL_SPAN,
+        &[],
+        ExpectedCallOutcome::Unsupported,
+    ),
+);
+
+#[test]
+fn fixture_call_graph_const_item_macro_generated_const_initializer_records_local_const_owner() {
+    let (graph, _tree) = crate::common::build_tree_for_tests("fixture_call_graph");
+    let owner = crate::common::call_site_paranoid::function_owner_context(
+        &graph,
+        &["crate"],
+        "call_const_item_macro_generated_const_initializer",
+    );
+
+    assert_executable_body_label_at_span(
+        &graph,
+        &owner,
+        ExecutableBodyKind::LocalItem,
+        GENERATED_CONST_ITEM_MACRO_CALL_SPAN,
+        Some("local_const"),
+    );
+}
+
+#[test]
+fn fixture_call_graph_const_item_macro_generated_const_initializer_owns_initializer_call() {
+    let (graph, _tree) = crate::common::build_tree_for_tests("fixture_call_graph");
+    let owner = crate::common::call_site_paranoid::function_owner_context(
+        &graph,
+        &["crate"],
+        "call_const_item_macro_generated_const_initializer",
+    );
+
+    // The generated const initializer is parsed from the stored macro body
+    // string, so its interior token spans are synthetic. Assert the ownership
+    // and path fact directly instead of treating the macro definition body span
+    // as source provenance for the expanded call.
+    assert_no_path_call_owned_by_path(&graph, &owner, &["assoc_const_value"]);
+    assert_executable_body_path_call_owned_by_label(
+        &graph,
+        &owner,
+        ExecutableBodyKind::LocalItem,
+        Some("local_const"),
+        &["assoc_const_value"],
+    );
+}
 
 paranoid_call_site_test!(
     fixture_call_graph_call_borrowed_typed_local_instance_method_resolves_borrowed_typed_local_binding_method_call_site,
@@ -6325,6 +6382,28 @@ fn assert_no_call_site_owned_at_span(
     );
 }
 
+fn assert_no_path_call_owned_by_path(
+    graph: &impl GraphAccess,
+    owner: &CallOwnerContext,
+    path: &[&str],
+) {
+    let expected_path = path.iter().copied().map(String::from).collect::<Vec<_>>();
+    let matches = graph
+        .call_sites()
+        .iter()
+        .filter(|call| call.owner() == owner.id)
+        .filter_map(|call| match call {
+            CallNode::PathCall(path_call) if path_call.path == expected_path => Some(call),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        matches.is_empty(),
+        "expected no path call owned by {} with path {path:?}, found {matches:#?}",
+        owner.label
+    );
+}
+
 fn assert_closure_body_path_call_owned_at_span(
     graph: &impl GraphAccess,
     parent: &CallOwnerContext,
@@ -6400,6 +6479,62 @@ fn assert_executable_body_path_call_owned_at_span(
         relations.len(),
         1,
         "expected one {kind:?} BodyContainsCall relation for {span:?}, found {relations:#?}"
+    );
+}
+
+fn assert_executable_body_path_call_owned_by_label(
+    graph: &impl GraphAccess,
+    parent: &CallOwnerContext,
+    kind: ExecutableBodyKind,
+    label: Option<&str>,
+    path: &[&str],
+) {
+    let bodies = graph
+        .executable_bodies()
+        .iter()
+        .filter(|body| {
+            body.parent == parent.id && body.kind == kind && body.label.as_deref() == label
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        bodies.len(),
+        1,
+        "expected one {kind:?} body owned by {} with label {label:?}, found {bodies:#?}",
+        parent.label
+    );
+
+    let owner = CallBodyOwnerId::Executable(bodies[0].id);
+    let expected_path = path.iter().copied().map(String::from).collect::<Vec<_>>();
+    let calls = graph
+        .call_sites()
+        .iter()
+        .filter(|call| call.owner() == owner)
+        .filter_map(|call| match call {
+            CallNode::PathCall(path_call) if path_call.path == expected_path => Some(call),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        calls.len(),
+        1,
+        "expected one {kind:?}-owned path call {path:?}, found {calls:#?}"
+    );
+
+    let relations = graph
+        .call_site_relations()
+        .iter()
+        .filter(|relation| {
+            matches!(
+                relation,
+                CallSiteRelation::BodyContainsCall { source, target }
+                    if *source == owner && *target == calls[0].id()
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        relations.len(),
+        1,
+        "expected one {kind:?} BodyContainsCall relation for path {path:?}, found {relations:#?}"
     );
 }
 

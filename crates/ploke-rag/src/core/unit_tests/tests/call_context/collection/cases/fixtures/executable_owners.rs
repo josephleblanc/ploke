@@ -733,10 +733,10 @@ async fn call_context_collection_reads_local_item_owner_rows() -> Result<(), Err
     )?));
     let target = unique_id_by_name(&db, "function", "assoc_const_value")?;
     let cases = [
-        // tests/fixture_crates/fixture_call_graph/src/lib.rs:1372
+        // tests/fixture_crates/fixture_call_graph/src/lib.rs:1379
         (
             "local_const",
-            1372,
+            1379,
             one_uuid(
                 &db,
                 &function_in_module_query(
@@ -745,10 +745,10 @@ async fn call_context_collection_reads_local_item_owner_rows() -> Result<(), Err
                 ),
             )?,
         ),
-        // tests/fixture_crates/fixture_call_graph/src/lib.rs:1441
+        // tests/fixture_crates/fixture_call_graph/src/lib.rs:1447
         (
             "local_fn:inner",
-            1441,
+            1447,
             one_uuid(
                 &db,
                 &function_in_module_query(&["crate"], "local_fn_body_call_is_not_outer_call_site"),
@@ -756,12 +756,24 @@ async fn call_context_collection_reads_local_item_owner_rows() -> Result<(), Err
         ),
         (
             "local_impl_method:value",
-            1461,
+            1464,
             one_uuid(
                 &db,
                 &function_in_module_query(
                     &["crate"],
                     "local_impl_method_body_call_is_not_outer_call_site",
+                ),
+            )?,
+        ),
+        // tests/fixture_crates/fixture_call_graph/src/lib.rs:2143
+        (
+            "local_const",
+            2143,
+            one_uuid(
+                &db,
+                &function_in_module_query(
+                    &["crate"],
+                    "call_const_item_macro_generated_const_initializer",
                 ),
             )?,
         ),
