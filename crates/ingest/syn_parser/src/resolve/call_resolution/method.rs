@@ -110,7 +110,7 @@ impl CallRelationResolver<'_> {
                 self.resolve_typed_local_method_call(call, type_path, type_relations)?
             }
             MethodCallReceiver::InitializedLocalBinding { init_path, .. } => {
-                self.resolve_typed_local_method_call(call, init_path, type_relations)?
+                self.resolve_initialized_local_method_call(call, init_path, type_relations)?
             }
             MethodCallReceiver::AliasedLocalBinding { source_path, .. } => {
                 self.resolve_alias_method_call(call, source_path, type_relations)?
@@ -131,13 +131,13 @@ impl CallRelationResolver<'_> {
                 type_relations,
             )?,
             MethodCallReceiver::BorrowedInitializedLocalBinding { init_path, .. } => {
-                self.resolve_typed_local_method_call(call, init_path, type_relations)?
+                self.resolve_initialized_local_method_call(call, init_path, type_relations)?
             }
             MethodCallReceiver::BorrowedTypedLocalBinding { type_path, .. } => {
                 self.resolve_typed_local_method_call(call, type_path, type_relations)?
             }
             MethodCallReceiver::DereferencedInitializedLocalBinding { init_path, .. } => {
-                self.resolve_typed_local_method_call(call, init_path, type_relations)?
+                self.resolve_initialized_local_method_call(call, init_path, type_relations)?
             }
             MethodCallReceiver::PathCallResult { path } => {
                 self.resolve_path_result_method_call(call, path, type_relations)?
@@ -1233,6 +1233,66 @@ impl CallRelationResolver<'_> {
         }
     }
 
+    fn resolve_initialized_local_method_call(
+        &self,
+        call: &MethodCallNode,
+        init_path: &[String],
+        type_relations: &[TypeRelation],
+    ) -> Result<AssocPathResolution, SynParserError> {
+        if let Some(init_call) = self.local_binding_initializer_path_call(call, init_path) {
+            if let Some(resolution) = self.resolve_associated_function_path(
+                call.owner,
+                init_path,
+                init_call.arg_count,
+                type_relations,
+            )? {
+                return match resolution {
+                    AssocPathResolution::Resolved(method_id) => self
+                        .resolve_method_return_type_method(
+                            call.owner,
+                            method_id,
+                            &call.method_name,
+                            type_relations,
+                        ),
+                    AssocPathResolution::Unresolved => Ok(AssocPathResolution::Unresolved),
+                    AssocPathResolution::Ambiguous => Ok(AssocPathResolution::Ambiguous),
+                    AssocPathResolution::Unsupported => Ok(AssocPathResolution::Unsupported),
+                };
+            }
+        }
+
+        self.resolve_typed_local_method_call(call, init_path, type_relations)
+    }
+
+    fn local_binding_initializer_path_call(
+        &self,
+        call: &MethodCallNode,
+        init_path: &[String],
+    ) -> Option<&PathCallNode> {
+        let mut candidates = self
+            .graph
+            .call_sites()
+            .iter()
+            .filter_map(|candidate| match candidate {
+                CallNode::PathCall(inner)
+                    if inner.owner == call.owner
+                        && inner.path == init_path
+                        && inner.span.1 <= call.span.0 =>
+                {
+                    Some(inner)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        let max_end = candidates.iter().map(|inner| inner.span.1).max()?;
+        candidates.retain(|inner| inner.span.1 == max_end);
+        match candidates.as_slice() {
+            [inner] => Some(*inner),
+            _ => None,
+        }
+    }
+
     fn resolve_typed_local_trait_method_call(
         &self,
         owner: CallBodyOwnerId,
@@ -1572,7 +1632,7 @@ impl CallRelationResolver<'_> {
                 self.resolve_typed_local_method_call(call, type_path, type_relations)
             }
             MethodCallReceiver::InitializedLocalBinding { init_path, .. } => {
-                self.resolve_typed_local_method_call(call, init_path, type_relations)
+                self.resolve_initialized_local_method_call(call, init_path, type_relations)
             }
             MethodCallReceiver::AliasedLocalBinding { source_path, .. } => {
                 self.resolve_alias_method_call(call, source_path, type_relations)
@@ -1593,13 +1653,13 @@ impl CallRelationResolver<'_> {
                 type_relations,
             ),
             MethodCallReceiver::BorrowedInitializedLocalBinding { init_path, .. } => {
-                self.resolve_typed_local_method_call(call, init_path, type_relations)
+                self.resolve_initialized_local_method_call(call, init_path, type_relations)
             }
             MethodCallReceiver::BorrowedTypedLocalBinding { type_path, .. } => {
                 self.resolve_typed_local_method_call(call, type_path, type_relations)
             }
             MethodCallReceiver::DereferencedInitializedLocalBinding { init_path, .. } => {
-                self.resolve_typed_local_method_call(call, init_path, type_relations)
+                self.resolve_initialized_local_method_call(call, init_path, type_relations)
             }
             MethodCallReceiver::PathCallResult { path } => {
                 self.resolve_path_result_method_call(call, path, type_relations)

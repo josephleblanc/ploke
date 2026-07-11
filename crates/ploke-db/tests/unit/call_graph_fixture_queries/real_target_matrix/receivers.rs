@@ -303,6 +303,117 @@ fn axum_real_target_request_extensions_mut_receiver_statuses_are_proof_backed()
 }
 
 #[test]
+fn axum_initialized_associated_constructor_receivers_resolve() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Matrix: associated-constructor initialized local receiver rows.
+    // Source chain:
+    //   axum/src/test_helpers/counting_cloneable_state.rs:15 defines
+    //   `CountingCloneableState::new() -> Self`.
+    //   axum/src/routing/tests/mod.rs:1165 and :1187 plus
+    //   axum/src/routing/tests/fallback.rs:396 bind
+    //   `let state = CountingCloneableState::new()`.
+    //   Those owners then call `state.clone()` and `state.setup_done()`.
+    // Expected traversal: the binding initializer resolves to the local
+    // associated function, its `Self` return type proves the receiver type, and
+    // both later method calls traverse to the local impl methods.
+    let new_target = method_id_by_name_body_and_file_suffix(
+        &db,
+        "new",
+        "setup_done: AtomicBool::new(false)",
+        "axum/src/test_helpers/counting_cloneable_state.rs",
+    )?;
+    let clone_target = method_id_by_name_body_and_file_suffix(
+        &db,
+        "clone",
+        "state.count.fetch_add(1, Ordering::SeqCst)",
+        "axum/src/test_helpers/counting_cloneable_state.rs",
+    )?;
+    let setup_done_target = method_id_by_name_body_and_file_suffix(
+        &db,
+        "setup_done",
+        "self.state.setup_done.store(true, Ordering::SeqCst)",
+        "axum/src/test_helpers/counting_cloneable_state.rs",
+    )?;
+
+    let cases = [
+        (
+            "axum/src/routing/tests/mod.rs:1165/1170/1174",
+            function_id_by_name_in_module(
+                &db,
+                &["crate", "routing", "tests"],
+                "state_isnt_cloned_too_much",
+            )?,
+        ),
+        (
+            "axum/src/routing/tests/mod.rs:1187/1190/1194",
+            function_id_by_name_in_module(
+                &db,
+                &["crate", "routing", "tests"],
+                "state_isnt_cloned_too_much_in_layer",
+            )?,
+        ),
+        (
+            "axum/src/routing/tests/fallback.rs:396/400/405",
+            function_id_by_name_in_module(
+                &db,
+                &["crate", "routing", "tests", "fallback"],
+                "state_isnt_cloned_too_much_with_fallback",
+            )?,
+        ),
+    ];
+    let receiver = CallReceiver::InitializedLocalBinding {
+        name: "state".to_string(),
+        init_path: path(&["CountingCloneableState", "new"]),
+    };
+
+    for (label, owner) in cases {
+        let context = db.call_context_for_owner(owner)?;
+        let new_row = row_by_path(&context, &["CountingCloneableState", "new"]);
+        assert_resolved_target(
+            new_row,
+            new_target,
+            CallRelationKind::AssociatedFunction,
+            CallSiteKind::Path,
+            CallTargetKind::Method,
+        );
+        assert_one_edge_traversal(
+            &db,
+            TraversalExpectation {
+                label,
+                owner,
+                target: new_target,
+                site_id: new_row.site.id,
+                expected_edge_count: 1,
+            },
+        )?;
+
+        for (method, target) in [("clone", clone_target), ("setup_done", setup_done_target)] {
+            let row = row_by_method_receiver(&context, method, &receiver);
+            assert_resolved_target(
+                row,
+                target,
+                CallRelationKind::Method,
+                CallSiteKind::Method,
+                CallTargetKind::Method,
+            );
+            assert_one_edge_traversal(
+                &db,
+                TraversalExpectation {
+                    label,
+                    owner,
+                    target,
+                    site_id: row.site.id,
+                    expected_edge_count: 1,
+                },
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
 fn axum_real_target_impl_trait_into_parameter_is_external_frontier() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 

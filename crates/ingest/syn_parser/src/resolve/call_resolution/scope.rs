@@ -734,6 +734,23 @@ impl<'a> CallRelationResolver<'a> {
             return Ok(());
         }
 
+        match self.resolve_local_glob_module(import_node)? {
+            LocalModulePathResolution::Resolved(module_id) => {
+                return self.collect_workspace_type_candidates_in_module(
+                    module_id,
+                    segment,
+                    candidates,
+                    saw_ambiguous,
+                    depth + 1,
+                );
+            }
+            LocalModulePathResolution::Unresolved => {}
+            LocalModulePathResolution::Ambiguous => {
+                *saw_ambiguous = true;
+                return Ok(());
+            }
+        }
+
         self.collect_workspace_dependency_glob_type_candidates(
             import_node,
             segment,
@@ -886,22 +903,45 @@ impl<'a> CallRelationResolver<'a> {
             .into_iter()
             .flatten()
         {
-            let SyntacticRelation::Contains { target, .. } = relation.rel() else {
-                continue;
-            };
-            let target_any = target.as_any();
-            let Ok(node) = self.graph.find_node_unique(target_any) else {
-                continue;
-            };
+            match relation.rel() {
+                SyntacticRelation::Contains { target, .. } => {
+                    let target_any = target.as_any();
+                    let Ok(node) = self.graph.find_node_unique(target_any) else {
+                        continue;
+                    };
 
-            if node.name() == segment {
-                self.visit_binding_terminals(target_any, 0, sink)?;
+                    if node.name() == segment {
+                        self.visit_binding_terminals(target_any, 0, sink)?;
+                    }
+                }
+                SyntacticRelation::ModuleImports { target, .. } => {
+                    let import_node = self.graph.get_import_checked(*target)?;
+                    if import_node.visible_name == segment {
+                        self.visit_binding_terminals(import_node.id.as_any(), 0, sink)?;
+                    }
+
+                    if import_node.is_glob {
+                        self.visit_glob_candidates(import_node.id, segment, sink)?;
+                    }
+                }
+                _ => {}
             }
+        }
 
-            if let Some(import_node) = node.as_import()
-                && import_node.is_glob
-            {
-                self.visit_glob_candidates(import_node.id, segment, sink)?;
+        if let Some(module_node) = self
+            .graph
+            .modules()
+            .iter()
+            .find(|module| module.id == module_id)
+        {
+            for import_node in &module_node.imports {
+                if import_node.visible_name == segment {
+                    self.visit_binding_terminals(import_node.id.as_any(), 0, sink)?;
+                }
+
+                if import_node.is_glob {
+                    self.visit_glob_candidates(import_node.id, segment, sink)?;
+                }
             }
         }
 
@@ -916,6 +956,13 @@ impl<'a> CallRelationResolver<'a> {
     ) -> Result<(), SynParserError> {
         self.visit_ancestor_glob_candidates(import_id, segment, sink)?;
 
+        let import_node = self.graph.get_import_checked(import_id)?;
+        if let LocalModulePathResolution::Resolved(module_id) =
+            self.resolve_local_glob_module(import_node)?
+        {
+            self.visit_scope_candidates(module_id, segment, sink)?;
+        }
+
         for relation in self.tree.get_iter_relations_to(&import_id.as_any()) {
             let SyntacticRelation::ImportedBy { source, target } = relation.rel() else {
                 continue;
@@ -928,6 +975,54 @@ impl<'a> CallRelationResolver<'a> {
         }
 
         Ok(())
+    }
+
+    fn resolve_local_glob_module(
+        &self,
+        import_node: &ImportNode,
+    ) -> Result<LocalModulePathResolution, SynParserError> {
+        if import_node.source_path().is_empty()
+            || !import_node
+                .source_path()
+                .first()
+                .is_some_and(|segment| segment == "crate")
+            || import_node.source_path().iter().all(|part| part == "super")
+            || self.is_workspace_dependency_path(import_node.source_path())
+            || self.is_external_path(import_node.source_path())
+        {
+            return Ok(LocalModulePathResolution::Unresolved);
+        }
+
+        let Some(mut module_id) = self.containing_module(import_node.id.as_any()) else {
+            return Ok(LocalModulePathResolution::Unresolved);
+        };
+        module_id = self.import_scope_module(module_id)?;
+        self.resolve_module_path_from_module(module_id, import_node.source_path())
+    }
+
+    fn resolve_module_path_from_module(
+        &self,
+        mut current_module: ModuleNodeId,
+        path: &[String],
+    ) -> Result<LocalModulePathResolution, SynParserError> {
+        let start_idx = self.start_segment_index(path, &mut current_module)?;
+        if start_idx >= path.len() {
+            return Ok(LocalModulePathResolution::Resolved(current_module));
+        }
+
+        for segment in &path[start_idx..] {
+            current_module = match self.resolve_module_segment(current_module, segment)? {
+                LocalModulePathResolution::Resolved(module_id) => module_id,
+                LocalModulePathResolution::Unresolved => {
+                    return Ok(LocalModulePathResolution::Unresolved);
+                }
+                LocalModulePathResolution::Ambiguous => {
+                    return Ok(LocalModulePathResolution::Ambiguous);
+                }
+            };
+        }
+
+        Ok(LocalModulePathResolution::Resolved(current_module))
     }
 
     fn visit_ancestor_glob_candidates(
@@ -977,8 +1072,12 @@ impl<'a> CallRelationResolver<'a> {
             if *target != import_id {
                 continue;
             }
+            let source_any = source.as_any();
+            if matches!(source_any, AnyNodeId::Unresolved(_)) {
+                continue;
+            }
             had_sources = true;
-            self.visit_named_binding_terminals(source.as_any(), segment, depth + 1, sink)?;
+            self.visit_named_binding_terminals(source_any, segment, depth + 1, sink)?;
         }
 
         if had_sources {
@@ -990,7 +1089,15 @@ impl<'a> CallRelationResolver<'a> {
             return Ok(());
         }
 
-        Ok(())
+        self.visit_local_import_source_terminals(import_node, depth + 1, &mut |candidate| {
+            let Ok(node) = self.graph.find_node_unique(candidate) else {
+                return Ok(());
+            };
+            if node.name() == segment {
+                sink(candidate)?;
+            }
+            Ok(())
+        })
     }
 
     pub(super) fn visit_binding_terminals(
@@ -1017,8 +1124,12 @@ impl<'a> CallRelationResolver<'a> {
             if *target != import_id {
                 continue;
             }
+            let source_any = source.as_any();
+            if matches!(source_any, AnyNodeId::Unresolved(_)) {
+                continue;
+            }
             had_sources = true;
-            self.visit_binding_terminals(source.as_any(), depth + 1, sink)?;
+            self.visit_binding_terminals(source_any, depth + 1, sink)?;
         }
 
         if had_sources {
@@ -1030,6 +1141,80 @@ impl<'a> CallRelationResolver<'a> {
             return Ok(());
         }
 
+        self.visit_local_import_source_terminals(import_node, depth + 1, sink)
+    }
+
+    fn visit_local_import_source_terminals(
+        &self,
+        import_node: &ImportNode,
+        depth: usize,
+        sink: &mut impl FnMut(AnyNodeId) -> Result<(), SynParserError>,
+    ) -> Result<(), SynParserError> {
+        if depth > MAX_IMPORT_CHAIN_DEPTH {
+            return Err(SynParserError::InternalState(format!(
+                "call resolution exceeded import chain depth limit of {MAX_IMPORT_CHAIN_DEPTH} at {}",
+                import_node.id.as_any()
+            )));
+        }
+
+        let path = import_node.source_path();
+        if path.is_empty()
+            || self.is_workspace_dependency_path(path)
+            || self.is_external_path(path)
+            || matches!(path, [segment] if !matches!(segment.as_str(), "crate" | "self" | "super"))
+        {
+            return Ok(());
+        }
+
+        let Some(mut current_module) = self.containing_module(import_node.id.as_any()) else {
+            return Ok(());
+        };
+        current_module = self.import_scope_module(current_module)?;
+        let start_idx = self.start_segment_index(path, &mut current_module)?;
+        if start_idx >= path.len() {
+            return Ok(());
+        }
+
+        for idx in start_idx..path.len() {
+            let segment = path[idx].as_str();
+            let is_last = idx == path.len() - 1;
+            if is_last {
+                return self.visit_direct_module_terminals(current_module, segment, sink);
+            }
+
+            current_module = match self.resolve_module_segment(current_module, segment)? {
+                LocalModulePathResolution::Resolved(module_id) => module_id,
+                LocalModulePathResolution::Unresolved => return Ok(()),
+                LocalModulePathResolution::Ambiguous => return Ok(()),
+            };
+        }
+
+        Ok(())
+    }
+
+    fn visit_direct_module_terminals(
+        &self,
+        module_id: ModuleNodeId,
+        segment: &str,
+        sink: &mut impl FnMut(AnyNodeId) -> Result<(), SynParserError>,
+    ) -> Result<(), SynParserError> {
+        for relation in self
+            .tree
+            .get_iter_relations_from(&module_id.as_any())
+            .into_iter()
+            .flatten()
+        {
+            let SyntacticRelation::Contains { target, .. } = relation.rel() else {
+                continue;
+            };
+            let target_any = target.as_any();
+            let Ok(node) = self.graph.find_node_unique(target_any) else {
+                continue;
+            };
+            if node.name() == segment {
+                sink(target_any)?;
+            }
+        }
         Ok(())
     }
 
