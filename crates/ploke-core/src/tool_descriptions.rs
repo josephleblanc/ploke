@@ -15,6 +15,9 @@ pub fn tool_description(name: ToolName) -> ToolDescription {
         ToolName::CodeItemEdges => include_str!("../tool_text/code_item_edges.md"),
         ToolName::CodeItemCallPath => include_str!("../tool_text/code_item_call_path.md"),
         ToolName::CodeItemEffectGuard => include_str!("../tool_text/code_item_effect_guard.md"),
+        ToolName::CodeItemBoundaryPolicy => {
+            include_str!("../tool_text/code_item_boundary_policy.md")
+        }
         ToolName::CodePrivateUncalled => include_str!("../tool_text/code_private_uncalled.md"),
         ToolName::Cargo => include_str!("../tool_text/cargo.md"),
         ToolName::ListDir => include_str!("../tool_text/list_dir.md"),
@@ -33,6 +36,9 @@ pub fn tool_description_artifact_relpath(name: ToolName) -> ToolDescriptionArtif
         ToolName::CodeItemEdges => "crates/ploke-core/tool_text/code_item_edges.md",
         ToolName::CodeItemCallPath => "crates/ploke-core/tool_text/code_item_call_path.md",
         ToolName::CodeItemEffectGuard => "crates/ploke-core/tool_text/code_item_effect_guard.md",
+        ToolName::CodeItemBoundaryPolicy => {
+            "crates/ploke-core/tool_text/code_item_boundary_policy.md"
+        }
         ToolName::CodePrivateUncalled => "crates/ploke-core/tool_text/code_private_uncalled.md",
         ToolName::Cargo => "crates/ploke-core/tool_text/cargo.md",
         ToolName::ListDir => "crates/ploke-core/tool_text/list_dir.md",

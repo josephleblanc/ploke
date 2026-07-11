@@ -49,6 +49,7 @@ pub use request_code_context::{
 pub mod code_edit;
 pub use code_edit::{CanonicalEdit, CodeEdit, CodeEditInput, GatCodeEdit};
 pub mod cargo;
+pub mod code_item_boundary_policy;
 pub mod code_item_call_path;
 pub mod code_item_effect_guard;
 pub mod code_item_endpoint;
@@ -226,6 +227,9 @@ fn validate_tool_args(tool_name: ToolName, args: &str) -> Result<(), ToolError> 
         ToolName::CodeItemEdges => validate_tool_args_with::<get_code_edges::CodeItemEdges>(args),
         ToolName::CodeItemCallPath => {
             validate_tool_args_with::<code_item_call_path::CodeItemCallPath>(args)
+        }
+        ToolName::CodeItemBoundaryPolicy => {
+            validate_tool_args_with::<code_item_boundary_policy::CodeItemBoundaryPolicy>(args)
         }
         ToolName::CodeItemEffectGuard => {
             validate_tool_args_with::<code_item_effect_guard::CodeItemEffectGuard>(args)
@@ -562,6 +566,43 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
                 format_args!("{:#?}", &content),
             );
             code_item_effect_guard::CodeItemEffectGuard::emit_completed(&ctx, content, ui_payload);
+            Ok(())
+        }
+        ToolName::CodeItemBoundaryPolicy => {
+            let params =
+                code_item_boundary_policy::CodeItemBoundaryPolicy::deserialize_params(&args)
+                    .map_err(|err| {
+                        let terr =
+                            code_item_boundary_policy::CodeItemBoundaryPolicy::adapt_error(err);
+                        code_item_boundary_policy::CodeItemBoundaryPolicy::emit_err(
+                            &ctx,
+                            terr.clone(),
+                        );
+                        eyre!(terr.format_for_audience(Audience::System))
+                    })?;
+            tracing::debug!(target: DEBUG_TOOLS,
+                "params: {}\n",
+                format_args!("{:#?}", &params),
+            );
+            let ToolResult {
+                content,
+                ui_payload,
+            } = code_item_boundary_policy::CodeItemBoundaryPolicy::execute(params, ctx.clone())
+                .await
+                .map_err(|e| {
+                    let terr = code_item_boundary_policy::CodeItemBoundaryPolicy::adapt_error(
+                        ToolInvocationError::Exec(e),
+                    );
+                    code_item_boundary_policy::CodeItemBoundaryPolicy::emit_err(&ctx, terr.clone());
+                    eyre!(terr.format_for_audience(Audience::System))
+                })?;
+            tracing::debug!(target: DEBUG_TOOLS,
+                "content: {}\n",
+                format_args!("{:#?}", &content),
+            );
+            code_item_boundary_policy::CodeItemBoundaryPolicy::emit_completed(
+                &ctx, content, ui_payload,
+            );
             Ok(())
         }
         ToolName::CodePrivateUncalled => {

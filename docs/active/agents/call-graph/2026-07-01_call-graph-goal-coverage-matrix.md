@@ -63,15 +63,16 @@ Exit criteria:
   architecture rules.
 - Add one consolidated doc note.
 
-Status: DB `module_boundary_policy_violations_from_owner` and RAG
-`exact_module_boundary_policy_violations_from_owner` now evaluate
-caller-supplied forbidden module-prefix rules over existing resolved-only
-boundary edges. The axum source oracle is
+Status: DB `module_boundary_policy_violations_from_owner`, RAG
+`exact_module_boundary_policy_violations_from_owner`, and exact TUI
+`code_item_boundary_policy` now evaluate caller-supplied forbidden
+module-prefix rules over existing resolved-only boundary edges. The axum source
+oracle is
 `RequestExt::extract -> extract_with_state -> FromRequest::from_request`;
 the helper flags `crate::ext_traits::* -> crate::extract::*` and rejects empty
-module-prefix rules fail-closed. Exact TUI policy inputs are not implemented in
-this slice because existing lookup/edges tools expose boundary inventory but do
-not accept architecture rules.
+module-prefix rules fail-closed. The TUI tool follows the same dedicated exact
+policy-tool pattern as `code_item_effect_guard` instead of adding broad optional
+policy parameters to lookup/edges.
 
 Previous completed slice: bounded two-hop private callable-parameter forwarding completed for
 fixture-backed parser, DB, RAG, and exact TUI surfaces. The resolver now follows

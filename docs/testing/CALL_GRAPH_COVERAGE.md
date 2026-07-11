@@ -65,7 +65,7 @@ The most useful companion documents are:
 | Paths | `call_paths_from_owner`, `call_paths_between` | Multi-hop traversal uses resolved local edges only | Covered |
 | Impact | `call_impact_for_target` usage-question tests | Direct/eventual callers, public/test buckets, source files/modules/crates/cfgs | Covered |
 | Reach | `call_reach_for_owner` usage-question tests | Reachable callees plus external/unsupported/unresolved/ambiguous frontier buckets | Covered |
-| Module-boundary policy | `module_boundary_policy_violations_from_owner` usage-question tests | Caller-supplied forbidden module-prefix rules are evaluated over resolved-only boundary edges | Covered for DB/RAG exact APIs |
+| Module-boundary policy | `module_boundary_policy_violations_from_owner` usage-question tests and `code_item_boundary_policy` integration tests | Caller-supplied forbidden module-prefix rules are evaluated over resolved-only boundary edges | Covered for DB/RAG/TUI exact APIs |
 | Effects | `call_effects_reachable_from_owner` | Annotated effect seeds are reachable through resolved paths to the effect owner without fabricating frontier edges | Covered |
 | Private zero-incoming | `private_uncalled_nodes` | Stored source graph can identify private nodes with no incoming persisted source callers | Covered |
 | Proof context | `proof_graphrag_context`, `proof_symbol_lookup`, `proof_blockers` | Proof rows and blockers explain admitted, blocked, summarized, generated, dependency-root, and targetless facts | Covered for current proof kinds |
@@ -94,6 +94,7 @@ The most useful companion documents are:
 | `code_item_lookup` | Integration tests under `crates/ploke-tui/tests/integration` | Exposes exact call impact, reach, effects, proof context, and callsite rows for strict selectors. |
 | `code_item_edges` | Integration tests under `crates/ploke-tui/tests/integration` | Mirrors lookup summaries and exact edge/path payloads, including targetless and proof rows. |
 | `code_item_call_path` | Integration tests | Returns strict multi-hop call paths for selected real-corpus and fixture rows. |
+| `code_item_boundary_policy` | Integration tests | Reports caller-supplied module-boundary policy violations over resolved-only boundary edges. |
 | `request_code_context` | Fixture-backed exact tests | Preserves selected call context/proof payloads; search-seeded live/provider behavior is not used as authoritative proof. |
 
 ## Known Boundaries
@@ -135,6 +136,7 @@ resolved-only boundary edges:
 - `cargo run -p xtask --features call_graph -- fixtures regenerate --active`
 - `cargo test -p ploke-db axum_usage_questions_report_module_boundary_policy_violations --test mod -- --nocapture`
 - `cargo test -p ploke-rag module_boundary_policy_exact_flags_axum_request_extract_boundary --lib -- --nocapture`
+- `cargo test -p ploke-tui --test integration code_item_boundary_policy_flags_real_corpus_request_extract_boundary -- --nocapture`
 
 On 2026-07-10 the call graph schema added `call_callee_evidence` to preserve
 typed parser callee evidence for async closure bindings. Active fixtures were

@@ -62,6 +62,9 @@ mod code_item_lookup_regression;
 #[path = "integration/code_item_call_path.rs"]
 mod code_item_call_path;
 
+#[path = "integration/code_item_boundary_policy.rs"]
+mod code_item_boundary_policy;
+
 #[path = "integration/code_item_effect_guard.rs"]
 mod code_item_effect_guard;
 

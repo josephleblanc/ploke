@@ -27,6 +27,8 @@ pub enum ToolName {
     CodeItemCallPath,
     #[serde(rename = "code_item_effect_guard")]
     CodeItemEffectGuard,
+    #[serde(rename = "code_item_boundary_policy")]
+    CodeItemBoundaryPolicy,
     #[serde(rename = "code_private_uncalled")]
     CodePrivateUncalled,
     #[serde(rename = "cargo")]
@@ -36,7 +38,7 @@ pub enum ToolName {
 }
 
 impl ToolName {
-    pub const ALL: [ToolName; 13] = [
+    pub const ALL: [ToolName; 14] = [
         ToolName::RequestCodeContext,
         ToolName::ApplyCodeEdit,
         ToolName::InsertRustItem,
@@ -47,6 +49,7 @@ impl ToolName {
         ToolName::CodeItemEdges,
         ToolName::CodeItemCallPath,
         ToolName::CodeItemEffectGuard,
+        ToolName::CodeItemBoundaryPolicy,
         ToolName::CodePrivateUncalled,
         ToolName::Cargo,
         ToolName::ListDir,
@@ -65,6 +68,7 @@ impl ToolName {
             CodeItemEdges => "code_item_edges",
             CodeItemCallPath => "code_item_call_path",
             CodeItemEffectGuard => "code_item_effect_guard",
+            CodeItemBoundaryPolicy => "code_item_boundary_policy",
             CodePrivateUncalled => "code_private_uncalled",
             Cargo => "cargo",
             ListDir => "list_dir",
@@ -238,6 +242,14 @@ mod tests {
         assert!(description.contains("no incoming persisted local call edges"));
         assert!(description.contains("dead-code"));
         assert!(description.contains("code_item_lookup"));
+    }
+
+    #[test]
+    fn code_item_boundary_policy_description_mentions_resolved_boundaries() {
+        let description = tool_description(ToolName::CodeItemBoundaryPolicy).to_lowercase();
+        assert!(description.contains("module-boundary policy"));
+        assert!(description.contains("resolved call graph"));
+        assert!(description.contains("targetless frontier"));
     }
 
     #[test]
