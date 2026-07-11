@@ -61,21 +61,22 @@ Exit criteria:
 - Add one DB assertion, one RAG assertion if exposed downstream, one TUI/tool
   assertion if exposed downstream, and one consolidated doc note.
 
-Status: reachable effect guard report slice implemented through DB and exact
-RAG; focused verification passed.
+Status: reachable effect guard report slice implemented through DB, exact RAG,
+and exact TUI tool input; focused verification passed.
 
 Latest completed slice: reachable effect guard reports. The DB now exposes
 `call_effect_guard_report_for_owner(owner, guard, effect_class, options)`,
 which composes existing resolved paths and reachable `effect_seed` proof rows
 to classify whether every path to a sensitive effect owner passes through a
 reviewed guard. Exact RAG exposes the same report through
-`exact_call_effect_guard_report_for_owner`. The real-corpus axum source oracle
-is `deserialize_error_status_codes -> TestClient::new -> spawn_service ->
-tokio::spawn`: `tokio::spawn` remains an external targetless frontier with an
-`async_task_spawn` effect seed, `TestClient::new` guards the resolved path to
-the `spawn_service` owner, and an unrelated `MethodRouter::new` guard reports
-the same effect as a violation. This is a usage-query/proof-composition slice;
-it does not add call edges to targetless effect callsites or introduce
+`exact_call_effect_guard_report_for_owner`, and `code_item_effect_guard` wraps
+the same contract with exact owner and guard endpoints. The real-corpus axum
+source oracle is `deserialize_error_status_codes -> TestClient::new ->
+spawn_service -> tokio::spawn`: `tokio::spawn` remains an external targetless
+frontier with an `async_task_spawn` effect seed, `TestClient::new` guards the
+resolved path to the `spawn_service` owner, and an unrelated guard reports the
+same effect as a violation. This is a usage-query/proof-composition slice; it
+does not add call edges to targetless effect callsites or introduce
 context-sensitive callback argument resolution.
 
 Latest completed slice: owner-scoped proof invariant findings downstream

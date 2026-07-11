@@ -2,7 +2,8 @@ use ploke_db::NodeType;
 use ploke_tui::{
     rag::utils::NodeKind,
     tools::{
-        Tool, code_edit::GatCodeEdit, code_item_lookup::CodeItemLookup,
+        Tool, code_edit::GatCodeEdit, code_item_call_path::CodeItemCallPath,
+        code_item_effect_guard::CodeItemEffectGuard, code_item_lookup::CodeItemLookup,
         get_code_edges::CodeItemEdges,
     },
 };
@@ -69,5 +70,19 @@ Examples: owner_type="HandleError" for HandleError::new; owner_type="HandlerServ
             ),
             "owner_type should be documented from the shared lookup support constant"
         );
+    }
+}
+
+#[test]
+fn exact_endpoint_tool_schemas_share_node_kind_vocabulary() {
+    let expected: Vec<&str> = NodeKind::allowed_values().to_vec();
+
+    for schema in [CodeItemCallPath::schema(), CodeItemEffectGuard::schema()] {
+        let values = enum_values(
+            schema,
+            &["$defs", "code_item_endpoint", "properties", "node_kind"],
+        );
+        assert_eq!(values, expected);
+        assert!(values.contains(&"method"));
     }
 }

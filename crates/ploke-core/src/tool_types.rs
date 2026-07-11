@@ -25,6 +25,8 @@ pub enum ToolName {
     CodeItemEdges,
     #[serde(rename = "code_item_call_path")]
     CodeItemCallPath,
+    #[serde(rename = "code_item_effect_guard")]
+    CodeItemEffectGuard,
     #[serde(rename = "code_private_uncalled")]
     CodePrivateUncalled,
     #[serde(rename = "cargo")]
@@ -34,7 +36,7 @@ pub enum ToolName {
 }
 
 impl ToolName {
-    pub const ALL: [ToolName; 12] = [
+    pub const ALL: [ToolName; 13] = [
         ToolName::RequestCodeContext,
         ToolName::ApplyCodeEdit,
         ToolName::InsertRustItem,
@@ -44,6 +46,7 @@ impl ToolName {
         ToolName::CodeItemLookup,
         ToolName::CodeItemEdges,
         ToolName::CodeItemCallPath,
+        ToolName::CodeItemEffectGuard,
         ToolName::CodePrivateUncalled,
         ToolName::Cargo,
         ToolName::ListDir,
@@ -61,6 +64,7 @@ impl ToolName {
             CodeItemLookup => "code_item_lookup",
             CodeItemEdges => "code_item_edges",
             CodeItemCallPath => "code_item_call_path",
+            CodeItemEffectGuard => "code_item_effect_guard",
             CodePrivateUncalled => "code_private_uncalled",
             Cargo => "cargo",
             ListDir => "list_dir",
