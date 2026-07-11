@@ -2,7 +2,8 @@ use std::borrow::Cow;
 
 use ploke_core::rag_types::CallResolutionKind;
 use ploke_test_utils::{
-    CallExpected, CallShapeCase, call_shape_case_blocker_reasons, call_shape_case_proof_blockers,
+    CallCorpusFixture, CallExpected, CallShapeCase, call_shape_case_blocker_reasons,
+    call_shape_case_proof_blockers,
 };
 use ploke_tui::tools::{code_item_lookup::LookupParams, get_code_edges::EdgesParams};
 
@@ -34,18 +35,22 @@ pub(crate) struct SharedCallShapeToolFixture {
 }
 
 impl SharedCallShapeToolFixture {
-    pub(crate) async fn new(case: &'static CallShapeCase) -> Self {
+    pub(crate) fn db_for_fixture(fixture: CallCorpusFixture) -> Arc<Database> {
+        let fixture_db = fixture.fixture();
         let db = Arc::new(
-            fresh_backup_fixture_db(case.fixture.fixture())
-                .unwrap_or_else(|err| panic!("{} fixture DB: {err}", case.name)),
+            fresh_backup_fixture_db(fixture_db)
+                .unwrap_or_else(|err| panic!("{} fixture DB: {err}", fixture_db.id)),
         );
         assert!(
             db.has_call_graph_relations()
-                .unwrap_or_else(|err| panic!("{} call graph relation check: {err}", case.name)),
+                .unwrap_or_else(|err| panic!("{} call graph relation check: {err}", fixture_db.id)),
             "{} must expose call graph relations",
-            case.fixture.fixture().id
+            fixture_db.id
         );
+        db
+    }
 
+    pub(crate) async fn new_with_db(case: &'static CallShapeCase, db: Arc<Database>) -> Self {
         let owner = resolve_owner(db.as_ref(), case);
         let target = match case.expected {
             CallExpected::Resolved { target, .. } => Some(resolve_target(db.as_ref(), target)),
@@ -77,7 +82,11 @@ impl SharedCallShapeToolFixture {
             "{} should project node-scoped call proof rows",
             case.name
         );
-        let state = app_state_with_rag(db, crate_root_from_file(&query.file_path, case.name)).await;
+        let state = app_state_with_rag(
+            Arc::clone(&db),
+            crate_root_from_file(&query.file_path, case.name),
+        )
+        .await;
 
         Self {
             state,

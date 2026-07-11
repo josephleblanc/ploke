@@ -7,9 +7,7 @@ use ploke_core::{
     tool_types::ToolName,
 };
 use ploke_db::{
-    helpers::{
-        graph_resolve_edges, graph_resolve_edges_for_call_body_owner_id, graph_resolve_edges_for_id,
-    },
+    helpers::{graph_resolve_edges_for_call_body_owner_id, graph_resolve_edges_for_id},
     typed_rows::ResolvedEdgeData,
 };
 use ploke_error::DomainError;
@@ -342,24 +340,10 @@ for a more fuzzy search."#
         let call_path_nodes =
             call_path_nodes_for_paths(&call_paths.from_owner, &call_paths.to_target);
 
-        let mod_path_vec = params
-            .module_path
-            .split("::")
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string())
-            .collect_vec();
         let resolved_edges = if node_kind.call_body_owner_kind().is_some() {
             graph_resolve_edges_for_call_body_owner_id(&ctx.state.db, resolved_item_id)?
-        } else if owner.is_some() || matches!(node_kind, NodeKind::Variant) {
-            graph_resolve_edges_for_id(&ctx.state.db, node_kind.as_relation(), resolved_item_id)?
         } else {
-            graph_resolve_edges(
-                &ctx.state.db,
-                node_kind.as_relation(),
-                &abs_path,
-                &mod_path_vec,
-                &params.item_name,
-            )?
+            graph_resolve_edges_for_id(&ctx.state.db, node_kind.as_relation(), resolved_item_id)?
         };
         let tool_results = ctx
             .state

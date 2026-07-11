@@ -722,6 +722,7 @@ incoming[id] := *call_relation {{ target_id: id @ 'NOW' }}
         let mut out = BTreeMap::new();
         let mut node_cache = BTreeMap::new();
         let mut site_cache = BTreeMap::new();
+        let mut context_cache = BTreeMap::new();
         for path in self.call_paths_from_owner(owner_id, options)? {
             for edge in path.edges {
                 let caller =
@@ -731,7 +732,7 @@ incoming[id] := *call_relation {{ target_id: id @ 'NOW' }}
                 if caller.module_path == callee.module_path {
                     continue;
                 }
-                let site = cached_call_site(self, &mut site_cache, &edge)?;
+                let site = cached_call_site(self, &mut site_cache, &mut context_cache, &edge)?;
                 out.entry((edge.caller_id, edge.callee_id, edge.call_site_id))
                     .or_insert_with(|| ModuleBoundaryEdge {
                         edge,
@@ -777,24 +778,39 @@ fn cached_node_info(
 fn cached_call_site(
     db: &Database,
     cache: &mut BTreeMap<Uuid, CallSiteRow>,
+    context_cache: &mut BTreeMap<Uuid, Vec<CallContextRow>>,
     edge: &CallPathEdge,
 ) -> Result<CallSiteRow, DbError> {
     if let Some(site) = cache.get(&edge.call_site_id) {
         return Ok(site.clone());
     }
-    let context = db.call_context_for_owner(edge.caller_id)?;
-    let site = context
+    let site = cached_context_site(db, context_cache, edge, "module boundary edge")?;
+    cache.insert(edge.call_site_id, site.clone());
+    Ok(site)
+}
+
+fn cached_context_site(
+    db: &Database,
+    cache: &mut BTreeMap<Uuid, Vec<CallContextRow>>,
+    edge: &CallPathEdge,
+    label: &str,
+) -> Result<CallSiteRow, DbError> {
+    let context = match cache.entry(edge.caller_id) {
+        std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+        std::collections::btree_map::Entry::Vacant(entry) => {
+            entry.insert(db.call_context_for_owner(edge.caller_id)?)
+        }
+    };
+    context
         .iter()
         .find(|row| row.site.id == edge.call_site_id)
         .map(|row| row.site.clone())
         .ok_or_else(|| {
             DbError::Cozo(format!(
-                "missing callsite {} while collecting module boundary edge",
+                "missing callsite {} while collecting {label}",
                 edge.call_site_id
             ))
-        })?;
-    cache.insert(edge.call_site_id, site.clone());
-    Ok(site)
+        })
 }
 
 fn proof_invariant_status_label(status: ProofInvariantStatus) -> &'static str {
@@ -1095,20 +1111,11 @@ fn boundary_edges_for_paths(
     paths: &[CallPath],
 ) -> Result<Vec<CallPathEdge>, DbError> {
     let mut out = BTreeMap::new();
+    let mut node_cache = BTreeMap::new();
     for path in paths {
         for edge in &path.edges {
-            let caller = db.call_node_info(edge.caller_id)?.ok_or_else(|| {
-                DbError::Cozo(format!(
-                    "missing call graph node metadata for boundary caller {}",
-                    edge.caller_id
-                ))
-            })?;
-            let callee = db.call_node_info(edge.callee_id)?.ok_or_else(|| {
-                DbError::Cozo(format!(
-                    "missing call graph node metadata for boundary callee {}",
-                    edge.callee_id
-                ))
-            })?;
+            let caller = cached_node_info(db, &mut node_cache, edge.caller_id, "boundary caller")?;
+            let callee = cached_node_info(db, &mut node_cache, edge.callee_id, "boundary callee")?;
             if caller.module_path != callee.module_path {
                 out.entry(edge.call_site_id).or_insert(*edge);
             }
@@ -1296,6 +1303,7 @@ fn source_cfgs_for_summary(
 ) -> Result<Vec<String>, DbError> {
     let mut cfgs = BTreeSet::new();
     let mut site_ids = BTreeSet::new();
+    let mut context_cache = BTreeMap::new();
     for rows in row_groups {
         for row in *rows {
             if site_ids.insert(row.site.id) {
@@ -1309,14 +1317,8 @@ fn source_cfgs_for_summary(
             if !site_ids.insert(edge.call_site_id) {
                 continue;
             }
-            let context = db.call_context_for_owner(edge.caller_id)?;
-            let Some(row) = context.iter().find(|row| row.site.id == edge.call_site_id) else {
-                return Err(DbError::Cozo(format!(
-                    "missing callsite {} while collecting summary cfgs",
-                    edge.call_site_id
-                )));
-            };
-            cfgs.extend(row.site.cfgs.iter().cloned());
+            let site = cached_context_site(db, &mut context_cache, edge, "summary cfgs")?;
+            cfgs.extend(site.cfgs.iter().cloned());
         }
     }
 

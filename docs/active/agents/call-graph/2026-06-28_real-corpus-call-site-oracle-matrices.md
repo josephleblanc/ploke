@@ -390,10 +390,11 @@ pins the memchr function-pointer rows by owner and source-line fanout. The
 shared real-corpus call-shape matrix in `ploke_test_utils::call_shape_matrix`
 now also covers the memchr function-pointer rows, memchr callable trait-object
 rows, the chrono `SelfField(["queue"]).is_empty()` row, and both generic-array
-`iter.size_hint()` rows. The chrono guarded receiver is shared DB and exact TUI
-coverage only because owner-scoped RAG collection currently bounds the long
-`parse_next_item` call list before that late source row; exact RAG has a
-dedicated chrono assertion for the same frontier. RAG collection and exact TUI
+`iter.size_hint()` rows. The chrono guarded receiver remains shared DB coverage
+with a dedicated exact RAG assertion for the same frontier; it is intentionally
+not part of the shared full TUI lookup/edges matrix because those tools also
+compute owner-wide usage summaries for the long `parse_next_item` body. RAG
+collection and exact TUI
 `code_item_lookup` plus `code_item_edges` preserve the two memchr
 function-pointer blockers, the two memchr callable trait-object path blockers,
 and the two generic-array `size_hint` external method-result receiver rows without

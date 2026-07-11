@@ -1,15 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use cozo::ScriptMutability;
 use uuid::Uuid;
 
 use crate::{Database, DbError};
 
-use super::super::{
-    CallPath, CallPathEdge, CallPathOptions,
-    decode::{decode_site, decode_target},
-    families::valid_call_target_rules,
-};
+use super::super::{CallPath, CallPathEdge, CallPathOptions, CallStatusKind};
 
 impl Database {
     /// Returns bounded resolved call paths that start at an owner node.
@@ -175,105 +170,25 @@ impl Database {
         &self,
         owner_ids: &BTreeSet<Uuid>,
     ) -> Result<BTreeMap<Uuid, Vec<CallPathEdge>>, DbError> {
-        if owner_ids.is_empty() {
-            return Ok(BTreeMap::new());
+        let mut edges = Vec::new();
+        for owner_id in owner_ids {
+            for row in self.call_context_for_owner(*owner_id)? {
+                if row.status.status != CallStatusKind::Resolved {
+                    continue;
+                }
+                for target in row.targets {
+                    edges.push(CallPathEdge {
+                        caller_id: row.site.owner_id,
+                        callee_id: target.target_id,
+                        call_site_id: row.site.id,
+                        span: row.site.span,
+                        relation: target.relation,
+                        source_kind: target.source_kind,
+                        target_kind: target.target_kind,
+                    });
+                }
+            }
         }
-
-        let input_rows = owner_ids
-            .iter()
-            .map(|id| format!("[to_uuid(\"{id}\")]"))
-            .collect::<Vec<_>>()
-            .join(",\n");
-
-        let mut script = valid_call_target_rules();
-        script.push_str(
-            r#"
-            input_owner[owner_id] <- [
-"#,
-        );
-        script.push_str(&input_rows);
-        script.push_str(
-            r#"
-            ]
-
-            ?[
-                id,
-                owner_id,
-                call_kind,
-                span,
-                cfgs,
-                unsafe_block,
-                path,
-                method_name,
-                macro_name,
-                receiver_kind,
-                receiver_path,
-                arg_count,
-                generic_arg_count,
-                relation_site_id,
-                relation_target_id,
-                relation_kind,
-                source_kind,
-                target_kind
-            ] :=
-                input_owner[owner_id],
-                *call_site_edge {
-                    source_id: owner_id,
-                    target_id: id,
-                    relation_kind: "BodyContainsCall",
-                    target_kind: call_kind @ 'NOW'
-                },
-                *call_site {
-                    id,
-                    owner_id,
-                    call_kind,
-                    span,
-                    cfgs,
-                    unsafe_block,
-                    path,
-                    method_name,
-                    macro_name,
-                    receiver_kind,
-                    receiver_path,
-                    arg_count,
-                    generic_arg_count @ 'NOW'
-                },
-                *call_resolution_status {
-                    source_id: id,
-                    source_kind: call_kind,
-                    status_kind: "Resolved" @ 'NOW'
-                },
-                relation_site_id = id,
-                source_kind = call_kind,
-                *call_relation {
-                    source_id: relation_site_id,
-                    target_id: relation_target_id,
-                    relation_kind,
-                    source_kind,
-                    target_kind @ 'NOW'
-                },
-                valid_target[relation_target_id, relation_kind, source_kind, target_kind]
-            :sort span, id, relation_target_id"#,
-        );
-
-        let rows = self.run_script(&script, BTreeMap::new(), ScriptMutability::Immutable)?;
-        let mut edges = rows
-            .rows
-            .iter()
-            .map(|row| {
-                let site = decode_site(&row[..13])?;
-                let target = decode_target(&row[13..])?;
-                Ok(CallPathEdge {
-                    caller_id: site.owner_id,
-                    callee_id: target.target_id,
-                    call_site_id: site.id,
-                    span: site.span,
-                    relation: target.relation,
-                    source_kind: target.source_kind,
-                    target_kind: target.target_kind,
-                })
-            })
-            .collect::<Result<Vec<_>, DbError>>()?;
         sort_call_edges(&mut edges);
         edges.dedup();
         let mut by_owner = BTreeMap::<Uuid, Vec<CallPathEdge>>::new();
@@ -287,105 +202,28 @@ impl Database {
         &self,
         target_ids: &BTreeSet<Uuid>,
     ) -> Result<BTreeMap<Uuid, Vec<CallPathEdge>>, DbError> {
-        if target_ids.is_empty() {
-            return Ok(BTreeMap::new());
-        }
-
-        let input_rows = target_ids
-            .iter()
-            .map(|id| format!("[to_uuid(\"{id}\")]"))
-            .collect::<Vec<_>>()
-            .join(",\n");
-
-        let mut script = valid_call_target_rules();
-        script.push_str(
-            r#"
-            input_target[target_id] <- [
-"#,
-        );
-        script.push_str(&input_rows);
-        script.push_str(
-            r#"
-            ]
-
-            ?[
-                id,
-                owner_id,
-                call_kind,
-                span,
-                cfgs,
-                unsafe_block,
-                path,
-                method_name,
-                macro_name,
-                receiver_kind,
-                receiver_path,
-                arg_count,
-                generic_arg_count,
-                relation_site_id,
-                relation_target_id,
-                relation_kind,
-                source_kind,
-                target_kind
-            ] :=
-                input_target[relation_target_id],
-                *call_relation {
-                    source_id: relation_site_id,
-                    target_id: relation_target_id,
-                    relation_kind,
-                    source_kind,
-                    target_kind @ 'NOW'
-                },
-                valid_target[relation_target_id, relation_kind, source_kind, target_kind],
-                id = relation_site_id,
-                call_kind = source_kind,
-                *call_resolution_status {
-                    source_id: id,
-                    source_kind: call_kind,
-                    status_kind: "Resolved" @ 'NOW'
-                },
-                *call_site_edge {
-                    source_id: owner_id,
-                    target_id: id,
-                    relation_kind: "BodyContainsCall",
-                    target_kind: call_kind @ 'NOW'
-                },
-                *call_site {
-                    id,
-                    owner_id,
-                    call_kind,
-                    span,
-                    cfgs,
-                    unsafe_block,
-                    path,
-                    method_name,
-                    macro_name,
-                    receiver_kind,
-                    receiver_path,
-                    arg_count,
-                    generic_arg_count @ 'NOW'
+        let mut edges = Vec::new();
+        for target_id in target_ids {
+            for row in self.call_context_for_target(*target_id)? {
+                if row.status.status != CallStatusKind::Resolved {
+                    continue;
                 }
-            :sort owner_id, span, relation_kind"#,
-        );
-
-        let rows = self.run_script(&script, BTreeMap::new(), ScriptMutability::Immutable)?;
-        let mut edges = rows
-            .rows
-            .iter()
-            .map(|row| {
-                let site = decode_site(&row[..13])?;
-                let target = decode_target(&row[13..])?;
-                Ok(CallPathEdge {
-                    caller_id: site.owner_id,
-                    callee_id: target.target_id,
-                    call_site_id: site.id,
-                    span: site.span,
-                    relation: target.relation,
-                    source_kind: target.source_kind,
-                    target_kind: target.target_kind,
-                })
-            })
-            .collect::<Result<Vec<_>, DbError>>()?;
+                for target in row.targets {
+                    if target.target_id != *target_id {
+                        continue;
+                    }
+                    edges.push(CallPathEdge {
+                        caller_id: row.site.owner_id,
+                        callee_id: target.target_id,
+                        call_site_id: row.site.id,
+                        span: row.site.span,
+                        relation: target.relation,
+                        source_kind: target.source_kind,
+                        target_kind: target.target_kind,
+                    });
+                }
+            }
+        }
         sort_call_edges(&mut edges);
         edges.dedup();
         let mut by_target = BTreeMap::<Uuid, Vec<CallPathEdge>>::new();
