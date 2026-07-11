@@ -122,6 +122,16 @@ should prevent future resumes from reselecting already-covered shapes.
      This is still an exact constructed-argument proof, not public callable
      parameter inference, arbitrary boxed value-flow, field-held boxed
      trait-object dispatch, or the real memchr boxed `dyn FnMut` runtime case.
+   - The same forwarding boundary now covers private boxed callable
+     parameters when the helper takes `f: Box<dyn Fn() -> i32>`, every
+     forwarding helper is private, and the complete caller chain supplies
+     `Box::new(local_target)`. The one-hop and two-hop fixture leaves resolve
+     `f()` to `local_target` through ordinary `CallRelation::Function` edges.
+     The paired conflicting boxed forwarding fixture preserves `local_target`
+     and `other_target` as ambiguous candidates and emits no resolved edge.
+     This remains complete private-caller proof, not arbitrary boxed
+     value-flow, public callable-parameter inference, or runtime trait-object
+     dispatch.
    - The same complete-local-caller boundary now has one adjacent constructed
      argument proof for private indexed field-parameter calls:
      `call_single_indexed_field_function_param(holder: CallbackArrayHolder)

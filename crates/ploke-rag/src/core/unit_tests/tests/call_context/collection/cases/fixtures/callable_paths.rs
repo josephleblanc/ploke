@@ -1020,6 +1020,26 @@ async fn call_context_collection_resolves_private_single_caller_callable_trait_o
             relation: CallTargetKind::DynamicFunction,
             proof_note: "caller supplies `Box::new(local_target)`",
         },
+        Case {
+            owner: "call_forwarded_boxed_dyn_fn_leaf",
+            source: "tests/fixture_crates/fixture_call_graph/src/lib.rs EOF `f()` with forwarded `Box<dyn Fn>` parameter",
+            kind: CallSiteKind::Path,
+            callee: CallCalleeInfo::Path {
+                path: vec!["f".to_string()],
+            },
+            relation: CallTargetKind::Function,
+            proof_note: "private forwarding chain ends in `Box::new(local_target)`",
+        },
+        Case {
+            owner: "call_two_hop_forwarded_boxed_dyn_fn_leaf",
+            source: "tests/fixture_crates/fixture_call_graph/src/lib.rs EOF `f()` with two-hop forwarded `Box<dyn Fn>` parameter",
+            kind: CallSiteKind::Path,
+            callee: CallCalleeInfo::Path {
+                path: vec!["f".to_string()],
+            },
+            relation: CallTargetKind::Function,
+            proof_note: "two-hop private forwarding chain ends in `Box::new(local_target)`",
+        },
     ];
     let owners = cases
         .iter()

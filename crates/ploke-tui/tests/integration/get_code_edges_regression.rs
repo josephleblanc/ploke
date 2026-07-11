@@ -1557,6 +1557,21 @@ async fn code_item_edges_returns_forwarded_referenced_dyn_fn_param_targets() {
     }
 }
 
+#[tokio::test]
+async fn code_item_edges_returns_forwarded_boxed_dyn_fn_param_targets() {
+    // Source oracle:
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs EOF
+    //     private `Box<dyn Fn>` leaves call `f()` after one-hop and two-hop
+    //     forwarding. Each complete private caller chain passes
+    //     `Box::new(local_target)`.
+    for fixture in [
+        CallableParamResolvedFixture::forwarded_boxed_dyn_fn_leaf().await,
+        CallableParamResolvedFixture::two_hop_forwarded_boxed_dyn_fn_leaf().await,
+    ] {
+        assert_callable_param_edges(fixture, "forwarded boxed dyn Fn parameter").await;
+    }
+}
+
 async fn assert_callable_param_edges(fixture: CallableParamResolvedFixture, label: &str) {
     let params = EdgesParams {
         item_name: Cow::Borrowed(fixture.owner_name),

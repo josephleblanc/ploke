@@ -553,7 +553,7 @@ fn fixture_context_resolves_two_hop_forwarded_function_pointer_parameter() -> Re
 }
 
 #[test]
-fn fixture_context_resolves_forwarded_referenced_dyn_fn_parameters() -> Result<(), DbError> {
+fn fixture_context_resolves_forwarded_callable_trait_object_parameters() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let target = function_id_by_name(&db, "local_target")?;
 
@@ -566,10 +566,10 @@ fn fixture_context_resolves_forwarded_referenced_dyn_fn_parameters() -> Result<(
     }
 
     // tests/fixture_crates/fixture_call_graph/src/lib.rs EOF:
-    // each private leaf receives `f: &dyn Fn() -> i32` through a bounded
-    // forwarding chain. The complete local caller set ends in `&local_target`,
-    // so the referenced callable parameter proof can reuse the same forwarding
-    // contract as bare function-pointer parameters.
+    // each private leaf receives `f` through a bounded forwarding chain. The
+    // complete local caller set ends in either `&local_target` or
+    // `Box::new(local_target)`, so the callable trait-object parameter proof can
+    // reuse the same forwarding contract as bare function-pointer parameters.
     for case in [
         Case {
             label: "one-hop forwarded referenced dyn Fn",
@@ -586,6 +586,23 @@ fn fixture_context_resolves_forwarded_referenced_dyn_fn_parameters() -> Result<(
                 "call_two_hop_forwarded_referenced_dyn_fn_wrapper",
             ],
             caller: "call_two_hop_forwarded_referenced_dyn_fn_with_local_target",
+            expected_depth: 4,
+        },
+        Case {
+            label: "one-hop forwarded boxed dyn Fn",
+            leaf: "call_forwarded_boxed_dyn_fn_leaf",
+            intermediates: &["call_forwarded_boxed_dyn_fn_wrapper"],
+            caller: "call_forwarded_boxed_dyn_fn_with_local_target",
+            expected_depth: 3,
+        },
+        Case {
+            label: "two-hop forwarded boxed dyn Fn",
+            leaf: "call_two_hop_forwarded_boxed_dyn_fn_leaf",
+            intermediates: &[
+                "call_two_hop_forwarded_boxed_dyn_fn_middle",
+                "call_two_hop_forwarded_boxed_dyn_fn_wrapper",
+            ],
+            caller: "call_two_hop_forwarded_boxed_dyn_fn_with_local_target",
             expected_depth: 4,
         },
     ] {
@@ -633,7 +650,7 @@ fn fixture_context_resolves_forwarded_referenced_dyn_fn_parameters() -> Result<(
             })
             .unwrap_or_else(|| {
                 panic!(
-                    "{} should traverse caller through forwarded referenced dyn Fn helpers: {paths:#?}",
+                    "{} should traverse caller through forwarded callable trait-object helpers: {paths:#?}",
                     case.label
                 )
             });
@@ -648,6 +665,71 @@ fn fixture_context_resolves_forwarded_referenced_dyn_fn_parameters() -> Result<(
             assert_eq!(edge.callee_id, pair[1]);
             assert_eq!(edge.relation, CallRelationKind::Function);
         }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn fixture_context_preserves_forwarded_conflicting_boxed_dyn_fn_candidates() -> Result<(), DbError>
+{
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let expected = dynamic_candidates(&db)?;
+    let leaf = function_id_by_name(&db, "call_forwarded_conflicting_boxed_dyn_fn_leaf")?;
+    let wrapper = function_id_by_name(&db, "call_forwarded_conflicting_boxed_dyn_fn_wrapper")?;
+    let local_caller = function_id_by_name(
+        &db,
+        "call_forwarded_conflicting_boxed_dyn_fn_with_local_target",
+    )?;
+    let other_caller = function_id_by_name(
+        &db,
+        "call_forwarded_conflicting_boxed_dyn_fn_with_other_target",
+    )?;
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs EOF:
+    // the private wrapper forwards `f: Box<dyn Fn()>`, but two complete callers
+    // construct conflicting boxed function items. The leaf should retain
+    // candidate provenance without fabricating a resolved edge.
+    let context = db.call_context_for_owner(leaf)?;
+    assert_eq!(
+        context.len(),
+        1,
+        "forwarded conflicting boxed dyn Fn leaf context rows: {context:#?}"
+    );
+    assert_path_function_candidates(
+        &context[0],
+        leaf,
+        &["f"],
+        &expected,
+        "call_forwarded_conflicting_boxed_dyn_fn_leaf",
+    );
+
+    let wrapper_context = db.call_context_for_owner(wrapper)?;
+    let leaf_call = row_by_path(
+        &wrapper_context,
+        &["call_forwarded_conflicting_boxed_dyn_fn_leaf"],
+    );
+    assert_resolved_target(
+        leaf_call,
+        leaf,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
+
+    for caller in [local_caller, other_caller] {
+        let caller_context = db.call_context_for_owner(caller)?;
+        let wrapper_call = row_by_path(
+            &caller_context,
+            &["call_forwarded_conflicting_boxed_dyn_fn_wrapper"],
+        );
+        assert_resolved_target(
+            wrapper_call,
+            wrapper,
+            CallRelationKind::Function,
+            CallSiteKind::Path,
+            CallTargetKind::Function,
+        );
     }
 
     Ok(())

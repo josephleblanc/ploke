@@ -2221,3 +2221,47 @@ pub fn call_static_item_macro_generated_static_initializer() -> i32 {
     call_graph_static_item_macro!();
     0
 }
+
+fn call_forwarded_boxed_dyn_fn_leaf(f: Box<dyn Fn() -> i32>) -> i32 {
+    f()
+}
+
+fn call_forwarded_boxed_dyn_fn_wrapper(f: Box<dyn Fn() -> i32>) -> i32 {
+    call_forwarded_boxed_dyn_fn_leaf(f)
+}
+
+pub fn call_forwarded_boxed_dyn_fn_with_local_target() -> i32 {
+    call_forwarded_boxed_dyn_fn_wrapper(Box::new(local_target))
+}
+
+fn call_two_hop_forwarded_boxed_dyn_fn_leaf(f: Box<dyn Fn() -> i32>) -> i32 {
+    f()
+}
+
+fn call_two_hop_forwarded_boxed_dyn_fn_middle(f: Box<dyn Fn() -> i32>) -> i32 {
+    call_two_hop_forwarded_boxed_dyn_fn_leaf(f)
+}
+
+fn call_two_hop_forwarded_boxed_dyn_fn_wrapper(f: Box<dyn Fn() -> i32>) -> i32 {
+    call_two_hop_forwarded_boxed_dyn_fn_middle(f)
+}
+
+pub fn call_two_hop_forwarded_boxed_dyn_fn_with_local_target() -> i32 {
+    call_two_hop_forwarded_boxed_dyn_fn_wrapper(Box::new(local_target))
+}
+
+fn call_forwarded_conflicting_boxed_dyn_fn_leaf(f: Box<dyn Fn() -> i32>) -> i32 {
+    f()
+}
+
+fn call_forwarded_conflicting_boxed_dyn_fn_wrapper(f: Box<dyn Fn() -> i32>) -> i32 {
+    call_forwarded_conflicting_boxed_dyn_fn_leaf(f)
+}
+
+pub fn call_forwarded_conflicting_boxed_dyn_fn_with_local_target() -> i32 {
+    call_forwarded_conflicting_boxed_dyn_fn_wrapper(Box::new(local_target))
+}
+
+pub fn call_forwarded_conflicting_boxed_dyn_fn_with_other_target() -> i32 {
+    call_forwarded_conflicting_boxed_dyn_fn_wrapper(Box::new(other_target))
+}

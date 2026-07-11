@@ -165,6 +165,21 @@ callable-parameter inference, field-held boxed callable value-flow, arbitrary
 boxed trait-object dispatch, or the real memchr boxed `dyn FnMut` object-field
 runtime cases.
 
+Latest completed slice: bounded forwarded boxed callable trait-object parameter
+proof. The fixture-backed source oracles
+`call_forwarded_boxed_dyn_fn_leaf(f: Box<dyn Fn() -> i32>) { f() }` and
+`call_two_hop_forwarded_boxed_dyn_fn_leaf(f: Box<dyn Fn() -> i32>) { f() }`
+receive `f` through one or two private forwarding helpers whose complete local
+caller chains end at `Box::new(local_target)`. Parser, DB, RAG, and exact TUI
+lookup/edges tests cover the resolved `Function` edges and caller-to-target
+paths. The paired
+`call_forwarded_conflicting_boxed_dyn_fn_leaf` oracle has complete private
+callers that pass `Box::new(local_target)` and `Box::new(other_target)`, so the
+leaf preserves both ambiguous candidates and emits no resolved edge. This is
+still bounded complete-private-caller proof, not arbitrary boxed value-flow,
+public callable-parameter inference, field-held callable trait-object
+dispatch, or runtime vtable modeling.
+
 Latest completed slice: same-block tuple-field awaited async-closure future
 proof. The fixture-backed source oracle
 `call_awaited_async_closure_future_tuple_field_with_body_call` binds

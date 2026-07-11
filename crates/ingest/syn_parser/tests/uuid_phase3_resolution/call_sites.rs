@@ -276,6 +276,9 @@ const FORWARDED_CONFLICTING_NAMED_FIELD_LEAF_CALL_SPAN: (usize, usize) = (45880,
 const FORWARDED_CONFLICTING_NAMED_FIELD_WRAPPER_CALL_SPAN: (usize, usize) = (45990, 46041);
 const FORWARDED_CONFLICTING_NAMED_FIELD_LOCAL_CALLER_SPAN: (usize, usize) = (46130, 46232);
 const FORWARDED_CONFLICTING_NAMED_FIELD_OTHER_CALLER_SPAN: (usize, usize) = (46321, 46423);
+const FORWARDED_BOXED_DYN_FN_LEAF_CALL_SPAN: (usize, usize) = (53228, 53231);
+const TWO_HOP_FORWARDED_BOXED_DYN_FN_LEAF_CALL_SPAN: (usize, usize) = (53564, 53567);
+const FORWARDED_CONFLICTING_BOXED_DYN_FN_LEAF_CALL_SPAN: (usize, usize) = (54069, 54072);
 const TWO_HOP_FORWARDED_FUNCTION_POINTER_LEAF_CALL_SPAN: (usize, usize) = (46504, 46507);
 const TWO_HOP_FORWARDED_FUNCTION_POINTER_MIDDLE_CALL_SPAN: (usize, usize) = (46590, 46637);
 const TWO_HOP_FORWARDED_FUNCTION_POINTER_WRAPPER_CALL_SPAN: (usize, usize) = (46721, 46770);
@@ -7301,6 +7304,82 @@ paranoid_call_site_test!(
             0,
             &[],
             ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_forwarded_boxed_dyn_fn_leaf_resolves_forwarded_private_parameter,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_forwarded_boxed_dyn_fn_leaf"
+    },
+    expected: {
+        let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("local_target should regenerate a FunctionNodeId");
+        ExpectedCallSite::path_value_binding(
+            &["f"],
+            FORWARDED_BOXED_DYN_FN_LEAF_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_two_hop_forwarded_boxed_dyn_fn_leaf_resolves_forwarded_private_parameter,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_two_hop_forwarded_boxed_dyn_fn_leaf"
+    },
+    expected: {
+        let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("local_target should regenerate a FunctionNodeId");
+        ExpectedCallSite::path_value_binding(
+            &["f"],
+            TWO_HOP_FORWARDED_BOXED_DYN_FN_LEAF_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_forwarded_conflicting_boxed_dyn_fn_leaf_preserves_forwarded_candidates,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_forwarded_conflicting_boxed_dyn_fn_leaf"
+    },
+    expected: {
+        let first_args = fixture_call_graph_function_args(&["crate"], "local_target");
+        let second_args = fixture_call_graph_function_args(&["crate"], "other_target");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let first_info = first_args.generate_pid(&parsed_graphs)?;
+        let second_info = second_args.generate_pid(&parsed_graphs)?;
+        let first = FunctionNodeId::try_from(first_info.test_pid())
+            .expect("local_target should regenerate a FunctionNodeId");
+        let second = FunctionNodeId::try_from(second_info.test_pid())
+            .expect("other_target should regenerate a FunctionNodeId");
+        ExpectedCallSite::path_value_binding(
+            &["f"],
+            FORWARDED_CONFLICTING_BOXED_DYN_FN_LEAF_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::AmbiguousPathFunctionCandidates { first, second },
         )
     },
 );
