@@ -85,6 +85,14 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
         &db,
         &function_in_module_query(&["crate"], "call_two_hop_forwarded_function_pointer_leaf"),
     )?;
+    let forwarded_referenced_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_forwarded_referenced_dyn_fn_leaf"),
+    )?;
+    let two_hop_forwarded_referenced_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_two_hop_forwarded_referenced_dyn_fn_leaf"),
+    )?;
     let multi_conflicting_param_owner = one_uuid(
         &db,
         &function_in_module_query(&["crate"], "call_multi_conflicting_function_pointer_param"),
@@ -159,6 +167,8 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
         (multi_param_owner, 1.0),
         (forwarded_param_owner, 1.0),
         (two_hop_forwarded_param_owner, 1.0),
+        (forwarded_referenced_owner, 1.0),
+        (two_hop_forwarded_referenced_owner, 1.0),
         (multi_conflicting_param_owner, 1.0),
         (forwarded_conflicting_owner, 1.0),
         (two_hop_forwarded_conflicting_owner, 1.0),
@@ -514,6 +524,14 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
         (
             two_hop_forwarded_param_owner,
             "two-hop forwarded function-pointer leaf",
+        ),
+        (
+            forwarded_referenced_owner,
+            "forwarded referenced dyn Fn leaf",
+        ),
+        (
+            two_hop_forwarded_referenced_owner,
+            "two-hop forwarded referenced dyn Fn leaf",
         ),
     ] {
         let context = call_context

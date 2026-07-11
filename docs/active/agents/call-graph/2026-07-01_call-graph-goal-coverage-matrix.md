@@ -2693,6 +2693,13 @@ unsupported, but the generated const initializer is addressable as a
 `local_const` executable owner, and `assoc_const_value()` is exposed from that
 owner through parser, DB, RAG, and exact TUI lookup/edges tests.
 
+Update 2026-07-11: the dynamic callable-value row now includes one-hop and
+two-hop private forwarding proof for referenced callable trait-object
+parameters. Fixture helpers with `f: &dyn Fn() -> i32` resolve `f()` to
+`local_target` only when every private forwarding hop is visible and the
+complete caller chain passes `&local_target`; DB, RAG, and exact lookup/edges
+tests cover the new owners without broadening unproven trait-object dispatch.
+
 Update 2026-07-09: the request-parts notes in the matrix row above are
 superseded by the current tuple-return summary slice. The axum-core
 `request_parts.rs:164`

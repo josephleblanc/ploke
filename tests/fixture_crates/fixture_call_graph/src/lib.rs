@@ -2160,3 +2160,31 @@ fn call_single_parenthesized_referenced_dyn_fn_param(f: &dyn Fn() -> i32) -> i32
 pub fn call_single_parenthesized_referenced_dyn_fn_param_with_local_target() -> i32 {
     call_single_parenthesized_referenced_dyn_fn_param(&local_target)
 }
+
+fn call_forwarded_referenced_dyn_fn_leaf(f: &dyn Fn() -> i32) -> i32 {
+    f()
+}
+
+fn call_forwarded_referenced_dyn_fn_wrapper(f: &dyn Fn() -> i32) -> i32 {
+    call_forwarded_referenced_dyn_fn_leaf(f)
+}
+
+pub fn call_forwarded_referenced_dyn_fn_with_local_target() -> i32 {
+    call_forwarded_referenced_dyn_fn_wrapper(&local_target)
+}
+
+fn call_two_hop_forwarded_referenced_dyn_fn_leaf(f: &dyn Fn() -> i32) -> i32 {
+    f()
+}
+
+fn call_two_hop_forwarded_referenced_dyn_fn_middle(f: &dyn Fn() -> i32) -> i32 {
+    call_two_hop_forwarded_referenced_dyn_fn_leaf(f)
+}
+
+fn call_two_hop_forwarded_referenced_dyn_fn_wrapper(f: &dyn Fn() -> i32) -> i32 {
+    call_two_hop_forwarded_referenced_dyn_fn_middle(f)
+}
+
+pub fn call_two_hop_forwarded_referenced_dyn_fn_with_local_target() -> i32 {
+    call_two_hop_forwarded_referenced_dyn_fn_wrapper(&local_target)
+}

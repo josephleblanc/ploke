@@ -553,6 +553,107 @@ fn fixture_context_resolves_two_hop_forwarded_function_pointer_parameter() -> Re
 }
 
 #[test]
+fn fixture_context_resolves_forwarded_referenced_dyn_fn_parameters() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let target = function_id_by_name(&db, "local_target")?;
+
+    struct Case<'a> {
+        label: &'a str,
+        leaf: &'a str,
+        intermediates: &'a [&'a str],
+        caller: &'a str,
+        expected_depth: u32,
+    }
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs EOF:
+    // each private leaf receives `f: &dyn Fn() -> i32` through a bounded
+    // forwarding chain. The complete local caller set ends in `&local_target`,
+    // so the referenced callable parameter proof can reuse the same forwarding
+    // contract as bare function-pointer parameters.
+    for case in [
+        Case {
+            label: "one-hop forwarded referenced dyn Fn",
+            leaf: "call_forwarded_referenced_dyn_fn_leaf",
+            intermediates: &["call_forwarded_referenced_dyn_fn_wrapper"],
+            caller: "call_forwarded_referenced_dyn_fn_with_local_target",
+            expected_depth: 3,
+        },
+        Case {
+            label: "two-hop forwarded referenced dyn Fn",
+            leaf: "call_two_hop_forwarded_referenced_dyn_fn_leaf",
+            intermediates: &[
+                "call_two_hop_forwarded_referenced_dyn_fn_middle",
+                "call_two_hop_forwarded_referenced_dyn_fn_wrapper",
+            ],
+            caller: "call_two_hop_forwarded_referenced_dyn_fn_with_local_target",
+            expected_depth: 4,
+        },
+    ] {
+        let leaf = function_id_by_name(&db, case.leaf)?;
+        let caller = function_id_by_name(&db, case.caller)?;
+        let mut chain = vec![caller];
+        for name in case.intermediates.iter().rev() {
+            chain.push(function_id_by_name(&db, name)?);
+        }
+        chain.push(leaf);
+        chain.push(target);
+
+        let context = db.call_context_for_owner(leaf)?;
+        assert_eq!(
+            context.len(),
+            1,
+            "{} leaf context rows: {context:#?}",
+            case.label
+        );
+        let row = row_by_path(&context, &["f"]);
+        assert_eq!(row.site.owner_id, leaf);
+        assert_eq!(row.site.arg_count, Some(0));
+        assert_resolved_target(
+            row,
+            target,
+            CallRelationKind::Function,
+            CallSiteKind::Path,
+            CallTargetKind::Function,
+        );
+
+        let paths = db.call_paths_between(
+            caller,
+            target,
+            CallPathOptions {
+                max_depth: case.expected_depth,
+                max_paths: 8,
+            },
+        )?;
+        let path = paths
+            .iter()
+            .find(|path| {
+                path.start_id == caller
+                    && path.end_id == target
+                    && path.depth == case.expected_depth
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "{} should traverse caller through forwarded referenced dyn Fn helpers: {paths:#?}",
+                    case.label
+                )
+            });
+        assert_eq!(
+            path.edges.len(),
+            chain.len() - 1,
+            "{} path edge count: {path:#?}",
+            case.label
+        );
+        for (edge, pair) in path.edges.iter().zip(chain.windows(2)) {
+            assert_eq!(edge.caller_id, pair[0]);
+            assert_eq!(edge.callee_id, pair[1]);
+            assert_eq!(edge.relation, CallRelationKind::Function);
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
 fn fixture_context_resolves_one_hop_forwarded_named_field_parameter() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let leaf = function_id_by_name(&db, "call_forwarded_named_field_leaf")?;

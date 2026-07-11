@@ -107,6 +107,13 @@ should prevent future resumes from reselecting already-covered shapes.
      bounded private single-caller generic `FnOnce` path and parenthesized
      dynamic edges. Public callable-trait, opaque, missing-argument, and
      multi-target shapes remain explicit blockers.
+   - The same bounded forwarding proof now covers private referenced callable
+     parameters when the helper takes `f: &dyn Fn() -> i32`, every forwarding
+     helper is private, and the complete caller chain supplies `&local_target`.
+     The one-hop and two-hop fixture leaves resolve `f()` to `local_target`
+     through ordinary `CallRelation::Function` edges; broader callable
+     trait-object dispatch without exact private-caller proof remains
+     targetless.
    - The same complete-local-caller boundary now has one adjacent constructed
      argument proof for private indexed field-parameter calls:
      `call_single_indexed_field_function_param(holder: CallbackArrayHolder)
