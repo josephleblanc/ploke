@@ -50,20 +50,28 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Current bucket: caller-supplied module-boundary policy checks over existing
-resolved boundary edges.
+Current bucket: bounded returned private callable-parameter proof.
 
 Exit criteria:
 
-- Add a DB helper and real-corpus assertion that reports forbidden
-  caller/callee module-prefix crossings without inventing targetless traversal
-  edges.
-- Add a RAG exact helper if the DB row is exposed downstream.
-- Do not change exact TUI tool inputs in this chunk unless a tool accepts
-  architecture rules.
-- Add one consolidated doc note.
+- Reuse existing complete-private-caller callable-parameter proof for a helper
+  that returns its private function-pointer parameter directly.
+- Add exact and ambiguous fixture-backed parser assertions.
+- Add DB context/proof assertions over the persisted call graph.
+- Add RAG and TUI/request-code-context propagation assertions.
+- Keep public callable parameters, arbitrary returned expressions, callable
+  trait objects, and async returned futures fail-closed.
 
-Status: DB `module_boundary_policy_violations_from_owner`, RAG
+Status: implemented for
+`return_forwarded_function_pointer(local_target)()` and the paired conflicting
+callers of `return_conflicting_forwarded_function_pointer(...)()`. The exact
+outer returned dynamic call resolves to `local_target` via `DynamicFunction`;
+the conflicting local/other callers preserve both candidates as ambiguous
+dynamic rows with no resolved edge. This slice reuses the existing bounded
+`ParameterCallResolution` path instead of adding a new helper family.
+
+Previous completed slice: caller-supplied module-boundary policy checks over
+existing resolved boundary edges. DB `module_boundary_policy_violations_from_owner`, RAG
 `exact_module_boundary_policy_violations_from_owner`, and exact TUI
 `code_item_boundary_policy` now evaluate caller-supplied forbidden
 module-prefix rules over existing resolved-only boundary edges. The axum source

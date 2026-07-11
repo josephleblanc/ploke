@@ -15,12 +15,24 @@ async fn request_code_context_returns_targetless_special_form_proof_context()
         &db,
         &function_in_module_query(&["crate"], "call_chained_returned_function"),
     )?;
+    let returned_param_owner = one_uuid(
+        &db,
+        &function_in_module_query(
+            &["crate"],
+            "call_returned_forwarded_function_pointer_param_with_local_target",
+        ),
+    )?;
     let qself_owner = one_uuid(
         &db,
         &function_in_module_query(&["crate"], "call_qualified_dyn_any_downcast_mut"),
     )?;
     let chained_target = one_uuid(&db, &function_in_module_query(&["crate"], "make_unary_fn"))?;
     let returned_target = one_uuid(&db, &function_in_module_query(&["crate"], "unary_target"))?;
+    let returned_param_helper = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "return_forwarded_function_pointer"),
+    )?;
+    let local_target = one_uuid(&db, &function_in_module_query(&["crate"], "local_target"))?;
 
     assert_eq!(
         db.project_call_proof_facts_for_owner(extern_owner, "bd:fixture-call-graph")?,
@@ -31,6 +43,11 @@ async fn request_code_context_returns_targetless_special_form_proof_context()
         db.project_call_proof_facts_for_owner(chained_owner, "bd:fixture-call-graph")?,
         6,
         "chained returned-function call should project inner and outer resolved proof facts"
+    );
+    assert_eq!(
+        db.project_call_proof_facts_for_owner(returned_param_owner, "bd:fixture-call-graph")?,
+        6,
+        "returned parameter function call should project inner and outer resolved proof facts"
     );
     assert_eq!(
         db.project_call_proof_facts_for_owner(qself_owner, "bd:fixture-call-graph")?,
@@ -116,6 +133,48 @@ async fn request_code_context_returns_targetless_special_form_proof_context()
     );
     assert_resolved_call(&chained_part.proof_context, chained_owner, chained_target);
     assert_resolved_call(&chained_part.proof_context, chained_owner, returned_target);
+
+    let returned_param_result = execute_fixture_tool_request(
+        &db,
+        "call_returned_forwarded_function_pointer_param_with_local_target",
+        1,
+        "returned_parameter_proof_context",
+    )
+    .await?;
+    let returned_param_payload: RequestCodeContextResult =
+        serde_json::from_str(&returned_param_result.content)?;
+    assert_result_ok(
+        &returned_param_payload,
+        "call_returned_forwarded_function_pointer_param_with_local_target",
+        1,
+        "fixture_call_graph",
+    );
+    assert!(
+        returned_param_payload
+            .note
+            .as_deref()
+            .is_none_or(|note| { !note.contains("Proof-context expansion is unavailable") }),
+        "projected returned parameter proof facts should avoid degraded proof-context note: {returned_param_payload:#?}"
+    );
+    let returned_param_part = returned_param_payload
+        .context
+        .iter()
+        .find(|part| part.id == returned_param_owner)
+        .expect("request_code_context should materialize the returned parameter proof owner");
+    assert!(
+        returned_param_part.proof_context.len() >= 6,
+        "returned parameter proof context: {returned_param_part:#?}"
+    );
+    assert_resolved_call(
+        &returned_param_part.proof_context,
+        returned_param_owner,
+        returned_param_helper,
+    );
+    assert_resolved_call(
+        &returned_param_part.proof_context,
+        returned_param_owner,
+        local_target,
+    );
 
     let qself_result = execute_fixture_tool_request(
         &db,

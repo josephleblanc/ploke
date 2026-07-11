@@ -81,7 +81,7 @@ The most useful companion documents are:
 | Proc-macro body owners | axum-macros | Public proc-macro entrypoints traverse to local helpers such as `expand_with` and `expand_attr_with`. |
 | Local executable owners | axum | Closure, async-block, local const/static/fn, and local impl method owners are exact-addressable where persisted. |
 | External frontiers | axum, chrono, local fixture | External dependency, std-root, extern C, and external receiver rows stay targetless unless explicitly summarized. |
-| Dynamic/callable fallbacks | axum, memchr | Callable fields, callback parameters, boxed dyn callable rows, and arbitrary expression dynamic callees remain visible blockers unless exact local proof exists. Fixture coverage includes complete private callable-parameter and named holder-field forwarding through two explicit helper calls, with conflicting caller targets kept ambiguous and edge-free. |
+| Dynamic/callable fallbacks | axum, memchr | Callable fields, callback parameters, boxed dyn callable rows, and arbitrary expression dynamic callees remain visible blockers unless exact local proof exists. Fixture coverage includes complete private callable-parameter and named holder-field forwarding through two explicit helper calls, returned private callable parameters, and conflicting caller targets kept ambiguous and edge-free. |
 | Source metadata and usage questions | axum | Source files/modules/crates/cfgs, public/test buckets, architecture boundaries, dead-code, and effect seeds are covered by usage-question tests. |
 
 ## RAG and TUI Coverage
@@ -167,6 +167,15 @@ fixture-backed awaited local async method-result receiver proof for
 - `cargo test -p ploke-rag proof_context_collection_preserves_projected_result_field_receiver_rows --lib -- --nocapture`
 - `cargo test -p ploke-tui request_code_context_returns_result_field_receiver_call_context --lib -- --nocapture`
 - `cargo test -p ploke-tui request_code_context_returns_result_field_receiver_proof_context --lib -- --nocapture`
+
+On 2026-07-11 the fixture-backed returned private callable-parameter proof
+reused the bounded complete-private-caller callable-parameter resolver for
+outer returned dynamic calls such as
+`return_forwarded_function_pointer(local_target)()`. The exact case resolves
+to `local_target`; the conflicting paired callers preserve `local_target` and
+`other_target` as ambiguous dynamic candidates without a resolved edge. Focused
+verification covered parser rows, DB context/proof rows, RAG call/proof
+context, and `request_code_context` call/proof payloads.
 
 On 2026-07-10 the call graph schema added `call_callee_evidence` to preserve
 typed parser callee evidence for async closure bindings. Active fixtures were

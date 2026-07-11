@@ -11,11 +11,39 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
     let make_closure = unique_id_by_name(&db, "function", "make_closure")?;
     let make_bound = unique_id_by_name(&db, "function", "make_bound_closure")?;
     let make_alias = unique_id_by_name(&db, "function", "make_alias_bound_closure")?;
+    let returned_param_helper =
+        unique_id_by_name(&db, "function", "return_forwarded_function_pointer")?;
+    let returned_conflicting_helper = unique_id_by_name(
+        &db,
+        "function",
+        "return_conflicting_forwarded_function_pointer",
+    )?;
     let local_target = unique_id_by_name(&db, "function", "local_target")?;
     let other_target = unique_id_by_name(&db, "function", "other_target")?;
     let returned_owner = one_uuid(
         &db,
         &function_in_module_query(&["crate"], "call_returned_function"),
+    )?;
+    let returned_param_owner = one_uuid(
+        &db,
+        &function_in_module_query(
+            &["crate"],
+            "call_returned_forwarded_function_pointer_param_with_local_target",
+        ),
+    )?;
+    let returned_conflicting_local_owner = one_uuid(
+        &db,
+        &function_in_module_query(
+            &["crate"],
+            "call_returned_conflicting_forwarded_function_pointer_param_with_local_target",
+        ),
+    )?;
+    let returned_conflicting_other_owner = one_uuid(
+        &db,
+        &function_in_module_query(
+            &["crate"],
+            "call_returned_conflicting_forwarded_function_pointer_param_with_other_target",
+        ),
     )?;
     let returned_closure_owner = one_uuid(
         &db,
@@ -118,6 +146,9 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
 
     let call_context = rag.collect_call_context(&[
         (returned_owner, 1.0),
+        (returned_param_owner, 1.0),
+        (returned_conflicting_local_owner, 1.0),
+        (returned_conflicting_other_owner, 1.0),
         (returned_closure_owner, 1.0),
         (bound_owner, 1.0),
         (alias_owner, 1.0),
@@ -189,6 +220,107 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
         returned_dynamic.targets[0].relation,
         CallTargetKind::DynamicFunction
     );
+
+    let returned_param_context = call_context
+        .get(&returned_param_owner)
+        .expect("returned parameter function owner should receive outgoing call context");
+    assert_eq!(
+        returned_param_context.len(),
+        2,
+        "returned parameter function context: {returned_param_context:#?}"
+    );
+    let returned_param_path = returned_param_context
+        .iter()
+        .find(|call| {
+            call.kind == CallSiteKind::Path
+                && call.callee
+                    == CallCalleeInfo::Path {
+                        path: vec!["return_forwarded_function_pointer".to_string()],
+                    }
+        })
+        .expect("inner returned-parameter helper path call should stay visible");
+    assert_eq!(returned_param_path.status, CallStatusKind::Resolved);
+    assert_eq!(
+        returned_param_path.resolution,
+        Some(CallResolutionKind::LocalExact)
+    );
+    assert_eq!(returned_param_path.targets.len(), 1);
+    assert_eq!(
+        returned_param_path.targets[0].target_id,
+        returned_param_helper
+    );
+    assert_eq!(
+        returned_param_path.targets[0].relation,
+        CallTargetKind::Function
+    );
+
+    let returned_param_dynamic = returned_param_context
+        .iter()
+        .find(|call| {
+            call.kind == CallSiteKind::Dynamic
+                && call
+                    .targets
+                    .iter()
+                    .any(|target| target.target_id == local_target)
+        })
+        .expect("outer returned-parameter dynamic call should stay visible");
+    assert_eq!(returned_param_dynamic.callee, CallCalleeInfo::Dynamic);
+    assert_eq!(returned_param_dynamic.status, CallStatusKind::Resolved);
+    assert_eq!(
+        returned_param_dynamic.resolution,
+        Some(CallResolutionKind::LocalExact)
+    );
+    assert_eq!(returned_param_dynamic.targets.len(), 1);
+    assert_eq!(returned_param_dynamic.targets[0].target_id, local_target);
+    assert_eq!(
+        returned_param_dynamic.targets[0].relation,
+        CallTargetKind::DynamicFunction
+    );
+
+    for (owner, label) in [
+        (
+            returned_conflicting_local_owner,
+            "returned conflicting local caller",
+        ),
+        (
+            returned_conflicting_other_owner,
+            "returned conflicting other caller",
+        ),
+    ] {
+        let context = call_context
+            .get(&owner)
+            .unwrap_or_else(|| panic!("{label} should receive outgoing call context"));
+        assert_eq!(context.len(), 2, "{label} context: {context:#?}");
+
+        let helper = context
+            .iter()
+            .find(|call| {
+                call.kind == CallSiteKind::Path
+                    && call.callee
+                        == CallCalleeInfo::Path {
+                            path: vec!["return_conflicting_forwarded_function_pointer".to_string()],
+                        }
+            })
+            .unwrap_or_else(|| panic!("{label} should include the returned helper path call"));
+        assert_eq!(helper.status, CallStatusKind::Resolved);
+        assert_eq!(helper.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(helper.targets.len(), 1);
+        assert_eq!(helper.targets[0].target_id, returned_conflicting_helper);
+        assert_eq!(helper.targets[0].relation, CallTargetKind::Function);
+
+        let dynamic = context
+            .iter()
+            .find(|call| call.kind == CallSiteKind::Dynamic)
+            .unwrap_or_else(|| panic!("{label} should include an outer dynamic call"));
+        assert_eq!(dynamic.callee, CallCalleeInfo::Dynamic);
+        assert_ambiguous_call_candidates(
+            dynamic,
+            local_target,
+            other_target,
+            CallTargetKind::DynamicFunction,
+            label,
+        );
+    }
 
     let closure_cases = [
         // tests/fixture_crates/fixture_call_graph/src/lib.rs:1431:

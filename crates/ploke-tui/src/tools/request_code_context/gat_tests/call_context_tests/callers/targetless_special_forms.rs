@@ -15,12 +15,24 @@ async fn request_code_context_returns_targetless_special_form_call_context()
         &db,
         &function_in_module_query(&["crate"], "call_chained_returned_function"),
     )?;
+    let returned_param_owner = one_uuid(
+        &db,
+        &function_in_module_query(
+            &["crate"],
+            "call_returned_forwarded_function_pointer_param_with_local_target",
+        ),
+    )?;
     let qself_owner = one_uuid(
         &db,
         &function_in_module_query(&["crate"], "call_qualified_dyn_any_downcast_mut"),
     )?;
     let chained_target = one_uuid(&db, &function_in_module_query(&["crate"], "make_unary_fn"))?;
     let returned_target = one_uuid(&db, &function_in_module_query(&["crate"], "unary_target"))?;
+    let returned_param_helper = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "return_forwarded_function_pointer"),
+    )?;
+    let local_target = one_uuid(&db, &function_in_module_query(&["crate"], "local_target"))?;
 
     let extern_tool_result =
         execute_fixture_tool_request(&db, "call_extern_c_function", 1, "extern_c_call_context")
@@ -136,6 +148,86 @@ async fn request_code_context_returns_targetless_special_form_call_context()
         chained_owner,
         returned_target,
         dynamic_call.site_id,
+        CallExpansionKind::OutgoingTarget,
+    );
+
+    let returned_param_result = execute_fixture_tool_request(
+        &db,
+        "call_returned_forwarded_function_pointer_param_with_local_target",
+        1,
+        "returned_parameter_call_context",
+    )
+    .await?;
+    let returned_param_payload: RequestCodeContextResult =
+        serde_json::from_str(&returned_param_result.content)?;
+    assert_result_ok(
+        &returned_param_payload,
+        "call_returned_forwarded_function_pointer_param_with_local_target",
+        1,
+        "fixture_call_graph",
+    );
+    let returned_param_part = returned_param_payload
+        .context
+        .iter()
+        .find(|part| part.id == returned_param_owner)
+        .expect("request_code_context should materialize the returned parameter owner");
+    assert_eq!(
+        returned_param_part.call_context.len(),
+        2,
+        "returned parameter function call context: {returned_param_part:#?}"
+    );
+    let helper_call = returned_param_part
+        .call_context
+        .iter()
+        .find(|call| {
+            call.kind == CallSiteKind::Path
+                && call.callee
+                    == CallCalleeInfo::Path {
+                        path: path(&["return_forwarded_function_pointer"]),
+                    }
+        })
+        .expect("inner returned-parameter helper path call should stay visible");
+    assert_resolved_target(helper_call, returned_param_helper, CallTargetKind::Function);
+    let helper_part = returned_param_payload
+        .context
+        .iter()
+        .find(|part| part.id == returned_param_helper)
+        .expect("request_code_context should materialize the returned parameter helper");
+    assert_expansion(
+        helper_part,
+        returned_param_owner,
+        returned_param_helper,
+        helper_call.site_id,
+        CallExpansionKind::OutgoingTarget,
+    );
+
+    let returned_param_dynamic = returned_param_part
+        .call_context
+        .iter()
+        .find(|call| {
+            call.kind == CallSiteKind::Dynamic
+                && call
+                    .targets
+                    .iter()
+                    .any(|target| target.target_id == local_target)
+        })
+        .expect("outer returned-parameter dynamic call should stay visible");
+    assert_eq!(returned_param_dynamic.callee, CallCalleeInfo::Dynamic);
+    assert_resolved_target(
+        returned_param_dynamic,
+        local_target,
+        CallTargetKind::DynamicFunction,
+    );
+    let local_target_part = returned_param_payload
+        .context
+        .iter()
+        .find(|part| part.id == local_target)
+        .expect("request_code_context should materialize the returned parameter target");
+    assert_expansion(
+        local_target_part,
+        returned_param_owner,
+        local_target,
+        returned_param_dynamic.site_id,
         CallExpansionKind::OutgoingTarget,
     );
 

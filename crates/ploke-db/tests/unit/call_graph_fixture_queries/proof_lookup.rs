@@ -81,7 +81,7 @@ fn fixture_proof_symbol_lookup_matches_ambiguous_dynamic_candidate_payloads() ->
     let callers = db.callers_for_target(target)?;
     assert_eq!(
         callers.len(),
-        AMBIGUOUS_DYNAMIC_OWNERS.len() + 6,
+        AMBIGUOUS_DYNAMIC_OWNERS.len() + 10,
         "other_target should be reachable through every ambiguous fixture candidate caller: {callers:#?}"
     );
     let context = db.call_context_for_owner(owner)?;
@@ -101,6 +101,17 @@ fn fixture_proof_symbol_lookup_matches_ambiguous_dynamic_candidate_payloads() ->
     let forwarded_conflicting_site = caller_by_owner_kind_path(
         &callers,
         function_id_by_name(&db, "call_forwarded_conflicting_function_pointer_leaf")?,
+        CallSiteKind::Path,
+        &["f"],
+    )
+    .site
+    .id;
+    let two_hop_forwarded_conflicting_site = caller_by_owner_kind_path(
+        &callers,
+        function_id_by_name(
+            &db,
+            "call_two_hop_forwarded_conflicting_function_pointer_leaf",
+        )?,
         CallSiteKind::Path,
         &["f"],
     )
@@ -130,6 +141,36 @@ fn fixture_proof_symbol_lookup_matches_ambiguous_dynamic_candidate_payloads() ->
     )
     .site
     .id;
+    let two_hop_forwarded_conflicting_field_site = caller_by_owner_kind_path(
+        &callers,
+        function_id_by_name(&db, "call_two_hop_forwarded_conflicting_named_field_leaf")?,
+        CallSiteKind::Dynamic,
+        &["holder", "callback"],
+    )
+    .site
+    .id;
+    let returned_conflicting_local_site = caller_by_owner_kind_path(
+        &callers,
+        function_id_by_name(
+            &db,
+            "call_returned_conflicting_forwarded_function_pointer_param_with_local_target",
+        )?,
+        CallSiteKind::Dynamic,
+        &["return_conflicting_forwarded_function_pointer"],
+    )
+    .site
+    .id;
+    let returned_conflicting_other_site = caller_by_owner_kind_path(
+        &callers,
+        function_id_by_name(
+            &db,
+            "call_returned_conflicting_forwarded_function_pointer_param_with_other_target",
+        )?,
+        CallSiteKind::Dynamic,
+        &["return_conflicting_forwarded_function_pointer"],
+    )
+    .site
+    .id;
 
     let count = db.project_call_proof_facts_for_target(target, "bd:fixture-call-graph")?;
     assert_eq!(
@@ -151,6 +192,10 @@ fn fixture_proof_symbol_lookup_matches_ambiguous_dynamic_candidate_payloads() ->
             forwarded_conflicting_site,
         ),
         (
+            "two-hop forwarded conflicting function pointer parameter candidate",
+            two_hop_forwarded_conflicting_site,
+        ),
+        (
             "conflicting generic FnOnce parameter candidate",
             conflicting_generic_site,
         ),
@@ -161,6 +206,18 @@ fn fixture_proof_symbol_lookup_matches_ambiguous_dynamic_candidate_payloads() ->
         (
             "forwarded conflicting named-field parameter candidate",
             forwarded_conflicting_field_site,
+        ),
+        (
+            "two-hop forwarded conflicting named-field parameter candidate",
+            two_hop_forwarded_conflicting_field_site,
+        ),
+        (
+            "returned conflicting function pointer parameter local candidate",
+            returned_conflicting_local_site,
+        ),
+        (
+            "returned conflicting function pointer parameter other candidate",
+            returned_conflicting_other_site,
         ),
     ] {
         let site_rows = proof_rows_for_site(&rows, site);

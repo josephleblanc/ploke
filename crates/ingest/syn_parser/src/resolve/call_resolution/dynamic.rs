@@ -243,6 +243,15 @@ impl CallRelationResolver<'_> {
             return Ok(());
         };
 
+        if let Some(resolution) =
+            self.resolve_parameter_value_call(returning_function.into(), &return_path)?
+        {
+            statuses.push(push_dynamic_parameter_resolution(
+                call, resolution, relations,
+            ));
+            return Ok(());
+        }
+
         match self.resolve_dynamic_path(returning_function.into(), &return_path)? {
             DynamicPathResolution::Resolved(target) => {
                 relations.push(CallRelation::DynamicFunction {

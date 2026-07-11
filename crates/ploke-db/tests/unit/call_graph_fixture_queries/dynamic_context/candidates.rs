@@ -17,7 +17,7 @@ fn fixture_context_reads_projected_ambiguous_dynamic_candidates() -> Result<(), 
     let context = db.call_context_for_target(target)?;
     assert_eq!(
         context.len(),
-        AMBIGUOUS_DYNAMIC_OWNERS.len() + 6,
+        AMBIGUOUS_DYNAMIC_OWNERS.len() + 10,
         "other_target should expose every ambiguous candidate caller: {context:#?}"
     );
 
@@ -48,6 +48,10 @@ fn fixture_context_reads_projected_ambiguous_dynamic_candidates() -> Result<(), 
             &["f"][..],
         ),
         (
+            "call_two_hop_forwarded_conflicting_function_pointer_leaf",
+            &["f"][..],
+        ),
+        (
             "call_multi_conflicting_generic_fn_once_param",
             &["generic_f"][..],
         ),
@@ -65,6 +69,7 @@ fn fixture_context_reads_projected_ambiguous_dynamic_candidates() -> Result<(), 
     for owner_name in [
         "call_multi_conflicting_named_field_function_param",
         "call_forwarded_conflicting_named_field_leaf",
+        "call_two_hop_forwarded_conflicting_named_field_leaf",
     ] {
         let owner = function_id_by_name(&db, owner_name)?;
         let row = context
@@ -77,6 +82,38 @@ fn fixture_context_reads_projected_ambiguous_dynamic_candidates() -> Result<(), 
             row,
             owner,
             &["holder", "callback"],
+            &expected,
+            owner_name,
+        );
+    }
+
+    for owner_name in [
+        "call_returned_conflicting_forwarded_function_pointer_param_with_local_target",
+        "call_returned_conflicting_forwarded_function_pointer_param_with_other_target",
+    ] {
+        let owner = function_id_by_name(&db, owner_name)?;
+        let owner_context = db.call_context_for_owner(owner)?;
+        assert_eq!(
+            owner_context.len(),
+            2,
+            "{owner_name} owner context rows: {owner_context:#?}"
+        );
+        let helper = row_by_path(
+            &owner_context,
+            &["return_conflicting_forwarded_function_pointer"],
+        );
+        assert_eq!(helper.site.arg_count, Some(1));
+
+        let row = row_by_owner_kind_path(
+            &context,
+            owner,
+            CallSiteKind::Dynamic,
+            &["return_conflicting_forwarded_function_pointer"],
+        );
+        assert_dynamic_path_function_candidates(
+            row,
+            owner,
+            &["return_conflicting_forwarded_function_pointer"],
             &expected,
             owner_name,
         );

@@ -2097,3 +2097,23 @@ pub async fn call_await_method_result_instance_method() -> i32 {
     let source = AwaitLocalAssocMethodResultSource;
     source.ready_assoc().await.instance_value()
 }
+
+fn return_forwarded_function_pointer(f: fn() -> i32) -> fn() -> i32 {
+    f
+}
+
+pub fn call_returned_forwarded_function_pointer_param_with_local_target() -> i32 {
+    return_forwarded_function_pointer(local_target)()
+}
+
+fn return_conflicting_forwarded_function_pointer(f: fn() -> i32) -> fn() -> i32 {
+    f
+}
+
+pub fn call_returned_conflicting_forwarded_function_pointer_param_with_local_target() -> i32 {
+    return_conflicting_forwarded_function_pointer(local_target)()
+}
+
+pub fn call_returned_conflicting_forwarded_function_pointer_param_with_other_target() -> i32 {
+    return_conflicting_forwarded_function_pointer(other_target)()
+}

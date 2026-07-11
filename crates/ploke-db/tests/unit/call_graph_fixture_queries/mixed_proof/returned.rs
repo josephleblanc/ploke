@@ -74,6 +74,71 @@ fn fixture_projection_stores_real_returned_function_call_proof_facts() -> Result
 }
 
 #[test]
+fn fixture_projection_stores_returned_parameter_function_call_proof_facts() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let owner = function_id_by_name(
+        &db,
+        "call_returned_forwarded_function_pointer_param_with_local_target",
+    )?;
+    let helper = function_id_by_name(&db, "return_forwarded_function_pointer")?;
+    let returned = function_id_by_name(&db, "local_target")?;
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(
+        context.len(),
+        2,
+        "returned parameter function proof context rows: {context:#?}"
+    );
+
+    let path_row = row_by_path(&context, &["return_forwarded_function_pointer"]);
+    let dynamic_row = row_by_kind_path(
+        &context,
+        CallSiteKind::Dynamic,
+        &["return_forwarded_function_pointer"],
+    );
+    assert_resolved_target(
+        path_row,
+        helper,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
+    assert_resolved_target(
+        dynamic_row,
+        returned,
+        CallRelationKind::DynamicFunction,
+        CallSiteKind::Dynamic,
+        CallTargetKind::Function,
+    );
+
+    let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
+    assert_eq!(count, 6);
+
+    assert_owner_proof_edges(
+        &db,
+        "returned parameter function resolved calls",
+        &[
+            OwnerProofEdge {
+                owner,
+                site: path_row.site.id,
+                span: path_row.site.span,
+                target: helper,
+            },
+            OwnerProofEdge {
+                owner,
+                site: dynamic_row.site.id,
+                span: dynamic_row.site.span,
+                target: returned,
+            },
+        ],
+        "fixture_call_graph/src/lib.rs",
+        "type_resolution_missing",
+        ProofEdgeCount::Exact,
+    )?;
+
+    Ok(())
+}
+
+#[test]
 fn fixture_projection_stores_returned_closure_dynamic_edge() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let cases = [

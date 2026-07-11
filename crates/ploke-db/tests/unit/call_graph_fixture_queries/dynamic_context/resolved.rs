@@ -43,6 +43,72 @@ fn fixture_context_reads_projected_returned_function_nested_calls() -> Result<()
 }
 
 #[test]
+fn fixture_context_reads_projected_returned_parameter_function_call() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let owner = function_id_by_name(
+        &db,
+        "call_returned_forwarded_function_pointer_param_with_local_target",
+    )?;
+    let helper = function_id_by_name(&db, "return_forwarded_function_pointer")?;
+    let returned = function_id_by_name(&db, "local_target")?;
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:2103-2109:
+    // the helper returns its private `f` parameter directly. Its complete
+    // caller set contains this call with `local_target`, so the outer
+    // returned callable invocation can become a resolved dynamic edge.
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(
+        context.len(),
+        2,
+        "returned parameter function context rows: {context:#?}"
+    );
+
+    let helper_row = row_by_path(&context, &["return_forwarded_function_pointer"]);
+    assert_eq!(helper_row.site.arg_count, Some(1));
+    assert_resolved_target(
+        helper_row,
+        helper,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
+
+    let dynamic_row = row_by_kind_path(
+        &context,
+        CallSiteKind::Dynamic,
+        &["return_forwarded_function_pointer"],
+    );
+    assert_eq!(dynamic_row.site.arg_count, Some(0));
+    assert_resolved_target(
+        dynamic_row,
+        returned,
+        CallRelationKind::DynamicFunction,
+        CallSiteKind::Dynamic,
+        CallTargetKind::Function,
+    );
+
+    let paths = db.call_paths_between(
+        owner,
+        returned,
+        CallPathOptions {
+            max_depth: 1,
+            max_paths: 8,
+        },
+    )?;
+    let path = paths
+        .iter()
+        .find(|path| path.start_id == owner && path.end_id == returned && path.depth == 1)
+        .unwrap_or_else(|| {
+            panic!("returned parameter caller should traverse directly to local_target: {paths:#?}")
+        });
+    assert_eq!(path.edges[0].caller_id, owner);
+    assert_eq!(path.edges[0].callee_id, returned);
+    assert_eq!(path.edges[0].relation, CallRelationKind::DynamicFunction);
+
+    Ok(())
+}
+
+#[test]
 fn fixture_context_reads_projected_returned_closure_nested_calls() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let cases = [
