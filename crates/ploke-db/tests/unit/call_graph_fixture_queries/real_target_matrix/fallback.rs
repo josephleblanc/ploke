@@ -7,7 +7,7 @@ use super::super::*;
 use super::common::*;
 use super::source_lines::{
     SourceLineFanout, assert_targetless_dynamic_line_fanout_by_method,
-    assert_targetless_method_line_fanout,
+    assert_targetless_method_kind_line_fanout, assert_targetless_method_line_fanout,
 };
 
 #[test]
@@ -554,8 +554,7 @@ fn memchr_callable_trait_object_field_calls_are_visible_targetless_path_rows() -
 }
 
 #[test]
-fn generic_array_guarded_match_arm_method_guard_is_targetless_fallback_oracle()
--> Result<(), DbError> {
+fn generic_array_guarded_match_arm_method_guard_is_external_frontier() -> Result<(), DbError> {
     let db = setup_call_graph_db(&CORPUS_GENERIC_ARRAY_CALL_GRAPH)?;
 
     // Matrix: `Fallback Source Oracle Matrix`.
@@ -566,80 +565,50 @@ fn generic_array_guarded_match_arm_method_guard_is_targetless_fallback_oracle()
     //   generic-array/src/lib.rs:1276 repeats the same guard shape, with arms
     //   at lines 1278 and 1280.
     //
-    // Current model gap: the guarded receiver rows are visible but remain
-    // targetless because receiver binding tracking does not yet resolve `iter`
-    // back to the iterator type.
-    let site_ids = generic_array_size_hint_sites(&db)?;
-    assert_targetless_method_line_fanout(
+    // Expected contract: the guarded receiver rows are visible and targetless,
+    // but no longer unsupported. The local binding proof ties `iter` to the
+    // `iter.into_iter()` initializer, and the owner where-clause proves the
+    // receiver is an external `IntoIterator` result.
+    let sites = generic_array_size_hint_sites(&db)?;
+    let site_ids = sites.iter().map(|(_, site)| *site).collect::<Vec<_>>();
+    assert_targetless_method_kind_line_fanout(
         &db,
         &CORPUS_GENERIC_ARRAY_CALL_GRAPH,
         "size_hint",
-        "Unsupported",
-        None,
-        CallStatusKind::Unsupported,
+        "MethodResultLocalBinding",
+        CallStatusKind::External,
         &[SourceLineFanout {
             file_suffix: "src/lib.rs",
             lines: &[1239, 1276],
         }],
     )?;
 
-    let size_hint_case = ploke_test_utils::call_shape_cases()
-        .iter()
-        .find(|case| case.name == "generic_array_try_from_iter_size_hint_local_receiver")
-        .expect("generic-array size_hint matrix case");
-    let records = site_ids
-        .iter()
-        .copied()
-        .flat_map(|site_id| {
-            ploke_test_utils::call_shape_case_proof_blockers(size_hint_case, site_id)
-        })
-        .collect::<Vec<_>>();
-    db.upsert_proof_fact_values(&records)?;
-
-    let blockers = db.proof_blockers()?;
-    for site_id in &site_ids {
-        let site = site_id.to_string();
-        for reason in [
-            "type_resolution_missing",
-            "external_dependency_summary_missing",
-        ] {
-            assert!(
-                blockers.iter().any(|proof| {
-                    proof.call_site_id.as_deref() == Some(site.as_str())
-                        && proof.reason == reason
-                        && proof.status == "blocked"
-                }),
-                "generic-array guarded size_hint site {site} should expose the explicit {reason} blocker: {blockers:#?}"
-            );
-        }
+    for (owner_id, _) in &sites {
+        db.project_call_proof_facts_for_owner(*owner_id, "bd:corpus-generic-array-call-graph")?;
     }
 
-    let proof_rows = db.proof_graphrag_context("guarded match receiver")?;
-    for site_id in &site_ids {
+    let proof_rows = db.proof_graphrag_context("external_dependency_summary_missing")?;
+    for site_id in site_ids {
         let site = site_id.to_string();
-        for reason in [
-            "type_resolution_missing",
-            "external_dependency_summary_missing",
-        ] {
-            assert!(
-                proof_rows.iter().any(|proof| {
-                    proof.kind == "proof_blocker"
-                        && proof.call_site_id.as_deref() == Some(site.as_str())
-                        && proof.blocker_reason.as_deref() == Some(reason)
-                        && proof.status.as_deref() == Some("blocked")
-                }),
-                "generic-array guarded size_hint site {site} should expose the {reason} blocker through proof context: {proof_rows:#?}"
-            );
-        }
+        assert!(
+            proof_rows.iter().any(|proof| {
+                proof.kind == "call_resolution"
+                    && proof.call_site_id.as_deref() == Some(site.as_str())
+                    && proof.resolution_state.as_deref() == Some("blocked")
+                    && proof.blocker_reason.as_deref()
+                        == Some("external_dependency_summary_missing")
+            }),
+            "generic-array guarded size_hint site {site} should expose the external frontier through proof context: {proof_rows:#?}"
+        );
     }
 
     Ok(())
 }
 
-fn generic_array_size_hint_sites(db: &Database) -> Result<Vec<Uuid>, DbError> {
+fn generic_array_size_hint_sites(db: &Database) -> Result<Vec<(Uuid, Uuid)>, DbError> {
     let mut params = std::collections::BTreeMap::new();
     params.insert("method".to_string(), cozo::DataValue::from("size_hint"));
-    params.insert("status".to_string(), cozo::DataValue::from("Unsupported"));
+    params.insert("status".to_string(), cozo::DataValue::from("External"));
 
     let rows = db.raw_query_params(
         r#"?[site_id, owner_id, resolution_kind] :=
@@ -660,7 +629,7 @@ fn generic_array_size_hint_sites(db: &Database) -> Result<Vec<Uuid>, DbError> {
     assert_eq!(
         rows.rows.len(),
         2,
-        "expected two unsupported generic-array size_hint rows: {:#?}",
+        "expected two external generic-array size_hint rows: {:#?}",
         rows.rows
     );
 
@@ -674,7 +643,7 @@ fn generic_array_size_hint_sites(db: &Database) -> Result<Vec<Uuid>, DbError> {
             relations_for_site(db, site_id)?.rows.is_empty(),
             "generic-array size_hint row should not have call_relation targets"
         );
-        sites.push(site_id);
+        sites.push((owner, site_id));
         blocked.push((owner, site_id));
     }
     assert_no_traversal_candidates_for_sites(db, &blocked, "generic-array size_hint guard rows")?;

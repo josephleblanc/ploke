@@ -381,7 +381,7 @@ in `crates/ploke-db/tests/unit/call_graph_fixture_queries/real_target_matrix/fal
 | memchr | arbitrary-expression dynamic callee | macro source `src/arch/x86_64/memchr.rs:153`; macro instantiations at `:180,203,227,252,278,305,326` | macro-local aliases `type Fn = *mut ()`, `type RealFn = $fnty` at `:72-73`; static pointer `FN` at `:74` | `corpus_memchr_call_graph` currently does not project the `core::mem::transmute::<Fn, RealFn>(fun)(...)` path or outer dynamic call, so the test asserts absence rather than guessed callees. |
 | memchr | function-pointer field call | `src/memmem/searcher.rs:222,718` | `Searcher.call` at `:34`; alias `SearcherKindFn` at `:273`; `Prefilter.call` at `:605`; alias `PrefilterKindFn` at `:774` | `corpus_memchr_call_graph` currently projects two targetless dynamic rows owned by methods named `find`, with argument counts 4 and 2. |
 | memchr | callable trait object field | `src/tests/substring/mod.rs:94,110` | `Runner.fwd` at `:67-68`; `Runner.rev` at `:70-71`; setters box closures at `:137,153` | `corpus_memchr_call_graph` projects these boxed `dyn FnMut` local-binding calls as targetless unsupported path rows under `Runner::run`; it does not project them as dynamic rows or fabricate edges to the setter closures. RAG collection and exact TUI lookup/edges now preserve both targetless path blockers. |
-| generic-array | guarded match arm | `src/lib.rs:1241,1243,1278,1280` | `ArrayLength` bound at `src/lib.rs:245`; `LengthError` at `:1197` | `corpus_generic_array_call_graph` now projects two targetless `iter.size_hint()` method rows with `Unsupported` status and no traversal edge. |
+| generic-array | guarded match arm method-result receiver | `src/lib.rs:1239,1241,1243,1276,1278,1280` | `ArrayLength` bound at `src/lib.rs:245`; `LengthError` at `:1197`; `I: IntoIterator` owner bounds on `try_from_iter` and `try_from_fallible_iter` | `corpus_generic_array_call_graph` now projects two targetless `iter.size_hint()` method rows with `External` status and `MethodResultLocalBinding(method_name = "into_iter")` receiver proof. No local traversal edge is fabricated for the external iterator frontier. |
 
 Current executable coverage: `fallback.rs` now pins the chrono alias rows by
 exact source owner and resolved traversal to `LocalResult::Single`, pins chrono
@@ -396,7 +396,7 @@ coverage only because owner-scoped RAG collection currently bounds the long
 dedicated chrono assertion for the same frontier. RAG collection and exact TUI
 `code_item_lookup` plus `code_item_edges` preserve the two memchr
 function-pointer blockers, the two memchr callable trait-object path blockers,
-and the two generic-array `size_hint` unsupported method rows without
+and the two generic-array `size_hint` external method-result receiver rows without
 fabricating traversal edges. RAG exact call-context and TUI lookup/edges also
 preserve both the 12 chrono alias constructor caller-site identities and the
 two `DateTime::from_timestamp*(...).ok_or(...)?.naive_utc()` try-receiver

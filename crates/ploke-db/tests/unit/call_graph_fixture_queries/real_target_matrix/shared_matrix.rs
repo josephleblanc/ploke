@@ -176,6 +176,11 @@ fn db_receiver_matches(
             Some(ploke_db::CallReceiver::SelfField { path: actual })
                 if actual.iter().map(String::as_str).eq(path.iter().copied())
         ),
+        Some(CallReceiverSelector::MethodResultLocalBinding { method_name }) => matches!(
+            actual,
+            Some(ploke_db::CallReceiver::MethodResultLocalBinding { method_name: actual, .. })
+                if actual == method_name
+        ),
         Some(CallReceiverSelector::Unsupported) => {
             matches!(actual, Some(ploke_db::CallReceiver::Unsupported))
         }

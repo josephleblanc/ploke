@@ -46,7 +46,7 @@
 //! | Shadowed local callable | `axum/src/routing/tests/mod.rs:{418,423-434}` shadows imported `get` with a closure | only the two setup `routing::get` rows are projected; closure calls inside assertion macros are not fabricated as routing edges. |
 //! | Fallback chrono corpus | `MappedLocalTime::Single`, try receiver `.naive_utc()`, and `self.queue.is_empty()` in chrono | registered `corpus_chrono_call_graph` fixture asserts resolved alias constructor rows, targetless try receiver rows, and the external targetless slice receiver frontier. |
 //! | Fallback memchr corpus | arbitrary-expression dynamic callee, function-pointer field calls, and boxed callable fields in memchr | registered `corpus_memchr_call_graph` fixture asserts dynamic field rows and absent unsupported shapes. |
-//! | Fallback generic-array corpus | guarded `iter.size_hint()` match-arm checks in generic-array | registered `corpus_generic_array_call_graph` fixture asserts the current absent projection gap. |
+//! | Fallback generic-array corpus | guarded `iter.size_hint()` match-arm checks in generic-array | registered `corpus_generic_array_call_graph` fixture asserts the external targetless method-result local receiver frontier. |
 
 mod associated;
 mod common;

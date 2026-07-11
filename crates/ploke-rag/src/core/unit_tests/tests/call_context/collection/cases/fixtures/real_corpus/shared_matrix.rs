@@ -267,6 +267,11 @@ fn rag_receiver_matches(
             Some(CallReceiverInfo::SelfField { path: actual })
                 if actual.iter().map(String::as_str).eq(path.iter().copied())
         ),
+        Some(CallReceiverSelector::MethodResultLocalBinding { method_name }) => matches!(
+            actual,
+            Some(CallReceiverInfo::MethodResultLocalBinding { method_name: actual, .. })
+                if actual == method_name
+        ),
         Some(CallReceiverSelector::Unsupported) => {
             matches!(actual, Some(CallReceiverInfo::Unsupported))
         }

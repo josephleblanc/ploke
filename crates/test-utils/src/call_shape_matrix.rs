@@ -83,6 +83,7 @@ pub enum CallSiteSelector {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CallReceiverSelector {
     SelfField { path: &'static [&'static str] },
+    MethodResultLocalBinding { method_name: &'static str },
     Unsupported,
 }
 
@@ -135,7 +136,7 @@ pub const fn call_shape_cases() -> &'static [CallShapeCase] {
 }
 
 pub fn call_shape_case_blocker_reasons(case: &CallShapeCase) -> &'static [&'static str] {
-    if is_generic_array_size_hint_case(case) {
+    if is_unsupported_generic_array_size_hint_case(case) {
         &[
             "type_resolution_missing",
             "external_dependency_summary_missing",
@@ -149,7 +150,7 @@ pub fn call_shape_case_proof_blockers(
     case: &CallShapeCase,
     call_site_id: Uuid,
 ) -> Vec<serde_json::Value> {
-    if is_generic_array_size_hint_case(case) {
+    if is_unsupported_generic_array_size_hint_case(case) {
         vec![
             generic_array_size_hint_guard_blocker(call_site_id),
             generic_array_iter_summary_blocker(call_site_id),
@@ -165,6 +166,16 @@ fn is_generic_array_size_hint_case(case: &CallShapeCase) -> bool {
         "generic_array_try_from_iter_size_hint_local_receiver"
             | "generic_array_try_from_fallible_iter_size_hint_local_receiver"
     )
+}
+
+fn is_unsupported_generic_array_size_hint_case(case: &CallShapeCase) -> bool {
+    is_generic_array_size_hint_case(case)
+        && matches!(
+            case.expected,
+            CallExpected::Targetless {
+                status: CallStatusKind::Unsupported
+            }
+        )
 }
 
 static CALL_SHAPE_CASES: &[CallShapeCase] = &[
@@ -393,10 +404,12 @@ static CALL_SHAPE_CASES: &[CallShapeCase] = &[
         site: CallSiteSelector::Method {
             name: "size_hint",
             arg_count: Some(0),
-            receiver: Some(CallReceiverSelector::Unsupported),
+            receiver: Some(CallReceiverSelector::MethodResultLocalBinding {
+                method_name: "into_iter",
+            }),
         },
         expected: CallExpected::Targetless {
-            status: CallStatusKind::Unsupported,
+            status: CallStatusKind::External,
         },
         coverage: &[
             CallPipelineCoverage::Db,
@@ -418,10 +431,12 @@ static CALL_SHAPE_CASES: &[CallShapeCase] = &[
         site: CallSiteSelector::Method {
             name: "size_hint",
             arg_count: Some(0),
-            receiver: Some(CallReceiverSelector::Unsupported),
+            receiver: Some(CallReceiverSelector::MethodResultLocalBinding {
+                method_name: "into_iter",
+            }),
         },
         expected: CallExpected::Targetless {
-            status: CallStatusKind::Unsupported,
+            status: CallStatusKind::External,
         },
         coverage: &[
             CallPipelineCoverage::Db,

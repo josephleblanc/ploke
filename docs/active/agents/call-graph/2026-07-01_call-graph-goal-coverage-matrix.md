@@ -61,12 +61,18 @@ Exit criteria:
 - Add one DB assertion, one RAG assertion if exposed downstream, one TUI/tool
   assertion if exposed downstream, and one consolidated doc note.
 
-Status: associated-constructor initialized local receiver proof implemented for
-the real axum routing `CountingCloneableState` rows and committed as
-`785c0e5be`. The slice regenerated the axum call-graph fixture, proved DB
-traversal for `CountingCloneableState::new()`, `state.clone()`, and
-`state.setup_done()`, and kept unknown callable-field/value-flow rows
-fail-closed.
+Status: generic-array method-result local receiver fixture/oracle refresh
+completed for DB coverage. The resolver already classifies
+`let iter = iter.into_iter(); iter.size_hint()` as an external targetless
+frontier when the initializer parameter has a visible external `IntoIterator`
+bound; this slice refreshed the real-corpus fixture and shared matrix from the
+old unsupported oracle to that exact receiver proof. Verification passed for
+`corpus_generic_array_call_graph`, `corpus_chrono_call_graph`, and
+`corpus_memchr_call_graph` backup checks, plus the DB shared matrix and focused
+generic-array external-frontier oracle. The RAG shared matrix also passes with
+the method-result receiver selector. The TUI shared matrix now compiles with
+the same selector branch, but the full integration filter remained CPU-bound
+and hit a 900-second timeout before completing.
 
 Latest completed slice: associated-constructor initialized receiver proof.
 Parser resolution now checks whether an initialized local receiver's initializer
@@ -737,8 +743,10 @@ Next bucket: choose the next binding/type-aware semantic row from the plan's
 remaining proof-input list. Do not add more dependency-root records unless the
 next row has a new exact source oracle and DB/RAG/TUI proof value.
 
-Previous completed slice: shared TUI matrix proof payloads now preserve the
-generic-array guarded `size_hint` explicit blockers.
+Superseded previous slice: shared TUI matrix proof payloads preserved the
+generic-array guarded `size_hint` explicit blockers before the 2026-07-11
+fixture refresh promoted those rows to external targetless method-result
+receiver frontiers.
 
 Completed evidence:
 
@@ -750,8 +758,12 @@ Completed evidence:
   building `AppState`, then `assert_proof_context` requires both
   `type_resolution_missing` and `external_dependency_summary_missing` blocker
   rows in exact lookup and edge-tool proof payloads.
-- This is downstream proof propagation only. It does not resolve the receiver,
-  create a traversal edge, or relax the targetless status.
+- This was downstream proof propagation only. It did not resolve the receiver,
+  create a traversal edge, or relax the targetless status at the time.
+- Superseded status: the refreshed `corpus_generic_array_call_graph_2026-07-11`
+  fixture now classifies these rows as `External` targetless
+  `MethodResultLocalBinding(method_name = "into_iter")` receiver frontiers, so
+  the shared matrix no longer injects the old explicit blockers.
 - Verification passed:
   `cargo run -p xtask --features call_graph -- fixtures regenerate --active`,
   `cargo run -p xtask --features call_graph -- verify-backup-dbs`,
@@ -1061,7 +1073,7 @@ Completed evidence:
   `cargo test -p ploke-db fixture_context_resolves_awaited_async_closure_future_block_alias_to_executable_owner -- --nocapture`, and
   `cargo test -p ploke-rag call_context_collection_resolves_awaited_async_closure_future_block_alias_rows -- --nocapture`.
 
-Previously completed slice: explicit blocker proof for the real generic-array
+Superseded previous slice: explicit blocker proof for the real generic-array
 guarded `size_hint` receiver rows.
 
 Completed evidence:
@@ -1070,7 +1082,7 @@ Completed evidence:
   `tests/fixture_github_clones/corpus/generic-array/src/lib.rs:1239` and
   `tests/fixture_github_clones/corpus/generic-array/src/lib.rs:1276`, where
   guarded match arms call `iter.size_hint()`.
-- The persisted call graph keeps both rows `Unsupported`, with no
+- At the time, the persisted call graph kept both rows `Unsupported`, with no
   `call_relation` targets and no traversal candidates.
 - DB proof lookup and GraphRAG proof context expose explicit
   `type_resolution_missing` blockers for both callsite ids. The same oracle
@@ -1078,16 +1090,17 @@ Completed evidence:
   the missing proof input: an external summary for
   `IntoIterator::into_iter` that proves the returned iterator supports
   `Iterator::size_hint`.
-- This does not resolve the receiver and does not create traversal edges; it
-  keeps the row fail-closed while documenting why local binding proof alone is
-  insufficient.
+- Superseded status: the current refreshed fixture keeps both rows targetless
+  and edge-free, but classifies them as `External` because the
+  method-result local binding and owner `IntoIterator` bound now provide enough
+  source-visible proof to identify the external iterator frontier.
 - The shared TUI call-shape matrix now reuses the same matrix-owned blocker
   facts and asserts exact `code_item_lookup` / `code_item_edges` proof payloads
   include both blockers for each row.
 - Verification passed:
   `cargo run -p xtask --features call_graph -- fixtures regenerate --active`,
   `cargo run -p xtask --features call_graph -- verify-backup-dbs`,
-  `cargo test -p ploke-db generic_array_guarded_match_arm_method_guard_is_targetless_fallback_oracle -- --nocapture`,
+  `cargo test -p ploke-db generic_array_guarded_match_arm_method_guard_is_external_frontier -- --nocapture`,
   `cargo fmt --all --check`, and `git diff --check`.
 
 Previously completed slice: proof-only dependency-root carrier for
