@@ -103,14 +103,18 @@ the admitted `external_summary`, callsite-linked `expansion_boundary`, and
 boundary-linked `expanded_item` metadata while preserving the unresolved or
 unsupported callsite row with zero local traversal edges.
 
-Latest completed slice: referenced callable trait-object initializer proof.
+Latest completed slice: referenced callable trait-object initializer proof,
+including mutable `FnMut` references.
 The fixture-backed source oracle
 `call_parenthesized_referenced_dyn_fn_value_binding` binds
 `referenced_fn: &dyn Fn() -> i32 = &local_target` and calls
-`(referenced_fn)()`. Parser call-site proof records the dynamic call as an
-initialized local binding with `init_path = local_target`; DB target-centered
-callers now include the referenced trait-object owner as a sixth exact
-`local_target` caller; DB proof/context tables, RAG collection/expansion, and
+`(referenced_fn)()`, and
+`call_parenthesized_mut_referenced_dyn_fnmut_value_binding` binds
+`referenced_fn: &mut dyn FnMut() -> i32 = &mut target` after `target =
+local_target` and calls `(referenced_fn)()`. Parser call-site proof records both
+dynamic calls as initialized local bindings with `init_path = local_target`; DB
+target-centered callers now include both referenced trait-object owners as exact
+`local_target` callers; DB proof/context tables, RAG incoming expansion, and
 thin `code_item_lookup` / `code_item_edges` assertions preserve the same
 `DynamicFunction` edge. This is exact initializer proof only; unproven boxed or
 field-held callable trait objects remain targetless/blocker rows.

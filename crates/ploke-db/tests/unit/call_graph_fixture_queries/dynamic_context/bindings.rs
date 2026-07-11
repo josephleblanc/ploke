@@ -94,25 +94,18 @@ fn fixture_context_reads_projected_function_item_binding_calls() -> Result<(), D
         CallTargetKind::Function,
     );
 
-    let owner = function_id_by_name(&db, "call_parenthesized_referenced_dyn_fn_value_binding")?;
-    let context = db.call_context_for_owner(owner)?;
-    assert_eq!(
-        context.len(),
-        1,
-        "referenced dyn Fn binding context rows: {context:#?}"
-    );
-    let row = row_by_kind_path(&context, CallSiteKind::Dynamic, &["referenced_fn"]);
-    assert_eq!(row.site.owner_id, owner);
-    assert_eq!(row.site.kind, CallSiteKind::Dynamic);
-    assert_eq!(row.site.path.as_ref(), Some(&path(&["referenced_fn"])));
-    assert_eq!(row.site.arg_count, Some(0));
-    assert_resolved_target(
-        row,
-        local_target,
-        CallRelationKind::DynamicFunction,
-        CallSiteKind::Dynamic,
-        CallTargetKind::Function,
-    );
+    for (owner_name, label) in [
+        (
+            "call_parenthesized_referenced_dyn_fn_value_binding",
+            "referenced dyn Fn binding",
+        ),
+        (
+            "call_parenthesized_mut_referenced_dyn_fnmut_value_binding",
+            "mut referenced dyn FnMut binding",
+        ),
+    ] {
+        assert_ref_dyn_call(&db, local_target, owner_name, label)?;
+    }
 
     let owner = function_id_by_name(&db, "call_shadowed_local_target_binding")?;
     let context = db.call_context_for_owner(owner)?;
@@ -302,6 +295,11 @@ fn fixture_context_reads_projected_parenthesized_binding_dynamic_calls() -> Resu
             expected_rows: 1,
         },
         ResolvedDynamicContextCase {
+            owner: "call_parenthesized_mut_referenced_dyn_fnmut_value_binding",
+            path: &["referenced_fn"],
+            expected_rows: 1,
+        },
+        ResolvedDynamicContextCase {
             owner: "call_dereferenced_boxed_dyn_fn_value_binding",
             path: &["boxed_fn"],
             expected_rows: 2,
@@ -329,6 +327,30 @@ fn fixture_context_reads_projected_parenthesized_binding_dynamic_calls() -> Resu
         );
     }
 
+    Ok(())
+}
+
+fn assert_ref_dyn_call(
+    db: &Database,
+    local_target: Uuid,
+    owner_name: &str,
+    label: &str,
+) -> Result<(), DbError> {
+    let owner = function_id_by_name(db, owner_name)?;
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(context.len(), 1, "{label} context rows: {context:#?}");
+    let row = row_by_kind_path(&context, CallSiteKind::Dynamic, &["referenced_fn"]);
+    assert_eq!(row.site.owner_id, owner);
+    assert_eq!(row.site.kind, CallSiteKind::Dynamic);
+    assert_eq!(row.site.path.as_ref(), Some(&path(&["referenced_fn"])));
+    assert_eq!(row.site.arg_count, Some(0));
+    assert_resolved_target(
+        row,
+        local_target,
+        CallRelationKind::DynamicFunction,
+        CallSiteKind::Dynamic,
+        CallTargetKind::Function,
+    );
     Ok(())
 }
 

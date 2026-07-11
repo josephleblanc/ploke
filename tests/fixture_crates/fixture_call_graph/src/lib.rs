@@ -2127,3 +2127,9 @@ pub fn call_item_macro_generated_function() -> i32 {
     call_graph_item_macro!();
     generated_by_item_macro()
 }
+
+pub fn call_parenthesized_mut_referenced_dyn_fnmut_value_binding() -> i32 {
+    let mut target = local_target;
+    let mut referenced_fn: &mut dyn FnMut() -> i32 = &mut target;
+    (referenced_fn)()
+}

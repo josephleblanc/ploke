@@ -13,10 +13,14 @@ fn fixture_callers_for_target_reads_real_incoming_callers() -> Result<(), DbErro
         function_id_by_name(&db, "call_dereferenced_boxed_dyn_fn_value_binding")?;
     let referenced_dyn_owner =
         function_id_by_name(&db, "call_parenthesized_referenced_dyn_fn_value_binding")?;
+    let mut_referenced_owner = function_id_by_name(
+        &db,
+        "call_parenthesized_mut_referenced_dyn_fnmut_value_binding",
+    )?;
 
     let callers = db.callers_for_target(target)?;
-    assert_callers_for_target(&callers, target, 6, "local_target");
-    assert_min_resolved_callers(&callers, 6, "local_target");
+    assert_callers_for_target(&callers, target, 7, "local_target");
+    assert_min_resolved_callers(&callers, 7, "local_target");
 
     let path = caller_by_owner_kind_path(
         &callers,
@@ -105,23 +109,26 @@ fn fixture_callers_for_target_reads_real_incoming_callers() -> Result<(), DbErro
         CallTargetKind::Function
     );
 
-    let referenced_dyn = caller_by_owner_kind_path(
-        &callers,
-        referenced_dyn_owner,
-        CallSiteKind::Dynamic,
-        &["referenced_fn"],
-    );
-    assert_eq!(referenced_dyn.status.status, CallStatusKind::Resolved);
-    assert_eq!(
-        referenced_dyn.status.resolution,
-        Some(CallResolutionKind::LocalExact)
-    );
-    assert_eq!(
-        referenced_dyn.target.relation,
-        CallRelationKind::DynamicFunction
-    );
-    assert_eq!(referenced_dyn.target.source_kind, CallSiteKind::Dynamic);
-    assert_eq!(referenced_dyn.target.target_kind, CallTargetKind::Function);
+    for (owner, label) in [
+        (referenced_dyn_owner, "referenced dyn Fn"),
+        (mut_referenced_owner, "mut referenced dyn FnMut"),
+    ] {
+        let referenced_dyn =
+            caller_by_owner_kind_path(&callers, owner, CallSiteKind::Dynamic, &["referenced_fn"]);
+        assert_eq!(referenced_dyn.status.status, CallStatusKind::Resolved);
+        assert_eq!(
+            referenced_dyn.status.resolution,
+            Some(CallResolutionKind::LocalExact),
+            "{label}"
+        );
+        assert_eq!(
+            referenced_dyn.target.relation,
+            CallRelationKind::DynamicFunction,
+            "{label}"
+        );
+        assert_eq!(referenced_dyn.target.source_kind, CallSiteKind::Dynamic);
+        assert_eq!(referenced_dyn.target.target_kind, CallTargetKind::Function);
+    }
 
     Ok(())
 }

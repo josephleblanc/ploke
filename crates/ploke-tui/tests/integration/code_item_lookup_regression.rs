@@ -363,6 +363,18 @@ async fn code_item_lookup_returns_resolved_dynamic_callable_context() {
 }
 
 #[tokio::test]
+async fn code_item_lookup_returns_mut_referenced_dyn_fnmut_callable_context() {
+    // Fixture source:
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:2131-2134
+    //     a mutable referenced `dyn FnMut` binding initialized with
+    //     `&mut target` is called as `(referenced_fn)()`.
+    assert_resolved_dynamic_callable_lookup(
+        "call_parenthesized_mut_referenced_dyn_fnmut_value_binding",
+    )
+    .await;
+}
+
+#[tokio::test]
 async fn code_item_lookup_returns_forwarded_named_field_dynamic_callable_context() {
     // Fixture source:
     //   tests/fixture_crates/fixture_call_graph/src/lib.rs EOF

@@ -263,6 +263,11 @@ fn fixture_context_reads_projected_resolved_dynamic_function_shapes() -> Result<
             expected_rows: 1,
         },
         ResolvedDynamicContextCase {
+            owner: "call_parenthesized_mut_referenced_dyn_fnmut_value_binding",
+            path: &["referenced_fn"],
+            expected_rows: 1,
+        },
+        ResolvedDynamicContextCase {
             owner: "call_block_function_item",
             path: &["local_target"],
             expected_rows: 1,
