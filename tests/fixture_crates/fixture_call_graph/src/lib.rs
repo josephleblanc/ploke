@@ -2204,3 +2204,9 @@ fn call_two_hop_forwarded_referenced_dyn_fn_wrapper(f: &dyn Fn() -> i32) -> i32 
 pub fn call_two_hop_forwarded_referenced_dyn_fn_with_local_target() -> i32 {
     call_two_hop_forwarded_referenced_dyn_fn_wrapper(&local_target)
 }
+
+pub async fn call_awaited_async_closure_future_tuple_field_with_body_call() {
+    let closure = async || local_target();
+    let futures = (closure(),);
+    futures.0.await;
+}

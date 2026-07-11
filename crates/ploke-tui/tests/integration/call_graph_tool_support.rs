@@ -96,6 +96,15 @@ pub(crate) struct AxumHandlerAsyncBlockToolFixture {
     pub(crate) owner: Uuid,
 }
 
+pub(crate) struct AsyncFutureToolFixture {
+    pub(crate) state: Arc<AppState>,
+    pub(crate) file_path: PathBuf,
+    pub(crate) module_path: Vec<String>,
+    pub(crate) owner_name: &'static str,
+    pub(crate) owner: Uuid,
+    pub(crate) closure: Uuid,
+}
+
 pub(crate) struct AxumCallbackClosureToolFixture {
     pub(crate) state: Arc<AppState>,
     pub(crate) file_path: PathBuf,
@@ -637,6 +646,74 @@ impl AxumFromRequestFreeFunctionPathToolFixture {
             start: start.id,
             intermediate: intermediate.id,
             target: target.id,
+        }
+    }
+
+    pub(crate) fn module_path_arg(&self) -> String {
+        self.module_path.join("::")
+    }
+
+    pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
+        ctx_for_state(&self.state, call_id)
+    }
+}
+
+impl AsyncFutureToolFixture {
+    pub(crate) async fn tuple_field() -> Self {
+        let db = Arc::new(Database::new(
+            setup_db_full_multi_embedding("fixture_call_graph").expect("fixture_call_graph db"),
+        ));
+        let crate_root = workspace_root().join("tests/fixture_crates/fixture_call_graph");
+        let module_path = vec!["crate".to_string()];
+        let file_path = crate_root.join("src/lib.rs");
+        let owner_name = "call_awaited_async_closure_future_tuple_field_with_body_call";
+        let owner = graph_resolve_exact(
+            db.as_ref(),
+            "function",
+            file_path.as_path(),
+            &module_path,
+            owner_name,
+        )
+        .expect("resolve awaited async closure future tuple-field owner")
+        .pop()
+        .expect("awaited async closure future tuple-field owner")
+        .id;
+        let exact = graph_resolve_exact_call_body_owner_for_parent(
+            db.as_ref(),
+            file_path.as_path(),
+            &module_path,
+            "async_closure",
+            "Closure",
+            owner_name,
+        )
+        .expect("resolve tuple-field async closure owner");
+        assert_eq!(
+            exact.len(),
+            1,
+            "parent_name should disambiguate the tuple-field async closure owner"
+        );
+        assert!(
+            db.project_call_proof_facts_for_node(owner, "bd:fixture-call-graph")
+                .expect("project tuple-field async future owner proof facts")
+                >= 3,
+            "tuple-field async future owner should project call/proof rows"
+        );
+        assert!(
+            db.project_call_proof_facts_for_node(exact[0].id, "bd:fixture-call-graph")
+                .expect("project tuple-field async closure proof facts")
+                >= 3,
+            "tuple-field async closure should project body call/proof rows"
+        );
+
+        let state = app_state_with_rag(db, crate_root).await;
+
+        Self {
+            state,
+            file_path,
+            module_path,
+            owner_name,
+            owner,
+            closure: exact[0].id,
         }
     }
 

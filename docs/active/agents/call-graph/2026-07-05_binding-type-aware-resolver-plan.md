@@ -349,6 +349,15 @@ should prevent future resumes from reselecting already-covered shapes.
      `request_code_context` tool assertions cover the direct alias shape;
      parser, DB traversal, and RAG call-context assertions cover the
      block-alias shape.
+   - The same same-block future tracker now admits one tuple-field proof:
+     `call_awaited_async_closure_future_tuple_field_with_body_call()` records
+     `let futures = (closure(),); futures.0.await;` by keying the original
+     `closure()` call as `futures.0`. Parser extraction marks only that call as
+     awaited, then the existing resolver emits the async-closure owner edge.
+     Parser, DB, RAG, and exact lookup/edges assertions cover this bounded
+     tuple-field shape. Returned futures, array/indexed futures, struct fields,
+     arbitrary aliases through aggregates, and general poll/resume semantics
+     remain future work.
 
 16. Private parenthesized generic `FnOnce` single-caller proof - completed:
    - `call_single_parenthesized_generic_fn_once_param<F>(generic_f: F) where

@@ -161,6 +161,19 @@ callable-parameter inference, field-held boxed callable value-flow, arbitrary
 boxed trait-object dispatch, or the real memchr boxed `dyn FnMut` object-field
 runtime cases.
 
+Latest completed slice: same-block tuple-field awaited async-closure future
+proof. The fixture-backed source oracle
+`call_awaited_async_closure_future_tuple_field_with_body_call` binds
+`closure = async || local_target()`, stores `closure()` in a one-element tuple,
+and awaits `futures.0`. Parser extraction now records the original `closure()`
+call as awaited through exact same-block tuple-field evidence, so the existing
+resolver projects a `Closure` edge from the outer function to the
+`async_closure` executable owner, while the body `local_target()` call remains
+owned by that async-closure owner. Parser, DB, RAG, and exact TUI lookup/edges
+tests cover the two-hop traversal. This still does not model returned futures,
+arbitrary aggregate future flow, async callable trait objects, or general
+poll/resume semantics.
+
 Previous completed slice: caller-supplied module-boundary policy checks over
 existing resolved boundary edges. DB `module_boundary_policy_violations_from_owner`, RAG
 `exact_module_boundary_policy_violations_from_owner`, and exact TUI

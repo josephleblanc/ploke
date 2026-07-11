@@ -1392,28 +1392,39 @@ fn tuple_return_method_call(expr: Option<&syn::Expr>) -> Option<(String, (usize,
     Some((call.method.to_string(), (byte_range.start, byte_range.end)))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FutureBinding {
+    path: Vec<String>,
+    span: (usize, usize),
+}
+
 fn awaited_future_spans(block: &syn::Block) -> Vec<(usize, usize)> {
     let mut future_bindings = Vec::new();
     let mut awaited_spans = Vec::new();
 
     for stmt in &block.stmts {
-        if let Some(name) = direct_await_name(stmt)
-            && let Some((_, span)) = future_bindings
+        if let Some(path) = direct_await_path(stmt)
+            && let Some(binding) = future_bindings
                 .iter()
                 .rev()
-                .find(|(candidate, _)| candidate == &name)
+                .find(|binding: &&FutureBinding| binding.path == path)
         {
-            awaited_spans.push(*span);
+            awaited_spans.push(binding.span);
         }
         if let Some(binding) = future_call_binding(stmt) {
             future_bindings.push(binding);
+        } else if let Some(bindings) = future_tuple_bindings(stmt) {
+            future_bindings.extend(bindings);
         } else if let Some((name, source)) = future_alias_binding(stmt)
-            && let Some((_, span)) = future_bindings
+            && let Some(binding) = future_bindings
                 .iter()
                 .rev()
-                .find(|(candidate, _)| candidate == &source)
+                .find(|binding: &&FutureBinding| binding.path.as_slice() == [source.as_str()])
         {
-            future_bindings.push((name, *span));
+            future_bindings.push(FutureBinding {
+                path: vec![name],
+                span: binding.span,
+            });
         }
     }
 
@@ -1422,7 +1433,7 @@ fn awaited_future_spans(block: &syn::Block) -> Vec<(usize, usize)> {
     awaited_spans
 }
 
-fn future_call_binding(stmt: &syn::Stmt) -> Option<(String, (usize, usize))> {
+fn future_call_binding(stmt: &syn::Stmt) -> Option<FutureBinding> {
     let syn::Stmt::Local(local) = stmt else {
         return None;
     };
@@ -1439,7 +1450,45 @@ fn future_call_binding(stmt: &syn::Stmt) -> Option<(String, (usize, usize))> {
     }
 
     let byte_range = call.span().byte_range();
-    Some((name, (byte_range.start, byte_range.end)))
+    Some(FutureBinding {
+        path: vec![name],
+        span: (byte_range.start, byte_range.end),
+    })
+}
+
+fn future_tuple_bindings(stmt: &syn::Stmt) -> Option<Vec<FutureBinding>> {
+    let syn::Stmt::Local(local) = stmt else {
+        return None;
+    };
+    let name = pat_ident_name(&local.pat)?;
+    let init_expr = local.init.as_ref()?.expr.as_ref();
+    let syn::Expr::Tuple(tuple) = unparen_expr(init_expr) else {
+        return None;
+    };
+
+    let bindings = tuple
+        .elems
+        .iter()
+        .enumerate()
+        .filter_map(|(index, expr)| {
+            let syn::Expr::Call(call) = unparen_expr(expr) else {
+                return None;
+            };
+            let syn::Expr::Path(path) = unparen_expr(call.func.as_ref()) else {
+                return None;
+            };
+            if path.qself.is_some() || path.path.segments.len() != 1 {
+                return None;
+            }
+            let byte_range = call.span().byte_range();
+            Some(FutureBinding {
+                path: vec![name.clone(), index.to_string()],
+                span: (byte_range.start, byte_range.end),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    (!bindings.is_empty()).then_some(bindings)
 }
 
 fn future_alias_binding(stmt: &syn::Stmt) -> Option<(String, String)> {
@@ -1463,24 +1512,46 @@ fn future_alias_binding(stmt: &syn::Stmt) -> Option<(String, String)> {
     Some((name, source.clone()))
 }
 
-fn direct_await_name(stmt: &syn::Stmt) -> Option<String> {
+fn direct_await_path(stmt: &syn::Stmt) -> Option<Vec<String>> {
     let syn::Stmt::Expr(expr, _) = stmt else {
         return None;
     };
     let syn::Expr::Await(await_expr) = unparen_expr(expr) else {
         return None;
     };
-    let syn::Expr::Path(path) = unparen_expr(await_expr.base.as_ref()) else {
-        return None;
-    };
-    if path.qself.is_some() {
-        return None;
+    await_expr_path(await_expr.base.as_ref())
+}
+
+fn await_expr_path(expr: &syn::Expr) -> Option<Vec<String>> {
+    match unparen_expr(expr) {
+        syn::Expr::Path(path) => {
+            if path.qself.is_some() {
+                return None;
+            }
+            let segments = path_segments(&path.path);
+            let [name] = segments.as_slice() else {
+                return None;
+            };
+            Some(vec![name.clone()])
+        }
+        syn::Expr::Field(field) => {
+            let syn::Expr::Path(base) = unparen_expr(field.base.as_ref()) else {
+                return None;
+            };
+            if base.qself.is_some() {
+                return None;
+            }
+            let segments = path_segments(&base.path);
+            let [name] = segments.as_slice() else {
+                return None;
+            };
+            let syn::Member::Unnamed(index) = &field.member else {
+                return None;
+            };
+            Some(vec![name.clone(), index.index.to_string()])
+        }
+        _ => None,
     }
-    let segments = path_segments(&path.path);
-    let [name] = segments.as_slice() else {
-        return None;
-    };
-    Some(name.clone())
 }
 
 fn closure_binding_id(
