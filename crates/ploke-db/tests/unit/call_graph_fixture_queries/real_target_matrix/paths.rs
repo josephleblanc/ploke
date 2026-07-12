@@ -1133,53 +1133,103 @@ fn assert_body_empty_dependency_root_proof(
 }
 
 #[test]
-fn axum_real_target_generated_post_function_is_documented_gap() -> Result<(), DbError> {
+fn axum_real_target_generated_post_function_resolves() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
     // Matrix: generated `routing::post` handler fanout.
     // Source chain:
     //   axum/src/routing/method_routing.rs:165 template; macro invocation :445.
     //   JSON, multipart, method_routing, and routing tests call `post(...)`.
-    // Current model gap: this corpus fixture does not expose a generated
-    // top-level function named `post`, so target-centered traversal cannot bind
-    // these real callsites yet.
-    let rows = db.raw_query(
-        r#"?[id] :=
-            *function { id: id, name: "post" @ 'NOW' }"#,
-    )?;
-    assert!(
-        rows.rows.is_empty(),
-        "generated routing::post should remain absent until macro-generated handler functions are modeled: {rows:#?}"
+    // Expected traversal: the item-position `top_level_handler_fn!(post, POST)`
+    // expansion creates a generated function node in `method_routing`, visible
+    // callsites bind to that target, and the generated body itself calls `on`.
+    let target =
+        function_id_by_name_in_module(&db, &["crate", "routing", "method_routing"], "post")?;
+    let on_target =
+        function_id_by_name_in_module(&db, &["crate", "routing", "method_routing"], "on")?;
+    let generated_context = db.call_context_for_owner(target)?;
+    let generated_on = row_by_path(&generated_context, &["on"]);
+    assert_resolved_target(
+        generated_on,
+        on_target,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
     );
+    assert_one_edge_traversal(
+        &db,
+        TraversalExpectation {
+            label: "generated routing::post body on(...)",
+            owner: target,
+            target: on_target,
+            site_id: generated_on.site.id,
+            expected_edge_count: 1,
+        },
+    )?;
+
+    let line_target = assert_resolved_path_line_fanout(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        &["post"],
+        CallRelationKind::Function,
+        CallTargetKind::Function,
+        &[
+            SourceLineFanout {
+                file_suffix: "axum/src/json.rs",
+                lines: &[248, 264, 279, 299, 318, 353],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/routing/method_routing.rs",
+                lines: &[1448, 1660],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/routing/tests/mod.rs",
+                lines: &[
+                    88, 624, 666, 744, 745, 746, 772, 792, 812, 838, 842, 844, 899, 1071, 1162,
+                ],
+            },
+        ],
+    );
+    assert_eq!(line_target?, target);
+
+    let callers = db.callers_for_target(target)?;
+    assert_eq!(
+        callers.len(),
+        23,
+        "generated routing::post should expose the inspected real-corpus callers: {callers:#?}"
+    );
+    assert_sites_match_callers(&db, target, &callers, "generated routing::post callers")?;
 
     // Matrix immediate candidate:
     //   axum/src/json.rs:237 imports `routing::post` in a grouped import.
     //   axum/src/json.rs:248 calls `post(echo_json)` from `deserialize_body`.
-    // Current DB contract: the grouped-import callsite is visible, but it
-    // remains unsupported and targetless because the generated `post` function
-    // binding itself is absent.
     let json_owner =
         function_id_by_name_in_module(&db, &["crate", "json", "tests"], "deserialize_body")?;
-    assert_owner_path_targetless(
-        &db,
-        json_owner,
-        &["post"],
-        CallStatusKind::Unsupported,
-        "axum/src/json.rs:248 grouped-import post",
-    )?;
     let post_context = db.call_context_for_owner(json_owner)?;
     let post_row = row_by_path(&post_context, &["post"]);
-    assert_targetless_status(post_row, CallStatusKind::Unsupported);
-    assert!(
-        relations_for_site(&db, post_row.site.id)?.rows.is_empty(),
-        "generated routing::post proof must not create a local traversal edge"
+    assert_resolved_target(
+        post_row,
+        target,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
     );
+    assert_one_edge_traversal(
+        &db,
+        TraversalExpectation {
+            label: "axum/src/json.rs:248 grouped-import post",
+            owner: json_owner,
+            target,
+            site_id: post_row.site.id,
+            expected_edge_count: 1,
+        },
+    )?;
 
     let domain_id = "bd:corpus-axum-call-graph";
     let projected = db.project_call_proof_facts_for_owner(json_owner, domain_id)?;
     assert!(
-        projected >= 2,
-        "deserialize_body should project call_site and call_resolution rows for generated post: {projected}"
+        projected >= 3,
+        "deserialize_body should project call_site, call_resolution, and call_relation rows for generated post: {projected}"
     );
     let site_id = post_row.site.id.to_string();
     db.upsert_proof_fact_values(&ploke_test_utils::axum_routing_post_macro_summary_records(
@@ -1219,10 +1269,17 @@ fn axum_real_target_generated_post_function_is_documented_gap() -> Result<(), Db
     );
     let context_after = db.call_context_for_owner(json_owner)?;
     let post_after = row_by_path(&context_after, &["post"]);
-    assert_targetless_status(post_after, CallStatusKind::Unsupported);
-    assert!(
-        relations_for_site(&db, post_after.site.id)?.rows.is_empty(),
-        "routing::post macro boundary summary must not create a generated call edge"
+    assert_resolved_target(
+        post_after,
+        target,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
+    assert_eq!(
+        relations_for_site(&db, post_after.site.id)?.rows.len(),
+        1,
+        "routing::post macro boundary summary should preserve the single local generated-function edge"
     );
 
     for (owner_name, label) in [
@@ -1235,31 +1292,21 @@ fn axum_real_target_generated_post_function_is_documented_gap() -> Result<(), Db
         ("invalid_json_data", "json.rs:353"),
     ] {
         let owner = function_id_by_name_in_module(&db, &["crate", "json", "tests"], owner_name)?;
-        assert_owner_path_targetless(&db, owner, &["post"], CallStatusKind::Unsupported, label)?;
+        let context = db.call_context_for_owner(owner)?;
+        assert_resolved_target(
+            row_by_path(&context, &["post"]),
+            target,
+            CallRelationKind::Function,
+            CallSiteKind::Path,
+            CallTargetKind::Function,
+        );
+        assert!(
+            callers
+                .iter()
+                .any(|caller| caller.site.owner_id == owner && caller.target.target_id == target),
+            "{label} should be present in generated routing::post callers: {callers:#?}"
+        );
     }
-    // axum/src/json.rs:279
-    // `post(...)` is inside the nested local async function
-    // `valid_json_content_type`, so it is owned by a local item body rather
-    // than the enclosing `json_content_types` test function.
-    assert_targetless_path_owner_kind_rows(
-        &db,
-        &["post"],
-        CallStatusKind::Unsupported,
-        "LocalItem",
-        1,
-        "axum/src/json.rs:279 local async fn post",
-    )?;
-    assert_targetless_path_owner_kind_line_fanout(
-        &db,
-        &CORPUS_AXUM_CALL_GRAPH,
-        &["post"],
-        CallStatusKind::Unsupported,
-        "LocalItem",
-        &[SourceLineFanout {
-            file_suffix: "axum/src/json.rs",
-            lines: &[279],
-        }],
-    )?;
 
     for (owner_name, label) in [
         (
@@ -1300,7 +1347,20 @@ fn axum_real_target_generated_post_function_is_documented_gap() -> Result<(), Db
             &["crate", "routing", "method_routing", "tests"],
             owner_name,
         )?;
-        assert_owner_path_targetless(&db, owner, &["post"], CallStatusKind::Unsupported, label)?;
+        let context = db.call_context_for_owner(owner)?;
+        assert_resolved_target(
+            row_by_path(&context, &["post"]),
+            target,
+            CallRelationKind::Function,
+            CallSiteKind::Path,
+            CallTargetKind::Function,
+        );
+        assert!(
+            callers
+                .iter()
+                .any(|caller| caller.site.owner_id == owner && caller.target.target_id == target),
+            "{label} should be present in generated routing::post callers: {callers:#?}"
+        );
     }
 
     struct RoutingPostCase {
@@ -1311,9 +1371,9 @@ fn axum_real_target_generated_post_function_is_documented_gap() -> Result<(), Db
 
     // Matrix routing-test rows:
     //   routing/tests/mod.rs:88,624,666,744,745,746,772,792,812,
-    //   838,842,844,899,1162 call generated `post(...)`.
-    // These 14 module-anchored rows are grouped by owner here; the raw
-    // targetless assertion below also includes one async-block-owned row.
+    //   838,842,844,899,1071,1162 call generated `post(...)`.
+    // These module-anchored rows are grouped by owner here; line fanout above
+    // also proves the nested async-block-owned row at :1071.
     let routing_cases = [
         RoutingPostCase {
             owner: "hello_world",
@@ -1369,14 +1429,34 @@ fn axum_real_target_generated_post_function_is_documented_gap() -> Result<(), Db
 
     for case in routing_cases {
         let owner = function_id_by_name_in_module(&db, &["crate", "routing", "tests"], case.owner)?;
-        assert_owner_path_targetless_count(
-            &db,
-            owner,
-            &["post"],
-            CallStatusKind::Unsupported,
+        let context = db.call_context_for_owner(owner)?;
+        let rows = context
+            .iter()
+            .filter(|row| {
+                row.site.kind == CallSiteKind::Path
+                    && row.site.path.as_ref() == Some(&path(&["post"]))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            rows.len(),
             case.expected_count,
-            case.label,
-        )?;
+            "{} should expose the expected generated routing::post row count: {context:#?}",
+            case.label
+        );
+        for row in rows {
+            assert_resolved_target(
+                row,
+                target,
+                CallRelationKind::Function,
+                CallSiteKind::Path,
+                CallTargetKind::Function,
+            );
+            assert!(
+                callers.iter().any(|caller| caller.site.id == row.site.id),
+                "{} should be present in target-centered generated routing::post callers: {callers:#?}",
+                case.label
+            );
+        }
     }
 
     let logging_owner =
@@ -1388,58 +1468,6 @@ fn axum_real_target_generated_post_function_is_documented_gap() -> Result<(), Db
             .all(|row| row.site.path.as_ref() != Some(&path(&["post"]))),
         "axum/src/routing/tests/mod.rs:1215 closure-body post(...) should remain absent under the parent function owner: {logging_context:#?}"
     );
-
-    assert_targetless_path_rows(&db, &["post"], CallStatusKind::Unsupported, 23)?;
-    assert_targetless_path_owner_kind_rows(
-        &db,
-        &["post"],
-        CallStatusKind::Unsupported,
-        "AsyncBlock",
-        1,
-        "axum/src/routing/tests/mod.rs async-block-owned post(...) row",
-    )?;
-    assert_path_file_fanout(
-        &db,
-        &["post"],
-        CallStatusKind::Unsupported,
-        &[
-            ("axum/src/json.rs", 5),
-            ("axum/src/routing/method_routing.rs", 2),
-            ("axum/src/routing/tests/mod.rs", 14),
-        ],
-    )?;
-    // Source-line projection oracle for the same matrix:
-    //   docs/active/agents/call-graph/
-    //   2026-06-28_real-corpus-call-site-oracle-matrices.md
-    //
-    // Projected rows stay fail-closed: callsite -> grouped import or same-module
-    // visibility -> generated `routing::post` template
-    // axum/src/routing/method_routing.rs:165 / invocation :445, but no
-    // generated function node or traversal edge. The multipart rows at
-    // axum/src/extract/multipart.rs:{381,404,420,448} plus closure-body
-    // logging rows at axum/src/routing/tests/mod.rs:{1071,1215} remain absent.
-    assert_targetless_path_line_fanout(
-        &db,
-        &CORPUS_AXUM_CALL_GRAPH,
-        &["post"],
-        CallStatusKind::Unsupported,
-        &[
-            SourceLineFanout {
-                file_suffix: "axum/src/json.rs",
-                lines: &[248, 264, 299, 318, 353],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/routing/method_routing.rs",
-                lines: &[1448, 1660],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/routing/tests/mod.rs",
-                lines: &[
-                    88, 624, 666, 744, 745, 746, 772, 792, 812, 838, 842, 844, 899, 1162,
-                ],
-            },
-        ],
-    )?;
 
     Ok(())
 }

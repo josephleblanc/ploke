@@ -81,15 +81,15 @@ for `middleware/{map_request,from_fn,map_response}.rs`.
 | `routing::post` | `axum/src/routing/method_routing.rs:1448,1660` | `merge`; `merge_accessing_state` | same-module test visibility through `use super::*` at `method_routing.rs:1391` -> generated function binding. |
 | `routing::post` | `axum/src/routing/tests/mod.rs:88,624,666,744,745,746,772,792,812,838,842,844,899,1071,1162` | routing tests | grouped `crate::routing::{..., post, ...}` import at `routing/tests/mod.rs:8-11` -> generated function binding. |
 
-Current executable coverage: `ploke-db` real-target matrix tests assert that no
-generated `post` function node exists yet, then pin the 23 currently projected
-`post(...)` rows as unsupported, targetless, and non-traversable. Exact
-source-line fanout covers the 22 module-anchored rows: six JSON rows, two
-`method_routing.rs` rows, and fourteen `routing/tests/mod.rs` rows. The
-remaining raw row is owned by a nested async-block executable owner. The
-multipart rows remain absent in the current fixture; the
-`routing/tests/mod.rs:1215` row is no longer flattened into the parent function
-owner.
+Current executable coverage: `ploke-db` real-target matrix tests assert that
+the generated `routing::method_routing::post` function node exists, its
+generated body reaches the local `on(...)` helper, and the 23 currently
+projected `post(...)` rows resolve to that generated function. Exact
+source-line fanout covers six JSON rows, two `method_routing.rs` rows, and
+fifteen `routing/tests/mod.rs` rows, including the nested async-block owner at
+`routing/tests/mod.rs:1071`. The multipart rows remain absent in the current
+fixture; the `routing/tests/mod.rs:1215` row is no longer flattened into the
+parent function owner.
 
 ## Re-Exported Body Constructor Fanout
 

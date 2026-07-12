@@ -2,7 +2,7 @@ use proc_macro2::TokenStream;
 use quote::{ToTokens, quote};
 use syn::parse::{Parse, ParseStream};
 use syn::{
-    Attribute, Generics, Ident, ItemImpl, ItemMacro, ItemStruct, ReturnType, Token, Type,
+    Attribute, Generics, Ident, ItemFn, ItemImpl, ItemMacro, ItemStruct, ReturnType, Token, Type,
     Visibility,
 };
 
@@ -44,15 +44,41 @@ impl Parse for OpaqueFuture {
     }
 }
 
+struct TopLevelHandlerFn {
+    name: Ident,
+    method: Ident,
+}
+
+impl Parse for TopLevelHandlerFn {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let name: Ident = input.parse()?;
+        input.parse::<Token![,]>()?;
+        let method: Ident = input.parse()?;
+        if !input.is_empty() {
+            return Err(input.error("unsupported top_level_handler_fn! trailing tokens"));
+        }
+
+        Ok(Self { name, method })
+    }
+}
+
 impl<'a> CodeVisitor<'a> {
     pub(super) fn record_generated_macro(&mut self, item: &ItemMacro) {
-        if !item.mac.path.is_ident("opaque_future") {
+        if item.mac.path.is_ident("opaque_future") {
+            let Ok(input) = syn::parse2::<OpaqueFuture>(item.mac.tokens.clone()) else {
+                return;
+            };
+            self.record_opaque_future(item, input);
             return;
         }
-        let Ok(input) = syn::parse2::<OpaqueFuture>(item.mac.tokens.clone()) else {
+
+        if item.mac.path.is_ident("top_level_handler_fn") {
+            let Ok(input) = syn::parse2::<TopLevelHandlerFn>(item.mac.tokens.clone()) else {
+                return;
+            };
+            self.record_top_level_handler_fn(item, input);
             return;
-        };
-        self.record_opaque_future(item, input);
+        }
     }
 
     fn record_opaque_future(&mut self, item: &ItemMacro, input: OpaqueFuture) {
@@ -133,6 +159,14 @@ impl<'a> CodeVisitor<'a> {
             });
 
         self.record_opaque_future_impl(&items.impl_item, span, item_cfgs, effective_cfgs);
+    }
+
+    fn record_top_level_handler_fn(&mut self, item: &ItemMacro, input: TopLevelHandlerFn) {
+        let Some(mut function) = top_level_handler_fn_item(&input) else {
+            return;
+        };
+        function.attrs.extend(item.attrs.clone());
+        syn::visit::Visit::visit_item_fn(self, &function);
     }
 
     fn opaque_future_fields(&mut self, item: &ItemStruct) -> Vec<FieldNode> {
@@ -346,6 +380,21 @@ fn opaque_future_items(input: &OpaqueFuture) -> Option<OpaqueFutureItems> {
     Some(OpaqueFutureItems {
         struct_item,
         impl_item,
+    })
+}
+
+fn top_level_handler_fn_item(input: &TopLevelHandlerFn) -> Option<ItemFn> {
+    let name = &input.name;
+    let method = &input.method;
+    parse_item(quote! {
+        pub fn #name<H, T, S>(handler: H) -> MethodRouter<S, Infallible>
+        where
+            H: Handler<T, S>,
+            T: 'static,
+            S: Clone + Send + Sync + 'static,
+        {
+            on(MethodFilter::#method, handler)
+        }
     })
 }
 

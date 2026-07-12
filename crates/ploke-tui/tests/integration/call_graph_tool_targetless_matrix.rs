@@ -781,7 +781,7 @@ async fn code_item_lookup_returns_generated_macro_boundary_path_rows() {
                 call_context,
                 fixture.owner,
                 &callee,
-                CallTargetKind::AssociatedFunction,
+                fixture.case.expected_resolved_relation(),
                 fixture.case.label,
                 "lookup",
             );
@@ -806,7 +806,7 @@ async fn code_item_lookup_returns_generated_macro_boundary_path_rows() {
                 fixture.owner,
                 &fixture.case,
                 target,
-                CallTargetKind::AssociatedFunction,
+                fixture.case.expected_resolved_relation(),
                 "lookup",
             );
             assert_eq!(
@@ -1614,7 +1614,7 @@ async fn code_item_edges_returns_generated_macro_boundary_path_rows() {
                 call_context,
                 fixture.owner,
                 &callee,
-                CallTargetKind::AssociatedFunction,
+                fixture.case.expected_resolved_relation(),
                 fixture.case.label,
                 "edges",
             );
@@ -1639,7 +1639,7 @@ async fn code_item_edges_returns_generated_macro_boundary_path_rows() {
                 fixture.owner,
                 &fixture.case,
                 target,
-                CallTargetKind::AssociatedFunction,
+                fixture.case.expected_resolved_relation(),
                 "edges",
             );
             assert_eq!(

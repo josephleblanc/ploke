@@ -79,8 +79,9 @@ future work can choose the next batch without rereading the diary-style notes.
   serialized reach payload. The real-corpus proof case at
   `axum/src/handler/service.rs:174`,
   `super::future::IntoServiceFuture::new(future)`, now resolves through the
-  bounded `opaque_future!` generated inherent constructor item, while broader
-  generated helpers such as `routing::post` remain frontier rows. Focused
+  bounded `opaque_future!` generated inherent constructor item, and
+  `axum/src/json.rs:248` `post(echo_json)` now resolves through the bounded
+  `top_level_handler_fn!(post, POST)` generated function item. Focused
   verification:
   `cargo test -p ploke-db axum_usage_questions_reach_generated_constructor_directly -- --nocapture`,
   `cargo test -p ploke-rag call_reach_exact_reads_axum_usage_question_summary -- --nocapture`,

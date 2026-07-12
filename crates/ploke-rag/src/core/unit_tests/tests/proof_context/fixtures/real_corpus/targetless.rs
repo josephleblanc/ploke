@@ -2,9 +2,9 @@ use super::super::super::super::*;
 use super::super::super::helpers::assert_blocked_resolution;
 use super::helpers::{
     AXUM_DOMAIN, MEMCHR_DOMAIN, assert_site_blocker, assert_site_blocker_in_domain,
-    assert_site_resolution_blocker, await_result_unwrap_site, axum_db, conn_limiter_accept_owner,
-    dynamic_site, function_id, memchr_db, method_id_by_file, method_id_by_name_and_body,
-    targetless_method_site, targetless_method_site_with_status, targetless_path_site,
+    await_result_unwrap_site, axum_db, conn_limiter_accept_owner, dynamic_site, function_id,
+    memchr_db, method_id_by_file, method_id_by_name_and_body, targetless_method_site,
+    targetless_method_site_with_status, targetless_path_site,
 };
 use ploke_db::ProofGraphStore;
 use ploke_test_utils::{AXUM_STD_MEM_REPLACE_SUMMARY_ID, axum_std_mem_replace_summary_records};
@@ -614,7 +614,7 @@ async fn proof_context_collection_preserves_axum_generated_constructor_summary()
 }
 
 #[tokio::test]
-async fn proof_context_collection_preserves_axum_generated_post_frontier() -> Result<(), Error> {
+async fn proof_context_collection_preserves_axum_generated_post_resolution() -> Result<(), Error> {
     init_tracing_once();
     let db = axum_db()?;
 
@@ -635,13 +635,31 @@ async fn proof_context_collection_preserves_axum_generated_post_frontier() -> Re
     let calls = call_context
         .get(&owner)
         .expect("deserialize_body should receive outgoing call context");
-    let site_id = targetless_path_site(
-        calls,
-        owner,
-        &["post"],
-        CallStatusKind::Unsupported,
-        "deserialize_body generated routing::post",
+    let generated = calls
+        .iter()
+        .find(|call| {
+            call.owner_id == owner
+                && call.kind == CallSiteKind::Path
+                && call.callee
+                    == CallCalleeInfo::Path {
+                        path: vec!["post".to_string()],
+                    }
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "deserialize_body should expose generated routing::post call context: {calls:#?}"
+            )
+        });
+    assert_eq!(generated.status, CallStatusKind::Resolved);
+    assert_eq!(generated.resolution, Some(CallResolutionKind::LocalExact));
+    assert_eq!(
+        generated.targets.len(),
+        1,
+        "generated routing::post should expose one RAG target: {generated:#?}"
     );
+    assert_eq!(generated.targets[0].relation, CallTargetKind::Function);
+    let site_id = generated.site_id;
+    let target = generated.targets[0].target_id;
     db.upsert_proof_fact_values(&ploke_test_utils::axum_routing_post_macro_summary_records(
         site_id,
     ))?;
@@ -656,20 +674,41 @@ async fn proof_context_collection_preserves_axum_generated_post_frontier() -> Re
     //   axum/src/routing/method_routing.rs:445 invokes the macro for `post`.
     //   axum/src/json.rs:237 imports `routing::post`.
     //   axum/src/json.rs:248 calls `post(echo_json)`.
-    // Expected proof traversal: proof context must include the call_site plus
-    // blocked call_resolution fact for this exact targetless path row, plus
-    // the callsite-linked admitted macro-boundary summary. There are zero local
-    // callee edges until generated routing functions are modeled as source
-    // items.
-    assert_site_resolution_blocker(
-        &rows,
-        owner,
-        site_id,
-        "blocked",
-        "type_resolution_missing",
-        "deserialize_body generated routing::post",
-    );
+    // Expected proof traversal: proof context must include the generated
+    // function call_site, resolved call_edge, resolved call_resolution fact,
+    // and the callsite-linked admitted macro-boundary summary.
+    let owner_text = owner.to_string();
     let site = site_id.to_string();
+    let target_text = target.to_string();
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "call_site"
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.caller_def_id.as_deref() == Some(owner_text.as_str())
+                && proof.build_domain_id.as_deref() == Some(AXUM_DOMAIN)
+        }),
+        "RAG proof context should expose the generated routing::post call_site row: {rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "call_edge"
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.caller_def_id.as_deref() == Some(owner_text.as_str())
+                && proof.callee_def_id.as_deref() == Some(target_text.as_str())
+                && proof.resolution_state.as_deref() == Some("resolved")
+        }),
+        "RAG proof context should expose the generated routing::post call_edge row: {rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "call_resolution"
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.resolution_state.as_deref() == Some("resolved")
+                && proof.resolved_def_id.as_deref() == Some(target_text.as_str())
+                && proof.blocker_reason.is_none()
+        }),
+        "RAG proof context should expose the generated routing::post resolved call_resolution row: {rows:#?}"
+    );
     let boundary_id = ploke_test_utils::axum_routing_post_boundary_id(site_id);
     let summary_id = ploke_test_utils::AXUM_ROUTING_POST_SUMMARY_ID;
     assert!(

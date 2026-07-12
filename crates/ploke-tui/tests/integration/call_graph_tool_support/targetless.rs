@@ -395,10 +395,10 @@ impl PathToolCase {
     }];
 
     pub(crate) const ROUTING_POST: [Self; 1] = [Self {
-        label: "axum/src/json.rs:248 generated routing::post frontier",
+        label: "axum/src/json.rs:248 generated routing::post handler",
         item: "deserialize_body",
         path: &["post"],
-        status: CallStatusKind::Unsupported,
+        status: CallStatusKind::Resolved,
         corpus: DynamicToolCorpus::Axum,
         owner: PathOwner::Function {
             module_path: &["crate", "json", "tests"],
@@ -463,6 +463,22 @@ impl PathToolCase {
             CallStatusKind::External => DbCallStatusKind::External,
             CallStatusKind::Unsupported => DbCallStatusKind::Unsupported,
         }
+    }
+
+    pub(crate) fn expected_resolved_relation(&self) -> CallTargetKind {
+        if self.path == ["post"]
+            && matches!(
+                self.owner,
+                PathOwner::Function {
+                    file_suffix: "axum/src/json.rs",
+                    ..
+                }
+            )
+        {
+            return CallTargetKind::Function;
+        }
+
+        CallTargetKind::AssociatedFunction
     }
 
     pub(crate) fn admitted_external_summary(&self) -> Option<ExternalSummaryCase> {
@@ -538,8 +554,8 @@ impl PathToolCase {
                 summary_id: AXUM_ROUTING_POST_SUMMARY_ID,
                 expanded_item_id: "expanded:item:axum-routing-post",
                 expanded_definition_id: "def:axum::routing::method_routing::post",
-                expected_state: "blocked",
-                expected_blocker: Some("type_resolution_missing"),
+                expected_state: "resolved",
+                expected_blocker: None,
                 callsite_label: "generated routing::post",
             });
         }

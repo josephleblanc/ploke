@@ -1,7 +1,7 @@
 # Backup DB Fixtures
 
 Last reviewed: 2026-07-10
-Last updated: 2026-07-11
+Last updated: 2026-07-12
 
 This document is the current inventory for backup database fixtures under
 the shared DB snapshot fixture directory. It records which source targets
@@ -233,6 +233,29 @@ Post-regeneration verification:
   inherent `new` method projected from `axum/src/handler/future.rs:11-18` and
   `axum/src/macros.rs:19-20`.
 - The admitted `opaque_future!` expansion-boundary summary remains linked to
+  the callsite as proof metadata without keeping a callsite-level
+  `type_resolution_missing` blocker.
+
+## 2026-07-12 Axum Top-Level Handler Generated Function Refresh
+
+The `corpus_axum_call_graph` fixture was recreated with
+`cargo run -p xtask --features call_graph -- recreate-backup-db --fixture corpus_axum_call_graph`
+after bounded item-position `top_level_handler_fn!` modeling began projecting
+the generated axum routing handler function item for `post`.
+
+Post-regeneration verification:
+
+- The recreated `corpus_axum_call_graph_2026-07-12.sqlite` shared snapshot was
+  copied into `tests/backup_dbs/` as the committed seed artifact.
+- `axum/src/routing/method_routing.rs:445`
+  `top_level_handler_fn!(post, POST)` now projects a generated
+  `routing::method_routing::post` function whose generated body calls the local
+  `on(...)` helper.
+- The 23 inspected real-corpus `post(...)` callsites in
+  `axum/src/json.rs`, `axum/src/routing/method_routing.rs`, and
+  `axum/src/routing/tests/mod.rs` now resolve to that generated function. The
+  multipart source-oracle rows remain absent in the current fixture.
+- The admitted `routing::post` expansion-boundary summary remains linked to
   the callsite as proof metadata without keeping a callsite-level
   `type_resolution_missing` blocker.
 
@@ -1104,6 +1127,9 @@ Expected searchable corpus embedding config:
   - `IntoServiceFuture::new(future)` reaches the generated inherent
     constructor projected from the bounded `opaque_future!` item-position macro
     invocation
+  - `routing::post(...)` callsites reach the generated top-level handler
+    function projected from the bounded
+    `top_level_handler_fn!(post, POST)` item-position macro invocation
   - axum `TestClient::new` reaches the cfg-gated local test helper target for
     168 projected structural rows through nested glob re-export rows,
     inherited parent glob imports, direct `test_helpers::TestClient` imports,
