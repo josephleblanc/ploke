@@ -75,7 +75,9 @@ test now asserts the two normal-build `tap_inner!` source-input closure rows at
 `axum/src/routing/mod.rs:410,430`, both resolving to
 `take_route_or_internal_error`; the debug-only
 `routing/tests/mod.rs:56,59` `super::...` rows remain absent from this fixture
-profile.
+profile. RAG exact call context, `code_item_lookup`, and `code_item_edges` now
+preserve those two target-centered caller rows through the shared remaining
+real-corpus matrices.
 
 ## Generated Handler And Service Function Fanout
 

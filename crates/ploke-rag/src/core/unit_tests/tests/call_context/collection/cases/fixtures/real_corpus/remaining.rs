@@ -41,6 +41,24 @@ async fn call_context_exact_reads_remaining_axum_supported_matrix_targets() -> R
             )],
         },
         ExactShapeCase {
+            // axum/src/routing/mod.rs:63 defines `take_route_or_internal_error`.
+            // routing/mod.rs:398 invokes `tap_inner!`, whose source-visible
+            // block contains closure-owned calls at routing/mod.rs:410,430.
+            // The debug-only routing/tests/mod.rs:56,59 `super::...` rows are
+            // absent from the normal-build corpus fixture.
+            label: "axum routing take_route_or_internal_error tap_inner callers",
+            target: function_id_by_name_in_module(
+                &db,
+                &["crate", "routing"],
+                "take_route_or_internal_error",
+            )?,
+            expected: vec![path_shape(
+                &["take_route_or_internal_error"],
+                CallTargetKind::Function,
+                2,
+            )],
+        },
+        ExactShapeCase {
             // axum-core/src/body.rs:26 defines try_downcast; body.rs currently
             // resolves two same-module non-macro caller rows to it.
             label: "axum-core try_downcast current resolved subset",
@@ -248,9 +266,9 @@ async fn call_context_exact_reads_remaining_axum_supported_matrix_targets() -> R
             // and ext_traits/request_parts.rs:133 call `E::...`; extract/mod.rs:115
             // calls `T::from_request_parts(...)`; middleware/from_extractor.rs:220
             // calls `E::...` from an async-block owner; handler/mod.rs:242
-            // generated `Tn::from_request_parts(...)` rows resolve through
-            // generated bounds; extract/mod.rs:103 calls `Self::...` from an
-            // async-block owner.
+            // and error_handling/mod.rs generated `Tn::from_request_parts(...)`
+            // rows resolve through generated bounds; extract/mod.rs:103 calls
+            // `Self::...` from an async-block owner.
             label: "axum-core FromRequestParts::from_request_parts trait-associated paths",
             target: method_id_by_trait_name(&db, "FromRequestParts", "from_request_parts")?,
             expected: vec![
@@ -272,75 +290,80 @@ async fn call_context_exact_reads_remaining_axum_supported_matrix_targets() -> R
                 path_shape(
                     &["T1", "from_request_parts"],
                     CallTargetKind::AssociatedFunction,
-                    15,
+                    31,
                 ),
                 path_shape(
                     &["T2", "from_request_parts"],
                     CallTargetKind::AssociatedFunction,
-                    14,
+                    29,
                 ),
                 path_shape(
                     &["T3", "from_request_parts"],
                     CallTargetKind::AssociatedFunction,
-                    13,
+                    27,
                 ),
                 path_shape(
                     &["T4", "from_request_parts"],
                     CallTargetKind::AssociatedFunction,
-                    12,
+                    25,
                 ),
                 path_shape(
                     &["T5", "from_request_parts"],
                     CallTargetKind::AssociatedFunction,
-                    11,
+                    23,
                 ),
                 path_shape(
                     &["T6", "from_request_parts"],
                     CallTargetKind::AssociatedFunction,
-                    10,
+                    21,
                 ),
                 path_shape(
                     &["T7", "from_request_parts"],
                     CallTargetKind::AssociatedFunction,
-                    9,
+                    19,
                 ),
                 path_shape(
                     &["T8", "from_request_parts"],
                     CallTargetKind::AssociatedFunction,
-                    8,
+                    17,
                 ),
                 path_shape(
                     &["T9", "from_request_parts"],
                     CallTargetKind::AssociatedFunction,
-                    7,
+                    15,
                 ),
                 path_shape(
                     &["T10", "from_request_parts"],
                     CallTargetKind::AssociatedFunction,
-                    6,
+                    13,
                 ),
                 path_shape(
                     &["T11", "from_request_parts"],
                     CallTargetKind::AssociatedFunction,
-                    5,
+                    11,
                 ),
                 path_shape(
                     &["T12", "from_request_parts"],
                     CallTargetKind::AssociatedFunction,
-                    4,
+                    9,
                 ),
                 path_shape(
                     &["T13", "from_request_parts"],
                     CallTargetKind::AssociatedFunction,
-                    3,
+                    7,
                 ),
                 path_shape(
                     &["T14", "from_request_parts"],
                     CallTargetKind::AssociatedFunction,
-                    2,
+                    5,
                 ),
                 path_shape(
                     &["T15", "from_request_parts"],
+                    CallTargetKind::AssociatedFunction,
+                    3,
+                ),
+                path_shape(
+                    &["T16", "from_request_parts"],
                     CallTargetKind::AssociatedFunction,
                     1,
                 ),

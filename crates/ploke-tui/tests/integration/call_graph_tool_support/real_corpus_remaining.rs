@@ -13,6 +13,7 @@ pub(crate) enum AxumRemainingTarget {
     FromRef,
     RouterNew,
     RouterClone,
+    RoutingHelper,
     ExpandField,
     TestClientNew,
 }
@@ -39,7 +40,7 @@ pub(crate) struct ExpectedRemainingCallSite {
 }
 
 impl AxumRemainingTarget {
-    pub(crate) const TOOL_REACHABLE_CASES: [Self; 11] = [
+    pub(crate) const TOOL_REACHABLE_CASES: [Self; 12] = [
         Self::CoreTryDowncast,
         Self::AxumTryDowncast,
         Self::PositionFirst,
@@ -51,6 +52,7 @@ impl AxumRemainingTarget {
         Self::FromRef,
         Self::RouterNew,
         Self::RouterClone,
+        Self::RoutingHelper,
     ];
 
     fn label(self) -> &'static str {
@@ -66,6 +68,7 @@ impl AxumRemainingTarget {
             Self::FromRef => "axum-core FromRef::from_ref",
             Self::RouterNew => "axum Router::new",
             Self::RouterClone => "axum Router::clone",
+            Self::RoutingHelper => "axum routing take_route_or_internal_error",
             Self::ExpandField => "axum-macros closure expand_field",
             Self::TestClientNew => "axum TestClient::new",
         }
@@ -76,6 +79,7 @@ impl AxumRemainingTarget {
             Self::CoreTryDowncast | Self::AxumTryDowncast => "try_downcast",
             Self::PositionFirst => "First",
             Self::HandleErrorNew | Self::RouterNew | Self::TestClientNew => "new",
+            Self::RoutingHelper => "take_route_or_internal_error",
             Self::ExpandField => "expand_field",
             Self::RouterClone => "clone",
             Self::RequestExtExtract | Self::RequestPartsExtExtract => "extract_with_state",
@@ -98,6 +102,7 @@ impl AxumRemainingTarget {
             | Self::RequestPartsExtExtract
             | Self::RouterNew
             | Self::RouterClone
+            | Self::RoutingHelper
             | Self::ExpandField
             | Self::TestClientNew => None,
         }
@@ -114,6 +119,7 @@ impl AxumRemainingTarget {
             | Self::AxumTryDowncast
             | Self::PositionFirst
             | Self::ExpandField
+            | Self::RoutingHelper
             | Self::FromRequest
             | Self::FromRequestParts
             | Self::FromRef => None,
@@ -122,7 +128,10 @@ impl AxumRemainingTarget {
 
     fn node_kind(self) -> &'static str {
         match self {
-            Self::CoreTryDowncast | Self::AxumTryDowncast | Self::ExpandField => "function",
+            Self::CoreTryDowncast
+            | Self::AxumTryDowncast
+            | Self::ExpandField
+            | Self::RoutingHelper => "function",
             Self::PositionFirst => "variant",
             Self::HandleErrorNew
             | Self::RequestExtExtract
@@ -144,11 +153,12 @@ impl AxumRemainingTarget {
             Self::HandleErrorNew => 2,
             Self::RequestExtExtract => 1,
             Self::RequestPartsExtExtract => 3,
-            Self::FromRequest => 2,
-            Self::FromRequestParts => 4,
+            Self::FromRequest => 18,
+            Self::FromRequestParts => 261,
             Self::FromRef => 4,
             Self::RouterNew => 310,
             Self::RouterClone => 13,
+            Self::RoutingHelper => 2,
             Self::ExpandField => 1,
             Self::TestClientNew => 168,
         }
@@ -208,6 +218,11 @@ impl AxumRemainingTarget {
                 db,
                 "clone",
                 "inner: Arc::clone(&self.inner)",
+                "axum/src/routing/mod.rs",
+            ),
+            Self::RoutingHelper => function_target_by_name_and_file(
+                db,
+                "take_route_or_internal_error",
                 "axum/src/routing/mod.rs",
             ),
             Self::ExpandField => {

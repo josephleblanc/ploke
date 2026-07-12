@@ -43,6 +43,15 @@ async fn code_item_lookup_returns_closure_owned_expand_field_caller() {
 }
 
 #[tokio::test]
+async fn code_item_lookup_returns_tap_inner_routing_helper_callers() {
+    assert_lookup_case(
+        AxumRemainingTarget::RoutingHelper,
+        "axum-routing-helper-lookup",
+    )
+    .await;
+}
+
+#[tokio::test]
 async fn code_item_lookup_returns_test_client_new_high_fanout_callers() {
     assert_lookup_case(
         AxumRemainingTarget::TestClientNew,
@@ -80,6 +89,15 @@ async fn code_item_edges_returns_trait_bound_remaining_real_corpus_callers() {
 #[tokio::test]
 async fn code_item_edges_returns_closure_owned_expand_field_caller() {
     assert_edges_case(AxumRemainingTarget::ExpandField, "axum-expand-field-edges").await;
+}
+
+#[tokio::test]
+async fn code_item_edges_returns_tap_inner_routing_helper_callers() {
+    assert_edges_case(
+        AxumRemainingTarget::RoutingHelper,
+        "axum-routing-helper-edges",
+    )
+    .await;
 }
 
 #[tokio::test]
