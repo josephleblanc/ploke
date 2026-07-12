@@ -1,6 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
 use proc_macro2::{Spacing, TokenStream, TokenTree};
+use syn::ext::IdentExt;
+use syn::parse::{Parse, ParseStream};
+use syn::{Ident, Token, braced};
 
 use crate::parser::nodes::{MacroKind, MacroNode};
 
@@ -9,6 +12,7 @@ pub(crate) struct MacroExpansionContext {
     items_by_macro: HashMap<String, Vec<syn::Item>>,
     exprs_by_macro: HashMap<String, syn::Expr>,
     returned_by_macro: HashSet<String>,
+    transparent_blocks: HashSet<String>,
 }
 
 pub(super) struct GeneratedCall {
@@ -19,11 +23,37 @@ pub(super) struct GeneratedCall {
     pub unsafe_block: bool,
 }
 
+struct TransparentStmtBlock {
+    block: syn::Block,
+}
+
+impl Parse for TransparentStmtBlock {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let _self_ident = Ident::parse_any(input)?;
+        input.parse::<Token![,]>()?;
+        input.parse::<Token![mut]>()?;
+        let _inner_ident = Ident::parse_any(input)?;
+        input.parse::<Token![=>]>()?;
+
+        let content;
+        let brace_token = braced!(content in input);
+        let stmts = syn::Block::parse_within(&content)?;
+        if !input.is_empty() {
+            return Err(input.error("unsupported transparent macro trailing tokens"));
+        }
+
+        Ok(Self {
+            block: syn::Block { brace_token, stmts },
+        })
+    }
+}
+
 impl MacroExpansionContext {
     pub(crate) fn from_macro_nodes(macros: &[MacroNode]) -> Self {
         let mut items_by_macro = HashMap::new();
         let mut exprs_by_macro = HashMap::new();
         let mut returned_by_macro = HashSet::new();
+        let mut transparent_blocks = HashSet::new();
         let mut duplicate_names = HashSet::new();
 
         for macro_node in macros {
@@ -38,6 +68,9 @@ impl MacroExpansionContext {
             };
             if supports_ifunc(&macro_node.name, &body_tokens) {
                 returned_by_macro.insert(macro_node.name.clone());
+            }
+            if supports_transparent_stmt_block(&macro_node.name, &body_tokens) {
+                transparent_blocks.insert(macro_node.name.clone());
             }
             if let Ok(Some(items)) = ploke_mbe::parse_no_arg_macro_rule_items(body_tokens.clone())
                 && is_supported_local_item_expansion(&items)
@@ -74,6 +107,7 @@ impl MacroExpansionContext {
             items_by_macro,
             exprs_by_macro,
             returned_by_macro,
+            transparent_blocks,
         }
     }
 
@@ -122,6 +156,18 @@ impl MacroExpansionContext {
             unsafe_block: true,
         })
     }
+
+    pub(super) fn transparent_stmt_block_for(&self, mac: &syn::Macro) -> Option<syn::Block> {
+        let mut segments = mac.path.segments.iter();
+        let name = segments.next()?.ident.to_string();
+        if segments.next().is_some() || !self.transparent_blocks.contains(&name) {
+            return None;
+        }
+
+        syn::parse2::<TransparentStmtBlock>(mac.tokens.clone())
+            .ok()
+            .map(|parsed| parsed.block)
+    }
 }
 
 fn is_supported_local_item_expansion(items: &[syn::Item]) -> bool {
@@ -154,6 +200,18 @@ fn supports_ifunc(name: &str, body: &TokenStream) -> bool {
         && body.contains("Fn")
         && body.contains("RealFn")
         && body.contains("FN . load")
+}
+
+fn supports_transparent_stmt_block(name: &str, body: &TokenStream) -> bool {
+    if name != "tap_inner" {
+        return false;
+    }
+
+    let body = body.to_string();
+    body.contains("into_inner")
+        && body.contains("Arc :: new")
+        && body.contains("$ stmt")
+        && body.contains("$ inner")
 }
 
 fn unsafe_ifunc_arg_count(tokens: TokenStream) -> Option<usize> {

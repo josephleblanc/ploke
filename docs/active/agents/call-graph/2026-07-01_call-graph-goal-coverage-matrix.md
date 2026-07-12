@@ -50,7 +50,21 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Latest completed slice: bounded axum `error_handling::impl_service!` generated
+Latest completed slice: bounded axum `tap_inner!` transparent source-block
+extraction. The real-corpus axum macro source
+`axum/src/routing/mod.rs:141-152` wraps a source-visible invocation block in
+`Router<S>::fallback_endpoint` at `routing/mod.rs:398`; that block contains two
+nested closure-owned calls to `take_route_or_internal_error` at
+`routing/mod.rs:410,430`. Parser extraction now recognizes this reviewed macro
+shape, keeps the macro invocation itself as a normal macro callsite, and visits
+the source block so the nested closure owners project their call rows. The
+regenerated `corpus_axum_call_graph_2026-07-12.sqlite` fixture and ploke-db
+real-target matrix prove both rows resolve to the same-module helper at
+`routing/mod.rs:63` and are visible through target-centered caller, callsite,
+and traversal APIs. This is bounded to the reviewed transparent source-input
+shape; it does not add arbitrary macro expansion.
+
+Previous completed slice: bounded axum `error_handling::impl_service!` generated
 extractor proof. The real-corpus axum macro source
 `axum/src/error_handling/mod.rs:152-222` generates sixteen
 `HandleError<S, F, T>` service impls whose async bodies call

@@ -365,6 +365,8 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
         if let Some(generated) = self.macro_expansions.generated_call_for(&call.mac) {
             let byte_range = call.mac.span().byte_range();
             self.record_generated_call(generated, (byte_range.start, byte_range.end));
+        } else if let Some(block) = self.macro_expansions.transparent_stmt_block_for(&call.mac) {
+            self.visit_block(&block);
         }
         visit::visit_expr_macro(self, call);
     }

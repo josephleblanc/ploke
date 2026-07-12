@@ -388,6 +388,25 @@ Post-regeneration verification:
   `Self::new(http_body_util::Full::from(buf))` rows resolve to
   `Body::new` through one associated-function edge.
 
+## 2026-07-12 Axum Tap Inner Transparent Source Block Refresh
+
+The `corpus_axum_call_graph` fixture was recreated with
+`cargo run -p xtask --features call_graph -- recreate-backup-db --fixture corpus_axum_call_graph`
+after bounded transparent-source extraction for the reviewed `tap_inner!`
+macro began projecting callsites from the invocation block.
+
+Post-regeneration verification:
+
+- The regenerated `corpus_axum_call_graph_2026-07-12.sqlite` shared snapshot was
+  copied into `tests/backup_dbs/` as the committed seed artifact.
+- `axum/src/routing/mod.rs:398` invokes `tap_inner!` with a source-visible block
+  whose nested closure owners call `take_route_or_internal_error` at
+  `routing/mod.rs:410,430`; both rows now resolve to the same-module helper at
+  `routing/mod.rs:63`.
+- The debug-only `routing/tests/mod.rs:56,59`
+  `super::take_route_or_internal_error` rows remain absent from the normal-build
+  fixture profile.
+
 ## 2026-07-11 Axum Module-Qualified Constructor Refresh
 
 The active fixture set was regenerated with

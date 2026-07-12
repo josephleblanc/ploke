@@ -413,36 +413,53 @@ fn axum_real_target_run_ui_tests_crate_paths_reach_helper() -> Result<(), DbErro
 }
 
 #[test]
-fn axum_real_target_take_route_helper_is_documented_gap() -> Result<(), DbError> {
+fn axum_real_target_take_route_helper_resolves_tap_inner_closure_rows() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
     // Matrix: `take_route_or_internal_error` path row.
     // Source chain:
     //   axum/src/routing/mod.rs:63 defines `take_route_or_internal_error`.
-    //   routing/mod.rs:410,430 and routing/tests/mod.rs:56,59 call it.
-    // Current model gap: the debug-only `super::...` test owner is not present
-    // in this fixture, and the same-module callsites in `fallback_endpoint`
-    // live inside closure bodies that are not projected yet. No local
-    // traversal edge should be invented.
+    //   axum/src/routing/mod.rs:398 invokes `tap_inner!`.
+    //   The transparent macro input block contains two closure-owned calls at
+    //   routing/mod.rs:410,430.
+    //   routing/tests/mod.rs:56,59 are debug-only `super::...` calls and remain
+    //   absent from the normal-build corpus fixture.
     let target =
         function_id_by_name_in_module(&db, &["crate", "routing"], "take_route_or_internal_error")?;
     assert_no_path_rows(&db, &["super", "take_route_or_internal_error"])?;
-    assert_no_path_rows(&db, &["take_route_or_internal_error"])?;
+    let line_target = assert_resolved_path_line_fanout(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        &["take_route_or_internal_error"],
+        CallRelationKind::Function,
+        CallTargetKind::Function,
+        &[SourceLineFanout {
+            file_suffix: "axum/src/routing/mod.rs",
+            lines: &[410, 430],
+        }],
+    )?;
+    assert_eq!(
+        line_target, target,
+        "tap_inner closure call rows should resolve to the routing helper definition"
+    );
 
     let callers = db.callers_for_target(target)?;
-    assert!(
-        callers.is_empty(),
-        "take_route_or_internal_error should remain targetless until routing same-module/super paths resolve: {callers:#?}"
+    assert_eq!(
+        callers.len(),
+        2,
+        "take_route_or_internal_error should expose the two inspected tap_inner closure callers"
     );
     let sites = db.call_sites_for_target(target)?;
-    assert!(
-        sites.is_empty(),
-        "call_sites_for_target should mirror the absent routing helper rows: {sites:#?}"
+    assert_eq!(
+        sites.len(),
+        2,
+        "call_sites_for_target should mirror the two tap_inner closure rows"
     );
-    assert_no_incoming_traversal_to_target(
+    assert_sites_match_callers(
         &db,
         target,
-        "axum/src/routing/mod.rs:410,430 and routing/tests/mod.rs:56,59 take_route_or_internal_error",
+        &callers,
+        "axum/src/routing/mod.rs:410,430 take_route_or_internal_error",
     )?;
 
     Ok(())

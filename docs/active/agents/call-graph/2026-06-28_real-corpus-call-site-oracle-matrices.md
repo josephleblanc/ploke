@@ -70,7 +70,12 @@ one-hop `parse_attrs` edges, including the explicit
 `std::mem::replace` external rows at
 `axum/src/error_handling/mod.rs:138` and
 `axum/src/response/sse.rs:449`, and the current absent wrapper-body owner rows
-for `middleware/{map_request,from_fn,map_response}.rs`.
+for `middleware/{map_request,from_fn,map_response}.rs`. The routing helper
+test now asserts the two normal-build `tap_inner!` source-input closure rows at
+`axum/src/routing/mod.rs:410,430`, both resolving to
+`take_route_or_internal_error`; the debug-only
+`routing/tests/mod.rs:56,59` `super::...` rows remain absent from this fixture
+profile.
 
 ## Generated Handler And Service Function Fanout
 
