@@ -211,14 +211,17 @@ fn axum_real_target_supported_callers_are_one_hop_traversable() -> Result<(), Db
             // `E::from_request_parts(...)` from a nested async block.
             // axum/src/handler/mod.rs:242 generated handler extraction rows
             // call `Tn::from_request_parts(...)` for extractor prefixes.
+            // axum/src/error_handling/mod.rs:207-222 generated HandleError
+            // service impls call `Tn::from_request_parts(...)` for extractor
+            // prefixes.
             // axum-core/src/extract/mod.rs:103 calls
             // `Self::from_request_parts(...)` from the nested async block
             // inside the ViaParts blanket impl.
             // Callee binding: axum-core/src/extract/mod.rs:59 trait method.
             label: "axum-core FromRequestParts::from_request_parts trait-associated paths",
             target: method_id_by_trait_name(&db, "FromRequestParts", "from_request_parts")?,
-            expected_call_edges: 125,
-            expected_traversal_candidates: 20,
+            expected_call_edges: 261,
+            expected_traversal_candidates: 36,
         },
         ResolvedTraversalCase {
             // axum-core/src/ext_traits/mod.rs:25 and
@@ -464,6 +467,7 @@ fn axum_real_target_supported_callers_match_oracle_shape_counts() -> Result<(), 
             //   axum-core/src/extract/mod.rs:115 T::from_request_parts(...)
             //   axum/src/middleware/from_extractor.rs:220 E::from_request_parts(...)
             //   axum/src/handler/mod.rs:242 generated Tn::from_request_parts(...)
+            //   axum/src/error_handling/mod.rs generated Tn::from_request_parts(...)
             //   axum-core/src/extract/mod.rs:103 async-block Self::from_request_parts(...)
             // Callee binding: axum-core/src/extract/mod.rs:59 trait method.
             label: "axum-core FromRequestParts::from_request_parts trait-associated paths",
@@ -472,21 +476,22 @@ fn axum_real_target_supported_callers_match_oracle_shape_counts() -> Result<(), 
                 ("path:E::from_request_parts", 3),
                 ("path:T::from_request_parts", 1),
                 ("path:Self::from_request_parts", 1),
-                ("path:T1::from_request_parts", 15),
-                ("path:T2::from_request_parts", 14),
-                ("path:T3::from_request_parts", 13),
-                ("path:T4::from_request_parts", 12),
-                ("path:T5::from_request_parts", 11),
-                ("path:T6::from_request_parts", 10),
-                ("path:T7::from_request_parts", 9),
-                ("path:T8::from_request_parts", 8),
-                ("path:T9::from_request_parts", 7),
-                ("path:T10::from_request_parts", 6),
-                ("path:T11::from_request_parts", 5),
-                ("path:T12::from_request_parts", 4),
-                ("path:T13::from_request_parts", 3),
-                ("path:T14::from_request_parts", 2),
-                ("path:T15::from_request_parts", 1),
+                ("path:T1::from_request_parts", 31),
+                ("path:T2::from_request_parts", 29),
+                ("path:T3::from_request_parts", 27),
+                ("path:T4::from_request_parts", 25),
+                ("path:T5::from_request_parts", 23),
+                ("path:T6::from_request_parts", 21),
+                ("path:T7::from_request_parts", 19),
+                ("path:T8::from_request_parts", 17),
+                ("path:T9::from_request_parts", 15),
+                ("path:T10::from_request_parts", 13),
+                ("path:T11::from_request_parts", 11),
+                ("path:T12::from_request_parts", 9),
+                ("path:T13::from_request_parts", 7),
+                ("path:T14::from_request_parts", 5),
+                ("path:T15::from_request_parts", 3),
+                ("path:T16::from_request_parts", 1),
             ],
         },
         ResolvedShapeCase {

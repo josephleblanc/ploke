@@ -92,6 +92,25 @@ impl Parse for AllTheTuples {
     }
 }
 
+struct ImplService {
+    params: Vec<Ident>,
+}
+
+impl Parse for ImplService {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let mut params = Vec::new();
+        while !input.is_empty() {
+            params.push(input.parse()?);
+            if input.is_empty() {
+                break;
+            }
+            input.parse::<Token![,]>()?;
+        }
+
+        Ok(Self { params })
+    }
+}
+
 impl<'a> CodeVisitor<'a> {
     pub(super) fn record_generated_macro(&mut self, item: &ItemMacro) {
         if item.mac.path.is_ident("opaque_future") {
@@ -133,6 +152,16 @@ impl<'a> CodeVisitor<'a> {
             if input.name == "impl_handler" {
                 self.record_impl_handler_tuples(item);
             }
+            return;
+        }
+
+        if item.mac.path.is_ident("impl_service")
+            && self.current_module_is(&["crate", "error_handling"])
+        {
+            let Ok(input) = syn::parse2::<ImplService>(item.mac.tokens.clone()) else {
+                return;
+            };
+            self.record_error_handling_impl_service(item, input);
         }
     }
 
@@ -266,6 +295,31 @@ impl<'a> CodeVisitor<'a> {
             };
             self.record_generated_impl(&item_impl, span, item_cfgs.clone(), effective_cfgs.clone());
         }
+    }
+
+    fn record_error_handling_impl_service(&mut self, item: &ItemMacro, input: ImplService) {
+        let Some(item_impl) = error_handling_impl_service_item(&input) else {
+            return;
+        };
+        let span = item.extract_span_bytes();
+        let item_cfgs = extract_cfg_strings(&item.attrs);
+        let effective_cfgs = self
+            .state
+            .current_scope_cfgs
+            .iter()
+            .cloned()
+            .chain(item_cfgs.iter().cloned())
+            .collect::<Vec<_>>();
+
+        self.record_generated_impl(&item_impl, span, item_cfgs, effective_cfgs);
+    }
+
+    fn current_module_is(&self, path: &[&str]) -> bool {
+        self.state
+            .current_module_path
+            .iter()
+            .map(String::as_str)
+            .eq(path.iter().copied())
     }
 
     fn opaque_future_fields(&mut self, item: &ItemStruct) -> Vec<FieldNode> {
@@ -566,6 +620,37 @@ fn handler_impl_item(arity: usize) -> Option<ItemImpl> {
                     let #last = #last::from_request(req, &state).await;
 
                     self(#(#parts,)* #last,).await.into_response()
+                })
+            }
+        }
+    })
+}
+
+fn error_handling_impl_service_item(input: &ImplService) -> Option<ItemImpl> {
+    let params = &input.params;
+    if params.is_empty() {
+        return None;
+    }
+
+    parse_item(quote! {
+        impl<S, F, B, Res, Fut, #(#params,)*> Service<Request<B>>
+            for HandleError<S, F, (#(#params,)*)>
+        where
+            S: Service<Request<B>> + Clone + Send + 'static,
+            S::Response: IntoResponse + Send,
+            S::Error: Send,
+            S::Future: Send,
+            F: FnOnce(#(#params),*, S::Error) -> Fut + Clone + Send + 'static,
+            Fut: Future<Output = Res> + Send,
+            Res: IntoResponse,
+            #( #params: FromRequestParts<()> + Send, )*
+            B: Send + 'static,
+        {
+            fn call(&mut self, req: Request<B>) -> Self::Future {
+                Box::pin(async move {
+                    #(
+                        let #params = #params::from_request_parts(&mut parts, &()).await;
+                    )*
                 })
             }
         }

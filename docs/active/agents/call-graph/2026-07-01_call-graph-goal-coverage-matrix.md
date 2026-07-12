@@ -50,7 +50,22 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Latest completed slice: bounded memchr `unsafe_ifunc!` generated transmute
+Latest completed slice: bounded axum `error_handling::impl_service!` generated
+extractor proof. The real-corpus axum macro source
+`axum/src/error_handling/mod.rs:152-222` generates sixteen
+`HandleError<S, F, T>` service impls whose async bodies call
+`Tn::from_request_parts(&mut parts, &()).await` for extractor prefixes.
+Parser extraction now projects the generated `Service::call` owners and the
+extractor path rows needed for proof, guarded to the `crate::error_handling`
+module because axum reuses the `impl_service!` name with different templates in
+middleware modules. The regenerated `corpus_axum_call_graph_2026-07-12.sqlite`
+fixture and ploke-db real-target matrix prove these rows resolve to
+`FromRequestParts::from_request_parts` through generated where-clause proof and
+are visible through target-centered caller and traversal APIs. This slice is
+bounded to extractor proof rows; it does not add arbitrary macro expansion or
+claim traversal for the rest of the generated service body.
+
+Previous completed slice: bounded memchr `unsafe_ifunc!` generated transmute
 frontier. The real-corpus memchr macro source
 `src/arch/x86_64/memchr.rs:153` generates
 `core::mem::transmute::<Fn, RealFn>(fun)(...)` at seven macro instantiations.

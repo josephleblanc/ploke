@@ -344,6 +344,31 @@ Post-regeneration verification:
   `FromRequestParts::from_request_parts` has 125 callers in the regenerated
   axum fixture.
 
+## 2026-07-12 Axum HandleError Impl Service Refresh
+
+The active fixture set was regenerated with
+`cargo run -p xtask --features call_graph -- fixtures regenerate --active`
+after bounded, module-specific item-position `impl_service!` modeling began
+projecting generated `HandleError<S, F, T>` service impl methods in
+`axum/src/error_handling/mod.rs`.
+
+Post-regeneration verification:
+
+- The regenerated `corpus_axum_call_graph_2026-07-12.sqlite` shared snapshot was
+  copied into `tests/backup_dbs/` as the committed seed artifact.
+- `cargo run -p xtask --features call_graph -- verify-backup-dbs --fixture corpus_axum_call_graph`
+  passed.
+- `axum/src/error_handling/mod.rs:207-222` now projects sixteen generated
+  `Service::call` method owners for `HandleError<S, F, T>`.
+- The generated owners preserve the extractor path rows needed for proof:
+  `Tn::from_request_parts(&mut parts, &()).await` resolves through generated
+  `FromRequestParts<()>` where-clause proof to the axum-core
+  `FromRequestParts::from_request_parts` trait method binding.
+- Target-centered caller queries now include both generated handler and
+  generated HandleError service extractor rows:
+  `FromRequestParts::from_request_parts` has 261 callers in the regenerated
+  axum fixture.
+
 ## 2026-07-12 Axum Body From Impl Generated Conversion Refresh
 
 The active fixture set was regenerated with

@@ -26,6 +26,8 @@ fn axum_real_target_trait_associated_paths_reach_trait_methods() -> Result<(), D
     //   axum-core/src/extract/mod.rs:53 declares trait `FromRequestParts`.
     //   axum-core/src/extract/mod.rs:59 declares
     //   `FromRequestParts::from_request_parts`.
+    //   axum/src/error_handling/mod.rs:207-222 generated HandleError
+    //   service impls call `Tn::from_request_parts` for extractor prefixes.
     // Expected traversal: bounded type-parameter associated paths resolve to
     // the trait method binding in one local-exact associated-function edge.
     // Concrete runtime impl dispatch remains type-parameter dependent and is
@@ -143,8 +145,8 @@ fn axum_real_target_trait_associated_paths_reach_trait_methods() -> Result<(), D
     let from_request_parts_callers = db.callers_for_target(from_request_parts)?;
     assert_eq!(
         from_request_parts_callers.len(),
-        125,
-        "FromRequestParts::from_request_parts should expose all inspected bounded callers plus generated Handler extractor-prefix callers: {from_request_parts_callers:#?}"
+        261,
+        "FromRequestParts::from_request_parts should expose all inspected bounded callers plus generated Handler and HandleError service extractor-prefix callers: {from_request_parts_callers:#?}"
     );
     assert_sites_match_callers(
         &db,
@@ -849,6 +851,105 @@ fn axum_real_target_handler_macro_extraction_paths_project_generated_rows() -> R
     )?;
     assert_no_path_rows(&db, &["ty", "from_request_parts"])?;
     assert_no_path_rows(&db, &["last", "from_request"])
+}
+
+#[test]
+fn axum_error_handling_impl_service_paths_project_generated_rows() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Matrix: generated `HandleError<_, _, T>::call` extraction rows.
+    // Source chain:
+    //   axum/src/error_handling/mod.rs:152-205 defines local
+    //   `impl_service!`.
+    //   error_handling/mod.rs:207-222 invokes it for arities one through
+    //   sixteen. Each generated `Service::call` body calls
+    //   `$ty::from_request_parts(&mut parts, &()).await` before rebuilding
+    //   the request and calling `inner.oneshot(req).await`.
+    // Expected traversal: the bounded, module-specific generated item model
+    // projects the sixteen generated `call` owners with the extractor path
+    // rows needed for proof. It preserves the nested async-block owner and
+    // uses the generated `FromRequestParts<()>` where-clause proof to reach
+    // the trait method binding without applying the unrelated `impl_service!`
+    // templates in middleware modules.
+    let owners = method_ids_by_name_body_and_file_suffix(
+        &db,
+        "call",
+        "from_request_parts(&mut parts, &()).await",
+        "axum/src/error_handling/mod.rs",
+    )?;
+    assert_eq!(
+        owners.len(),
+        16,
+        "error_handling::impl_service! should generate exactly sixteen Service::call methods"
+    );
+
+    let arity_sixteen = method_id_by_name_body_and_file_suffix(
+        &db,
+        "call",
+        "T16::from_request_parts(&mut parts, &()).await",
+        "axum/src/error_handling/mod.rs",
+    )?;
+    let async_owner = async_block_owner_for_method_parent(&db, arity_sixteen)?;
+    let context = db.call_context_for_owner(async_owner)?;
+    let target = method_id_by_trait_name(&db, "FromRequestParts", "from_request_parts")?;
+
+    let target_sites = db.call_sites_for_target(target)?;
+    let mut site_ids = Vec::new();
+    for index in 1..=16 {
+        let ty = format!("T{index}");
+        let expected_path = path(&[ty.as_str(), "from_request_parts"]);
+        let row = context
+            .iter()
+            .find(|row| {
+                row.site.kind == CallSiteKind::Path
+                    && row.site.path.as_ref() == Some(&expected_path)
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "generated arity-16 async owner should expose {ty}::from_request_parts: {context:#?}"
+                )
+            });
+        assert_resolved_target(
+            row,
+            target,
+            CallRelationKind::AssociatedFunction,
+            CallSiteKind::Path,
+            CallTargetKind::Method,
+        );
+        assert_eq!(
+            relations_for_site(&db, row.site.id)?.rows.len(),
+            1,
+            "axum/src/error_handling/mod.rs generated arity-16 {ty}::from_request_parts should persist one call edge"
+        );
+        assert!(
+            target_sites
+                .iter()
+                .any(|site| site.owner_id == async_owner && site.id == row.site.id),
+            "target-centered call_sites_for_target should include generated {ty}::from_request_parts: {target_sites:#?}"
+        );
+        site_ids.push(row.site.id);
+    }
+
+    let outgoing = db.expand_call_context(
+        CallContextSeed::Owner(async_owner),
+        CallContextOptions {
+            include_incoming_callers: false,
+            max_candidates: 512,
+            ..CallContextOptions::default()
+        },
+    )?;
+    assert!(
+        outgoing.iter().any(|candidate| {
+            candidate.node_id == target
+                && candidate.target_id == target
+                && candidate.relation == ploke_db::CallContextRelation::OutgoingTarget
+                && candidate.distance == 1
+                && site_ids.contains(&candidate.call_site_id)
+        }),
+        "generated arity-16 async owner should traverse to FromRequestParts::from_request_parts through one of its extractor rows: {outgoing:#?}"
+    );
+
+    Ok(())
 }
 
 #[test]
