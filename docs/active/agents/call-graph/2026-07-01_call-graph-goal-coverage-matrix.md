@@ -1799,6 +1799,27 @@ Completed evidence:
   preserving all proof rows as discharge context, avoiding a global derived
   blocker expansion in large fixture-backed tool tests.
 
+Latest completed slice in current bucket: DB-first method-frontier external
+summary admission for real `Body::size_hint`.
+
+Completed evidence:
+
+- Added shared proof-fixture records for the real axum-core
+  `Body::size_hint` method frontier, where `self.0.size_hint()` leaves the
+  local workspace through the tuple-field `BoxBody` receiver.
+- Added a DB real-target matrix test that proves the row starts as a
+  targetless `External` method frontier with
+  `external_dependency_summary_missing`, accepts a linked admitted
+  `external_summary`, discharges the owner-scoped summary need, exposes the
+  proof-derived `external_summary_boundary` effect, and still has zero local
+  call edges after proof admission.
+- This is still a DB/proof slice. It does not add parser/resolver breadth,
+  fabricate a local edge for `BoxBody::size_hint`, or add production
+  external-summary authoring.
+- Verification passed:
+  `cargo test -p ploke-db --test mod axum_body_size_hint_external_summary_covers_method_frontier -- --nocapture`,
+  `cargo fmt --all`, and `git diff --check`.
+
 Previous completed slice in current bucket: proof-authoritative external
 summary admission over the real `Request::builder` alias frontier, propagated
 through DB, RAG, and TUI tool payloads.

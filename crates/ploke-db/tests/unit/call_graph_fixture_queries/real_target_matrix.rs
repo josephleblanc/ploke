@@ -50,6 +50,7 @@
 
 mod associated;
 mod common;
+mod external_summaries;
 mod fallback;
 mod multi_hop;
 mod paths;
