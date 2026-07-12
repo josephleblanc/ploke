@@ -289,10 +289,10 @@ row now traverse to the axum-core trait method binding. Exact TUI lookup/edges
 tests assert the enclosing `test_from_extractor` item does not flatten that
 nested row.
 The axum handler `all_the_tuples!(impl_handler)` macro extraction rows are now
-projected as stable generated `Tn::from_request*` path rows, but they remain
-targetless and are not included in the target-centered trait method caller
-counts until the generated impl where-clause can be used from the nested
-async-block owner.
+projected as stable generated `Tn::from_request*` path rows under generated
+`impl Handler<...> for F` method owners, but they remain targetless and are not
+included in the target-centered trait method caller counts until the generated
+impl where-clause can be used from the nested async-block owner.
 Receiver tests now assert exact owner-count buckets and source-line
 fanout for the projected `req.extensions_mut()` local-binding rows, split into
 direct/single-reference external parameter receivers and still-unresolved

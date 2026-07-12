@@ -327,6 +327,9 @@ Post-regeneration verification:
   async-block owners whose extraction rows use stable generic names such as
   `T1::from_request_parts` and `T2::from_request` rather than macro
   metavariable names.
+- The generated `Handler::call` method owners are recorded under generated
+  `impl Handler<...> for F` trait impl rows instead of being modeled as
+  inherent impl methods.
 - Those generated associated-path rows currently remain unsupported and
   targetless: resolver proof does not yet connect the generated impl
   where-clause to the nested async-block owner, and no traversal edge is

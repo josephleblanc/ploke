@@ -763,6 +763,7 @@ fn axum_real_target_handler_macro_extraction_paths_project_generated_rows() -> R
         "call",
         "T1 :: from_request (req , & state) . await",
     )?;
+    assert_method_owner_impl_trait(&db, one_param, "Handler", "generated arity-1 Handler::call")?;
     let one_param_body = async_block_owner_for_method_parent(&db, one_param)?;
     let one_param_context = db.call_context_for_owner(one_param_body)?;
     let last_row = assert_targetless_row(
@@ -787,6 +788,7 @@ fn axum_real_target_handler_macro_extraction_paths_project_generated_rows() -> R
         "call",
         "T2 :: from_request (req , & state) . await",
     )?;
+    assert_method_owner_impl_trait(&db, two_param, "Handler", "generated arity-2 Handler::call")?;
     let two_param_body = async_block_owner_for_method_parent(&db, two_param)?;
     let two_param_context = db.call_context_for_owner(two_param_body)?;
     let parts_row = assert_targetless_row(
@@ -980,4 +982,36 @@ fn async_block_owner_for_method_parent(db: &Database, parent: Uuid) -> Result<Uu
         rows.rows
     );
     to_uuid(&rows.rows[0][0])
+}
+
+fn assert_method_owner_impl_trait(
+    db: &Database,
+    method: Uuid,
+    trait_name: &str,
+    label: &str,
+) -> Result<(), DbError> {
+    let rows = db.raw_query(&format!(
+        r#"?[impl_id, trait_type_id, trait_target_id] :=
+            method = to_uuid("{method}"),
+            *method {{ id: method, owner_id: impl_id @ 'NOW' }},
+            *impl {{ id: impl_id, trait_type: trait_type_id @ 'NOW' }},
+            *type_use {{
+                owner_id: impl_id,
+                root_type_id: trait_type_id,
+                role: "ImplTrait" @ 'NOW'
+            }},
+            *type_relation {{
+                source_id: trait_type_id,
+                target_id: trait_target_id,
+                relation_kind: "Trait" @ 'NOW'
+            }},
+            *trait {{ id: trait_target_id, name: "{trait_name}" @ 'NOW' }}"#
+    ))?;
+    assert_eq!(
+        rows.rows.len(),
+        1,
+        "{label} should be recorded as an impl of trait {trait_name}: {:#?}",
+        rows.rows
+    );
+    Ok(())
 }

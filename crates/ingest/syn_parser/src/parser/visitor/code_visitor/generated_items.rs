@@ -292,6 +292,13 @@ impl<'a> CodeVisitor<'a> {
             .expect("generated impl should use ImplNodeId");
         self.push_primary_scope(&name, impl_id.into(), &effective_cfgs);
         let self_type = get_or_create_type(self.state, &item.self_ty);
+        let trait_type = item.trait_.as_ref().map(|(_, path, _)| {
+            let ty = Type::Path(TypePath {
+                qself: None,
+                path: path.clone(),
+            });
+            get_or_create_trait_type(self.state, &ty)
+        });
         let methods = self.generated_impl_methods(item, &effective_cfgs);
         let generic_params = self.state.process_generics(&item.generics);
         let where_predicates = self.state.process_where_predicates(&item.generics);
@@ -301,7 +308,7 @@ impl<'a> CodeVisitor<'a> {
             id: impl_id,
             span,
             self_type,
-            trait_type: None,
+            trait_type,
             methods,
             generic_params,
             where_predicates,
