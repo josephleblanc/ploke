@@ -9,6 +9,15 @@ pub(crate) struct AxumBodyEmptyToolFixture {
     pub(crate) dependency_root_sites: Vec<Uuid>,
 }
 
+pub(crate) struct AxumBodyNewToolFixture {
+    pub(crate) state: Arc<AppState>,
+    pub(crate) file_path: PathBuf,
+    pub(crate) module_path: Vec<String>,
+    pub(crate) target: Uuid,
+    pub(crate) callers: Vec<ExpectedCallSite>,
+    pub(crate) generated_callers: Vec<ExpectedCallSite>,
+}
+
 pub(crate) struct AxumParseAttrsToolFixture {
     pub(crate) state: Arc<AppState>,
     pub(crate) file_path: PathBuf,
@@ -126,6 +135,70 @@ impl AxumBodyEmptyToolFixture {
             target: target.id,
             callers,
             dependency_root_sites,
+        }
+    }
+
+    pub(crate) fn module_path_arg(&self) -> String {
+        self.module_path.join("::")
+    }
+
+    pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
+        ctx_for_state(&self.state, call_id)
+    }
+}
+
+impl AxumBodyNewToolFixture {
+    pub(crate) async fn new() -> Self {
+        let db = axum_call_graph_db();
+        let target = axum_method_target_by_body_and_file(
+            &db,
+            "new",
+            "try_downcast(body)",
+            "axum-core/src/body.rs",
+        );
+        let callers = db
+            .callers_for_target(target.id)
+            .expect("Body::new incoming callers")
+            .into_iter()
+            .map(|caller| ExpectedCallSite {
+                owner: caller.site.owner_id,
+                site: caller.site.id,
+                path: caller
+                    .site
+                    .path
+                    .expect("Body::new caller should carry a path"),
+            })
+            .collect::<Vec<_>>();
+        let generated_callers = axum_body_from_impl_generated_callers(&db, target.id);
+        assert!(
+            callers.len() >= generated_callers.len(),
+            "Body::new should expose all generated body_from_impl! caller rows"
+        );
+        for generated in &generated_callers {
+            assert!(
+                callers.iter().any(|caller| {
+                    caller.owner == generated.owner
+                        && caller.site == generated.site
+                        && caller.path == generated.path
+                }),
+                "Body::new target-centered callers should include generated caller {generated:#?}: {callers:#?}"
+            );
+        }
+        assert!(
+            db.project_call_proof_facts_for_node(target.id, "bd:corpus-axum-call-graph")
+                .expect("project axum Body::new proof facts")
+                >= callers.len(),
+            "Body::new should project target-scoped proof rows for real-corpus callers"
+        );
+        let state = axum_state_for_target(Arc::clone(&db), &target, "Body::new").await;
+
+        Self {
+            state,
+            file_path: target.file_path,
+            module_path: target.module_path,
+            target: target.id,
+            callers,
+            generated_callers,
         }
     }
 

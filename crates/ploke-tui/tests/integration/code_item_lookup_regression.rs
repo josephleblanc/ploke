@@ -12,31 +12,33 @@ use ploke_tui::tools::{
 
 use crate::call_graph_tool_support::{
     AsyncFutureToolFixture, AxumAwaitReceiverToolFixture, AxumBodyEmptyToolFixture,
-    AxumBoxedIntoRouteToolFixture, AxumErrorHandlingTraitsToolFixture, AxumExpandWithToolFixture,
-    AxumFromFnBasicToolFixture, AxumHandlerCallToolFixture, AxumJsonFromBytesToolFixture,
-    AxumParseAttrsToolFixture, AxumRequestExtractPathToolFixture, AxumRunUiTestsToolFixture,
-    AxumTaskSpawnEffectToolFixture, CallGraphToolFixture, CallableBlockerFixture,
-    CallableBlockerShape, CallableParamResolvedFixture, ChronoAliasConstructorToolFixture,
-    ChronoNaiveUtcToolFixture, FixtureBranchReceiverToolFixture, FixtureDynamicCallableToolFixture,
-    FixtureSelfFieldReceiverToolFixture, ResultCallbackFixture,
+    AxumBodyNewToolFixture, AxumBoxedIntoRouteToolFixture, AxumErrorHandlingTraitsToolFixture,
+    AxumExpandWithToolFixture, AxumFromFnBasicToolFixture, AxumHandlerCallToolFixture,
+    AxumJsonFromBytesToolFixture, AxumParseAttrsToolFixture, AxumRequestExtractPathToolFixture,
+    AxumRunUiTestsToolFixture, AxumTaskSpawnEffectToolFixture, CallGraphToolFixture,
+    CallableBlockerFixture, CallableBlockerShape, CallableParamResolvedFixture,
+    ChronoAliasConstructorToolFixture, ChronoNaiveUtcToolFixture, FixtureBranchReceiverToolFixture,
+    FixtureDynamicCallableToolFixture, FixtureSelfFieldReceiverToolFixture, ResultCallbackFixture,
     assert_ambiguous_dynamic_candidates, assert_ambiguous_path_candidates,
     assert_await_result_unwrap_context, assert_await_result_unwrap_proof,
     assert_body_empty_dependency_root_proof, assert_body_empty_impact_summary,
-    assert_body_empty_incoming_context, assert_boxed_into_route_incoming_context,
-    assert_branch_receiver_context, assert_branch_receiver_proof, assert_call_path_node,
-    assert_chrono_naive_utc_incoming_context, assert_dynamic_context, assert_dynamic_proof,
-    assert_expected_path_incoming_context, assert_fixture_extern_c_abs_effects,
-    assert_from_fn_basic_body_empty_crate_boundary, assert_handler_call_incoming_context,
-    assert_incoming_context, assert_initialized_local_receiver_context,
-    assert_initialized_local_receiver_proof, assert_json_from_bytes_incoming_context,
-    assert_no_external_summary_need_for_site, assert_parse_attrs_incoming_context,
-    assert_path_blocker_proof, assert_path_context, assert_path_resolution_proof,
-    assert_process_invariant_findings, assert_resolved_callable_param_proof,
-    assert_resolved_method_target_context, assert_resolved_path_context,
-    assert_run_ui_tests_incoming_context, assert_runtime_dispatch_blocker,
-    assert_self_field_receiver_context, assert_self_field_receiver_proof,
-    assert_serde_json_summary_proof, assert_target_proof, assert_task_spawn_effects,
-    assert_task_spawn_policy_violation, assert_two_hop_call_path, ui_field,
+    assert_body_empty_incoming_context, assert_body_new_generated_incoming_context,
+    assert_body_new_impact_summary, assert_body_new_incoming_context,
+    assert_boxed_into_route_incoming_context, assert_branch_receiver_context,
+    assert_branch_receiver_proof, assert_call_path_node, assert_chrono_naive_utc_incoming_context,
+    assert_dynamic_context, assert_dynamic_proof, assert_expected_path_incoming_context,
+    assert_fixture_extern_c_abs_effects, assert_from_fn_basic_body_empty_crate_boundary,
+    assert_handler_call_incoming_context, assert_incoming_context,
+    assert_initialized_local_receiver_context, assert_initialized_local_receiver_proof,
+    assert_json_from_bytes_incoming_context, assert_no_external_summary_need_for_site,
+    assert_parse_attrs_incoming_context, assert_path_blocker_proof, assert_path_context,
+    assert_path_resolution_proof, assert_process_invariant_findings,
+    assert_resolved_callable_param_proof, assert_resolved_method_target_context,
+    assert_resolved_path_context, assert_run_ui_tests_incoming_context,
+    assert_runtime_dispatch_blocker, assert_self_field_receiver_context,
+    assert_self_field_receiver_proof, assert_serde_json_summary_proof, assert_target_proof,
+    assert_task_spawn_effects, assert_task_spawn_policy_violation, assert_two_hop_call_path,
+    ui_field,
 };
 
 #[tokio::test]
@@ -2724,6 +2726,78 @@ async fn code_item_lookup_returns_real_corpus_body_empty_callers() {
             >= fixture.callers.len(),
         "code_item_lookup should surface real-corpus Body::empty proof rows"
     );
+}
+
+#[tokio::test]
+async fn code_item_lookup_returns_real_corpus_body_new_generated_callers() {
+    let fixture = AxumBodyNewToolFixture::new().await;
+    let module_path = fixture.module_path_arg();
+    let params = LookupParams {
+        item_name: Cow::Borrowed("new"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("method"),
+        module_path: Cow::Owned(module_path),
+        owner_trait: None,
+        owner_type: None,
+        parent_name: None,
+        allowed_effects: Vec::new(),
+    };
+
+    let result = CodeItemLookup::execute(params, fixture.ctx("axum-body-new-lookup"))
+        .await
+        .expect("tool execution");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize ConciseContext");
+    let call_context = payload
+        .get("call_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_context array");
+    let proof_context = payload
+        .get("proof_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("proof_context array");
+    let impact = payload
+        .get("call_impact")
+        .and_then(serde_json::Value::as_object)
+        .expect("call_impact object");
+
+    // Real-corpus oracle matrix:
+    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //   crates/ploke-db/tests/unit/call_graph_fixture_queries/real_target_matrix.rs
+    //   axum-core/src/body.rs:46 defines `Body::new`.
+    //   axum-core/src/body.rs:120-126 defines `body_from_impl!`.
+    //   axum-core/src/body.rs:129-138 invokes it for seven concrete buffer
+    //   types. Each generated `impl From<T> for Body` contains
+    //   `Self::new(http_body_util::Full::from(buf))`.
+    // Expected tool traversal: exact lookup of `Body::new` exposes the full
+    // target-centered caller set and includes the seven generated
+    // `Body::from -> Body::new` caller-site rows.
+    assert_body_new_incoming_context(
+        call_context,
+        &fixture.callers,
+        fixture.target,
+        "code_item_lookup",
+    );
+    assert_body_new_generated_incoming_context(
+        call_context,
+        &fixture.generated_callers,
+        fixture.target,
+        "code_item_lookup",
+    );
+    assert_body_new_impact_summary(
+        impact,
+        &fixture.generated_callers,
+        fixture.target,
+        "code_item_lookup",
+    );
+    for caller in &fixture.generated_callers {
+        assert_target_proof(
+            proof_context,
+            caller.owner,
+            fixture.target,
+            "code_item_lookup",
+        );
+    }
 }
 
 #[tokio::test]

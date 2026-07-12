@@ -14,7 +14,8 @@ use ploke_core::{
     },
 };
 use ploke_db::{
-    CallStatusKind as DbCallStatusKind, Database, ProofGraphStore,
+    CallRelationKind as DbCallRelationKind, CallResolutionKind as DbCallResolutionKind,
+    CallSiteKind as DbCallSiteKind, CallStatusKind as DbCallStatusKind, Database, ProofGraphStore,
     helpers::{
         graph_resolve_exact, graph_resolve_exact_call_body_owner,
         graph_resolve_exact_call_body_owner_for_parent,
@@ -159,6 +160,7 @@ pub(crate) struct AxumAwaitReceiverToolFixture {
     pub(crate) owner: Uuid,
 }
 
+#[derive(Debug)]
 pub(crate) struct ExpectedCallSite {
     pub(crate) owner: Uuid,
     pub(crate) site: Uuid,
@@ -1914,6 +1916,66 @@ pub(crate) fn assert_body_empty_incoming_context(
     assert_expected_path_incoming_context(calls, callers, target, label, "Body::empty");
 }
 
+pub(crate) fn assert_body_new_incoming_context(
+    calls: &[serde_json::Value],
+    callers: &[ExpectedCallSite],
+    target: Uuid,
+    label: &str,
+) {
+    assert_expected_path_incoming_context(calls, callers, target, label, "Body::new");
+}
+
+pub(crate) fn assert_body_new_generated_incoming_context(
+    calls: &[serde_json::Value],
+    callers: &[ExpectedCallSite],
+    target: Uuid,
+    label: &str,
+) {
+    assert_expected_path_incoming_subset(
+        calls,
+        callers,
+        target,
+        label,
+        "generated Body::from -> Body::new",
+    );
+}
+
+pub(crate) fn assert_body_new_impact_summary(
+    impact: &serde_json::Map<String, serde_json::Value>,
+    generated_callers: &[ExpectedCallSite],
+    target: Uuid,
+    label: &str,
+) {
+    let direct_call_sites = impact
+        .get("direct_call_sites")
+        .and_then(serde_json::Value::as_array)
+        .unwrap_or_else(|| {
+            panic!("{label} Body::new call_impact direct_call_sites array: {impact:#?}")
+        });
+    let callsite_buckets = impact
+        .get("callsite_buckets")
+        .and_then(serde_json::Value::as_array)
+        .unwrap_or_else(|| {
+            panic!("{label} Body::new call_impact callsite_buckets array: {impact:#?}")
+        });
+
+    assert_body_new_generated_incoming_context(direct_call_sites, generated_callers, target, label);
+
+    let buckets = callsite_buckets
+        .iter()
+        .map(|bucket| serde_json::from_value::<CallSiteBucketInfo>(bucket.clone()))
+        .collect::<Result<Vec<_>, _>>()
+        .expect("typed Body::new impact callsite buckets");
+    assert!(
+        buckets.iter().any(|bucket| {
+            bucket.kind == CallSiteKind::Path
+                && bucket.relation == CallTargetKind::AssociatedFunction
+                && bucket.count >= generated_callers.len()
+        }),
+        "{label} Body::new impact should summarize a path/associated-function bucket covering the generated callers: {buckets:#?}"
+    );
+}
+
 pub(crate) fn assert_body_empty_impact_summary(
     impact: &serde_json::Map<String, serde_json::Value>,
     label: &str,
@@ -1995,6 +2057,83 @@ pub(crate) fn assert_body_empty_impact_summary(
     ] {
         assert_source_module_json(source_modules, module, label);
     }
+}
+
+fn axum_body_from_impl_generated_callers(db: &Database, target: Uuid) -> Vec<ExpectedCallSite> {
+    let owners = axum_method_ids_by_name_and_body_substring(
+        db,
+        "from",
+        "Self::new(http_body_util::Full::from(buf))",
+    );
+    assert_eq!(
+        owners.len(),
+        7,
+        "body_from_impl! should generate exactly seven From<T> for Body::from methods"
+    );
+
+    let expected_path = vec!["Self".to_string(), "new".to_string()];
+    let mut expected = Vec::new();
+    for owner in owners {
+        let context = db
+            .call_context_for_owner(owner)
+            .expect("generated Body::from call context");
+        let row = context
+            .iter()
+            .find(|row| {
+                row.site.kind == DbCallSiteKind::Path
+                    && row.site.path.as_ref() == Some(&expected_path)
+                    && row.targets.iter().any(|candidate| {
+                        candidate.target_id == target
+                            && candidate.relation == DbCallRelationKind::AssociatedFunction
+                    })
+            })
+            .unwrap_or_else(|| {
+                panic!("generated Body::from owner should call Body::new: {context:#?}")
+            });
+        assert_eq!(row.status.status, DbCallStatusKind::Resolved);
+        assert_eq!(
+            row.status.resolution,
+            Some(DbCallResolutionKind::LocalExact)
+        );
+        expected.push(ExpectedCallSite {
+            owner,
+            site: row.site.id,
+            path: expected_path.clone(),
+        });
+    }
+
+    expected
+}
+
+fn axum_method_ids_by_name_and_body_substring(
+    db: &Database,
+    name: &str,
+    body_marker: &str,
+) -> Vec<Uuid> {
+    let mut params = BTreeMap::new();
+    params.insert("name".to_string(), DataValue::from(name));
+
+    let rows = db
+        .raw_query_params(
+            r#"?[id, body] :=
+                *method { id, name: $name, body @ 'NOW' }"#,
+            params,
+        )
+        .unwrap_or_else(|err| panic!("query methods named {name}: {err}"));
+    let normalized_marker = body_key(body_marker);
+    rows.rows
+        .iter()
+        .filter_map(|row| {
+            let body = match &row[1] {
+                DataValue::Str(body) => body.as_str(),
+                _ => return None,
+            };
+            body_key(body)
+                .contains(&normalized_marker)
+                .then(|| row[0].clone())
+        })
+        .map(|id| to_uuid(&id).unwrap_or_else(|err| panic!("method uuid: {err}")))
+        .collect()
 }
 
 fn attach_body_empty_dependency_root_proof(
@@ -2253,6 +2392,60 @@ pub(crate) fn assert_expected_path_incoming_context(
         matching.len(),
         callers.len(),
         "{label} should return all {target_label} incoming caller-site rows: {calls:#?}"
+    );
+
+    for expected in callers {
+        let owner = expected.owner.to_string();
+        let site = expected.site.to_string();
+        assert!(
+            matching.iter().any(|call| {
+                call.get("owner_id").and_then(serde_json::Value::as_str) == Some(owner.as_str())
+                    && call.get("site_id").and_then(serde_json::Value::as_str)
+                        == Some(site.as_str())
+                    && call
+                        .get("callee")
+                        .and_then(|callee| callee.get("path"))
+                        .and_then(|path_variant| path_variant.get("path"))
+                        .and_then(serde_json::Value::as_array)
+                        .is_some_and(|path| {
+                            path.iter()
+                                .filter_map(serde_json::Value::as_str)
+                                .eq(expected.path.iter().map(String::as_str))
+                        })
+            }),
+            "{label} should return {target_label} incoming caller site {site}: {calls:#?}"
+        );
+    }
+}
+
+fn assert_expected_path_incoming_subset(
+    calls: &[serde_json::Value],
+    callers: &[ExpectedCallSite],
+    target: Uuid,
+    label: &str,
+    target_label: &str,
+) {
+    let target = target.to_string();
+    let matching = calls
+        .iter()
+        .filter(|call| {
+            call.get("kind").and_then(serde_json::Value::as_str) == Some("path")
+                && call
+                    .get("targets")
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|targets| {
+                        targets.iter().any(|candidate| {
+                            candidate
+                                .get("target_id")
+                                .and_then(serde_json::Value::as_str)
+                                == Some(target.as_str())
+                        })
+                    })
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        matching.len() >= callers.len(),
+        "{label} should return at least the {target_label} incoming caller-site rows: {calls:#?}"
     );
 
     for expected in callers {

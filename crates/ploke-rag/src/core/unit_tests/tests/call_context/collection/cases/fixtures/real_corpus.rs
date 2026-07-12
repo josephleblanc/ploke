@@ -3,7 +3,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use cozo::{DataValue, UuidWrapper};
 use ploke_db::multi_embedding::db_ext::{ANCESTOR_RULES_NOW, METHOD_NODE_ANCESTOR_RULE};
 use ploke_db::{
-    CallReceiver, CallStatusKind as DbCallStatusKind, ModuleBoundaryPolicyRule, ProofGraphStore,
+    CallReceiver, CallRelationKind as DbCallRelationKind,
+    CallResolutionKind as DbCallResolutionKind, CallSiteKind as DbCallSiteKind,
+    CallStatusKind as DbCallStatusKind, ModuleBoundaryPolicyRule, ProofGraphStore,
 };
 use serde_json::json;
 
@@ -185,6 +187,83 @@ async fn call_context_exact_reads_axum_body_empty_incoming_callers() -> Result<(
         ]),
         "RAG call context should preserve literal Body::empty and trait-impl Self::empty path shapes"
     );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn call_context_exact_reads_axum_body_new_generated_from_callers() -> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    let target = method_id_by_file(&db, "new", "try_downcast(body)", "axum-core/src/body.rs")?;
+    let generated = axum_body_from_impl_generated_callers(&db, target)?;
+    let callers = db.callers_for_target(target)?;
+    assert!(
+        callers.len() >= generated.len(),
+        "Body::new target-centered callers should include the generated body_from_impl! subset: {callers:#?}"
+    );
+
+    let context = rag.exact_call_context(target)?;
+    let incoming = context
+        .iter()
+        .filter(|call| {
+            call.kind == CallSiteKind::Path
+                && call
+                    .targets
+                    .iter()
+                    .any(|candidate| candidate.target_id == target)
+        })
+        .collect::<Vec<_>>();
+
+    let expected_site_ids = callers
+        .iter()
+        .map(|caller| caller.site.id)
+        .collect::<BTreeSet<_>>();
+    let incoming_site_ids = incoming
+        .iter()
+        .map(|call| call.site_id)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        incoming_site_ids, expected_site_ids,
+        "RAG call context should preserve every DB Body::new caller site identity"
+    );
+
+    // Matrix: generated `body_from_impl!` conversion impls.
+    // Source chain:
+    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //   crates/ploke-db/tests/unit/call_graph_fixture_queries/real_target_matrix.rs
+    //   axum-core/src/body.rs:46 defines `Body::new`.
+    //   axum-core/src/body.rs:120-126 defines `body_from_impl!`.
+    //   axum-core/src/body.rs:129-138 invokes it for seven concrete buffer
+    //   types. Each generated `impl From<T> for Body` contains
+    //   `Self::new(http_body_util::Full::from(buf))`.
+    // Expected traversal: RAG exact call context includes all target-centered
+    // `Body::new` callers and preserves the seven generated `Body::from`
+    // caller-site rows as resolved associated-function edges.
+    assert_eq!(
+        generated.len(),
+        7,
+        "body_from_impl! should generate seven Body::from -> Body::new caller sites"
+    );
+    for expected in generated {
+        let call = incoming
+            .iter()
+            .copied()
+            .find(|call| call.owner_id == expected.owner && call.site_id == expected.site)
+            .unwrap_or_else(|| {
+                panic!("RAG context should include generated Body::from caller {expected:#?}: {context:#?}")
+            });
+        assert_eq!(call.status, CallStatusKind::Resolved);
+        assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(call.targets.len(), 1);
+        assert_eq!(call.targets[0].target_id, target);
+        assert_eq!(call.targets[0].relation, CallTargetKind::AssociatedFunction);
+        let CallCalleeInfo::Path { path: callee_path } = &call.callee else {
+            panic!("generated Body::from caller should be a path call: {call:#?}");
+        };
+        assert_eq!(callee_path, &path(&["Self", "new"]));
+    }
 
     Ok(())
 }
@@ -3942,6 +4021,87 @@ async fn call_context_collection_reads_axum_await_result_receiver_gap() -> Resul
     );
 
     Ok(())
+}
+
+#[derive(Debug)]
+struct ExpectedGeneratedCallSite {
+    owner: Uuid,
+    site: Uuid,
+}
+
+fn axum_body_from_impl_generated_callers(
+    db: &Database,
+    target: Uuid,
+) -> Result<Vec<ExpectedGeneratedCallSite>, Error> {
+    let owners = method_ids_by_name_and_body_substring(
+        db,
+        "from",
+        "Self::new(http_body_util::Full::from(buf))",
+    )?;
+    assert_eq!(
+        owners.len(),
+        7,
+        "body_from_impl! should generate exactly seven From<T> for Body::from methods"
+    );
+
+    let expected_path = path(&["Self", "new"]);
+    let mut expected = Vec::new();
+    for owner in owners {
+        let context = db.call_context_for_owner(owner)?;
+        let row = context
+            .iter()
+            .find(|row| {
+                row.site.kind == DbCallSiteKind::Path
+                    && row.site.path.as_ref() == Some(&expected_path)
+                    && row.targets.iter().any(|candidate| {
+                        candidate.target_id == target
+                            && candidate.relation == DbCallRelationKind::AssociatedFunction
+                    })
+            })
+            .unwrap_or_else(|| {
+                panic!("generated Body::from owner should call Body::new: {context:#?}")
+            });
+        assert_eq!(row.status.status, DbCallStatusKind::Resolved);
+        assert_eq!(
+            row.status.resolution,
+            Some(DbCallResolutionKind::LocalExact)
+        );
+        expected.push(ExpectedGeneratedCallSite {
+            owner,
+            site: row.site.id,
+        });
+    }
+
+    Ok(expected)
+}
+
+fn method_ids_by_name_and_body_substring(
+    db: &Database,
+    name: &str,
+    body_marker: &str,
+) -> Result<Vec<Uuid>, Error> {
+    let mut params = BTreeMap::new();
+    params.insert("name".to_string(), DataValue::from(name));
+
+    let rows = db.raw_query_params(
+        r#"?[id, body] :=
+            *method { id, name: $name, body @ 'NOW' }"#,
+        params,
+    )?;
+    let normalized_marker = body_key(body_marker);
+    rows.rows
+        .iter()
+        .filter_map(|row| {
+            let body = match &row[1] {
+                DataValue::Str(body) => body.as_str(),
+                _ => return None,
+            };
+            body_key(body)
+                .contains(&normalized_marker)
+                .then(|| row[0].clone())
+        })
+        .map(|id| to_uuid(&id).map_err(Error::from))
+        .collect()
 }
 
 fn method_id_by_name_and_body_substring(
