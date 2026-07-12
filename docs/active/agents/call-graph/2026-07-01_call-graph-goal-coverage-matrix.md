@@ -50,7 +50,23 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Latest completed slice: bounded axum `map_inner!` transparent source-expression
+Latest completed slice: direct self-field function-pointer initializer
+candidates. The fixture-backed source oracle
+`DirectSelfFieldDispatcher::invoke` calls `(self.call)(self)` while the same
+struct has two explicit direct initializers assigning `direct_self_field_local`
+and `direct_self_field_other` to the `call` field. Parser resolution now walks
+function bodies and impl methods for matching struct literals, follows function
+type aliases used by self fields, and records a finite ambiguous
+`DynamicFunction` candidate set for that direct initializer shape. The
+`fixture_call_graph` parser and ploke-db fixture tests assert the two
+candidates, argument count `1`, target-centered candidate visibility, and no
+admitted traversal edge for the ambiguous row. The regenerated
+`corpus_memchr_call_graph_2026-07-12.sqlite` fixture still keeps real memchr
+`Searcher.call` and `Prefilter.call` targetless because those fields flow
+through shorthand local aliases and cfg-sensitive constructors; the direct
+initializer proof does not guess through that unsupported shape.
+
+Recent completed slice: bounded axum `map_inner!` transparent source-expression
 extraction. The real-corpus axum macro source
 `axum/src/routing/mod.rs:129-138` wraps a source-visible invocation expression
 in `Router<S>::layer` at `routing/mod.rs:304-308`; that expression contains

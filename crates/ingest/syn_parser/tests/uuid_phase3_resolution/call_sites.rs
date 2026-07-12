@@ -143,6 +143,8 @@ const METHOD_TUPLE_RETURN_PATTERN_LOCAL_INIT_CALL_SPAN: (usize, usize) = (40981,
 const METHOD_TUPLE_RETURN_PATTERN_LOCAL_INSTANCE_CALL_SPAN: (usize, usize) = (41005, 41026);
 const METHOD_TUPLE_RETURN_LOCAL_ASSOC_IMPL_SPAN: (usize, usize) = (40757, 40858);
 const TRY_METHOD_RESULT_LOCAL_ASSOC_IMPL_SPAN: (usize, usize) = (35825, 36015);
+const DIRECT_SELF_FIELD_DISPATCHER_IMPL_SPAN: (usize, usize) = (56020, 56381);
+const DIRECT_SELF_FIELD_DISPATCHER_CALL_SPAN: (usize, usize) = (56104, 56121);
 const ASSOC_CONST_CARRIER_IMPL_SPAN: (usize, usize) = (2125, 2210);
 const IMPL_ASSOC_CONST_CALL_SPAN: (usize, usize) = (2188, 2207);
 const TRAIT_ASSOC_CONST_CALL_SPAN: (usize, usize) = (2280, 2299);
@@ -984,6 +986,21 @@ fn fixture_call_graph_self_field_result_assoc_method_args(
         expected_path: &["crate"],
         owner: AssocOwner::Impl {
             span: SELF_FIELD_RESULT_ASSOC_OWNER_IMPL_SPAN,
+        },
+        ident,
+        expected_cfg: None,
+    }
+}
+
+fn fixture_call_graph_direct_self_field_dispatcher_method_args(
+    ident: &'static str,
+) -> AssocParanoidArgs<'static> {
+    AssocParanoidArgs {
+        fixture: "fixture_call_graph",
+        relative_file_path: CALL_GRAPH_LIB_RS,
+        expected_path: &["crate"],
+        owner: AssocOwner::Impl {
+            span: DIRECT_SELF_FIELD_DISPATCHER_IMPL_SPAN,
         },
         ident,
         expected_cfg: None,
@@ -5298,6 +5315,32 @@ paranoid_call_site_test!(
             ExpectedCallOutcome::ResolvedMethodLocalExact {
                 target: target_info.test_method_id(),
             },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_direct_self_field_dispatcher_invoke_preserves_dynamic_function_candidates,
+    fixture: "fixture_call_graph",
+    owner: method {
+        args: fixture_call_graph_direct_self_field_dispatcher_method_args("invoke")
+    },
+    expected: {
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let local_args = fixture_call_graph_function_args(&["crate"], "direct_self_field_local");
+        let other_args = fixture_call_graph_function_args(&["crate"], "direct_self_field_other");
+        let local_info = local_args.generate_pid(&parsed_graphs)?;
+        let other_info = other_args.generate_pid(&parsed_graphs)?;
+        let first = FunctionNodeId::try_from(local_info.test_pid())
+            .expect("direct_self_field_local should regenerate a FunctionNodeId");
+        let second = FunctionNodeId::try_from(other_info.test_pid())
+            .expect("direct_self_field_other should regenerate a FunctionNodeId");
+        ExpectedCallSite::dynamic_self_field(
+            &["self", "call"],
+            DIRECT_SELF_FIELD_DISPATCHER_CALL_SPAN,
+            1,
+            &[],
+            ExpectedCallOutcome::AmbiguousDynamicFunctionCandidates { first, second },
         )
     },
 );

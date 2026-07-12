@@ -2309,3 +2309,35 @@ pub fn call_borrowed_param_alias_instance_method(value: LocalAssoc) -> i32 {
     let alias = &value;
     alias.instance_value()
 }
+
+pub struct DirectSelfFieldDispatcher {
+    call: DirectSelfFieldDispatchFn,
+}
+
+pub type DirectSelfFieldDispatchFn = unsafe fn(&DirectSelfFieldDispatcher) -> i32;
+
+unsafe fn direct_self_field_local(_dispatcher: &DirectSelfFieldDispatcher) -> i32 {
+    local_target()
+}
+
+unsafe fn direct_self_field_other(_dispatcher: &DirectSelfFieldDispatcher) -> i32 {
+    other_target()
+}
+
+impl DirectSelfFieldDispatcher {
+    pub fn invoke(&self) -> i32 {
+        unsafe { (self.call)(self) }
+    }
+
+    pub fn local() -> Self {
+        DirectSelfFieldDispatcher {
+            call: direct_self_field_local,
+        }
+    }
+
+    pub fn other() -> Self {
+        DirectSelfFieldDispatcher {
+            call: direct_self_field_other,
+        }
+    }
+}

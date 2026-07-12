@@ -1325,6 +1325,25 @@ impl<'a> ExpectedCallSite<'a> {
         }
     }
 
+    /// Constructor for a dynamic-call expectation whose callee is a self field.
+    pub const fn dynamic_self_field(
+        path: &'a [&'a str],
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::SelfField { path },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
     /// Constructor for a dynamic-call expectation whose field callee has initializer proof.
     pub const fn dynamic_field_initialized_local_binding(
         path: &'a [&'a str],

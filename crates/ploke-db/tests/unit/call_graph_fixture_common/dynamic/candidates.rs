@@ -113,7 +113,7 @@ pub(in crate::unit) fn assert_dynamic_candidates(
     expected: &[Uuid],
     label: &str,
 ) {
-    assert_dynamic_function_candidates(row, owner, None, expected, label);
+    assert_dynamic_function_candidates(row, owner, None, 0, expected, label);
 }
 
 pub(in crate::unit) fn assert_dynamic_path_function_candidates(
@@ -123,20 +123,39 @@ pub(in crate::unit) fn assert_dynamic_path_function_candidates(
     expected: &[Uuid],
     label: &str,
 ) {
-    assert_dynamic_function_candidates(row, owner, Some(expected_path), expected, label);
+    assert_dynamic_function_candidates(row, owner, Some(expected_path), 0, expected, label);
+}
+
+pub(in crate::unit) fn assert_dynamic_path_function_candidates_with_args(
+    row: &CallContextRow,
+    owner: Uuid,
+    expected_path: &[&str],
+    expected_arg_count: u32,
+    expected: &[Uuid],
+    label: &str,
+) {
+    assert_dynamic_function_candidates(
+        row,
+        owner,
+        Some(expected_path),
+        expected_arg_count,
+        expected,
+        label,
+    );
 }
 
 fn assert_dynamic_function_candidates(
     row: &CallContextRow,
     owner: Uuid,
     expected_path: Option<&[&str]>,
+    expected_arg_count: u32,
     expected: &[Uuid],
     label: &str,
 ) {
     assert_eq!(row.site.owner_id, owner);
     assert_eq!(row.site.kind, CallSiteKind::Dynamic);
     assert_eq!(row.site.path, expected_path.map(path));
-    assert_eq!(row.site.arg_count, Some(0));
+    assert_eq!(row.site.arg_count, Some(expected_arg_count));
     assert_eq!(row.site.generic_arg_count, None);
     assert_eq!(row.status.status, CallStatusKind::Ambiguous);
     assert_eq!(row.status.resolution, None);

@@ -5,13 +5,14 @@ use crate::{
     parser::{
         graph::GraphAccess,
         nodes::{CallBodyOwnerId, ExecutableBodyId, ExecutableBodyKind, StructNode, StructNodeId},
+        nodes::{OrdinaryTypeSourceId, OrdinaryTypeTargetId, OrdinaryTypeUseId, TypeAliasNodeId},
         relations::TypeRelation,
         types::TypeNode,
     },
 };
 
 use super::super::{
-    CallRelationResolver, LocalTypeResolution,
+    CallRelationResolver, LocalTypeResolution, MAX_IMPORT_CHAIN_DEPTH,
     path::{ParameterCallResolution, ParameterCallTarget},
 };
 use super::unparen_expr;
@@ -38,6 +39,13 @@ impl CallRelationResolver<'_> {
         let Some(struct_node) = self.self_struct_node(owner, type_relations)? else {
             return Ok(None);
         };
+        if let Some(resolution) = self.struct_field_function_initializer_resolution(
+            struct_node,
+            field_name,
+            type_relations,
+        )? {
+            return Ok(Some(resolution));
+        }
         self.struct_field_parameter_initializer_resolution(struct_node, field_name, type_relations)
     }
 
@@ -50,7 +58,7 @@ impl CallRelationResolver<'_> {
         let Some(field_type) = self.self_field_type(owner, field_name, type_relations)? else {
             return Ok(None);
         };
-        if !matches!(self.type_node(field_type)?, TypeNode::Function(_)) {
+        if !self.field_type_is_callable_function(field_type, type_relations)? {
             return Ok(None);
         }
 
@@ -58,6 +66,63 @@ impl CallRelationResolver<'_> {
             return Ok(None);
         };
         self.unique_struct_field_closure_initializer(struct_node, field_name, type_relations)
+    }
+
+    fn field_type_is_callable_function(
+        &self,
+        field_type: OrdinaryTypeUseId,
+        type_relations: &[TypeRelation],
+    ) -> Result<bool, SynParserError> {
+        if matches!(self.type_node(field_type)?, TypeNode::Function(_)) {
+            return Ok(true);
+        }
+
+        let Ok(source) = OrdinaryTypeSourceId::try_from(field_type) else {
+            return Ok(false);
+        };
+        let mut targets = ordinary_targets_for_source(source, type_relations);
+        targets.sort_unstable();
+        targets.dedup();
+
+        for target in targets {
+            if self.type_target_is_function_alias(target, type_relations, 0)? {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
+    }
+
+    fn type_target_is_function_alias(
+        &self,
+        target: OrdinaryTypeTargetId,
+        type_relations: &[TypeRelation],
+        depth: usize,
+    ) -> Result<bool, SynParserError> {
+        let Ok(alias_id) = TypeAliasNodeId::try_from(target) else {
+            return Ok(false);
+        };
+        if depth >= MAX_IMPORT_CHAIN_DEPTH {
+            return Err(SynParserError::InternalState(format!(
+                "call resolution exceeded type alias chain depth limit of {MAX_IMPORT_CHAIN_DEPTH} at {alias_id}"
+            )));
+        }
+
+        let alias_node = self.graph.get_type_alias_checked(alias_id)?;
+        if matches!(self.type_node(alias_node.type_id)?, TypeNode::Function(_)) {
+            return Ok(true);
+        }
+
+        let Ok(source) = OrdinaryTypeSourceId::try_from(alias_node.type_id) else {
+            return Ok(false);
+        };
+        for next in ordinary_targets_for_source(source, type_relations) {
+            if self.type_target_is_function_alias(next, type_relations, depth + 1)? {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
     }
 
     fn struct_field_parameter_initializer_resolution(
@@ -129,6 +194,110 @@ impl CallRelationResolver<'_> {
         }
 
         if !matched {
+            return Ok(None);
+        }
+
+        targets.sort_unstable();
+        targets.dedup();
+        Ok(match targets.as_slice() {
+            [target] => Some(ParameterCallResolution::Exact(*target)),
+            [_, _, ..] => Some(ParameterCallResolution::Ambiguous(targets)),
+            [] => None,
+        })
+    }
+
+    fn struct_field_function_initializer_resolution(
+        &self,
+        struct_node: &StructNode,
+        field_name: &str,
+        type_relations: &[TypeRelation],
+    ) -> Result<Option<ParameterCallResolution>, SynParserError> {
+        let mut targets = Vec::new();
+        let mut matched = false;
+        let mut blocked = false;
+
+        for function in self.graph.functions() {
+            let owner = CallBodyOwnerId::Function(function.id);
+            let inits = struct_field_function_initializer_paths(
+                function.body.as_deref(),
+                &function.name,
+                &struct_node.name,
+                field_name,
+            )?;
+            for path in inits.blocked {
+                if self.struct_initializer_path_matches(
+                    owner,
+                    &path,
+                    struct_node,
+                    type_relations,
+                )? {
+                    blocked = true;
+                }
+            }
+            for init in inits.direct {
+                if !self.struct_initializer_path_matches(
+                    owner,
+                    &init.struct_path,
+                    struct_node,
+                    type_relations,
+                )? {
+                    continue;
+                }
+                matched = true;
+                match self.resolve_dynamic_path(owner, &init.function_path)? {
+                    super::DynamicPathResolution::Resolved(target) => {
+                        targets.push(ParameterCallTarget::Function(target));
+                    }
+                    super::DynamicPathResolution::Unresolved if init.cfg_gated => {}
+                    _ => return Ok(None),
+                }
+            }
+        }
+
+        for impl_node in self.graph.impls() {
+            for method in &impl_node.methods {
+                let owner = CallBodyOwnerId::Method(method.id);
+                let inits = struct_field_function_initializer_paths(
+                    method.body.as_deref(),
+                    &method.name,
+                    &struct_node.name,
+                    field_name,
+                )?;
+                for path in inits.blocked {
+                    if self.struct_initializer_path_matches(
+                        owner,
+                        &path,
+                        struct_node,
+                        type_relations,
+                    )? {
+                        blocked = true;
+                    }
+                }
+                for init in inits.direct {
+                    if !self.struct_initializer_path_matches(
+                        owner,
+                        &init.struct_path,
+                        struct_node,
+                        type_relations,
+                    )? {
+                        continue;
+                    }
+                    matched = true;
+                    match self.resolve_dynamic_path(owner, &init.function_path)? {
+                        super::DynamicPathResolution::Resolved(target) => {
+                            targets.push(ParameterCallTarget::Function(target));
+                        }
+                        super::DynamicPathResolution::Unresolved if init.cfg_gated => {}
+                        _ => return Ok(None),
+                    }
+                }
+            }
+        }
+
+        if !matched {
+            return Ok(None);
+        }
+        if blocked {
             return Ok(None);
         }
 
@@ -293,6 +462,22 @@ fn direct_self_field_name(path: &[String]) -> Option<&str> {
     }
 }
 
+fn ordinary_targets_for_source(
+    source: OrdinaryTypeSourceId,
+    type_relations: &[TypeRelation],
+) -> Vec<OrdinaryTypeTargetId> {
+    type_relations
+        .iter()
+        .filter_map(|relation| match relation {
+            TypeRelation::Ordinary {
+                source: relation_source,
+                target,
+            } if *relation_source == source => Some(*target),
+            _ => None,
+        })
+        .collect()
+}
+
 fn struct_field_closure_initializer_paths(
     body: Option<&str>,
     owner_name: &str,
@@ -368,6 +553,19 @@ struct FieldParameterInitializer {
     parameter_path: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FieldFunctionInitializer {
+    struct_path: Vec<String>,
+    function_path: Vec<String>,
+    cfg_gated: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct FieldFunctionInitializers {
+    direct: Vec<FieldFunctionInitializer>,
+    blocked: Vec<Vec<String>>,
+}
+
 struct StructFieldParameterVisitor<'a> {
     struct_name: &'a str,
     field_name: &'a str,
@@ -392,6 +590,97 @@ impl<'ast> Visit<'ast> for StructFieldParameterVisitor<'_> {
     }
 
     fn visit_expr_closure(&mut self, _expr: &'ast syn::ExprClosure) {}
+}
+
+fn struct_field_function_initializer_paths(
+    body: Option<&str>,
+    owner_name: &str,
+    struct_name: &str,
+    field_name: &str,
+) -> Result<FieldFunctionInitializers, SynParserError> {
+    let Some(body) = body else {
+        return Ok(FieldFunctionInitializers::default());
+    };
+    let block = syn::parse_str::<syn::Block>(body).map_err(|err| {
+        SynParserError::InternalState(format!(
+            "failed to parse stored body for self-field function proof in {owner_name}: {err}"
+        ))
+    })?;
+    let mut visitor = StructFieldFunctionVisitor {
+        struct_name,
+        field_name,
+        initializers: FieldFunctionInitializers::default(),
+        cfg_depth: 0,
+    };
+    visitor.visit_block(&block);
+    Ok(visitor.initializers)
+}
+
+struct StructFieldFunctionVisitor<'a> {
+    struct_name: &'a str,
+    field_name: &'a str,
+    initializers: FieldFunctionInitializers,
+    cfg_depth: usize,
+}
+
+impl<'ast> Visit<'ast> for StructFieldFunctionVisitor<'_> {
+    fn visit_expr_struct(&mut self, expr: &'ast syn::ExprStruct) {
+        if struct_path_matches(&expr.path, self.struct_name) {
+            for field in &expr.fields {
+                if !member_matches(&field.member, self.field_name) {
+                    continue;
+                }
+                match callable_function_initializer(field) {
+                    FunctionInitializer::Direct(function_path) => {
+                        self.initializers.direct.push(FieldFunctionInitializer {
+                            struct_path: path_segments(&expr.path),
+                            function_path,
+                            cfg_gated: self.cfg_depth > 0,
+                        });
+                    }
+                    FunctionInitializer::Blocked => {
+                        self.initializers.blocked.push(path_segments(&expr.path));
+                    }
+                    FunctionInitializer::Other => {}
+                }
+            }
+        }
+        visit::visit_expr_struct(self, expr);
+    }
+
+    fn visit_expr_block(&mut self, expr: &'ast syn::ExprBlock) {
+        let is_cfg_gated = expr.attrs.iter().any(is_cfg_attr);
+        if is_cfg_gated {
+            self.cfg_depth += 1;
+        }
+        visit::visit_expr_block(self, expr);
+        if is_cfg_gated {
+            self.cfg_depth -= 1;
+        }
+    }
+
+    fn visit_expr_closure(&mut self, _expr: &'ast syn::ExprClosure) {}
+}
+
+enum FunctionInitializer {
+    Direct(Vec<String>),
+    Blocked,
+    Other,
+}
+
+fn callable_function_initializer(field: &syn::FieldValue) -> FunctionInitializer {
+    let Some(function_path) = callable_function_path(&field.expr) else {
+        return FunctionInitializer::Other;
+    };
+    if field.colon_token.is_none() {
+        FunctionInitializer::Blocked
+    } else {
+        FunctionInitializer::Direct(function_path)
+    }
+}
+
+fn is_cfg_attr(attr: &syn::Attribute) -> bool {
+    attr.path().is_ident("cfg")
 }
 
 fn struct_path_matches(path: &syn::Path, struct_name: &str) -> bool {
@@ -422,6 +711,16 @@ fn callable_parameter_path(expr: &syn::Expr) -> Option<Vec<String>> {
         syn::Expr::Call(call) => boxed_call_parameter_path(call),
         _ => None,
     }
+}
+
+fn callable_function_path(expr: &syn::Expr) -> Option<Vec<String>> {
+    let syn::Expr::Path(path) = unparen_expr(expr) else {
+        return None;
+    };
+    if path.qself.is_some() {
+        return None;
+    }
+    single_segment_path(path_segments(&path.path))
 }
 
 fn boxed_call_parameter_path(call: &syn::ExprCall) -> Option<Vec<String>> {
