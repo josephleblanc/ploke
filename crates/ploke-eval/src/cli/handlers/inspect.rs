@@ -4044,6 +4044,25 @@ fn tool_argument_projection(arguments: &ToolCallArguments) -> Vec<ToolArgumentFi
             push_option(&mut fields, "max_depth", args.max_depth);
             push_option(&mut fields, "max_paths", args.max_paths);
         }
+        ToolCallArguments::CodeItemEffectGuard(args) => {
+            push_ref(&mut fields, "owner_item", &args.owner.item_name);
+            push_ref(&mut fields, "guard_item", &args.guard.item_name);
+            push_ref(&mut fields, "owner_file", &args.owner.file_path);
+            push_ref(&mut fields, "guard_file", &args.guard.file_path);
+            push_ref(&mut fields, "effect_class", &args.effect_class);
+            push_option(&mut fields, "max_depth", args.max_depth);
+            push_option(&mut fields, "max_paths", args.max_paths);
+        }
+        ToolCallArguments::CodeItemBoundaryPolicy(args) => {
+            push_ref(&mut fields, "owner_item", &args.owner.item_name);
+            push_ref(&mut fields, "owner_file", &args.owner.file_path);
+            push_count(&mut fields, "rules", args.rules.len());
+            if let Some(rule) = args.rules.first() {
+                push_ref(&mut fields, "rule_id", &rule.rule_id);
+            }
+            push_option(&mut fields, "max_depth", args.max_depth);
+            push_option(&mut fields, "max_paths", args.max_paths);
+        }
         ToolCallArguments::CodePrivateUncalled(args) => {
             push_option(&mut fields, "max_results", args.max_results);
         }

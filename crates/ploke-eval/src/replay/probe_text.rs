@@ -304,6 +304,28 @@ fn tool_result_lines(tool: &str, content: &str) -> Vec<String> {
                 result.proof_context.len()
             )]
         }
+        PersistedToolResultContent::Decoded(ToolResultContent::CodeItemEffectGuard(result)) => {
+            vec![format!(
+                "result: guarded={} effect_class={} effects={} violations={} owner={} guard={} source_files={} proof_context={}",
+                result.guarded,
+                result.effect_class,
+                result.effects.len(),
+                result.violations.len(),
+                result.owner_id,
+                result.guard_id,
+                result.source_files.len(),
+                result.proof_context.len()
+            )]
+        }
+        PersistedToolResultContent::Decoded(ToolResultContent::CodeItemBoundaryPolicy(result)) => {
+            vec![format!(
+                "result: rules={} violations={} owner={} source_files={}",
+                result.rules.len(),
+                result.violations.len(),
+                result.owner_id,
+                result.source_files.len()
+            )]
+        }
         PersistedToolResultContent::Decoded(ToolResultContent::CodePrivateUncalled(result)) => {
             vec![format!(
                 "result: total={} returned={} truncated={} nodes={}",

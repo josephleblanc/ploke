@@ -4385,6 +4385,56 @@ fn render_tool_call_arguments(
             render_optional_u32(ui, render_cache, "max depth", args.max_depth);
             render_optional_usize(ui, render_cache, "max paths", args.max_paths);
         }
+        ToolCallArguments::CodeItemEffectGuard(args) => {
+            show_inspector_collapsing(
+                ui,
+                egui::CollapsingHeader::new("owner").default_open(true),
+                |ui| {
+                    let _span = tracing::trace_span!("inspector_tool_argument_effect_guard_owner")
+                        .entered();
+                    render_code_item_query(
+                        ui,
+                        render_cache,
+                        args.owner.item_name.as_str(),
+                        args.owner.file_path.as_str(),
+                        args.owner.node_kind.as_str(),
+                        args.owner.module_path.as_str(),
+                    );
+                },
+            );
+            show_inspector_collapsing(
+                ui,
+                egui::CollapsingHeader::new("guard").default_open(true),
+                |ui| {
+                    let _span = tracing::trace_span!("inspector_tool_argument_effect_guard_guard")
+                        .entered();
+                    render_code_item_query(
+                        ui,
+                        render_cache,
+                        args.guard.item_name.as_str(),
+                        args.guard.file_path.as_str(),
+                        args.guard.node_kind.as_str(),
+                        args.guard.module_path.as_str(),
+                    );
+                },
+            );
+            tool_kv_text(ui, render_cache, "effect class", args.effect_class.as_str());
+            render_optional_u32(ui, render_cache, "max depth", args.max_depth);
+            render_optional_usize(ui, render_cache, "max paths", args.max_paths);
+        }
+        ToolCallArguments::CodeItemBoundaryPolicy(args) => {
+            render_code_item_query(
+                ui,
+                render_cache,
+                args.owner.item_name.as_str(),
+                args.owner.file_path.as_str(),
+                args.owner.node_kind.as_str(),
+                args.owner.module_path.as_str(),
+            );
+            tool_kv_usize(ui, render_cache, "rules", args.rules.len());
+            render_optional_u32(ui, render_cache, "max depth", args.max_depth);
+            render_optional_usize(ui, render_cache, "max paths", args.max_paths);
+        }
         ToolCallArguments::CodePrivateUncalled(args) => {
             render_optional_usize(ui, render_cache, "max results", args.max_results);
         }
@@ -4531,6 +4581,36 @@ fn render_tool_result_content(
             );
             tool_kv_debug(ui, render_cache, "source id", result.source_id);
             tool_kv_debug(ui, render_cache, "target id", result.target_id);
+        }
+        ToolResultContent::CodeItemEffectGuard(result) => {
+            tool_kv_bool(ui, render_cache, "guarded", result.guarded);
+            tool_kv_text(
+                ui,
+                render_cache,
+                "effect class",
+                result.effect_class.as_str(),
+            );
+            tool_kv_usize(ui, render_cache, "effects", result.effects.len());
+            tool_kv_usize(ui, render_cache, "violations", result.violations.len());
+            tool_kv_usize(ui, render_cache, "source files", result.source_files.len());
+            tool_kv_usize(
+                ui,
+                render_cache,
+                "proof context",
+                result.proof_context.len(),
+            );
+            tool_kv_u32(ui, render_cache, "max depth", result.max_depth);
+            tool_kv_usize(ui, render_cache, "max paths", result.max_paths);
+            tool_kv_debug(ui, render_cache, "owner id", result.owner_id);
+            tool_kv_debug(ui, render_cache, "guard id", result.guard_id);
+        }
+        ToolResultContent::CodeItemBoundaryPolicy(result) => {
+            tool_kv_usize(ui, render_cache, "rules", result.rules.len());
+            tool_kv_usize(ui, render_cache, "violations", result.violations.len());
+            tool_kv_usize(ui, render_cache, "source files", result.source_files.len());
+            tool_kv_u32(ui, render_cache, "max depth", result.max_depth);
+            tool_kv_usize(ui, render_cache, "max paths", result.max_paths);
+            tool_kv_debug(ui, render_cache, "owner id", result.owner_id);
         }
         ToolResultContent::CodePrivateUncalled(result) => {
             tool_kv_usize(ui, render_cache, "total", result.total);

@@ -22,7 +22,9 @@ pub use ploke_tui::tools::{
         CargoToolParamsOwned, CargoToolResult,
     },
     code_edit::{CanonicalEditOwned, CodeEditParamsOwned},
+    code_item_boundary_policy::{CodeItemBoundaryPolicyParamsOwned, CodeItemBoundaryPolicyResult},
     code_item_call_path::{CodeItemCallPathParamsOwned, CodeItemCallPathResult},
+    code_item_effect_guard::{CodeItemEffectGuardParamsOwned, CodeItemEffectGuardResult},
     code_item_lookup::LookupParamsOwned,
     code_private_uncalled::{CodePrivateUncalledResult, PrivateUncalledParamsOwned},
     create_file::CreateFileParamsOwned,
@@ -144,6 +146,10 @@ pub enum ToolCallArguments {
     CodeItemEdges(EdgesParamsOwned),
     #[serde(rename = "code_item_call_path")]
     CodeItemCallPath(CodeItemCallPathParamsOwned),
+    #[serde(rename = "code_item_effect_guard")]
+    CodeItemEffectGuard(CodeItemEffectGuardParamsOwned),
+    #[serde(rename = "code_item_boundary_policy")]
+    CodeItemBoundaryPolicy(CodeItemBoundaryPolicyParamsOwned),
     #[serde(rename = "code_private_uncalled")]
     CodePrivateUncalled(PrivateUncalledParamsOwned),
     #[serde(rename = "cargo")]
@@ -171,6 +177,8 @@ impl ToolCallArguments {
             Self::CodeItemLookup(_) => Some(ToolName::CodeItemLookup),
             Self::CodeItemEdges(_) => Some(ToolName::CodeItemEdges),
             Self::CodeItemCallPath(_) => Some(ToolName::CodeItemCallPath),
+            Self::CodeItemEffectGuard(_) => Some(ToolName::CodeItemEffectGuard),
+            Self::CodeItemBoundaryPolicy(_) => Some(ToolName::CodeItemBoundaryPolicy),
             Self::CodePrivateUncalled(_) => Some(ToolName::CodePrivateUncalled),
             Self::Cargo(_) => Some(ToolName::Cargo),
             Self::ListDir(_) => Some(ToolName::ListDir),
@@ -250,6 +258,16 @@ pub fn decode_tool_arguments(tool: &str, raw: &str) -> PersistedToolCallArgument
         ToolName::CodeItemCallPath => {
             decode_as(tool_name.as_str(), raw, ToolCallArguments::CodeItemCallPath)
         }
+        ToolName::CodeItemEffectGuard => decode_as(
+            tool_name.as_str(),
+            raw,
+            ToolCallArguments::CodeItemEffectGuard,
+        ),
+        ToolName::CodeItemBoundaryPolicy => decode_as(
+            tool_name.as_str(),
+            raw,
+            ToolCallArguments::CodeItemBoundaryPolicy,
+        ),
         ToolName::CodePrivateUncalled => decode_as(
             tool_name.as_str(),
             raw,
@@ -328,6 +346,10 @@ pub enum ToolResultContent {
     CodeItemLookup(ConciseContext),
     #[serde(rename = "code_item_call_path")]
     CodeItemCallPath(CodeItemCallPathResult),
+    #[serde(rename = "code_item_effect_guard")]
+    CodeItemEffectGuard(CodeItemEffectGuardResult),
+    #[serde(rename = "code_item_boundary_policy")]
+    CodeItemBoundaryPolicy(CodeItemBoundaryPolicyResult),
     #[serde(rename = "code_private_uncalled")]
     CodePrivateUncalled(CodePrivateUncalledResult),
     #[serde(rename = "cargo")]
@@ -348,6 +370,8 @@ impl ToolResultContent {
             Self::NsRead(_) => ToolName::NsRead,
             Self::CodeItemLookup(_) => ToolName::CodeItemLookup,
             Self::CodeItemCallPath(_) => ToolName::CodeItemCallPath,
+            Self::CodeItemEffectGuard(_) => ToolName::CodeItemEffectGuard,
+            Self::CodeItemBoundaryPolicy(_) => ToolName::CodeItemBoundaryPolicy,
             Self::CodePrivateUncalled(_) => ToolName::CodePrivateUncalled,
             Self::Cargo(_) => ToolName::Cargo,
             Self::ListDir(_) => ToolName::ListDir,
@@ -417,6 +441,16 @@ pub fn decode_tool_result_content(tool: &str, raw: &str) -> PersistedToolResultC
         ToolName::CodeItemCallPath => {
             decode_result_as(tool_name.as_str(), raw, ToolResultContent::CodeItemCallPath)
         }
+        ToolName::CodeItemEffectGuard => decode_result_as(
+            tool_name.as_str(),
+            raw,
+            ToolResultContent::CodeItemEffectGuard,
+        ),
+        ToolName::CodeItemBoundaryPolicy => decode_result_as(
+            tool_name.as_str(),
+            raw,
+            ToolResultContent::CodeItemBoundaryPolicy,
+        ),
         ToolName::CodePrivateUncalled => decode_result_as(
             tool_name.as_str(),
             raw,
@@ -460,6 +494,8 @@ fn tool_name_from_persisted(tool: &str) -> Option<ToolName> {
         "code_item_lookup" => Some(ToolName::CodeItemLookup),
         "code_item_edges" => Some(ToolName::CodeItemEdges),
         "code_item_call_path" => Some(ToolName::CodeItemCallPath),
+        "code_item_effect_guard" => Some(ToolName::CodeItemEffectGuard),
+        "code_item_boundary_policy" => Some(ToolName::CodeItemBoundaryPolicy),
         "code_private_uncalled" => Some(ToolName::CodePrivateUncalled),
         "cargo" => Some(ToolName::Cargo),
         "list_dir" => Some(ToolName::ListDir),
@@ -547,6 +583,73 @@ mod tests {
     }
 
     #[test]
+    fn tool_call_arguments_decode_code_item_effect_guard() {
+        let raw = r#"{
+            "owner":{
+                "item_name":"handle",
+                "file_path":"src/lib.rs",
+                "node_kind":"function",
+                "module_path":"crate::service"
+            },
+            "guard":{
+                "item_name":"check_auth",
+                "file_path":"src/auth.rs",
+                "node_kind":"function",
+                "module_path":"crate::auth"
+            },
+            "effect_class":"async_task_spawn",
+            "max_depth":4,
+            "max_paths":8
+        }"#;
+        let decoded = decode_tool_arguments("code_item_effect_guard", raw);
+
+        let PersistedToolCallArguments::Decoded(ToolCallArguments::CodeItemEffectGuard(arguments)) =
+            decoded
+        else {
+            panic!("expected decoded code_item_effect_guard arguments");
+        };
+
+        assert_eq!(arguments.owner.item_name, "handle");
+        assert_eq!(arguments.guard.item_name, "check_auth");
+        assert_eq!(arguments.effect_class, "async_task_spawn");
+        assert_eq!(arguments.max_depth, Some(4));
+        assert_eq!(arguments.max_paths, Some(8));
+    }
+
+    #[test]
+    fn tool_call_arguments_decode_code_item_boundary_policy() {
+        let raw = r#"{
+            "owner":{
+                "item_name":"handle",
+                "file_path":"src/lib.rs",
+                "node_kind":"function",
+                "module_path":"crate::service"
+            },
+            "rules":[{
+                "rule_id":"service_must_not_call_storage",
+                "caller_module_prefix":["crate","service"],
+                "callee_module_prefix":["crate","storage"]
+            }],
+            "max_depth":3,
+            "max_paths":16
+        }"#;
+        let decoded = decode_tool_arguments("code_item_boundary_policy", raw);
+
+        let PersistedToolCallArguments::Decoded(ToolCallArguments::CodeItemBoundaryPolicy(
+            arguments,
+        )) = decoded
+        else {
+            panic!("expected decoded code_item_boundary_policy arguments");
+        };
+
+        assert_eq!(arguments.owner.item_name, "handle");
+        assert_eq!(arguments.rules.len(), 1);
+        assert_eq!(arguments.rules[0].rule_id, "service_must_not_call_storage");
+        assert_eq!(arguments.max_depth, Some(3));
+        assert_eq!(arguments.max_paths, Some(16));
+    }
+
+    #[test]
     fn tool_call_arguments_record_json_parse_failure() {
         let decoded = decode_tool_arguments("request_code_context", "{");
 
@@ -623,6 +726,77 @@ mod tests {
         assert_eq!(result.returned, 0);
         assert!(result.truncated);
         assert!(result.nodes.is_empty());
+    }
+
+    #[test]
+    fn tool_result_content_decodes_code_item_effect_guard() {
+        let raw = r#"{
+            "owner_id":"00000000-0000-0000-0000-000000000001",
+            "guard_id":"00000000-0000-0000-0000-000000000002",
+            "owner_file_path":"src/lib.rs",
+            "guard_file_path":"src/auth.rs",
+            "effect_class":"async_task_spawn",
+            "guarded":true,
+            "max_depth":4,
+            "max_paths":8,
+            "effects":[],
+            "violations":[],
+            "source_files":[],
+            "proof_context":[]
+        }"#;
+        let decoded = decode_tool_result_content("code_item_effect_guard", raw);
+
+        let PersistedToolResultContent::Decoded(ToolResultContent::CodeItemEffectGuard(result)) =
+            decoded
+        else {
+            panic!("expected decoded code_item_effect_guard result");
+        };
+
+        assert_eq!(
+            result.owner_id.to_string(),
+            "00000000-0000-0000-0000-000000000001"
+        );
+        assert_eq!(
+            result.guard_id.to_string(),
+            "00000000-0000-0000-0000-000000000002"
+        );
+        assert_eq!(result.owner_file_path.as_ref(), "src/lib.rs");
+        assert!(result.guarded);
+        assert!(result.effects.is_empty());
+        assert!(result.proof_context.is_empty());
+    }
+
+    #[test]
+    fn tool_result_content_decodes_code_item_boundary_policy() {
+        let raw = r#"{
+            "owner_id":"00000000-0000-0000-0000-000000000003",
+            "owner_file_path":"src/lib.rs",
+            "rules":[{
+                "rule_id":"service_must_not_call_storage",
+                "caller_module_prefix":["crate","service"],
+                "callee_module_prefix":["crate","storage"]
+            }],
+            "max_depth":3,
+            "max_paths":16,
+            "violations":[],
+            "source_files":["src/lib.rs"]
+        }"#;
+        let decoded = decode_tool_result_content("code_item_boundary_policy", raw);
+
+        let PersistedToolResultContent::Decoded(ToolResultContent::CodeItemBoundaryPolicy(result)) =
+            decoded
+        else {
+            panic!("expected decoded code_item_boundary_policy result");
+        };
+
+        assert_eq!(
+            result.owner_id.to_string(),
+            "00000000-0000-0000-0000-000000000003"
+        );
+        assert_eq!(result.rules.len(), 1);
+        assert_eq!(result.rules[0].rule_id, "service_must_not_call_storage");
+        assert!(result.violations.is_empty());
+        assert_eq!(result.source_files.len(), 1);
     }
 
     #[test]
