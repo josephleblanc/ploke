@@ -1090,6 +1090,62 @@ async fn call_context_collection_resolves_private_single_caller_callable_trait_o
 }
 
 #[tokio::test]
+async fn call_context_collection_resolves_private_single_caller_result_method_callback()
+-> Result<(), Error> {
+    init_tracing_once();
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_single_result_callback"),
+    )?;
+    let local_target = unique_id_by_name(&db, "function", "local_result_target")?;
+    let rag = init_test_rag_mock(Arc::clone(&db));
+
+    let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+    let context = call_context
+        .get(&owner)
+        .expect("single-caller result callback owner should receive outgoing call context");
+    let call = context
+        .iter()
+        .find(|call| {
+            call.kind == CallSiteKind::Method
+                && call.callee
+                    == CallCalleeInfo::Method {
+                        name: "and_then".to_string(),
+                        receiver: Some(CallReceiverInfo::PathCallResult {
+                            path: vec!["Ok".to_string()],
+                        }),
+                    }
+                && call
+                    .targets
+                    .iter()
+                    .any(|target| target.target_id == local_target)
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "single-caller result callback context should include resolved and_then(f) -> local_result_target: {context:#?}"
+            )
+        });
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs EOF:
+    // `call_single_result_callback(f)` is private and every local caller passes
+    // `local_result_target`, so this is complete private-caller proof for the
+    // callback argument of `Ok::<i32, ()>(1).and_then(f)`.
+    assert_eq!(call.status, CallStatusKind::Resolved);
+    assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+    assert_eq!(call.targets.len(), 1);
+    assert_eq!(call.targets[0].target_id, local_target);
+    assert_eq!(
+        call.targets[0].relation,
+        CallTargetKind::MethodCallbackFunction
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn call_context_collection_resolves_private_single_caller_branch_parameter_calls()
 -> Result<(), Error> {
     init_tracing_once();

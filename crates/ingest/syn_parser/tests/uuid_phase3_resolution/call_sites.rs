@@ -387,6 +387,7 @@ const AWAITED_ASYNC_CLOSURE_FUTURE_TUPLE_FIELD_BODY_LOCAL_TARGET_CALL_SPAN: (usi
 const AWAITED_ASYNC_CLOSURE_FUTURE_NAMED_FIELD_CALL_SPAN: (usize, usize) = (54913, 54922);
 const AWAITED_ASYNC_CLOSURE_FUTURE_NAMED_FIELD_BODY_LOCAL_TARGET_CALL_SPAN: (usize, usize) =
     (54852, 54866);
+const RESULT_CALLBACK_AND_THEN_CALL_SPAN: (usize, usize) = (55114, 55142);
 const ITER_RESULT_INTO_ITER_CALL_SPAN: (usize, usize) = (44177, 44193);
 const ITER_RESULT_SIZE_HINT_CALL_SPAN: (usize, usize) = (44199, 44215);
 const NAMED_FIELD_FUNCTION_DYNAMIC_CALL_SPAN: (usize, usize) = (17945, 17964);
@@ -11109,4 +11110,29 @@ paranoid_call_site_test!(
         &[],
         ExpectedCallOutcome::External,
     ),
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_single_result_callback_resolves_method_callback_function_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_single_result_callback"
+    },
+    expected: {
+        let target_args = fixture_call_graph_function_args(&["crate"], "local_result_target");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("local_result_target should regenerate a FunctionNodeId");
+        ExpectedCallSite::method(
+            "and_then",
+            ExpectedMethodReceiver::PathCallResult { path: &["Ok"] },
+            RESULT_CALLBACK_AND_THEN_CALL_SPAN,
+            1,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedMethodCallbackFunctionLocalExact { target },
+        )
+    },
 );

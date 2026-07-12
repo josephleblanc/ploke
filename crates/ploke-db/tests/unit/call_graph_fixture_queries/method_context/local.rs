@@ -1,3 +1,5 @@
+use ploke_db::CallPathOptions;
+
 use super::*;
 
 const METHOD_TUPLE_RETURN_PATTERN_LOCAL_INIT_CALL_SPAN: (usize, usize) = (40981, 40999);
@@ -29,6 +31,90 @@ fn fixture_context_reads_projected_typed_local_method_call() -> Result<(), DbErr
     assert_eq!(row.targets[0].relation, CallRelationKind::Method);
     assert_eq!(row.targets[0].source_kind, CallSiteKind::Method);
     assert_eq!(row.targets[0].target_kind, CallTargetKind::Method);
+
+    Ok(())
+}
+
+#[test]
+fn fixture_context_resolves_result_method_callback_function() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let owner = function_id_by_name(&db, "call_single_result_callback")?;
+    let caller = function_id_by_name(&db, "call_single_result_callback_with_local_target")?;
+    let target = function_id_by_name(&db, "local_result_target")?;
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs EOF:
+    // `call_single_result_callback(f)` invokes
+    // `Ok::<i32, ()>(1).and_then(f)`. The helper is private and its only local
+    // caller passes `local_result_target`, so the method callback edge is exact.
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(
+        context.len(),
+        2,
+        "result callback context rows: {context:#?}"
+    );
+
+    let receiver = CallReceiver::PathCallResult {
+        path: path(&["Ok"]),
+    };
+    let row = row_by_method_receiver(&context, "and_then", &receiver);
+    assert_eq!(row.site.owner_id, owner);
+    assert_eq!(row.site.arg_count, Some(1));
+    assert_eq!(row.site.generic_arg_count, Some(0));
+    assert_resolved_target(
+        row,
+        target,
+        CallRelationKind::MethodCallbackFunction,
+        CallSiteKind::Method,
+        CallTargetKind::Function,
+    );
+
+    let callers = db.callers_for_target(target)?;
+    let caller_row = caller_by_owner_method_receiver(&callers, owner, "and_then", &receiver);
+    assert_eq!(caller_row.status.status, CallStatusKind::Resolved);
+    assert_eq!(
+        caller_row.status.resolution,
+        Some(CallResolutionKind::LocalExact)
+    );
+    assert_eq!(
+        caller_row.target.relation,
+        CallRelationKind::MethodCallbackFunction
+    );
+    assert_eq!(caller_row.target.target_kind, CallTargetKind::Function);
+
+    let caller_context = db.call_context_for_owner(caller)?;
+    let wrapper_call = row_by_path(&caller_context, &["call_single_result_callback"]);
+    assert_resolved_target(
+        wrapper_call,
+        owner,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
+
+    let paths = db.call_paths_between(
+        caller,
+        target,
+        CallPathOptions {
+            max_depth: 2,
+            max_paths: 8,
+        },
+    )?;
+    let path = paths
+        .iter()
+        .find(|path| path.start_id == caller && path.end_id == target && path.depth == 2)
+        .unwrap_or_else(|| {
+            panic!("result callback caller should traverse caller -> helper -> local_result_target: {paths:#?}")
+        });
+    assert_eq!(path.edges[0].caller_id, caller);
+    assert_eq!(path.edges[0].callee_id, owner);
+    assert_eq!(path.edges[0].relation, CallRelationKind::Function);
+    assert_eq!(path.edges[1].caller_id, owner);
+    assert_eq!(path.edges[1].callee_id, target);
+    assert_eq!(
+        path.edges[1].relation,
+        CallRelationKind::MethodCallbackFunction
+    );
+    assert_eq!(path.edges[1].target_kind, CallTargetKind::Function);
 
     Ok(())
 }

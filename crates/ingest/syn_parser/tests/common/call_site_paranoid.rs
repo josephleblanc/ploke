@@ -696,6 +696,8 @@ pub enum ExpectedCallOutcome {
     ResolvedLocalFunctionLocalExact { target: ExecutableBodyId },
     /// Resolver should produce a local exact associated-function edge.
     ResolvedAssociatedFunctionLocalExact { target: MethodNodeId },
+    /// Resolver should produce a local exact method-callback edge to a function item.
+    ResolvedMethodCallbackFunctionLocalExact { target: FunctionNodeId },
     /// Resolver should produce a local exact tuple struct constructor edge.
     ResolvedTupleStructConstructorLocalExact { target: StructNodeId },
     /// Resolver should produce a local exact enum variant constructor edge.
@@ -2040,6 +2042,7 @@ fn assert_resolution_outcome(
         | ExpectedCallOutcome::ResolvedClosureLocalExact { .. }
         | ExpectedCallOutcome::ResolvedLocalFunctionLocalExact { .. }
         | ExpectedCallOutcome::ResolvedAssociatedFunctionLocalExact { .. }
+        | ExpectedCallOutcome::ResolvedMethodCallbackFunctionLocalExact { .. }
         | ExpectedCallOutcome::ResolvedTupleStructConstructorLocalExact { .. }
         | ExpectedCallOutcome::ResolvedEnumVariantConstructorLocalExact { .. } => assert!(
             matches!(
@@ -2286,6 +2289,25 @@ fn assert_resolution_outcome(
                 matches!(relations[0], CallRelation::AssociatedFunction { source: actual_source, target: actual_target }
                     if actual_source == source && actual_target == target),
                 "expected AssociatedFunction edge {source:?} -> {target:?}, got {:?}",
+                relations[0]
+            );
+        }
+        ExpectedCallOutcome::ResolvedMethodCallbackFunctionLocalExact { target } => {
+            let source = match expected_id {
+                AnyCallSiteId::Method(source) => source,
+                other => panic!(
+                    "method-callback function relation expected a method call-site ID, got {other:?}"
+                ),
+            };
+            assert_eq!(
+                relations.len(),
+                1,
+                "resolved method-callback function call site {expected_id:?} should emit exactly one semantic edge; got {relations:#?}"
+            );
+            assert!(
+                matches!(relations[0], CallRelation::MethodCallbackFunction { source: actual_source, target: actual_target }
+                    if actual_source == source && actual_target == target),
+                "expected MethodCallbackFunction edge {source:?} -> {target:?}, got {:?}",
                 relations[0]
             );
         }

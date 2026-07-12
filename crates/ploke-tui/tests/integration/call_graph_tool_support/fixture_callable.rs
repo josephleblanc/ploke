@@ -21,6 +21,15 @@ pub(crate) struct CallableParamResolvedFixture {
     pub(crate) build_domain: &'static str,
 }
 
+pub(crate) struct ResultCallbackFixture {
+    pub(crate) state: Arc<AppState>,
+    pub(crate) file_path: PathBuf,
+    pub(crate) owner_name: &'static str,
+    pub(crate) owner: Uuid,
+    pub(crate) target: Uuid,
+    pub(crate) build_domain: &'static str,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CallableBlockerShape {
     Path,
@@ -328,6 +337,70 @@ impl CallableParamResolvedFixture {
             target,
             path: path.iter().map(|part| (*part).to_string()).collect(),
             build_domain: "bd:fixture-call-graph",
+        }
+    }
+
+    pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
+        ctx_for_state(&self.state, call_id)
+    }
+}
+
+impl ResultCallbackFixture {
+    pub(crate) async fn new() -> Self {
+        let db = Arc::new(Database::new(
+            setup_db_full_multi_embedding("fixture_call_graph").expect("fixture_call_graph db"),
+        ));
+        let crate_root = workspace_root().join("tests/fixture_crates/fixture_call_graph");
+        let module_path = vec!["crate".to_string()];
+        let file_path = crate_root.join("src/lib.rs");
+        let owner_name = "call_single_result_callback";
+        let owner = graph_resolve_exact(
+            db.as_ref(),
+            "function",
+            file_path.as_path(),
+            &module_path,
+            owner_name,
+        )
+        .unwrap_or_else(|err| panic!("resolve {owner_name}: {err}"))
+        .pop()
+        .unwrap_or_else(|| panic!("{owner_name} row"))
+        .id;
+        let target = graph_resolve_exact(
+            db.as_ref(),
+            "function",
+            file_path.as_path(),
+            &module_path,
+            "local_result_target",
+        )
+        .expect("resolve local_result_target")
+        .pop()
+        .expect("local_result_target row")
+        .id;
+        assert_eq!(
+            db.project_call_proof_facts_for_node(owner, "bd:fixture-call-graph")
+                .expect("project result callback proof facts"),
+            8,
+            "{owner_name} should project the expected result callback proof rows"
+        );
+
+        let state = app_state_with_rag(db, crate_root).await;
+
+        Self {
+            state,
+            file_path,
+            owner_name,
+            owner,
+            target,
+            build_domain: "bd:fixture-call-graph",
+        }
+    }
+
+    pub(crate) fn callee(&self) -> CallCalleeInfo {
+        CallCalleeInfo::Method {
+            name: "and_then".to_string(),
+            receiver: Some(CallReceiverInfo::PathCallResult {
+                path: vec!["Ok".to_string()],
+            }),
         }
     }
 

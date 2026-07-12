@@ -2285,3 +2285,15 @@ pub async fn call_awaited_async_closure_future_named_field_with_body_call() {
     let holder = AsyncFutureHolder { future: closure() };
     holder.future.await;
 }
+
+fn local_result_target(value: i32) -> Result<i32, ()> {
+    Ok(value)
+}
+
+fn call_single_result_callback(f: fn(i32) -> Result<i32, ()>) -> Result<i32, ()> {
+    Ok::<i32, ()>(1).and_then(f)
+}
+
+pub fn call_single_result_callback_with_local_target() -> Result<i32, ()> {
+    call_single_result_callback(local_result_target)
+}

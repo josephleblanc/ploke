@@ -50,6 +50,17 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
+Latest completed slice: exact private result method-callback function proof.
+The fixture source
+`call_single_result_callback(f)` now proves
+`Ok::<i32, ()>(1).and_then(f) -> local_result_target` when the helper is
+private and every local caller passes the same function item. Parser, DB, RAG,
+and exact TUI lookup/edge tests assert the resolved
+`MethodCallbackFunction` row plus the two-hop
+caller -> helper -> callback target traversal. This remains bounded to exact
+complete-local-caller callback argument proof; it does not add arbitrary
+callback-body traversal.
+
 Current bucket: real-corpus method-callback candidate proof surface.
 
 Exit criteria:

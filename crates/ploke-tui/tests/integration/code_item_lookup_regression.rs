@@ -17,19 +17,20 @@ use crate::call_graph_tool_support::{
     CallGraphToolFixture, CallableBlockerFixture, CallableBlockerShape,
     CallableParamResolvedFixture, ChronoAliasConstructorToolFixture, ChronoNaiveUtcToolFixture,
     FixtureBranchReceiverToolFixture, FixtureDynamicCallableToolFixture,
-    FixtureSelfFieldReceiverToolFixture, assert_ambiguous_dynamic_candidates,
-    assert_ambiguous_path_candidates, assert_await_result_unwrap_context,
-    assert_await_result_unwrap_proof, assert_body_empty_dependency_root_proof,
-    assert_body_empty_impact_summary, assert_body_empty_incoming_context,
-    assert_boxed_into_route_incoming_context, assert_branch_receiver_context,
-    assert_branch_receiver_proof, assert_call_path_node, assert_chrono_naive_utc_incoming_context,
-    assert_dynamic_context, assert_dynamic_proof, assert_expected_path_incoming_context,
-    assert_fixture_extern_c_abs_effects, assert_handler_call_incoming_context,
-    assert_incoming_context, assert_initialized_local_receiver_context,
-    assert_initialized_local_receiver_proof, assert_json_from_bytes_incoming_context,
-    assert_no_external_summary_need_for_site, assert_parse_attrs_incoming_context,
-    assert_path_blocker_proof, assert_path_context, assert_path_resolution_proof,
-    assert_process_invariant_findings, assert_resolved_callable_param_proof,
+    FixtureSelfFieldReceiverToolFixture, ResultCallbackFixture,
+    assert_ambiguous_dynamic_candidates, assert_ambiguous_path_candidates,
+    assert_await_result_unwrap_context, assert_await_result_unwrap_proof,
+    assert_body_empty_dependency_root_proof, assert_body_empty_impact_summary,
+    assert_body_empty_incoming_context, assert_boxed_into_route_incoming_context,
+    assert_branch_receiver_context, assert_branch_receiver_proof, assert_call_path_node,
+    assert_chrono_naive_utc_incoming_context, assert_dynamic_context, assert_dynamic_proof,
+    assert_expected_path_incoming_context, assert_fixture_extern_c_abs_effects,
+    assert_handler_call_incoming_context, assert_incoming_context,
+    assert_initialized_local_receiver_context, assert_initialized_local_receiver_proof,
+    assert_json_from_bytes_incoming_context, assert_no_external_summary_need_for_site,
+    assert_parse_attrs_incoming_context, assert_path_blocker_proof, assert_path_context,
+    assert_path_resolution_proof, assert_process_invariant_findings,
+    assert_resolved_callable_param_proof, assert_resolved_method_target_context,
     assert_resolved_path_context, assert_run_ui_tests_incoming_context,
     assert_runtime_dispatch_blocker, assert_self_field_receiver_context,
     assert_self_field_receiver_proof, assert_serde_json_summary_proof, assert_target_proof,
@@ -1016,6 +1017,73 @@ async fn code_item_lookup_returns_forwarded_boxed_dyn_fn_param_targets() {
     ] {
         assert_callable_param_lookup(fixture, "forwarded boxed dyn Fn parameter").await;
     }
+}
+
+#[tokio::test]
+async fn code_item_lookup_returns_result_method_callback_function_target() {
+    // Source oracle:
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs EOF
+    //     private `call_single_result_callback(f)` calls
+    //     `Ok::<i32, ()>(1).and_then(f)`.
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs EOF
+    //     the only local caller passes `local_result_target`.
+    let fixture = ResultCallbackFixture::new().await;
+    let params = LookupParams {
+        item_name: Cow::Borrowed(fixture.owner_name),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("function"),
+        module_path: Cow::Borrowed("crate"),
+        owner_trait: None,
+        owner_type: None,
+        parent_name: None,
+        allowed_effects: Vec::new(),
+    };
+
+    let result = CodeItemLookup::execute(params, fixture.ctx("result-callback-lookup"))
+        .await
+        .expect("result callback lookup");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize ConciseContext");
+    let call_context = payload
+        .get("call_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_context array");
+    let proof_context = payload
+        .get("proof_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("proof_context array");
+
+    let site_id = assert_resolved_method_target_context(
+        call_context,
+        fixture.owner,
+        &fixture.callee(),
+        fixture.target,
+        CallTargetKind::MethodCallbackFunction,
+        Some(0),
+        "result method callback",
+        "code_item_lookup",
+    );
+    assert_resolved_callable_param_proof(
+        proof_context,
+        fixture.owner,
+        fixture.target,
+        site_id,
+        fixture.build_domain,
+        "code_item_lookup",
+    );
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert!(
+        ui_field(ui, "call_context_outgoing")
+            .parse::<usize>()
+            .expect("outgoing count")
+            >= 1,
+        "code_item_lookup should surface the resolved result callback row"
+    );
+    assert_eq!(
+        ui_field(ui, "proof_context"),
+        proof_context.len().to_string()
+    );
 }
 
 async fn assert_callable_param_lookup(fixture: CallableParamResolvedFixture, label: &str) {

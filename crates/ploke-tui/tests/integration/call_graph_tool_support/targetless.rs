@@ -969,6 +969,48 @@ pub(crate) fn assert_resolved_method_context(
     call.site_id
 }
 
+pub(crate) fn assert_resolved_method_target_context(
+    calls: &[serde_json::Value],
+    owner: Uuid,
+    callee: &CallCalleeInfo,
+    target: Uuid,
+    relation: CallTargetKind,
+    generic_arg_count: Option<u32>,
+    label: &str,
+    tool: &str,
+) -> Uuid {
+    let matching = calls
+        .iter()
+        .filter_map(|call| serde_json::from_value::<CallContextInfo>(call.clone()).ok())
+        .filter(|call| {
+            call.owner_id == owner && call.kind == CallSiteKind::Method && &call.callee == callee
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching.len(),
+        1,
+        "{tool} should return exactly one resolved method row for {label}: {calls:#?}"
+    );
+    let call = &matching[0];
+    assert_eq!(call.status, CallStatusKind::Resolved);
+    assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+    if let Some(expected) = generic_arg_count {
+        assert_eq!(
+            call.generic_arg_count,
+            Some(expected),
+            "{tool} should preserve method generic argument count for {label}: {call:#?}"
+        );
+    }
+    assert_eq!(
+        call.targets.len(),
+        1,
+        "{tool} target rows for {label}: {call:#?}"
+    );
+    assert_eq!(call.targets[0].target_id, target);
+    assert_eq!(call.targets[0].relation, relation);
+    call.site_id
+}
+
 pub(crate) fn assert_path_context(
     calls: &[serde_json::Value],
     owner: Uuid,
