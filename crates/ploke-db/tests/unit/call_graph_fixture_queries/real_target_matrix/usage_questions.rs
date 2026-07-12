@@ -2282,6 +2282,78 @@ fn axum_usage_questions_report_dyn_future_poll_runtime_dispatch_blocker() -> Res
 }
 
 #[test]
+fn axum_usage_questions_list_runtime_dispatch_needs_for_owner() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+    let domain_id = "bd:corpus-axum-call-graph";
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Debugging / RAG:
+    //   "Which runtime-dispatch frontiers are blocking a complete local
+    //   traversal from this owner?"
+    //   "What proof input is missing for an async poll/resume boundary?"
+    //
+    // Source oracle:
+    //   axum/src/error_handling/mod.rs:240 stores
+    //     `Pin<Box<dyn Future<Output = Result<Response, Infallible>>>>`.
+    //   axum/src/error_handling/mod.rs:251
+    //     `HandleErrorFuture::poll` calls `self.project().future.poll(cx)`.
+    // Expected contract: once the proof layer records the runtime-dispatch
+    // blocker for that targetless callsite, the owner-scoped proof queue lists
+    // it as a dynamic-dispatch need without adding a traversal edge.
+    let owner = method_id_by_name_body_and_file_suffix(
+        &db,
+        "poll",
+        "self.project().future.poll(cx)",
+        "axum/src/error_handling/mod.rs",
+    )?;
+    let context = db.call_context_for_owner(owner)?;
+    let poll = row_by_method_receiver(&context, "poll", &CallReceiver::Unsupported);
+    assert_targetless_status(poll, CallStatusKind::Unsupported);
+    assert!(
+        relations_for_site(&db, poll.site.id)?.rows.is_empty(),
+        "axum/src/error_handling/mod.rs:251 dyn Future::poll must not start with a local edge"
+    );
+
+    db.project_call_proof_facts_for_owner(owner, domain_id)?;
+    db.upsert_proof_fact_values(&[ploke_test_utils::axum_dyn_future_poll_blocker(poll.site.id)])?;
+
+    let needs = db.runtime_dispatch_needs_for_owner(
+        owner,
+        CallPathOptions {
+            max_depth: 1,
+            max_paths: 16,
+        },
+    )?;
+    let need = needs
+        .iter()
+        .find(|need| need.call_site.site.id == poll.site.id)
+        .unwrap_or_else(|| {
+            panic!(
+                "dyn Future::poll should be listed as an owner-scoped runtime-dispatch need: {needs:#?}"
+            )
+        });
+    assert_targetless_status(&need.call_site, CallStatusKind::Unsupported);
+    assert!(
+        need.paths_to_owner.is_empty(),
+        "direct dyn Future::poll frontier should not need an intermediate path: {need:#?}"
+    );
+    assert!(
+        need.blocker_reasons
+            .iter()
+            .any(|reason| reason == "dynamic_dispatch_unbounded"),
+        "runtime dispatch need should retain the dynamic-dispatch blocker: {need:#?}"
+    );
+    assert!(
+        relations_for_site(&db, poll.site.id)?.rows.is_empty(),
+        "runtime-dispatch proof queue must not fabricate a dyn Future::poll edge"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn axum_usage_questions_report_architecture_boundary_edges() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 

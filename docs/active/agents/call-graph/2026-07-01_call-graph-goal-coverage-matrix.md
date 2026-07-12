@@ -1636,6 +1636,28 @@ Completed evidence:
   and
   `cargo test -p ploke-tui --test integration code_item_edges_returns_unsupported_receiver_targetless_real_corpus_rows -- --nocapture`.
 
+Latest completed slice in current bucket: owner-scoped runtime-dispatch need
+queue for real axum dyn Future poll frontiers.
+
+Completed evidence:
+
+- Added `Database::runtime_dispatch_needs_for_owner`, structurally parallel to
+  `external_summary_needs_for_owner`, for callsites reachable from an owner
+  whose active proof blockers include `dynamic_dispatch_unbounded`.
+- Added the exported `RuntimeDispatchNeed` row carrying the targetless callsite,
+  any resolved path from the selected owner to that callsite owner, and the
+  active blocker reasons.
+- Added a real-target DB usage-question test over
+  `axum/src/error_handling/mod.rs:251`
+  `HandleErrorFuture::poll -> self.project().future.poll(cx)` proving the
+  owner-scoped queue lists the dyn `Future::poll` frontier after the explicit
+  blocker fact is attached.
+- The queue is proof-authoring visibility only. It does not infer poll/resume,
+  does not discharge the blocker, and does not fabricate a local traversal edge.
+- Verification passed:
+  `cargo check -p ploke-db` and
+  `cargo test -p ploke-db axum_usage_questions_list_runtime_dispatch_needs_for_owner -- --nocapture`.
+
 Completed slice in current bucket: fixture-backed FFI boundary effect
 annotation over an external targetless frontier.
 

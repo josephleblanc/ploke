@@ -16,7 +16,7 @@ use super::super::{
     CallProofInvariantFinding, CallReachEffect, CallReachReport, CallRelationKind, CallSiteBucket,
     CallSiteKind, CallSiteRow, CallStatusKind, CallTestEntrypoint, CrateBoundaryEdge,
     ExternalSummaryNeed, ModuleBoundaryEdge, ModuleBoundaryPolicyRule,
-    ModuleBoundaryPolicyViolation,
+    ModuleBoundaryPolicyViolation, RuntimeDispatchNeed,
 };
 use super::metadata::{call_node_info_rank, call_node_infos, decode_call_node_info};
 
@@ -479,50 +479,45 @@ impl Database {
         owner_id: Uuid,
         options: CallPathOptions,
     ) -> Result<Vec<ExternalSummaryNeed>, DbError> {
-        let paths = self.call_paths_from_owner(owner_id, options)?;
-        let context_by_site = reachable_callsite_context_rows(self, owner_id, &paths)?;
-        let blockers_by_site = proof_blockers_by_call_site(self, context_by_site.keys())?;
-        let mut paths_by_owner = BTreeMap::<Uuid, Vec<CallPath>>::new();
-        for path in &paths {
-            paths_by_owner
-                .entry(path.end_id)
-                .or_default()
-                .push(path.clone());
-        }
+        proof_needs_for_owner(
+            self,
+            owner_id,
+            options,
+            "external_dependency_summary_missing",
+        )
+        .map(|needs| {
+            needs
+                .into_iter()
+                .map(|need| ExternalSummaryNeed {
+                    paths_to_owner: need.paths_to_owner,
+                    call_site: need.call_site,
+                    blocker_reasons: need.blocker_reasons,
+                })
+                .collect()
+        })
+    }
 
-        let mut needs = Vec::new();
-        for (site, reasons) in blockers_by_site {
-            if !reasons
-                .iter()
-                .any(|reason| reason == "external_dependency_summary_missing")
-            {
-                continue;
-            }
-            let Ok(site_id) = Uuid::parse_str(&site) else {
-                continue;
-            };
-            let Some(call_site) = context_by_site.get(&site_id) else {
-                continue;
-            };
-            let blocker_reasons = reasons.into_iter().collect::<BTreeSet<_>>();
-            needs.push(ExternalSummaryNeed {
-                paths_to_owner: paths_by_owner
-                    .get(&call_site.site.owner_id)
-                    .cloned()
-                    .unwrap_or_default(),
-                call_site: call_site.clone(),
-                blocker_reasons: blocker_reasons.into_iter().collect(),
-            });
-        }
-
-        needs.sort_by_key(|need| {
-            (
-                need.call_site.site.owner_id.as_u128(),
-                need.call_site.site.span,
-                need.call_site.site.id.as_u128(),
-            )
-        });
-        Ok(needs)
+    /// Lists active runtime-dispatch blockers attached to callsites reachable from `owner_id`.
+    ///
+    /// This is a proof-authoring helper for dynamic receiver and async poll/resume
+    /// frontiers. It reports targetless sites whose proof graph still has a
+    /// `dynamic_dispatch_unbounded` blocker, without promoting those frontiers
+    /// into resolved call edges.
+    pub fn runtime_dispatch_needs_for_owner(
+        &self,
+        owner_id: Uuid,
+        options: CallPathOptions,
+    ) -> Result<Vec<RuntimeDispatchNeed>, DbError> {
+        proof_needs_for_owner(self, owner_id, options, "dynamic_dispatch_unbounded").map(|needs| {
+            needs
+                .into_iter()
+                .map(|need| RuntimeDispatchNeed {
+                    paths_to_owner: need.paths_to_owner,
+                    call_site: need.call_site,
+                    blocker_reasons: need.blocker_reasons,
+                })
+                .collect()
+        })
     }
 
     /// Lists build/test domain proof metadata linked to a call-graph node.
@@ -1078,6 +1073,61 @@ fn summary_effects_for_reachable_sites(
     }
 
     Ok(effects.into_values().collect())
+}
+
+struct ReachableProofNeed {
+    paths_to_owner: Vec<CallPath>,
+    call_site: CallContextRow,
+    blocker_reasons: Vec<String>,
+}
+
+fn proof_needs_for_owner(
+    db: &Database,
+    owner_id: Uuid,
+    options: CallPathOptions,
+    reason: &str,
+) -> Result<Vec<ReachableProofNeed>, DbError> {
+    let paths = db.call_paths_from_owner(owner_id, options)?;
+    let context_by_site = reachable_callsite_context_rows(db, owner_id, &paths)?;
+    let blockers_by_site = proof_blockers_by_call_site(db, context_by_site.keys())?;
+    let mut paths_by_owner = BTreeMap::<Uuid, Vec<CallPath>>::new();
+    for path in &paths {
+        paths_by_owner
+            .entry(path.end_id)
+            .or_default()
+            .push(path.clone());
+    }
+
+    let mut needs = Vec::new();
+    for (site, reasons) in blockers_by_site {
+        if !reasons.iter().any(|candidate| candidate == reason) {
+            continue;
+        }
+        let Ok(site_id) = Uuid::parse_str(&site) else {
+            continue;
+        };
+        let Some(call_site) = context_by_site.get(&site_id) else {
+            continue;
+        };
+        let blocker_reasons = reasons.into_iter().collect::<BTreeSet<_>>();
+        needs.push(ReachableProofNeed {
+            paths_to_owner: paths_by_owner
+                .get(&call_site.site.owner_id)
+                .cloned()
+                .unwrap_or_default(),
+            call_site: call_site.clone(),
+            blocker_reasons: blocker_reasons.into_iter().collect(),
+        });
+    }
+
+    needs.sort_by_key(|need| {
+        (
+            need.call_site.site.owner_id.as_u128(),
+            need.call_site.site.span,
+            need.call_site.site.id.as_u128(),
+        )
+    });
+    Ok(needs)
 }
 
 fn reachable_callsite_context_rows(

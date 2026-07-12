@@ -18,5 +18,5 @@ pub use rows::{
     CallPathOptions, CallProofInvariantFinding, CallReachEffect, CallReachReport,
     CallResolutionRow, CallSiteBucket, CallSiteRow, CallTargetRow, CallTestEntrypoint,
     CrateBoundaryEdge, ExternalSummaryNeed, ModuleBoundaryEdge, ModuleBoundaryPolicyRule,
-    ModuleBoundaryPolicyViolation,
+    ModuleBoundaryPolicyViolation, RuntimeDispatchNeed,
 };

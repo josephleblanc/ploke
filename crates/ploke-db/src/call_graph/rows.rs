@@ -302,6 +302,15 @@ pub struct ExternalSummaryNeed {
     pub blocker_reasons: Vec<String>,
 }
 
+/// Active runtime-dispatch blocker attached to a callsite reachable from an owner.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct RuntimeDispatchNeed {
+    #[serde(default)]
+    pub paths_to_owner: Vec<CallPath>,
+    pub call_site: CallContextRow,
+    pub blocker_reasons: Vec<String>,
+}
+
 /// Build/test domain proof metadata linked to a call-graph node.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CallBuildDomain {
