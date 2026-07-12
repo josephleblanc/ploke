@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use syn::visit::{self, Visit};
 
 use crate::{
@@ -218,6 +220,7 @@ impl CallRelationResolver<'_> {
 
         for function in self.graph.functions() {
             let owner = CallBodyOwnerId::Function(function.id);
+            let owner_cfg_gated = !function.cfgs.is_empty();
             let inits = struct_field_function_initializer_paths(
                 function.body.as_deref(),
                 &function.name,
@@ -244,11 +247,14 @@ impl CallRelationResolver<'_> {
                     continue;
                 }
                 matched = true;
+                let init_cfg_gated = init.cfg_gated || owner_cfg_gated;
                 match self.resolve_dynamic_path(owner, &init.function_path)? {
                     super::DynamicPathResolution::Resolved(target) => {
                         targets.push(ParameterCallTarget::Function(target));
                     }
-                    super::DynamicPathResolution::Unresolved if init.cfg_gated => {}
+                    super::DynamicPathResolution::Unresolved
+                    | super::DynamicPathResolution::Unsupported
+                        if init_cfg_gated => {}
                     _ => return Ok(None),
                 }
             }
@@ -257,6 +263,7 @@ impl CallRelationResolver<'_> {
         for impl_node in self.graph.impls() {
             for method in &impl_node.methods {
                 let owner = CallBodyOwnerId::Method(method.id);
+                let owner_cfg_gated = !method.cfgs.is_empty();
                 let inits = struct_field_function_initializer_paths(
                     method.body.as_deref(),
                     &method.name,
@@ -283,11 +290,14 @@ impl CallRelationResolver<'_> {
                         continue;
                     }
                     matched = true;
+                    let init_cfg_gated = init.cfg_gated || owner_cfg_gated;
                     match self.resolve_dynamic_path(owner, &init.function_path)? {
                         super::DynamicPathResolution::Resolved(target) => {
                             targets.push(ParameterCallTarget::Function(target));
                         }
-                        super::DynamicPathResolution::Unresolved if init.cfg_gated => {}
+                        super::DynamicPathResolution::Unresolved
+                        | super::DynamicPathResolution::Unsupported
+                            if init_cfg_gated => {}
                         _ => return Ok(None),
                     }
                 }
@@ -611,6 +621,7 @@ fn struct_field_function_initializer_paths(
         field_name,
         initializers: FieldFunctionInitializers::default(),
         cfg_depth: 0,
+        aliases: vec![BTreeMap::new()],
     };
     visitor.visit_block(&block);
     Ok(visitor.initializers)
@@ -621,21 +632,48 @@ struct StructFieldFunctionVisitor<'a> {
     field_name: &'a str,
     initializers: FieldFunctionInitializers,
     cfg_depth: usize,
+    aliases: Vec<BTreeMap<String, FieldFunctionAlias>>,
 }
 
 impl<'ast> Visit<'ast> for StructFieldFunctionVisitor<'_> {
+    fn visit_block(&mut self, block: &'ast syn::Block) {
+        self.aliases.push(BTreeMap::new());
+        for stmt in &block.stmts {
+            self.visit_stmt(stmt);
+        }
+        self.aliases.pop();
+    }
+
+    fn visit_local(&mut self, local: &'ast syn::Local) {
+        if let Some((name, function_path)) = local_function_alias(local)
+            && let Some(scope) = self.aliases.last_mut()
+        {
+            scope.insert(
+                name,
+                FieldFunctionAlias {
+                    function_path,
+                    cfg_gated: self.cfg_depth > 0,
+                },
+            );
+        }
+        visit::visit_local(self, local);
+    }
+
     fn visit_expr_struct(&mut self, expr: &'ast syn::ExprStruct) {
         if struct_path_matches(&expr.path, self.struct_name) {
             for field in &expr.fields {
                 if !member_matches(&field.member, self.field_name) {
                     continue;
                 }
-                match callable_function_initializer(field) {
-                    FunctionInitializer::Direct(function_path) => {
+                match self.callable_function_initializer(field) {
+                    FunctionInitializer::Direct {
+                        function_path,
+                        cfg_gated,
+                    } => {
                         self.initializers.direct.push(FieldFunctionInitializer {
                             struct_path: path_segments(&expr.path),
                             function_path,
-                            cfg_gated: self.cfg_depth > 0,
+                            cfg_gated,
                         });
                     }
                     FunctionInitializer::Blocked => {
@@ -662,21 +700,48 @@ impl<'ast> Visit<'ast> for StructFieldFunctionVisitor<'_> {
     fn visit_expr_closure(&mut self, _expr: &'ast syn::ExprClosure) {}
 }
 
-enum FunctionInitializer {
-    Direct(Vec<String>),
-    Blocked,
-    Other,
+impl StructFieldFunctionVisitor<'_> {
+    fn callable_function_initializer(&self, field: &syn::FieldValue) -> FunctionInitializer {
+        let Some(function_path) = callable_function_path(&field.expr) else {
+            return FunctionInitializer::Other;
+        };
+        if field.colon_token.is_some() {
+            return FunctionInitializer::Direct {
+                function_path,
+                cfg_gated: self.cfg_depth > 0,
+            };
+        }
+
+        let [name] = function_path.as_slice() else {
+            return FunctionInitializer::Blocked;
+        };
+        let Some(alias) = self.function_alias(name) else {
+            return FunctionInitializer::Blocked;
+        };
+        FunctionInitializer::Direct {
+            function_path: alias.function_path.clone(),
+            cfg_gated: self.cfg_depth > 0 || alias.cfg_gated,
+        }
+    }
+
+    fn function_alias(&self, name: &str) -> Option<&FieldFunctionAlias> {
+        self.aliases.iter().rev().find_map(|scope| scope.get(name))
+    }
 }
 
-fn callable_function_initializer(field: &syn::FieldValue) -> FunctionInitializer {
-    let Some(function_path) = callable_function_path(&field.expr) else {
-        return FunctionInitializer::Other;
-    };
-    if field.colon_token.is_none() {
-        FunctionInitializer::Blocked
-    } else {
-        FunctionInitializer::Direct(function_path)
-    }
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FieldFunctionAlias {
+    function_path: Vec<String>,
+    cfg_gated: bool,
+}
+
+enum FunctionInitializer {
+    Direct {
+        function_path: Vec<String>,
+        cfg_gated: bool,
+    },
+    Blocked,
+    Other,
 }
 
 fn is_cfg_attr(attr: &syn::Attribute) -> bool {
@@ -721,6 +786,18 @@ fn callable_function_path(expr: &syn::Expr) -> Option<Vec<String>> {
         return None;
     }
     single_segment_path(path_segments(&path.path))
+}
+
+fn local_function_alias(local: &syn::Local) -> Option<(String, Vec<String>)> {
+    let syn::Pat::Ident(pat) = &local.pat else {
+        return None;
+    };
+    if pat.by_ref.is_some() || pat.mutability.is_some() || pat.subpat.is_some() {
+        return None;
+    }
+    let init = local.init.as_ref()?;
+    let function_path = callable_function_path(&init.expr)?;
+    Some((pat.ident.to_string(), function_path))
 }
 
 fn boxed_call_parameter_path(call: &syn::ExprCall) -> Option<Vec<String>> {

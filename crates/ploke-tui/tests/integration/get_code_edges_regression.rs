@@ -1284,6 +1284,7 @@ async fn code_item_edges_returns_direct_self_field_dispatch_candidates() {
         call_context,
         fixture.owner,
         Some(path.as_slice()),
+        None,
         &fixture.candidates,
         CallTargetKind::DynamicFunction,
         label,

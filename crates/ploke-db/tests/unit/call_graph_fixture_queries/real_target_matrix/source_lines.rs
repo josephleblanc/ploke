@@ -448,24 +448,6 @@ file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_f
     )
 }
 
-pub(super) fn assert_targetless_dynamic_line_fanout_by_method(
-    db: &Database,
-    fixture: &FixtureDb,
-    owner_method: &str,
-    status: CallStatusKind,
-    expected: &[SourceLineFanout],
-) -> Result<(), DbError> {
-    assert_targetless_dynamic_line_fanout_by_method_filtered(
-        db,
-        fixture,
-        owner_method,
-        None,
-        status,
-        expected,
-        "(self.call)",
-    )
-}
-
 pub(super) fn assert_targetless_dynamic_line_fanout_by_method_arg_count(
     db: &Database,
     fixture: &FixtureDb,

@@ -886,67 +886,6 @@ pub(super) fn assert_targetless_method_rows(
     Ok(())
 }
 
-pub(super) fn assert_targetless_dynamic_rows_by_method_name(
-    db: &Database,
-    method: &str,
-    expected_arg_counts: &[u32],
-) -> Result<(), DbError> {
-    let mut params = BTreeMap::new();
-    params.insert("method".to_string(), DataValue::from(method));
-
-    let rows = db.raw_query_params(
-        r#"?[site_id, owner_id, arg_count, status_kind, resolution_kind] :=
-            *method { id: owner_id, owner_id: method_owner_id, name: $method @ 'NOW' },
-            *call_site {
-                id: site_id,
-                owner_id: owner_id,
-                call_kind: "Dynamic",
-                arg_count: arg_count @ 'NOW'
-            },
-            *call_resolution_status {
-                source_id: site_id,
-                source_kind: "Dynamic",
-                status_kind: status_kind,
-                resolution_kind: resolution_kind @ 'NOW'
-            }"#,
-        params,
-    )?;
-    assert_eq!(
-        rows.rows.len(),
-        expected_arg_counts.len(),
-        "expected {} targetless dynamic rows owned by methods named {method:?}: {:#?}",
-        expected_arg_counts.len(),
-        rows.rows
-    );
-
-    let mut actual_arg_counts = Vec::new();
-    for row in &rows.rows {
-        assert_eq!(row[3], DataValue::from("Unsupported"));
-        assert_eq!(row[4], DataValue::Null);
-        let site_id = to_uuid(&row[0])?;
-        let owner_id = to_uuid(&row[1])?;
-        assert!(
-            relations_for_site(db, site_id)?.rows.is_empty(),
-            "dynamic row owned by {method:?} should not have call_relation targets"
-        );
-        assert_no_traversal_candidates_for_sites(db, &[(owner_id, site_id)], method)?;
-        let DataValue::Num(cozo::Num::Int(arg_count)) = &row[2] else {
-            panic!("dynamic row arg_count should be numeric: {row:#?}");
-        };
-        actual_arg_counts.push(*arg_count as u32);
-    }
-    actual_arg_counts.sort_unstable();
-
-    let mut expected = expected_arg_counts.to_vec();
-    expected.sort_unstable();
-    assert_eq!(
-        actual_arg_counts, expected,
-        "unexpected dynamic arg counts for methods named {method:?}"
-    );
-
-    Ok(())
-}
-
 pub(super) fn assert_no_dynamic_rows_by_method_name(
     db: &Database,
     method: &str,

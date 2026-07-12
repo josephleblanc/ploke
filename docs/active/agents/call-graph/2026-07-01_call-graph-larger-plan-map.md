@@ -92,8 +92,9 @@ Current matrix posture:
   classify as targetless external frontiers across parser, DB, RAG, and TUI
   proof surfaces without claiming concrete trait dispatch.
 - Real-corpus dynamic callable fallback proof: memchr function-pointer field
-  rows and boxed callable-field rows remain fail-closed and targetless while DB
-  proof rows preserve their blocker reasons and source provenance.
+  rows now preserve finite ambiguous `DynamicFunction` candidates, while boxed
+  callable-field rows remain fail-closed and targetless with DB proof rows
+  preserving blocker reasons and source provenance.
 - Tool usage summaries: `code_item_edges` now propagates the existing
   impact/reach summaries in `node_info`, matching `code_item_lookup` instead
   of exposing only lower-level path carriers.

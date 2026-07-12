@@ -6,8 +6,8 @@ use uuid::Uuid;
 use super::super::*;
 use super::common::*;
 use super::source_lines::{
-    SourceLineFanout, assert_targetless_dynamic_line_fanout_by_method,
-    assert_targetless_method_kind_line_fanout, assert_targetless_method_line_fanout,
+    SourceLineFanout, assert_targetless_method_kind_line_fanout,
+    assert_targetless_method_line_fanout,
 };
 
 #[test]
@@ -367,7 +367,7 @@ fn chrono_guarded_match_arm_slice_method_guard_is_external_frontier() -> Result<
 }
 
 #[test]
-fn memchr_function_pointer_field_calls_are_dynamic_targetless_oracles() -> Result<(), DbError> {
+fn memchr_function_pointer_field_calls_preserve_ambiguous_candidates() -> Result<(), DbError> {
     let db = setup_call_graph_db(&CORPUS_MEMCHR_CALL_GRAPH)?;
 
     // Matrix: `Fallback Source Oracle Matrix`.
@@ -380,17 +380,28 @@ fn memchr_function_pointer_field_calls_are_dynamic_targetless_oracles() -> Resul
     //   memchr/src/memmem/searcher.rs:718 calls `(self.call)(self, haystack)`.
     //
     // Current model: both function-pointer field calls are structural dynamic
-    // rows owned by methods named `find`, with no local target edge.
-    assert_targetless_dynamic_rows_by_method_name(&db, "find", &[4, 2])?;
-    assert_targetless_dynamic_line_fanout_by_method(
+    // rows owned by methods named `find`. Local initializer proof can bound the
+    // cfg-visible helper function candidates, so the rows are ambiguous rather
+    // than targetless. Missing cfg-gated architecture helpers are not invented
+    // as candidates for this fixture.
+    let searcher_candidates = function_ids_by_names(
         &db,
-        &CORPUS_MEMCHR_CALL_GRAPH,
-        "find",
-        CallStatusKind::Unsupported,
-        &[SourceLineFanout {
-            file_suffix: "src/memmem/searcher.rs",
-            lines: &[222, 718],
-        }],
+        &[
+            "searcher_kind_empty",
+            "searcher_kind_one_byte",
+            "searcher_kind_two_way",
+            "searcher_kind_two_way_with_prefilter",
+            "searcher_kind_sse2",
+            "searcher_kind_avx2",
+        ],
+    )?;
+    let prefilter_candidates = function_ids_by_names(
+        &db,
+        &[
+            "prefilter_kind_fallback",
+            "prefilter_kind_sse2",
+            "prefilter_kind_avx2",
+        ],
     )?;
 
     let searcher_find = method_id_by_name_body_and_file_suffix(
@@ -399,9 +410,10 @@ fn memchr_function_pointer_field_calls_are_dynamic_targetless_oracles() -> Resul
         "(self.call)(self, prestate, haystack, needle)",
         "src/memmem/searcher.rs",
     )?;
-    let searcher_site = assert_owner_dynamic_targetless(
+    let searcher_site = assert_owner_dynamic_function_candidates(
         &db,
         searcher_find,
+        &searcher_candidates,
         4,
         "memchr/src/memmem/searcher.rs:222 Searcher.call",
     )?;
@@ -412,38 +424,46 @@ fn memchr_function_pointer_field_calls_are_dynamic_targetless_oracles() -> Resul
         "(self.call)(self, haystack)",
         "src/memmem/searcher.rs",
     )?;
-    let prefilter_site = assert_owner_dynamic_targetless(
+    let prefilter_site = assert_owner_dynamic_function_candidates(
         &db,
         prefilter_find,
+        &prefilter_candidates,
         2,
         "memchr/src/memmem/searcher.rs:718 Prefilter.call",
     )?;
 
-    for (owner, site, label) in [
+    for (owner, site, expected, label) in [
         (
             searcher_find,
             searcher_site,
+            searcher_candidates.as_slice(),
             "memchr/src/memmem/searcher.rs:222 Searcher.call",
         ),
         (
             prefilter_find,
             prefilter_site,
+            prefilter_candidates.as_slice(),
             "memchr/src/memmem/searcher.rs:718 Prefilter.call",
         ),
     ] {
+        let site = site.to_string();
+        let expected_names = candidate_strings(expected);
+        let facts = db.call_proof_facts_for_owner(owner, "bd:corpus-memchr-call-graph")?;
+        let site_facts = facts
+            .into_iter()
+            .filter(|fact| {
+                fact.get("call_site_id").and_then(serde_json::Value::as_str) == Some(site.as_str())
+            })
+            .collect::<Vec<_>>();
+        assert_candidate_proof(&site_facts, &site, &expected_names, label);
+
         let projected =
             db.project_call_proof_facts_for_owner(owner, "bd:corpus-memchr-call-graph")?;
         assert!(
             projected >= 2,
             "{label} should project at least call_site and call_resolution proof facts"
         );
-        assert_blocked_resolution_proof(
-            &db,
-            site,
-            "dynamic_dispatch_unbounded",
-            "src/memmem/searcher.rs",
-            label,
-        )?;
+        assert_candidate_blocker(&db, &site, label)?;
     }
 
     Ok(())
@@ -765,9 +785,19 @@ fn assert_owner_path_resolved_count(
     Ok(sites)
 }
 
-fn assert_owner_dynamic_targetless(
+fn function_ids_by_names(db: &Database, names: &[&str]) -> Result<Vec<Uuid>, DbError> {
+    let mut ids = names
+        .iter()
+        .map(|name| function_id_by_name(db, name))
+        .collect::<Result<Vec<_>, _>>()?;
+    ids.sort_unstable();
+    Ok(ids)
+}
+
+fn assert_owner_dynamic_function_candidates(
     db: &Database,
     owner: Uuid,
+    expected: &[Uuid],
     expected_arg_count: u32,
     label: &str,
 ) -> Result<Uuid, DbError> {
@@ -782,17 +812,19 @@ fn assert_owner_dynamic_targetless(
         "{label} should project exactly one dynamic row: {context:#?}"
     );
     let row = rows[0];
+    assert_dynamic_path_function_candidates_with_args(
+        row,
+        owner,
+        &["self", "call"],
+        expected_arg_count,
+        expected,
+        label,
+    );
     assert_eq!(
-        row.site.arg_count,
-        Some(expected_arg_count),
-        "{label} should preserve the dynamic call argument count"
+        relations_for_site(db, row.site.id)?.rows.len(),
+        expected.len(),
+        "{label} should store one DynamicFunction relation for each candidate"
     );
-    assert_targetless_status(row, CallStatusKind::Unsupported);
-    assert!(
-        relations_for_site(db, row.site.id)?.rows.is_empty(),
-        "{label} should not have raw call_relation targets"
-    );
-    assert_no_traversal_candidates_for_site(db, owner, row.site.id, label)?;
 
     Ok(row.site.id)
 }

@@ -12,6 +12,7 @@ struct MemchrDynamicCase {
     method: &'static str,
     body: &'static str,
     expected_arg_count: u32,
+    candidates: &'static [&'static str],
 }
 
 struct MemchrPathCase {
@@ -241,7 +242,8 @@ async fn call_context_collection_reads_axum_layer_dynamic_callable_candidates() 
 }
 
 #[tokio::test]
-async fn call_context_collection_reads_memchr_function_pointer_field_gaps() -> Result<(), Error> {
+async fn call_context_collection_reads_memchr_function_pointer_field_candidates()
+-> Result<(), Error> {
     init_tracing_once();
     let (db, rag) = setup_memchr_call_graph_rag()?;
 
@@ -256,23 +258,35 @@ async fn call_context_collection_reads_memchr_function_pointer_field_gaps() -> R
     //   memchr/src/memmem/searcher.rs:604-605 defines `Prefilter.call`.
     //   memchr/src/memmem/searcher.rs:718 calls `(self.call)(self, haystack)`.
     //
-    // Expected traversal: these function-pointer fields are structurally
-    // visible dynamic callsites, but have zero traversable edges until field
-    // binding and function-pointer dispatch proof is modeled. DB tests own
-    // source-line fanout; RAG must preserve the targetless unsupported rows
-    // and argument counts without guessing.
+    // Expected traversal: local initializer proof bounds these function-pointer
+    // fields to cfg-visible helper function candidates. RAG must preserve the
+    // candidate-only ambiguity, argument counts, and `self.call` callee path
+    // without promoting any candidate to an exact traversal edge.
     let cases = [
         MemchrDynamicCase {
             label: "memchr/src/memmem/searcher.rs:222 Searcher.call",
             method: "find",
             body: "(self.call)(self, prestate, haystack, needle)",
             expected_arg_count: 4,
+            candidates: &[
+                "searcher_kind_empty",
+                "searcher_kind_one_byte",
+                "searcher_kind_two_way",
+                "searcher_kind_two_way_with_prefilter",
+                "searcher_kind_sse2",
+                "searcher_kind_avx2",
+            ],
         },
         MemchrDynamicCase {
             label: "memchr/src/memmem/searcher.rs:718 Prefilter.call",
             method: "find",
             body: "(self.call)(self, haystack)",
             expected_arg_count: 2,
+            candidates: &[
+                "prefilter_kind_fallback",
+                "prefilter_kind_sse2",
+                "prefilter_kind_avx2",
+            ],
         },
     ];
 
@@ -297,14 +311,16 @@ async fn call_context_collection_reads_memchr_function_pointer_field_gaps() -> R
 
         let call = dynamic[0];
         assert_eq!(call.owner_id, owner);
-        assert_eq!(call.arg_count, Some(case.expected_arg_count));
-        assert_eq!(call.status, CallStatusKind::Unsupported);
-        assert_eq!(call.resolution, None);
         assert!(
-            call.targets.is_empty(),
-            "{} should remain targetless in RAG call context: {call:#?}",
+            call.path
+                .as_ref()
+                .is_some_and(|path| path.iter().map(String::as_str).eq(["self", "call"])),
+            "{} should preserve the dynamic self-field callee path: {call:#?}",
             case.label
         );
+        assert_eq!(call.arg_count, Some(case.expected_arg_count));
+        let expected = function_ids_by_names(&db, case.candidates)?;
+        assert_dynamic_candidates(call, &expected, CallTargetKind::DynamicFunction, case.label);
     }
 
     Ok(())
@@ -1030,4 +1046,55 @@ async fn call_context_collection_reads_axum_handler_async_block_owner_gap() -> R
     );
 
     Ok(())
+}
+
+fn function_ids_by_names(db: &Database, names: &[&str]) -> Result<Vec<Uuid>, Error> {
+    let mut ids = names
+        .iter()
+        .map(|name| function_id_by_exact_name(db, name))
+        .collect::<Result<Vec<_>, _>>()?;
+    ids.sort_unstable();
+    Ok(ids)
+}
+
+fn function_id_by_exact_name(db: &Database, name: &str) -> Result<Uuid, Error> {
+    let mut params = BTreeMap::new();
+    params.insert("name".to_string(), DataValue::from(name));
+    let rows = db.raw_query_params(
+        r#"?[id] :=
+            *function { id, name: $name @ 'NOW' }"#,
+        params,
+    )?;
+    assert_eq!(
+        rows.rows.len(),
+        1,
+        "expected exactly one function named {name:?}; rows: {:#?}",
+        rows.rows
+    );
+    to_uuid(&rows.rows[0][0]).map_err(Error::from)
+}
+
+fn assert_dynamic_candidates(
+    call: &CallContextInfo,
+    expected: &[Uuid],
+    relation: CallTargetKind,
+    label: &str,
+) {
+    assert_eq!(call.status, CallStatusKind::Ambiguous, "{label}");
+    assert_eq!(call.resolution, None, "{label}: {call:#?}");
+    assert_eq!(call.targets.len(), expected.len(), "{label}: {call:#?}");
+    assert!(
+        call.targets
+            .iter()
+            .all(|target| target.relation == relation),
+        "{label} should expose only {relation:?} candidates: {call:#?}"
+    );
+
+    let mut actual = call
+        .targets
+        .iter()
+        .map(|target| target.target_id)
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    assert_eq!(actual, expected, "{label} candidate targets");
 }

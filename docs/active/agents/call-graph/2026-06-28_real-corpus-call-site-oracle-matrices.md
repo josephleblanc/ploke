@@ -419,7 +419,7 @@ in `crates/ploke-db/tests/unit/call_graph_fixture_queries/real_target_matrix/fal
 | chrono | `DateTime...?.naive_utc()` try receiver | `src/format/parsed.rs:836,953`; two cfg(test, feature = "clock") `Local::now()` initialized-local rows; macro-equivalent `src/naive/datetime/mod.rs:140,157,174,195` | `DateTime<Tz>::naive_utc` at `src/datetime/mod.rs:563`; constructors return `Option<Self>` at `:768,:803` | `corpus_chrono_call_graph` now resolves the two `parsed.rs` `TryMethodCallResult(ok_or)` receiver rows for `naive_utc` to `DateTime<Tz>::naive_utc` through local associated `DateTime::from_timestamp* -> Option<Self>` proof, and also resolves two cfg(test) `InitializedLocalBinding(Local::now)` rows, preserving one method edge per source callsite. The macro-equivalent rows remain outside this proof until macro-expanded constructor return evidence is modeled. |
 | chrono | guarded match arm method guard | `src/format/strftime.rs:635` | `StrftimeItems.queue: &'static [Item<'static>]` field `src/format/strftime.rs:198` | `corpus_chrono_call_graph` now projects one targetless `SelfField(["queue"]).is_empty()` row with `External` status, using the source-visible slice receiver type without fabricating a local traversal edge. |
 | memchr | arbitrary-expression dynamic callee | macro source `src/arch/x86_64/memchr.rs:153`; macro instantiations at `:180,203,227,252,278,305,326` | macro-local aliases `type Fn = *mut ()`, `type RealFn = $fnty` at `:72-73`; static pointer `FN` at `:74` | `corpus_memchr_call_graph` now projects seven bounded generated rows for `core::mem::transmute::<Fn, RealFn>(fun)(...)`: an inner targetless external path row and an outer targetless external returned-path dynamic row per macro instantiation. The test asserts the rows and argument counts but still requires no concrete function-pointer target or traversal edge. |
-| memchr | function-pointer field call | `src/memmem/searcher.rs:222,718` | `Searcher.call` at `:34`; alias `SearcherKindFn` at `:273`; `Prefilter.call` at `:605`; alias `PrefilterKindFn` at `:774` | `corpus_memchr_call_graph` currently projects two targetless dynamic rows owned by methods named `find`, with argument counts 4 and 2. The parser now has synthetic fixture coverage for explicit direct self-field function initializers, but these memchr rows stay unsupported because the real constructors use shorthand local aliases and cfg-sensitive branches. |
+| memchr | function-pointer field call | `src/memmem/searcher.rs:222,718` | `Searcher.call` at `:34`; alias `SearcherKindFn` at `:273`; `Prefilter.call` at `:605`; alias `PrefilterKindFn` at `:774` | `corpus_memchr_call_graph` now projects two ambiguous `DynamicFunction` rows owned by methods named `find`, with argument counts 4 and 2. Shorthand local aliases in the real constructors preserve the cfg-visible helper candidates; cfg-gated architecture helpers that are absent from the fixture are omitted rather than guessed. |
 | memchr | callable trait object field | `src/tests/substring/mod.rs:94,110` | `Runner.fwd` at `:67-68`; `Runner.rev` at `:70-71`; setters box closures at `:137,153` | `corpus_memchr_call_graph` projects these boxed `dyn FnMut` local-binding calls as targetless unsupported path rows under `Runner::run`; it does not project them as dynamic rows or fabricate edges to the setter closures. RAG collection and exact TUI lookup/edges now preserve both targetless path blockers. |
 | generic-array | guarded match arm method-result receiver | `src/lib.rs:1239,1241,1243,1276,1278,1280` | `ArrayLength` bound at `src/lib.rs:245`; `LengthError` at `:1197`; `I: IntoIterator` owner bounds on `try_from_iter` and `try_from_fallible_iter` | `corpus_generic_array_call_graph` now projects two targetless `iter.size_hint()` method rows with `External` status and `MethodResultLocalBinding(method_name = "into_iter")` receiver proof. No local traversal edge is fabricated for the external iterator frontier. |
 
@@ -427,7 +427,7 @@ Current executable coverage: `fallback.rs` now pins the chrono alias rows by
 exact source owner and resolved traversal to `LocalResult::Single`, pins chrono
 try-receiver and guarded-receiver rows by owner and source-line fanout, and
 pins the memchr generated `unsafe_ifunc!` transmute dynamic frontier plus
-function-pointer rows by owner and source-line fanout. The
+function-pointer candidate rows by owner and expected candidate set. The
 shared real-corpus call-shape matrix in `ploke_test_utils::call_shape_matrix`
 now also covers the memchr function-pointer rows, memchr callable trait-object
 rows, the chrono `SelfField(["queue"]).is_empty()` row, and both generic-array
@@ -437,9 +437,10 @@ not part of the shared full TUI lookup/edges matrix because those tools also
 compute owner-wide usage summaries for the long `parse_next_item` body. RAG
 collection and exact TUI
 `code_item_lookup` plus `code_item_edges` preserve the memchr generated
-transmute frontier, the two memchr function-pointer blockers, the two memchr
-callable trait-object path blockers, and the two generic-array `size_hint`
-external method-result receiver rows without fabricating traversal edges. RAG
+transmute frontier, the two memchr function-pointer candidate rows, the two
+memchr callable trait-object path blockers, and the two generic-array
+`size_hint` external method-result receiver rows without fabricating traversal
+edges. RAG
 exact call-context and TUI lookup/edges also
 preserve both the 12 chrono alias constructor caller-site identities, the
 two `DateTime::from_timestamp*(...).ok_or(...)?.naive_utc()` try-receiver

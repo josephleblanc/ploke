@@ -26,10 +26,7 @@ use crate::call_graph_tool_support::{
 
 #[tokio::test]
 async fn code_item_lookup_returns_dynamic_targetless_real_corpus_rows() {
-    for case in DynamicToolCase::AXUM
-        .into_iter()
-        .chain(DynamicToolCase::MEMCHR)
-    {
+    for case in DynamicToolCase::AXUM {
         let fixture = DynamicToolFixture::new(case).await;
         let params = LookupParams {
             item_name: Cow::Borrowed(case.method),
@@ -63,12 +60,9 @@ async fn code_item_lookup_returns_dynamic_targetless_real_corpus_rows() {
         // Source chains:
         //   axum/src/boxed.rs:120 calls `(self.into_route)(self.router, state)`.
         //   axum/src/serve/listener.rs:236 calls `(self.tap_fn)(&mut io)`.
-        //   memchr/src/memmem/searcher.rs:222 calls
-        //   `(self.call)(self, prestate, haystack, needle)`.
-        //   memchr/src/memmem/searcher.rs:718 calls `(self.call)(self, haystack)`.
         // Expected traversal: exact owner lookup exposes the structural
         // dynamic call_site and blocked call_resolution rows, with zero callee
-        // targets until callable-field and function-pointer proof exists.
+        // targets until callable-field proof exists.
         let site_id = assert_dynamic_context(
             call_context,
             fixture.owner,
@@ -105,8 +99,11 @@ async fn code_item_lookup_returns_dynamic_targetless_real_corpus_rows() {
 }
 
 #[tokio::test]
-async fn code_item_lookup_returns_axum_layer_dynamic_candidate_rows() {
-    for case in AmbiguousDynamicToolCase::AXUM_LAYER {
+async fn code_item_lookup_returns_real_corpus_dynamic_candidate_rows() {
+    for case in AmbiguousDynamicToolCase::AXUM_LAYER
+        .into_iter()
+        .chain(AmbiguousDynamicToolCase::MEMCHR_SELF_FIELD)
+    {
         let fixture = AmbiguousDynamicToolFixture::new(case).await;
         let params = LookupParams {
             item_name: Cow::Borrowed(fixture.case.method),
@@ -138,17 +135,14 @@ async fn code_item_lookup_returns_axum_layer_dynamic_candidate_rows() {
         //   2026-06-28_real-corpus-call-site-oracle-matrices.md
         //
         // Source chains:
-        //   axum/src/boxed.rs:159 calls `(self.layer)(self.inner.into_route(state))`.
-        //   axum/src/boxed.rs:163 calls
-        //   `(self.layer)(self.inner.into_route(state)).call(request)`.
+        // Source chains are listed on the case matrix in `targetless.rs`.
         // Expected traversal: exact owner lookup exposes candidate-only
-        // `DynamicClosure` ambiguity from the reviewed
-        // `MethodRouter::{layer,route_layer}` closure bindings and does not
-        // fabricate a resolved traversal edge.
+        // dynamic ambiguity and does not fabricate a resolved traversal edge.
         let site_id = assert_ambiguous_dynamic_candidates_with_relation(
             call_context,
             fixture.owner,
             Some(fixture.case.expected_path),
+            fixture.case.expected_arg_count,
             &fixture.candidates,
             fixture.case.expected_relation.clone(),
             fixture.case.label,
@@ -972,10 +966,7 @@ async fn code_item_lookup_returns_generated_macro_boundary_path_rows() {
 
 #[tokio::test]
 async fn code_item_edges_returns_dynamic_targetless_real_corpus_rows() {
-    for case in DynamicToolCase::AXUM
-        .into_iter()
-        .chain(DynamicToolCase::MEMCHR)
-    {
+    for case in DynamicToolCase::AXUM {
         let fixture = DynamicToolFixture::new(case).await;
         let params = EdgesParams {
             item_name: Cow::Borrowed(case.method),
@@ -1037,8 +1028,11 @@ async fn code_item_edges_returns_dynamic_targetless_real_corpus_rows() {
 }
 
 #[tokio::test]
-async fn code_item_edges_returns_axum_layer_dynamic_candidate_rows() {
-    for case in AmbiguousDynamicToolCase::AXUM_LAYER {
+async fn code_item_edges_returns_real_corpus_dynamic_candidate_rows() {
+    for case in AmbiguousDynamicToolCase::AXUM_LAYER
+        .into_iter()
+        .chain(AmbiguousDynamicToolCase::MEMCHR_SELF_FIELD)
+    {
         let fixture = AmbiguousDynamicToolFixture::new(case).await;
         let params = EdgesParams {
             item_name: Cow::Borrowed(fixture.case.method),
@@ -1073,6 +1067,7 @@ async fn code_item_edges_returns_axum_layer_dynamic_candidate_rows() {
             call_context,
             fixture.owner,
             Some(fixture.case.expected_path),
+            fixture.case.expected_arg_count,
             &fixture.candidates,
             fixture.case.expected_relation.clone(),
             fixture.case.label,

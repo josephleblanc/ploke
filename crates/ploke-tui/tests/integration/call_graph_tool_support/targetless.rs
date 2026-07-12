@@ -28,7 +28,9 @@ pub(crate) struct AmbiguousDynamicToolCase {
     pub(crate) file_suffix: &'static str,
     pub(crate) body: &'static str,
     pub(crate) expected_path: &'static [&'static str],
+    pub(crate) expected_arg_count: Option<u32>,
     pub(crate) expected_relation: CallTargetKind,
+    candidate_names: &'static [&'static str],
     corpus: DynamicToolCorpus,
 }
 
@@ -144,29 +146,6 @@ impl DynamicToolCase {
         },
     ];
 
-    pub(crate) const MEMCHR: [Self; 2] = [
-        Self {
-            label: "memchr/src/memmem/searcher.rs:222 Searcher.call",
-            method: "find",
-            owner_type: "Searcher",
-            file_suffix: "src/memmem/searcher.rs",
-            body: "(self.call)(self, prestate, haystack, needle)",
-            expected_path: None,
-            expected_arg_count: Some(4),
-            corpus: DynamicToolCorpus::Memchr,
-        },
-        Self {
-            label: "memchr/src/memmem/searcher.rs:718 Prefilter.call",
-            method: "find",
-            owner_type: "Prefilter",
-            file_suffix: "src/memmem/searcher.rs",
-            body: "(self.call)(self, haystack)",
-            expected_path: None,
-            expected_arg_count: Some(2),
-            corpus: DynamicToolCorpus::Memchr,
-        },
-    ];
-
     pub(crate) fn build_domain(&self) -> &'static str {
         self.corpus.build_domain()
     }
@@ -181,7 +160,9 @@ impl AmbiguousDynamicToolCase {
             file_suffix: "axum/src/boxed.rs",
             body: "(self.layer)(self.inner.into_route(state))",
             expected_path: &["self", "layer"],
+            expected_arg_count: Some(1),
             expected_relation: CallTargetKind::DynamicClosure,
+            candidate_names: &[],
             corpus: DynamicToolCorpus::Axum,
         },
         Self {
@@ -191,8 +172,48 @@ impl AmbiguousDynamicToolCase {
             file_suffix: "axum/src/boxed.rs",
             body: "(self.layer)(self.inner.into_route(state)).call(request)",
             expected_path: &["self", "layer"],
+            expected_arg_count: Some(1),
             expected_relation: CallTargetKind::DynamicClosure,
+            candidate_names: &[],
             corpus: DynamicToolCorpus::Axum,
+        },
+    ];
+
+    pub(crate) const MEMCHR_SELF_FIELD: [Self; 2] = [
+        Self {
+            label: "memchr/src/memmem/searcher.rs:222 Searcher.call",
+            method: "find",
+            owner_type: "Searcher",
+            file_suffix: "src/memmem/searcher.rs",
+            body: "(self.call)(self, prestate, haystack, needle)",
+            expected_path: &["self", "call"],
+            expected_arg_count: Some(4),
+            expected_relation: CallTargetKind::DynamicFunction,
+            candidate_names: &[
+                "searcher_kind_empty",
+                "searcher_kind_one_byte",
+                "searcher_kind_two_way",
+                "searcher_kind_two_way_with_prefilter",
+                "searcher_kind_sse2",
+                "searcher_kind_avx2",
+            ],
+            corpus: DynamicToolCorpus::Memchr,
+        },
+        Self {
+            label: "memchr/src/memmem/searcher.rs:718 Prefilter.call",
+            method: "find",
+            owner_type: "Prefilter",
+            file_suffix: "src/memmem/searcher.rs",
+            body: "(self.call)(self, haystack)",
+            expected_path: &["self", "call"],
+            expected_arg_count: Some(2),
+            expected_relation: CallTargetKind::DynamicFunction,
+            candidate_names: &[
+                "prefilter_kind_fallback",
+                "prefilter_kind_sse2",
+                "prefilter_kind_avx2",
+            ],
+            corpus: DynamicToolCorpus::Memchr,
         },
     ];
 
@@ -732,7 +753,7 @@ impl AmbiguousDynamicToolFixture {
             case.body,
             case.label,
         );
-        let candidates = axum_layer_dynamic_candidates(&db);
+        let candidates = ambiguous_dynamic_candidates(&db, &case);
         assert!(
             db.project_call_proof_facts_for_node(owner.id, case.build_domain())
                 .unwrap_or_else(|err| panic!("project {} proof facts: {err}", case.label))
@@ -1266,6 +1287,7 @@ pub(crate) fn assert_ambiguous_dynamic_candidates(
         calls,
         owner,
         None,
+        None,
         expected,
         CallTargetKind::DynamicFunction,
         label,
@@ -1277,6 +1299,7 @@ pub(crate) fn assert_ambiguous_dynamic_candidates_with_relation(
     calls: &[serde_json::Value],
     owner: Uuid,
     expected_path: Option<&[&str]>,
+    expected_arg_count: Option<u32>,
     expected: &[Uuid],
     expected_relation: CallTargetKind,
     label: &str,
@@ -1303,6 +1326,13 @@ pub(crate) fn assert_ambiguous_dynamic_candidates_with_relation(
                 .as_ref()
                 .is_some_and(|path| path.iter().map(String::as_str).eq(expected.iter().copied())),
             "{tool} should preserve dynamic callee path for {label}: {call:#?}"
+        );
+    }
+    if let Some(expected) = expected_arg_count {
+        assert_eq!(
+            call.arg_count,
+            Some(expected),
+            "{tool} should preserve dynamic arg count for {label}: {call:#?}"
         );
     }
     assert_eq!(call.status, CallStatusKind::Ambiguous);
@@ -1963,6 +1993,39 @@ fn axum_layer_dynamic_candidates(db: &Database) -> Vec<Uuid> {
     ];
     candidates.sort_unstable();
     candidates
+}
+
+fn ambiguous_dynamic_candidates(db: &Database, case: &AmbiguousDynamicToolCase) -> Vec<Uuid> {
+    if case.candidate_names.is_empty() {
+        return axum_layer_dynamic_candidates(db);
+    }
+
+    let mut candidates = case
+        .candidate_names
+        .iter()
+        .map(|name| function_id_by_exact_name(db, name))
+        .collect::<Vec<_>>();
+    candidates.sort_unstable();
+    candidates
+}
+
+fn function_id_by_exact_name(db: &Database, name: &str) -> Uuid {
+    let mut params = BTreeMap::new();
+    params.insert("name".to_string(), DataValue::from(name));
+    let rows = db
+        .raw_query_params(
+            r#"?[id] :=
+                *function { id, name: $name @ 'NOW' }"#,
+            params,
+        )
+        .unwrap_or_else(|err| panic!("query function {name}: {err}"));
+    assert_eq!(
+        rows.rows.len(),
+        1,
+        "expected exactly one function named {name:?}: {:#?}",
+        rows.rows
+    );
+    to_uuid(&rows.rows[0][0]).unwrap_or_else(|err| panic!("{name} uuid: {err}"))
 }
 
 fn closure_owner_for_method_parent(db: &Database, parent: Uuid) -> Uuid {

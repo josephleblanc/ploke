@@ -223,20 +223,23 @@ The `corpus_memchr_call_graph` fixture was recreated with
 `cargo run -p xtask --features call_graph -- recreate-backup-db --fixture corpus_memchr_call_graph`
 after the parser began projecting the bounded `unsafe_ifunc!` generated
 `core::mem::transmute::<Fn, RealFn>(fun)(...)` source oracle rows. It was
-recreated again after adding explicit direct self-field function-pointer
-initializer proof; the memchr `Searcher.call` and `Prefilter.call` rows remain
-targetless because their real constructors flow through shorthand aliases and
-cfg-sensitive branches rather than direct field initializer paths.
+recreated again after shorthand self-field function-pointer initializer proof
+began preserving cfg-visible candidate sets for memchr `Searcher.call` and
+`Prefilter.call`; cfg-gated architecture helpers that are not visible in the
+fixture remain omitted from the candidate set.
 
 Post-regeneration verification:
 
 - The recreated `corpus_memchr_call_graph_2026-07-12.sqlite` shared snapshot was
   copied into `tests/backup_dbs/` as the committed seed artifact.
 - Current seed checksum:
-  `06242deafd97d1ac22521695fb44396d2b136ed95e14be2d3fed18133e223b68`.
+  `28f8b66d25409fe0e3501bdcb84113c2e4638777ff035d7706a84e9cfdb4c38f`.
 - The memchr real-target matrix can now assert the generated inner transmute path
   row and outer returned-path dynamic row as external targetless frontiers rather
   than treating the source oracle as fully absent.
+- The memchr real-target matrix can also assert finite ambiguous
+  `DynamicFunction` candidate sets for `Searcher.call` and `Prefilter.call`
+  instead of preserving those function-pointer field rows as targetless.
 
 ## 2026-07-12 Axum Opaque Future Generated Constructor Refresh
 
@@ -1058,8 +1061,8 @@ Expected searchable corpus embedding config:
     callees, function-pointer fields, and callable trait object fields
   - generated `unsafe_ifunc!` transmute path and returned-path dynamic frontier
     rows in [fallback.rs](../../crates/ploke-db/tests/unit/call_graph_fixture_queries/real_target_matrix/fallback.rs)
-  - memchr `Searcher.call` and `Prefilter.call` rows remain targetless dynamic
-    blockers in the current direct-initializer proof model
+  - memchr `Searcher.call` and `Prefilter.call` rows preserve finite ambiguous
+    `DynamicFunction` candidates from cfg-visible shorthand field initializers
 
 ### `corpus_memchr_openrouter_embeddings_2026-05-17.sqlite`
 
