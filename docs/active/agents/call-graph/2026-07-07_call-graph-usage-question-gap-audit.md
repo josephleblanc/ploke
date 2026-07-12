@@ -12,12 +12,13 @@ Related planning files:
 ## Summary
 
 The core query surface is now substantially implemented. DB tests cover real
-axum usage questions for paths, impact, reach, module-boundary edges,
-frontiers, source files/modules/crates/cfgs, argument shape, test/non-test
-caller buckets, public caller buckets, private zero-incoming nodes, generated
-entrypoint-summary proof context, proc-macro entrypoint impact, and callable
-item metadata such as unsafe and async function qualifiers. RAG and tool tests
-preserve the same major surfaces through exact APIs and tool payloads.
+axum usage questions for paths, impact, reach, module-boundary and
+crate-boundary edges, frontiers, source files/modules/crates/cfgs, argument
+shape, test/non-test caller buckets, public caller buckets, private
+zero-incoming nodes, generated entrypoint-summary proof context, proc-macro
+entrypoint impact, and callable item metadata such as unsafe and async function
+qualifiers. RAG and tool tests preserve the same major surfaces through exact
+APIs and tool payloads.
 
 The remaining gaps are mostly not missing query helpers. They are missing proof
 inputs:
@@ -27,8 +28,9 @@ inputs:
   external effects;
 - broader source/sink, cost, and policy annotations for
   security/performance/refactoring questions that need domain semantics beyond
-  current `effect_seed`, admitted owner `effect_policy` allowlists, and
-  caller-supplied effect guard or module-boundary policy reports;
+  current `effect_seed`, admitted owner `effect_policy` allowlists,
+  caller-supplied effect guard reports, module-boundary policy reports, and
+  crate-boundary inventory;
 - generated harness/build-entrypoint execution policy for full binary/test/CI
   reachability beyond admitted proof-only entrypoint summaries.
 
@@ -43,11 +45,11 @@ inputs:
 | Performance work | Reach/path/frontier queries expose known helpers, external calls, cfgs, and argument shape. | Partial: hot-path/cost/blocking annotations are not modeled. |
 | Refactoring support | Impact, direct callsites, source files/modules/crates, boundary edges, and callsite buckets support migration planning. | Strong for caller inventory; move-safety/cycle prediction needs dependency-policy rules. |
 | Test planning | Impact test/non-test buckets, source metadata, admitted generated test-harness entrypoint summaries, and typed `call_test_entrypoints` identify stored test callers and proof-only generated entrypoints. | Partial: generated harness summaries remain proof facts, and CI test selection is not modeled. |
-| Architecture review | `module_boundary_edges_from_owner`, RAG `exact_module_boundary_edges_from_owner`, reach `boundary_edges`, lookup/edges `module_boundary_edges` payloads, and source modules expose cross-module call edges with caller/callee/site metadata. DB `module_boundary_policy_violations_from_owner`, RAG `exact_module_boundary_policy_violations_from_owner`, and exact TUI `code_item_boundary_policy` now evaluate caller-supplied forbidden module-prefix rules over resolved-only boundary edges. | Strong for module-boundary inventory and exact module-prefix policy checks; broader dependency-policy semantics are not modeled. |
+| Architecture review | `module_boundary_edges_from_owner`, `crate_boundary_edges_from_owner`, RAG `exact_module_boundary_edges_from_owner`, RAG `exact_crate_boundary_edges_from_owner`, reach `boundary_edges`, lookup/edges `module_boundary_edges` and `crate_boundary_edges` payloads, source modules, and source crates expose cross-module/cross-crate call edges with caller/callee/site metadata. DB `module_boundary_policy_violations_from_owner`, RAG `exact_module_boundary_policy_violations_from_owner`, and exact TUI `code_item_boundary_policy` now evaluate caller-supplied forbidden module-prefix rules over resolved-only boundary edges. | Strong for module-boundary and crate-boundary inventory plus exact module-prefix policy checks; broader dependency-policy semantics are not modeled. |
 | Debugging | Owner/target context, exact paths, frontier status buckets, proof context, and source spans map persisted edges/blockers back to source callsites. | Strong current surface. |
 | API understanding | Impact buckets, argument/generic argument counts, constructor relation kinds, path-shape counts, aliases/re-exports, and source crates show real target usage. | Strong current surface. |
 | Documentation and RAG | RAG exact call context, exact paths, impact/reach summaries, proof context, and tool payloads expose caller/callee context and fail-closed blockers. | Strong current surface. |
-| Build or deployment optimization | Source crates/modules/cfgs and component impact reports answer affected components and feature/platform-gated paths. Exact DB/RAG/tool build-domain summaries and typed test-entrypoint summaries now expose linked admitted build/test proof metadata for generated test-entrypoint summaries without adding source call edges. | Partial: actual CI test selection policy is not modeled. |
+| Build or deployment optimization | Source crates/modules/cfgs, component impact reports, and crate-boundary edge rows answer affected components and feature/platform-gated paths. Exact DB/RAG/tool build-domain summaries and typed test-entrypoint summaries now expose linked admitted build/test proof metadata for generated test-entrypoint summaries without adding source call edges. | Partial: actual CI test selection policy is not modeled. |
 
 ## Concrete Existing Proof Points
 
@@ -56,8 +58,8 @@ inputs:
 - DB/RAG/TUI metadata propagation: fixture-backed async item metadata tests for
   `make_ready_local_assoc` and `call_await_result_instance_method`, plus
   unsafe item metadata tests for `unsafe_target`.
-- RAG: real-corpus exact path, impact, reach, module-boundary, module-boundary
-  policy, effect-guard, frontier, and
+- RAG: real-corpus exact path, impact, reach, module-boundary, crate-boundary,
+  module-boundary policy, effect-guard, frontier, and
   private-uncalled tests in
   `crates/ploke-rag/src/core/unit_tests/tests/call_context/collection/cases/fixtures/real_corpus.rs`.
 - Proof graph: strict `effect_policy` storage/projection tests in
@@ -66,9 +68,12 @@ inputs:
   `code_item_boundary_policy`, `code_item_lookup`, `code_item_edges`,
   `code_private_uncalled`, and
   targetless matrix integration tests under
-  `crates/ploke-tui/tests/integration/`. The exact effect-guard tool proves the
-  axum `tokio::spawn` effect guard/violation contract without fabricating a
-  local edge to the external targetless callsite. The exact lookup/edges and
+  `crates/ploke-tui/tests/integration/`. Exact lookup/edges crate-boundary
+  tests prove the axum `from_fn::tests::basic -> Body::empty` cross-crate
+  edge is available through model-facing payloads. The exact effect-guard tool
+  proves the axum `tokio::spawn` effect guard/violation contract without
+  fabricating a local edge to the external targetless callsite. The exact
+  lookup/edges and
   private-uncalled tools now expose admitted generated-entrypoint summaries
   through typed payloads without fabricating source call edges.
 
