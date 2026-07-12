@@ -44,18 +44,18 @@ impl Parse for OpaqueFuture {
     }
 }
 
-struct TopLevelHandlerFn {
+struct TopLevelRouteFn {
     name: Ident,
     method: Ident,
 }
 
-impl Parse for TopLevelHandlerFn {
+impl Parse for TopLevelRouteFn {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         let name: Ident = input.parse()?;
         input.parse::<Token![,]>()?;
         let method: Ident = input.parse()?;
         if !input.is_empty() {
-            return Err(input.error("unsupported top_level_handler_fn! trailing tokens"));
+            return Err(input.error("unsupported top-level route macro trailing tokens"));
         }
 
         Ok(Self { name, method })
@@ -73,11 +73,18 @@ impl<'a> CodeVisitor<'a> {
         }
 
         if item.mac.path.is_ident("top_level_handler_fn") {
-            let Ok(input) = syn::parse2::<TopLevelHandlerFn>(item.mac.tokens.clone()) else {
+            let Ok(input) = syn::parse2::<TopLevelRouteFn>(item.mac.tokens.clone()) else {
                 return;
             };
             self.record_top_level_handler_fn(item, input);
             return;
+        }
+
+        if item.mac.path.is_ident("top_level_service_fn") {
+            let Ok(input) = syn::parse2::<TopLevelRouteFn>(item.mac.tokens.clone()) else {
+                return;
+            };
+            self.record_top_level_service_fn(item, input);
         }
     }
 
@@ -161,8 +168,16 @@ impl<'a> CodeVisitor<'a> {
         self.record_opaque_future_impl(&items.impl_item, span, item_cfgs, effective_cfgs);
     }
 
-    fn record_top_level_handler_fn(&mut self, item: &ItemMacro, input: TopLevelHandlerFn) {
+    fn record_top_level_handler_fn(&mut self, item: &ItemMacro, input: TopLevelRouteFn) {
         let Some(mut function) = top_level_handler_fn_item(&input) else {
+            return;
+        };
+        function.attrs.extend(item.attrs.clone());
+        syn::visit::Visit::visit_item_fn(self, &function);
+    }
+
+    fn record_top_level_service_fn(&mut self, item: &ItemMacro, input: TopLevelRouteFn) {
+        let Some(mut function) = top_level_service_fn_item(&input) else {
             return;
         };
         function.attrs.extend(item.attrs.clone());
@@ -383,7 +398,7 @@ fn opaque_future_items(input: &OpaqueFuture) -> Option<OpaqueFutureItems> {
     })
 }
 
-fn top_level_handler_fn_item(input: &TopLevelHandlerFn) -> Option<ItemFn> {
+fn top_level_handler_fn_item(input: &TopLevelRouteFn) -> Option<ItemFn> {
     let name = &input.name;
     let method = &input.method;
     parse_item(quote! {
@@ -394,6 +409,22 @@ fn top_level_handler_fn_item(input: &TopLevelHandlerFn) -> Option<ItemFn> {
             S: Clone + Send + Sync + 'static,
         {
             on(MethodFilter::#method, handler)
+        }
+    })
+}
+
+fn top_level_service_fn_item(input: &TopLevelRouteFn) -> Option<ItemFn> {
+    let name = &input.name;
+    let method = &input.method;
+    parse_item(quote! {
+        pub fn #name<T, S>(svc: T) -> MethodRouter<S, T::Error>
+        where
+            T: Service<Request> + Clone + Send + Sync + 'static,
+            T::Response: IntoResponse + 'static,
+            T::Future: Send + 'static,
+            S: Clone,
+        {
+            on_service(MethodFilter::#method, svc)
         }
     })
 }

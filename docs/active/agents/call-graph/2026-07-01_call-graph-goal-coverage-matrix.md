@@ -1397,9 +1397,8 @@ Previously completed slice in current bucket: owner-scoped external summary need
 queue exposed through DB, RAG, and exact TUI tools. Detailed evidence is
 recorded below under the same heading.
 
-Previously completed slice in current bucket: generated `routing::post`
-top-level handler resolution over a real axum grouped-import free-function
-callsite.
+Previously completed slice in current bucket: generated top-level handler and
+service function resolution over real axum routing free-function callsites.
 
 Completed evidence:
 
@@ -1411,9 +1410,17 @@ Completed evidence:
   `top_level_handler_fn!(post, POST)` expansion from the macro template at
   `method_routing.rs:165` as a generated `routing::method_routing::post`
   function, and that generated body reaches the local `on(...)` helper.
+- The sibling bounded generated-item model projects the
+  `top_level_service_fn!` invocations at
+  `axum/src/routing/method_routing.rs:335-343` as generated `*_service`
+  functions, and those generated bodies reach the local `on_service(...)`
+  helper.
 - DB, RAG, `code_item_lookup`, and `code_item_edges` tests now preserve the
   resolved `post` call edge plus a callsite-linked `expansion_boundary` and
   admitted `external_summary` artifact for that generated-function boundary.
+- DB real-corpus tests also preserve the resolved `get_service`,
+  `delete_service`, `patch_service`, and top-level `post_service` call edges to
+  the generated service functions.
 - This is a bounded item-position macro model only. It does not claim general
   macro expansion for arbitrary generated source bodies.
 
@@ -1674,8 +1681,8 @@ Completed evidence:
 Previously completed slice in current bucket: generated-item macro boundary
 summary proof over real axum constructor and handler frontiers. Current
 follow-ups close the bounded `opaque_future!` constructor edge and the bounded
-`top_level_handler_fn!(post, POST)` handler edge while keeping broader generated
-source boundaries fail-closed.
+`top_level_handler_fn!(post, POST)` / `top_level_service_fn!` routing edges
+while keeping broader generated source boundaries fail-closed.
 
 Completed evidence:
 
@@ -1702,6 +1709,9 @@ Completed evidence:
   RAG proof context and exact TUI lookup/edges assertions now preserve the
   resolved constructor edge, the resolved generated `routing::post` edge, and
   the proof metadata. This slice does not claim general macro expansion.
+- DB source-line tests now also preserve generated `*_service` free-function
+  edges and generated-body `on_service(...)` edges for the sibling
+  `top_level_service_fn!` macro family.
 - Verification passed before this follow-up:
   `cargo run -p xtask --features call_graph -- fixtures regenerate --active`,
   `cargo run -p xtask --features call_graph -- verify-backup-dbs`,

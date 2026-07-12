@@ -1473,6 +1473,161 @@ fn axum_real_target_generated_post_function_resolves() -> Result<(), DbError> {
 }
 
 #[test]
+fn axum_real_target_generated_service_functions_resolve() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Matrix: generated `*_service` top-level handler fanout.
+    // Source chain:
+    //   axum/src/routing/method_routing.rs:31-91 template; macro invocations
+    //   :335-343. The template creates free functions whose generated bodies
+    //   call `on_service(MethodFilter::<METHOD>, svc)`.
+    // Expected traversal: every generated service function exists and reaches
+    // `on_service`; visible real-corpus `get_service`, `delete_service`,
+    // `patch_service`, and `post_service` path callsites bind to those generated
+    // functions without treating chained `.post_service(...)` methods as free
+    // function rows.
+    let on_service =
+        function_id_by_name_in_module(&db, &["crate", "routing", "method_routing"], "on_service")?;
+    for name in [
+        "connect_service",
+        "delete_service",
+        "get_service",
+        "head_service",
+        "options_service",
+        "patch_service",
+        "post_service",
+        "put_service",
+        "trace_service",
+    ] {
+        let target =
+            function_id_by_name_in_module(&db, &["crate", "routing", "method_routing"], name)?;
+        let generated_context = db.call_context_for_owner(target)?;
+        let generated_on_service = row_by_path(&generated_context, &["on_service"]);
+        assert_resolved_target(
+            generated_on_service,
+            on_service,
+            CallRelationKind::Function,
+            CallSiteKind::Path,
+            CallTargetKind::Function,
+        );
+        assert_one_edge_traversal(
+            &db,
+            TraversalExpectation {
+                label: name,
+                owner: target,
+                target: on_service,
+                site_id: generated_on_service.site.id,
+                expected_edge_count: 1,
+            },
+        )?;
+    }
+
+    struct ServicePathCase<'a> {
+        target: &'static str,
+        path: &'a [&'a str],
+        expected_callers: usize,
+        lines: &'a [SourceLineFanout],
+    }
+
+    let cases = [
+        ServicePathCase {
+            target: "get_service",
+            path: &["get_service"],
+            expected_callers: 9,
+            lines: &[
+                SourceLineFanout {
+                    file_suffix: "axum/src/routing/method_routing.rs",
+                    lines: &[1415],
+                },
+                SourceLineFanout {
+                    file_suffix: "axum/src/routing/tests/get_to_head.rs",
+                    lines: &[46],
+                },
+                SourceLineFanout {
+                    file_suffix: "axum/src/routing/tests/handle_error.rs",
+                    lines: &[88],
+                },
+                SourceLineFanout {
+                    file_suffix: "axum/src/routing/tests/merge.rs",
+                    lines: &[197, 203],
+                },
+                SourceLineFanout {
+                    file_suffix: "axum/src/routing/tests/mod.rs",
+                    lines: &[173, 231, 279],
+                },
+            ],
+        },
+        ServicePathCase {
+            target: "get_service",
+            path: &["crate", "routing", "get_service"],
+            expected_callers: 9,
+            lines: &[SourceLineFanout {
+                file_suffix: "axum/src/routing/tests/fallback.rs",
+                lines: &[203],
+            }],
+        },
+        ServicePathCase {
+            target: "delete_service",
+            path: &["delete_service"],
+            expected_callers: 1,
+            lines: &[SourceLineFanout {
+                file_suffix: "axum/src/routing/method_routing.rs",
+                lines: &[1500],
+            }],
+        },
+        ServicePathCase {
+            target: "patch_service",
+            path: &["patch_service"],
+            expected_callers: 1,
+            lines: &[SourceLineFanout {
+                file_suffix: "axum/src/routing/tests/mod.rs",
+                lines: &[280],
+            }],
+        },
+        ServicePathCase {
+            target: "post_service",
+            path: &["post_service"],
+            expected_callers: 1,
+            lines: &[SourceLineFanout {
+                file_suffix: "axum/src/routing/method_routing.rs",
+                lines: &[1620],
+            }],
+        },
+    ];
+
+    for case in cases {
+        let target = function_id_by_name_in_module(
+            &db,
+            &["crate", "routing", "method_routing"],
+            case.target,
+        )?;
+        let line_target = assert_resolved_path_line_fanout(
+            &db,
+            &CORPUS_AXUM_CALL_GRAPH,
+            case.path,
+            CallRelationKind::Function,
+            CallTargetKind::Function,
+            case.lines,
+        )?;
+        assert_eq!(
+            line_target, target,
+            "{:?} should resolve to generated {}",
+            case.path, case.target
+        );
+        let callers = db.callers_for_target(target)?;
+        assert_eq!(
+            callers.len(),
+            case.expected_callers,
+            "{} should expose expected generated service callers: {callers:#?}",
+            case.target
+        );
+        assert_sites_match_callers(&db, target, &callers, &format!("generated {}", case.target))?;
+    }
+
+    Ok(())
+}
+
+#[test]
 fn axum_real_target_try_downcast_helpers_reach_current_resolved_subset() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 

@@ -140,8 +140,9 @@ bounded generated-item modeling slice:
   inherent `new` method enough for the callsite to resolve.
 - The current DB/RAG/TUI contract is now to preserve the resolved
   `IntoServiceFuture::new` call edge, retain the admitted `expansion_boundary`
-  / `expanded_item` proof metadata, and keep broader generated helpers such as
-  `routing::post` fail-closed.
+  / `expanded_item` proof metadata, preserve the bounded generated
+  `routing::post` handler edge, and preserve DB source-line traversal for the
+  sibling generated `*_service` free-function edges.
 
 The next semantic implementation slice should avoid more targetless proof
 breadth and should choose either:
@@ -180,8 +181,8 @@ carriers. They need one of the larger models listed above:
   `self.into_route` row whose construction site is not visible in selected
   source;
 - generated top-level item modeling for parameterized item macros beyond the
-  bounded axum `opaque_future!` constructor case, such as generated
-  `routing::post`;
+  bounded axum `opaque_future!` constructor and routing
+  `top_level_{handler,service}_fn!` cases;
 - macro-expanded arbitrary-expression bodies for memchr's generated
   `transmute::<Fn, RealFn>(fun)(...)` callsites;
 - broader runtime trait-object dispatch summaries for real-corpus boxed

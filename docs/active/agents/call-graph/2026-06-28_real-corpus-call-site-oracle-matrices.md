@@ -72,7 +72,7 @@ one-hop `parse_attrs` edges, including the explicit
 `axum/src/response/sse.rs:449`, and the current absent wrapper-body owner rows
 for `middleware/{map_request,from_fn,map_response}.rs`.
 
-## Generated Handler Function Fanout
+## Generated Handler And Service Function Fanout
 
 | Target | Callsites | Owner(s) | Evidence chain |
 | --- | --- | --- | --- |
@@ -80,6 +80,10 @@ for `middleware/{map_request,from_fn,map_response}.rs`.
 | `routing::post` | `axum/src/extract/multipart.rs:381,404,420,448` | multipart tests | grouped import at `multipart.rs:362` -> same generated function binding. |
 | `routing::post` | `axum/src/routing/method_routing.rs:1448,1660` | `merge`; `merge_accessing_state` | same-module test visibility through `use super::*` at `method_routing.rs:1391` -> generated function binding. |
 | `routing::post` | `axum/src/routing/tests/mod.rs:88,624,666,744,745,746,772,792,812,838,842,844,899,1071,1162` | routing tests | grouped `crate::routing::{..., post, ...}` import at `routing/tests/mod.rs:8-11` -> generated function binding. |
+| `routing::get_service` | `axum/src/routing/tests/get_to_head.rs:46`; `handle_error.rs:88`; `merge.rs:197,203`; `method_routing.rs:1415`; `routing/tests/mod.rs:173,231,279`; `routing/tests/fallback.rs:203` | service tests | imports, inherited test module visibility, and explicit `crate::routing::get_service` bind to generated `top_level_service_fn!(get_service, GET)` from `method_routing.rs:31-91` / `:337`. |
+| `routing::delete_service` | `axum/src/routing/method_routing.rs:1500` | method routing tests | same-module test visibility binds to generated `top_level_service_fn!(delete_service, DELETE)` from `method_routing.rs:31-91` / `:336`. |
+| `routing::patch_service` | `axum/src/routing/tests/mod.rs:280` | routing tests | grouped `crate::routing::{..., patch_service, ...}` import binds to generated `top_level_service_fn!(patch_service, PATCH)` from `method_routing.rs:31-91` / `:340`. |
+| `routing::post_service` | `axum/src/routing/method_routing.rs:1620` | method routing tests | same-module test visibility binds the top-level `post_service(...)` call to generated `top_level_service_fn!(post_service, POST)` from `method_routing.rs:31-91` / `:341`; chained `.post_service(...)` method rows are separate. |
 
 Current executable coverage: `ploke-db` real-target matrix tests assert that
 the generated `routing::method_routing::post` function node exists, its
@@ -90,6 +94,11 @@ fifteen `routing/tests/mod.rs` rows, including the nested async-block owner at
 `routing/tests/mod.rs:1071`. The multipart rows remain absent in the current
 fixture; the `routing/tests/mod.rs:1215` row is no longer flattened into the
 parent function owner.
+
+The same DB matrix now asserts every generated `*_service` top-level function
+exists and that each generated body reaches `on_service(...)`. Source-line
+fanout pins nine `get_service` caller rows, plus one each for
+`delete_service`, `patch_service`, and top-level `post_service`.
 
 ## Re-Exported Body Constructor Fanout
 

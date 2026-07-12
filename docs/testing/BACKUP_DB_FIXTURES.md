@@ -259,6 +259,25 @@ Post-regeneration verification:
   the callsite as proof metadata without keeping a callsite-level
   `type_resolution_missing` blocker.
 
+## 2026-07-12 Axum Top-Level Service Generated Function Refresh
+
+The `corpus_axum_call_graph` fixture was recreated with
+`cargo run -p xtask --features call_graph -- recreate-backup-db --fixture corpus_axum_call_graph`
+after bounded item-position `top_level_service_fn!` modeling began projecting
+the generated axum routing service function items.
+
+Post-regeneration verification:
+
+- The recreated `corpus_axum_call_graph_2026-07-12.sqlite` shared snapshot was
+  copied into `tests/backup_dbs/` as the committed seed artifact.
+- `axum/src/routing/method_routing.rs:335-343` now projects generated
+  `*_service` functions whose generated bodies call the local `on_service(...)`
+  helper.
+- The inspected real-corpus `get_service(...)`, `delete_service(...)`,
+  `patch_service(...)`, and `post_service(...)` path callsites now resolve to
+  those generated functions. Chained `.post_service(...)` method calls remain
+  outside this top-level free-function slice.
+
 ## 2026-07-12 Axum Function-Pointer Self-Field Refresh
 
 The `corpus_axum_call_graph` fixture was recreated with
@@ -1130,6 +1149,9 @@ Expected searchable corpus embedding config:
   - `routing::post(...)` callsites reach the generated top-level handler
     function projected from the bounded
     `top_level_handler_fn!(post, POST)` item-position macro invocation
+  - `*_service(...)` callsites reach generated top-level service functions
+    projected from the bounded `top_level_service_fn!` item-position macro
+    invocations
   - axum `TestClient::new` reaches the cfg-gated local test helper target for
     168 projected structural rows through nested glob re-export rows,
     inherited parent glob imports, direct `test_helpers::TestClient` imports,
