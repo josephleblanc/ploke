@@ -61,6 +61,8 @@ use syn::{
 };
 use tracing::{error, instrument, trace}; // Import error macro
 
+mod generated_items;
+
 fn receiver_param_names(parameters: &[ParamData]) -> Vec<String> {
     parameters
         .iter()
@@ -3217,9 +3219,6 @@ use statement ident: {:?}
 
     // Visit macro definitions (macro_rules!)
     fn visit_item_macro(&mut self, item_macro: &'ast syn::ItemMacro) {
-        if item_macro.ident.as_ref().is_none() {
-            return;
-        }
         #[cfg(feature = "cfg_eval")]
         {
             use crate::parser::visitor::attribute_processing::should_include_item;
@@ -3228,6 +3227,10 @@ use statement ident: {:?}
             if !should_include_item(&item_macro.attrs, active_cfg) {
                 return; // Skip this item due to cfg
             }
+        }
+        if item_macro.ident.as_ref().is_none() {
+            self.record_generated_macro(item_macro);
+            return;
         }
         let is_exported = item_macro
             .attrs

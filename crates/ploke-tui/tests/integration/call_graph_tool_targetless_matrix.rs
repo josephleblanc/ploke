@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use ploke_core::rag_types::{CallCalleeInfo, CallContextInfo, CallStatusKind};
+use ploke_core::rag_types::{CallCalleeInfo, CallContextInfo, CallStatusKind, CallTargetKind};
 use ploke_tui::tools::{
     Tool,
     code_item_lookup::{CodeItemLookup, LookupParams},
@@ -15,8 +15,8 @@ use crate::call_graph_tool_support::{
     assert_dynamic_context, assert_dynamic_proof, assert_method_context, assert_method_proof,
     assert_path_blocker_proof, assert_path_context, assert_path_context_absent,
     assert_path_context_count, assert_path_resolution_proof, assert_resolved_method_context,
-    assert_resolved_method_proof, assert_runtime_dispatch_blocker, request_parts_extract_target,
-    ui_field,
+    assert_resolved_method_proof, assert_resolved_path_context_target, assert_resolved_path_proof,
+    assert_runtime_dispatch_blocker, request_parts_extract_target, ui_field,
 };
 
 #[tokio::test]
@@ -719,7 +719,7 @@ async fn code_item_lookup_returns_memchr_callable_trait_object_path_rows() {
 }
 
 #[tokio::test]
-async fn code_item_lookup_returns_generated_constructor_frontier_path_rows() {
+async fn code_item_lookup_returns_generated_macro_boundary_path_rows() {
     for case in PathToolCase::INTO_SERVICE_FUTURE_NEW
         .into_iter()
         .chain(PathToolCase::ROUTING_POST)
@@ -763,70 +763,109 @@ async fn code_item_lookup_returns_generated_constructor_frontier_path_rows() {
         //   docs/active/agents/call-graph/
         //   2026-06-28_real-corpus-call-site-oracle-matrices.md
         //
-        // Source chain:
+        // Source chains:
         //   axum/src/handler/service.rs:155 binds
         //   `type Future = super::future::IntoServiceFuture<H::Future>`.
         //   axum/src/handler/service.rs:174 calls
         //   `super::future::IntoServiceFuture::new(future)`.
         //   axum/src/handler/future.rs:11-18 and axum/src/macros.rs:19-20
         //   generate the concrete inherent constructor.
-        // Expected traversal: exact tool lookup can target
-        // `impl Service<Request<B>> for HandlerService::call` by both trait
-        // input and self type, but the generated constructor remains an
-        // unresolved targetless frontier until macro-expanded inherent items
-        // are modeled.
+        //   axum/src/json.rs:248 calls generated `routing::post(...)`.
+        // Expected traversal: the bounded `opaque_future!` expansion resolves
+        // the generated constructor edge, while broader generated routing
+        // helpers still remain unresolved frontiers.
         let callee = fixture.case.callee();
-        let site_id = assert_path_context(
-            call_context,
-            fixture.owner,
-            &callee,
-            &fixture.case.status,
-            fixture.case.label,
-            "lookup",
-        );
-        assert_path_resolution_proof(
-            proof_context,
-            fixture.owner,
-            site_id,
-            "bd:corpus-axum-call-graph",
-            boundary.expected_state,
-            "type_resolution_missing",
-            fixture.case.label,
-            "lookup",
-        );
-        assert_admitted_macro_boundary_summary_proof(
-            proof_context,
-            fixture.owner,
-            site_id,
-            boundary,
-            fixture.case.label,
-            "lookup",
-        );
-        let (frontier_ui_field, frontier_count, ambiguous_count) =
-            assert_status_frontier_reach(reach, fixture.owner, &fixture.case, "lookup");
-
         let ui = result.ui_payload.as_ref().expect("ui payload");
+        if fixture.case.status == CallStatusKind::Resolved {
+            let (site_id, target) = assert_resolved_path_context_target(
+                call_context,
+                fixture.owner,
+                &callee,
+                CallTargetKind::AssociatedFunction,
+                fixture.case.label,
+                "lookup",
+            );
+            assert_resolved_path_proof(
+                proof_context,
+                fixture.owner,
+                site_id,
+                target,
+                fixture.case.label,
+                "lookup",
+            );
+            assert_admitted_macro_boundary_summary_proof(
+                proof_context,
+                fixture.owner,
+                site_id,
+                boundary,
+                fixture.case.label,
+                "lookup",
+            );
+            let direct_count = assert_resolved_direct_call_site_reach(
+                reach,
+                fixture.owner,
+                &fixture.case,
+                target,
+                CallTargetKind::AssociatedFunction,
+                "lookup",
+            );
+            assert_eq!(
+                ui_field(ui, "reach_direct_call_sites"),
+                direct_count.to_string()
+            );
+        } else {
+            let site_id = assert_path_context(
+                call_context,
+                fixture.owner,
+                &callee,
+                &fixture.case.status,
+                fixture.case.label,
+                "lookup",
+            );
+            assert_path_resolution_proof(
+                proof_context,
+                fixture.owner,
+                site_id,
+                "bd:corpus-axum-call-graph",
+                boundary.expected_state,
+                boundary
+                    .expected_blocker
+                    .expect("blocked macro boundary should carry a blocker"),
+                fixture.case.label,
+                "lookup",
+            );
+            assert_admitted_macro_boundary_summary_proof(
+                proof_context,
+                fixture.owner,
+                site_id,
+                boundary,
+                fixture.case.label,
+                "lookup",
+            );
+            let (frontier_ui_field, frontier_count, ambiguous_count) =
+                assert_status_frontier_reach(reach, fixture.owner, &fixture.case, "lookup");
+            assert_eq!(
+                ui_field(ui, frontier_ui_field.as_str()),
+                frontier_count.to_string()
+            );
+            assert_eq!(
+                ui_field(ui, "reach_ambiguous_frontier_calls"),
+                ambiguous_count.to_string()
+            );
+        }
         assert!(
             ui_field(ui, "call_context_outgoing")
                 .parse::<usize>()
                 .expect("outgoing count")
                 >= 1,
-            "code_item_lookup should surface outgoing generated constructor frontier call context"
+            "code_item_lookup should surface outgoing generated-boundary call context"
         );
         assert!(
             ui_field(ui, "proof_context")
                 .parse::<usize>()
                 .expect("proof count")
                 >= 2,
-            "code_item_lookup should surface generated constructor frontier proof rows"
-        );
-        assert_eq!(
-            ui_field(ui, frontier_ui_field.as_str()),
-            frontier_count.to_string()
-        );
-        assert_eq!(
-            ui_field(ui, "reach_ambiguous_frontier_calls"),
-            ambiguous_count.to_string()
+            "code_item_lookup should surface generated-boundary proof rows"
         );
     }
 }
@@ -1180,6 +1219,60 @@ fn assert_status_frontier_reach(
     (format!("reach_{bucket}"), calls.len(), ambiguous.len())
 }
 
+fn assert_resolved_direct_call_site_reach(
+    reach: &serde_json::Map<String, serde_json::Value>,
+    owner: uuid::Uuid,
+    case: &PathToolCase,
+    target: uuid::Uuid,
+    relation: CallTargetKind,
+    tool: &str,
+) -> usize {
+    let direct = reach
+        .get("direct_call_sites")
+        .and_then(serde_json::Value::as_array)
+        .unwrap_or_else(|| panic!("{tool} call_reach direct_call_sites array"));
+    let calls = direct
+        .iter()
+        .map(|call| serde_json::from_value::<CallContextInfo>(call.clone()))
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap_or_else(|err| panic!("{tool} direct_call_sites rows should deserialize: {err}"));
+    assert!(
+        calls.iter().any(|call| {
+            call.owner_id == owner
+                && call.status == CallStatusKind::Resolved
+                && matches!(
+                    &call.callee,
+                    CallCalleeInfo::Path { path }
+                        if path.iter().map(String::as_str).eq(case.path.iter().copied())
+                )
+                && call.targets.len() == 1
+                && call.targets[0].target_id == target
+                && call.targets[0].relation == relation
+        }),
+        "{tool} should expose {} as a resolved direct callsite: {calls:#?}",
+        case.label
+    );
+    let unresolved = reach
+        .get("unresolved_frontier_calls")
+        .and_then(serde_json::Value::as_array)
+        .unwrap_or_else(|| panic!("{tool} call_reach unresolved_frontier_calls array"));
+    assert!(
+        unresolved.iter().all(|call| {
+            serde_json::from_value::<CallContextInfo>(call.clone()).map_or(true, |call| {
+                !(call.owner_id == owner
+                    && matches!(
+                        &call.callee,
+                        CallCalleeInfo::Path { path }
+                            if path.iter().map(String::as_str).eq(case.path.iter().copied())
+                    ))
+            })
+        }),
+        "{tool} should not keep resolved {} in unresolved frontier: {unresolved:#?}",
+        case.label
+    );
+    calls.len()
+}
+
 #[tokio::test]
 async fn code_item_edges_returns_from_ref_dependency_root_path_rows() {
     for case in PathToolCase::FROM_REF_DEP_ROOT {
@@ -1469,7 +1562,7 @@ async fn code_item_edges_returns_memchr_callable_trait_object_path_rows() {
 }
 
 #[tokio::test]
-async fn code_item_edges_returns_generated_constructor_frontier_path_rows() {
+async fn code_item_edges_returns_generated_macro_boundary_path_rows() {
     for case in PathToolCase::INTO_SERVICE_FUTURE_NEW
         .into_iter()
         .chain(PathToolCase::ROUTING_POST)
@@ -1512,56 +1605,96 @@ async fn code_item_edges_returns_generated_constructor_frontier_path_rows() {
             .and_then(serde_json::Value::as_object)
             .expect("node_info.call_reach object");
 
-        // Same generated-constructor frontier oracle as the lookup test above,
+        // Same generated-boundary oracle as the lookup test above,
         // exercised through the edge-oriented payload.
         let callee = fixture.case.callee();
-        let site_id = assert_path_context(
-            call_context,
-            fixture.owner,
-            &callee,
-            &fixture.case.status,
-            fixture.case.label,
-            "edges",
-        );
-        assert_path_resolution_proof(
-            proof_context,
-            fixture.owner,
-            site_id,
-            "bd:corpus-axum-call-graph",
-            boundary.expected_state,
-            "type_resolution_missing",
-            fixture.case.label,
-            "edges",
-        );
-        assert_admitted_macro_boundary_summary_proof(
-            proof_context,
-            fixture.owner,
-            site_id,
-            boundary,
-            fixture.case.label,
-            "edges",
-        );
-        let (frontier_ui_field, frontier_count, ambiguous_count) =
-            assert_status_frontier_reach(reach, fixture.owner, &fixture.case, "edges");
-
         let ui = result.ui_payload.as_ref().expect("ui payload");
+        if fixture.case.status == CallStatusKind::Resolved {
+            let (site_id, target) = assert_resolved_path_context_target(
+                call_context,
+                fixture.owner,
+                &callee,
+                CallTargetKind::AssociatedFunction,
+                fixture.case.label,
+                "edges",
+            );
+            assert_resolved_path_proof(
+                proof_context,
+                fixture.owner,
+                site_id,
+                target,
+                fixture.case.label,
+                "edges",
+            );
+            assert_admitted_macro_boundary_summary_proof(
+                proof_context,
+                fixture.owner,
+                site_id,
+                boundary,
+                fixture.case.label,
+                "edges",
+            );
+            let direct_count = assert_resolved_direct_call_site_reach(
+                reach,
+                fixture.owner,
+                &fixture.case,
+                target,
+                CallTargetKind::AssociatedFunction,
+                "edges",
+            );
+            assert_eq!(
+                ui_field(ui, "reach_direct_call_sites"),
+                direct_count.to_string()
+            );
+        } else {
+            let site_id = assert_path_context(
+                call_context,
+                fixture.owner,
+                &callee,
+                &fixture.case.status,
+                fixture.case.label,
+                "edges",
+            );
+            assert_path_resolution_proof(
+                proof_context,
+                fixture.owner,
+                site_id,
+                "bd:corpus-axum-call-graph",
+                boundary.expected_state,
+                boundary
+                    .expected_blocker
+                    .expect("blocked macro boundary should carry a blocker"),
+                fixture.case.label,
+                "edges",
+            );
+            assert_admitted_macro_boundary_summary_proof(
+                proof_context,
+                fixture.owner,
+                site_id,
+                boundary,
+                fixture.case.label,
+                "edges",
+            );
+            let (frontier_ui_field, frontier_count, ambiguous_count) =
+                assert_status_frontier_reach(reach, fixture.owner, &fixture.case, "edges");
+            assert_eq!(
+                ui_field(ui, frontier_ui_field.as_str()),
+                frontier_count.to_string()
+            );
+            assert_eq!(
+                ui_field(ui, "reach_ambiguous_frontier_calls"),
+                ambiguous_count.to_string()
+            );
+        }
         assert!(
             ui_field(ui, "call_context_outgoing")
                 .parse::<usize>()
                 .expect("outgoing count")
                 >= 1,
-            "code_item_edges should surface outgoing generated constructor frontier call context"
+            "code_item_edges should surface outgoing generated-boundary call context"
         );
         let proof_count = proof_context.len().to_string();
         assert_eq!(ui_field(ui, "proof_context"), proof_count.as_str());
-        assert_eq!(
-            ui_field(ui, frontier_ui_field.as_str()),
-            frontier_count.to_string()
-        );
-        assert_eq!(
-            ui_field(ui, "reach_ambiguous_frontier_calls"),
-            ambiguous_count.to_string()
-        );
     }
 }
 

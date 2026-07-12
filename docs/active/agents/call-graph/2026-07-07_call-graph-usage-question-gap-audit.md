@@ -113,7 +113,8 @@ already closed or intentionally fail-closed with proof rows:
 - missing trait-visibility blockers
 - axum-core `request_parts.rs:164` tuple-return receiver resolution
 - routing helper rows hidden behind macro/generated source boundaries
-- generated `IntoServiceFuture::new` rows
+- generated `IntoServiceFuture::new` rows, which are now closed by bounded
+  `opaque_future!` generated-item modeling
 - current effect and external-summary reach surfaces
 
 The next implementation bucket should therefore start with a genuinely new
@@ -126,33 +127,30 @@ execution-policy summaries.
 ### 2026-07-12 generated-item inventory update
 
 After fixture regeneration, the real-corpus `IntoServiceFuture::new` row was
-rechecked as the most obvious generated-source candidate:
+rechecked as the most obvious generated-source candidate and then closed by a
+bounded generated-item modeling slice:
 
 - Source oracle:
   `axum/src/handler/future.rs:11-18` invokes `opaque_future!`,
   `axum/src/macros.rs:19-20` templates the generated inherent `new`, and
   `axum/src/handler/service.rs:174` calls
   `super::future::IntoServiceFuture::new(future)`.
-- Existing parser macro support is intentionally much narrower: no-arg
-  `macro_rules!` expansions inside function bodies that produce exactly one
-  local `fn`, local `const`, local `static`, or one statement-position path
-  call.
-- `opaque_future!` is a parameterized item macro that generates top-level
-  struct and impl items, so making this row traversable requires a generated
-  item modeling slice, not a small path resolver change.
-- The current DB/RAG/TUI contract is therefore still correct for this row:
-  preserve the unresolved targetless callsite, retain the admitted
-  `expansion_boundary` / `expanded_item` proof metadata, and do not fabricate a
-  local call edge until a generated method node exists.
+- Parser support remains intentionally narrow, but now includes this exact
+  item-position `opaque_future!` shape: it projects the generated struct plus
+  inherent `new` method enough for the callsite to resolve.
+- The current DB/RAG/TUI contract is now to preserve the resolved
+  `IntoServiceFuture::new` call edge, retain the admitted `expansion_boundary`
+  / `expanded_item` proof metadata, and keep broader generated helpers such as
+  `routing::post` fail-closed.
 
 The next semantic implementation slice should avoid more targetless proof
 breadth and should choose either:
 
-- an explicitly scoped generated-item model for parameterized item macros, with
-  parser-generated struct/impl/function nodes and DB-first traversal tests; or
-- a smaller non-generated proof carrier with concrete new syntax evidence that
-  is not already represented by the current fixture-backed private callable
-  forwarding, receiver, or async future-flow rows.
+- a separately scoped generated-item model for another parameterized item macro,
+  with DB-first traversal tests and no generalized macro expansion claim; or
+- a non-generated proof carrier with concrete new syntax evidence that is not
+  already represented by the current fixture-backed private callable forwarding,
+  receiver, or async future-flow rows.
 
 ### 2026-07-12 post-regeneration candidate boundary
 
@@ -181,8 +179,9 @@ carriers. They need one of the larger models listed above:
   as axum `self.layer`, `self.tap_fn`, and the router-side
   `self.into_route` row whose construction site is not visible in selected
   source;
-- generated top-level item modeling for parameterized item macros such as axum
-  `opaque_future!`;
+- generated top-level item modeling for parameterized item macros beyond the
+  bounded axum `opaque_future!` constructor case, such as generated
+  `routing::post`;
 - macro-expanded arbitrary-expression bodies for memchr's generated
   `transmute::<Fn, RealFn>(fun)(...)` callsites;
 - broader runtime trait-object dispatch summaries for real-corpus boxed

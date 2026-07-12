@@ -472,16 +472,16 @@ async fn proof_context_collection_preserves_axum_std_mem_replace_admitted_summar
 }
 
 #[tokio::test]
-async fn proof_context_collection_preserves_axum_generated_constructor_frontier()
--> Result<(), Error> {
+async fn proof_context_collection_preserves_axum_generated_constructor_summary() -> Result<(), Error>
+{
     init_tracing_once();
     let db = axum_db()?;
 
     let owner = method_id_by_name_and_body(&db, "call", "IntoServiceFuture::new(future)")?;
     let projected = db.project_call_proof_facts_for_owner(owner, AXUM_DOMAIN)?;
     assert!(
-        projected >= 2,
-        "HandlerService::call should project IntoServiceFuture::new frontier proof rows"
+        projected >= 3,
+        "HandlerService::call should project IntoServiceFuture::new call-site, edge, and resolution proof rows"
     );
 
     let rag = init_test_rag_mock(Arc::clone(&db));
@@ -494,13 +494,39 @@ async fn proof_context_collection_preserves_axum_generated_constructor_frontier(
     let calls = call_context
         .get(&owner)
         .expect("HandlerService::call should receive outgoing call context");
-    let site_id = targetless_path_site(
-        calls,
-        owner,
-        &["super", "future", "IntoServiceFuture", "new"],
-        CallStatusKind::Unresolved,
-        "HandlerService::call IntoServiceFuture::new",
+    let generated = calls
+        .iter()
+        .find(|call| {
+            call.owner_id == owner
+                && call.kind == CallSiteKind::Path
+                && call.callee
+                    == CallCalleeInfo::Path {
+                        path: vec![
+                            "super".to_string(),
+                            "future".to_string(),
+                            "IntoServiceFuture".to_string(),
+                            "new".to_string(),
+                        ],
+                    }
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "HandlerService::call should expose generated IntoServiceFuture::new call context: {calls:#?}"
+            )
+        });
+    assert_eq!(generated.status, CallStatusKind::Resolved);
+    assert_eq!(generated.resolution, Some(CallResolutionKind::LocalExact));
+    assert_eq!(
+        generated.targets.len(),
+        1,
+        "generated constructor should expose one RAG target: {generated:#?}"
     );
+    assert_eq!(
+        generated.targets[0].relation,
+        CallTargetKind::AssociatedFunction
+    );
+    let site_id = generated.site_id;
+    let target = generated.targets[0].target_id;
     db.upsert_proof_fact_values(&ploke_test_utils::axum_opaque_future_macro_summary_records(
         site_id,
     ))?;
@@ -516,20 +542,41 @@ async fn proof_context_collection_preserves_axum_generated_constructor_frontier(
     //   `super::future::IntoServiceFuture::new(future)`.
     //   axum/src/handler/future.rs:11-18 and axum/src/macros.rs:19-20
     //   generate the concrete inherent `new`.
-    // Expected proof traversal: proof context must include the call_site plus
-    // unresolved call_resolution fact for this exact targetless path row, plus
-    // the callsite-linked admitted macro-boundary summary. There are zero local
-    // callee edges until macro-generated inherent items are modeled as source
-    // items.
-    assert_site_resolution_blocker(
-        &rows,
-        owner,
-        site_id,
-        "unresolved",
-        "type_resolution_missing",
-        "HandlerService::call IntoServiceFuture::new",
-    );
+    // Expected proof traversal: proof context must include the generated
+    // constructor call_site, resolved call_edge, resolved call_resolution fact,
+    // and the callsite-linked admitted macro-boundary summary.
+    let owner_text = owner.to_string();
     let site = site_id.to_string();
+    let target_text = target.to_string();
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "call_site"
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.caller_def_id.as_deref() == Some(owner_text.as_str())
+                && proof.build_domain_id.as_deref() == Some(AXUM_DOMAIN)
+        }),
+        "RAG proof context should expose the generated constructor call_site row: {rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "call_edge"
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.caller_def_id.as_deref() == Some(owner_text.as_str())
+                && proof.callee_def_id.as_deref() == Some(target_text.as_str())
+                && proof.resolution_state.as_deref() == Some("resolved")
+        }),
+        "RAG proof context should expose the generated constructor call_edge row: {rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "call_resolution"
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.resolution_state.as_deref() == Some("resolved")
+                && proof.resolved_def_id.as_deref() == Some(target_text.as_str())
+                && proof.blocker_reason.is_none()
+        }),
+        "RAG proof context should expose the generated constructor resolved call_resolution row: {rows:#?}"
+    );
     let boundary_id = ploke_test_utils::axum_opaque_future_boundary_id(site_id);
     let summary_id = ploke_test_utils::AXUM_OPAQUE_FUTURE_SUMMARY_ID;
     assert!(

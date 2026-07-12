@@ -313,6 +313,7 @@ pub(crate) struct MacroBoundaryCase {
     pub(crate) expanded_item_id: &'static str,
     pub(crate) expanded_definition_id: &'static str,
     pub(crate) expected_state: &'static str,
+    pub(crate) expected_blocker: Option<&'static str>,
     pub(crate) callsite_label: &'static str,
 }
 
@@ -379,10 +380,10 @@ impl PathToolCase {
     }];
 
     pub(crate) const INTO_SERVICE_FUTURE_NEW: [Self; 1] = [Self {
-        label: "axum/src/handler/service.rs:174 IntoServiceFuture::new generated frontier",
+        label: "axum/src/handler/service.rs:174 IntoServiceFuture::new generated constructor",
         item: "call",
         path: &["super", "future", "IntoServiceFuture", "new"],
-        status: CallStatusKind::Unresolved,
+        status: CallStatusKind::Resolved,
         corpus: DynamicToolCorpus::Axum,
         owner: PathOwner::Method {
             trait_name: "Service<Request>",
@@ -516,7 +517,8 @@ impl PathToolCase {
                 summary_id: AXUM_OPAQUE_FUTURE_SUMMARY_ID,
                 expanded_item_id: "expanded:item:axum-opaque-future-new",
                 expanded_definition_id: "def:axum::future::IntoServiceFuture::new",
-                expected_state: "unresolved",
+                expected_state: "resolved",
+                expected_blocker: None,
                 callsite_label: "generated constructor",
             });
         }
@@ -537,6 +539,7 @@ impl PathToolCase {
                 expanded_item_id: "expanded:item:axum-routing-post",
                 expanded_definition_id: "def:axum::routing::method_routing::post",
                 expected_state: "blocked",
+                expected_blocker: Some("type_resolution_missing"),
                 callsite_label: "generated routing::post",
             });
         }
@@ -789,10 +792,11 @@ fn attach_admitted_macro_boundary_summary_if_needed(
     let Some(boundary) = case.admitted_macro_boundary_summary() else {
         return;
     };
-    let site = db
+    let rows = db
         .call_context_for_owner(owner)
-        .unwrap_or_else(|err| panic!("{} call context lookup: {err}", case.label))
-        .into_iter()
+        .unwrap_or_else(|err| panic!("{} call context lookup: {err}", case.label));
+    let site = rows
+        .iter()
         .find(|row| {
             row.site.path.as_ref().is_some_and(|path| {
                 path.iter()
@@ -802,8 +806,9 @@ fn attach_admitted_macro_boundary_summary_if_needed(
         })
         .unwrap_or_else(|| {
             panic!(
-                "{} should expose the generated macro-boundary callsite before summary insertion",
+                "{} should expose the generated macro-boundary callsite with {:?} before summary insertion: {rows:#?}",
                 case.label,
+                case.db_status(),
             )
         })
         .site
@@ -1131,6 +1136,20 @@ pub(crate) fn assert_resolved_path_context(
     label: &str,
     tool: &str,
 ) -> Uuid {
+    let (site_id, actual) =
+        assert_resolved_path_context_target(calls, owner, callee, relation, label, tool);
+    assert_eq!(actual, target, "{tool} target for {label}");
+    site_id
+}
+
+pub(crate) fn assert_resolved_path_context_target(
+    calls: &[serde_json::Value],
+    owner: Uuid,
+    callee: &CallCalleeInfo,
+    relation: CallTargetKind,
+    label: &str,
+    tool: &str,
+) -> (Uuid, Uuid) {
     let matching = matching_path_context(calls, owner, callee);
     assert_eq!(
         matching.len(),
@@ -1145,9 +1164,8 @@ pub(crate) fn assert_resolved_path_context(
         1,
         "{tool} target rows for {label}: {call:#?}"
     );
-    assert_eq!(call.targets[0].target_id, target);
     assert_eq!(call.targets[0].relation, relation);
-    call.site_id
+    (call.site_id, call.targets[0].target_id)
 }
 
 pub(crate) fn assert_path_context_count(
@@ -1339,6 +1357,52 @@ pub(crate) fn assert_resolved_method_proof(
     );
 }
 
+pub(crate) fn assert_resolved_path_proof(
+    proofs: &[serde_json::Value],
+    owner: Uuid,
+    site_id: Uuid,
+    target: Uuid,
+    label: &str,
+    tool: &str,
+) {
+    let owner = owner.to_string();
+    let site = site_id.to_string();
+    let target = target.to_string();
+    let rows = proofs
+        .iter()
+        .filter_map(|proof| serde_json::from_value::<ProofContextInfo>(proof.clone()).ok())
+        .collect::<Vec<_>>();
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "call_site"
+                && proof.caller_def_id.as_deref() == Some(owner.as_str())
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.build_domain_id.as_deref() == Some("bd:corpus-axum-call-graph")
+        }),
+        "{tool} should return the resolved path call_site proof row for {label}: {proofs:#?}"
+    );
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "call_edge"
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.caller_def_id.as_deref() == Some(owner.as_str())
+                && proof.callee_def_id.as_deref() == Some(target.as_str())
+                && proof.resolution_state.as_deref() == Some("resolved")
+        }),
+        "{tool} should return the resolved path call_edge proof row for {label}: {proofs:#?}"
+    );
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "call_resolution"
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.resolution_state.as_deref() == Some("resolved")
+                && proof.resolved_def_id.as_deref() == Some(target.as_str())
+                && proof.blocker_reason.is_none()
+        }),
+        "{tool} should return the resolved path call_resolution proof row for {label}: {proofs:#?}"
+    );
+}
+
 pub(crate) fn assert_runtime_dispatch_blocker(
     proofs: &[serde_json::Value],
     site_id: Uuid,
@@ -1507,9 +1571,9 @@ pub(crate) fn assert_admitted_macro_boundary_summary_proof(
             proof.kind == "call_resolution"
                 && proof.call_site_id.as_deref() == Some(site.as_str())
                 && proof.resolution_state.as_deref() == Some(boundary.expected_state)
-                && proof.blocker_reason.as_deref() == Some("type_resolution_missing")
+                && proof.blocker_reason.as_deref() == boundary.expected_blocker
         }),
-        "{tool} should keep the {} callsite fail-closed for {label}: {proofs:#?}",
+        "{tool} should preserve the {} call_resolution state for {label}: {proofs:#?}",
         boundary.callsite_label
     );
     assert!(

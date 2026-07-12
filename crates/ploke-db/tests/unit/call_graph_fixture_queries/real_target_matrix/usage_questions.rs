@@ -1149,19 +1149,18 @@ fn axum_usage_questions_surface_platform_cfgs_for_listener_reach() -> Result<(),
 }
 
 #[test]
-fn axum_usage_questions_surface_unresolved_frontier_for_generated_constructor()
--> Result<(), DbError> {
+fn axum_usage_questions_reach_generated_constructor_directly() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
     // Usage questions:
     //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
     //
     // Debugging:
-    //   "What source callsite corresponds to this persisted call edge or proof
-    //   blocker?"
+    //   "What source callsite corresponds to this persisted generated-item
+    //   call edge?"
     // Documentation and RAG:
-    //   "What fail-closed blocker should be shown when a callsite is visible
-    //   but targetless?"
+    //   "Which generated-source boundary was crossed to make this edge
+    //   traversable?"
     //
     // Source oracle:
     //   axum/src/handler/future.rs:11-18 defines the generated future type.
@@ -1171,14 +1170,25 @@ fn axum_usage_questions_surface_unresolved_frontier_for_generated_constructor()
     //     `type Future = super::future::IntoServiceFuture<H::Future>`.
     //   axum/src/handler/service.rs:174 calls
     //     `super::future::IntoServiceFuture::new(future)`.
-    // Current contract: the source callsite is visible as an unresolved
-    // frontier row, but it has no fabricated callee and cannot become a local
-    // traversal edge until macro-expanded inherent items are modeled.
+    // Current contract: the bounded `opaque_future!` item invocation is
+    // modeled as a generated struct plus inherent `new` method, so the
+    // source callsite traverses directly to the generated constructor.
     let owner =
         method_id_by_name_and_body_substring(&db, "call", "IntoServiceFuture::new(future)")?;
     let context = db.call_context_for_owner(owner)?;
     let row = row_by_path(&context, &["super", "future", "IntoServiceFuture", "new"]);
-    assert_targetless_status(row, CallStatusKind::Unresolved);
+    let target = row
+        .targets
+        .first()
+        .map(|target| target.target_id)
+        .expect("generated constructor call should expose one target");
+    assert_resolved_target(
+        row,
+        target,
+        CallRelationKind::AssociatedFunction,
+        CallSiteKind::Path,
+        CallTargetKind::Method,
+    );
 
     let paths = db.call_paths_from_owner(
         owner,
@@ -1188,11 +1198,10 @@ fn axum_usage_questions_surface_unresolved_frontier_for_generated_constructor()
         },
     )?;
     assert!(
-        paths.iter().all(|path| path
-            .edges
-            .iter()
-            .all(|edge| edge.call_site_id != row.site.id)),
-        "targetless unresolved rows must not appear in call paths: {paths:#?}"
+        paths.iter().any(|path| path.end_id == target
+            && path.edges.len() == 1
+            && path.edges[0].call_site_id == row.site.id),
+        "generated constructor should appear as a one-hop path: {paths:#?}"
     );
 
     let report = db.call_reach_for_owner(
@@ -1202,17 +1211,29 @@ fn axum_usage_questions_surface_unresolved_frontier_for_generated_constructor()
             max_paths: 128,
         },
     )?;
-    let unresolved = report
-        .unresolved_frontier_calls
+    let direct = report
+        .direct_call_sites
         .iter()
-        .find(|frontier| frontier.site.id == row.site.id)
+        .find(|direct| direct.site.id == row.site.id)
         .unwrap_or_else(|| {
             panic!(
-                "reach report should expose generated constructor in unresolved frontier rows: {report:#?}"
+                "reach report should expose generated constructor in direct callsite rows: {report:#?}"
             )
         });
-    assert_eq!(unresolved.site.owner_id, owner);
-    assert_targetless_status(unresolved, CallStatusKind::Unresolved);
+    assert_resolved_target(
+        direct,
+        target,
+        CallRelationKind::AssociatedFunction,
+        CallSiteKind::Path,
+        CallTargetKind::Method,
+    );
+    assert!(
+        report
+            .unresolved_frontier_calls
+            .iter()
+            .all(|frontier| frontier.site.id != row.site.id),
+        "resolved generated constructor should not remain in unresolved frontier rows: {report:#?}"
+    );
     assert!(
         report.ambiguous_frontier_calls.is_empty(),
         "this axum owner should not report ambiguous frontier rows: {report:#?}"

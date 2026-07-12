@@ -2233,8 +2233,8 @@ async fn call_reach_exact_reads_axum_usage_question_summary() -> Result<(), Erro
     //   `type Future = super::future::IntoServiceFuture<H::Future>`.
     //   axum/src/handler/service.rs:174 calls
     //   `super::future::IntoServiceFuture::new(future)`.
-    // Current contract: generated constructor calls remain visible as
-    // unresolved frontier rows until macro-expanded inherent items are modeled.
+    // Current contract: bounded `opaque_future!` generated constructors are
+    // modeled as local associated-function edges, not unresolved frontiers.
     let service_owner =
         method_id_by_name_and_body_substring(&db, "call", "IntoServiceFuture::new(future)")?;
     let service_report = rag
@@ -2246,8 +2246,8 @@ async fn call_reach_exact_reads_axum_usage_question_summary() -> Result<(), Erro
             },
         )?
         .expect("call context enabled");
-    let unresolved = service_report
-        .unresolved_frontier_calls
+    let direct = service_report
+        .direct_call_sites
         .iter()
         .find(|call| {
             matches!(
@@ -2258,14 +2258,27 @@ async fn call_reach_exact_reads_axum_usage_question_summary() -> Result<(), Erro
         })
         .unwrap_or_else(|| {
             panic!(
-                "RAG reach should include IntoServiceFuture::new in unresolved frontier rows: {service_report:#?}"
+                "RAG reach should include IntoServiceFuture::new in direct callsite rows: {service_report:#?}"
             )
         });
-    assert_eq!(unresolved.owner_id, service_owner);
-    assert_eq!(unresolved.status, CallStatusKind::Unresolved);
+    assert_eq!(direct.owner_id, service_owner);
+    assert_eq!(direct.status, CallStatusKind::Resolved);
+    assert_eq!(direct.resolution, Some(CallResolutionKind::LocalExact));
+    assert_eq!(
+        direct.targets.len(),
+        1,
+        "resolved generated constructor row should expose one RAG target: {direct:#?}"
+    );
+    assert_eq!(
+        direct.targets[0].relation,
+        CallTargetKind::AssociatedFunction
+    );
     assert!(
-        unresolved.targets.is_empty(),
-        "unresolved generated constructor row should remain targetless: {unresolved:#?}"
+        service_report
+            .unresolved_frontier_calls
+            .iter()
+            .all(|call| call.site_id != direct.site_id),
+        "resolved generated constructor should not remain in unresolved frontier rows: {service_report:#?}"
     );
     assert!(
         service_report.ambiguous_frontier_calls.is_empty(),

@@ -5,7 +5,8 @@ use ploke_test_utils::CORPUS_AXUM_CALL_GRAPH;
 use serde_json::json;
 
 #[test]
-fn axum_real_target_into_service_future_new_is_documented_gap() -> Result<(), DbError> {
+fn axum_real_target_into_service_future_new_resolves_generated_constructor() -> Result<(), DbError>
+{
     let db = setup_axum_call_graph_db()?;
 
     // Matrix: `IntoServiceFuture::new` generated constructor row.
@@ -17,29 +18,40 @@ fn axum_real_target_into_service_future_new_is_documented_gap() -> Result<(), Db
     //   `type Future = super::future::IntoServiceFuture<H::Future>`.
     //   axum/src/handler/service.rs:174 calls
     //   `super::future::IntoServiceFuture::new(future)`.
-    // Current model gap: the structural path row exists, but the parser does
-    // not expand `opaque_future!`, so there is no concrete generated
-    // `IntoServiceFuture::new` method node to traverse to.
+    // Expected traversal: the parser models the bounded `opaque_future!`
+    // generated struct plus inherent `new` method, so this path row traverses
+    // to the generated constructor in one associated-function edge.
     let owner =
         method_id_by_name_and_body_substring(&db, "call", "IntoServiceFuture::new(future)")?;
     let context = db.call_context_for_owner(owner)?;
     let row = row_by_path(&context, &["super", "future", "IntoServiceFuture", "new"]);
+    let target = row
+        .targets
+        .first()
+        .map(|target| target.target_id)
+        .expect("resolved generated constructor row should expose one target");
 
-    assert_eq!(row.status.status, CallStatusKind::Unresolved);
-    assert_eq!(row.status.resolution, None);
-    assert!(
-        row.targets.is_empty(),
-        "unresolved IntoServiceFuture::new row should not expose traversal targets: {row:#?}"
+    assert_resolved_target(
+        row,
+        target,
+        CallRelationKind::AssociatedFunction,
+        CallSiteKind::Path,
+        CallTargetKind::Method,
     );
-    assert!(
-        relations_for_site(&db, row.site.id)?.rows.is_empty(),
-        "IntoServiceFuture::new structural row should have zero persisted call edges"
+    assert_eq!(
+        relations_for_site(&db, row.site.id)?.rows.len(),
+        1,
+        "IntoServiceFuture::new should persist exactly one generated constructor edge"
     );
-    assert_no_traversal_candidates_for_site(
+    assert_one_edge_traversal(
         &db,
-        owner,
-        row.site.id,
-        "axum/src/handler/service.rs:174 IntoServiceFuture::new",
+        TraversalExpectation {
+            label: "axum/src/handler/service.rs:174 IntoServiceFuture::new",
+            owner,
+            target,
+            site_id: row.site.id,
+            expected_edge_count: 1,
+        },
     )?;
 
     Ok(())
@@ -58,17 +70,27 @@ fn axum_generated_constructor_macro_boundary_accepts_summary_proof() -> Result<(
     //   `new`.
     //   axum/src/handler/service.rs:174 calls
     //   `super::future::IntoServiceFuture::new(future)`.
-    // Current call-graph contract: the callsite remains unresolved and
-    // targetless because the generated inherent method is not modeled. This
-    // proof-layer check admits a summary for the macro-expansion boundary only;
-    // it must discharge `macro_expansion_not_available` without clearing the
-    // callsite's `type_resolution_missing` blocker or creating a call edge.
+    // Current call-graph contract: the generated inherent method is modeled
+    // as a traversal target. This proof-layer check still admits a summary for
+    // the macro-expansion boundary only; it must discharge
+    // `macro_expansion_not_available` without changing the existing call edge.
     let owner =
         method_id_by_name_and_body_substring(&db, "call", "IntoServiceFuture::new(future)")?;
     let context = db.call_context_for_owner(owner)?;
     let row = row_by_path(&context, &["super", "future", "IntoServiceFuture", "new"]);
-    assert_targetless_status(row, CallStatusKind::Unresolved);
-    assert!(relations_for_site(&db, row.site.id)?.rows.is_empty());
+    let target = row
+        .targets
+        .first()
+        .map(|target| target.target_id)
+        .expect("resolved generated constructor row should expose one target");
+    assert_resolved_target(
+        row,
+        target,
+        CallRelationKind::AssociatedFunction,
+        CallSiteKind::Path,
+        CallTargetKind::Method,
+    );
+    assert_eq!(relations_for_site(&db, row.site.id)?.rows.len(), 1);
 
     let site = row.site.id.to_string();
     let boundary_id = format!("boundary:{site}:opaque_future");
@@ -100,11 +122,11 @@ fn axum_generated_constructor_macro_boundary_accepts_summary_proof() -> Result<(
         "unresolved macro boundary should produce a macro expansion blocker: {blockers:#?}"
     );
     assert!(
-        blockers.iter().any(|proof| {
-            proof.call_site_id.as_deref() == Some(site.as_str())
-                && proof.reason == "type_resolution_missing"
+        blockers.iter().all(|proof| {
+            proof.call_site_id.as_deref() != Some(site.as_str())
+                || proof.reason != "type_resolution_missing"
         }),
-        "generated constructor callsite should remain blocked until the generated method exists: {blockers:#?}"
+        "resolved generated constructor callsite should not keep a type-resolution blocker: {blockers:#?}"
     );
 
     db.upsert_proof_fact_values(&ploke_test_utils::axum_opaque_future_macro_summary_records(
@@ -118,11 +140,11 @@ fn axum_generated_constructor_macro_boundary_accepts_summary_proof() -> Result<(
         "admitted macro boundary summary should discharge only the boundary blocker: {blockers:#?}"
     );
     assert!(
-        blockers.iter().any(|proof| {
-            proof.call_site_id.as_deref() == Some(site.as_str())
-                && proof.reason == "type_resolution_missing"
+        blockers.iter().all(|proof| {
+            proof.call_site_id.as_deref() != Some(site.as_str())
+                || proof.reason != "type_resolution_missing"
         }),
-        "macro boundary summary must not clear the unresolved callsite blocker: {blockers:#?}"
+        "macro boundary summary must not recreate a callsite blocker: {blockers:#?}"
     );
 
     let summary_rows = db.proof_graphrag_context(summary_id)?;
@@ -159,10 +181,17 @@ fn axum_generated_constructor_macro_boundary_accepts_summary_proof() -> Result<(
         &context_after,
         &["super", "future", "IntoServiceFuture", "new"],
     );
-    assert_targetless_status(row_after, CallStatusKind::Unresolved);
-    assert!(
-        relations_for_site(&db, row_after.site.id)?.rows.is_empty(),
-        "macro boundary summary must not create a generated call edge"
+    assert_resolved_target(
+        row_after,
+        target,
+        CallRelationKind::AssociatedFunction,
+        CallSiteKind::Path,
+        CallTargetKind::Method,
+    );
+    assert_eq!(
+        relations_for_site(&db, row_after.site.id)?.rows.len(),
+        1,
+        "macro boundary summary must not add or remove generated call edges"
     );
 
     Ok(())

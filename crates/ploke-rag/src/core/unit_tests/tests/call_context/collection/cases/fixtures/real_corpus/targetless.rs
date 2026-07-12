@@ -401,7 +401,7 @@ async fn call_context_collection_reads_axum_captured_callback_parameter_gap() ->
 }
 
 #[tokio::test]
-async fn call_context_collection_reads_axum_generated_constructor_gap() -> Result<(), Error> {
+async fn call_context_collection_reads_axum_generated_constructor_edge() -> Result<(), Error> {
     init_tracing_once();
     let (db, rag) = setup_axum_call_graph_rag()?;
 
@@ -434,19 +434,28 @@ async fn call_context_collection_reads_axum_generated_constructor_gap() -> Resul
     //   axum/src/handler/service.rs:155 binds the associated future type.
     //   axum/src/handler/service.rs:174 calls
     //   `super::future::IntoServiceFuture::new(future)`.
-    // Expected traversal: the path call is visible in RAG, but targetless until
-    // macro-expanded inherent impl items are modeled.
+    // Expected traversal: the bounded `opaque_future!` item invocation is
+    // modeled as a generated struct plus inherent `new` method, so RAG sees a
+    // one-target associated-function edge.
     assert_eq!(
         generated.len(),
         1,
-        "HandlerService::call should expose one targetless IntoServiceFuture::new row: {context:#?}"
+        "HandlerService::call should expose one IntoServiceFuture::new row: {context:#?}"
     );
     assert_eq!(generated[0].arg_count, Some(1));
-    assert_eq!(generated[0].status, CallStatusKind::Unresolved);
-    assert_eq!(generated[0].resolution, None);
-    assert!(
-        generated[0].targets.is_empty(),
-        "generated IntoServiceFuture::new row should remain targetless in RAG call context: {generated:#?}"
+    assert_eq!(generated[0].status, CallStatusKind::Resolved);
+    assert_eq!(
+        generated[0].resolution,
+        Some(CallResolutionKind::LocalExact)
+    );
+    assert_eq!(
+        generated[0].targets.len(),
+        1,
+        "generated IntoServiceFuture::new row should expose one RAG target: {generated:#?}"
+    );
+    assert_eq!(
+        generated[0].targets[0].relation,
+        CallTargetKind::AssociatedFunction
     );
 
     Ok(())
