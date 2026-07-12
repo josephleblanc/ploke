@@ -217,6 +217,27 @@ impl Drop for FixtureRestoreGuard {
 | `corpus_axum_openrouter_embeddings_2026-05-17.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | OpenRouter-searchable workspace-member corpus backup for type-context matrix tests | 2026-05-17 |
 | `ploke-db_af8e3a20-728d-5967-8523-da8a5ccdae45` | `crates/ploke-db` | currently orphaned snapshot | 2026-03-20 |
 
+## 2026-07-12 Active Call-Graph Fixture Regeneration Pass
+
+The active fixture set was regenerated with
+`cargo run -p xtask --features call_graph -- fixtures regenerate --active`.
+The regenerated shared call-graph corpus snapshots were copied into
+`tests/backup_dbs/` as committed seed artifacts.
+
+Post-regeneration verification:
+
+- `cargo run -p xtask --features call_graph -- verify-backup-dbs` passed for
+  all registered active fixtures.
+- Current committed seed checksums:
+  - `corpus_memchr_call_graph_2026-07-12.sqlite`:
+    `ad8127dd511d5ce6698d9fa2eb0f743c637319a9289cff9c359ce5a58599b93e`
+  - `corpus_generic_array_call_graph_2026-07-11.sqlite`:
+    `e20d08e9230e595843ca515004f6feb02a902986664ab376521545dd931012a0`
+  - `corpus_chrono_call_graph_2026-07-11.sqlite`:
+    `94238a1b7f953a42a5a21c1bee3ee3c1bf9a79e712f2df05572d0133a739d5f8`
+  - `corpus_axum_call_graph_2026-07-12.sqlite`:
+    `ef91b92ad0411c9b63fc19d53756239dff64df3caabdfb2a12fbf7c41223f5a4`
+
 ## 2026-07-12 Memchr Generated IFunc Call Refresh
 
 The `corpus_memchr_call_graph` fixture was recreated with
@@ -233,7 +254,7 @@ Post-regeneration verification:
 - The recreated `corpus_memchr_call_graph_2026-07-12.sqlite` shared snapshot was
   copied into `tests/backup_dbs/` as the committed seed artifact.
 - Current seed checksum:
-  `28f8b66d25409fe0e3501bdcb84113c2e4638777ff035d7706a84e9cfdb4c38f`.
+  `ad8127dd511d5ce6698d9fa2eb0f743c637319a9289cff9c359ce5a58599b93e`.
 - The memchr real-target matrix can now assert the generated inner transmute path
   row and outer returned-path dynamic row as external targetless frontiers rather
   than treating the source oracle as fully absent.
@@ -409,7 +430,7 @@ Post-regeneration verification:
 - The regenerated `corpus_axum_call_graph_2026-07-12.sqlite` shared snapshot was
   copied into `tests/backup_dbs/` as the committed seed artifact.
 - The committed seed and regenerated shared snapshot both have SHA-256
-  `18dc8967a2f7059dd0c17a1e39dc3c3fd1fd3133700733fe0a27df8977f8aead`.
+  `ef91b92ad0411c9b63fc19d53756239dff64df3caabdfb2a12fbf7c41223f5a4`.
 - `axum/src/routing/mod.rs:304-308` invokes `map_inner!` with a reviewed
   source-visible expression whose `catch_all_fallback` field contains
   `this.catch_all_fallback.map(|route| route.layer(layer))`. The regenerated
