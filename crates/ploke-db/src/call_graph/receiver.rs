@@ -39,6 +39,12 @@ pub enum CallReceiver {
         method_name: String,
         method_span: (usize, usize),
     },
+    EnumVariantBinding {
+        name: String,
+        enum_path: Vec<String>,
+        variant_name: String,
+        field_index: usize,
+    },
     BorrowedLocalBinding {
         name: String,
     },

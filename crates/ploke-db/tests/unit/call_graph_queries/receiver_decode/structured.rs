@@ -63,6 +63,16 @@ fn context_for_owner_decodes_structured_method_receivers() -> Result<(), DbError
             },
         ),
         structured_receiver(
+            "EnumVariantBinding",
+            vec!["state", "0", "Ready", "Self"],
+            CallReceiver::EnumVariantBinding {
+                name: "state".to_string(),
+                enum_path: vec!["Self".to_string()],
+                variant_name: "Ready".to_string(),
+                field_index: 0,
+            },
+        ),
+        structured_receiver(
             "BorrowedTypedLocalBinding",
             vec!["borrowed", "LocalAssoc"],
             CallReceiver::BorrowedTypedLocalBinding {

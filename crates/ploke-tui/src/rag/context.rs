@@ -715,6 +715,15 @@ fn format_receiver(receiver: &CallReceiverInfo) -> String {
         } => {
             format!("{name} = {method_name}()")
         }
+        CallReceiverInfo::EnumVariantBinding {
+            name,
+            enum_path,
+            variant_name,
+            field_index,
+        } => format!(
+            "{name} = {}::{variant_name}.{field_index}",
+            enum_path.join("::")
+        ),
         CallReceiverInfo::BorrowedLocalBinding { name } => format!("&{name}"),
         CallReceiverInfo::BorrowedTypedLocalBinding { name, type_path } => {
             format!("&{name}: {}", type_path.join("::"))

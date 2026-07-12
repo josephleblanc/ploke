@@ -861,6 +861,17 @@ fn receiver_info(receiver: CallReceiver) -> CallReceiverInfo {
             method_name,
             method_span,
         },
+        CallReceiver::EnumVariantBinding {
+            name,
+            enum_path,
+            variant_name,
+            field_index,
+        } => CallReceiverInfo::EnumVariantBinding {
+            name,
+            enum_path,
+            variant_name,
+            field_index,
+        },
         CallReceiver::BorrowedLocalBinding { name } => {
             CallReceiverInfo::BorrowedLocalBinding { name }
         }

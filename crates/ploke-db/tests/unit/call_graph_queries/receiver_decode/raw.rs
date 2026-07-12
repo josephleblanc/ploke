@@ -65,6 +65,16 @@ fn context_for_owner_decodes_raw_method_receivers() -> Result<(), DbError> {
             },
         ),
         raw_receiver(
+            "EnumVariantBinding",
+            list(&["state", "0", "Ready", "Self"]),
+            CallReceiver::EnumVariantBinding {
+                name: "state".to_string(),
+                enum_path: vec!["Self".to_string()],
+                variant_name: "Ready".to_string(),
+                field_index: 0,
+            },
+        ),
+        raw_receiver(
             "PathCallResult",
             list(&["make_local_assoc"]),
             CallReceiver::PathCallResult {

@@ -1361,6 +1361,41 @@ call_context: 1 call site(s)
 }
 
 #[test]
+fn format_call_context_block_renders_enum_variant_binding_receiver() {
+    let calls = vec![CallContextInfo {
+        site_id: Uuid::from_u128(0x70a),
+        owner_id: Uuid::from_u128(0x70a),
+        kind: CallSiteKind::Method,
+        span: (44220, 44242),
+        path: None,
+        arg_count: Some(0),
+        generic_arg_count: Some(0),
+        callee: CallCalleeInfo::Method {
+            name: "ready".to_string(),
+            receiver: Some(CallReceiverInfo::EnumVariantBinding {
+                name: "state".to_string(),
+                enum_path: vec!["Self".to_string()],
+                variant_name: "Ready".to_string(),
+                field_index: 0,
+            }),
+        },
+        status: CallStatusKind::Resolved,
+        resolution: Some(CallResolutionKind::LocalExact),
+        targets: vec![CallTargetInfo {
+            target_id: Uuid::from_u128(0x908),
+            relation: CallTargetKind::Method,
+        }],
+    }];
+
+    let rendered = format_call_context_block(&calls, "  ", 8);
+    let expected = "\
+call_context: 1 call site(s)
+  - Method @ 44220..44242: method ready on state = Self::Ready.0 => Resolved(LocalExact), targets [Method:00000000-0000-0000-0000-000000000908], owner 00000000-0000-0000-0000-00000000070a";
+
+    assert_eq!(rendered, expected);
+}
+
+#[test]
 fn format_call_context_block_renders_await_method_result_receiver() {
     let calls = vec![CallContextInfo {
         site_id: Uuid::from_u128(0x709),

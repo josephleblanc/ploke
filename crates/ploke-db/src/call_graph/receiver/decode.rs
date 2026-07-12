@@ -153,6 +153,27 @@ impl CallReceiver {
                     ))),
                 }
             }
+            "EnumVariantBinding" => {
+                let path = to_string_list(path)?;
+                match path.as_slice() {
+                    [name, field_index, variant_name, enum_path @ ..] if !enum_path.is_empty() => {
+                        let field_index = field_index.parse::<usize>().map_err(|err| {
+                            DbError::Cozo(format!(
+                                "enum variant binding receiver should store a usize field index, got {field_index:?}: {err}"
+                            ))
+                        })?;
+                        Ok(Some(Self::EnumVariantBinding {
+                            name: name.clone(),
+                            enum_path: enum_path.to_vec(),
+                            variant_name: variant_name.clone(),
+                            field_index,
+                        }))
+                    }
+                    other => Err(DbError::Cozo(format!(
+                        "enum variant binding receiver should store a name, field index, variant name, and enum path, got {other:?}"
+                    ))),
+                }
+            }
             "BorrowedLocalBinding" => {
                 let path = to_string_list(path)?;
                 match path.as_slice() {
