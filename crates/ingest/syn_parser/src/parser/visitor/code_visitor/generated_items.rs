@@ -62,6 +62,21 @@ impl Parse for TopLevelRouteFn {
     }
 }
 
+struct BodyFromImpl {
+    ty: Type,
+}
+
+impl Parse for BodyFromImpl {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let ty: Type = input.parse()?;
+        if !input.is_empty() {
+            return Err(input.error("unsupported body_from_impl! trailing tokens"));
+        }
+
+        Ok(Self { ty })
+    }
+}
+
 struct AllTheTuples {
     name: Ident,
 }
@@ -100,6 +115,14 @@ impl<'a> CodeVisitor<'a> {
                 return;
             };
             self.record_top_level_service_fn(item, input);
+            return;
+        }
+
+        if item.mac.path.is_ident("body_from_impl") {
+            let Ok(input) = syn::parse2::<BodyFromImpl>(item.mac.tokens.clone()) else {
+                return;
+            };
+            self.record_body_from_impl(item, input);
             return;
         }
 
@@ -207,6 +230,23 @@ impl<'a> CodeVisitor<'a> {
         };
         function.attrs.extend(item.attrs.clone());
         syn::visit::Visit::visit_item_fn(self, &function);
+    }
+
+    fn record_body_from_impl(&mut self, item: &ItemMacro, input: BodyFromImpl) {
+        let Some(item_impl) = body_from_impl_item(&input) else {
+            return;
+        };
+        let span = item.extract_span_bytes();
+        let item_cfgs = extract_cfg_strings(&item.attrs);
+        let effective_cfgs = self
+            .state
+            .current_scope_cfgs
+            .iter()
+            .cloned()
+            .chain(item_cfgs.iter().cloned())
+            .collect::<Vec<_>>();
+
+        self.record_generated_impl(&item_impl, span, item_cfgs, effective_cfgs);
     }
 
     fn record_impl_handler_tuples(&mut self, item: &ItemMacro) {
@@ -476,6 +516,17 @@ fn top_level_service_fn_item(input: &TopLevelRouteFn) -> Option<ItemFn> {
             S: Clone,
         {
             on_service(MethodFilter::#method, svc)
+        }
+    })
+}
+
+fn body_from_impl_item(input: &BodyFromImpl) -> Option<ItemImpl> {
+    let ty = &input.ty;
+    parse_item(quote! {
+        impl From<#ty> for Body {
+            fn from(buf: #ty) -> Self {
+                Self::new(http_body_util::Full::from(buf))
+            }
         }
     })
 }

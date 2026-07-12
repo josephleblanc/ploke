@@ -58,6 +58,62 @@ fn axum_real_target_into_service_future_new_resolves_generated_constructor() -> 
 }
 
 #[test]
+fn axum_core_generated_body_from_impl_methods_reach_body_new() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Matrix: generated `body_from_impl!` conversion impls.
+    // Source chain:
+    //   axum-core/src/body.rs:120-126 defines `body_from_impl!`.
+    //   axum-core/src/body.rs:129-138 invokes it for seven concrete buffer
+    //   types. Each generated `impl From<T> for Body` contains
+    //   `Self::new(http_body_util::Full::from(buf))`.
+    // Expected traversal: the bounded generated-item model creates the seven
+    // generated `from` method owners and each owner reaches `Body::new` through
+    // one `Self::new(...)` associated-function edge.
+    let owners = method_ids_by_name_and_body_substring(
+        &db,
+        "from",
+        "Self::new(http_body_util::Full::from(buf))",
+    )?;
+    assert_eq!(
+        owners.len(),
+        7,
+        "body_from_impl! should generate exactly seven From<T> for Body::from methods"
+    );
+
+    let body_new = method_id_by_name_body_and_file_suffix(
+        &db,
+        "new",
+        "try_downcast(body)",
+        "axum-core/src/body.rs",
+    )?;
+
+    for owner in owners {
+        let context = db.call_context_for_owner(owner)?;
+        let row = row_by_path(&context, &["Self", "new"]);
+        assert_resolved_target(
+            row,
+            body_new,
+            CallRelationKind::AssociatedFunction,
+            CallSiteKind::Path,
+            CallTargetKind::Method,
+        );
+        assert_one_edge_traversal(
+            &db,
+            TraversalExpectation {
+                label: "axum-core/src/body.rs body_from_impl! generated Body::from -> Body::new",
+                owner,
+                target: body_new,
+                site_id: row.site.id,
+                expected_edge_count: 1,
+            },
+        )?;
+    }
+
+    Ok(())
+}
+
+#[test]
 fn axum_generated_constructor_macro_boundary_accepts_summary_proof() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
     let domain_id = "bd:corpus-axum-call-graph";

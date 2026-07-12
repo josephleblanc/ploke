@@ -2861,6 +2861,15 @@ re-export traversal to the `FromRequest` / `FromRequestParts` trait method
 bindings. Targetless async-block coverage still applies to the separate
 `Handler::call` `self()` / `into_response()` async poll/resume blocker rows.
 
+Update 2026-07-12: the generated-item bucket now also includes a bounded
+`body_from_impl!` model for `axum-core/src/body.rs`. The parser projects the
+seven generated `impl From<T> for Body` conversion methods from
+`body_from_impl!(&'static [u8])`, `Cow`, `Vec<u8>`, `&'static str`, `String`,
+and `Bytes` invocations, and the refreshed axum fixture proves each generated
+`from` owner traverses `Self::new(http_body_util::Full::from(buf))` to
+`Body::new` in one associated-function edge. This is another narrow item-macro
+model, not general macro expansion.
+
 Update 2026-07-11: the unsupported receiver row above now has one additional
 fixture-backed positive: `source.ready_assoc().await.instance_value()` resolves
 when the direct inner `ready_assoc` call is an exact local async method returning

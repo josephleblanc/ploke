@@ -344,6 +344,25 @@ Post-regeneration verification:
   `FromRequestParts::from_request_parts` has 125 callers in the regenerated
   axum fixture.
 
+## 2026-07-12 Axum Body From Impl Generated Conversion Refresh
+
+The active fixture set was regenerated with
+`cargo run -p xtask --features call_graph -- fixtures regenerate --active`
+after bounded item-position `body_from_impl!` modeling began projecting the
+generated `impl From<T> for Body` conversion methods in
+`axum-core/src/body.rs`.
+
+Post-regeneration verification:
+
+- The regenerated `corpus_axum_call_graph_2026-07-12.sqlite` shared snapshot was
+  copied into `tests/backup_dbs/` as the committed seed artifact.
+- `cargo run -p xtask --features call_graph -- verify-backup-dbs --fixture corpus_axum_call_graph`
+  passed.
+- `axum-core/src/body.rs:120-138` now projects seven generated
+  `From<T> for Body::from` method owners whose
+  `Self::new(http_body_util::Full::from(buf))` rows resolve to
+  `Body::new` through one associated-function edge.
+
 ## 2026-07-11 Axum Module-Qualified Constructor Refresh
 
 The active fixture set was regenerated with
