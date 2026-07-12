@@ -213,9 +213,27 @@ impl Drop for FixtureRestoreGuard {
 | `corpus_chrono_call_graph_2026-07-11.sqlite` | `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be` | plain corpus backup for real-target call graph query contracts | 2026-07-11 |
 | `corpus_chrono_openrouter_embeddings_2026-05-17.sqlite` | `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be` | OpenRouter-searchable corpus backup for type-context matrix tests | 2026-05-17 |
 | `corpus_axum_type_graph_2026-05-17.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | typed graphRAG workspace-member corpus backup for type-context matrix tests | 2026-05-17 |
-| `corpus_axum_call_graph_2026-07-11.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | plain workspace-member corpus backup for real-target call graph query contracts | 2026-07-11 |
+| `corpus_axum_call_graph_2026-07-12.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | plain workspace-member corpus backup for real-target call graph query contracts | 2026-07-12 |
 | `corpus_axum_openrouter_embeddings_2026-05-17.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | OpenRouter-searchable workspace-member corpus backup for type-context matrix tests | 2026-05-17 |
 | `ploke-db_af8e3a20-728d-5967-8523-da8a5ccdae45` | `crates/ploke-db` | currently orphaned snapshot | 2026-03-20 |
+
+## 2026-07-12 Axum Function-Pointer Self-Field Refresh
+
+The `corpus_axum_call_graph` fixture was recreated with
+`cargo run -p xtask --features call_graph -- recreate-backup-db --fixture corpus_axum_call_graph`
+after dynamic self-field resolution began admitting bare function-pointer
+fields initialized by a unique local struct-field closure.
+
+Post-regeneration verification:
+
+- The recreated `corpus_axum_call_graph_2026-07-12.sqlite` shared snapshot was
+  copied into `tests/backup_dbs/` as the committed seed artifact.
+- `axum/src/boxed.rs:85` now resolves `(self.into_route)(self.handler, state)`
+  to the unique closure initializer recorded from
+  `BoxedIntoRoute::from_handler`.
+- The remaining real-corpus dynamic field blockers at
+  `axum/src/boxed.rs:120`, `axum/src/boxed.rs:159`, and
+  `axum/src/serve/listener.rs:236` remain unsupported and targetless.
 
 ## 2026-07-11 Axum Module-Qualified Constructor Refresh
 

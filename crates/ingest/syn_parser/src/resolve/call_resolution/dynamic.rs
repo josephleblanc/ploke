@@ -6,7 +6,7 @@ use crate::{
             AnyCallSiteId, CallBodyOwnerId, DynamicBranchTarget, DynamicCallCallee,
             DynamicCallNode, ExecutableBodyId, ExecutableBodyKind, FunctionNodeId,
         },
-        relations::{CallRelation, CallResolutionKind, CallResolutionStatus},
+        relations::{CallRelation, CallResolutionKind, CallResolutionStatus, TypeRelation},
     },
 };
 
@@ -14,6 +14,8 @@ use super::{
     CallRelationResolver, LocalFunctionPathResolution,
     path::{ParameterCallResolution, ParameterCallTarget},
 };
+
+mod self_field;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DynamicPathResolution {
@@ -28,6 +30,7 @@ impl CallRelationResolver<'_> {
     pub(super) fn resolve_dynamic_call(
         &self,
         call: &DynamicCallNode,
+        type_relations: &[TypeRelation],
         relations: &mut Vec<CallRelation>,
         statuses: &mut Vec<CallResolutionStatus>,
     ) -> Result<(), SynParserError> {
@@ -105,6 +108,24 @@ impl CallRelationResolver<'_> {
                 ));
                 return Ok(());
             }
+        }
+
+        if let DynamicCallCallee::SelfField { path } = &call.callee {
+            if let Some(closure_id) =
+                self.resolve_self_field_closure_call(call.owner, path, type_relations)?
+            {
+                relations.push(CallRelation::DynamicClosure {
+                    source: call.id,
+                    target: closure_id,
+                });
+                statuses.push(CallResolutionStatus::Resolved {
+                    source,
+                    kind: CallResolutionKind::LocalExact,
+                });
+            } else {
+                statuses.push(CallResolutionStatus::Unsupported { source });
+            }
+            return Ok(());
         }
 
         if let DynamicCallCallee::ClosureBinding { closure_id, .. }

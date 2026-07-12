@@ -78,22 +78,80 @@ struct DynamicGap {
 }
 
 #[test]
-fn axum_dynamic_callable_fields_are_visible_unsupported_blockers() -> Result<(), DbError> {
+fn axum_dynamic_callable_fields_preserve_supported_and_unsupported_boundaries()
+-> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
     // Ground truth:
     //   axum/src/boxed.rs:85  (self.into_route)(self.handler, state)
+    //     `into_route: fn(H, S) -> Route` is initialized by the unique
+    //     `MakeErasedHandler { into_route: |handler, state| ... }` closure in
+    //     `BoxedIntoRoute::from_handler` at boxed.rs:23-25.
     //   axum/src/boxed.rs:120 (self.into_route)(self.router, state)
+    //     construction site not found in selected axum/src.
     //   axum/src/boxed.rs:159 (self.layer)(self.inner.into_route(state))
+    //     boxed dynamic `LayerFn` trait object supplied by caller.
     //   axum/src/serve/listener.rs:236 (self.tap_fn)(&mut io)
-    let cases = [
-        DynamicGap {
-            method_name: "into_route",
-            body_marker: "(self.into_route)(self.handler, state)",
-            source_line: 85,
-            expected_args: 2,
-            expected_path: &["self", "into_route"],
+    //     generic `FnMut` field supplied by caller.
+    let supported_owner = method_id_by_name_and_body_substring(
+        &db,
+        "into_route",
+        "(self.into_route)(self.handler, state)",
+    )?;
+    let supported_context = db.call_context_for_owner(supported_owner)?;
+    let supported_rows = supported_context
+        .iter()
+        .filter(|row| row.site.kind == CallSiteKind::Dynamic)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        supported_rows.len(),
+        1,
+        "axum/src/boxed.rs:85 should project one dynamic function-pointer field call: {supported_context:#?}"
+    );
+    let supported = supported_rows[0];
+    assert_eq!(
+        supported.site.path.as_ref(),
+        Some(&path(&["self", "into_route"]))
+    );
+    assert_eq!(supported.site.arg_count, Some(2));
+    assert_eq!(supported.status.status, CallStatusKind::Resolved);
+    assert_eq!(
+        supported.status.resolution,
+        Some(CallResolutionKind::LocalExact)
+    );
+    let closure = supported
+        .targets
+        .first()
+        .map(|target| target.target_id)
+        .unwrap_or_else(|| {
+            panic!(
+                "axum/src/boxed.rs:85 should resolve to the MakeErasedHandler initializer closure: {supported:#?}"
+            )
+        });
+    assert_resolved_target(
+        supported,
+        closure,
+        CallRelationKind::DynamicClosure,
+        CallSiteKind::Dynamic,
+        CallTargetKind::Closure,
+    );
+    assert_eq!(
+        relations_for_site(&db, supported.site.id)?.rows.len(),
+        1,
+        "axum/src/boxed.rs:85 should persist exactly one dynamic closure edge"
+    );
+    assert_one_edge_traversal(
+        &db,
+        TraversalExpectation {
+            label: "axum/src/boxed.rs:85 self.into_route closure field",
+            owner: supported_owner,
+            target: closure,
+            site_id: supported.site.id,
+            expected_edge_count: 1,
         },
+    )?;
+
+    let unsupported_cases = [
         DynamicGap {
             method_name: "into_route",
             body_marker: "(self.into_route)(self.router, state)",
@@ -117,7 +175,7 @@ fn axum_dynamic_callable_fields_are_visible_unsupported_blockers() -> Result<(),
         },
     ];
 
-    for case in cases {
+    for case in unsupported_cases {
         let owner = method_id_by_name_and_body_substring(&db, case.method_name, case.body_marker)?;
         let context = db.call_context_for_owner(owner)?;
         let dynamic_rows = context
@@ -166,7 +224,7 @@ fn axum_dynamic_callable_fields_are_visible_unsupported_blockers() -> Result<(),
         CallStatusKind::Unsupported,
         &[SourceLineFanout {
             file_suffix: "axum/src/boxed.rs",
-            lines: &[85, 120],
+            lines: &[120],
         }],
         "(self.into_route)",
     )?;

@@ -355,7 +355,7 @@ impl CallRelationResolver<'_> {
         ))
     }
 
-    fn self_field_type(
+    pub(super) fn self_field_type(
         &self,
         owner: CallBodyOwnerId,
         field_name: &str,

@@ -99,7 +99,7 @@ enum LocalFunctionPathResolution {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LocalTypeResolution {
+pub(super) enum LocalTypeResolution {
     Resolved(OrdinaryTypeTargetId),
     Unresolved,
     Ambiguous,
@@ -222,7 +222,12 @@ impl<'a> CallRelationResolver<'a> {
                     )?;
                 }
                 CallNode::DynamicCall(dynamic_call) => {
-                    self.resolve_dynamic_call(dynamic_call, &mut relations, &mut statuses)?;
+                    self.resolve_dynamic_call(
+                        dynamic_call,
+                        &type_report.relations,
+                        &mut relations,
+                        &mut statuses,
+                    )?;
                 }
                 CallNode::MacroCall(macro_call) => {
                     statuses.push(CallResolutionStatus::Unsupported {
@@ -1752,7 +1757,7 @@ impl<'a> CallRelationResolver<'a> {
             })
     }
 
-    fn resolve_local_type_path(
+    pub(super) fn resolve_local_type_path(
         &self,
         owner: CallBodyOwnerId,
         path: &[String],
