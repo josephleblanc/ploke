@@ -116,6 +116,15 @@ ambiguous candidates for `axum-macros/src/lib.rs:724`: the function item
 candidate set, while traversal expansion remains empty for the ambiguous
 callsite.
 
+Follow-up completed slice: exact TUI method-callback candidate surface. No
+resolver or fixture change was needed. `code_item_lookup` and
+`code_item_edges` now have focused axum `expand_with` tests that assert the
+same `syn::parse(input).and_then(f)` ambiguous method row, one
+`MethodCallbackFunction` candidate for `from_ref::expand`, and three
+`MethodCallbackClosure` candidates from the closure-passing proc-macro callers.
+This completes the DB/RAG/tool surface for the bounded real-corpus
+method-callback candidate proof without admitting a traversal edge.
+
 Previous completed slice: returned callable-parameter tool proof surface.
 Exact TUI lookup and edge-tool tests now pin
 `call_returned_forwarded_function_pointer_param_with_local_target`, whose

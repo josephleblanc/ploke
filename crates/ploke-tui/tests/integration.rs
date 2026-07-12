@@ -44,6 +44,9 @@ mod call_graph_tool_support;
 #[path = "integration/call_graph_tool_executable_owner.rs"]
 mod call_graph_tool_executable_owner;
 
+#[path = "integration/call_graph_tool_method_callback.rs"]
+mod call_graph_tool_method_callback;
+
 #[path = "integration/call_graph_tool_remaining_matrix.rs"]
 mod call_graph_tool_remaining_matrix;
 
