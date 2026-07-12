@@ -3,6 +3,7 @@ use ploke_test_utils::{
     CallExpected, CallOwnerSelector, CallReceiverSelector, CallShapeCase, CallSiteSelector,
     CallTargetSelector,
 };
+use std::collections::BTreeSet;
 
 use super::*;
 
@@ -24,6 +25,7 @@ pub(super) fn resolve_owner(db: &Database, case: &CallShapeCase) -> TargetInfo {
 
 pub(super) fn resolve_target(db: &Database, target: CallTargetSelector) -> TargetInfo {
     match target {
+        CallTargetSelector::FunctionByName { name } => function_by_name(db, name),
         CallTargetSelector::FunctionInModule { module_path, name } => {
             function_by_name_in_module(db, module_path, name, name)
         }
@@ -91,6 +93,36 @@ pub(super) fn assert_db_expectation(
                 case.name
             );
         }
+        CallExpected::AmbiguousCandidates {
+            relation,
+            target_kind,
+            ..
+        } => {
+            assert_eq!(
+                row.status.status,
+                DbCallStatusKind::Ambiguous,
+                "{} should preserve candidate-only ambiguity in DB context",
+                case.name
+            );
+            assert_eq!(
+                row.status.resolution, None,
+                "{} should not promote ambiguous candidates to exact resolution",
+                case.name
+            );
+            assert_eq!(
+                row.targets.len(),
+                case_candidate_count(case),
+                "{} should preserve expected DB candidate count",
+                case.name
+            );
+            assert!(
+                row.targets.iter().all(|candidate| {
+                    candidate.relation == relation && candidate.target_kind == target_kind
+                }),
+                "{} should preserve relation/kind on all candidate rows: {row:#?}",
+                case.name
+            );
+        }
         CallExpected::Targetless { status } => {
             assert_eq!(row.status.status, status);
             assert!(
@@ -100,6 +132,59 @@ pub(super) fn assert_db_expectation(
             );
         }
     }
+}
+
+pub(super) fn assert_candidate_ids(
+    row: &ploke_db::CallContextRow,
+    candidates: &[Uuid],
+    case: &CallShapeCase,
+    tool: &str,
+) {
+    let actual = row
+        .targets
+        .iter()
+        .map(|target| target.target_id)
+        .collect::<BTreeSet<_>>();
+    let expected = candidates.iter().copied().collect::<BTreeSet<_>>();
+    assert_eq!(
+        actual, expected,
+        "{tool} should preserve the expected ambiguous candidate set for {}",
+        case.name
+    );
+}
+
+fn case_candidate_count(case: &CallShapeCase) -> usize {
+    match case.expected {
+        CallExpected::AmbiguousCandidates { candidates, .. } => candidates.len(),
+        _ => 0,
+    }
+}
+
+fn function_by_name(db: &Database, name: &str) -> TargetInfo {
+    let mut params = BTreeMap::new();
+    params.insert("name".to_string(), DataValue::from(name));
+
+    let script = format!(
+        r#"
+ancestor[desc, desc] := *module{{ id: desc @ 'NOW' }}
+{ANCESTOR_RULES_NOW}
+
+module_has_file[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_id] := module_has_file[mod_id], file_id = mod_id
+file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_file[parent], file_id = parent
+
+?[id, file_path, mod_path] :=
+    *function {{ id, name: $name, module_id @ 'NOW' }},
+    *module{{ id: module_id, path: mod_path @ 'NOW' }},
+    file_owner_for_module[module_id, file_id],
+    *file_mod{{ owner_id: file_id, file_path @ 'NOW' }}
+"#
+    );
+    one_target_info(
+        db.raw_query_params(&script, params)
+            .unwrap_or_else(|err| panic!("query function {name}: {err}")),
+        name,
+    )
 }
 
 fn db_site_matches(row: &ploke_db::CallContextRow, site: CallSiteSelector) -> bool {

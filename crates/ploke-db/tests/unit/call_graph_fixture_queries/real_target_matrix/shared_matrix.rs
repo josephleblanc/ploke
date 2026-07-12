@@ -1,6 +1,6 @@
 //! DB assertions for the shared real-target call-shape matrix.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use cozo::DataValue;
 use ploke_db::multi_embedding::db_ext::{ANCESTOR_RULES_NOW, METHOD_NODE_ANCESTOR_RULE};
@@ -56,6 +56,25 @@ fn assert_case(db: &Database, case: &CallShapeCase) -> Result<(), DbError> {
                 },
             )?;
         }
+        CallExpected::AmbiguousCandidates {
+            candidates,
+            relation,
+            target_kind,
+        } => {
+            let targets = candidates
+                .iter()
+                .map(|target| resolve_target(db, *target))
+                .collect::<Result<Vec<_>, _>>()?;
+            assert_ambiguous_candidates(row, owner, &targets, relation, target_kind, case);
+            assert_eq!(
+                relations_for_site(db, row.site.id)?.rows.len(),
+                targets.len(),
+                "{} should preserve exactly one raw edge per ambiguous candidate; source: {}",
+                case.name,
+                case.source
+            );
+            assert_no_admitted_owner_traversal_for_site(db, owner, row.site.id, case.name)?;
+        }
         CallExpected::Targetless { status } => {
             assert_targetless_status(row, status);
             assert!(
@@ -101,6 +120,7 @@ fn resolve_target(db: &Database, target: CallTargetSelector) -> Result<Uuid, DbE
         CallTargetSelector::FunctionInModule { module_path, name } => {
             function_id_by_name_in_module(db, module_path, name)
         }
+        CallTargetSelector::FunctionByName { name } => function_id_by_name(db, name),
         CallTargetSelector::MethodByBody {
             name,
             body,
@@ -248,6 +268,79 @@ fn select_site<'a>(
     };
 
     Ok(row)
+}
+
+fn assert_ambiguous_candidates(
+    row: &ploke_db::CallContextRow,
+    owner: Uuid,
+    expected: &[Uuid],
+    relation: CallRelationKind,
+    target_kind: CallTargetKind,
+    case: &CallShapeCase,
+) {
+    assert_eq!(row.site.owner_id, owner);
+    assert_eq!(
+        row.status.status,
+        CallStatusKind::Ambiguous,
+        "{} should preserve candidate-only ambiguity; source: {}",
+        case.name,
+        case.source
+    );
+    assert_eq!(
+        row.status.resolution, None,
+        "{} should not promote ambiguous candidates to exact resolution; source: {}",
+        case.name, case.source
+    );
+    assert_eq!(
+        row.targets.len(),
+        expected.len(),
+        "{} should preserve exactly one DB target row per candidate; source: {}; row: {row:#?}",
+        case.name,
+        case.source
+    );
+    assert!(
+        row.targets
+            .iter()
+            .all(|target| target.relation == relation && target.target_kind == target_kind),
+        "{} should preserve relation/kind on all candidate rows: {row:#?}",
+        case.name
+    );
+
+    let actual = row
+        .targets
+        .iter()
+        .map(|target| target.target_id)
+        .collect::<BTreeSet<_>>();
+    let expected = expected.iter().copied().collect::<BTreeSet<_>>();
+    assert_eq!(
+        actual, expected,
+        "{} should preserve the expected ambiguous candidate set; source: {}",
+        case.name, case.source
+    );
+}
+
+fn assert_no_admitted_owner_traversal_for_site(
+    db: &Database,
+    owner: Uuid,
+    site_id: Uuid,
+    label: &str,
+) -> Result<(), DbError> {
+    let outgoing = db.expand_call_context(
+        CallContextSeed::Owner(owner),
+        CallContextOptions {
+            include_incoming_callers: false,
+            max_candidates: 512,
+            ..CallContextOptions::default()
+        },
+    )?;
+    assert!(
+        outgoing
+            .iter()
+            .all(|candidate| candidate.call_site_id != site_id),
+        "{label} should preserve ambiguous candidates without admitting an owner traversal edge: {outgoing:#?}"
+    );
+
+    Ok(())
 }
 
 fn db_receiver_matches(

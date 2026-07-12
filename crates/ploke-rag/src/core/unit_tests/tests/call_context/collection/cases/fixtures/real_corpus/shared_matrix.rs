@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::BTreeSet, sync::Arc};
 
 use ploke_test_utils::{
     CallExpected, CallOwnerSelector, CallPipelineCoverage, CallReceiverSelector, CallShapeCase,
@@ -76,6 +76,53 @@ fn assert_case(db: &Database, rag: &RagService, case: &CallShapeCase) -> Result<
             );
 
             assert_target_centered_view(db, rag, case, owner, target, call.site_id, edge_count)?;
+        }
+        CallExpected::AmbiguousCandidates {
+            candidates,
+            relation,
+            target_kind: _,
+        } => {
+            let targets = candidates
+                .iter()
+                .map(|target| resolve_target(db, *target))
+                .collect::<Result<Vec<_>, _>>()?;
+            assert_eq!(
+                call.status,
+                CallStatusKind::Ambiguous,
+                "{} should preserve candidate-only ambiguity in RAG call context; source: {}",
+                case.name,
+                case.source
+            );
+            assert_eq!(
+                call.resolution, None,
+                "{} should not promote ambiguous candidates to exact resolution; source: {}",
+                case.name, case.source
+            );
+            assert_eq!(
+                call.targets.len(),
+                targets.len(),
+                "{} should preserve exactly one RAG target row per candidate; source: {}; call: {call:#?}",
+                case.name,
+                case.source
+            );
+            assert!(
+                call.targets
+                    .iter()
+                    .all(|target| target.relation == rag_relation_kind(relation)),
+                "{} should preserve relation kind on all candidate rows: {call:#?}",
+                case.name
+            );
+            let actual = call
+                .targets
+                .iter()
+                .map(|target| target.target_id)
+                .collect::<BTreeSet<_>>();
+            let expected = targets.into_iter().collect::<BTreeSet<_>>();
+            assert_eq!(
+                actual, expected,
+                "{} should preserve the expected ambiguous candidate set; source: {}",
+                case.name, case.source
+            );
         }
         CallExpected::Targetless { status } => {
             assert_eq!(
@@ -193,6 +240,7 @@ fn resolve_owner(db: &Database, owner: CallOwnerSelector) -> Result<Uuid, Error>
 
 fn resolve_target(db: &Database, target: CallTargetSelector) -> Result<Uuid, Error> {
     match target {
+        CallTargetSelector::FunctionByName { name } => function_id_by_name(db, name),
         CallTargetSelector::FunctionInModule { module_path, name } => {
             function_id_by_name_in_module(db, module_path, name)
         }
@@ -207,6 +255,23 @@ fn resolve_target(db: &Database, target: CallTargetSelector) -> Result<Uuid, Err
             variant_name,
         } => variant_id_by_enum_and_variant_names(db, enum_name, variant_name),
     }
+}
+
+fn function_id_by_name(db: &Database, name: &str) -> Result<Uuid, Error> {
+    let mut params = BTreeMap::new();
+    params.insert("name".to_string(), DataValue::from(name));
+    let rows = db.raw_query_params(
+        r#"?[id] :=
+            *function { id, name: $name @ 'NOW' }"#,
+        params,
+    )?;
+    assert_eq!(
+        rows.rows.len(),
+        1,
+        "expected exactly one function named {name:?}; rows: {:#?}",
+        rows.rows
+    );
+    to_uuid(&rows.rows[0][0]).map_err(Error::from)
 }
 
 fn method_id_by_name_body_and_owner_type(

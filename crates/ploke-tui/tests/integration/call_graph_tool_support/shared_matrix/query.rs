@@ -32,6 +32,7 @@ pub(super) fn query_node_id(
 pub(super) fn query_for_target(target: &TargetInfo, expected: CallExpected) -> MatrixQuery {
     let (item_name, node_kind, owner_type) = match expected {
         CallExpected::Resolved { target, .. } => match target {
+            CallTargetSelector::FunctionByName { name } => (name, "function", None),
             CallTargetSelector::FunctionInModule { name, .. } => (name, "function", None),
             CallTargetSelector::MethodByBody {
                 name, owner_type, ..
@@ -39,7 +40,9 @@ pub(super) fn query_for_target(target: &TargetInfo, expected: CallExpected) -> M
             CallTargetSelector::Struct { name } => (name, "struct", None),
             CallTargetSelector::Variant { variant_name, .. } => (variant_name, "variant", None),
         },
-        CallExpected::Targetless { .. } => unreachable!("target query requires resolved case"),
+        CallExpected::AmbiguousCandidates { .. } | CallExpected::Targetless { .. } => {
+            unreachable!("target query requires resolved case")
+        }
     };
     MatrixQuery {
         file_path: target.file_path.clone(),

@@ -90,6 +90,9 @@ pub enum CallReceiverSelector {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CallTargetSelector {
+    FunctionByName {
+        name: &'static str,
+    },
     FunctionInModule {
         module_path: &'static [&'static str],
         name: &'static str,
@@ -115,6 +118,11 @@ pub enum CallExpected {
         relation: CallRelationKind,
         target_kind: CallTargetKind,
         edge_count: usize,
+    },
+    AmbiguousCandidates {
+        candidates: &'static [CallTargetSelector],
+        relation: CallRelationKind,
+        target_kind: CallTargetKind,
     },
     Targetless {
         status: CallStatusKind,
@@ -186,6 +194,39 @@ fn is_unsupported_generic_array_size_hint_case(case: &CallShapeCase) -> bool {
             }
         )
 }
+
+const MEMCHR_SEARCHER_CALL_CANDIDATES: &[CallTargetSelector] = &[
+    CallTargetSelector::FunctionByName {
+        name: "searcher_kind_empty",
+    },
+    CallTargetSelector::FunctionByName {
+        name: "searcher_kind_one_byte",
+    },
+    CallTargetSelector::FunctionByName {
+        name: "searcher_kind_two_way",
+    },
+    CallTargetSelector::FunctionByName {
+        name: "searcher_kind_two_way_with_prefilter",
+    },
+    CallTargetSelector::FunctionByName {
+        name: "searcher_kind_sse2",
+    },
+    CallTargetSelector::FunctionByName {
+        name: "searcher_kind_avx2",
+    },
+];
+
+const MEMCHR_PREFILTER_CALL_CANDIDATES: &[CallTargetSelector] = &[
+    CallTargetSelector::FunctionByName {
+        name: "prefilter_kind_fallback",
+    },
+    CallTargetSelector::FunctionByName {
+        name: "prefilter_kind_sse2",
+    },
+    CallTargetSelector::FunctionByName {
+        name: "prefilter_kind_avx2",
+    },
+];
 
 static CALL_SHAPE_CASES: &[CallShapeCase] = &[
     CallShapeCase {
@@ -334,8 +375,10 @@ static CALL_SHAPE_CASES: &[CallShapeCase] = &[
             owner_trait: None,
         },
         site: CallSiteSelector::Dynamic { arg_count: Some(4) },
-        expected: CallExpected::Targetless {
-            status: CallStatusKind::Unsupported,
+        expected: CallExpected::AmbiguousCandidates {
+            candidates: MEMCHR_SEARCHER_CALL_CANDIDATES,
+            relation: CallRelationKind::DynamicFunction,
+            target_kind: CallTargetKind::Function,
         },
         coverage: &[
             CallPipelineCoverage::Db,
@@ -355,8 +398,10 @@ static CALL_SHAPE_CASES: &[CallShapeCase] = &[
             owner_trait: None,
         },
         site: CallSiteSelector::Dynamic { arg_count: Some(2) },
-        expected: CallExpected::Targetless {
-            status: CallStatusKind::Unsupported,
+        expected: CallExpected::AmbiguousCandidates {
+            candidates: MEMCHR_PREFILTER_CALL_CANDIDATES,
+            relation: CallRelationKind::DynamicFunction,
+            target_kind: CallTargetKind::Function,
         },
         coverage: &[
             CallPipelineCoverage::Db,
