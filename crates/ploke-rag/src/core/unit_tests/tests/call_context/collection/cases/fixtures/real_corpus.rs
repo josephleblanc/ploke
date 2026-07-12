@@ -586,8 +586,8 @@ async fn call_context_exact_reads_chrono_option_ok_or_try_receiver_callers() -> 
     let callers = db.callers_for_target(target)?;
     assert_eq!(
         callers.len(),
-        2,
-        "current chrono fixture should resolve the two parsed.rs DateTime...?.naive_utc callers: {callers:#?}"
+        4,
+        "current chrono fixture should resolve the two parsed.rs DateTime...?.naive_utc callers plus two cfg(test) Local::now initialized-local callers: {callers:#?}"
     );
 
     let context = rag.exact_call_context(target)?;
@@ -618,7 +618,10 @@ async fn call_context_exact_reads_chrono_option_ok_or_try_receiver_callers() -> 
     //   chrono/src/format/parsed.rs:836,953 call
     //   `DateTime::from_timestamp*(...).ok_or(OUT_OF_RANGE)?.naive_utc()`.
     // Expected traversal: RAG exact call context preserves both DB-resolved
-    // try-receiver caller-site identities and the method target relation.
+    // try-receiver caller-site identities and the method target relation. The
+    // target also has two cfg(test) initialized-local callers; those are
+    // asserted by the DB oracle and intentionally excluded from this
+    // try-receiver RAG row check.
     assert_eq!(
         incoming.len(),
         2,
@@ -627,6 +630,12 @@ async fn call_context_exact_reads_chrono_option_ok_or_try_receiver_callers() -> 
 
     let expected_site_ids = callers
         .iter()
+        .filter(|caller| {
+            caller.site.receiver.as_ref()
+                == Some(&CallReceiver::TryMethodCallResult {
+                    method_name: "ok_or".to_string(),
+                })
+        })
         .map(|caller| caller.site.id)
         .collect::<BTreeSet<_>>();
     let incoming_site_ids = incoming
@@ -851,7 +860,10 @@ async fn call_paths_exact_reads_axum_request_extract_two_hop_trait_path() -> Res
         target,
         CallPathOptions {
             max_depth: 2,
-            max_paths: 16,
+            // FromRequest::from_request has generated handler arity callers,
+            // so target-centered traversal needs the same fan-in budget as
+            // the DB oracle to include the inspected RequestExt source path.
+            max_paths: 128,
         },
     )?;
     let reverse_path = incoming
