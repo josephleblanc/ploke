@@ -145,7 +145,8 @@ async fn call_context_exact_reads_remaining_axum_supported_matrix_targets() -> R
             // axum-core/src/extract/mod.rs:85 declares
             // FromRequest::from_request. ext_traits/request.rs:279 calls
             // `E::from_request(...)`; extract/mod.rs:127 calls
-            // `T::from_request(...)`.
+            // `T::from_request(...)`; handler/mod.rs:250 generated
+            // `Tn::from_request(...)` rows resolve through generated bounds.
             label: "axum-core FromRequest::from_request trait-associated paths",
             target: method_id_by_trait_name(&db, "FromRequest", "from_request")?,
             expected: vec![
@@ -159,21 +160,104 @@ async fn call_context_exact_reads_remaining_axum_supported_matrix_targets() -> R
                     CallTargetKind::AssociatedFunction,
                     1,
                 ),
+                path_shape(
+                    &["T1", "from_request"],
+                    CallTargetKind::AssociatedFunction,
+                    1,
+                ),
+                path_shape(
+                    &["T2", "from_request"],
+                    CallTargetKind::AssociatedFunction,
+                    1,
+                ),
+                path_shape(
+                    &["T3", "from_request"],
+                    CallTargetKind::AssociatedFunction,
+                    1,
+                ),
+                path_shape(
+                    &["T4", "from_request"],
+                    CallTargetKind::AssociatedFunction,
+                    1,
+                ),
+                path_shape(
+                    &["T5", "from_request"],
+                    CallTargetKind::AssociatedFunction,
+                    1,
+                ),
+                path_shape(
+                    &["T6", "from_request"],
+                    CallTargetKind::AssociatedFunction,
+                    1,
+                ),
+                path_shape(
+                    &["T7", "from_request"],
+                    CallTargetKind::AssociatedFunction,
+                    1,
+                ),
+                path_shape(
+                    &["T8", "from_request"],
+                    CallTargetKind::AssociatedFunction,
+                    1,
+                ),
+                path_shape(
+                    &["T9", "from_request"],
+                    CallTargetKind::AssociatedFunction,
+                    1,
+                ),
+                path_shape(
+                    &["T10", "from_request"],
+                    CallTargetKind::AssociatedFunction,
+                    1,
+                ),
+                path_shape(
+                    &["T11", "from_request"],
+                    CallTargetKind::AssociatedFunction,
+                    1,
+                ),
+                path_shape(
+                    &["T12", "from_request"],
+                    CallTargetKind::AssociatedFunction,
+                    1,
+                ),
+                path_shape(
+                    &["T13", "from_request"],
+                    CallTargetKind::AssociatedFunction,
+                    1,
+                ),
+                path_shape(
+                    &["T14", "from_request"],
+                    CallTargetKind::AssociatedFunction,
+                    1,
+                ),
+                path_shape(
+                    &["T15", "from_request"],
+                    CallTargetKind::AssociatedFunction,
+                    1,
+                ),
+                path_shape(
+                    &["T16", "from_request"],
+                    CallTargetKind::AssociatedFunction,
+                    1,
+                ),
             ],
         },
         ExactShapeCase {
             // axum-core/src/extract/mod.rs:59 declares
             // FromRequestParts::from_request_parts. ext_traits/request.rs:305
             // and ext_traits/request_parts.rs:133 call `E::...`; extract/mod.rs:115
-            // calls `T::from_request_parts(...)`; extract/mod.rs:103 calls
-            // `Self::from_request_parts(...)` from an async-block owner.
+            // calls `T::from_request_parts(...)`; middleware/from_extractor.rs:220
+            // calls `E::...` from an async-block owner; handler/mod.rs:242
+            // generated `Tn::from_request_parts(...)` rows resolve through
+            // generated bounds; extract/mod.rs:103 calls `Self::...` from an
+            // async-block owner.
             label: "axum-core FromRequestParts::from_request_parts trait-associated paths",
             target: method_id_by_trait_name(&db, "FromRequestParts", "from_request_parts")?,
             expected: vec![
                 path_shape(
                     &["E", "from_request_parts"],
                     CallTargetKind::AssociatedFunction,
-                    2,
+                    3,
                 ),
                 path_shape(
                     &["T", "from_request_parts"],
@@ -182,6 +266,81 @@ async fn call_context_exact_reads_remaining_axum_supported_matrix_targets() -> R
                 ),
                 path_shape(
                     &["Self", "from_request_parts"],
+                    CallTargetKind::AssociatedFunction,
+                    1,
+                ),
+                path_shape(
+                    &["T1", "from_request_parts"],
+                    CallTargetKind::AssociatedFunction,
+                    15,
+                ),
+                path_shape(
+                    &["T2", "from_request_parts"],
+                    CallTargetKind::AssociatedFunction,
+                    14,
+                ),
+                path_shape(
+                    &["T3", "from_request_parts"],
+                    CallTargetKind::AssociatedFunction,
+                    13,
+                ),
+                path_shape(
+                    &["T4", "from_request_parts"],
+                    CallTargetKind::AssociatedFunction,
+                    12,
+                ),
+                path_shape(
+                    &["T5", "from_request_parts"],
+                    CallTargetKind::AssociatedFunction,
+                    11,
+                ),
+                path_shape(
+                    &["T6", "from_request_parts"],
+                    CallTargetKind::AssociatedFunction,
+                    10,
+                ),
+                path_shape(
+                    &["T7", "from_request_parts"],
+                    CallTargetKind::AssociatedFunction,
+                    9,
+                ),
+                path_shape(
+                    &["T8", "from_request_parts"],
+                    CallTargetKind::AssociatedFunction,
+                    8,
+                ),
+                path_shape(
+                    &["T9", "from_request_parts"],
+                    CallTargetKind::AssociatedFunction,
+                    7,
+                ),
+                path_shape(
+                    &["T10", "from_request_parts"],
+                    CallTargetKind::AssociatedFunction,
+                    6,
+                ),
+                path_shape(
+                    &["T11", "from_request_parts"],
+                    CallTargetKind::AssociatedFunction,
+                    5,
+                ),
+                path_shape(
+                    &["T12", "from_request_parts"],
+                    CallTargetKind::AssociatedFunction,
+                    4,
+                ),
+                path_shape(
+                    &["T13", "from_request_parts"],
+                    CallTargetKind::AssociatedFunction,
+                    3,
+                ),
+                path_shape(
+                    &["T14", "from_request_parts"],
+                    CallTargetKind::AssociatedFunction,
+                    2,
+                ),
+                path_shape(
+                    &["T15", "from_request_parts"],
                     CallTargetKind::AssociatedFunction,
                     1,
                 ),

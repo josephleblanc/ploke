@@ -1183,7 +1183,7 @@ async fn call_impact_exact_reads_axum_usage_question_summary() -> Result<(), Err
             target,
             CallPathOptions {
                 max_depth: 2,
-                max_paths: 16,
+                max_paths: 128,
             },
         )?
         .expect("call context enabled");
@@ -1242,8 +1242,8 @@ async fn call_impact_exact_reads_axum_usage_question_summary() -> Result<(), Err
     );
     assert_eq!(
         report.direct_call_sites.len(),
-        2,
-        "RAG impact summary should preserve both direct target-centered callsite rows: {report:#?}"
+        18,
+        "RAG impact summary should preserve all direct target-centered callsite rows, including generated handler extraction rows: {report:#?}"
     );
     assert!(
         report.direct_call_sites.iter().any(|call| {
@@ -1265,7 +1265,7 @@ async fn call_impact_exact_reads_axum_usage_question_summary() -> Result<(), Err
         report.callsite_buckets.iter().any(|bucket| {
             bucket.kind == CallSiteKind::Path
                 && bucket.relation == CallTargetKind::AssociatedFunction
-                && bucket.count == 2
+                && bucket.count == 18
         }),
         "RAG impact summary should expose the direct path/associated-function callsite bucket: {report:#?}"
     );
