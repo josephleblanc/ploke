@@ -50,7 +50,15 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Latest completed slice: exact private result method-callback function proof.
+Latest completed slice: bounded named-field async future alias proof.
+`call_awaited_async_closure_future_named_field_alias_with_body_call` now proves
+`AsyncFutureHolder { future: closure() }; let alias = holder.future;
+alias.await;` through the same same-block async poll carrier used for direct
+named-field storage. Parser, DB, RAG, and exact lookup/edges tests prove the
+original `closure()` call is awaited and traverses through the async-closure
+owner without adding arbitrary aggregate future flow.
+
+Previous completed slice: exact private result method-callback function proof.
 The fixture source
 `call_single_result_callback(f)` now proves
 `Ok::<i32, ()>(1).and_then(f) -> local_result_target` when the helper is
