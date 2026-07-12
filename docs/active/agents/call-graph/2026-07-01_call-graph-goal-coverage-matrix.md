@@ -10,7 +10,7 @@ Related planning files:
 - [`2026-06-28_real-corpus-call-site-oracle-matrices.md`](2026-06-28_real-corpus-call-site-oracle-matrices.md)
 - [`2026-07-07_call-graph-usage-question-gap-audit.md`](2026-07-07_call-graph-usage-question-gap-audit.md)
 
-Status date: 2026-07-11
+Status date: 2026-07-12
 Baseline HEAD when created: `19860cc40`
 
 ## Operating Rule
@@ -50,7 +50,19 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Latest completed slice: bounded borrowed parameter-alias receiver proof.
+Latest completed slice: bounded memchr `unsafe_ifunc!` generated transmute
+frontier. The real-corpus memchr macro source
+`src/arch/x86_64/memchr.rs:153` generates
+`core::mem::transmute::<Fn, RealFn>(fun)(...)` at seven macro instantiations.
+Parser extraction now projects the generated inner `core::mem::transmute` path
+row and outer returned-path dynamic row per instantiation; the regenerated
+`corpus_memchr_call_graph_2026-07-12.sqlite` fixture and ploke-db real-target
+matrix prove these rows are visible as external targetless frontiers with no
+fabricated function-pointer target or traversal edge. This slice is bounded to
+the reviewed `unsafe_ifunc!` source oracle; it does not add arbitrary macro
+expansion, arbitrary expression callees, or concrete function-pointer dispatch.
+
+Previous completed slice: bounded borrowed parameter-alias receiver proof.
 `call_borrowed_param_alias_instance_method(value: LocalAssoc)` now proves
 `let alias = &value; alias.instance_value()` by reusing the existing
 `AliasedLocalBinding { source_path: ["value"] }` receiver carrier and exact

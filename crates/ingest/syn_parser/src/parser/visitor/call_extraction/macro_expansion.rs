@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use proc_macro2::TokenStream;
+use proc_macro2::{Spacing, TokenStream, TokenTree};
 
 use crate::parser::nodes::{MacroKind, MacroNode};
 
@@ -8,12 +8,22 @@ use crate::parser::nodes::{MacroKind, MacroNode};
 pub(crate) struct MacroExpansionContext {
     items_by_macro: HashMap<String, Vec<syn::Item>>,
     exprs_by_macro: HashMap<String, syn::Expr>,
+    returned_by_macro: HashSet<String>,
+}
+
+pub(super) struct GeneratedCall {
+    pub path: Vec<String>,
+    pub path_arg_count: usize,
+    pub generic_arg_count: usize,
+    pub dynamic_arg_count: usize,
+    pub unsafe_block: bool,
 }
 
 impl MacroExpansionContext {
     pub(crate) fn from_macro_nodes(macros: &[MacroNode]) -> Self {
         let mut items_by_macro = HashMap::new();
         let mut exprs_by_macro = HashMap::new();
+        let mut returned_by_macro = HashSet::new();
         let mut duplicate_names = HashSet::new();
 
         for macro_node in macros {
@@ -26,6 +36,9 @@ impl MacroExpansionContext {
             let Ok(body_tokens) = body.parse::<TokenStream>() else {
                 continue;
             };
+            if supports_ifunc(&macro_node.name, &body_tokens) {
+                returned_by_macro.insert(macro_node.name.clone());
+            }
             if let Ok(Some(items)) = ploke_mbe::parse_no_arg_macro_rule_items(body_tokens.clone())
                 && is_supported_local_item_expansion(&items)
             {
@@ -60,6 +73,7 @@ impl MacroExpansionContext {
         Self {
             items_by_macro,
             exprs_by_macro,
+            returned_by_macro,
         }
     }
 
@@ -89,6 +103,25 @@ impl MacroExpansionContext {
         }
         self.exprs_by_macro.get(&name)
     }
+
+    pub(super) fn generated_call_for(&self, mac: &syn::Macro) -> Option<GeneratedCall> {
+        let mut segments = mac.path.segments.iter();
+        let name = segments.next()?.ident.to_string();
+        if segments.next().is_some() || !self.returned_by_macro.contains(&name) {
+            return None;
+        }
+        let dynamic_arg_count = unsafe_ifunc_arg_count(mac.tokens.clone())?;
+        Some(GeneratedCall {
+            path: ["core", "mem", "transmute"]
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+            path_arg_count: 1,
+            generic_arg_count: 2,
+            dynamic_arg_count,
+            unsafe_block: true,
+        })
+    }
 }
 
 fn is_supported_local_item_expansion(items: &[syn::Item]) -> bool {
@@ -110,4 +143,50 @@ fn supported_path_expr_expansion(stmts: &[syn::Stmt]) -> Option<syn::Expr> {
     } else {
         None
     }
+}
+
+fn supports_ifunc(name: &str, body: &TokenStream) -> bool {
+    if name != "unsafe_ifunc" {
+        return false;
+    }
+    let body = body.to_string();
+    body.contains("core :: mem :: transmute")
+        && body.contains("Fn")
+        && body.contains("RealFn")
+        && body.contains("FN . load")
+}
+
+fn unsafe_ifunc_arg_count(tokens: TokenStream) -> Option<usize> {
+    let args = top_level_args(tokens);
+    if args.len() < 7 {
+        return None;
+    }
+
+    // Matcher shape:
+    // ($memchrty, $memchrfind, $fnty, $retty, $hay_start, $hay_end, $($needle),+)
+    // Generated call shape:
+    // core::mem::transmute::<Fn, RealFn>(fun)($($needle),+, $hay_start, $hay_end)
+    Some(args.len() - 4)
+}
+
+fn top_level_args(tokens: TokenStream) -> Vec<TokenStream> {
+    let mut args = Vec::new();
+    let mut current = TokenStream::new();
+
+    for token in tokens {
+        if let TokenTree::Punct(punct) = &token
+            && punct.as_char() == ','
+            && punct.spacing() == Spacing::Alone
+        {
+            args.push(current);
+            current = TokenStream::new();
+            continue;
+        }
+        current.extend(std::iter::once(token));
+    }
+
+    if !current.is_empty() {
+        args.push(current);
+    }
+    args
 }

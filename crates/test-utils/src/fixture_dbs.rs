@@ -611,7 +611,7 @@ pub const CORPUS_MEMCHR_TYPE_GRAPH: FixtureDb = FixtureDb {
 
 pub const CORPUS_MEMCHR_CALL_GRAPH: FixtureDb = FixtureDb {
     id: "corpus_memchr_call_graph",
-    rel_path: "tests/backup_dbs/corpus_memchr_call_graph_2026-07-11.sqlite",
+    rel_path: "tests/backup_dbs/corpus_memchr_call_graph_2026-07-12.sqlite",
     parsed_targets: &["github:BurntSushi/memchr@24f5daa5257e00e87007c936761600e034827905"],
     status: FixtureStatus::Active,
     creation: FixtureCreationStrategy::Automated(FixtureAutomation::GithubCorpusCrate {
@@ -627,7 +627,7 @@ pub const CORPUS_MEMCHR_CALL_GRAPH: FixtureDb = FixtureDb {
     requires_primary_index: false,
     bm25_index_expected: false,
     embedding: None,
-    last_updated: "2026-07-11",
+    last_updated: "2026-07-12",
     notes: "Source-pinned memchr corpus backup for real-target call graph query contracts over arbitrary-expression dynamic callees, function-pointer fields, and callable trait object fields.",
 };
 

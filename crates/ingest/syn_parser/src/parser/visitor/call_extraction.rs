@@ -13,16 +13,17 @@ mod model;
 mod receiver;
 
 use dynamic::classify_dynamic_callee;
+use macro_expansion::GeneratedCall;
 pub(super) use macro_expansion::MacroExpansionContext;
 use model::{ConstructedFields, FieldInitProof, LocalBindingProof};
 use receiver::classify_method_receiver;
 
 use crate::parser::nodes::{
-    ArgumentFieldInit, CallArgument, CallBodyOwnerId, CallNode, DynamicCallNode, ExecutableBodyId,
-    ExecutableBodyNode, MacroCallNode, MethodCallNode, PathCallCallee, PathCallNode,
-    generate_async_block_body_id, generate_closure_body_id, generate_dynamic_call_site_id,
-    generate_local_item_body_id, generate_macro_call_site_id, generate_method_call_site_id,
-    generate_path_call_site_id,
+    ArgumentFieldInit, CallArgument, CallBodyOwnerId, CallNode, DynamicCallCallee, DynamicCallNode,
+    ExecutableBodyId, ExecutableBodyNode, MacroCallNode, MethodCallNode, PathCallCallee,
+    PathCallNode, generate_async_block_body_id, generate_closure_body_id,
+    generate_dynamic_call_site_id, generate_local_item_body_id, generate_macro_call_site_id,
+    generate_method_call_site_id, generate_path_call_site_id,
 };
 use crate::parser::relations::CallSiteRelation;
 
@@ -167,6 +168,45 @@ impl BodyCallVisitor<'_> {
         self.relations.push(CallSiteRelation::BodyContainsCall {
             source: self.owner,
             target,
+        });
+    }
+
+    fn record_generated_call(&mut self, call: GeneratedCall, span: (usize, usize)) {
+        let unsafe_block = self.unsafe_depth > 0 || call.unsafe_block;
+        let path_id = generate_path_call_site_id(self.owner, &call.path, span, self.cfgs);
+        let path_target = path_id.into();
+
+        self.calls.push(CallNode::PathCall(PathCallNode {
+            id: path_id,
+            owner: self.owner,
+            span,
+            cfgs: self.cfgs.to_vec(),
+            unsafe_block,
+            callee: PathCallCallee::ItemPath,
+            path: call.path.clone(),
+            arg_count: call.path_arg_count,
+            generic_arg_count: call.generic_arg_count,
+            arguments: vec![CallArgument::Other; call.path_arg_count],
+        }));
+        self.relations.push(CallSiteRelation::BodyContainsCall {
+            source: self.owner,
+            target: path_target,
+        });
+
+        let dynamic_id = generate_dynamic_call_site_id(self.owner, span, self.cfgs);
+        let dynamic_target = dynamic_id.into();
+        self.calls.push(CallNode::DynamicCall(DynamicCallNode {
+            id: dynamic_id,
+            owner: self.owner,
+            span,
+            cfgs: self.cfgs.to_vec(),
+            unsafe_block,
+            arg_count: call.dynamic_arg_count,
+            callee: DynamicCallCallee::ReturnedPathCall { path: call.path },
+        }));
+        self.relations.push(CallSiteRelation::BodyContainsCall {
+            source: self.owner,
+            target: dynamic_target,
         });
     }
 
@@ -322,6 +362,10 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
 
     fn visit_expr_macro(&mut self, call: &'ast syn::ExprMacro) {
         self.record_macro_call(&call.mac);
+        if let Some(generated) = self.macro_expansions.generated_call_for(&call.mac) {
+            let byte_range = call.mac.span().byte_range();
+            self.record_generated_call(generated, (byte_range.start, byte_range.end));
+        }
         visit::visit_expr_macro(self, call);
     }
 

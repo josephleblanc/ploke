@@ -204,7 +204,7 @@ impl Drop for FixtureRestoreGuard {
 | `corpus_semver_type_graph_2026-05-17.sqlite` | `github:dtolnay/semver@8591f2344b52b31d85b538de58b76a676fe9ff90` | typed graphRAG type traversal corpus backup | 2026-05-17 |
 | `corpus_semver_openrouter_embeddings_2026-05-17.sqlite` | `github:dtolnay/semver@8591f2344b52b31d85b538de58b76a676fe9ff90` | OpenRouter-searchable corpus backup for type-context matrix tests | 2026-05-17 |
 | `corpus_memchr_type_graph_2026-05-17.sqlite` | `github:BurntSushi/memchr@24f5daa5257e00e87007c936761600e034827905` | typed graphRAG type traversal corpus backup | 2026-05-17 |
-| `corpus_memchr_call_graph_2026-07-11.sqlite` | `github:BurntSushi/memchr@24f5daa5257e00e87007c936761600e034827905` | plain corpus backup for real-target call graph query contracts | 2026-07-11 |
+| `corpus_memchr_call_graph_2026-07-12.sqlite` | `github:BurntSushi/memchr@24f5daa5257e00e87007c936761600e034827905` | plain corpus backup for real-target call graph query contracts | 2026-07-12 |
 | `corpus_memchr_openrouter_embeddings_2026-05-17.sqlite` | `github:BurntSushi/memchr@24f5daa5257e00e87007c936761600e034827905` | OpenRouter-searchable corpus backup for type-context matrix tests | 2026-05-17 |
 | `corpus_generic_array_type_graph_2026-05-17.sqlite` | `github:fizyk20/generic-array@80bab87431c2e29823dc551a3311324812838a23` | typed graphRAG type traversal corpus backup | 2026-05-17 |
 | `corpus_generic_array_call_graph_2026-07-11.sqlite` | `github:fizyk20/generic-array@80bab87431c2e29823dc551a3311324812838a23` | plain corpus backup for real-target call graph query contracts | 2026-07-11 |
@@ -216,6 +216,21 @@ impl Drop for FixtureRestoreGuard {
 | `corpus_axum_call_graph_2026-07-12.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | plain workspace-member corpus backup for real-target call graph query contracts | 2026-07-12 |
 | `corpus_axum_openrouter_embeddings_2026-05-17.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | OpenRouter-searchable workspace-member corpus backup for type-context matrix tests | 2026-05-17 |
 | `ploke-db_af8e3a20-728d-5967-8523-da8a5ccdae45` | `crates/ploke-db` | currently orphaned snapshot | 2026-03-20 |
+
+## 2026-07-12 Memchr Generated IFunc Call Refresh
+
+The `corpus_memchr_call_graph` fixture was recreated with
+`cargo run -p xtask --features call_graph -- recreate-backup-db --fixture corpus_memchr_call_graph`
+after the parser began projecting the bounded `unsafe_ifunc!` generated
+`core::mem::transmute::<Fn, RealFn>(fun)(...)` source oracle rows.
+
+Post-regeneration verification:
+
+- The recreated `corpus_memchr_call_graph_2026-07-12.sqlite` shared snapshot was
+  copied into `tests/backup_dbs/` as the committed seed artifact.
+- The memchr real-target matrix can now assert the generated inner transmute path
+  row and outer returned-path dynamic row as external targetless frontiers rather
+  than treating the source oracle as fully absent.
 
 ## 2026-07-12 Axum Opaque Future Generated Constructor Refresh
 
@@ -917,10 +932,10 @@ Expected searchable corpus embedding config:
   - later traversal from iterator self types to `Iterator` and
     `DoubleEndedIterator` impl surfaces
 
-### `corpus_memchr_call_graph_2026-07-11.sqlite`
+### `corpus_memchr_call_graph_2026-07-12.sqlite`
 
 - Status: active
-- File: `tests/backup_dbs/corpus_memchr_call_graph_2026-07-11.sqlite`
+- File: `tests/backup_dbs/corpus_memchr_call_graph_2026-07-12.sqlite`
 - Parsed target: `github:BurntSushi/memchr@24f5daa5257e00e87007c936761600e034827905`
 - Checkout slug: `tests/fixture_github_clones/corpus/BurntSushi__memchr`
 - Expected DB config:
@@ -931,6 +946,8 @@ Expected searchable corpus embedding config:
 - Tests using this fixture:
   - real-target call graph matrix rows for arbitrary-expression dynamic
     callees, function-pointer fields, and callable trait object fields
+  - generated `unsafe_ifunc!` transmute path and returned-path dynamic frontier
+    rows in [fallback.rs](../../crates/ploke-db/tests/unit/call_graph_fixture_queries/real_target_matrix/fallback.rs)
 
 ### `corpus_memchr_openrouter_embeddings_2026-05-17.sqlite`
 

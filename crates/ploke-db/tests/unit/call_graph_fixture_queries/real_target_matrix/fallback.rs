@@ -426,7 +426,7 @@ fn memchr_function_pointer_field_calls_are_dynamic_targetless_oracles() -> Resul
 }
 
 #[test]
-fn memchr_arbitrary_expression_dynamic_callee_is_absent_fallback_gap() -> Result<(), DbError> {
+fn memchr_arbitrary_expression_dynamic_callee_projects_generated_rows() -> Result<(), DbError> {
     let db = setup_call_graph_db(&CORPUS_MEMCHR_CALL_GRAPH)?;
 
     // Matrix: `Fallback Source Oracle Matrix`.
@@ -438,10 +438,26 @@ fn memchr_arbitrary_expression_dynamic_callee_is_absent_fallback_gap() -> Result
     //   macro invocations at lines 180, 203, 227, 252, 278, 305, and 326
     //   instantiate that arbitrary-expression dynamic callee.
     //
-    // Current model gap: the transmute path and outer arbitrary-expression call
-    // are not projected, so the fixture must not invent a callee.
-    assert_no_path_rows(&db, &["core", "mem", "transmute"])?;
-    assert_no_dynamic_rows_by_function_names(&db, &["find_raw", "rfind_raw", "count_raw"])
+    // Expected traversal: the bounded source-oracle projection records the
+    // generated inner path call and outer arbitrary-expression dynamic call,
+    // but both remain targetless. The inner path is a `core` external frontier;
+    // the outer returned-path dynamic call inherits that external frontier and
+    // does not fabricate a concrete function-pointer target.
+    assert_targetless_path_rows(
+        &db,
+        &["core", "mem", "transmute"],
+        CallStatusKind::External,
+        7,
+    )?;
+    assert_memchr_ifunc_owner(&db, "memchr_raw", "unsafe_ifunc!", 3, "memchr_raw")?;
+    assert_memchr_ifunc_owner(&db, "memrchr_raw", "unsafe_ifunc!", 3, "memrchr_raw")?;
+    assert_memchr_ifunc_owner(&db, "memchr2_raw", "unsafe_ifunc!", 4, "memchr2_raw")?;
+    assert_memchr_ifunc_owner(&db, "memrchr2_raw", "unsafe_ifunc!", 4, "memrchr2_raw")?;
+    assert_memchr_ifunc_owner(&db, "memchr3_raw", "unsafe_ifunc!", 5, "memchr3_raw")?;
+    assert_memchr_ifunc_owner(&db, "memrchr3_raw", "unsafe_ifunc!", 5, "memrchr3_raw")?;
+    assert_memchr_ifunc_owner(&db, "count_raw", "unsafe_ifunc!", 3, "count_raw")?;
+
+    Ok(())
 }
 
 #[test]
@@ -755,6 +771,87 @@ fn assert_owner_dynamic_targetless(
     assert_no_traversal_candidates_for_site(db, owner, row.site.id, label)?;
 
     Ok(row.site.id)
+}
+
+fn assert_memchr_ifunc_owner(
+    db: &Database,
+    owner_name: &str,
+    body_marker: &str,
+    expected_arg_count: u32,
+    label: &str,
+) -> Result<Uuid, DbError> {
+    let owner =
+        function_id_by_name_in_module(db, &["crate", "arch", "x86_64", "memchr"], owner_name)?;
+    let context = db.call_context_for_owner(owner)?;
+    assert!(
+        context.iter().any(|row| {
+            row.site.kind == CallSiteKind::Macro
+                && row.site.macro_name.as_deref() == Some("unsafe_ifunc")
+        }),
+        "{label} should keep the source macro invocation visible: {context:#?}"
+    );
+
+    let path_row = context
+        .iter()
+        .find(|row| {
+            row.site.kind == CallSiteKind::Path
+                && row.site.path.as_deref()
+                    == Some(&["core", "mem", "transmute"].map(str::to_string))
+        })
+        .unwrap_or_else(|| {
+            panic!("{label} should include generated transmute path row: {context:#?}")
+        });
+    assert_eq!(
+        path_row.site.arg_count,
+        Some(1),
+        "{label} generated transmute path row should preserve the `fun` argument"
+    );
+    assert_eq!(
+        path_row.site.generic_arg_count,
+        Some(2),
+        "{label} generated transmute path row should preserve `<Fn, RealFn>`"
+    );
+    assert_eq!(
+        path_row.site.unsafe_block, true,
+        "{label} generated transmute path row should preserve macro unsafe block"
+    );
+    assert_targetless_status(path_row, CallStatusKind::External);
+    assert!(
+        relations_for_site(db, path_row.site.id)?.rows.is_empty(),
+        "{label} generated transmute path row should not have call_relation targets"
+    );
+
+    let dynamic_row = context
+        .iter()
+        .find(|row| {
+            row.site.kind == CallSiteKind::Dynamic
+                && row.site.path.as_deref() == Some(&["core", "mem", "transmute"].map(str::to_string))
+                && row.site.arg_count == Some(expected_arg_count)
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "{label} should include generated returned-path dynamic row with {expected_arg_count} args: {context:#?}"
+            )
+        });
+    assert_eq!(
+        dynamic_row.site.unsafe_block, true,
+        "{label} generated dynamic row should preserve macro unsafe block"
+    );
+    assert_targetless_status(dynamic_row, CallStatusKind::External);
+    assert!(
+        relations_for_site(db, dynamic_row.site.id)?.rows.is_empty(),
+        "{label} generated dynamic row should not have call_relation targets"
+    );
+    assert_no_traversal_candidates_for_site(db, owner, dynamic_row.site.id, label)?;
+    assert!(
+        context
+            .iter()
+            .any(|row| row.site.kind == CallSiteKind::Macro
+                && row.site.macro_name.as_deref() == Some(body_marker.trim_end_matches('!'))),
+        "{label} macro row should match body marker {body_marker:?}: {context:#?}"
+    );
+
+    Ok(dynamic_row.site.id)
 }
 
 fn assert_blocked_resolution_proof(
