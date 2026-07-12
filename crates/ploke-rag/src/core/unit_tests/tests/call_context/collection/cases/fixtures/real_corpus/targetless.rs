@@ -945,6 +945,69 @@ async fn call_context_collection_reads_axum_std_mem_replace_frontier() -> Result
 }
 
 #[tokio::test]
+async fn call_context_collection_reads_axum_generated_middleware_replace_frontiers()
+-> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    let owners = method_ids_by_file(
+        &db,
+        "call",
+        "std::mem::replace(&mut self.inner, not_ready_inner)",
+        "axum/src/middleware/from_fn.rs",
+    )?;
+    assert_eq!(
+        owners.len(),
+        16,
+        "from_fn all_the_tuples!(impl_service) should project one generated Service::call owner per tuple arity"
+    );
+
+    let callee = CallCalleeInfo::Path {
+        path: path(&["std", "mem", "replace"]),
+    };
+
+    // Matrix:
+    //   docs/active/agents/call-graph/
+    //   2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //
+    // Source chain:
+    //   axum/src/middleware/from_fn.rs:244-302 defines the local
+    //   `impl_service!` macro template.
+    //   axum/src/middleware/from_fn.rs:305 invokes
+    //   `all_the_tuples!(impl_service)`.
+    //   The generated `Service::call` bodies preserve the template
+    //   `std::mem::replace(&mut self.inner, not_ready_inner)` row.
+    // Expected traversal: each generated std-root path call is visible to RAG
+    // call-context collection as an external frontier and has no local target.
+    for owner in owners {
+        let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+        let context = call_context
+            .get(&owner)
+            .unwrap_or_else(|| panic!("generated from_fn owner {owner} should receive context"));
+        let matching = context
+            .iter()
+            .filter(|call| call.kind == CallSiteKind::Path && call.callee == callee)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            matching.len(),
+            1,
+            "generated from_fn owner {owner} should expose one std::mem::replace frontier row: {context:#?}"
+        );
+        let call = matching[0];
+        assert_eq!(call.owner_id, owner);
+        assert_eq!(call.arg_count, Some(2));
+        assert_eq!(call.status, CallStatusKind::External);
+        assert_eq!(call.resolution, None);
+        assert!(
+            call.targets.is_empty(),
+            "generated from_fn std::mem::replace frontier should remain targetless: {call:#?}"
+        );
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn call_context_collection_reads_axum_handler_async_block_owner_gap() -> Result<(), Error> {
     init_tracing_once();
     let (db, rag) = setup_axum_call_graph_rag()?;
@@ -1072,6 +1135,51 @@ fn function_id_by_exact_name(db: &Database, name: &str) -> Result<Uuid, Error> {
         rows.rows
     );
     to_uuid(&rows.rows[0][0]).map_err(Error::from)
+}
+
+fn method_ids_by_file(
+    db: &Database,
+    name: &str,
+    body_marker: &str,
+    file_suffix: &str,
+) -> Result<Vec<Uuid>, Error> {
+    let mut params = BTreeMap::new();
+    params.insert("name".to_string(), DataValue::from(name));
+
+    let script = format!(
+        r#"
+ancestor[desc, desc] := *module{{ id: desc @ 'NOW' }}
+{ANCESTOR_RULES_NOW}
+{METHOD_NODE_ANCESTOR_RULE}
+
+module_has_file[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_id] := module_has_file[mod_id], file_id = mod_id
+file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_file[parent], file_id = parent
+
+?[id, body, file_path] :=
+    *method {{ id, name: $name, body @ 'NOW' }},
+    ancestor[id, mod_id],
+    *module{{ id: mod_id @ 'NOW' }},
+    file_owner_for_module[mod_id, file_id],
+    *file_mod{{ owner_id: file_id, file_path @ 'NOW' }}
+"#
+    );
+    let rows = db.raw_query_params(&script, params)?;
+    let marker = body_key(body_marker);
+    rows.rows
+        .iter()
+        .filter_map(|row| {
+            let DataValue::Str(body) = &row[1] else {
+                return None;
+            };
+            let DataValue::Str(file_path) = &row[2] else {
+                return None;
+            };
+            (body_key(body).contains(&marker) && file_path.ends_with(file_suffix))
+                .then(|| row[0].clone())
+        })
+        .map(|id| to_uuid(&id).map_err(Error::from))
+        .collect()
 }
 
 fn assert_dynamic_candidates(

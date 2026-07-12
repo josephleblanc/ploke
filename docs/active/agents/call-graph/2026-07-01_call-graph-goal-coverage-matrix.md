@@ -61,10 +61,15 @@ their `std::mem::replace(&mut self.inner, not_ready_inner)` rows as targetless
 `corpus_axum_call_graph_2026-07-12.sqlite` fixture and ploke-db real-target
 matrix prove thirty-four total `std::mem::replace` rows: the two existing
 hand-written rows plus sixteen generated `from_fn` rows and sixteen generated
-`map_request` rows. This remains bounded to the reviewed external-frontier
-source row; it does not add arbitrary macro expansion, local traversal for
-`std::mem::replace`, or the same-named `map_response` middleware macro
-template.
+`map_request` rows. RAG call-context collection now asserts the sixteen
+generated `from_fn` owners preserve one targetless external `std::mem::replace`
+row each. Exact TUI lookup/edge tools are not extended for this chunk because
+the generated arities produce duplicate `call` methods with the same public
+coordinate tuple; adding a tool assertion needs an addressability extension
+rather than a brittle representative pick. This remains bounded to the reviewed
+external-frontier source row; it does not add arbitrary macro expansion, local
+traversal for `std::mem::replace`, or the same-named `map_response` middleware
+macro template.
 
 Recent completed slice: direct self-field function-pointer initializer
 candidates. The fixture-backed source oracle
