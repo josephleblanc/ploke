@@ -407,6 +407,19 @@ impl PathToolCase {
         },
     }];
 
+    pub(crate) const ROUTING_GET_SERVICE: [Self; 1] = [Self {
+        label: "axum/src/routing/tests/get_to_head.rs:46 generated routing::get_service",
+        item: "get_handles_head",
+        path: &["get_service"],
+        status: CallStatusKind::Resolved,
+        corpus: DynamicToolCorpus::Axum,
+        owner: PathOwner::Function {
+            module_path: &["crate", "routing", "tests", "get_to_head", "for_services"],
+            file_suffix: "axum/src/routing/tests/get_to_head.rs",
+            body: "get_service(service_fn(|_req: Request| async move",
+        },
+    }];
+
     pub(crate) const MEMCHR_CALLABLE_TRAIT_OBJECT: [Self; 2] = [
         Self {
             label: "memchr/src/tests/substring/mod.rs:94 Runner.fwd boxed dyn FnMut",
@@ -466,11 +479,11 @@ impl PathToolCase {
     }
 
     pub(crate) fn expected_resolved_relation(&self) -> CallTargetKind {
-        if self.path == ["post"]
+        if (self.path == ["post"] || self.path == ["get_service"])
             && matches!(
                 self.owner,
                 PathOwner::Function {
-                    file_suffix: "axum/src/json.rs",
+                    file_suffix: "axum/src/json.rs" | "axum/src/routing/tests/get_to_head.rs",
                     ..
                 }
             )
@@ -557,6 +570,27 @@ impl PathToolCase {
                 expected_state: "resolved",
                 expected_blocker: None,
                 callsite_label: "generated routing::post",
+            });
+        }
+
+        if self.path == ["get_service"]
+            && matches!(
+                self.owner,
+                PathOwner::Function {
+                    file_suffix: "axum/src/routing/tests/get_to_head.rs",
+                    ..
+                }
+            )
+        {
+            return Some(MacroBoundaryCase {
+                boundary_id: axum_routing_get_service_boundary_id,
+                records: axum_routing_get_service_macro_summary_records,
+                summary_id: AXUM_ROUTING_GET_SERVICE_SUMMARY_ID,
+                expanded_item_id: "expanded:item:axum-routing-get-service",
+                expanded_definition_id: "def:axum::routing::method_routing::get_service",
+                expected_state: "resolved",
+                expected_blocker: None,
+                callsite_label: "generated routing::get_service",
             });
         }
 

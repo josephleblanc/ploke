@@ -99,6 +99,9 @@ The same DB matrix now asserts every generated `*_service` top-level function
 exists and that each generated body reaches `on_service(...)`. Source-line
 fanout pins nine `get_service` caller rows, plus one each for
 `delete_service`, `patch_service`, and top-level `post_service`.
+Exact RAG proof context, `code_item_lookup`, and `code_item_edges` now use the
+`axum/src/routing/tests/get_to_head.rs:46` `get_service(...)` call as the
+downstream representative for generated service-function boundary proof.
 
 ## Re-Exported Body Constructor Fanout
 

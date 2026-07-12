@@ -711,16 +711,155 @@ async fn proof_context_collection_preserves_axum_generated_post_resolution() -> 
     );
     let boundary_id = ploke_test_utils::axum_routing_post_boundary_id(site_id);
     let summary_id = ploke_test_utils::AXUM_ROUTING_POST_SUMMARY_ID;
+    assert_generated_macro_boundary_rows(
+        &rows,
+        site_id,
+        summary_id,
+        &boundary_id,
+        "expanded:item:axum-routing-post",
+        "def:axum::routing::method_routing::post",
+        "generated routing::post",
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn proof_context_collection_preserves_axum_generated_get_service_resolution()
+-> Result<(), Error> {
+    init_tracing_once();
+    let db = axum_db()?;
+
+    let owner = function_id(
+        &db,
+        &["crate", "routing", "tests", "get_to_head", "for_services"],
+        "get_handles_head",
+    )?;
+    let projected = db.project_call_proof_facts_for_owner(owner, AXUM_DOMAIN)?;
+    assert!(
+        projected >= 2,
+        "get_handles_head should project generated routing::get_service proof rows"
+    );
+
+    let rag = init_test_rag_mock(Arc::clone(&db));
+    assert!(
+        !rag.proof_context_degraded(),
+        "projected axum routing::get_service facts should enable RAG proof context"
+    );
+
+    let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+    let calls = call_context
+        .get(&owner)
+        .expect("get_handles_head should receive outgoing call context");
+    let generated = calls
+        .iter()
+        .find(|call| {
+            call.owner_id == owner
+                && call.kind == CallSiteKind::Path
+                && call.callee
+                    == CallCalleeInfo::Path {
+                        path: vec!["get_service".to_string()],
+                    }
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "get_handles_head should expose generated routing::get_service call context: {calls:#?}"
+            )
+        });
+    assert_eq!(generated.status, CallStatusKind::Resolved);
+    assert_eq!(generated.resolution, Some(CallResolutionKind::LocalExact));
+    assert_eq!(
+        generated.targets.len(),
+        1,
+        "generated routing::get_service should expose one RAG target: {generated:#?}"
+    );
+    assert_eq!(generated.targets[0].relation, CallTargetKind::Function);
+    let site_id = generated.site_id;
+    db.upsert_proof_fact_values(
+        &ploke_test_utils::axum_routing_get_service_macro_summary_records(site_id),
+    )?;
+
+    let rows = rag.exact_proof_context(owner)?;
+
+    // Matrix: generated `*_service` routing helper row.
+    // Source chain:
+    //   docs/active/agents/call-graph/
+    //   2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //   axum/src/routing/method_routing.rs:31-91 is the
+    //   `top_level_service_fn!` template.
+    //   axum/src/routing/method_routing.rs:337 invokes it for `get_service`.
+    //   axum/src/routing/tests/get_to_head.rs:46 calls `get_service(...)`.
+    // Expected proof traversal: proof context must include the generated
+    // function call_site, resolved call_edge, resolved call_resolution fact,
+    // and the callsite-linked admitted macro-boundary summary.
+    let owner_text = owner.to_string();
+    let site = site_id.to_string();
+    let target = generated.targets[0].target_id;
+    let target_text = target.to_string();
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "call_site"
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.caller_def_id.as_deref() == Some(owner_text.as_str())
+                && proof.build_domain_id.as_deref() == Some(AXUM_DOMAIN)
+        }),
+        "RAG proof context should expose the generated routing::get_service call_site row: {rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "call_edge"
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.caller_def_id.as_deref() == Some(owner_text.as_str())
+                && proof.callee_def_id.as_deref() == Some(target_text.as_str())
+                && proof.resolution_state.as_deref() == Some("resolved")
+        }),
+        "RAG proof context should expose the generated routing::get_service call_edge row: {rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "call_resolution"
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.resolution_state.as_deref() == Some("resolved")
+                && proof.resolved_def_id.as_deref() == Some(target_text.as_str())
+                && proof.blocker_reason.is_none()
+        }),
+        "RAG proof context should expose the generated routing::get_service resolved call_resolution row: {rows:#?}"
+    );
+    let boundary_id = ploke_test_utils::axum_routing_get_service_boundary_id(site_id);
+    let summary_id = ploke_test_utils::AXUM_ROUTING_GET_SERVICE_SUMMARY_ID;
+    assert_generated_macro_boundary_rows(
+        &rows,
+        site_id,
+        summary_id,
+        &boundary_id,
+        "expanded:item:axum-routing-get-service",
+        "def:axum::routing::method_routing::get_service",
+        "generated routing::get_service",
+    );
+
+    Ok(())
+}
+
+fn assert_generated_macro_boundary_rows(
+    rows: &[ProofContextInfo],
+    site_id: Uuid,
+    summary_id: &str,
+    boundary_id: &str,
+    expanded_item_id: &str,
+    definition_id: &str,
+    label: &str,
+) {
+    let site = site_id.to_string();
     assert!(
         rows.iter().any(|proof| {
             proof.kind == "expansion_boundary"
                 && proof.call_site_id.as_deref() == Some(site.as_str())
-                && proof.boundary_id.as_deref() == Some(boundary_id.as_str())
+                && proof.boundary_id.as_deref() == Some(boundary_id)
                 && proof.external_summary_id.as_deref() == Some(summary_id)
                 && proof.status.as_deref() == Some("externally_summarized")
                 && proof.blocker_reason.is_none()
         }),
-        "RAG proof context should expose the admitted routing::post boundary summary linked to the generated function callsite: {rows:#?}"
+        "RAG proof context should expose the admitted {label} boundary summary linked to the generated function callsite: {rows:#?}"
     );
     assert!(
         rows.iter().any(|proof| {
@@ -729,19 +868,17 @@ async fn proof_context_collection_preserves_axum_generated_post_resolution() -> 
                 && proof.status.as_deref() == Some("admitted")
                 && proof.allowed_effects == ["external_summary_boundary".to_string()]
         }),
-        "RAG proof context should expose the admitted routing::post summary artifact: {rows:#?}"
+        "RAG proof context should expose the admitted {label} summary artifact: {rows:#?}"
     );
     assert!(
         rows.iter().any(|proof| {
             proof.kind == "expanded_item"
-                && proof.expanded_item_id.as_deref() == Some("expanded:item:axum-routing-post")
-                && proof.boundary_id.as_deref() == Some(boundary_id.as_str())
-                && proof.definition_id.as_deref() == Some("def:axum::routing::method_routing::post")
+                && proof.expanded_item_id.as_deref() == Some(expanded_item_id)
+                && proof.boundary_id.as_deref() == Some(boundary_id)
+                && proof.definition_id.as_deref() == Some(definition_id)
         }),
-        "RAG proof context should expose the generated routing::post item linkage: {rows:#?}"
+        "RAG proof context should expose the {label} generated-item linkage: {rows:#?}"
     );
-
-    Ok(())
 }
 
 #[tokio::test]

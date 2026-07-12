@@ -723,6 +723,7 @@ async fn code_item_lookup_returns_generated_macro_boundary_path_rows() {
     for case in PathToolCase::INTO_SERVICE_FUTURE_NEW
         .into_iter()
         .chain(PathToolCase::ROUTING_POST)
+        .chain(PathToolCase::ROUTING_GET_SERVICE)
     {
         let fixture = PathToolFixture::new(case.clone()).await;
         let boundary = fixture
@@ -771,9 +772,11 @@ async fn code_item_lookup_returns_generated_macro_boundary_path_rows() {
         //   axum/src/handler/future.rs:11-18 and axum/src/macros.rs:19-20
         //   generate the concrete inherent constructor.
         //   axum/src/json.rs:248 calls generated `routing::post(...)`.
+        //   axum/src/routing/tests/get_to_head.rs:46 calls generated
+        //   `routing::get_service(...)`.
         // Expected traversal: the bounded `opaque_future!` expansion resolves
-        // the generated constructor edge, while broader generated routing
-        // helpers still remain unresolved frontiers.
+        // the generated constructor edge, while bounded routing macro
+        // expansions resolve representative generated handler/service helpers.
         let callee = fixture.case.callee();
         let ui = result.ui_payload.as_ref().expect("ui payload");
         if fixture.case.status == CallStatusKind::Resolved {
@@ -1566,6 +1569,7 @@ async fn code_item_edges_returns_generated_macro_boundary_path_rows() {
     for case in PathToolCase::INTO_SERVICE_FUTURE_NEW
         .into_iter()
         .chain(PathToolCase::ROUTING_POST)
+        .chain(PathToolCase::ROUTING_GET_SERVICE)
     {
         let fixture = PathToolFixture::new(case.clone()).await;
         let boundary = fixture

@@ -3,14 +3,19 @@ use uuid::Uuid;
 const AXUM_CALL_GRAPH_DOMAIN_ID: &str = "bd:corpus-axum-call-graph";
 pub const AXUM_OPAQUE_FUTURE_SUMMARY_ID: &str = "external-summary:axum-opaque-future-macro";
 pub const AXUM_ROUTING_POST_SUMMARY_ID: &str = "external-summary:axum-routing-post-macro";
+pub const AXUM_ROUTING_GET_SERVICE_SUMMARY_ID: &str =
+    "external-summary:axum-routing-get-service-macro";
 pub const AXUM_REQUEST_BUILDER_SUMMARY_ID: &str = "external-summary:axum-request-builder";
 pub const AXUM_STD_MEM_REPLACE_SUMMARY_ID: &str = "external-summary:axum-std-mem-replace";
 pub const AXUM_SERDE_JSON_FROM_SLICE_SUMMARY_ID: &str =
     "external-summary:axum-serde-json-from-slice";
 const AXUM_OPAQUE_FUTURE_EXPANDED_ITEM_ID: &str = "expanded:item:axum-opaque-future-new";
 const AXUM_ROUTING_POST_EXPANDED_ITEM_ID: &str = "expanded:item:axum-routing-post";
+const AXUM_ROUTING_GET_SERVICE_EXPANDED_ITEM_ID: &str = "expanded:item:axum-routing-get-service";
 const AXUM_OPAQUE_FUTURE_DEFINITION_ID: &str = "def:axum::future::IntoServiceFuture::new";
 const AXUM_ROUTING_POST_DEFINITION_ID: &str = "def:axum::routing::method_routing::post";
+const AXUM_ROUTING_GET_SERVICE_DEFINITION_ID: &str =
+    "def:axum::routing::method_routing::get_service";
 
 pub fn axum_opaque_future_boundary_id(call_site_id: Uuid) -> String {
     format!("boundary:{call_site_id}:opaque_future")
@@ -120,6 +125,67 @@ pub fn axum_routing_post_macro_summary_records(call_site_id: Uuid) -> Vec<serde_
             "version": "axum-routing-post-summary-v1",
             "review_method": "source-oracle-review",
             "scope_of_validity": "axum routing method macro boundary for generated post function",
+            "allowed_effects": ["external_summary_boundary"],
+            "required_containment": "none",
+            "invalidation_conditions": "source oracle, fixture hash, or proof policy changes",
+            "status": "admitted",
+            "evidence_use": "proof_only"
+        }),
+    ]);
+    records
+}
+
+pub fn axum_routing_get_service_boundary_id(call_site_id: Uuid) -> String {
+    format!("boundary:{call_site_id}:routing_get_service")
+}
+
+pub fn axum_routing_get_service_macro_summary_records(
+    call_site_id: Uuid,
+) -> Vec<serde_json::Value> {
+    let site = call_site_id.to_string();
+    let boundary_id = axum_routing_get_service_boundary_id(call_site_id);
+    let mut records = axum_call_graph_domain_records(AXUM_CALL_GRAPH_DOMAIN_ID);
+    records.extend([
+        serde_json::json!({
+            "fact_kind": "expansion_boundary",
+            "schema_version": "ploke-proof-facts.v1",
+            "boundary_id": boundary_id.clone(),
+            "build_domain_id": AXUM_CALL_GRAPH_DOMAIN_ID,
+            "call_site_id": site,
+            "boundary_kind": "macro_rules_invocation",
+            "expansion_state": "externally_summarized",
+            "external_summary_id": AXUM_ROUTING_GET_SERVICE_SUMMARY_ID,
+            "source_span": {
+                "file": "axum/src/routing/method_routing.rs",
+                "start_byte": 9725,
+                "end_byte": 9765
+            },
+            "evidence_use": "proof_only"
+        }),
+        serde_json::json!({
+            "fact_kind": "expanded_item",
+            "schema_version": "ploke-proof-facts.v1",
+            "expanded_item_id": AXUM_ROUTING_GET_SERVICE_EXPANDED_ITEM_ID,
+            "boundary_id": boundary_id.clone(),
+            "build_domain_id": AXUM_CALL_GRAPH_DOMAIN_ID,
+            "definition_id": AXUM_ROUTING_GET_SERVICE_DEFINITION_ID,
+            "source_span": {
+                "file": "axum/src/routing/method_routing.rs",
+                "start_byte": 9725,
+                "end_byte": 9765
+            },
+            "evidence_use": "proof_only"
+        }),
+        serde_json::json!({
+            "fact_kind": "external_summary",
+            "schema_version": "ploke-proof-facts.v1",
+            "external_summary_id": AXUM_ROUTING_GET_SERVICE_SUMMARY_ID,
+            "build_domain_id": AXUM_CALL_GRAPH_DOMAIN_ID,
+            "summary_class": "audited_no_process_effects",
+            "artifact_hash": "sha256:axum-routing-get-service-summary",
+            "version": "axum-routing-get-service-summary-v1",
+            "review_method": "source-oracle-review",
+            "scope_of_validity": "axum routing method macro boundary for generated get_service function",
             "allowed_effects": ["external_summary_boundary"],
             "required_containment": "none",
             "invalidation_conditions": "source oracle, fixture hash, or proof policy changes",

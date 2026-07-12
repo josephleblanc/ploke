@@ -141,8 +141,10 @@ bounded generated-item modeling slice:
 - The current DB/RAG/TUI contract is now to preserve the resolved
   `IntoServiceFuture::new` call edge, retain the admitted `expansion_boundary`
   / `expanded_item` proof metadata, preserve the bounded generated
-  `routing::post` handler edge, and preserve DB source-line traversal for the
-  sibling generated `*_service` free-function edges.
+  `routing::post` handler edge, preserve representative generated
+  `routing::get_service` service-function proof downstream, and preserve DB
+  source-line traversal for the sibling generated `*_service` free-function
+  edges.
 
 The next semantic implementation slice should avoid more targetless proof
 breadth and should choose either:
