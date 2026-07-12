@@ -20,6 +20,27 @@ pub(crate) struct DynamicToolFixture {
     pub(crate) owner: Uuid,
 }
 
+#[derive(Clone)]
+pub(crate) struct AmbiguousDynamicToolCase {
+    pub(crate) label: &'static str,
+    pub(crate) method: &'static str,
+    pub(crate) owner_type: &'static str,
+    pub(crate) file_suffix: &'static str,
+    pub(crate) body: &'static str,
+    pub(crate) expected_path: &'static [&'static str],
+    pub(crate) expected_relation: CallTargetKind,
+    corpus: DynamicToolCorpus,
+}
+
+pub(crate) struct AmbiguousDynamicToolFixture {
+    pub(crate) state: Arc<AppState>,
+    pub(crate) case: AmbiguousDynamicToolCase,
+    pub(crate) file_path: PathBuf,
+    pub(crate) module_path: Vec<String>,
+    pub(crate) owner: Uuid,
+    pub(crate) candidates: Vec<Uuid>,
+}
+
 #[derive(Clone, Copy)]
 enum DynamicToolCorpus {
     Axum,
@@ -146,7 +167,36 @@ impl DynamicToolCase {
         },
     ];
 
-    pub(crate) fn build_domain(self) -> &'static str {
+    pub(crate) fn build_domain(&self) -> &'static str {
+        self.corpus.build_domain()
+    }
+}
+
+impl AmbiguousDynamicToolCase {
+    pub(crate) const AXUM_LAYER: [Self; 2] = [
+        Self {
+            label: "axum/src/boxed.rs:159 Map::into_route layer trait object",
+            method: "into_route",
+            owner_type: "Map",
+            file_suffix: "axum/src/boxed.rs",
+            body: "(self.layer)(self.inner.into_route(state))",
+            expected_path: &["self", "layer"],
+            expected_relation: CallTargetKind::DynamicClosure,
+            corpus: DynamicToolCorpus::Axum,
+        },
+        Self {
+            label: "axum/src/boxed.rs:163 Map::call_with_state layer trait object",
+            method: "call_with_state",
+            owner_type: "Map",
+            file_suffix: "axum/src/boxed.rs",
+            body: "(self.layer)(self.inner.into_route(state)).call(request)",
+            expected_path: &["self", "layer"],
+            expected_relation: CallTargetKind::DynamicClosure,
+            corpus: DynamicToolCorpus::Axum,
+        },
+    ];
+
+    pub(crate) fn build_domain(&self) -> &'static str {
         self.corpus.build_domain()
     }
 }
@@ -645,6 +695,47 @@ impl DynamicToolFixture {
     }
 }
 
+impl AmbiguousDynamicToolFixture {
+    pub(crate) async fn new(case: AmbiguousDynamicToolCase) -> Self {
+        let db = case.corpus.db();
+        let owner = owner_by_body(
+            &db,
+            case.method,
+            case.owner_type,
+            None,
+            case.file_suffix,
+            case.body,
+            case.label,
+        );
+        let candidates = axum_layer_dynamic_candidates(&db);
+        assert!(
+            db.project_call_proof_facts_for_node(owner.id, case.build_domain())
+                .unwrap_or_else(|err| panic!("project {} proof facts: {err}", case.label))
+                >= 2,
+            "{} should project ambiguous dynamic call-site proof rows",
+            case.label
+        );
+        let state = axum_state_for_target(Arc::clone(&db), &owner, case.label).await;
+
+        Self {
+            state,
+            case,
+            file_path: owner.file_path,
+            module_path: owner.module_path,
+            owner: owner.id,
+            candidates,
+        }
+    }
+
+    pub(crate) fn module_path_arg(&self) -> String {
+        self.module_path.join("::")
+    }
+
+    pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
+        ctx_for_state(&self.state, call_id)
+    }
+}
+
 impl ReceiverToolFixture {
     pub(crate) async fn new(case: ReceiverToolCase) -> Self {
         let db = axum_call_graph_db();
@@ -1117,6 +1208,26 @@ pub(crate) fn assert_ambiguous_dynamic_candidates(
     label: &str,
     tool: &str,
 ) -> Uuid {
+    assert_ambiguous_dynamic_candidates_with_relation(
+        calls,
+        owner,
+        None,
+        expected,
+        CallTargetKind::DynamicFunction,
+        label,
+        tool,
+    )
+}
+
+pub(crate) fn assert_ambiguous_dynamic_candidates_with_relation(
+    calls: &[serde_json::Value],
+    owner: Uuid,
+    expected_path: Option<&[&str]>,
+    expected: &[Uuid],
+    expected_relation: CallTargetKind,
+    label: &str,
+    tool: &str,
+) -> Uuid {
     let matching = calls
         .iter()
         .filter_map(|call| serde_json::from_value::<CallContextInfo>(call.clone()).ok())
@@ -1132,6 +1243,14 @@ pub(crate) fn assert_ambiguous_dynamic_candidates(
         "{tool} should return exactly one ambiguous dynamic row for {label}: {calls:#?}"
     );
     let call = &matching[0];
+    if let Some(expected) = expected_path {
+        assert!(
+            call.path
+                .as_ref()
+                .is_some_and(|path| path.iter().map(String::as_str).eq(expected.iter().copied())),
+            "{tool} should preserve dynamic callee path for {label}: {call:#?}"
+        );
+    }
     assert_eq!(call.status, CallStatusKind::Ambiguous);
     assert_eq!(call.resolution, None);
     assert_eq!(
@@ -1142,8 +1261,8 @@ pub(crate) fn assert_ambiguous_dynamic_candidates(
     assert!(
         call.targets
             .iter()
-            .all(|target| target.relation == CallTargetKind::DynamicFunction),
-        "{tool} should expose only dynamic-function candidates for {label}: {call:#?}"
+            .all(|target| target.relation == expected_relation),
+        "{tool} should expose only {expected_relation:?} candidates for {label}: {call:#?}"
     );
     let mut actual = call
         .targets
@@ -1706,6 +1825,128 @@ pub(crate) fn assert_path_resolution_proof(
         }),
         "{tool} should not fabricate a call_edge for targetless path row {label}: {proofs:#?}"
     );
+}
+
+pub(crate) fn assert_ambiguous_candidate_proof(
+    proofs: &[serde_json::Value],
+    owner: Uuid,
+    site_id: Uuid,
+    build_domain: &str,
+    expected_candidates: &[Uuid],
+    label: &str,
+    tool: &str,
+) {
+    let owner = owner.to_string();
+    let site = site_id.to_string();
+    let rows = proofs
+        .iter()
+        .filter_map(|proof| serde_json::from_value::<ProofContextInfo>(proof.clone()).ok())
+        .collect::<Vec<_>>();
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "call_site"
+                && proof.caller_def_id.as_deref() == Some(owner.as_str())
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.build_domain_id.as_deref() == Some(build_domain)
+        }),
+        "{tool} should return the ambiguous call_site proof row for {label}: {proofs:#?}"
+    );
+    let resolution = rows
+        .iter()
+        .find(|proof| {
+            proof.kind == "call_resolution"
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.resolution_state.as_deref() == Some("ambiguous")
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "{tool} should return the ambiguous call_resolution proof row for {label}: {proofs:#?}"
+            )
+        });
+    let mut actual = resolution.candidate_def_ids.clone();
+    actual.sort();
+    let mut expected = expected_candidates
+        .iter()
+        .map(Uuid::to_string)
+        .collect::<Vec<_>>();
+    expected.sort();
+    assert_eq!(
+        actual, expected,
+        "{tool} should preserve every ambiguous candidate for {label}"
+    );
+    assert!(
+        rows.iter().all(|proof| {
+            proof.kind != "call_edge" || proof.call_site_id.as_deref() != Some(site.as_str())
+        }),
+        "{tool} should not fabricate a call_edge for ambiguous candidate row {label}: {proofs:#?}"
+    );
+}
+
+fn axum_layer_dynamic_candidates(db: &Database) -> Vec<Uuid> {
+    let layer = owner_by_body(
+        db,
+        "layer",
+        "MethodRouter",
+        Some(&["crate", "routing", "method_routing"]),
+        "axum/src/routing/method_routing.rs",
+        "let layer_fn = move |route: Route<E>| route.layer(layer.clone());",
+        "MethodRouter::layer layer_fn closure",
+    )
+    .id;
+    let route_layer = owner_by_body(
+        db,
+        "route_layer",
+        "MethodRouter",
+        Some(&["crate", "routing", "method_routing"]),
+        "axum/src/routing/method_routing.rs",
+        "let layer_fn = move |svc| Route::new(layer.layer(svc));",
+        "MethodRouter::route_layer layer_fn closure",
+    )
+    .id;
+    let mut candidates = vec![
+        closure_owner_for_method_parent(db, layer),
+        closure_owner_for_method_parent(db, route_layer),
+    ];
+    candidates.sort_unstable();
+    candidates
+}
+
+fn closure_owner_for_method_parent(db: &Database, parent: Uuid) -> Uuid {
+    let rows = db
+        .raw_query(&format!(
+            r#"?[id, kind, parent_kind, name] :=
+                parent = to_uuid("{parent}"),
+                *call_body_owner {{
+                    id,
+                    owner_kind: kind,
+                    parent_id: parent,
+                    parent_kind,
+                    label: name @ 'NOW'
+                }},
+                kind = "Closure",
+                name = "closure""#
+        ))
+        .unwrap_or_else(|err| panic!("query closure owner for method parent {parent}: {err}"));
+    assert_eq!(
+        rows.rows.len(),
+        1,
+        "expected exactly one closure call_body_owner row for method parent {parent}: {:#?}",
+        rows.rows
+    );
+    assert_eq!(
+        data_str(&rows.rows[0][1], "call_body_owner.owner_kind"),
+        "Closure"
+    );
+    assert_eq!(
+        data_str(&rows.rows[0][2], "call_body_owner.parent_kind"),
+        "Method"
+    );
+    assert_eq!(
+        data_str(&rows.rows[0][3], "call_body_owner.label"),
+        "closure"
+    );
+    to_uuid(&rows.rows[0][0])
+        .unwrap_or_else(|err| panic!("closure call_body_owner uuid for {parent}: {err}"))
 }
 
 fn owner_by_body(

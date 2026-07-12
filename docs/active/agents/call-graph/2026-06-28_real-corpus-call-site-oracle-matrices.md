@@ -388,8 +388,9 @@ callable-field blockers at `axum/src/boxed.rs:120` and
 targets, `dynamic_dispatch_unbounded` proof rows, and self-field callsite paths
 through `CallContextInfo.path`; the ambiguous layer rows retain the reviewed
 candidate ids while admitting no local traversal edge. Exact TUI
-`code_item_lookup` and `code_item_edges` tests assert the remaining
-owner-seeded targetless rows, blocked proof facts, and path payloads.
+`code_item_lookup` and `code_item_edges` tests assert those ambiguous layer
+candidate rows as well as the remaining owner-seeded targetless rows, blocked
+proof facts, and path payloads.
 
 ## Axum Module-Qualified Constructor Oracle
 

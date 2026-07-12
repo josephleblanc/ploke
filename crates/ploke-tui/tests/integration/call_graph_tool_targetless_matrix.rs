@@ -11,15 +11,17 @@ use ploke_tui::tools::{
 use uuid::Uuid;
 
 use crate::call_graph_tool_support::{
-    DynamicToolCase, DynamicToolFixture, PathToolCase, PathToolFixture, ReceiverToolCase,
-    ReceiverToolFixture, assert_admitted_external_summary_effect,
-    assert_admitted_external_summary_proof, assert_admitted_macro_boundary_summary_proof,
-    assert_dynamic_context, assert_dynamic_proof, assert_method_context, assert_method_proof,
-    assert_path_blocker_proof, assert_path_context, assert_path_context_absent,
-    assert_path_context_count, assert_path_resolution_proof, assert_resolved_method_context,
-    assert_resolved_method_proof, assert_resolved_path_context_count,
-    assert_resolved_path_context_target, assert_resolved_path_proof,
-    assert_runtime_dispatch_blocker, request_parts_extract_target, ui_field,
+    AmbiguousDynamicToolCase, AmbiguousDynamicToolFixture, DynamicToolCase, DynamicToolFixture,
+    PathToolCase, PathToolFixture, ReceiverToolCase, ReceiverToolFixture,
+    assert_admitted_external_summary_effect, assert_admitted_external_summary_proof,
+    assert_admitted_macro_boundary_summary_proof, assert_ambiguous_candidate_proof,
+    assert_ambiguous_dynamic_candidates_with_relation, assert_dynamic_context,
+    assert_dynamic_proof, assert_method_context, assert_method_proof, assert_path_blocker_proof,
+    assert_path_context, assert_path_context_absent, assert_path_context_count,
+    assert_path_resolution_proof, assert_resolved_method_context, assert_resolved_method_proof,
+    assert_resolved_path_context_count, assert_resolved_path_context_target,
+    assert_resolved_path_proof, assert_runtime_dispatch_blocker, request_parts_extract_target,
+    ui_field,
 };
 
 #[tokio::test]
@@ -98,6 +100,81 @@ async fn code_item_lookup_returns_dynamic_targetless_real_corpus_rows() {
                 .expect("proof count")
                 >= 2,
             "code_item_lookup should surface dynamic targetless proof rows"
+        );
+    }
+}
+
+#[tokio::test]
+async fn code_item_lookup_returns_axum_layer_dynamic_candidate_rows() {
+    for case in AmbiguousDynamicToolCase::AXUM_LAYER {
+        let fixture = AmbiguousDynamicToolFixture::new(case).await;
+        let params = LookupParams {
+            item_name: Cow::Borrowed(fixture.case.method),
+            file_path: Cow::Owned(fixture.file_path.display().to_string()),
+            node_kind: Cow::Borrowed("method"),
+            module_path: Cow::Owned(fixture.module_path_arg()),
+            owner_trait: None,
+            owner_type: Some(Cow::Borrowed(fixture.case.owner_type)),
+            parent_name: None,
+            allowed_effects: Vec::new(),
+        };
+
+        let result = CodeItemLookup::execute(params, fixture.ctx("dynamic-candidate-lookup"))
+            .await
+            .unwrap_or_else(|err| panic!("{} code_item_lookup: {err}", fixture.case.label));
+        let payload: serde_json::Value =
+            serde_json::from_str(&result.content).expect("deserialize ConciseContext");
+        let call_context = payload
+            .get("call_context")
+            .and_then(serde_json::Value::as_array)
+            .expect("call_context array");
+        let proof_context = payload
+            .get("proof_context")
+            .and_then(serde_json::Value::as_array)
+            .expect("proof_context array");
+
+        // Matrix:
+        //   docs/active/agents/call-graph/
+        //   2026-06-28_real-corpus-call-site-oracle-matrices.md
+        //
+        // Source chains:
+        //   axum/src/boxed.rs:159 calls `(self.layer)(self.inner.into_route(state))`.
+        //   axum/src/boxed.rs:163 calls
+        //   `(self.layer)(self.inner.into_route(state)).call(request)`.
+        // Expected traversal: exact owner lookup exposes candidate-only
+        // `DynamicClosure` ambiguity from the reviewed
+        // `MethodRouter::{layer,route_layer}` closure bindings and does not
+        // fabricate a resolved traversal edge.
+        let site_id = assert_ambiguous_dynamic_candidates_with_relation(
+            call_context,
+            fixture.owner,
+            Some(fixture.case.expected_path),
+            &fixture.candidates,
+            fixture.case.expected_relation.clone(),
+            fixture.case.label,
+            "lookup",
+        );
+        assert_ambiguous_candidate_proof(
+            proof_context,
+            fixture.owner,
+            site_id,
+            fixture.case.build_domain(),
+            &fixture.candidates,
+            fixture.case.label,
+            "lookup",
+        );
+
+        let ui = result.ui_payload.as_ref().expect("ui payload");
+        assert!(
+            ui_field(ui, "call_context_outgoing")
+                .parse::<usize>()
+                .expect("outgoing count")
+                >= 1,
+            "code_item_lookup should surface outgoing dynamic candidate context"
+        );
+        assert_eq!(
+            ui_field(ui, "proof_context"),
+            proof_context.len().to_string()
         );
     }
 }
@@ -919,6 +996,73 @@ async fn code_item_edges_returns_dynamic_targetless_real_corpus_rows() {
         );
         let proof_count = proof_context.len().to_string();
         assert_eq!(ui_field(ui, "proof_context"), proof_count.as_str());
+    }
+}
+
+#[tokio::test]
+async fn code_item_edges_returns_axum_layer_dynamic_candidate_rows() {
+    for case in AmbiguousDynamicToolCase::AXUM_LAYER {
+        let fixture = AmbiguousDynamicToolFixture::new(case).await;
+        let params = EdgesParams {
+            item_name: Cow::Borrowed(fixture.case.method),
+            file_path: Cow::Owned(fixture.file_path.display().to_string()),
+            node_kind: Cow::Borrowed("method"),
+            module_path: Cow::Owned(fixture.module_path_arg()),
+            owner_trait: None,
+            owner_type: Some(Cow::Borrowed(fixture.case.owner_type)),
+            parent_name: None,
+            allowed_effects: Vec::new(),
+        };
+
+        let result = CodeItemEdges::execute(params, fixture.ctx("dynamic-candidate-edges"))
+            .await
+            .unwrap_or_else(|err| panic!("{} code_item_edges: {err}", fixture.case.label));
+        let payload: serde_json::Value =
+            serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
+        let call_context = payload
+            .get("node_info")
+            .and_then(|node| node.get("call_context"))
+            .and_then(serde_json::Value::as_array)
+            .expect("node_info.call_context array");
+        let proof_context = payload
+            .get("node_info")
+            .and_then(|node| node.get("proof_context"))
+            .and_then(serde_json::Value::as_array)
+            .expect("node_info.proof_context array");
+
+        // Same real-corpus dynamic candidate oracle as the lookup test above,
+        // exercised through the edge-oriented exact tool payload.
+        let site_id = assert_ambiguous_dynamic_candidates_with_relation(
+            call_context,
+            fixture.owner,
+            Some(fixture.case.expected_path),
+            &fixture.candidates,
+            fixture.case.expected_relation.clone(),
+            fixture.case.label,
+            "edges",
+        );
+        assert_ambiguous_candidate_proof(
+            proof_context,
+            fixture.owner,
+            site_id,
+            fixture.case.build_domain(),
+            &fixture.candidates,
+            fixture.case.label,
+            "edges",
+        );
+
+        let ui = result.ui_payload.as_ref().expect("ui payload");
+        assert!(
+            ui_field(ui, "call_context_outgoing")
+                .parse::<usize>()
+                .expect("outgoing count")
+                >= 1,
+            "code_item_edges should surface outgoing dynamic candidate context"
+        );
+        assert_eq!(
+            ui_field(ui, "proof_context"),
+            proof_context.len().to_string()
+        );
     }
 }
 
