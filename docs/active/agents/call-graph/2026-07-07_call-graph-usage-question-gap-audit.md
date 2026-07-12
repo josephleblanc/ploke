@@ -153,3 +153,36 @@ breadth and should choose either:
 - a smaller non-generated proof carrier with concrete new syntax evidence that
   is not already represented by the current fixture-backed private callable
   forwarding, receiver, or async future-flow rows.
+
+### 2026-07-12 post-regeneration candidate boundary
+
+After regenerating fixtures and rechecking the nearby fixture/real-corpus rows,
+the smallest apparent non-generated candidates are already covered:
+
+- returned function-pointer parameter forwarding through
+  `return_forwarded_function_pointer(local_target)()`;
+- returned closure literals, returned local closure bindings, and returned
+  closure aliases;
+- tuple-field, named-field, alias, and alias-chain awaited async-closure future
+  bindings;
+- private one-hop and two-hop forwarding for `fn()`, `&dyn Fn`, `Box<dyn Fn>`,
+  and constructed holder-field callable parameters;
+- mutable referenced `dyn FnMut` local binding proof.
+
+Remaining visible targetless rows are not safe to promote with the current proof
+carriers. They need one of the larger models listed above:
+
+- object/field value-flow for real-corpus dynamic callable fields such as axum
+  `self.into_route`, `self.layer`, and `self.tap_fn`;
+- generated top-level item modeling for parameterized item macros such as axum
+  `opaque_future!`;
+- macro-expanded arbitrary-expression bodies for memchr's generated
+  `transmute::<Fn, RealFn>(fun)(...)` callsites;
+- broader runtime trait-object dispatch summaries for real-corpus boxed
+  `dyn FnMut` fields;
+- external-return or source/sink policy summaries when the target is outside
+  local source ownership.
+
+Do not spend another slice adding fixture breadth around the already-covered
+private callable or awaited-future cases. The next implementation should pick
+one larger proof model explicitly and keep the first test DB-first.
