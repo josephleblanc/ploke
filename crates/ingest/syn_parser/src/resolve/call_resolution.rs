@@ -1526,36 +1526,6 @@ impl<'a> CallRelationResolver<'a> {
         Ok(targets)
     }
 
-    fn resolve_workspace_trait_import(
-        &self,
-        owner: CallBodyOwnerId,
-        segment: &str,
-    ) -> Result<Vec<TraitNodeId>, SynParserError> {
-        let Some(module_id) = self.containing_module_for_owner(owner) else {
-            return Ok(Vec::new());
-        };
-        let module_id = self.import_scope_module(module_id)?;
-        let Some(module_node) = self
-            .graph
-            .modules()
-            .iter()
-            .find(|module| module.id == module_id)
-        else {
-            return Ok(Vec::new());
-        };
-
-        let mut targets = Vec::new();
-        for import_node in &module_node.imports {
-            if import_node.visible_name != segment || import_node.is_glob {
-                continue;
-            }
-            targets.extend(self.resolve_workspace_trait_path(import_node.source_path())?);
-        }
-        targets.sort_unstable();
-        targets.dedup();
-        Ok(targets)
-    }
-
     fn resolve_workspace_trait_path(
         &self,
         path: &[String],

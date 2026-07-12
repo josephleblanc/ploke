@@ -317,7 +317,9 @@ The `corpus_axum_call_graph` fixture was recreated with
 `cargo run -p xtask --features call_graph -- recreate-backup-db --fixture corpus_axum_call_graph`
 after bounded item-position `all_the_tuples!(impl_handler)` modeling began
 projecting generated `Handler::call` impl bodies for extractor tuple arities 1
-through 16.
+through 16, and workspace trait import/re-export traversal began resolving the
+generated impl where-clause traits through the same local re-export chains used
+by workspace type import proof.
 
 Post-regeneration verification:
 
@@ -330,10 +332,13 @@ Post-regeneration verification:
 - The generated `Handler::call` method owners are recorded under generated
   `impl Handler<...> for F` trait impl rows instead of being modeled as
   inherent impl methods.
-- Those generated associated-path rows currently remain unsupported and
-  targetless: resolver proof does not yet connect the generated impl
-  where-clause to the nested async-block owner, and no traversal edge is
-  fabricated.
+- Those generated associated-path rows now resolve through generated impl
+  where-clause proof and the local `crate::extract::{FromRequest,
+  FromRequestParts}` re-export chain to the axum-core trait method bindings.
+- Target-centered caller queries now include the generated extractor rows:
+  `FromRequest::from_request` has 18 callers and
+  `FromRequestParts::from_request_parts` has 125 callers in the regenerated
+  axum fixture.
 
 ## 2026-07-11 Axum Module-Qualified Constructor Refresh
 

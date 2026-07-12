@@ -262,9 +262,9 @@ external receiver type proof.
 | Case | Callsites | Owner | Evidence chain |
 | --- | --- | --- | --- |
 | `E::from_request` / `T::from_request` | `axum-core/src/ext_traits/request.rs:279`; `extract/mod.rs:127` | `RequestExt::extract_with_state`; blanket `FromRequest<S> for Result<T, T::Rejection>` | trait `FromRequest` at `extract/mod.rs:79`; method `:85`; bounds `E: FromRequest<S, M>` at `request.rs:276` and `T: FromRequest<S>` at `extract/mod.rs:121`; concrete impl remains type-parameter dependent. |
-| `E::from_request_parts` / `T::from_request_parts` | `axum-core/src/ext_traits/request.rs:305`; `ext_traits/request_parts.rs:133`; `extract/mod.rs:115` | request and request-parts extraction helpers; blanket `FromRequestParts<S> for Result<T, T::Rejection>` | trait `FromRequestParts` at `extract/mod.rs:53`; method `:59`; bounds at call owner -> trait-associated dispatch. |
-| handler macro `$ty::from_request_parts` | `axum/src/handler/mod.rs:242` | generated `Handler::call`, async block starts `:240` | current fixture projects stable generated rows such as `T1::from_request_parts` on generated async-block owners, but they remain unsupported/targetless until generated where-clause proof is connected to those nested owners. |
-| handler macro `$last::from_request` | `axum/src/handler/mod.rs:250` | generated `Handler::call`, async block starts `:240` | current fixture projects stable generated rows such as `T1::from_request` / `T2::from_request` on generated async-block owners, but they remain unsupported/targetless until generated where-clause proof is connected to those nested owners. |
+| `E::from_request_parts` / `T::from_request_parts` | `axum-core/src/ext_traits/request.rs:305`; `ext_traits/request_parts.rs:133`; `extract/mod.rs:115`; `axum/src/middleware/from_extractor.rs:220` | request and request-parts extraction helpers; blanket `FromRequestParts<S> for Result<T, T::Rejection>`; middleware async block nested in `FromExtractor::call` | trait `FromRequestParts` at `extract/mod.rs:53`; method `:59`; bounds at call owner -> trait-associated dispatch. |
+| handler macro `$ty::from_request_parts` | `axum/src/handler/mod.rs:242` | generated `Handler::call`, async block starts `:240` | current fixture projects stable generated rows such as `T1::from_request_parts` on generated async-block owners and resolves them through generated impl where-clause proof plus the `crate::extract::FromRequestParts` re-export chain to `FromRequestParts::from_request_parts`. |
+| handler macro `$last::from_request` | `axum/src/handler/mod.rs:250` | generated `Handler::call`, async block starts `:240` | current fixture projects stable generated rows such as `T1::from_request` / `T2::from_request` on generated async-block owners and resolves them through generated impl where-clause proof plus the `crate::extract::FromRequest` re-export chain to `FromRequest::from_request`. |
 | `FromRequest` ViaParts blanket inner call | `axum-core/src/extract/mod.rs:103` | blanket impl method body, async block | marker `private::ViaParts` at `:31`; blanket impl `:91`; bound `T: FromRequestParts<S>` at `:94`; call `Self::from_request_parts`; regenerated fixture owns this as an async-block path row that resolves through the parent blanket impl bounds to `FromRequestParts::from_request_parts`. |
 | `FromRef::from_ref` same-crate bounded calls | `axum-core/src/ext_traits/mod.rs:25,45` | axum-core state extraction test helpers | trait `FromRef` at `extract/from_ref.rs:13`; method `:15`; same-crate bounds now traverse to the trait method binding; concrete impl dispatch remains type-dependent. |
 | `FromRef::from_ref` dependency-root bounded calls | `axum/src/extract/state.rs:309`; `middleware/from_extractor.rs:328` | axum state extraction helpers and middleware tests | `FromRef` is imported through `axum_core::extract::FromRef`; both the top-level `State` extractor row and the nested middleware `local_impl_method:from_request_parts` row traverse through parsed workspace dependency proof to the axum-core `FromRef::from_ref` trait method binding. |
@@ -276,11 +276,14 @@ external receiver type proof.
 | closure body boundary | `axum-macros/src/from_ref.rs:23` | closure inside `from_ref::expand` | closure call to `expand_field` is nested-owner owned in the regenerated fixture and resolves to target fn `from_ref.rs:29`. |
 | async block boundary | `axum/src/handler/mod.rs:217,240` | handler `call` async blocks | calls inside async blocks should not be flattened into outer function owner once nested async owners are modeled. |
 
-Current executable coverage: DB target traversal now asserts the two one-hop
-`E::from_request` / `T::from_request` edges to `FromRequest::from_request`, the four one-hop
-`E::from_request_parts`, `T::from_request_parts`, and async-block-owned
-`Self::from_request_parts` edges to `FromRequestParts::from_request_parts`, and
-the two same-crate axum-core `FromRef::from_ref` bounded associated-path edges.
+Current executable coverage: DB target traversal now asserts the two hand-written
+one-hop `E::from_request` / `T::from_request` edges plus 16 generated
+`Tn::from_request` handler extraction rows to `FromRequest::from_request`, the
+five hand-written `E::from_request_parts`, `T::from_request_parts`, and
+async-block-owned `Self::from_request_parts` edges plus 120 generated
+`Tn::from_request_parts` handler extraction rows to
+`FromRequestParts::from_request_parts`, and the two same-crate axum-core
+`FromRef::from_ref` bounded associated-path edges.
 These are trait method binding edges only; concrete runtime impl dispatch
 remains a documented future slice. The top-level axum dependency-root
 `FromRef::from_ref` path row at `axum/src/extract/state.rs:309` and the nested
@@ -290,9 +293,9 @@ tests assert the enclosing `test_from_extractor` item does not flatten that
 nested row.
 The axum handler `all_the_tuples!(impl_handler)` macro extraction rows are now
 projected as stable generated `Tn::from_request*` path rows under generated
-`impl Handler<...> for F` method owners, but they remain targetless and are not
-included in the target-centered trait method caller counts until the generated
-impl where-clause can be used from the nested async-block owner.
+`impl Handler<...> for F` method owners, and they are included in the
+target-centered trait method caller counts through generated impl where-clause
+proof from the nested async-block owner.
 Receiver tests now assert exact owner-count buckets and source-line
 fanout for the projected `req.extensions_mut()` local-binding rows, split into
 direct/single-reference external parameter receivers and still-unresolved

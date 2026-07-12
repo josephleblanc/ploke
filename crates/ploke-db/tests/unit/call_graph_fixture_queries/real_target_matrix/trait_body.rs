@@ -15,6 +15,9 @@ fn axum_real_target_trait_associated_paths_reach_trait_methods() -> Result<(), D
     //   axum-core/src/ext_traits/request.rs:305 and
     //   ext_traits/request_parts.rs:133 call `E::from_request_parts`.
     //   axum-core/src/extract/mod.rs:115 calls `T::from_request_parts`.
+    //   axum/src/middleware/from_extractor.rs:220 calls
+    //   `E::from_request_parts` from an async-block owner nested inside
+    //   `FromExtractor::call`.
     //   axum-core/src/extract/mod.rs:103 calls `Self::from_request_parts`
     //   from an async-block owner nested inside the ViaParts blanket impl.
     // Intermediate bindings:
@@ -87,6 +90,20 @@ fn axum_real_target_trait_associated_paths_reach_trait_methods() -> Result<(), D
             &["E", "from_request_parts"][..],
             from_request_parts,
         ),
+        (
+            "axum/src/middleware/from_extractor.rs:220",
+            async_block_owner_for_method_parent(
+                &db,
+                method_id_by_name_body_and_file_suffix(
+                    &db,
+                    "call",
+                    "E::from_request_parts(&mut parts, &state).await",
+                    "axum/src/middleware/from_extractor.rs",
+                )?,
+            )?,
+            &["E", "from_request_parts"][..],
+            from_request_parts,
+        ),
     ];
     for (label, owner, path, target) in cases {
         let context = db.call_context_for_owner(owner)?;
@@ -113,8 +130,8 @@ fn axum_real_target_trait_associated_paths_reach_trait_methods() -> Result<(), D
     let from_request_callers = db.callers_for_target(from_request)?;
     assert_eq!(
         from_request_callers.len(),
-        2,
-        "FromRequest::from_request should expose both inspected bounded callers: {from_request_callers:#?}"
+        18,
+        "FromRequest::from_request should expose both hand-written bounded callers plus generated Handler arity callers: {from_request_callers:#?}"
     );
     assert_sites_match_callers(
         &db,
@@ -126,8 +143,8 @@ fn axum_real_target_trait_associated_paths_reach_trait_methods() -> Result<(), D
     let from_request_parts_callers = db.callers_for_target(from_request_parts)?;
     assert_eq!(
         from_request_parts_callers.len(),
-        4,
-        "FromRequestParts::from_request_parts should expose all inspected bounded callers: {from_request_parts_callers:#?}"
+        125,
+        "FromRequestParts::from_request_parts should expose all inspected bounded callers plus generated Handler extractor-prefix callers: {from_request_parts_callers:#?}"
     );
     assert_sites_match_callers(
         &db,
@@ -751,13 +768,11 @@ fn axum_real_target_handler_macro_extraction_paths_project_generated_rows() -> R
     //   axum/src/handler/mod.rs:242 calls
     //   `$ty::from_request_parts(&mut parts, &state).await`.
     //   handler/mod.rs:250 calls `$last::from_request(req, &state).await`.
-    // Current traversal gap: the bounded `all_the_tuples!(impl_handler)`
+    // Expected traversal: the bounded `all_the_tuples!(impl_handler)`
     // generated item model projects concrete generic names (`T1`, `T2`, ...)
-    // instead of unstable macro metavariables, and preserves async-block
-    // ownership for the generated call body. These generated generic associated
-    // paths are classified unsupported until resolver proof can connect the
-    // generated impl where-clause to the nested async-block owner, so this test
-    // asserts targetless rows and zero fabricated traversal candidates.
+    // instead of unstable macro metavariables, preserves async-block ownership,
+    // and uses the generated impl where-clause proof to reach the
+    // `FromRequest` / `FromRequestParts` trait method bindings.
     let one_param = method_id_by_name_and_body_substring(
         &db,
         "call",
@@ -766,21 +781,26 @@ fn axum_real_target_handler_macro_extraction_paths_project_generated_rows() -> R
     assert_method_owner_impl_trait(&db, one_param, "Handler", "generated arity-1 Handler::call")?;
     let one_param_body = async_block_owner_for_method_parent(&db, one_param)?;
     let one_param_context = db.call_context_for_owner(one_param_body)?;
-    let last_row = assert_targetless_row(
-        &one_param_context,
-        one_param_body,
-        TargetlessRowCase::path(
-            &["T1", "from_request"],
-            2,
-            CallStatusKind::Unsupported,
-            "axum/src/handler/mod.rs generated arity-1 T1::from_request",
-        ),
+    let from_request = method_id_by_trait_name(&db, "FromRequest", "from_request")?;
+    let from_request_parts =
+        method_id_by_trait_name(&db, "FromRequestParts", "from_request_parts")?;
+    let last_row = row_by_path(&one_param_context, &["T1", "from_request"]);
+    assert_resolved_target(
+        last_row,
+        from_request,
+        CallRelationKind::AssociatedFunction,
+        CallSiteKind::Path,
+        CallTargetKind::Method,
     );
-    assert_no_traversal_candidates_for_site(
+    assert_one_edge_traversal(
         &db,
-        one_param_body,
-        last_row.site.id,
-        "axum/src/handler/mod.rs generated arity-1 T1::from_request",
+        TraversalExpectation {
+            label: "axum/src/handler/mod.rs generated arity-1 T1::from_request",
+            owner: one_param_body,
+            target: from_request,
+            site_id: last_row.site.id,
+            expected_edge_count: 1,
+        },
     )?;
 
     let two_param = method_id_by_name_and_body_substring(
@@ -791,37 +811,41 @@ fn axum_real_target_handler_macro_extraction_paths_project_generated_rows() -> R
     assert_method_owner_impl_trait(&db, two_param, "Handler", "generated arity-2 Handler::call")?;
     let two_param_body = async_block_owner_for_method_parent(&db, two_param)?;
     let two_param_context = db.call_context_for_owner(two_param_body)?;
-    let parts_row = assert_targetless_row(
-        &two_param_context,
-        two_param_body,
-        TargetlessRowCase::path(
-            &["T1", "from_request_parts"],
-            2,
-            CallStatusKind::Unsupported,
-            "axum/src/handler/mod.rs generated arity-2 T1::from_request_parts",
-        ),
+    let parts_row = row_by_path(&two_param_context, &["T1", "from_request_parts"]);
+    assert_resolved_target(
+        parts_row,
+        from_request_parts,
+        CallRelationKind::AssociatedFunction,
+        CallSiteKind::Path,
+        CallTargetKind::Method,
     );
-    assert_no_traversal_candidates_for_site(
+    assert_one_edge_traversal(
         &db,
-        two_param_body,
-        parts_row.site.id,
-        "axum/src/handler/mod.rs generated arity-2 T1::from_request_parts",
+        TraversalExpectation {
+            label: "axum/src/handler/mod.rs generated arity-2 T1::from_request_parts",
+            owner: two_param_body,
+            target: from_request_parts,
+            site_id: parts_row.site.id,
+            expected_edge_count: 1,
+        },
     )?;
-    let last_row = assert_targetless_row(
-        &two_param_context,
-        two_param_body,
-        TargetlessRowCase::path(
-            &["T2", "from_request"],
-            2,
-            CallStatusKind::Unsupported,
-            "axum/src/handler/mod.rs generated arity-2 T2::from_request",
-        ),
+    let last_row = row_by_path(&two_param_context, &["T2", "from_request"]);
+    assert_resolved_target(
+        last_row,
+        from_request,
+        CallRelationKind::AssociatedFunction,
+        CallSiteKind::Path,
+        CallTargetKind::Method,
     );
-    assert_no_traversal_candidates_for_site(
+    assert_one_edge_traversal(
         &db,
-        two_param_body,
-        last_row.site.id,
-        "axum/src/handler/mod.rs generated arity-2 T2::from_request",
+        TraversalExpectation {
+            label: "axum/src/handler/mod.rs generated arity-2 T2::from_request",
+            owner: two_param_body,
+            target: from_request,
+            site_id: last_row.site.id,
+            expected_edge_count: 1,
+        },
     )?;
     assert_no_path_rows(&db, &["ty", "from_request_parts"])?;
     assert_no_path_rows(&db, &["last", "from_request"])
@@ -937,30 +961,7 @@ fn axum_real_target_handler_async_block_body_calls_are_async_block_owned() -> Re
         );
     }
 
-    assert_targetless_path_owner_kind_line_fanout(
-        &db,
-        &CORPUS_AXUM_CALL_GRAPH,
-        &["self"],
-        CallStatusKind::Unsupported,
-        "AsyncBlock",
-        &[SourceLineFanout {
-            file_suffix: "axum/src/handler/mod.rs",
-            lines: &[217],
-        }],
-    )?;
-    assert_targetless_method_owner_kind_line_fanout(
-        &db,
-        &CORPUS_AXUM_CALL_GRAPH,
-        "into_response",
-        "AwaitPathCallResult",
-        Some(&["self"]),
-        CallStatusKind::Unsupported,
-        "AsyncBlock",
-        &[SourceLineFanout {
-            file_suffix: "axum/src/handler/mod.rs",
-            lines: &[217],
-        }],
-    )
+    Ok(())
 }
 
 fn async_block_owner_for_method_parent(db: &Database, parent: Uuid) -> Result<Uuid, DbError> {

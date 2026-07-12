@@ -6,7 +6,8 @@ use crate::{
         graph::GraphAccess,
         nodes::{
             AnyNodeId, AsAnyNodeId, CallBodyOwnerId, FunctionNodeId, ImportKind, ImportNode,
-            ImportNodeId, ModuleNodeId, OrdinaryTypeTargetId, OrdinaryTypeUseId, TypeAliasNodeId,
+            ImportNodeId, ModuleNodeId, OrdinaryTypeTargetId, OrdinaryTypeUseId, TraitNodeId,
+            TypeAliasNodeId,
         },
         relations::{SyntacticRelation, TypeRelation},
         types::TypeNode,
@@ -16,8 +17,8 @@ use crate::{
 
 use super::{
     CallRelationResolver, LocalFunctionPathResolution, LocalModulePathResolution,
-    LocalTypeResolution, MAX_IMPORT_CHAIN_DEPTH, WorkspaceTypeResolution, WorkspaceTypeTarget,
-    dependency_name_matches,
+    LocalTraitResolution, LocalTypeResolution, MAX_IMPORT_CHAIN_DEPTH, WorkspaceTypeResolution,
+    WorkspaceTypeTarget, dependency_name_matches,
 };
 
 impl<'a> CallRelationResolver<'a> {
@@ -754,6 +755,267 @@ impl<'a> CallRelationResolver<'a> {
         }
 
         self.collect_workspace_dependency_glob_type_candidates(
+            import_node,
+            segment,
+            candidates,
+            saw_ambiguous,
+        )
+    }
+
+    pub(super) fn resolve_workspace_trait_import(
+        &self,
+        owner: CallBodyOwnerId,
+        segment: &str,
+    ) -> Result<Vec<TraitNodeId>, SynParserError> {
+        if self.workspace.is_none() {
+            return Ok(Vec::new());
+        }
+
+        let Some(module_id) = self.containing_module_for_owner(owner) else {
+            return Ok(Vec::new());
+        };
+        let module_id = self.import_scope_module(module_id)?;
+        let mut targets = Vec::new();
+        let mut saw_ambiguous = false;
+        self.collect_workspace_trait_candidates_in_module(
+            module_id,
+            segment,
+            &mut targets,
+            &mut saw_ambiguous,
+            0,
+        )?;
+
+        targets.sort_unstable();
+        targets.dedup();
+        if saw_ambiguous {
+            Ok(Vec::new())
+        } else {
+            Ok(targets)
+        }
+    }
+
+    fn collect_workspace_trait_path_from_module(
+        &self,
+        mut current_module: ModuleNodeId,
+        path: &[String],
+        candidates: &mut Vec<TraitNodeId>,
+        saw_ambiguous: &mut bool,
+        depth: usize,
+    ) -> Result<(), SynParserError> {
+        if depth > MAX_IMPORT_CHAIN_DEPTH {
+            return Err(SynParserError::InternalState(format!(
+                "call resolution exceeded import chain depth limit of {MAX_IMPORT_CHAIN_DEPTH} while resolving workspace trait `{}`",
+                path.join("::")
+            )));
+        }
+
+        let start_idx = self.start_segment_index(path, &mut current_module)?;
+        if start_idx >= path.len() {
+            return Ok(());
+        }
+
+        for idx in start_idx..path.len() {
+            let segment = path[idx].as_str();
+            let is_last = idx == path.len() - 1;
+            if is_last {
+                return self.collect_workspace_trait_candidates_in_module(
+                    current_module,
+                    segment,
+                    candidates,
+                    saw_ambiguous,
+                    depth + 1,
+                );
+            }
+
+            current_module = match self.resolve_module_segment(current_module, segment)? {
+                LocalModulePathResolution::Resolved(module_id) => module_id,
+                LocalModulePathResolution::Unresolved => return Ok(()),
+                LocalModulePathResolution::Ambiguous => {
+                    *saw_ambiguous = true;
+                    return Ok(());
+                }
+            };
+        }
+
+        Ok(())
+    }
+
+    fn collect_workspace_trait_candidates_in_module(
+        &self,
+        module_id: ModuleNodeId,
+        segment: &str,
+        candidates: &mut Vec<TraitNodeId>,
+        saw_ambiguous: &mut bool,
+        depth: usize,
+    ) -> Result<(), SynParserError> {
+        if depth > MAX_IMPORT_CHAIN_DEPTH {
+            return Err(SynParserError::InternalState(format!(
+                "call resolution exceeded import chain depth limit of {MAX_IMPORT_CHAIN_DEPTH} while resolving workspace trait `{segment}`"
+            )));
+        }
+
+        let Some(module_node) = self
+            .graph
+            .modules()
+            .iter()
+            .find(|module| module.id == module_id)
+        else {
+            return Ok(());
+        };
+
+        for import_node in &module_node.imports {
+            if import_node.is_glob {
+                self.collect_workspace_glob_trait_candidates(
+                    import_node,
+                    segment,
+                    candidates,
+                    saw_ambiguous,
+                    depth + 1,
+                )?;
+            } else if import_node.visible_name == segment {
+                self.collect_workspace_direct_trait_candidates(
+                    import_node,
+                    candidates,
+                    saw_ambiguous,
+                    depth + 1,
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    fn collect_workspace_direct_trait_candidates(
+        &self,
+        import_node: &ImportNode,
+        candidates: &mut Vec<TraitNodeId>,
+        saw_ambiguous: &mut bool,
+        depth: usize,
+    ) -> Result<(), SynParserError> {
+        if depth > MAX_IMPORT_CHAIN_DEPTH {
+            return Err(SynParserError::InternalState(format!(
+                "call resolution exceeded import chain depth limit of {MAX_IMPORT_CHAIN_DEPTH} at {}",
+                import_node.id.as_any()
+            )));
+        }
+
+        if let Some((krate, tail)) = self.workspace_dependency_tail(import_node.source_path()) {
+            let resolver = CallRelationResolver::new(krate.graph, krate.tree);
+            match resolver.resolve_trait_path_from_root(tail)? {
+                LocalTraitResolution::Resolved(target) => candidates.push(target),
+                LocalTraitResolution::Unresolved => {}
+                LocalTraitResolution::Ambiguous => *saw_ambiguous = true,
+            }
+            return Ok(());
+        }
+
+        let Some(mut module_id) = self.containing_module(import_node.id.as_any()) else {
+            return Ok(());
+        };
+        module_id = self.import_scope_module(module_id)?;
+        self.collect_workspace_trait_path_from_module(
+            module_id,
+            import_node.source_path(),
+            candidates,
+            saw_ambiguous,
+            depth + 1,
+        )
+    }
+
+    fn collect_workspace_dependency_glob_trait_candidates(
+        &self,
+        import_node: &ImportNode,
+        segment: &str,
+        candidates: &mut Vec<TraitNodeId>,
+        saw_ambiguous: &mut bool,
+    ) -> Result<(), SynParserError> {
+        let Some((krate, tail)) = self.workspace_dependency_tail(import_node.source_path()) else {
+            return Ok(());
+        };
+        let resolver = CallRelationResolver::new(krate.graph, krate.tree);
+        let module_id = match resolver.resolve_module_path_from_root(tail)? {
+            LocalModulePathResolution::Resolved(module_id) => module_id,
+            LocalModulePathResolution::Unresolved => return Ok(()),
+            LocalModulePathResolution::Ambiguous => {
+                *saw_ambiguous = true;
+                return Ok(());
+            }
+        };
+
+        resolver.visit_scope_candidates(module_id, segment, &mut |candidate| {
+            if let Ok(target) = TraitNodeId::try_from(candidate) {
+                candidates.push(target);
+            }
+            Ok(())
+        })
+    }
+
+    fn collect_workspace_ancestor_glob_trait_candidates(
+        &self,
+        import_node: &ImportNode,
+        segment: &str,
+        candidates: &mut Vec<TraitNodeId>,
+        saw_ambiguous: &mut bool,
+        depth: usize,
+    ) -> Result<bool, SynParserError> {
+        if import_node.source_path().is_empty()
+            || !import_node.source_path().iter().all(|part| part == "super")
+        {
+            return Ok(false);
+        }
+
+        let Some(module_id) =
+            self.ancestor_glob_module(import_node, "resolving workspace trait glob import")?
+        else {
+            return Ok(true);
+        };
+
+        let module_id = self.import_scope_module(module_id)?;
+        self.collect_workspace_trait_candidates_in_module(
+            module_id,
+            segment,
+            candidates,
+            saw_ambiguous,
+            depth + 1,
+        )?;
+        Ok(true)
+    }
+
+    fn collect_workspace_glob_trait_candidates(
+        &self,
+        import_node: &ImportNode,
+        segment: &str,
+        candidates: &mut Vec<TraitNodeId>,
+        saw_ambiguous: &mut bool,
+        depth: usize,
+    ) -> Result<(), SynParserError> {
+        if self.collect_workspace_ancestor_glob_trait_candidates(
+            import_node,
+            segment,
+            candidates,
+            saw_ambiguous,
+            depth + 1,
+        )? {
+            return Ok(());
+        }
+
+        match self.resolve_local_glob_module(import_node)? {
+            LocalModulePathResolution::Resolved(module_id) => {
+                return self.collect_workspace_trait_candidates_in_module(
+                    module_id,
+                    segment,
+                    candidates,
+                    saw_ambiguous,
+                    depth + 1,
+                );
+            }
+            LocalModulePathResolution::Unresolved => {}
+            LocalModulePathResolution::Ambiguous => {
+                *saw_ambiguous = true;
+                return Ok(());
+            }
+        }
+
+        self.collect_workspace_dependency_glob_trait_candidates(
             import_node,
             segment,
             candidates,
