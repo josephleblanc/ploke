@@ -311,6 +311,27 @@ Post-regeneration verification:
   `axum/src/boxed.rs:120`, `axum/src/boxed.rs:159`, and
   `axum/src/serve/listener.rs:236` remain unsupported and targetless.
 
+## 2026-07-12 Axum Handler Tuple Generated Extraction Refresh
+
+The `corpus_axum_call_graph` fixture was recreated with
+`cargo run -p xtask --features call_graph -- recreate-backup-db --fixture corpus_axum_call_graph`
+after bounded item-position `all_the_tuples!(impl_handler)` modeling began
+projecting generated `Handler::call` impl bodies for extractor tuple arities 1
+through 16.
+
+Post-regeneration verification:
+
+- The recreated `corpus_axum_call_graph_2026-07-12.sqlite` shared snapshot was
+  copied into `tests/backup_dbs/` as the committed seed artifact.
+- `axum/src/handler/mod.rs:262` now projects generated `Handler::call`
+  async-block owners whose extraction rows use stable generic names such as
+  `T1::from_request_parts` and `T2::from_request` rather than macro
+  metavariable names.
+- Those generated associated-path rows currently remain unsupported and
+  targetless: resolver proof does not yet connect the generated impl
+  where-clause to the nested async-block owner, and no traversal edge is
+  fabricated.
+
 ## 2026-07-11 Axum Module-Qualified Constructor Refresh
 
 The active fixture set was regenerated with

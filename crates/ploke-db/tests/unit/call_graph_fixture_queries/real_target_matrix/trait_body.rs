@@ -743,7 +743,7 @@ fn axum_real_target_blanket_via_parts_self_path_reaches_trait_method() -> Result
 }
 
 #[test]
-fn axum_real_target_handler_macro_extraction_paths_are_absent_gaps() -> Result<(), DbError> {
+fn axum_real_target_handler_macro_extraction_paths_project_generated_rows() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
     // Matrix: generated `Handler::call` extraction rows.
@@ -751,8 +751,76 @@ fn axum_real_target_handler_macro_extraction_paths_are_absent_gaps() -> Result<(
     //   axum/src/handler/mod.rs:242 calls
     //   `$ty::from_request_parts(&mut parts, &state).await`.
     //   handler/mod.rs:250 calls `$last::from_request(req, &state).await`.
-    // Current model gap: these macro-template associated paths are not
-    // projected as stable call_site rows in the axum fixture yet.
+    // Current traversal gap: the bounded `all_the_tuples!(impl_handler)`
+    // generated item model projects concrete generic names (`T1`, `T2`, ...)
+    // instead of unstable macro metavariables, and preserves async-block
+    // ownership for the generated call body. These generated generic associated
+    // paths are classified unsupported until resolver proof can connect the
+    // generated impl where-clause to the nested async-block owner, so this test
+    // asserts targetless rows and zero fabricated traversal candidates.
+    let one_param = method_id_by_name_and_body_substring(
+        &db,
+        "call",
+        "T1 :: from_request (req , & state) . await",
+    )?;
+    let one_param_body = async_block_owner_for_method_parent(&db, one_param)?;
+    let one_param_context = db.call_context_for_owner(one_param_body)?;
+    let last_row = assert_targetless_row(
+        &one_param_context,
+        one_param_body,
+        TargetlessRowCase::path(
+            &["T1", "from_request"],
+            2,
+            CallStatusKind::Unsupported,
+            "axum/src/handler/mod.rs generated arity-1 T1::from_request",
+        ),
+    );
+    assert_no_traversal_candidates_for_site(
+        &db,
+        one_param_body,
+        last_row.site.id,
+        "axum/src/handler/mod.rs generated arity-1 T1::from_request",
+    )?;
+
+    let two_param = method_id_by_name_and_body_substring(
+        &db,
+        "call",
+        "T2 :: from_request (req , & state) . await",
+    )?;
+    let two_param_body = async_block_owner_for_method_parent(&db, two_param)?;
+    let two_param_context = db.call_context_for_owner(two_param_body)?;
+    let parts_row = assert_targetless_row(
+        &two_param_context,
+        two_param_body,
+        TargetlessRowCase::path(
+            &["T1", "from_request_parts"],
+            2,
+            CallStatusKind::Unsupported,
+            "axum/src/handler/mod.rs generated arity-2 T1::from_request_parts",
+        ),
+    );
+    assert_no_traversal_candidates_for_site(
+        &db,
+        two_param_body,
+        parts_row.site.id,
+        "axum/src/handler/mod.rs generated arity-2 T1::from_request_parts",
+    )?;
+    let last_row = assert_targetless_row(
+        &two_param_context,
+        two_param_body,
+        TargetlessRowCase::path(
+            &["T2", "from_request"],
+            2,
+            CallStatusKind::Unsupported,
+            "axum/src/handler/mod.rs generated arity-2 T2::from_request",
+        ),
+    );
+    assert_no_traversal_candidates_for_site(
+        &db,
+        two_param_body,
+        last_row.site.id,
+        "axum/src/handler/mod.rs generated arity-2 T2::from_request",
+    )?;
     assert_no_path_rows(&db, &["ty", "from_request_parts"])?;
     assert_no_path_rows(&db, &["last", "from_request"])
 }

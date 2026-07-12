@@ -1,5 +1,5 @@
 use proc_macro2::TokenStream;
-use quote::{ToTokens, quote};
+use quote::{ToTokens, format_ident, quote};
 use syn::parse::{Parse, ParseStream};
 use syn::{
     Attribute, Generics, Ident, ItemFn, ItemImpl, ItemMacro, ItemStruct, ReturnType, Token, Type,
@@ -62,6 +62,21 @@ impl Parse for TopLevelRouteFn {
     }
 }
 
+struct AllTheTuples {
+    name: Ident,
+}
+
+impl Parse for AllTheTuples {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let name: Ident = input.parse()?;
+        if !input.is_empty() {
+            return Err(input.error("unsupported all_the_tuples! trailing tokens"));
+        }
+
+        Ok(Self { name })
+    }
+}
+
 impl<'a> CodeVisitor<'a> {
     pub(super) fn record_generated_macro(&mut self, item: &ItemMacro) {
         if item.mac.path.is_ident("opaque_future") {
@@ -85,6 +100,16 @@ impl<'a> CodeVisitor<'a> {
                 return;
             };
             self.record_top_level_service_fn(item, input);
+            return;
+        }
+
+        if item.mac.path.is_ident("all_the_tuples") {
+            let Ok(input) = syn::parse2::<AllTheTuples>(item.mac.tokens.clone()) else {
+                return;
+            };
+            if input.name == "impl_handler" {
+                self.record_impl_handler_tuples(item);
+            }
         }
     }
 
@@ -165,7 +190,7 @@ impl<'a> CodeVisitor<'a> {
                 target: PrimaryNodeId::from(struct_id),
             });
 
-        self.record_opaque_future_impl(&items.impl_item, span, item_cfgs, effective_cfgs);
+        self.record_generated_impl(&items.impl_item, span, item_cfgs, effective_cfgs);
     }
 
     fn record_top_level_handler_fn(&mut self, item: &ItemMacro, input: TopLevelRouteFn) {
@@ -182,6 +207,25 @@ impl<'a> CodeVisitor<'a> {
         };
         function.attrs.extend(item.attrs.clone());
         syn::visit::Visit::visit_item_fn(self, &function);
+    }
+
+    fn record_impl_handler_tuples(&mut self, item: &ItemMacro) {
+        let span = item.extract_span_bytes();
+        let item_cfgs = extract_cfg_strings(&item.attrs);
+        let effective_cfgs = self
+            .state
+            .current_scope_cfgs
+            .iter()
+            .cloned()
+            .chain(item_cfgs.iter().cloned())
+            .collect::<Vec<_>>();
+
+        for arity in 1..=16 {
+            let Some(item_impl) = handler_impl_item(arity) else {
+                continue;
+            };
+            self.record_generated_impl(&item_impl, span, item_cfgs.clone(), effective_cfgs.clone());
+        }
     }
 
     fn opaque_future_fields(&mut self, item: &ItemStruct) -> Vec<FieldNode> {
@@ -227,7 +271,7 @@ impl<'a> CodeVisitor<'a> {
             .collect()
     }
 
-    fn record_opaque_future_impl(
+    fn record_generated_impl(
         &mut self,
         item: &ItemImpl,
         span: (usize, usize),
@@ -245,10 +289,10 @@ impl<'a> CodeVisitor<'a> {
 
         let impl_id: ImplNodeId = impl_any
             .try_into()
-            .expect("opaque_future! impl should use ImplNodeId");
+            .expect("generated impl should use ImplNodeId");
         self.push_primary_scope(&name, impl_id.into(), &effective_cfgs);
         let self_type = get_or_create_type(self.state, &item.self_ty);
-        let methods = self.opaque_future_methods(item, &effective_cfgs);
+        let methods = self.generated_impl_methods(item, &effective_cfgs);
         let generic_params = self.state.process_generics(&item.generics);
         let where_predicates = self.state.process_where_predicates(&item.generics);
         self.pop_primary_scope(&name);
@@ -283,7 +327,7 @@ impl<'a> CodeVisitor<'a> {
             });
     }
 
-    fn opaque_future_methods(
+    fn generated_impl_methods(
         &mut self,
         item: &ItemImpl,
         effective_cfgs: &[String],
@@ -313,7 +357,7 @@ impl<'a> CodeVisitor<'a> {
                 self.debug_new_id(&name, any_id);
                 let method_id: MethodNodeId = any_id
                     .try_into()
-                    .expect("opaque_future! method should use MethodNodeId");
+                    .expect("generated impl method should use MethodNodeId");
                 self.push_assoc_scope(
                     &name,
                     AssociatedItemNodeId::from(method_id),
@@ -425,6 +469,47 @@ fn top_level_service_fn_item(input: &TopLevelRouteFn) -> Option<ItemFn> {
             S: Clone,
         {
             on_service(MethodFilter::#method, svc)
+        }
+    })
+}
+
+fn handler_impl_item(arity: usize) -> Option<ItemImpl> {
+    if !(1..=16).contains(&arity) {
+        return None;
+    }
+
+    let params = (1..=arity)
+        .map(|index| format_ident!("T{}", index))
+        .collect::<Vec<_>>();
+    let parts = &params[..params.len() - 1];
+    let last = params.last()?;
+
+    parse_item(quote! {
+        impl<F, Fut, S, Res, M, #(#parts,)* #last> Handler<(M, #(#parts,)* #last,), S> for F
+        where
+            F: FnOnce(#(#parts,)* #last,) -> Fut + Clone + Send + Sync + 'static,
+            Fut: Future<Output = Res> + Send,
+            S: Send + Sync + 'static,
+            Res: IntoResponse,
+            #( #parts: FromRequestParts<S> + Send, )*
+            #last: FromRequest<S, M> + Send,
+        {
+            type Future = Pin<Box<dyn Future<Output = Response> + Send>>;
+
+            fn call(self, req: Request, state: S) -> Self::Future {
+                let (mut parts, body) = req.into_parts();
+                Box::pin(async move {
+                    #(
+                        let #parts = #parts::from_request_parts(&mut parts, &state).await;
+                    )*
+
+                    let req = Request::from_parts(parts, body);
+
+                    let #last = #last::from_request(req, &state).await;
+
+                    self(#(#parts,)* #last,).await.into_response()
+                })
+            }
         }
     })
 }
