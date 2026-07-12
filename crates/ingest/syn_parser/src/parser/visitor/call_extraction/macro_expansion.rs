@@ -13,6 +13,7 @@ pub(crate) struct MacroExpansionContext {
     exprs_by_macro: HashMap<String, syn::Expr>,
     returned_by_macro: HashSet<String>,
     transparent_blocks: HashSet<String>,
+    transparent_exprs: HashSet<String>,
 }
 
 pub(super) struct GeneratedCall {
@@ -25,6 +26,10 @@ pub(super) struct GeneratedCall {
 
 struct TransparentStmtBlock {
     block: syn::Block,
+}
+
+struct TransparentExpr {
+    expr: syn::Expr,
 }
 
 impl Parse for TransparentStmtBlock {
@@ -48,12 +53,29 @@ impl Parse for TransparentStmtBlock {
     }
 }
 
+impl Parse for TransparentExpr {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let _self_ident = Ident::parse_any(input)?;
+        input.parse::<Token![,]>()?;
+        let _inner_mut = input.parse::<Option<Token![mut]>>()?;
+        let _inner_ident = Ident::parse_any(input)?;
+        input.parse::<Token![=>]>()?;
+        let expr = input.parse::<syn::Expr>()?;
+        if !input.is_empty() {
+            return Err(input.error("unsupported transparent macro trailing tokens"));
+        }
+
+        Ok(Self { expr })
+    }
+}
+
 impl MacroExpansionContext {
     pub(crate) fn from_macro_nodes(macros: &[MacroNode]) -> Self {
         let mut items_by_macro = HashMap::new();
         let mut exprs_by_macro = HashMap::new();
         let mut returned_by_macro = HashSet::new();
         let mut transparent_blocks = HashSet::new();
+        let mut transparent_exprs = HashSet::new();
         let mut duplicate_names = HashSet::new();
 
         for macro_node in macros {
@@ -71,6 +93,9 @@ impl MacroExpansionContext {
             }
             if supports_transparent_stmt_block(&macro_node.name, &body_tokens) {
                 transparent_blocks.insert(macro_node.name.clone());
+            }
+            if supports_transparent_expr(&macro_node.name, &body_tokens) {
+                transparent_exprs.insert(macro_node.name.clone());
             }
             if let Ok(Some(items)) = ploke_mbe::parse_no_arg_macro_rule_items(body_tokens.clone())
                 && is_supported_local_item_expansion(&items)
@@ -108,6 +133,7 @@ impl MacroExpansionContext {
             exprs_by_macro,
             returned_by_macro,
             transparent_blocks,
+            transparent_exprs,
         }
     }
 
@@ -168,6 +194,19 @@ impl MacroExpansionContext {
             .ok()
             .map(|parsed| parsed.block)
     }
+
+    pub(super) fn transparent_expr_for(&self, mac: &syn::Macro) -> Option<syn::Expr> {
+        let mut segments = mac.path.segments.iter();
+        let name = segments.next()?.ident.to_string();
+        if segments.next().is_some() || !self.transparent_exprs.contains(&name) {
+            return None;
+        }
+
+        syn::parse2::<TransparentExpr>(mac.tokens.clone())
+            .ok()
+            .map(|parsed| parsed.expr)
+            .filter(is_supported_router_layer_expr)
+    }
 }
 
 fn is_supported_local_item_expansion(items: &[syn::Item]) -> bool {
@@ -212,6 +251,71 @@ fn supports_transparent_stmt_block(name: &str, body: &TokenStream) -> bool {
         && body.contains("Arc :: new")
         && body.contains("$ stmt")
         && body.contains("$ inner")
+}
+
+fn supports_transparent_expr(name: &str, body: &TokenStream) -> bool {
+    if name != "map_inner" {
+        return false;
+    }
+
+    let body = body.to_string();
+    body.contains("Router")
+        && body.contains("Arc :: new")
+        && body.contains("$ expr")
+        && body.contains("$ inner")
+}
+
+fn is_supported_router_layer_expr(expr: &syn::Expr) -> bool {
+    let syn::Expr::Struct(expr_struct) = unparen_expr(expr) else {
+        return false;
+    };
+    if !expr_struct
+        .path
+        .segments
+        .last()
+        .is_some_and(|segment| segment.ident == "RouterInner")
+    {
+        return false;
+    }
+
+    expr_struct.fields.iter().any(|field| {
+        member_matches(&field.member, "catch_all_fallback")
+            && catches_router_layer_closure(&field.expr)
+    })
+}
+
+fn catches_router_layer_closure(expr: &syn::Expr) -> bool {
+    let syn::Expr::MethodCall(call) = unparen_expr(expr) else {
+        return false;
+    };
+    if call.method != "map" || call.args.len() != 1 {
+        return false;
+    }
+    let Some(syn::Expr::Closure(closure)) = call.args.first() else {
+        return false;
+    };
+    closure_calls_route_layer(closure)
+}
+
+fn closure_calls_route_layer(closure: &syn::ExprClosure) -> bool {
+    let syn::Expr::MethodCall(call) = unparen_expr(closure.body.as_ref()) else {
+        return false;
+    };
+    call.method == "layer"
+        && call.args.len() == 1
+        && matches!(unparen_expr(call.receiver.as_ref()), syn::Expr::Path(path) if path.path.is_ident("route"))
+}
+
+fn member_matches(member: &syn::Member, name: &str) -> bool {
+    matches!(member, syn::Member::Named(ident) if ident == name)
+}
+
+fn unparen_expr(expr: &syn::Expr) -> &syn::Expr {
+    let mut current = expr;
+    while let syn::Expr::Paren(paren) = current {
+        current = paren.expr.as_ref();
+    }
+    current
 }
 
 fn unsafe_ifunc_arg_count(tokens: TokenStream) -> Option<usize> {

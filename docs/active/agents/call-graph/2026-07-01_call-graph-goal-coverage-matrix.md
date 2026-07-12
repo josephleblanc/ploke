@@ -50,7 +50,22 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Latest completed slice: bounded axum `tap_inner!` transparent source-block
+Latest completed slice: bounded axum `map_inner!` transparent source-expression
+extraction. The real-corpus axum macro source
+`axum/src/routing/mod.rs:129-138` wraps a source-visible invocation expression
+in `Router<S>::layer` at `routing/mod.rs:304-308`; that expression contains
+`this.catch_all_fallback.map(|route| route.layer(layer))` at
+`routing/mod.rs:307`. Parser extraction now recognizes this reviewed macro
+shape, keeps the macro invocation itself as a normal macro callsite, and visits
+the source expression so the targetless `map(...)` row and nested
+closure-owned targetless `route.layer(layer)` row are preserved in the
+regenerated `corpus_axum_call_graph_2026-07-12.sqlite` fixture. The DB
+real-target matrix proves both rows are visible and fail closed with no
+traversal edge. This is bounded to the reviewed transparent source-input shape;
+it does not add arbitrary macro expansion or infer a target for the unsupported
+`this.catch_all_fallback` receiver.
+
+Recent completed slice: bounded axum `tap_inner!` transparent source-block
 extraction. The real-corpus axum macro source
 `axum/src/routing/mod.rs:141-152` wraps a source-visible invocation block in
 `Router<S>::fallback_endpoint` at `routing/mod.rs:398`; that block contains two

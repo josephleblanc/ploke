@@ -2,6 +2,7 @@ use super::super::*;
 use super::common::*;
 use super::source_lines::{
     SourceLineFanout, assert_targetless_dynamic_line_fanout_by_method_arg_count,
+    assert_targetless_method_owner_kind_line_fanout,
 };
 use ploke_test_utils::CORPUS_AXUM_CALL_GRAPH;
 
@@ -340,6 +341,51 @@ fn axum_dynamic_callable_fields_preserve_supported_and_unsupported_boundaries()
             lines: &[236],
         }],
         "(self.tap_fn)",
+    )
+}
+
+#[test]
+fn axum_map_inner_source_rows_are_visible_and_fail_closed() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Ground truth:
+    //   axum/src/routing/mod.rs:129-138 defines `map_inner!`.
+    //   axum/src/routing/mod.rs:304-308 invokes it from `Router::layer`.
+    //   The reviewed source input includes
+    //   `catch_all_fallback: this.catch_all_fallback.map(|route| route.layer(layer))`.
+    //
+    // Current model contract: bounded transparent-source extraction visits the
+    // inspected `$expr`, so the `map(...)` receiver row and nested
+    // `route.layer(layer)` closure row are visible. The receiver for
+    // `this.catch_all_fallback.map(...)` still lacks a local binding/type proof,
+    // so both rows stay targetless and contribute no traversal edge.
+    let router_layer = method_id_by_name_body_and_file_suffix(
+        &db,
+        "layer",
+        "catch_all_fallback: this.catch_all_fallback.map(|route| route.layer(layer))",
+        "axum/src/routing/mod.rs",
+    )?;
+    assert_owner_method_targetless(
+        &db,
+        router_layer,
+        "map",
+        &CallReceiver::Unsupported,
+        CallStatusKind::Unsupported,
+        "axum/src/routing/mod.rs:307 map_inner Router::layer catch_all_fallback.map",
+    )?;
+
+    assert_targetless_method_owner_kind_line_fanout(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        "layer",
+        "LocalBinding",
+        Some(&["route"]),
+        CallStatusKind::Unsupported,
+        "Closure",
+        &[SourceLineFanout {
+            file_suffix: "axum/src/routing/mod.rs",
+            lines: &[307],
+        }],
     )
 }
 

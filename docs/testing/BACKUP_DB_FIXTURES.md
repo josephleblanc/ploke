@@ -399,6 +399,14 @@ Post-regeneration verification:
 
 - The regenerated `corpus_axum_call_graph_2026-07-12.sqlite` shared snapshot was
   copied into `tests/backup_dbs/` as the committed seed artifact.
+- The committed seed and regenerated shared snapshot both have SHA-256
+  `18dc8967a2f7059dd0c17a1e39dc3c3fd1fd3133700733fe0a27df8977f8aead`.
+- `axum/src/routing/mod.rs:304-308` invokes `map_inner!` with a reviewed
+  source-visible expression whose `catch_all_fallback` field contains
+  `this.catch_all_fallback.map(|route| route.layer(layer))`. The regenerated
+  fixture now preserves both the targetless `map(...)` row and the nested
+  closure-owned targetless `route.layer(layer)` row while admitting no traversal
+  edge for either unsupported receiver frontier.
 - `axum/src/routing/mod.rs:398` invokes `tap_inner!` with a source-visible block
   whose nested closure owners call `take_route_or_internal_error` at
   `routing/mod.rs:410,430`; both rows now resolve to the same-module helper at

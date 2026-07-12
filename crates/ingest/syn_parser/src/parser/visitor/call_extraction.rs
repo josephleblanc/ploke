@@ -367,6 +367,8 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
             self.record_generated_call(generated, (byte_range.start, byte_range.end));
         } else if let Some(block) = self.macro_expansions.transparent_stmt_block_for(&call.mac) {
             self.visit_block(&block);
+        } else if let Some(expr) = self.macro_expansions.transparent_expr_for(&call.mac) {
+            self.visit_expr(&expr);
         }
         visit::visit_expr_macro(self, call);
     }
@@ -379,6 +381,8 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
             self.record_macro_local_item(item, span);
         } else if let Some(expr) = self.macro_expansions.single_path_expr_for(&call.mac) {
             self.record_macro_path_expr_call(expr, span);
+        } else if let Some(expr) = self.macro_expansions.transparent_expr_for(&call.mac) {
+            self.visit_expr(&expr);
         }
         visit::visit_stmt_macro(self, call);
     }
