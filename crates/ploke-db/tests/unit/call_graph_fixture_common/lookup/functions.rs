@@ -47,21 +47,28 @@ pub(in crate::unit) fn closure_owner_for_parent(
     db: &Database,
     parent: Uuid,
 ) -> Result<Uuid, DbError> {
-    executable_owner_for_parent(db, parent, "Closure", "closure")
+    executable_owner_for_parent(db, parent, "Closure", "closure", "Function")
+}
+
+pub(in crate::unit) fn closure_owner_for_method_parent(
+    db: &Database,
+    parent: Uuid,
+) -> Result<Uuid, DbError> {
+    executable_owner_for_parent(db, parent, "Closure", "closure", "Method")
 }
 
 pub(in crate::unit) fn async_block_owner_for_parent(
     db: &Database,
     parent: Uuid,
 ) -> Result<Uuid, DbError> {
-    executable_owner_for_parent(db, parent, "AsyncBlock", "async_block")
+    executable_owner_for_parent(db, parent, "AsyncBlock", "async_block", "Function")
 }
 
 pub(in crate::unit) fn async_closure_owner_for_parent(
     db: &Database,
     parent: Uuid,
 ) -> Result<Uuid, DbError> {
-    executable_owner_for_parent(db, parent, "Closure", "async_closure")
+    executable_owner_for_parent(db, parent, "Closure", "async_closure", "Function")
 }
 
 pub(in crate::unit) fn local_item_owner_for_parent_with_label(
@@ -69,7 +76,7 @@ pub(in crate::unit) fn local_item_owner_for_parent_with_label(
     parent: Uuid,
     label: &str,
 ) -> Result<Uuid, DbError> {
-    executable_owner_for_parent(db, parent, "LocalItem", label)
+    executable_owner_for_parent(db, parent, "LocalItem", label, "Function")
 }
 
 fn executable_owner_for_parent(
@@ -77,6 +84,7 @@ fn executable_owner_for_parent(
     parent: Uuid,
     owner_kind: &str,
     label: &str,
+    expected_parent_kind: &str,
 ) -> Result<Uuid, DbError> {
     let rows = db.raw_query(&format!(
         r#"?[id, kind, parent_kind, name] :=
@@ -103,7 +111,7 @@ fn executable_owner_for_parent(
     );
     assert_eq!(
         data_str(&rows.rows[0][2], "call_body_owner.parent_kind"),
-        "Function"
+        expected_parent_kind
     );
     assert_eq!(data_str(&rows.rows[0][3], "call_body_owner.label"), label);
     to_uuid(&rows.rows[0][0])

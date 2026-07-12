@@ -90,7 +90,16 @@ fn axum_dynamic_callable_fields_preserve_supported_and_unsupported_boundaries()
     //   axum/src/boxed.rs:120 (self.into_route)(self.router, state)
     //     construction site not found in selected axum/src.
     //   axum/src/boxed.rs:159 (self.layer)(self.inner.into_route(state))
-    //     boxed dynamic `LayerFn` trait object supplied by caller.
+    //   axum/src/boxed.rs:163 (self.layer)(self.inner.into_route(state)).call(request)
+    //     boxed dynamic `LayerFn` trait object supplied by
+    //     `BoxedIntoRoute::map(self, f)`. The finite visible candidate set is
+    //     supplied by the recorded method-body closure bindings:
+    //       axum/src/routing/method_routing.rs:1026 `layer_fn`
+    //       axum/src/routing/method_routing.rs:1070 `layer_fn`
+    //     `Router::layer` also supplies `|route| route.layer(layer)` at
+    //     axum/src/routing/mod.rs:307, but that closure is inside
+    //     `map_inner!` input and remains outside this proof until the
+    //     generated/macro-body bucket models that source.
     //   axum/src/serve/listener.rs:236 (self.tap_fn)(&mut io)
     //     generic `FnMut` field supplied by caller.
     let supported_owner = method_id_by_name_and_body_substring(
@@ -151,6 +160,105 @@ fn axum_dynamic_callable_fields_preserve_supported_and_unsupported_boundaries()
         },
     )?;
 
+    let method_router_layer = method_id_by_name_and_body_substring(
+        &db,
+        "layer",
+        "let layer_fn = move |route: Route<E>| route.layer(layer.clone());",
+    )?;
+    let method_router_route_layer = method_id_by_name_and_body_substring(
+        &db,
+        "route_layer",
+        "let layer_fn = move |svc| Route::new(layer.layer(svc));",
+    )?;
+    let mut expected_layer_candidates = vec![
+        closure_owner_for_method_parent(&db, method_router_layer)?,
+        closure_owner_for_method_parent(&db, method_router_route_layer)?,
+    ];
+    expected_layer_candidates.sort_unstable();
+
+    for (method_name, body_marker, source_line) in [
+        (
+            "into_route",
+            "(self.layer)(self.inner.into_route(state))",
+            159,
+        ),
+        (
+            "call_with_state",
+            "(self.layer)(self.inner.into_route(state)).call(request)",
+            163,
+        ),
+    ] {
+        let owner = method_id_by_name_and_body_substring(&db, method_name, body_marker)?;
+        let context = db.call_context_for_owner(owner)?;
+        let dynamic_rows = context
+            .iter()
+            .filter(|row| row.site.kind == CallSiteKind::Dynamic)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            dynamic_rows.len(),
+            1,
+            "axum/src/boxed.rs:{source_line} should project one dynamic layer callable field call: {context:#?}"
+        );
+        let row = dynamic_rows[0];
+        assert_eq!(row.site.path.as_ref(), Some(&path(&["self", "layer"])));
+        assert_eq!(row.site.arg_count, Some(1));
+        assert_eq!(row.status.status, CallStatusKind::Ambiguous);
+        assert_eq!(row.status.resolution, None);
+        assert_eq!(
+            row.targets.len(),
+            expected_layer_candidates.len(),
+            "axum/src/boxed.rs:{source_line} should expose the finite recorded layer closure candidates: {row:#?}"
+        );
+        assert!(row.targets.iter().all(|target| {
+            target.relation == CallRelationKind::DynamicClosure
+                && target.source_kind == CallSiteKind::Dynamic
+                && target.target_kind == CallTargetKind::Closure
+        }));
+        let mut actual = row
+            .targets
+            .iter()
+            .map(|target| target.target_id)
+            .collect::<Vec<_>>();
+        actual.sort_unstable();
+        assert_eq!(
+            actual, expected_layer_candidates,
+            "axum/src/boxed.rs:{source_line} should preserve the reviewed layer closure candidates"
+        );
+        assert_eq!(
+            relations_for_site(&db, row.site.id)?.rows.len(),
+            expected_layer_candidates.len(),
+            "axum/src/boxed.rs:{source_line} should persist the ambiguous layer closure candidates"
+        );
+        assert_no_traversal_candidates_for_site(
+            &db,
+            owner,
+            row.site.id,
+            &format!("axum/src/boxed.rs:{source_line} self.layer ambiguous candidates"),
+        )?;
+        let facts = db.call_proof_facts_for_owner(owner, "bd:corpus-axum-call-graph")?;
+        let site = row.site.id.to_string();
+        let resolution = facts
+            .iter()
+            .find(|fact| {
+                fact.get("fact_kind") == Some(&serde_json::json!("call_resolution"))
+                    && fact.get("call_site_id") == Some(&serde_json::json!(site))
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "axum/src/boxed.rs:{source_line} self.layer should project a call_resolution proof fact: {facts:#?}"
+                )
+            });
+        assert!(
+            resolution.get("resolution_state") == Some(&serde_json::json!("ambiguous"))
+                && resolution
+                    .get("candidate_def_ids")
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|candidates| candidates.len() == expected_layer_candidates.len()),
+            "axum/src/boxed.rs:{source_line} self.layer should project ambiguous proof candidates: {resolution:#?}"
+        );
+    }
+
     let unsupported_cases = [
         DynamicGap {
             method_name: "into_route",
@@ -158,13 +266,6 @@ fn axum_dynamic_callable_fields_preserve_supported_and_unsupported_boundaries()
             source_line: 120,
             expected_args: 2,
             expected_path: &["self", "into_route"],
-        },
-        DynamicGap {
-            method_name: "into_route",
-            body_marker: "(self.layer)(self.inner.into_route(state))",
-            source_line: 159,
-            expected_args: 1,
-            expected_path: &["self", "layer"],
         },
         DynamicGap {
             method_name: "accept",
@@ -227,18 +328,6 @@ fn axum_dynamic_callable_fields_preserve_supported_and_unsupported_boundaries()
             lines: &[120],
         }],
         "(self.into_route)",
-    )?;
-    assert_targetless_dynamic_line_fanout_by_method_arg_count(
-        &db,
-        &CORPUS_AXUM_CALL_GRAPH,
-        "into_route",
-        1,
-        CallStatusKind::Unsupported,
-        &[SourceLineFanout {
-            file_suffix: "axum/src/boxed.rs",
-            lines: &[159],
-        }],
-        "(self.layer)",
     )?;
     assert_targetless_dynamic_line_fanout_by_method_arg_count(
         &db,

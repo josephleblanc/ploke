@@ -1215,22 +1215,10 @@ async fn proof_context_collection_preserves_axum_dynamic_callable_blockers() -> 
 
     let cases = [
         DynamicCase {
-            label: "MakeErasedHandler::into_route callable field",
-            method: "into_route",
-            body: "(self.into_route)(self.handler, state)",
-            expected_path: &["self", "into_route"],
-        },
-        DynamicCase {
             label: "MakeErasedRouter::into_route callable field",
             method: "into_route",
             body: "(self.into_route)(self.router, state)",
             expected_path: &["self", "into_route"],
-        },
-        DynamicCase {
-            label: "Map::into_route layer trait object",
-            method: "into_route",
-            body: "(self.layer)(self.inner.into_route(state))",
-            expected_path: &["self", "layer"],
         },
         DynamicCase {
             label: "TapIo::accept callable field",
@@ -1273,14 +1261,12 @@ async fn proof_context_collection_preserves_axum_dynamic_callable_blockers() -> 
         // Matrix: dynamic unsupported callable rows.
         // Source chain:
         //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
-        //   axum/src/boxed.rs:85 calls `(self.into_route)(self.handler, state)`.
         //   axum/src/boxed.rs:120 calls `(self.into_route)(self.router, state)`.
-        //   axum/src/boxed.rs:159 calls `(self.layer)(self.inner.into_route(state))`.
         //   axum/src/serve/listener.rs:236 calls `(self.tap_fn)(&mut io)`.
         // Expected proof traversal: owner-seeded proof context must include the
         // call_site plus blocked call_resolution facts for each unsupported,
         // targetless dynamic call site. There are zero callee edges until
-        // callable-field, closure, and callable trait-object proof is modeled.
+        // callable-field proof is modeled.
         assert_blocked_resolution(rows, owner, "dynamic_dispatch_unbounded");
         assert_site_blocker(
             rows,
@@ -1288,6 +1274,245 @@ async fn proof_context_collection_preserves_axum_dynamic_callable_blockers() -> 
             site_id,
             "dynamic_dispatch_unbounded",
             case.label,
+        );
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn proof_context_collection_preserves_axum_handler_dynamic_callable_resolution()
+-> Result<(), Error> {
+    init_tracing_once();
+    let db = axum_db()?;
+
+    let owner =
+        method_id_by_name_and_body(&db, "into_route", "(self.into_route)(self.handler, state)")?;
+    let projected = db.project_call_proof_facts_for_owner(owner, AXUM_DOMAIN)?;
+    assert!(
+        projected >= 3,
+        "MakeErasedHandler::into_route should project resolved dynamic callable proof rows"
+    );
+
+    let rag = init_test_rag_mock(Arc::clone(&db));
+    assert!(
+        !rag.proof_context_degraded(),
+        "projected axum handler dynamic facts should enable RAG proof context"
+    );
+
+    let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+    let calls = call_context
+        .get(&owner)
+        .expect("MakeErasedHandler::into_route should receive outgoing call context");
+    let dynamic = calls
+        .iter()
+        .find(|call| {
+            call.owner_id == owner
+                && call.kind == CallSiteKind::Dynamic
+                && call.callee == CallCalleeInfo::Dynamic
+                && call.status == CallStatusKind::Resolved
+                && call.resolution == Some(CallResolutionKind::LocalExact)
+                && call.path.as_ref().is_some_and(|path| {
+                    path.iter()
+                        .map(String::as_str)
+                        .eq(["self", "into_route"])
+                })
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "MakeErasedHandler::into_route should expose the resolved dynamic function-pointer field row: {calls:#?}"
+            )
+        });
+    assert_eq!(
+        dynamic.targets.len(),
+        1,
+        "MakeErasedHandler::into_route should expose one closure initializer target: {dynamic:#?}"
+    );
+    assert_eq!(dynamic.targets[0].relation, CallTargetKind::DynamicClosure);
+
+    let proof_context = rag.collect_proof_context(&[(owner, 1.0)])?;
+    let rows = proof_context
+        .get(&owner)
+        .expect("MakeErasedHandler::into_route should receive projected proof rows");
+
+    // Matrix: resolved dynamic handler callable row.
+    // Source chain:
+    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //   axum/src/boxed.rs:85 calls `(self.into_route)(self.handler, state)`.
+    //   `BoxedIntoRoute::from_handler` at boxed.rs:23-25 initializes the
+    //   function-pointer field with the unique local closure.
+    // Expected proof traversal: proof context exposes call_site, resolved
+    // call_edge, and resolved call_resolution rows for the DynamicClosure
+    // edge, with no blocker for this formerly targetless row.
+    let owner_text = owner.to_string();
+    let site = dynamic.site_id.to_string();
+    let target = dynamic.targets[0].target_id.to_string();
+    assert!(
+        rows.iter().any(|row| {
+            row.kind == "call_site"
+                && row.caller_def_id.as_deref() == Some(owner_text.as_str())
+                && row.call_site_id.as_deref() == Some(site.as_str())
+                && row.build_domain_id.as_deref() == Some(AXUM_DOMAIN)
+        }),
+        "MakeErasedHandler::into_route proof context should include the call_site fact: {rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|row| {
+            row.kind == "call_edge"
+                && row.call_site_id.as_deref() == Some(site.as_str())
+                && row.caller_def_id.as_deref() == Some(owner_text.as_str())
+                && row.callee_def_id.as_deref() == Some(target.as_str())
+                && row.resolution_state.as_deref() == Some("resolved")
+        }),
+        "MakeErasedHandler::into_route proof context should include the resolved call_edge fact: {rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|row| {
+            row.kind == "call_resolution"
+                && row.call_site_id.as_deref() == Some(site.as_str())
+                && row.resolution_state.as_deref() == Some("resolved")
+                && row.resolved_def_id.as_deref() == Some(target.as_str())
+                && row.blocker_reason.is_none()
+        }),
+        "MakeErasedHandler::into_route proof context should include the resolved call_resolution fact: {rows:#?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn proof_context_collection_preserves_axum_layer_dynamic_callable_candidates()
+-> Result<(), Error> {
+    init_tracing_once();
+    let db = axum_db()?;
+
+    let cases = [
+        DynamicCase {
+            label: "Map::into_route layer trait object",
+            method: "into_route",
+            body: "(self.layer)(self.inner.into_route(state))",
+            expected_path: &["self", "layer"],
+        },
+        DynamicCase {
+            label: "Map::call_with_state layer trait object",
+            method: "call_with_state",
+            body: "(self.layer)(self.inner.into_route(state)).call(request)",
+            expected_path: &["self", "layer"],
+        },
+    ];
+
+    let mut owners = Vec::new();
+    for case in cases {
+        let owner = method_id_by_name_and_body(&db, case.method, case.body)?;
+        let projected = db.project_call_proof_facts_for_owner(owner, AXUM_DOMAIN)?;
+        assert!(
+            projected >= 2,
+            "{} should project ambiguous dynamic layer proof rows",
+            case.label
+        );
+        owners.push((case, owner));
+    }
+
+    let rag = init_test_rag_mock(Arc::clone(&db));
+    assert!(
+        !rag.proof_context_degraded(),
+        "projected axum dynamic layer facts should enable RAG proof context"
+    );
+
+    for (case, owner) in owners {
+        let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+        let calls = call_context
+            .get(&owner)
+            .unwrap_or_else(|| panic!("{} should receive outgoing call context", case.label));
+        let matching = calls
+            .iter()
+            .filter(|call| {
+                call.owner_id == owner
+                    && call.kind == CallSiteKind::Dynamic
+                    && call.callee == CallCalleeInfo::Dynamic
+                    && call.status == CallStatusKind::Ambiguous
+                    && call.resolution.is_none()
+                    && call.path.as_ref().is_some_and(|path| {
+                        path.iter()
+                            .map(String::as_str)
+                            .eq(case.expected_path.iter().copied())
+                    })
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            matching.len(),
+            1,
+            "{} should expose one ambiguous dynamic layer row: {calls:#?}",
+            case.label
+        );
+        let call = matching[0];
+        assert_eq!(
+            call.targets.len(),
+            2,
+            "{} should preserve both reviewed dynamic layer closure candidates: {call:#?}",
+            case.label
+        );
+        assert!(
+            call.targets
+                .iter()
+                .all(|target| target.relation == CallTargetKind::DynamicClosure),
+            "{} should expose only dynamic-closure candidates: {call:#?}",
+            case.label
+        );
+
+        let proof_context = rag.collect_proof_context(&[(owner, 1.0)])?;
+        let rows = proof_context
+            .get(&owner)
+            .unwrap_or_else(|| panic!("{} should receive projected proof rows", case.label));
+
+        // Matrix: dynamic layer callable rows.
+        // Source chain:
+        //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
+        //   axum/src/boxed.rs:159 calls `(self.layer)(self.inner.into_route(state))`.
+        //   axum/src/boxed.rs:163 calls
+        //   `(self.layer)(self.inner.into_route(state)).call(request)`.
+        //   The visible closure candidates come from `MethodRouter::layer`
+        //   and `MethodRouter::route_layer`; the `Router::layer` macro-input
+        //   closure remains outside this proof bucket.
+        // Expected proof traversal: proof context exposes the ambiguous
+        // call_resolution row and candidate ids, while preserving zero
+        // admitted local traversal edges for the dynamic layer field call.
+        let site = call.site_id.to_string();
+        assert!(
+            rows.iter().any(|row| {
+                row.kind == "call_site"
+                    && row.caller_def_id.as_deref() == Some(&owner.to_string())
+                    && row.call_site_id.as_deref() == Some(site.as_str())
+                    && row.build_domain_id.as_deref() == Some(AXUM_DOMAIN)
+            }),
+            "{} proof context should include the call_site fact: {rows:#?}",
+            case.label
+        );
+        let resolution = rows
+            .iter()
+            .find(|row| {
+                row.kind == "call_resolution"
+                    && row.call_site_id.as_deref() == Some(site.as_str())
+                    && row.resolution_state.as_deref() == Some("ambiguous")
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "{} proof context should include the ambiguous call_resolution fact: {rows:#?}",
+                    case.label
+                )
+            });
+        assert_eq!(
+            resolution.candidate_def_ids.len(),
+            2,
+            "{} ambiguous proof row should preserve both candidates",
+            case.label
+        );
+        assert!(
+            rows.iter().all(|row| {
+                row.kind != "call_edge" || row.call_site_id.as_deref() != Some(site.as_str())
+            }),
+            "{} proof context should not fabricate a call_edge: {rows:#?}",
+            case.label
         );
     }
 

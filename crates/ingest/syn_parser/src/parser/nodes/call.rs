@@ -124,6 +124,12 @@ pub enum CallArgument {
     /// The argument expression is an inline non-async closure literal with a
     /// known executable body owner.
     Closure { closure_id: ExecutableBodyId },
+    /// The argument expression is a local non-async closure binding, or a
+    /// direct `clone()` of that binding, with a known executable body owner.
+    ClosureBinding {
+        path: Vec<String>,
+        closure_id: ExecutableBodyId,
+    },
     /// The argument expression constructs a local value with path-valued field
     /// initializers, such as `CallbackHolder { callback: local_target }`.
     Constructed {
@@ -488,6 +494,18 @@ pub enum MethodCallReceiver {
         method_name: String,
         /// Byte span of the initializer method call.
         method_span: (usize, usize),
+    },
+    /// The receiver is a local binding destructured from a tuple enum variant
+    /// field, such as `Self::Variant(value) => value.method()`.
+    EnumVariantBinding {
+        /// Binding identifier used as the receiver expression.
+        name: String,
+        /// Path naming the enum container in the pattern, commonly `Self`.
+        enum_path: Vec<String>,
+        /// Variant name that introduced the binding.
+        variant_name: String,
+        /// Zero-based tuple field index in the variant.
+        field_index: usize,
     },
     /// The receiver is a borrowed local binding, such as `&value`.
     BorrowedLocalBinding {

@@ -100,17 +100,7 @@ pub(crate) struct PathToolFixture {
 }
 
 impl DynamicToolCase {
-    pub(crate) const AXUM: [Self; 4] = [
-        Self {
-            label: "axum/src/boxed.rs:85 MakeErasedHandler::into_route callable field",
-            method: "into_route",
-            owner_type: "MakeErasedHandler",
-            file_suffix: "axum/src/boxed.rs",
-            body: "(self.into_route)(self.handler, state)",
-            expected_path: Some(&["self", "into_route"]),
-            expected_arg_count: None,
-            corpus: DynamicToolCorpus::Axum,
-        },
+    pub(crate) const AXUM: [Self; 2] = [
         Self {
             label: "axum/src/boxed.rs:120 MakeErasedRouter::into_route callable field",
             method: "into_route",
@@ -118,16 +108,6 @@ impl DynamicToolCase {
             file_suffix: "axum/src/boxed.rs",
             body: "(self.into_route)(self.router, state)",
             expected_path: Some(&["self", "into_route"]),
-            expected_arg_count: None,
-            corpus: DynamicToolCorpus::Axum,
-        },
-        Self {
-            label: "axum/src/boxed.rs:159 Map::into_route layer trait object",
-            method: "into_route",
-            owner_type: "Map",
-            file_suffix: "axum/src/boxed.rs",
-            body: "(self.layer)(self.inner.into_route(state))",
-            expected_path: Some(&["self", "layer"]),
             expected_arg_count: None,
             corpus: DynamicToolCorpus::Axum,
         },

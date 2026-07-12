@@ -358,7 +358,7 @@ Route receiver rows and blocked proof facts.
 | --- | --- | --- | --- |
 | `(self.into_route)(...)` handler | `axum/src/boxed.rs:85` | `MakeErasedHandler::into_route` | field `into_route: fn(H, S) -> Route` at `boxed.rs:72`; initialized in `BoxedIntoRoute::from_handler` at `:23-25` with a unique non-capturing closure; now resolved as a `DynamicClosure` edge by the function-pointer self-field proof. |
 | `(self.into_route)(...)` router | `axum/src/boxed.rs:120` | `MakeErasedRouter::into_route` | field `into_route: fn(Router<S>, S) -> Route` at `boxed.rs:108`; construction site not found in selected `axum/src`; unsupported/fail-closed. |
-| `(self.layer)(...)` | `axum/src/boxed.rs:159,163` | `Map::into_route`; `Map::call_with_state` | field `layer: Box<dyn LayerFn<E, E2>>` at `boxed.rs:142`; boxed from `BoxedIntoRoute::map(self, f)` at `:31-40`; `LayerFn` blanket impl `:167-173`; dynamic trait-object callable. |
+| `(self.layer)(...)` | `axum/src/boxed.rs:159,163` | `Map::into_route`; `Map::call_with_state` | field `layer: Box<dyn LayerFn<E, E2>>` at `boxed.rs:142`; boxed from `BoxedIntoRoute::map(self, f)` at `:31-40`; regenerated fixture now preserves two finite ambiguous `DynamicClosure` candidates from the visible `MethodRouter::{layer,route_layer}` `layer_fn` bindings while admitting no local traversal edge. The `Router::layer` macro-input closure remains outside this proof bucket. |
 | `(self.tap_fn)(...)` | `axum/src/serve/listener.rs:236` | `TapIo<L, F>::accept` | field `tap_fn: F` at `listener.rs:212`; set by `ListenerExt::tap_io(self, tap_fn)` at `:116-123`; bound `F: FnMut(&mut L::Io)` at `:118,229`; example closure passed at `serve/mod.rs:566`. |
 | `and_then(f)` | `axum-macros/src/lib.rs:724` | `expand_with` | parameter `f: F` at `:718`; bound `F: FnOnce(I) -> syn::Result<K>` at `:720`; callback passed into external `and_then`; current fixture projects four finite ambiguous method-callback candidates and still admits no resolved traversal edge. |
 | `expand_with(item, from_ref::expand)` | `axum-macros/src/lib.rs:715` | `derive_from_ref` | proc-macro owner now resolves the direct `expand_with(...)` helper edge; function item `from_ref::expand` at `from_ref.rs:11` appears as the `MethodCallbackFunction` candidate for `and_then(f)`, not as a resolved traversal target. |
@@ -380,16 +380,15 @@ ordinary path-call edges before interprocedural callback proof exists. The
 `expand_with` `and_then(f)` row now preserves four finite ambiguous
 method-callback candidates: `from_ref::expand` plus the three closure arguments
 passed by the other proc-macro callers. RAG call-context and proof-context tests
-now preserve those candidates, the four currently projected dynamic
-callable-field blockers in `axum/src/boxed.rs:{85,120,159}` and
-`axum/src/serve/listener.rs:236`, including zero traversal targets,
-`dynamic_dispatch_unbounded` proof rows, and the persisted self-field callsite
-paths for the remaining targetless `["self", "layer"]` and
-`["self", "tap_fn"]` rows through `CallContextInfo.path`. The handler
-`["self", "into_route"]` row at `axum/src/boxed.rs:85` is now a resolved
-`DynamicClosure` edge; the router row at `axum/src/boxed.rs:120` remains
-unsupported because no selected-source construction site is visible.
-Exact TUI `code_item_lookup` and `code_item_edges` tests assert the same four
+now preserve those candidates, the resolved handler callable field at
+`axum/src/boxed.rs:85`, the ambiguous layer callable field rows at
+`axum/src/boxed.rs:159,163`, and the remaining targetless dynamic
+callable-field blockers at `axum/src/boxed.rs:120` and
+`axum/src/serve/listener.rs:236`. The targetless rows retain zero traversal
+targets, `dynamic_dispatch_unbounded` proof rows, and self-field callsite paths
+through `CallContextInfo.path`; the ambiguous layer rows retain the reviewed
+candidate ids while admitting no local traversal edge. Exact TUI
+`code_item_lookup` and `code_item_edges` tests assert the remaining
 owner-seeded targetless rows, blocked proof facts, and path payloads.
 
 ## Axum Module-Qualified Constructor Oracle

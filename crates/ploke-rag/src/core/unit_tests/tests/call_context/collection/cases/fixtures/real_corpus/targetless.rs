@@ -40,33 +40,19 @@ async fn call_context_collection_reads_axum_dynamic_callable_field_gaps() -> Res
     //   2026-06-28_real-corpus-call-site-oracle-matrices.md
     //
     // Source chains:
-    //   axum/src/boxed.rs:85  `(self.into_route)(self.handler, state)`
     //   axum/src/boxed.rs:120 `(self.into_route)(self.router, state)`
-    //   axum/src/boxed.rs:159 `(self.layer)(self.inner.into_route(state))`
     //   axum/src/serve/listener.rs:236 `(self.tap_fn)(&mut io)`
     //
     // Expected traversal: these are visible structural dynamic callsites, but
-    // they have zero traversable edges until callable-field/closure/dyn-trait
-    // proof is modeled. DB tests own argument counts and source-line fanout;
-    // RAG must preserve the targetless unsupported rows without guessing.
+    // they have zero traversable edges until callable-field proof is modeled.
+    // DB tests own argument counts and source-line fanout; RAG must preserve
+    // the targetless unsupported rows without guessing.
     let cases = [
-        DynamicCase {
-            label: "axum/src/boxed.rs:85 MakeErasedHandler::into_route callable field",
-            method: "into_route",
-            body: "(self.into_route)(self.handler, state)",
-            expected_path: &["self", "into_route"],
-        },
         DynamicCase {
             label: "axum/src/boxed.rs:120 MakeErasedRouter::into_route callable field",
             method: "into_route",
             body: "(self.into_route)(self.router, state)",
             expected_path: &["self", "into_route"],
-        },
-        DynamicCase {
-            label: "axum/src/boxed.rs:159 Map::into_route layer trait object",
-            method: "into_route",
-            body: "(self.layer)(self.inner.into_route(state))",
-            expected_path: &["self", "layer"],
         },
         DynamicCase {
             label: "axum/src/serve/listener.rs:236 TapIo::accept callable field",
@@ -110,6 +96,143 @@ async fn call_context_collection_reads_axum_dynamic_callable_field_gaps() -> Res
         assert!(
             call.targets.is_empty(),
             "{} should remain targetless in RAG call context: {call:#?}",
+            case.label
+        );
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn call_context_collection_reads_axum_handler_dynamic_callable_resolution()
+-> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    let owner = method_id_by_name_and_body_substring(
+        &db,
+        "into_route",
+        "(self.into_route)(self.handler, state)",
+    )?;
+    let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+    let context = call_context
+        .get(&owner)
+        .expect("MakeErasedHandler::into_route should receive outgoing call context");
+    let dynamic = context
+        .iter()
+        .filter(|call| call.kind == CallSiteKind::Dynamic && call.callee == CallCalleeInfo::Dynamic)
+        .collect::<Vec<_>>();
+
+    // Matrix:
+    //   docs/active/agents/call-graph/
+    //   2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //
+    // Source chain:
+    //   axum/src/boxed.rs:85 calls `(self.into_route)(self.handler, state)`.
+    //   `BoxedIntoRoute::from_handler` at boxed.rs:23-25 initializes the
+    //   function-pointer field with the unique local closure.
+    // Expected traversal: RAG preserves the resolved DynamicClosure edge for
+    // the unique field initializer rather than treating this row as targetless.
+    assert_eq!(
+        dynamic.len(),
+        1,
+        "MakeErasedHandler::into_route should expose one dynamic function-pointer field row: {context:#?}"
+    );
+    let call = dynamic[0];
+    assert_eq!(call.owner_id, owner);
+    assert!(
+        call.path
+            .as_ref()
+            .is_some_and(|path| path.iter().map(String::as_str).eq(["self", "into_route"])),
+        "MakeErasedHandler::into_route should preserve the dynamic self-field path: {call:#?}"
+    );
+    assert_eq!(call.arg_count, Some(2));
+    assert_eq!(call.status, CallStatusKind::Resolved);
+    assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+    assert_eq!(
+        call.targets.len(),
+        1,
+        "MakeErasedHandler::into_route should expose one closure initializer target: {call:#?}"
+    );
+    assert_eq!(call.targets[0].relation, CallTargetKind::DynamicClosure);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn call_context_collection_reads_axum_layer_dynamic_callable_candidates() -> Result<(), Error>
+{
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    // Matrix:
+    //   docs/active/agents/call-graph/
+    //   2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //
+    // Source chains:
+    //   axum/src/boxed.rs:159 `(self.layer)(self.inner.into_route(state))`
+    //   axum/src/boxed.rs:163 `(self.layer)(self.inner.into_route(state)).call(request)`
+    // The reviewed finite candidates are the method-body `layer_fn` closures
+    // in `MethodRouter::layer` and `MethodRouter::route_layer`; the
+    // `Router::layer` macro-input closure remains outside this proof bucket.
+    // Expected traversal: RAG exposes the candidate-only ambiguity and does
+    // not promote either candidate to an admitted traversal edge.
+    for case in [
+        DynamicCase {
+            label: "axum/src/boxed.rs:159 Map::into_route layer trait object",
+            method: "into_route",
+            body: "(self.layer)(self.inner.into_route(state))",
+            expected_path: &["self", "layer"],
+        },
+        DynamicCase {
+            label: "axum/src/boxed.rs:163 Map::call_with_state layer trait object",
+            method: "call_with_state",
+            body: "(self.layer)(self.inner.into_route(state)).call(request)",
+            expected_path: &["self", "layer"],
+        },
+    ] {
+        let owner = method_id_by_name_and_body_substring(&db, case.method, case.body)?;
+        let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+        let context = call_context
+            .get(&owner)
+            .unwrap_or_else(|| panic!("{} should receive outgoing call context", case.label));
+        let dynamic = context
+            .iter()
+            .filter(|call| {
+                call.kind == CallSiteKind::Dynamic && call.callee == CallCalleeInfo::Dynamic
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            dynamic.len(),
+            1,
+            "{} should expose one dynamic layer callable field row: {context:#?}",
+            case.label
+        );
+
+        let call = dynamic[0];
+        assert_eq!(call.owner_id, owner);
+        assert!(
+            call.path.as_ref().is_some_and(|path| path
+                .iter()
+                .map(String::as_str)
+                .eq(case.expected_path.iter().copied())),
+            "{} should preserve the dynamic self-field callee path: {call:#?}",
+            case.label
+        );
+        assert_eq!(call.arg_count, Some(1));
+        assert_eq!(call.status, CallStatusKind::Ambiguous);
+        assert_eq!(call.resolution, None);
+        assert_eq!(
+            call.targets.len(),
+            2,
+            "{} should expose both reviewed layer closure candidates: {call:#?}",
+            case.label
+        );
+        assert!(
+            call.targets
+                .iter()
+                .all(|target| target.relation == CallTargetKind::DynamicClosure),
+            "{} should expose only dynamic-closure candidates: {call:#?}",
             case.label
         );
     }

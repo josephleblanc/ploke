@@ -36,6 +36,12 @@ pub(super) enum LocalBindingProof {
         method_name: String,
         method_span: (usize, usize),
     },
+    EnumVariantField {
+        name: String,
+        enum_path: Vec<String>,
+        variant_name: String,
+        field_index: usize,
+    },
     Closure {
         name: String,
         closure_id: ExecutableBodyId,
@@ -89,6 +95,7 @@ impl LocalBindingProof {
             | Self::TupleReturn { name, .. }
             | Self::TupleMethodReturn { name, .. }
             | Self::MethodResult { name, .. }
+            | Self::EnumVariantField { name, .. }
             | Self::Closure { name, .. }
             | Self::LocalFunction { name, .. }
             | Self::ValueAlias { name, .. }

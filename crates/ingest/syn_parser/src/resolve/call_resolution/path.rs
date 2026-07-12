@@ -3,8 +3,8 @@ use crate::{
     parser::{
         graph::GraphAccess,
         nodes::{
-            AnyCallSiteId, CallArgument, CallBodyOwnerId, CallNode, ExecutableBodyId,
-            FunctionNodeId, PathCallCallee, PathCallNode,
+            AnyCallSiteId, AsAnyNodeId, CallArgument, CallBodyOwnerId, CallNode, ExecutableBodyId,
+            FunctionNodeId, MethodNodeId, PathCallCallee, PathCallNode,
         },
         relations::{CallRelation, CallResolutionKind, CallResolutionStatus, TypeRelation},
         types::{TypeNode, VisibilityKind},
@@ -34,6 +34,12 @@ enum ParameterProof<'a> {
     Field(&'a [String]),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ParameterOwner {
+    Function(FunctionNodeId),
+    Method(MethodNodeId),
+}
+
 // Bound interprocedural callable-parameter proof to explicit private forwarding chains.
 const PARAMETER_FORWARDING_DEPTH: usize = 2;
 
@@ -50,14 +56,26 @@ impl CallRelationResolver<'_> {
         match &call.callee {
             PathCallCallee::ItemPath => {}
             PathCallCallee::ValueBinding { path } => {
-                if self.resolve_parameter_value_path_call(call, path, relations, statuses)? {
+                if self.resolve_parameter_value_path_call(
+                    call,
+                    path,
+                    type_relations,
+                    relations,
+                    statuses,
+                )? {
                     return Ok(());
                 }
                 statuses.push(CallResolutionStatus::Unsupported { source });
                 return Ok(());
             }
             PathCallCallee::AliasedValueBinding { source_path, .. } => {
-                if self.resolve_parameter_value_path_call(call, source_path, relations, statuses)? {
+                if self.resolve_parameter_value_path_call(
+                    call,
+                    source_path,
+                    type_relations,
+                    relations,
+                    statuses,
+                )? {
                     return Ok(());
                 }
                 statuses.push(CallResolutionStatus::Unsupported { source });
@@ -368,10 +386,13 @@ impl CallRelationResolver<'_> {
         &self,
         call: &PathCallNode,
         path: &[String],
+        type_relations: &[TypeRelation],
         relations: &mut Vec<CallRelation>,
         statuses: &mut Vec<CallResolutionStatus>,
     ) -> Result<bool, SynParserError> {
-        let Some(resolution) = self.resolve_parameter_value_call(call.owner, path)? else {
+        let Some(resolution) =
+            self.resolve_parameter_value_call(call.owner, path, type_relations)?
+        else {
             return Ok(false);
         };
 
@@ -398,35 +419,49 @@ impl CallRelationResolver<'_> {
         &self,
         owner: CallBodyOwnerId,
         path: &[String],
+        type_relations: &[TypeRelation],
     ) -> Result<Option<ParameterCallResolution>, SynParserError> {
-        self.resolve_parameter_value_call_with_depth(owner, path, PARAMETER_FORWARDING_DEPTH)
+        self.resolve_parameter_value_call_with_depth(
+            owner,
+            path,
+            type_relations,
+            PARAMETER_FORWARDING_DEPTH,
+        )
     }
 
     fn resolve_parameter_value_call_with_depth(
         &self,
         owner: CallBodyOwnerId,
         path: &[String],
+        type_relations: &[TypeRelation],
         depth: usize,
     ) -> Result<Option<ParameterCallResolution>, SynParserError> {
         let [name] = path else {
             return Ok(None);
         };
 
-        self.resolve_parameter_call(owner, name, ParameterProof::Value, depth)
+        self.resolve_parameter_call(owner, name, ParameterProof::Value, type_relations, depth)
     }
 
     pub(super) fn resolve_parameter_field_call(
         &self,
         owner: CallBodyOwnerId,
         path: &[String],
+        type_relations: &[TypeRelation],
     ) -> Result<Option<ParameterCallResolution>, SynParserError> {
-        self.resolve_parameter_field_call_with_depth(owner, path, PARAMETER_FORWARDING_DEPTH)
+        self.resolve_parameter_field_call_with_depth(
+            owner,
+            path,
+            type_relations,
+            PARAMETER_FORWARDING_DEPTH,
+        )
     }
 
     fn resolve_parameter_field_call_with_depth(
         &self,
         owner: CallBodyOwnerId,
         path: &[String],
+        type_relations: &[TypeRelation],
         depth: usize,
     ) -> Result<Option<ParameterCallResolution>, SynParserError> {
         let Some((name, field_path)) = path.split_first() else {
@@ -436,7 +471,13 @@ impl CallRelationResolver<'_> {
             return Ok(None);
         }
 
-        self.resolve_parameter_field_name_call_with_depth(owner, name, field_path, depth)
+        self.resolve_parameter_field_name_call_with_depth(
+            owner,
+            name,
+            field_path,
+            type_relations,
+            depth,
+        )
     }
 
     fn resolve_parameter_field_name_call_with_depth(
@@ -444,9 +485,16 @@ impl CallRelationResolver<'_> {
         owner: CallBodyOwnerId,
         name: &str,
         field_path: &[String],
+        type_relations: &[TypeRelation],
         depth: usize,
     ) -> Result<Option<ParameterCallResolution>, SynParserError> {
-        self.resolve_parameter_call(owner, name, ParameterProof::Field(field_path), depth)
+        self.resolve_parameter_call(
+            owner,
+            name,
+            ParameterProof::Field(field_path),
+            type_relations,
+            depth,
+        )
     }
 
     fn resolve_parameter_call(
@@ -454,25 +502,28 @@ impl CallRelationResolver<'_> {
         owner: CallBodyOwnerId,
         name: &str,
         proof: ParameterProof<'_>,
+        type_relations: &[TypeRelation],
         depth: usize,
     ) -> Result<Option<ParameterCallResolution>, SynParserError> {
-        let Some(parameter_owner) = self.parameter_function_owner(owner)? else {
+        let Some(parameter_owner) = self.parameter_owner(owner)? else {
             return Ok(None);
         };
-        if !self.function_allows_local_parameter_proof(parameter_owner)? {
+        if !self.parameter_owner_allows_local_proof(parameter_owner)? {
             return Ok(None);
         }
-        let Some(params) = self.owner_parameters(owner)? else {
-            return Ok(None);
-        };
-        let Some(index) = params
+        let params = self.parameter_owner_params(parameter_owner)?;
+        let value_params = params
+            .iter()
+            .filter(|param| !param.is_self)
+            .collect::<Vec<_>>();
+        let Some(index) = value_params
             .iter()
             .position(|param| param.name.as_deref() == Some(name))
         else {
             return Ok(None);
         };
 
-        let param_type = self.type_node(params[index].type_id)?;
+        let param_type = self.type_node(value_params[index].type_id)?;
         if !self.parameter_allows_local_caller_proof(parameter_owner, param_type, proof)? {
             return Ok(None);
         }
@@ -480,29 +531,64 @@ impl CallRelationResolver<'_> {
 
         let mut targets = Vec::new();
         let mut caller_count = 0usize;
-        for site in self.graph.call_sites() {
-            let CallNode::PathCall(site) = site else {
-                continue;
-            };
-            if !self.path_call_targets_function(site, parameter_owner)? {
-                continue;
+        match parameter_owner {
+            ParameterOwner::Function(function_id) => {
+                for site in self.graph.call_sites() {
+                    let CallNode::PathCall(site) = site else {
+                        continue;
+                    };
+                    if !self.path_call_targets_function(site, function_id)? {
+                        continue;
+                    }
+                    caller_count += 1;
+                    if site.arguments.len() <= index {
+                        return Ok(None);
+                    }
+                    let Some(resolution) = self.resolve_call_argument(
+                        site.owner,
+                        &site.arguments[index],
+                        param_type,
+                        proof,
+                        expected_type,
+                        type_relations,
+                        depth,
+                    )?
+                    else {
+                        return Ok(None);
+                    };
+                    extend_parameter_targets(&mut targets, resolution);
+                }
             }
-            caller_count += 1;
-            if site.arguments.len() <= index {
-                return Ok(None);
+            ParameterOwner::Method(method_id) => {
+                for site in self.graph.call_sites() {
+                    let CallNode::MethodCall(site) = site else {
+                        continue;
+                    };
+                    if !matches!(
+                        self.resolve_method_call_target(site, type_relations)?,
+                        AssocPathResolution::Resolved(target) if target == method_id
+                    ) {
+                        continue;
+                    }
+                    caller_count += 1;
+                    if site.arguments.len() <= index {
+                        return Ok(None);
+                    }
+                    let Some(resolution) = self.resolve_call_argument(
+                        site.owner,
+                        &site.arguments[index],
+                        param_type,
+                        proof,
+                        expected_type,
+                        type_relations,
+                        depth,
+                    )?
+                    else {
+                        return Ok(None);
+                    };
+                    extend_parameter_targets(&mut targets, resolution);
+                }
             }
-            let Some(resolution) = self.resolve_call_argument(
-                site,
-                &site.arguments[index],
-                param_type,
-                proof,
-                expected_type,
-                depth,
-            )?
-            else {
-                return Ok(None);
-            };
-            extend_parameter_targets(&mut targets, resolution);
         }
 
         if caller_count == 0 {
@@ -519,15 +605,17 @@ impl CallRelationResolver<'_> {
         })
     }
 
-    fn parameter_function_owner(
+    fn parameter_owner(
         &self,
         owner: CallBodyOwnerId,
-    ) -> Result<Option<FunctionNodeId>, SynParserError> {
+    ) -> Result<Option<ParameterOwner>, SynParserError> {
         match owner {
-            CallBodyOwnerId::Function(id) => Ok(Some(id)),
+            CallBodyOwnerId::Function(id) => Ok(Some(ParameterOwner::Function(id))),
+            CallBodyOwnerId::Method(id) => Ok(Some(ParameterOwner::Method(id))),
             CallBodyOwnerId::Executable(id) => {
                 match self.executable_parent_owner(id, "parameter call proof")? {
-                    CallBodyOwnerId::Function(id) => Ok(Some(id)),
+                    CallBodyOwnerId::Function(id) => Ok(Some(ParameterOwner::Function(id))),
+                    CallBodyOwnerId::Method(id) => Ok(Some(ParameterOwner::Method(id))),
                     _ => Ok(None),
                 }
             }
@@ -535,26 +623,76 @@ impl CallRelationResolver<'_> {
         }
     }
 
-    fn function_allows_local_parameter_proof(
+    fn parameter_owner_allows_local_proof(
         &self,
-        function_id: FunctionNodeId,
+        owner: ParameterOwner,
     ) -> Result<bool, SynParserError> {
-        let function = self
-            .graph
-            .functions()
-            .iter()
-            .find(|function| function.id == function_id)
+        match owner {
+            ParameterOwner::Function(function_id) => {
+                let function = self
+                    .graph
+                    .functions()
+                    .iter()
+                    .find(|function| function.id == function_id)
+                    .ok_or_else(|| {
+                        SynParserError::InternalState(format!(
+                            "call resolution found parameter call owned by missing function {function_id}"
+                        ))
+                    })?;
+                Ok(matches!(function.visibility, VisibilityKind::Inherited))
+            }
+            ParameterOwner::Method(method_id) => {
+                if self.impl_for_owner_method(method_id)?.is_none() {
+                    return Ok(false);
+                }
+                let method = self.method_node(method_id)?;
+                Ok(!matches!(method.visibility, VisibilityKind::Public))
+            }
+        }
+    }
+
+    fn parameter_owner_params(
+        &self,
+        owner: ParameterOwner,
+    ) -> Result<&[crate::parser::nodes::ParamData], SynParserError> {
+        match owner {
+            ParameterOwner::Function(function_id) => self
+                .graph
+                .functions()
+                .iter()
+                .find(|function| function.id == function_id)
+                .map(|function| function.parameters.as_slice())
+                .ok_or_else(|| {
+                    SynParserError::InternalState(format!(
+                        "call resolution found parameter call owned by missing function {function_id}"
+                    ))
+                }),
+            ParameterOwner::Method(method_id) => Ok(self.method_node(method_id)?.parameters.as_slice()),
+        }
+    }
+
+    fn method_node(
+        &self,
+        method_id: MethodNodeId,
+    ) -> Result<&crate::parser::nodes::MethodNode, SynParserError> {
+        self.graph
+            .find_node_unique(method_id.as_any())
+            .map_err(|err| {
+                SynParserError::InternalState(format!(
+                    "call resolution found parameter call owned by missing or non-unique method {method_id}: {err}"
+                ))
+            })?
+            .as_method()
             .ok_or_else(|| {
                 SynParserError::InternalState(format!(
-                    "call resolution found parameter call owned by missing function {function_id}"
+                    "call resolution parameter owner {method_id} did not resolve to a method node"
                 ))
-            })?;
-        Ok(matches!(function.visibility, VisibilityKind::Inherited))
+            })
     }
 
     fn parameter_allows_local_caller_proof(
         &self,
-        function_id: FunctionNodeId,
+        owner: ParameterOwner,
         param_type: &TypeNode,
         proof: ParameterProof<'_>,
     ) -> Result<bool, SynParserError> {
@@ -564,7 +702,7 @@ impl CallRelationResolver<'_> {
                 Ok(true)
             }
             (ParameterProof::Value, TypeNode::Named(node)) => {
-                self.type_parameter_has_callable_bound(function_id, &node.path)
+                self.owner_type_parameter_has_callable_bound(owner, &node.path)
             }
             (ParameterProof::Value, TypeNode::Reference(node)) => {
                 self.referenced_callable_type(node.referenced)
@@ -604,16 +742,20 @@ impl CallRelationResolver<'_> {
         }
     }
 
-    fn type_parameter_has_callable_bound(
+    fn owner_type_parameter_has_callable_bound(
         &self,
-        function_id: FunctionNodeId,
+        owner: ParameterOwner,
         path: &[String],
     ) -> Result<bool, SynParserError> {
         let [type_name] = path else {
             return Ok(false);
         };
 
-        for scope in self.generic_bound_scopes(CallBodyOwnerId::Function(function_id))? {
+        let owner = match owner {
+            ParameterOwner::Function(id) => CallBodyOwnerId::Function(id),
+            ParameterOwner::Method(id) => CallBodyOwnerId::Method(id),
+        };
+        for scope in self.generic_bound_scopes(owner)? {
             for param in scope.params {
                 if param.kind.name() != Some(type_name.as_str()) {
                     continue;
@@ -675,17 +817,18 @@ impl CallRelationResolver<'_> {
 
     fn resolve_call_argument(
         &self,
-        site: &PathCallNode,
+        owner: CallBodyOwnerId,
         arg: &CallArgument,
         param_type: &TypeNode,
         proof: ParameterProof<'_>,
         expected_type: Option<&[String]>,
+        type_relations: &[TypeRelation],
         depth: usize,
     ) -> Result<Option<ParameterCallResolution>, SynParserError> {
         match (proof, arg) {
             (ParameterProof::Value, CallArgument::Path { path })
             | (ParameterProof::Value, CallArgument::ReferencedPath { path }) => {
-                if let Some(target) = self.resolve_argument_path(site.owner, path)? {
+                if let Some(target) = self.resolve_argument_path(owner, path)? {
                     return Ok(Some(ParameterCallResolution::Exact(
                         ParameterCallTarget::Function(target),
                     )));
@@ -693,16 +836,17 @@ impl CallRelationResolver<'_> {
                 if depth == 0 {
                     return Ok(None);
                 }
-                self.resolve_parameter_value_call_with_depth(site.owner, path, depth - 1)
+                self.resolve_parameter_value_call_with_depth(owner, path, type_relations, depth - 1)
             }
             (ParameterProof::Value, CallArgument::BoxedPath { path })
                 if self.boxed_callable_type(param_type)? =>
             {
-                Ok(self.resolve_argument_path(site.owner, path)?.map(|target| {
+                Ok(self.resolve_argument_path(owner, path)?.map(|target| {
                     ParameterCallResolution::Exact(ParameterCallTarget::Function(target))
                 }))
             }
-            (ParameterProof::Value, CallArgument::Closure { closure_id }) => Ok(Some(
+            (ParameterProof::Value, CallArgument::Closure { closure_id })
+            | (ParameterProof::Value, CallArgument::ClosureBinding { closure_id, .. }) => Ok(Some(
                 ParameterCallResolution::Exact(ParameterCallTarget::Closure(*closure_id)),
             )),
             (
@@ -716,7 +860,7 @@ impl CallRelationResolver<'_> {
                     return Ok(None);
                 };
                 Ok(self
-                    .resolve_argument_path(site.owner, &field.init_path)?
+                    .resolve_argument_path(owner, &field.init_path)?
                     .map(|target| {
                         ParameterCallResolution::Exact(ParameterCallTarget::Function(target))
                     }))
@@ -728,23 +872,22 @@ impl CallRelationResolver<'_> {
                 let Some(Some(init_path)) = element_init_paths.get(index) else {
                     return Ok(None);
                 };
-                Ok(self
-                    .resolve_argument_path(site.owner, init_path)?
-                    .map(|target| {
-                        ParameterCallResolution::Exact(ParameterCallTarget::Function(target))
-                    }))
+                Ok(self.resolve_argument_path(owner, init_path)?.map(|target| {
+                    ParameterCallResolution::Exact(ParameterCallTarget::Function(target))
+                }))
             }
             (ParameterProof::Field(field_path), CallArgument::Path { path }) => {
-                if depth == 0 || !self.parameter_type_matches(site.owner, path, expected_type)? {
+                if depth == 0 || !self.parameter_type_matches(owner, path, expected_type)? {
                     return Ok(None);
                 }
                 let [name] = path.as_slice() else {
                     return Ok(None);
                 };
                 self.resolve_parameter_field_name_call_with_depth(
-                    site.owner,
+                    owner,
                     name,
                     field_path,
+                    type_relations,
                     depth - 1,
                 )
             }

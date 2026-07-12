@@ -308,8 +308,12 @@ Post-regeneration verification:
   to the unique closure initializer recorded from
   `BoxedIntoRoute::from_handler`.
 - The remaining real-corpus dynamic field blockers at
-  `axum/src/boxed.rs:120`, `axum/src/boxed.rs:159`, and
-  `axum/src/serve/listener.rs:236` remain unsupported and targetless.
+  `axum/src/boxed.rs:120` and `axum/src/serve/listener.rs:236` remain
+  unsupported and targetless.
+- `axum/src/boxed.rs:159` and `:163` now preserve finite ambiguous
+  `DynamicClosure` candidates for `(self.layer)(...)` from the recorded
+  `MethodRouter::{layer,route_layer}` closure bindings, without admitting a
+  local traversal edge.
 
 ## 2026-07-12 Axum Handler Tuple Generated Extraction Refresh
 
@@ -1207,9 +1211,13 @@ Expected searchable corpus embedding config:
   - typed local `Router` receiver `.clone()` rows reach the local
     `impl<S> Clone for Router<S>` method through exact local external-trait impl
     receiver resolution
-  - targetless dynamic callees such as `(self.into_route)(...)`,
-    `(self.layer)(...)`, and `(self.tap_fn)(...)` preserve their self-field
-    callee path while remaining unsupported and edge-free
+  - targetless dynamic callees such as `(self.into_route)(...)` and
+    `(self.tap_fn)(...)` preserve their self-field callee path while remaining
+    unsupported and edge-free
+  - `(self.layer)(...)` in `axum/src/boxed.rs:159,163` preserves finite
+    ambiguous `DynamicClosure` candidates from the visible
+    `MethodRouter::{layer,route_layer}` closure bindings without admitting a
+    local traversal edge
   - selected proc-macro entrypoint bodies reach local helper functions through
     `CallBodyOwnerId::Macro` owner edges, including `expand_with` and active
     `expand_attr_with` callers

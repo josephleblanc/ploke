@@ -81,6 +81,7 @@ pub(super) fn classify_dynamic_callee(
                     | LocalBindingProof::TupleReturn { .. }
                     | LocalBindingProof::TupleMethodReturn { .. }
                     | LocalBindingProof::MethodResult { .. }
+                    | LocalBindingProof::EnumVariantField { .. }
                     | LocalBindingProof::Constructed { .. }
                     | LocalBindingProof::Array { .. }
                     | LocalBindingProof::Referenced { .. }
@@ -258,6 +259,7 @@ fn classify_dynamic_path_expr(
                 | LocalBindingProof::TupleReturn { .. }
                 | LocalBindingProof::TupleMethodReturn { .. }
                 | LocalBindingProof::MethodResult { .. }
+                | LocalBindingProof::EnumVariantField { .. }
                 | LocalBindingProof::Constructed { .. }
                 | LocalBindingProof::Array { .. }
                 | LocalBindingProof::Referenced { .. }
@@ -570,6 +572,7 @@ fn dereferenced_local_binding_callee(
         | LocalBindingProof::TupleReturn { .. }
         | LocalBindingProof::TupleMethodReturn { .. }
         | LocalBindingProof::MethodResult { .. }
+        | LocalBindingProof::EnumVariantField { .. }
         | LocalBindingProof::Constructed { .. }
         | LocalBindingProof::Array { .. }
         | LocalBindingProof::Referenced { .. }

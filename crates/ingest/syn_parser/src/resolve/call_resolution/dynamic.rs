@@ -54,7 +54,9 @@ impl CallRelationResolver<'_> {
         if let DynamicCallCallee::IfBranchParameter { path }
         | DynamicCallCallee::MatchArmParameter { path } = &call.callee
         {
-            if let Some(resolution) = self.resolve_parameter_value_call(call.owner, path)? {
+            if let Some(resolution) =
+                self.resolve_parameter_value_call(call.owner, path, type_relations)?
+            {
                 statuses.push(push_dynamic_parameter_resolution(
                     call, resolution, relations,
                 ));
@@ -75,14 +77,16 @@ impl CallRelationResolver<'_> {
         }
 
         if let DynamicCallCallee::ReturnedPathCall { path } = &call.callee {
-            self.resolve_returned_path_call(call, path, relations, statuses)?;
+            self.resolve_returned_path_call(call, path, type_relations, relations, statuses)?;
             return Ok(());
         }
 
         if let DynamicCallCallee::LocalBinding { path }
         | DynamicCallCallee::FnPointerCastLocalBinding { path } = &call.callee
         {
-            if let Some(resolution) = self.resolve_parameter_value_call(call.owner, path)? {
+            if let Some(resolution) =
+                self.resolve_parameter_value_call(call.owner, path, type_relations)?
+            {
                 statuses.push(push_dynamic_parameter_resolution(
                     call, resolution, relations,
                 ));
@@ -93,7 +97,9 @@ impl CallRelationResolver<'_> {
         if let DynamicCallCallee::AliasedLocalBinding { source_path, .. }
         | DynamicCallCallee::FnPointerCastAliasedLocalBinding { source_path, .. } = &call.callee
         {
-            if let Some(resolution) = self.resolve_parameter_value_call(call.owner, source_path)? {
+            if let Some(resolution) =
+                self.resolve_parameter_value_call(call.owner, source_path, type_relations)?
+            {
                 statuses.push(push_dynamic_parameter_resolution(
                     call, resolution, relations,
                 ));
@@ -102,7 +108,9 @@ impl CallRelationResolver<'_> {
         }
 
         if let DynamicCallCallee::FieldLocalBinding { path } = &call.callee {
-            if let Some(resolution) = self.resolve_parameter_field_call(call.owner, path)? {
+            if let Some(resolution) =
+                self.resolve_parameter_field_call(call.owner, path, type_relations)?
+            {
                 statuses.push(push_dynamic_parameter_resolution(
                     call, resolution, relations,
                 ));
@@ -111,17 +119,12 @@ impl CallRelationResolver<'_> {
         }
 
         if let DynamicCallCallee::SelfField { path } = &call.callee {
-            if let Some(closure_id) =
-                self.resolve_self_field_closure_call(call.owner, path, type_relations)?
+            if let Some(resolution) =
+                self.resolve_self_field_callable_call(call.owner, path, type_relations)?
             {
-                relations.push(CallRelation::DynamicClosure {
-                    source: call.id,
-                    target: closure_id,
-                });
-                statuses.push(CallResolutionStatus::Resolved {
-                    source,
-                    kind: CallResolutionKind::LocalExact,
-                });
+                statuses.push(push_dynamic_parameter_resolution(
+                    call, resolution, relations,
+                ));
             } else {
                 statuses.push(CallResolutionStatus::Unsupported { source });
             }
@@ -223,6 +226,7 @@ impl CallRelationResolver<'_> {
         &self,
         call: &DynamicCallNode,
         path: &[String],
+        type_relations: &[TypeRelation],
         relations: &mut Vec<CallRelation>,
         statuses: &mut Vec<CallResolutionStatus>,
     ) -> Result<(), SynParserError> {
@@ -264,9 +268,11 @@ impl CallRelationResolver<'_> {
             return Ok(());
         };
 
-        if let Some(resolution) =
-            self.resolve_parameter_value_call(returning_function.into(), &return_path)?
-        {
+        if let Some(resolution) = self.resolve_parameter_value_call(
+            returning_function.into(),
+            &return_path,
+            type_relations,
+        )? {
             statuses.push(push_dynamic_parameter_resolution(
                 call, resolution, relations,
             ));

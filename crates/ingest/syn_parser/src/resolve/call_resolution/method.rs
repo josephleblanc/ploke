@@ -3,10 +3,10 @@ use crate::{
     parser::{
         graph::GraphAccess,
         nodes::{
-            AnyCallSiteId, AsAnyNodeId, CallArgument, CallBodyOwnerId, CallNode, FieldNode,
-            FunctionNodeId, MethodCallNode, MethodCallReceiver, MethodNodeId, OrdinaryTypeSourceId,
-            OrdinaryTypeTargetId, OrdinaryTypeUseId, PathCallNode, StructNodeId, TraitTypeSourceId,
-            TypeAliasNodeId, TypeGenericParamNodeId,
+            AnyCallSiteId, AsAnyNodeId, CallArgument, CallBodyOwnerId, CallNode, EnumNodeId,
+            FieldNode, FunctionNodeId, MethodCallNode, MethodCallReceiver, MethodNodeId,
+            OrdinaryTypeSourceId, OrdinaryTypeTargetId, OrdinaryTypeUseId, PathCallNode,
+            StructNodeId, TraitTypeSourceId, TypeAliasNodeId, TypeGenericParamNodeId,
         },
         relations::{CallRelation, CallResolutionKind, CallResolutionStatus, TypeRelation},
         types::TypeNode,
@@ -172,6 +172,18 @@ impl CallRelationResolver<'_> {
                 *method_span,
                 type_relations,
             )?,
+            MethodCallReceiver::EnumVariantBinding {
+                enum_path,
+                variant_name,
+                field_index,
+                ..
+            } => self.resolve_enum_variant_binding_method_call(
+                call,
+                enum_path,
+                variant_name,
+                *field_index,
+                type_relations,
+            )?,
             MethodCallReceiver::FieldTypedLocalBinding {
                 type_path,
                 field_path,
@@ -216,7 +228,9 @@ impl CallRelationResolver<'_> {
                 statuses.push(CallResolutionStatus::Ambiguous { source });
             }
             AssocPathResolution::Unsupported => {
-                if let Some(resolution) = self.resolve_method_callback_argument_call(call)? {
+                if let Some(resolution) =
+                    self.resolve_method_callback_argument_call(call, type_relations)?
+                {
                     statuses.push(push_method_callback_resolution(call, resolution, relations));
                 } else {
                     statuses.push(CallResolutionStatus::Unsupported { source });
@@ -230,6 +244,7 @@ impl CallRelationResolver<'_> {
     fn resolve_method_callback_argument_call(
         &self,
         call: &MethodCallNode,
+        type_relations: &[TypeRelation],
     ) -> Result<Option<ParameterCallResolution>, SynParserError> {
         if call.method_name != "and_then" || call.arg_count != 1 {
             return Ok(None);
@@ -237,7 +252,7 @@ impl CallRelationResolver<'_> {
         let Some(CallArgument::Path { path }) = call.arguments.first() else {
             return Ok(None);
         };
-        self.resolve_parameter_value_call(call.owner, path)
+        self.resolve_parameter_value_call(call.owner, path, type_relations)
     }
 
     fn is_external_literal_method(method_name: &str) -> bool {
@@ -1258,6 +1273,94 @@ impl CallRelationResolver<'_> {
         })
     }
 
+    fn resolve_enum_variant_binding_method_call(
+        &self,
+        call: &MethodCallNode,
+        enum_path: &[String],
+        variant_name: &str,
+        field_index: usize,
+        type_relations: &[TypeRelation],
+    ) -> Result<AssocPathResolution, SynParserError> {
+        let Some(field_type) = self.enum_variant_binding_field_type(
+            call.owner,
+            enum_path,
+            variant_name,
+            field_index,
+            type_relations,
+        )?
+        else {
+            return Ok(AssocPathResolution::Unsupported);
+        };
+
+        self.resolve_type_use_method(call.owner, &[field_type], &call.method_name, type_relations)?
+            .map_or(Ok(AssocPathResolution::Unsupported), Ok)
+    }
+
+    fn enum_variant_binding_field_type(
+        &self,
+        owner: CallBodyOwnerId,
+        enum_path: &[String],
+        variant_name: &str,
+        field_index: usize,
+        type_relations: &[TypeRelation],
+    ) -> Result<Option<OrdinaryTypeUseId>, SynParserError> {
+        let Some(enum_node) = self.enum_node_for_binding_path(owner, enum_path, type_relations)?
+        else {
+            return Ok(None);
+        };
+        let Some(variant) = enum_node
+            .variants
+            .iter()
+            .find(|variant| variant.name == variant_name)
+        else {
+            return Ok(None);
+        };
+        Ok(variant.fields.get(field_index).map(|field| field.type_id))
+    }
+
+    fn enum_node_for_binding_path(
+        &self,
+        owner: CallBodyOwnerId,
+        enum_path: &[String],
+        type_relations: &[TypeRelation],
+    ) -> Result<Option<&crate::parser::nodes::EnumNode>, SynParserError> {
+        if matches!(enum_path, [segment] if segment == "Self") {
+            let CallBodyOwnerId::Method(method_id) = owner else {
+                return Ok(None);
+            };
+            let Some(impl_id) = self.impl_for_owner_method(method_id)? else {
+                return Ok(None);
+            };
+            let Some(impl_node) = self.maybe_impl_node(impl_id) else {
+                return Ok(None);
+            };
+            let Some(target) = self.impl_self_target(impl_node, type_relations)? else {
+                return Ok(None);
+            };
+            let Ok(enum_id) = EnumNodeId::try_from(target) else {
+                return Ok(None);
+            };
+            return self.graph.get_enum_checked(enum_id).map(Some);
+        }
+
+        if enum_path.is_empty()
+            || self.is_external_path(enum_path)
+            || (enum_path.len() != 1 && !self.is_explicit_local_path(enum_path))
+        {
+            return Ok(None);
+        }
+
+        match self.resolve_local_type_path(owner, enum_path)? {
+            LocalTypeResolution::Resolved(target) => {
+                let Ok(enum_id) = EnumNodeId::try_from(target) else {
+                    return Ok(None);
+                };
+                self.graph.get_enum_checked(enum_id).map(Some)
+            }
+            LocalTypeResolution::Unresolved | LocalTypeResolution::Ambiguous => Ok(None),
+        }
+    }
+
     fn resolve_typed_local_method_call(
         &self,
         call: &MethodCallNode,
@@ -1721,7 +1824,7 @@ impl CallRelationResolver<'_> {
         }
     }
 
-    fn resolve_method_call_target(
+    pub(super) fn resolve_method_call_target(
         &self,
         call: &MethodCallNode,
         type_relations: &[TypeRelation],
@@ -1799,6 +1902,18 @@ impl CallRelationResolver<'_> {
                 call,
                 method_name,
                 *method_span,
+                type_relations,
+            ),
+            MethodCallReceiver::EnumVariantBinding {
+                enum_path,
+                variant_name,
+                field_index,
+                ..
+            } => self.resolve_enum_variant_binding_method_call(
+                call,
+                enum_path,
+                variant_name,
+                *field_index,
                 type_relations,
             ),
             MethodCallReceiver::FieldTypedLocalBinding {

@@ -702,6 +702,22 @@ fn method_receiver_to_cozo(receiver: &MethodCallReceiver) -> (cozo::DataValue, c
                 string_list(&encoded),
             )
         }
+        MethodCallReceiver::EnumVariantBinding {
+            name,
+            enum_path,
+            variant_name,
+            field_index,
+        } => {
+            let mut encoded = Vec::with_capacity(enum_path.len() + 3);
+            encoded.push(name.clone());
+            encoded.push(field_index.to_string());
+            encoded.push(variant_name.clone());
+            encoded.extend(enum_path.iter().cloned());
+            (
+                cozo::DataValue::from("EnumVariantBinding"),
+                string_list(&encoded),
+            )
+        }
         MethodCallReceiver::BorrowedLocalBinding { name } => (
             cozo::DataValue::from("BorrowedLocalBinding"),
             string_list(std::slice::from_ref(name)),

@@ -754,6 +754,10 @@ fn call_argument(
             let path = path_segments(&path.path);
             if path.is_empty() {
                 CallArgument::Other
+            } else if let Some(CallArgument::ClosureBinding { closure_id, .. }) =
+                closure_binding_argument(arg, local_scopes)
+            {
+                CallArgument::ClosureBinding { path, closure_id }
             } else {
                 CallArgument::Path { path }
             }
@@ -766,7 +770,8 @@ fn call_argument(
             }
         }
         syn::Expr::Reference(reference) => referenced_path_argument(reference),
-        _ => boxed_path_argument(arg, param_names, local_scopes)
+        _ => closure_binding_argument(arg, local_scopes)
+            .or_else(|| boxed_path_argument(arg, param_names, local_scopes))
             .or_else(|| array_argument(arg, param_names, local_scopes))
             .or_else(|| constructed_argument(arg, param_names, local_scopes))
             .unwrap_or(CallArgument::Other),
@@ -785,6 +790,48 @@ fn referenced_path_argument(reference: &syn::ExprReference) -> CallArgument {
         CallArgument::Other
     } else {
         CallArgument::ReferencedPath { path }
+    }
+}
+
+fn closure_binding_argument(
+    arg: &syn::Expr,
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<CallArgument> {
+    let path = closure_binding_arg_path(arg)?;
+    let [name] = path.as_slice() else {
+        return None;
+    };
+    let Some(LocalBindingProof::Closure {
+        closure_id,
+        is_async: false,
+        ..
+    }) = visible_local_binding(name, local_scopes)
+    else {
+        return None;
+    };
+    Some(CallArgument::ClosureBinding {
+        path,
+        closure_id: *closure_id,
+    })
+}
+
+fn closure_binding_arg_path(arg: &syn::Expr) -> Option<Vec<String>> {
+    match unparen_expr(arg) {
+        syn::Expr::Path(path) if path.qself.is_none() => {
+            let path = path_segments(&path.path);
+            (!path.is_empty()).then_some(path)
+        }
+        syn::Expr::MethodCall(call) if call.method == "clone" && call.args.is_empty() => {
+            let syn::Expr::Path(path) = unparen_expr(call.receiver.as_ref()) else {
+                return None;
+            };
+            if path.qself.is_some() {
+                return None;
+            }
+            let path = path_segments(&path.path);
+            (!path.is_empty()).then_some(path)
+        }
+        _ => None,
     }
 }
 
@@ -938,6 +985,7 @@ fn classify_path_callee(
             | LocalBindingProof::TupleReturn { .. }
             | LocalBindingProof::TupleMethodReturn { .. }
             | LocalBindingProof::MethodResult { .. }
+            | LocalBindingProof::EnumVariantField { .. }
             | LocalBindingProof::Constructed { .. }
             | LocalBindingProof::Array { .. }
             | LocalBindingProof::Referenced { .. }
@@ -1280,6 +1328,11 @@ fn local_binding_proofs(
         return struct_proofs;
     }
 
+    let enum_proofs = enum_variant_binding_proofs(pat, init_expr);
+    if !enum_proofs.is_empty() {
+        return enum_proofs;
+    }
+
     tuple_binding_proofs(pat, init_expr, owner, cfgs, param_names, local_scopes)
 }
 
@@ -1361,6 +1414,50 @@ fn struct_binding_proofs(
                 param_names,
                 local_scopes,
             )
+        })
+        .collect()
+}
+
+fn enum_variant_binding_proofs(
+    pat: &syn::Pat,
+    init_expr: Option<&syn::Expr>,
+) -> Vec<LocalBindingProof> {
+    let syn::Pat::TupleStruct(pattern) = pat else {
+        return Vec::new();
+    };
+    let Some(init_expr) = init_expr else {
+        return Vec::new();
+    };
+    let scrutinee_path = match unparen_expr(init_expr) {
+        syn::Expr::Path(path) => expr_path_segments(path),
+        _ => None,
+    };
+    if pattern.qself.is_some()
+        || !matches!(scrutinee_path.as_deref(), Some(path) if path == ["self"])
+    {
+        return Vec::new();
+    }
+
+    let path = path_segments(&pattern.path);
+    let Some((variant_name, enum_path)) = path.split_last() else {
+        return Vec::new();
+    };
+    if enum_path.is_empty() {
+        return Vec::new();
+    }
+
+    pattern
+        .elems
+        .iter()
+        .enumerate()
+        .filter_map(|(field_index, pat)| {
+            let name = pat_ident_name(pat)?;
+            Some(LocalBindingProof::EnumVariantField {
+                name,
+                enum_path: enum_path.to_vec(),
+                variant_name: variant_name.clone(),
+                field_index,
+            })
         })
         .collect()
 }
@@ -2143,6 +2240,7 @@ fn init_target_path(
             | LocalBindingProof::TupleReturn { .. }
             | LocalBindingProof::TupleMethodReturn { .. }
             | LocalBindingProof::MethodResult { .. }
+            | LocalBindingProof::EnumVariantField { .. }
             | LocalBindingProof::Closure { .. }
             | LocalBindingProof::LocalFunction { .. }
             | LocalBindingProof::ValueAlias { .. }

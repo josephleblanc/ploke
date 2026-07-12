@@ -78,6 +78,17 @@ pub(super) fn classify_method_receiver(
                         method_name: method_name.clone(),
                         method_span: *method_span,
                     },
+                    LocalBindingProof::EnumVariantField {
+                        name,
+                        enum_path,
+                        variant_name,
+                        field_index,
+                    } => MethodCallReceiver::EnumVariantBinding {
+                        name: name.clone(),
+                        enum_path: enum_path.clone(),
+                        variant_name: variant_name.clone(),
+                        field_index: *field_index,
+                    },
                     LocalBindingProof::Constructed {
                         name, type_path, ..
                     } => MethodCallReceiver::InitializedLocalBinding {
@@ -236,6 +247,7 @@ fn borrowed_local_receiver(
             | LocalBindingProof::TupleReturn { .. }
             | LocalBindingProof::TupleMethodReturn { .. }
             | LocalBindingProof::MethodResult { .. }
+            | LocalBindingProof::EnumVariantField { .. }
             | LocalBindingProof::Closure { .. }
             | LocalBindingProof::LocalFunction { .. }
             | LocalBindingProof::ValueAlias { .. }
@@ -321,7 +333,8 @@ fn local_field_receiver(
             }
             LocalBindingProof::TupleReturn { .. }
             | LocalBindingProof::TupleMethodReturn { .. }
-            | LocalBindingProof::MethodResult { .. } => {
+            | LocalBindingProof::MethodResult { .. }
+            | LocalBindingProof::EnumVariantField { .. } => {
                 Some(MethodCallReceiver::FieldLocalBinding { name, field_path })
             }
             LocalBindingProof::Constructed {
