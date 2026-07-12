@@ -23,6 +23,10 @@ async fn call_context_expansion_adds_incoming_fixture_method_callers() -> Result
         &db,
         &function_in_module_query(&["crate"], "call_param_alias_instance_method"),
     )?;
+    let borrowed_alias_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_borrowed_param_alias_instance_method"),
+    )?;
     let nested_ref_owner = one_uuid(
         &db,
         &function_in_module_query(
@@ -75,6 +79,17 @@ async fn call_context_expansion_adds_incoming_fixture_method_callers() -> Result
         Case {
             owner: alias_owner,
             label: "parameter-alias method owner",
+            callee: CallCalleeInfo::Method {
+                name: "instance_value".to_string(),
+                receiver: Some(CallReceiverInfo::AliasedLocalBinding {
+                    name: "alias".to_string(),
+                    source_path: vec!["value".to_string()],
+                }),
+            },
+        },
+        Case {
+            owner: borrowed_alias_owner,
+            label: "borrowed parameter-alias method owner",
             callee: CallCalleeInfo::Method {
                 name: "instance_value".to_string(),
                 receiver: Some(CallReceiverInfo::AliasedLocalBinding {

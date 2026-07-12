@@ -2304,3 +2304,8 @@ pub async fn call_awaited_async_closure_future_named_field_alias_with_body_call(
     let alias = holder.future;
     alias.await;
 }
+
+pub fn call_borrowed_param_alias_instance_method(value: LocalAssoc) -> i32 {
+    let alias = &value;
+    alias.instance_value()
+}

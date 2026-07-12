@@ -50,7 +50,17 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Latest completed slice: bounded named-field async future alias proof.
+Latest completed slice: bounded borrowed parameter-alias receiver proof.
+`call_borrowed_param_alias_instance_method(value: LocalAssoc)` now proves
+`let alias = &value; alias.instance_value()` by reusing the existing
+`AliasedLocalBinding { source_path: ["value"] }` receiver carrier and exact
+parameter method resolution. Parser, DB context/proof, and RAG incoming caller
+tests assert the resolved `LocalAssoc::instance_value` edge. This remains
+bounded to one-hop borrowed aliases of visible local parameters; it does not add
+general reference binding, deref, field, multi-segment, or arbitrary expression
+alias flow.
+
+Previous completed slice: bounded named-field async future alias proof.
 `call_awaited_async_closure_future_named_field_alias_with_body_call` now proves
 `AsyncFutureHolder { future: closure() }; let alias = holder.future;
 alias.await;` through the same same-block async poll carrier used for direct
@@ -1167,7 +1177,7 @@ Completed evidence:
   import/re-export/glob semantics, dependency-root imports, or macro-expanded
   path resolution.
 
-Latest completed slice: parameter-alias method receiver proof.
+Completed slice: parameter-alias method receiver proof.
 
 Completed evidence:
 
@@ -1186,9 +1196,11 @@ Completed evidence:
   `cargo run -p xtask --features call_graph -- fixtures regenerate --active`,
   `cargo run -p xtask --features call_graph -- verify-backup-dbs`,
   `cargo fmt --all --check`, and `git diff --check`.
-- This remains bounded to direct local aliases of visible parameters. Borrowed,
-  dereferenced, field, multi-segment, external, and arbitrary expression alias
-  sources remain future binding/type-flow work.
+- This remains bounded to direct local aliases of visible parameters, including
+  the follow-up borrowed form
+  `let alias = &value; alias.instance_value()`. Dereferenced, field,
+  multi-segment, external, and arbitrary expression alias sources remain future
+  binding/type-flow work.
 
 Latest completed slice: real-corpus callback-parameter runtime-dispatch
 blocker proof.

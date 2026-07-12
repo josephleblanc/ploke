@@ -2037,8 +2037,15 @@ fn value_alias_path(
     param_names: &[String],
     local_scopes: &[Vec<LocalBindingProof>],
 ) -> Option<Vec<String>> {
-    let syn::Expr::Path(path) = unparen_expr(expr?) else {
-        return None;
+    let path = match unparen_expr(expr?) {
+        syn::Expr::Path(path) => path,
+        syn::Expr::Reference(reference) => {
+            let syn::Expr::Path(path) = unparen_expr(reference.expr.as_ref()) else {
+                return None;
+            };
+            path
+        }
+        _ => return None,
     };
     if path.qself.is_some() {
         return None;
