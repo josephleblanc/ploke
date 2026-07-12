@@ -36,28 +36,29 @@ use crate::call_graph_tool_support::{
     AxumJsonFromBytesToolFixture, AxumParseAttrsToolFixture, AxumRequestExtractPathToolFixture,
     AxumRunUiTestsToolFixture, AxumTaskSpawnEffectToolFixture, CallGraphToolFixture,
     CallableBlockerFixture, CallableBlockerShape, CallableParamResolvedFixture,
-    ChronoAliasConstructorToolFixture, ChronoNaiveUtcToolFixture, FixtureBranchReceiverToolFixture,
-    FixtureDynamicCallableToolFixture, FixtureSelfFieldReceiverToolFixture, ResultCallbackFixture,
-    assert_ambiguous_dynamic_candidates, assert_ambiguous_path_candidates,
-    assert_await_result_unwrap_context, assert_await_result_unwrap_proof,
-    assert_body_empty_dependency_root_proof, assert_body_empty_impact_summary,
-    assert_body_empty_incoming_context, assert_body_new_generated_incoming_context,
-    assert_body_new_impact_summary, assert_body_new_incoming_context,
-    assert_boxed_into_route_incoming_context, assert_branch_receiver_context,
-    assert_branch_receiver_proof, assert_call_path_node, assert_chrono_naive_utc_incoming_context,
-    assert_dynamic_context, assert_dynamic_proof, assert_expected_path_incoming_context,
-    assert_fixture_extern_c_abs_effects, assert_from_fn_basic_body_empty_crate_boundary,
-    assert_handler_call_incoming_context, assert_incoming_context,
-    assert_initialized_local_receiver_context, assert_initialized_local_receiver_proof,
-    assert_json_from_bytes_incoming_context, assert_no_external_summary_need_for_site,
-    assert_parse_attrs_incoming_context, assert_path_blocker_proof, assert_path_context,
-    assert_path_resolution_proof, assert_process_invariant_findings,
-    assert_resolved_callable_param_proof, assert_resolved_method_target_context,
-    assert_resolved_path_context, assert_run_ui_tests_incoming_context,
-    assert_runtime_dispatch_blocker, assert_self_field_receiver_context,
-    assert_self_field_receiver_proof, assert_serde_json_summary_proof, assert_target_proof,
-    assert_task_spawn_effects, assert_task_spawn_policy_violation, assert_two_hop_call_path,
-    ui_field,
+    ChronoAliasConstructorToolFixture, ChronoNaiveUtcToolFixture, DirectSelfFieldDispatchFixture,
+    FixtureBranchReceiverToolFixture, FixtureDynamicCallableToolFixture,
+    FixtureSelfFieldReceiverToolFixture, ResultCallbackFixture, assert_ambiguous_candidate_proof,
+    assert_ambiguous_dynamic_candidates, assert_ambiguous_dynamic_candidates_with_relation,
+    assert_ambiguous_path_candidates, assert_await_result_unwrap_context,
+    assert_await_result_unwrap_proof, assert_body_empty_dependency_root_proof,
+    assert_body_empty_impact_summary, assert_body_empty_incoming_context,
+    assert_body_new_generated_incoming_context, assert_body_new_impact_summary,
+    assert_body_new_incoming_context, assert_boxed_into_route_incoming_context,
+    assert_branch_receiver_context, assert_branch_receiver_proof, assert_call_path_node,
+    assert_chrono_naive_utc_incoming_context, assert_dynamic_context, assert_dynamic_proof,
+    assert_expected_path_incoming_context, assert_fixture_extern_c_abs_effects,
+    assert_from_fn_basic_body_empty_crate_boundary, assert_handler_call_incoming_context,
+    assert_incoming_context, assert_initialized_local_receiver_context,
+    assert_initialized_local_receiver_proof, assert_json_from_bytes_incoming_context,
+    assert_no_external_summary_need_for_site, assert_parse_attrs_incoming_context,
+    assert_path_blocker_proof, assert_path_context, assert_path_resolution_proof,
+    assert_process_invariant_findings, assert_resolved_callable_param_proof,
+    assert_resolved_method_target_context, assert_resolved_path_context,
+    assert_run_ui_tests_incoming_context, assert_runtime_dispatch_blocker,
+    assert_self_field_receiver_context, assert_self_field_receiver_proof,
+    assert_serde_json_summary_proof, assert_target_proof, assert_task_spawn_effects,
+    assert_task_spawn_policy_violation, assert_two_hop_call_path, ui_field,
 };
 
 #[tokio::test]
@@ -1238,6 +1239,83 @@ async fn code_item_edges_returns_returned_conflicting_function_pointer_candidate
     ] {
         assert_callable_blocker_edges(fixture).await;
     }
+}
+
+#[tokio::test]
+async fn code_item_edges_returns_direct_self_field_dispatch_candidates() {
+    // Source oracle:
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:2313-2341:
+    //     `DirectSelfFieldDispatcher::invoke` calls `(self.call)(self)`;
+    //     the fixture's explicit constructors assign `direct_self_field_local`
+    //     and `direct_self_field_other` directly to the `call` field.
+    // The edge tool must expose the same candidate-only dynamic row as lookup
+    // without admitting a traversal edge.
+    let fixture = DirectSelfFieldDispatchFixture::new().await;
+    let params = EdgesParams {
+        item_name: Cow::Borrowed(fixture.owner_name),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("method"),
+        module_path: Cow::Borrowed("crate"),
+        owner_trait: None,
+        owner_type: Some(Cow::Borrowed(fixture.owner_type)),
+        parent_name: None,
+        allowed_effects: Vec::new(),
+    };
+
+    let result = CodeItemEdges::execute(params, fixture.ctx("direct-self-field-edges"))
+        .await
+        .expect("direct self-field edges");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
+    let call_context = payload
+        .get("node_info")
+        .and_then(|node| node.get("call_context"))
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.call_context array");
+    let proof_context = payload
+        .get("node_info")
+        .and_then(|node| node.get("proof_context"))
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.proof_context array");
+
+    let label = "DirectSelfFieldDispatcher::invoke direct self-field call";
+    let path = fixture.path.iter().map(String::as_str).collect::<Vec<_>>();
+    let site_id = assert_ambiguous_dynamic_candidates_with_relation(
+        call_context,
+        fixture.owner,
+        Some(path.as_slice()),
+        &fixture.candidates,
+        CallTargetKind::DynamicFunction,
+        label,
+        "code_item_edges",
+    );
+    assert_ambiguous_candidate_proof(
+        proof_context,
+        fixture.owner,
+        site_id,
+        fixture.build_domain,
+        &fixture.candidates,
+        label,
+        "code_item_edges",
+    );
+    assert_eq!(
+        summary_usize(&payload, "blocked"),
+        0,
+        "code_item_edges summary should not count candidate rows as targetless blockers: {payload:#?}"
+    );
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert!(
+        ui_field(ui, "call_context_outgoing")
+            .parse::<usize>()
+            .expect("outgoing count")
+            >= 1,
+        "code_item_edges should surface outgoing direct self-field call context"
+    );
+    assert_eq!(
+        ui_field(ui, "proof_context"),
+        proof_context.len().to_string()
+    );
 }
 
 async fn assert_callable_blocker_edges(fixture: CallableBlockerFixture) {

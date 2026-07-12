@@ -21,6 +21,17 @@ pub(crate) struct CallableParamResolvedFixture {
     pub(crate) build_domain: &'static str,
 }
 
+pub(crate) struct DirectSelfFieldDispatchFixture {
+    pub(crate) state: Arc<AppState>,
+    pub(crate) file_path: PathBuf,
+    pub(crate) owner_name: &'static str,
+    pub(crate) owner_type: &'static str,
+    pub(crate) owner: Uuid,
+    pub(crate) path: Vec<String>,
+    pub(crate) candidates: Vec<Uuid>,
+    pub(crate) build_domain: &'static str,
+}
+
 pub(crate) struct ResultCallbackFixture {
     pub(crate) state: Arc<AppState>,
     pub(crate) file_path: PathBuf,
@@ -248,6 +259,86 @@ fn function_id(
         .pop()
         .unwrap_or_else(|| panic!("{name} row"))
         .id
+}
+
+impl DirectSelfFieldDispatchFixture {
+    pub(crate) async fn new() -> Self {
+        let db = Arc::new(Database::new(
+            setup_db_full_multi_embedding("fixture_call_graph").expect("fixture_call_graph db"),
+        ));
+        let crate_root = workspace_root().join("tests/fixture_crates/fixture_call_graph");
+        let module_path = vec!["crate".to_string()];
+        let file_path = crate_root.join("src/lib.rs");
+        let owner_name = "invoke";
+        let owner_type = "DirectSelfFieldDispatcher";
+        let owner = method_id_by_self_type(db.as_ref(), owner_type, owner_name);
+        let mut candidates = vec![
+            function_id(
+                db.as_ref(),
+                file_path.as_path(),
+                &module_path,
+                "direct_self_field_local",
+            ),
+            function_id(
+                db.as_ref(),
+                file_path.as_path(),
+                &module_path,
+                "direct_self_field_other",
+            ),
+        ];
+        candidates.sort_unstable();
+        assert_eq!(
+            db.project_call_proof_facts_for_node(owner, "bd:fixture-call-graph")
+                .expect("project direct self-field dispatch proof facts"),
+            2,
+            "{owner_type}::{owner_name} should project candidate-only proof rows"
+        );
+
+        let state = app_state_with_rag(db, crate_root).await;
+
+        Self {
+            state,
+            file_path,
+            owner_name,
+            owner_type,
+            owner,
+            path: vec!["self".to_string(), "call".to_string()],
+            candidates,
+            build_domain: "bd:fixture-call-graph",
+        }
+    }
+
+    pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
+        ctx_for_state(&self.state, call_id)
+    }
+}
+
+fn method_id_by_self_type(db: &Database, self_type: &str, method: &str) -> Uuid {
+    let rows = db
+        .raw_query(&format!(
+            r#"?[method_id] :=
+                *method {{ id: method_id, name: "{method}", owner_id: impl_id @ 'NOW' }},
+                *impl {{ id: impl_id @ 'NOW' }},
+                *type_use {{
+                    owner_id: impl_id,
+                    root_type_id: self_type_id,
+                    role: "ImplSelf" @ 'NOW'
+                }},
+                *type_relation {{
+                    source_id: self_type_id,
+                    target_id: self_target_id,
+                    relation_kind: "Ordinary" @ 'NOW'
+                }},
+                *struct {{ id: self_target_id, name: "{self_type}" @ 'NOW' }}"#
+        ))
+        .unwrap_or_else(|err| panic!("resolve {self_type}::{method}: {err}"));
+    assert_eq!(
+        rows.rows.len(),
+        1,
+        "expected exactly one {self_type}::{method} method row: {:#?}",
+        rows.rows
+    );
+    to_uuid(&rows.rows[0][0]).unwrap_or_else(|err| panic!("{self_type}::{method} uuid: {err}"))
 }
 
 impl CallableParamResolvedFixture {

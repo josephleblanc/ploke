@@ -60,7 +60,10 @@ type aliases used by self fields, and records a finite ambiguous
 `DynamicFunction` candidate set for that direct initializer shape. The
 `fixture_call_graph` parser and ploke-db fixture tests assert the two
 candidates, argument count `1`, target-centered candidate visibility, and no
-admitted traversal edge for the ambiguous row. The regenerated
+admitted traversal edge for the ambiguous row. Downstream RAG proof-context and
+exact `code_item_lookup` / `code_item_edges` tests now assert the same
+candidate-only dynamic row, preserving the `self.call` path and both candidate
+IDs without fabricating a `call_edge`. The regenerated
 `corpus_memchr_call_graph_2026-07-12.sqlite` fixture still keeps real memchr
 `Searcher.call` and `Prefilter.call` targetless because those fields flow
 through shorthand local aliases and cfg-sensitive constructors; the direct
