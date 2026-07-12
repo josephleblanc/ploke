@@ -387,6 +387,9 @@ const AWAITED_ASYNC_CLOSURE_FUTURE_TUPLE_FIELD_BODY_LOCAL_TARGET_CALL_SPAN: (usi
 const AWAITED_ASYNC_CLOSURE_FUTURE_NAMED_FIELD_CALL_SPAN: (usize, usize) = (54913, 54922);
 const AWAITED_ASYNC_CLOSURE_FUTURE_NAMED_FIELD_BODY_LOCAL_TARGET_CALL_SPAN: (usize, usize) =
     (54852, 54866);
+const AWAITED_ASYNC_CLOSURE_FUTURE_NAMED_FIELD_ALIAS_CALL_SPAN: (usize, usize) = (55450, 55459);
+const AWAITED_ASYNC_CLOSURE_FUTURE_NAMED_FIELD_ALIAS_BODY_LOCAL_TARGET_CALL_SPAN: (usize, usize) =
+    (55389, 55403);
 const RESULT_CALLBACK_AND_THEN_CALL_SPAN: (usize, usize) = (55114, 55142);
 const ITER_RESULT_INTO_ITER_CALL_SPAN: (usize, usize) = (44177, 44193);
 const ITER_RESULT_SIZE_HINT_CALL_SPAN: (usize, usize) = (44199, 44215);
@@ -6121,6 +6124,16 @@ fn fixture_call_graph_call_awaited_async_closure_future_named_field_resolves_pat
         "call_awaited_async_closure_future_named_field_with_body_call",
         AWAITED_ASYNC_CLOSURE_FUTURE_NAMED_FIELD_CALL_SPAN,
         AWAITED_ASYNC_CLOSURE_FUTURE_NAMED_FIELD_BODY_LOCAL_TARGET_CALL_SPAN,
+    )
+}
+
+#[test]
+fn fixture_call_graph_call_awaited_async_closure_future_named_field_alias_resolves_path_call_site()
+-> Result<(), syn_parser::error::SynParserError> {
+    assert_awaited_async_closure_future_path_call_site(
+        "call_awaited_async_closure_future_named_field_alias_with_body_call",
+        AWAITED_ASYNC_CLOSURE_FUTURE_NAMED_FIELD_ALIAS_CALL_SPAN,
+        AWAITED_ASYNC_CLOSURE_FUTURE_NAMED_FIELD_ALIAS_BODY_LOCAL_TARGET_CALL_SPAN,
     )
 }
 

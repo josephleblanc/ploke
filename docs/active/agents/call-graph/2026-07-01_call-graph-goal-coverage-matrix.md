@@ -2792,6 +2792,13 @@ closure() }; holder.future.await;` marks only the original `closure()` call as
 awaited and resolves it to the async-closure owner. Returned futures, arbitrary
 aggregate future flow, and general poll/resume semantics remain out of scope.
 
+Update 2026-07-11: the same named-field async poll proof now admits a one-step
+field alias. `AsyncFutureHolder { future: closure() }; let alias =
+holder.future; alias.await;` reuses the stored `holder.future` binding and
+still marks only the original `closure()` call as awaited. Parser, DB, RAG, and
+exact lookup/edges tests cover the alias without adding arbitrary aggregate
+future flow.
+
 Update 2026-07-11: the dynamic callable-value row now includes one-hop and
 two-hop private forwarding proof for referenced callable trait-object
 parameters. Fixture helpers with `f: &dyn Fn() -> i32` resolve `f()` to

@@ -2297,3 +2297,10 @@ fn call_single_result_callback(f: fn(i32) -> Result<i32, ()>) -> Result<i32, ()>
 pub fn call_single_result_callback_with_local_target() -> Result<i32, ()> {
     call_single_result_callback(local_result_target)
 }
+
+pub async fn call_awaited_async_closure_future_named_field_alias_with_body_call() {
+    let closure = async || local_target();
+    let holder = AsyncFutureHolder { future: closure() };
+    let alias = holder.future;
+    alias.await;
+}

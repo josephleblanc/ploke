@@ -1475,7 +1475,7 @@ fn awaited_future_spans(block: &syn::Block) -> Vec<(usize, usize)> {
             && let Some(binding) = future_bindings
                 .iter()
                 .rev()
-                .find(|binding: &&FutureBinding| binding.path.as_slice() == [source.as_str()])
+                .find(|binding: &&FutureBinding| binding.path == source)
         {
             future_bindings.push(FutureBinding {
                 path: vec![name],
@@ -1588,25 +1588,38 @@ fn future_struct_bindings(stmt: &syn::Stmt) -> Option<Vec<FutureBinding>> {
     (!bindings.is_empty()).then_some(bindings)
 }
 
-fn future_alias_binding(stmt: &syn::Stmt) -> Option<(String, String)> {
+fn future_alias_binding(stmt: &syn::Stmt) -> Option<(String, Vec<String>)> {
     let syn::Stmt::Local(local) = stmt else {
         return None;
     };
     let name = pat_ident_name(&local.pat)?;
     let init_expr = local.init.as_ref()?.expr.as_ref();
-    let path = match unparen_expr(init_expr) {
-        syn::Expr::Path(path) => path,
-        syn::Expr::Block(_) => block_path_expr(init_expr)?,
+    let source = match unparen_expr(init_expr) {
+        syn::Expr::Path(path) => {
+            if path.qself.is_some() {
+                return None;
+            }
+            let segments = path_segments(&path.path);
+            let [name] = segments.as_slice() else {
+                return None;
+            };
+            vec![name.clone()]
+        }
+        syn::Expr::Field(_) => await_expr_path(init_expr)?,
+        syn::Expr::Block(_) => {
+            let path = block_path_expr(init_expr)?;
+            if path.qself.is_some() {
+                return None;
+            }
+            let segments = path_segments(&path.path);
+            let [name] = segments.as_slice() else {
+                return None;
+            };
+            vec![name.clone()]
+        }
         _ => return None,
     };
-    if path.qself.is_some() {
-        return None;
-    }
-    let segments = path_segments(&path.path);
-    let [source] = segments.as_slice() else {
-        return None;
-    };
-    Some((name, source.clone()))
+    Some((name, source))
 }
 
 fn direct_await_path(stmt: &syn::Stmt) -> Option<Vec<String>> {
