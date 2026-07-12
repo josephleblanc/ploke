@@ -602,8 +602,9 @@ fn axum_real_target_external_path_rows_remain_targetless() -> Result<(), DbError
     //   middleware/map_response.rs:260; and response/sse.rs:449 call
     //   `std::mem::replace(...)`.
     // Expected traversal: zero local call edges. The current fixture projects
-    // two std-root rows as external and leaves the wrapper-body rows listed
-    // below absent rather than inventing local traversal edges.
+    // std-root rows as external, including the bounded generated middleware
+    // `from_fn` and `map_request` wrapper-body rows. The unrelated
+    // `map_response` macro template remains absent for this slice.
     let json_owner = method_id_by_name_and_body_substring(
         &db,
         "from_bytes",
@@ -655,24 +656,12 @@ fn axum_real_target_external_path_rows_remain_targetless() -> Result<(), DbError
         "axum/src/error_handling/mod.rs:138 std::mem::replace",
     )?;
 
-    assert_targetless_path_rows(&db, &["std", "mem", "replace"], CallStatusKind::External, 2)?;
-    assert_targetless_path_line_fanout(
+    assert_targetless_path_rows(
         &db,
-        &CORPUS_AXUM_CALL_GRAPH,
         &["std", "mem", "replace"],
         CallStatusKind::External,
-        &[
-            SourceLineFanout {
-                file_suffix: "axum/src/error_handling/mod.rs",
-                lines: &[138],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/response/sse.rs",
-                lines: &[449],
-            },
-        ],
+        34,
     )?;
-
     assert_no_method_owner_by_body_and_file_suffix(
         &db,
         "call",
@@ -681,28 +670,47 @@ fn axum_real_target_external_path_rows_remain_targetless() -> Result<(), DbError
         "axum/src/error_handling/mod.rs:181 macro-template std::mem::replace",
     )?;
 
-    for (label, file_suffix) in [
+    for (label, file_suffix, count) in [
         (
             "axum/src/middleware/map_request.rs:281",
             "axum/src/middleware/map_request.rs",
+            16,
         ),
         (
             "axum/src/middleware/from_fn.rs:285",
             "axum/src/middleware/from_fn.rs",
-        ),
-        (
-            "axum/src/middleware/map_response.rs:260",
-            "axum/src/middleware/map_response.rs",
+            16,
         ),
     ] {
-        assert_no_method_owner_by_body_and_file_suffix(
+        let owners = method_ids_by_name_body_and_file_suffix(
             &db,
             "call",
             "std::mem::replace(&mut self.inner, not_ready_inner)",
             file_suffix,
-            label,
         )?;
+        assert_eq!(
+            owners.len(),
+            count,
+            "{label} should project one generated Service::call owner per supported tuple arity"
+        );
+        for owner in owners {
+            assert_owner_path_targetless(
+                &db,
+                owner,
+                &["std", "mem", "replace"],
+                CallStatusKind::External,
+                label,
+            )?;
+        }
     }
+
+    assert_no_method_owner_by_body_and_file_suffix(
+        &db,
+        "call",
+        "std::mem::replace(&mut self.inner, not_ready_inner)",
+        "axum/src/middleware/map_response.rs",
+        "axum/src/middleware/map_response.rs:260",
+    )?;
 
     Ok(())
 }

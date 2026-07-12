@@ -236,7 +236,29 @@ Post-regeneration verification:
   - `corpus_chrono_call_graph_2026-07-11.sqlite`:
     `94238a1b7f953a42a5a21c1bee3ee3c1bf9a79e712f2df05572d0133a739d5f8`
   - `corpus_axum_call_graph_2026-07-12.sqlite`:
-    `ef91b92ad0411c9b63fc19d53756239dff64df3caabdfb2a12fbf7c41223f5a4`
+    `e2e0d8fbd76cf4924560e80723fff6812de29309c5d796bdc2c27ea29b1f37d0`
+
+## 2026-07-12 Axum Middleware Service Generated Frontier Refresh
+
+The `corpus_axum_call_graph` fixture was recreated with
+`cargo run -p xtask --features call_graph -- recreate-backup-db --fixture corpus_axum_call_graph`
+after bounded, module-specific `all_the_tuples!(impl_service)` modeling began
+projecting generated middleware service-body frontier rows for
+`axum/src/middleware/from_fn.rs` and `axum/src/middleware/map_request.rs`.
+
+Post-regeneration verification:
+
+- The regenerated `corpus_axum_call_graph_2026-07-12.sqlite` shared snapshot was
+  copied into `tests/backup_dbs/` as the committed seed artifact.
+- `cargo run -p xtask --features call_graph -- verify-backup-dbs --fixture corpus_axum_call_graph`
+  passed.
+- Current seed checksum:
+  `e2e0d8fbd76cf4924560e80723fff6812de29309c5d796bdc2c27ea29b1f37d0`.
+- The axum real-target matrix now asserts thirty-four external targetless
+  `std::mem::replace` rows: the existing hand-written `error_handling` and
+  `response/sse` rows plus sixteen generated `from_fn` rows and sixteen
+  generated `map_request` rows. The same-named `map_response` middleware macro
+  remains out of scope for this bounded template slice.
 
 ## 2026-07-12 Memchr Generated IFunc Call Refresh
 

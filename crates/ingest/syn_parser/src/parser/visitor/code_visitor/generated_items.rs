@@ -111,6 +111,12 @@ impl Parse for ImplService {
     }
 }
 
+#[derive(Clone, Copy)]
+enum MiddlewareService {
+    FromFn,
+    MapRequest,
+}
+
 impl<'a> CodeVisitor<'a> {
     pub(super) fn record_generated_macro(&mut self, item: &ItemMacro) {
         if item.mac.path.is_ident("opaque_future") {
@@ -151,6 +157,18 @@ impl<'a> CodeVisitor<'a> {
             };
             if input.name == "impl_handler" {
                 self.record_impl_handler_tuples(item);
+                return;
+            }
+            if input.name == "impl_service"
+                && self.current_module_is(&["crate", "middleware", "from_fn"])
+            {
+                self.record_middleware_impl_service_tuples(item, MiddlewareService::FromFn);
+                return;
+            }
+            if input.name == "impl_service"
+                && self.current_module_is(&["crate", "middleware", "map_request"])
+            {
+                self.record_middleware_impl_service_tuples(item, MiddlewareService::MapRequest);
             }
             return;
         }
@@ -265,42 +283,32 @@ impl<'a> CodeVisitor<'a> {
         let Some(item_impl) = body_from_impl_item(&input) else {
             return;
         };
-        let span = item.extract_span_bytes();
-        let item_cfgs = extract_cfg_strings(&item.attrs);
-        let effective_cfgs = self
-            .state
-            .current_scope_cfgs
-            .iter()
-            .cloned()
-            .chain(item_cfgs.iter().cloned())
-            .collect::<Vec<_>>();
-
-        self.record_generated_impl(&item_impl, span, item_cfgs, effective_cfgs);
+        self.record_generated_impls(item, [item_impl]);
     }
 
     fn record_impl_handler_tuples(&mut self, item: &ItemMacro) {
-        let span = item.extract_span_bytes();
-        let item_cfgs = extract_cfg_strings(&item.attrs);
-        let effective_cfgs = self
-            .state
-            .current_scope_cfgs
-            .iter()
-            .cloned()
-            .chain(item_cfgs.iter().cloned())
-            .collect::<Vec<_>>();
-
-        for arity in 1..=16 {
-            let Some(item_impl) = handler_impl_item(arity) else {
-                continue;
-            };
-            self.record_generated_impl(&item_impl, span, item_cfgs.clone(), effective_cfgs.clone());
-        }
+        self.record_generated_impls(item, (1..=16).filter_map(handler_impl_item));
     }
 
     fn record_error_handling_impl_service(&mut self, item: &ItemMacro, input: ImplService) {
         let Some(item_impl) = error_handling_impl_service_item(&input) else {
             return;
         };
+        self.record_generated_impls(item, [item_impl]);
+    }
+
+    fn record_middleware_impl_service_tuples(&mut self, item: &ItemMacro, kind: MiddlewareService) {
+        self.record_generated_impls(
+            item,
+            (1..=16).filter_map(|arity| middleware_impl_service_item(kind, arity)),
+        );
+    }
+
+    fn record_generated_impls(
+        &mut self,
+        item: &ItemMacro,
+        impls: impl IntoIterator<Item = ItemImpl>,
+    ) {
         let span = item.extract_span_bytes();
         let item_cfgs = extract_cfg_strings(&item.attrs);
         let effective_cfgs = self
@@ -311,7 +319,9 @@ impl<'a> CodeVisitor<'a> {
             .chain(item_cfgs.iter().cloned())
             .collect::<Vec<_>>();
 
-        self.record_generated_impl(&item_impl, span, item_cfgs, effective_cfgs);
+        for item_impl in impls {
+            self.record_generated_impl(&item_impl, span, item_cfgs.clone(), effective_cfgs.clone());
+        }
     }
 
     fn current_module_is(&self, path: &[&str]) -> bool {
@@ -655,6 +665,39 @@ fn error_handling_impl_service_item(input: &ImplService) -> Option<ItemImpl> {
             }
         }
     })
+}
+
+fn middleware_impl_service_item(kind: MiddlewareService, arity: usize) -> Option<ItemImpl> {
+    if !(1..=16).contains(&arity) {
+        return None;
+    }
+
+    let params = (1..=arity)
+        .map(|index| format_ident!("T{}", index))
+        .collect::<Vec<_>>();
+    let parts = &params[..params.len() - 1];
+    let last = params.last()?;
+
+    match kind {
+        MiddlewareService::FromFn => parse_item(quote! {
+            impl<F, S, I, #(#parts,)* #last> Service<Request>
+                for FromFn<F, S, I, (#(#parts,)* #last,)>
+            {
+                fn call(&mut self, req: Request) -> Self::Future {
+                    std::mem::replace(&mut self.inner, not_ready_inner);
+                }
+            }
+        }),
+        MiddlewareService::MapRequest => parse_item(quote! {
+            impl<F, S, I, B, #(#parts,)* #last> Service<Request<B>>
+                for MapRequest<F, S, I, (#(#parts,)* #last,)>
+            {
+                fn call(&mut self, req: Request<B>) -> Self::Future {
+                    std::mem::replace(&mut self.inner, not_ready_inner);
+                }
+            }
+        }),
+    }
 }
 
 fn parse_item<T: syn::parse::Parse>(tokens: TokenStream) -> Option<T> {
