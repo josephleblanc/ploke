@@ -1658,6 +1658,28 @@ Completed evidence:
   `cargo check -p ploke-db` and
   `cargo test -p ploke-db axum_usage_questions_list_runtime_dispatch_needs_for_owner -- --nocapture`.
 
+Follow-up completed slice in current bucket: downstream runtime-dispatch need
+payloads.
+
+Completed evidence:
+
+- Added `RuntimeDispatchNeedInfo` to the RAG/tool DTO layer and exposed
+  `RagService::exact_runtime_dispatch_needs_for_owner` over the DB helper.
+- Exact `code_item_lookup` and `code_item_edges` now include
+  `runtime_dispatch_needs` and UI counts alongside the existing
+  `external_summary_needs` payload.
+- RAG and tool assertions use the same real axum
+  `HandleErrorFuture::poll -> self.project().future.poll(cx)` source oracle
+  and prove the targetless dyn `Future::poll` callsite is visible as a
+  runtime-dispatch need without adding traversal targets.
+- Verification passed:
+  `cargo check -p ploke-core -p ploke-rag -p ploke-tui`,
+  `cargo test -p ploke-rag runtime_dispatch_needs_exact_reads_axum_dyn_future_poll_queue -- --nocapture`,
+  `cargo test -p ploke-tui --test integration code_item_lookup_returns_unsupported_receiver_targetless_real_corpus_rows -- --nocapture`,
+  `cargo test -p ploke-tui --test integration code_item_edges_returns_unsupported_receiver_targetless_real_corpus_rows -- --nocapture`,
+  and
+  `cargo test -p ploke-tui --test integration tool_io_roundtrip -- --nocapture`.
+
 Completed slice in current bucket: fixture-backed FFI boundary effect
 annotation over an external targetless frontier.
 

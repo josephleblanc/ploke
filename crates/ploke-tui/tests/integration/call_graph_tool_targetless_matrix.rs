@@ -399,6 +399,10 @@ async fn code_item_lookup_returns_unsupported_receiver_targetless_real_corpus_ro
             .get("proof_context")
             .and_then(serde_json::Value::as_array)
             .expect("proof_context array");
+        let runtime_needs = payload
+            .get("runtime_dispatch_needs")
+            .and_then(serde_json::Value::as_array)
+            .expect("runtime_dispatch_needs array");
 
         // Matrix:
         //   docs/active/agents/call-graph/
@@ -462,6 +466,7 @@ async fn code_item_lookup_returns_unsupported_receiver_targetless_real_corpus_ro
                     fixture.case.label,
                     "lookup",
                 );
+                assert_runtime_dispatch_need(runtime_needs, site_id, fixture.case.label, "lookup");
             }
         }
 
@@ -479,6 +484,10 @@ async fn code_item_lookup_returns_unsupported_receiver_targetless_real_corpus_ro
                 .expect("proof count")
                 >= 2,
             "code_item_lookup should surface unsupported receiver proof rows"
+        );
+        assert_eq!(
+            ui_field(ui, "runtime_dispatch_needs"),
+            runtime_needs.len().to_string()
         );
     }
 }
@@ -1250,6 +1259,44 @@ fn assert_no_external_summary_need(
     );
 }
 
+fn assert_runtime_dispatch_need(
+    needs: &[serde_json::Value],
+    site_id: Uuid,
+    label: &str,
+    tool: &str,
+) {
+    let site = site_id.to_string();
+    let need = needs
+        .iter()
+        .find(|need| {
+            need.get("call_site")
+                .and_then(|call| call.get("site_id"))
+                .and_then(serde_json::Value::as_str)
+                == Some(site.as_str())
+        })
+        .unwrap_or_else(|| {
+            panic!("{tool} should expose a runtime-dispatch need for {label}: {needs:#?}")
+        });
+    let blockers = need
+        .get("blocker_reasons")
+        .and_then(serde_json::Value::as_array)
+        .unwrap_or_else(|| panic!("{tool} runtime_dispatch_needs.blocker_reasons array"));
+    assert!(
+        blockers
+            .iter()
+            .any(|reason| reason.as_str() == Some("dynamic_dispatch_unbounded")),
+        "{tool} runtime-dispatch need should preserve dynamic_dispatch_unbounded for {label}: {need:#?}"
+    );
+    let paths = need
+        .get("paths_to_owner")
+        .and_then(serde_json::Value::as_array)
+        .unwrap_or_else(|| panic!("{tool} runtime_dispatch_needs.paths_to_owner array"));
+    assert!(
+        paths.is_empty(),
+        "{tool} direct runtime-dispatch need should not include intermediate owner paths for {label}: {need:#?}"
+    );
+}
+
 #[tokio::test]
 async fn code_item_edges_returns_unsupported_receiver_targetless_real_corpus_rows() {
     for case in ReceiverToolCase::REQUEST_PARTS_TURBOFISH
@@ -1283,6 +1330,11 @@ async fn code_item_edges_returns_unsupported_receiver_targetless_real_corpus_row
             .and_then(|node| node.get("proof_context"))
             .and_then(serde_json::Value::as_array)
             .expect("node_info.proof_context array");
+        let runtime_needs = payload
+            .get("node_info")
+            .and_then(|node| node.get("runtime_dispatch_needs"))
+            .and_then(serde_json::Value::as_array)
+            .expect("node_info.runtime_dispatch_needs array");
 
         // Same receiver source oracles as the lookup test above, exercised
         // through the edge-oriented payload.
@@ -1331,6 +1383,7 @@ async fn code_item_edges_returns_unsupported_receiver_targetless_real_corpus_row
                     fixture.case.label,
                     "edges",
                 );
+                assert_runtime_dispatch_need(runtime_needs, site_id, fixture.case.label, "edges");
             }
         }
 
@@ -1344,6 +1397,10 @@ async fn code_item_edges_returns_unsupported_receiver_targetless_real_corpus_row
         );
         let proof_count = proof_context.len().to_string();
         assert_eq!(ui_field(ui, "proof_context"), proof_count.as_str());
+        assert_eq!(
+            ui_field(ui, "runtime_dispatch_needs"),
+            runtime_needs.len().to_string()
+        );
     }
 }
 

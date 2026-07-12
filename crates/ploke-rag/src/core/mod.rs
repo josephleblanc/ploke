@@ -19,7 +19,7 @@ use ploke_core::rag_types::{
     CallSiteKind as RagCallSiteKind, CallStatusKind as RagCallStatusKind, CallTargetInfo,
     CallTargetKind, CallTestEntrypointInfo, CanonPath, CrateBoundaryEdgeInfo,
     ExternalSummaryNeedInfo, ModuleBoundaryEdgeInfo, ModuleBoundaryPolicyViolationInfo,
-    NodeFilepath, ProofContextInfo,
+    NodeFilepath, ProofContextInfo, RuntimeDispatchNeedInfo,
 };
 use ploke_db::{
     CallBuildDomain as DbCallBuildDomain, CallContextCandidate, CallContextOptions,
@@ -36,7 +36,7 @@ use ploke_db::{
     ModuleBoundaryEdge as DbModuleBoundaryEdge,
     ModuleBoundaryPolicyRule as DbModuleBoundaryPolicyRule,
     ModuleBoundaryPolicyViolation as DbModuleBoundaryPolicyViolation, ProofGraphContextRow,
-    ProofGraphStore,
+    ProofGraphStore, RuntimeDispatchNeed as DbRuntimeDispatchNeed,
 };
 use ploke_embed::indexer::EmbeddingProcessor;
 use ploke_embed::runtime::EmbeddingRuntime;
@@ -577,6 +577,22 @@ fn external_summary_need_info(
         .map(|path| path_info(db, path))
         .collect::<Result<Vec<_>, RagError>>()?;
     Ok(ExternalSummaryNeedInfo {
+        paths_to_owner,
+        call_site: row_to_call_context(row.call_site, usize::MAX)?,
+        blocker_reasons: row.blocker_reasons,
+    })
+}
+
+fn runtime_dispatch_need_info(
+    db: &Database,
+    row: DbRuntimeDispatchNeed,
+) -> Result<RuntimeDispatchNeedInfo, RagError> {
+    let paths_to_owner = row
+        .paths_to_owner
+        .into_iter()
+        .map(|path| path_info(db, path))
+        .collect::<Result<Vec<_>, RagError>>()?;
+    Ok(RuntimeDispatchNeedInfo {
         paths_to_owner,
         call_site: row_to_call_context(row.call_site, usize::MAX)?,
         blocker_reasons: row.blocker_reasons,
@@ -1232,6 +1248,24 @@ impl RagService {
                 .external_summary_needs_for_owner(owner_id, options)?
                 .into_iter()
                 .map(|row| external_summary_need_info(self.db.as_ref(), row))
+                .collect::<Result<Vec<_>, RagError>>()?,
+        ))
+    }
+
+    pub fn exact_runtime_dispatch_needs_for_owner(
+        &self,
+        owner_id: Uuid,
+        options: CallPathOptions,
+    ) -> Result<Option<Vec<RuntimeDispatchNeedInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .runtime_dispatch_needs_for_owner(owner_id, options)?
+                .into_iter()
+                .map(|row| runtime_dispatch_need_info(self.db.as_ref(), row))
                 .collect::<Result<Vec<_>, RagError>>()?,
         ))
     }

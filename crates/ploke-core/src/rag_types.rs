@@ -577,6 +577,15 @@ pub struct ExternalSummaryNeedInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct RuntimeDispatchNeedInfo {
+    #[serde(default)]
+    pub paths_to_owner: Vec<CallPathInfo>,
+    pub call_site: CallContextInfo,
+    #[serde(default)]
+    pub blocker_reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct CallBuildDomainInfo {
     pub build_domain_id: String,
     #[serde(default)]
@@ -809,6 +818,7 @@ impl From<ContextPart> for ConciseContext {
             call_effect_policy_violations: Vec::new(),
             call_proof_invariant_findings: Vec::new(),
             external_summary_needs: Vec::new(),
+            runtime_dispatch_needs: Vec::new(),
             module_boundary_edges: Vec::new(),
             crate_boundary_edges: Vec::new(),
             call_build_domains: Vec::new(),
@@ -882,6 +892,8 @@ pub struct ConciseContext {
     pub call_proof_invariant_findings: Vec<CallProofInvariantFindingInfo>,
     #[serde(default)]
     pub external_summary_needs: Vec<ExternalSummaryNeedInfo>,
+    #[serde(default)]
+    pub runtime_dispatch_needs: Vec<RuntimeDispatchNeedInfo>,
     #[serde(default)]
     pub module_boundary_edges: Vec<ModuleBoundaryEdgeInfo>,
     #[serde(default)]

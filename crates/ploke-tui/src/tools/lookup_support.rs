@@ -4,7 +4,7 @@ use ploke_core::{
         CallBuildDomainInfo, CallContextInfo, CallEffectPolicyViolationInfo, CallImpactInfo,
         CallPathInfo, CallProofInvariantFindingInfo, CallReachEffectInfo, CallReachInfo,
         CallTestEntrypointInfo, CrateBoundaryEdgeInfo, ExternalSummaryNeedInfo,
-        ModuleBoundaryEdgeInfo, ProofContextInfo,
+        ModuleBoundaryEdgeInfo, ProofContextInfo, RuntimeDispatchNeedInfo,
     },
     tool_types::ToolName,
 };
@@ -592,6 +592,25 @@ pub(super) fn external_summary_needs_for_node(
     }
 }
 
+pub(super) fn runtime_dispatch_needs_for_node(
+    ctx: &super::Ctx,
+    node_id: Uuid,
+) -> Result<Vec<RuntimeDispatchNeedInfo>, ploke_error::Error> {
+    use ploke_error::InternalError;
+
+    match ctx.state.rag.as_ref() {
+        Some(rag) if !rag.call_context_degraded() => Ok(rag
+            .exact_runtime_dispatch_needs_for_owner(node_id, TOOL_CALL_PATH_OPTIONS)
+            .map_err(|err| {
+                ploke_error::Error::Internal(InternalError::CompilerError(format!(
+                    "failed to collect runtime dispatch needs for code item {node_id}: {err}"
+                )))
+            })?
+            .unwrap_or_default()),
+        _ => Ok(Vec::new()),
+    }
+}
+
 pub(super) fn module_boundary_edges_for_node(
     ctx: &super::Ctx,
     node_id: Uuid,
@@ -735,6 +754,7 @@ pub(super) fn with_call_usage_fields(
     policy_violations: &[CallEffectPolicyViolationInfo],
     invariant_findings: &[CallProofInvariantFindingInfo],
     summary_needs: &[ExternalSummaryNeedInfo],
+    runtime_needs: &[RuntimeDispatchNeedInfo],
     module_boundary_edges: &[ModuleBoundaryEdgeInfo],
     crate_boundary_edges: &[CrateBoundaryEdgeInfo],
     build_domains: &[CallBuildDomainInfo],
@@ -852,6 +872,7 @@ pub(super) fn with_call_usage_fields(
             invariant_findings.len().to_string(),
         )
         .with_field("external_summary_needs", summary_needs.len().to_string())
+        .with_field("runtime_dispatch_needs", runtime_needs.len().to_string())
         .with_field(
             "module_boundary_edges",
             module_boundary_edges.len().to_string(),

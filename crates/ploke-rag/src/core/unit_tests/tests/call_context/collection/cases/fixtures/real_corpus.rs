@@ -3615,6 +3615,95 @@ async fn external_summary_needs_exact_reads_axum_feature_gated_json_queue() -> R
 }
 
 #[tokio::test]
+async fn runtime_dispatch_needs_exact_reads_axum_dyn_future_poll_queue() -> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+    let domain_id = "bd:corpus-axum-call-graph";
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Debugging / RAG:
+    //   "Which runtime-dispatch frontiers are blocking a complete local
+    //   traversal from this owner?"
+    //
+    // Source oracle:
+    //   axum/src/error_handling/mod.rs:240 stores
+    //     `Pin<Box<dyn Future<Output = Result<Response, Infallible>>>>`.
+    //   axum/src/error_handling/mod.rs:251
+    //     `HandleErrorFuture::poll` calls `self.project().future.poll(cx)`.
+    // Expected contract: RAG exposes the owner-scoped runtime-dispatch queue
+    // for the dyn `Future::poll` frontier without adding a local traversal
+    // edge.
+    let owner = method_id_by_file(
+        &db,
+        "poll",
+        "self.project().future.poll(cx)",
+        "axum/src/error_handling/mod.rs",
+    )?;
+    let context = db.call_context_for_owner(owner)?;
+    let poll = context
+        .iter()
+        .find(|row| {
+            row.site.method.as_deref() == Some("poll")
+                && row.site.receiver == Some(CallReceiver::Unsupported)
+                && row.status.status == DbCallStatusKind::Unsupported
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "HandleErrorFuture::poll should expose targetless dyn Future::poll: {context:#?}"
+            )
+        });
+    assert!(
+        poll.targets.is_empty(),
+        "dyn Future::poll should stay targetless before blocker insertion: {poll:#?}"
+    );
+
+    db.project_call_proof_facts_for_owner(owner, domain_id)?;
+    db.upsert_proof_fact_values(&[ploke_test_utils::axum_dyn_future_poll_blocker(poll.site.id)])?;
+
+    let needs = rag
+        .exact_runtime_dispatch_needs_for_owner(
+            owner,
+            CallPathOptions {
+                max_depth: 1,
+                max_paths: 16,
+            },
+        )?
+        .expect("call context enabled");
+    let need = needs
+        .iter()
+        .find(|need| need.call_site.site_id == poll.site.id)
+        .unwrap_or_else(|| {
+            panic!("RAG should expose dyn Future::poll as a runtime-dispatch need: {needs:#?}")
+        });
+    assert_eq!(need.call_site.owner_id, owner);
+    assert_eq!(need.call_site.status, CallStatusKind::Unsupported);
+    assert!(
+        need.paths_to_owner.is_empty(),
+        "direct owner frontier should not carry an intermediate path: {need:#?}"
+    );
+    assert!(
+        need.blocker_reasons
+            .iter()
+            .any(|reason| reason == "dynamic_dispatch_unbounded"),
+        "RAG need should preserve the active dynamic-dispatch blocker: {need:#?}"
+    );
+    assert!(
+        matches!(
+            &need.call_site.callee,
+            CallCalleeInfo::Method {
+                name,
+                receiver: Some(CallReceiverInfo::Unsupported),
+            } if name == "poll"
+        ),
+        "RAG need should preserve the unsupported dyn Future::poll receiver payload: {need:#?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn get_context_attaches_axum_request_extract_two_hop_call_paths() -> Result<(), Error> {
     init_tracing_once();
     let db = Arc::new(fresh_backup_fixture_db(

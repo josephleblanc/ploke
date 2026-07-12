@@ -328,6 +328,8 @@ for a more fuzzy search."#
             lookup_support::call_proof_invariant_findings_for_node(&ctx, resolved_item_id)?;
         let external_summary_needs =
             lookup_support::external_summary_needs_for_node(&ctx, resolved_item_id)?;
+        let runtime_dispatch_needs =
+            lookup_support::runtime_dispatch_needs_for_node(&ctx, resolved_item_id)?;
         let module_boundary_edges =
             lookup_support::module_boundary_edges_for_node(&ctx, resolved_item_id)?;
         let crate_boundary_edges =
@@ -377,6 +379,7 @@ for a more fuzzy search."#
             call_effect_policy_violations,
             call_proof_invariant_findings,
             external_summary_needs,
+            runtime_dispatch_needs,
             module_boundary_edges,
             crate_boundary_edges,
             call_build_domains,
@@ -413,6 +416,7 @@ for a more fuzzy search."#
             &concise_context.call_effect_policy_violations,
             &concise_context.call_proof_invariant_findings,
             &concise_context.external_summary_needs,
+            &concise_context.runtime_dispatch_needs,
             &concise_context.module_boundary_edges,
             &concise_context.crate_boundary_edges,
             &concise_context.call_build_domains,
