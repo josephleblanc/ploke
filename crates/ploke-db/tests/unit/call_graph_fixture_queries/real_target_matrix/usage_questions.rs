@@ -61,6 +61,9 @@ fn axum_usage_questions_have_multi_hop_navigation_and_impact_answers() -> Result
     //     `RequestExt::extract` calls `self.extract_with_state(&())`.
     //   axum-core/src/ext_traits/request.rs:279
     //     `RequestExt::extract_with_state` calls `E::from_request(self, state)`.
+    //   axum/src/handler/mod.rs:250 also contributes generated
+    //     `Tn::from_request(req, &state)` direct callsites through
+    //     `all_the_tuples!(impl_handler)`.
     //   axum-core/src/extract/mod.rs:85
     //     defines the `FromRequest::from_request` trait method binding.
     let start = method_id_by_name_body_and_file_suffix(
@@ -104,7 +107,7 @@ fn axum_usage_questions_have_multi_hop_navigation_and_impact_answers() -> Result
     let direct_sites = db.call_sites_for_target(target)?;
     assert_eq!(
         direct_sites.len(),
-        2,
+        18,
         "target-centered direct callsite query should still answer exact callsite fanout: {direct_sites:#?}"
     );
     assert!(
@@ -1281,7 +1284,7 @@ fn axum_usage_questions_summarize_eventual_callers_for_impact() -> Result<(), Db
         target,
         CallPathOptions {
             max_depth: 2,
-            max_paths: 16,
+            max_paths: 128,
         },
     )?;
     assert_eq!(report.target.id, target);
@@ -1309,8 +1312,8 @@ fn axum_usage_questions_summarize_eventual_callers_for_impact() -> Result<(), Db
     );
     assert_eq!(
         report.direct_call_sites.len(),
-        2,
-        "FromRequest::from_request impact report should expose both direct caller-site rows: {report:#?}"
+        18,
+        "FromRequest::from_request impact report should expose all direct caller-site rows, including generated handler extraction rows: {report:#?}"
     );
     assert!(
         report.direct_call_sites.iter().any(|row| {
@@ -1328,7 +1331,7 @@ fn axum_usage_questions_summarize_eventual_callers_for_impact() -> Result<(), Db
         report.callsite_buckets.iter().any(|bucket| {
             bucket.kind == CallSiteKind::Path
                 && bucket.relation == CallRelationKind::AssociatedFunction
-                && bucket.count == 2
+                && bucket.count == 18
         }),
         "FromRequest::from_request impact report should summarize direct path/associated-function callsites: {report:#?}"
     );

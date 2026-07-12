@@ -192,11 +192,13 @@ fn axum_real_target_supported_callers_are_one_hop_traversable() -> Result<(), Db
             // `E::from_request(self, state)` from `E: FromRequest<S, M>`.
             // axum-core/src/extract/mod.rs:127 calls
             // `T::from_request(req, state)` from `T: FromRequest<S>`.
+            // axum/src/handler/mod.rs:250 generated handler extraction rows
+            // call `Tn::from_request(req, &state)` for arities 1 through 16.
             // Callee binding: axum-core/src/extract/mod.rs:85 trait method.
             label: "axum-core FromRequest::from_request trait-associated paths",
             target: method_id_by_trait_name(&db, "FromRequest", "from_request")?,
-            expected_call_edges: 2,
-            expected_traversal_candidates: 2,
+            expected_call_edges: 18,
+            expected_traversal_candidates: 18,
         },
         ResolvedTraversalCase {
             // axum-core/src/ext_traits/request.rs:305 and
@@ -205,14 +207,18 @@ fn axum_real_target_supported_callers_are_one_hop_traversable() -> Result<(), Db
             // axum-core/src/extract/mod.rs:115 calls
             // `T::from_request_parts(parts, state)` from
             // `T: FromRequestParts<S>`.
+            // axum/src/middleware/from_extractor.rs:220 calls
+            // `E::from_request_parts(...)` from a nested async block.
+            // axum/src/handler/mod.rs:242 generated handler extraction rows
+            // call `Tn::from_request_parts(...)` for extractor prefixes.
             // axum-core/src/extract/mod.rs:103 calls
             // `Self::from_request_parts(...)` from the nested async block
             // inside the ViaParts blanket impl.
             // Callee binding: axum-core/src/extract/mod.rs:59 trait method.
             label: "axum-core FromRequestParts::from_request_parts trait-associated paths",
             target: method_id_by_trait_name(&db, "FromRequestParts", "from_request_parts")?,
-            expected_call_edges: 4,
-            expected_traversal_candidates: 4,
+            expected_call_edges: 125,
+            expected_traversal_candidates: 20,
         },
         ResolvedTraversalCase {
             // axum-core/src/ext_traits/mod.rs:25 and
@@ -426,24 +432,61 @@ fn axum_real_target_supported_callers_match_oracle_shape_counts() -> Result<(), 
             // Callers:
             //   axum-core/src/ext_traits/request.rs:279 E::from_request(...)
             //   axum-core/src/extract/mod.rs:127 T::from_request(...)
+            //   axum/src/handler/mod.rs:250 generated Tn::from_request(...)
             // Callee binding: axum-core/src/extract/mod.rs:85 trait method.
             label: "axum-core FromRequest::from_request trait-associated paths",
             target: method_id_by_trait_name(&db, "FromRequest", "from_request")?,
-            expected: vec![("path:E::from_request", 1), ("path:T::from_request", 1)],
+            expected: vec![
+                ("path:E::from_request", 1),
+                ("path:T::from_request", 1),
+                ("path:T1::from_request", 1),
+                ("path:T2::from_request", 1),
+                ("path:T3::from_request", 1),
+                ("path:T4::from_request", 1),
+                ("path:T5::from_request", 1),
+                ("path:T6::from_request", 1),
+                ("path:T7::from_request", 1),
+                ("path:T8::from_request", 1),
+                ("path:T9::from_request", 1),
+                ("path:T10::from_request", 1),
+                ("path:T11::from_request", 1),
+                ("path:T12::from_request", 1),
+                ("path:T13::from_request", 1),
+                ("path:T14::from_request", 1),
+                ("path:T15::from_request", 1),
+                ("path:T16::from_request", 1),
+            ],
         },
         ResolvedShapeCase {
             // Callers:
             //   axum-core/src/ext_traits/request.rs:305 E::from_request_parts(...)
             //   axum-core/src/ext_traits/request_parts.rs:133 E::from_request_parts(...)
             //   axum-core/src/extract/mod.rs:115 T::from_request_parts(...)
+            //   axum/src/middleware/from_extractor.rs:220 E::from_request_parts(...)
+            //   axum/src/handler/mod.rs:242 generated Tn::from_request_parts(...)
             //   axum-core/src/extract/mod.rs:103 async-block Self::from_request_parts(...)
             // Callee binding: axum-core/src/extract/mod.rs:59 trait method.
             label: "axum-core FromRequestParts::from_request_parts trait-associated paths",
             target: method_id_by_trait_name(&db, "FromRequestParts", "from_request_parts")?,
             expected: vec![
-                ("path:E::from_request_parts", 2),
+                ("path:E::from_request_parts", 3),
                 ("path:T::from_request_parts", 1),
                 ("path:Self::from_request_parts", 1),
+                ("path:T1::from_request_parts", 15),
+                ("path:T2::from_request_parts", 14),
+                ("path:T3::from_request_parts", 13),
+                ("path:T4::from_request_parts", 12),
+                ("path:T5::from_request_parts", 11),
+                ("path:T6::from_request_parts", 10),
+                ("path:T7::from_request_parts", 9),
+                ("path:T8::from_request_parts", 8),
+                ("path:T9::from_request_parts", 7),
+                ("path:T10::from_request_parts", 6),
+                ("path:T11::from_request_parts", 5),
+                ("path:T12::from_request_parts", 4),
+                ("path:T13::from_request_parts", 3),
+                ("path:T14::from_request_parts", 2),
+                ("path:T15::from_request_parts", 1),
             ],
         },
         ResolvedShapeCase {
