@@ -169,11 +169,18 @@ the smallest apparent non-generated candidates are already covered:
   and constructed holder-field callable parameters;
 - mutable referenced `dyn FnMut` local binding proof.
 
+One larger object/field value-flow slice has now been promoted:
+`axum/src/boxed.rs:85` resolves `(self.into_route)(self.handler, state)` to the
+unique `BoxedIntoRoute::from_handler` closure initializer for the
+`MakeErasedHandler::into_route: fn(H, S) -> Route` field.
+
 Remaining visible targetless rows are not safe to promote with the current proof
 carriers. They need one of the larger models listed above:
 
-- object/field value-flow for real-corpus dynamic callable fields such as axum
-  `self.into_route`, `self.layer`, and `self.tap_fn`;
+- broader object/field value-flow for real-corpus dynamic callable fields such
+  as axum `self.layer`, `self.tap_fn`, and the router-side
+  `self.into_route` row whose construction site is not visible in selected
+  source;
 - generated top-level item modeling for parameterized item macros such as axum
   `opaque_future!`;
 - macro-expanded arbitrary-expression bodies for memchr's generated

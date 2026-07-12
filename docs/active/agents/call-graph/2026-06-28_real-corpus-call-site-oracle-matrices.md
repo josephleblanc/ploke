@@ -336,7 +336,7 @@ Route receiver rows and blocked proof facts.
 
 | Case | Callsites | Owner | Evidence chain |
 | --- | --- | --- | --- |
-| `(self.into_route)(...)` handler | `axum/src/boxed.rs:85` | `MakeErasedHandler::into_route` | field `into_route: fn(H, S) -> Route` at `boxed.rs:72`; initialized in `BoxedIntoRoute::from_handler` at `:23-25` with non-capturing closure; structural dynamic call, no named callee without field/closure proof. |
+| `(self.into_route)(...)` handler | `axum/src/boxed.rs:85` | `MakeErasedHandler::into_route` | field `into_route: fn(H, S) -> Route` at `boxed.rs:72`; initialized in `BoxedIntoRoute::from_handler` at `:23-25` with a unique non-capturing closure; now resolved as a `DynamicClosure` edge by the function-pointer self-field proof. |
 | `(self.into_route)(...)` router | `axum/src/boxed.rs:120` | `MakeErasedRouter::into_route` | field `into_route: fn(Router<S>, S) -> Route` at `boxed.rs:108`; construction site not found in selected `axum/src`; unsupported/fail-closed. |
 | `(self.layer)(...)` | `axum/src/boxed.rs:159,163` | `Map::into_route`; `Map::call_with_state` | field `layer: Box<dyn LayerFn<E, E2>>` at `boxed.rs:142`; boxed from `BoxedIntoRoute::map(self, f)` at `:31-40`; `LayerFn` blanket impl `:167-173`; dynamic trait-object callable. |
 | `(self.tap_fn)(...)` | `axum/src/serve/listener.rs:236` | `TapIo<L, F>::accept` | field `tap_fn: F` at `listener.rs:212`; set by `ListenerExt::tap_io(self, tap_fn)` at `:116-123`; bound `F: FnMut(&mut L::Io)` at `:118,229`; example closure passed at `serve/mod.rs:566`. |
@@ -364,8 +364,11 @@ now preserve those candidates, the four currently projected dynamic
 callable-field blockers in `axum/src/boxed.rs:{85,120,159}` and
 `axum/src/serve/listener.rs:236`, including zero traversal targets,
 `dynamic_dispatch_unbounded` proof rows, and the persisted self-field callsite
-paths `["self", "into_route"]`, `["self", "layer"]`, and
-`["self", "tap_fn"]` through `CallContextInfo.path`.
+paths for the remaining targetless `["self", "layer"]` and
+`["self", "tap_fn"]` rows through `CallContextInfo.path`. The handler
+`["self", "into_route"]` row at `axum/src/boxed.rs:85` is now a resolved
+`DynamicClosure` edge; the router row at `axum/src/boxed.rs:120` remains
+unsupported because no selected-source construction site is visible.
 Exact TUI `code_item_lookup` and `code_item_edges` tests assert the same four
 owner-seeded targetless rows, blocked proof facts, and path payloads.
 
