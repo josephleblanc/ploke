@@ -166,6 +166,17 @@ pub struct ModuleBoundaryEdge {
     pub site: CallSiteRow,
 }
 
+/// Resolved direct call edge whose caller and callee live in different crates.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CrateBoundaryEdge {
+    pub edge: CallPathEdge,
+    pub caller: CallNodeInfo,
+    pub caller_crate: String,
+    pub callee: CallNodeInfo,
+    pub callee_crate: String,
+    pub site: CallSiteRow,
+}
+
 /// Caller-supplied architecture rule that marks a module boundary as forbidden.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ModuleBoundaryPolicyRule {

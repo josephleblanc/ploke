@@ -14,8 +14,9 @@ use super::super::{
     CallBuildDomain, CallContextRow, CallEffectGuardReport, CallEffectPolicyViolation,
     CallGuardReport, CallImpactReport, CallNodeInfo, CallPath, CallPathEdge, CallPathOptions,
     CallProofInvariantFinding, CallReachEffect, CallReachReport, CallRelationKind, CallSiteBucket,
-    CallSiteKind, CallSiteRow, CallStatusKind, CallTestEntrypoint, ExternalSummaryNeed,
-    ModuleBoundaryEdge, ModuleBoundaryPolicyRule, ModuleBoundaryPolicyViolation,
+    CallSiteKind, CallSiteRow, CallStatusKind, CallTestEntrypoint, CrateBoundaryEdge,
+    ExternalSummaryNeed, ModuleBoundaryEdge, ModuleBoundaryPolicyRule,
+    ModuleBoundaryPolicyViolation,
 };
 use super::metadata::{call_node_info_rank, call_node_infos, decode_call_node_info};
 
@@ -756,6 +757,95 @@ incoming[id] := *call_relation {{ target_id: id @ 'NOW' }}
         Ok(edges)
     }
 
+    /// Lists resolved call path edges from `owner_id` that cross crate boundaries.
+    ///
+    /// This is a bounded architecture/build helper. It uses the same
+    /// resolved-only path traversal as [`Self::call_paths_from_owner`] and
+    /// does not promote targetless dependency frontiers into edges.
+    pub fn crate_boundary_edges_from_owner(
+        &self,
+        owner_id: Uuid,
+        options: CallPathOptions,
+    ) -> Result<Vec<CrateBoundaryEdge>, DbError> {
+        let paths = self.call_paths_from_owner(owner_id, options)?;
+        let mut ids = BTreeSet::new();
+        for path in &paths {
+            for edge in &path.edges {
+                ids.insert(edge.caller_id);
+                ids.insert(edge.callee_id);
+            }
+        }
+        let crates = source_crates_by_node(self, &ids)?;
+
+        let mut out = BTreeMap::new();
+        let mut node_cache = BTreeMap::new();
+        let mut site_cache = BTreeMap::new();
+        let mut context_cache = BTreeMap::new();
+        for path in paths {
+            for edge in path.edges {
+                let caller_crate = crates.get(&edge.caller_id).ok_or_else(|| {
+                    DbError::Cozo(format!(
+                        "missing source crate metadata for crate-boundary caller {}",
+                        edge.caller_id
+                    ))
+                })?;
+                let callee_crate = crates.get(&edge.callee_id).ok_or_else(|| {
+                    DbError::Cozo(format!(
+                        "missing source crate metadata for crate-boundary callee {}",
+                        edge.callee_id
+                    ))
+                })?;
+                if caller_crate == callee_crate {
+                    continue;
+                }
+
+                let key = (edge.caller_id, edge.callee_id, edge.call_site_id);
+                if out.contains_key(&key) {
+                    continue;
+                }
+                let caller =
+                    cached_node_info(self, &mut node_cache, edge.caller_id, "crate caller")?;
+                let callee =
+                    cached_node_info(self, &mut node_cache, edge.callee_id, "crate callee")?;
+                let site = cached_call_site(self, &mut site_cache, &mut context_cache, &edge)?;
+                out.insert(
+                    key,
+                    CrateBoundaryEdge {
+                        edge,
+                        caller,
+                        caller_crate: caller_crate.clone(),
+                        callee,
+                        callee_crate: callee_crate.clone(),
+                        site,
+                    },
+                );
+            }
+        }
+
+        let mut edges = out.into_values().collect::<Vec<_>>();
+        edges.sort_by(|left, right| {
+            (
+                left.caller_crate.as_str(),
+                left.callee_crate.as_str(),
+                left.caller.module_path.as_slice(),
+                left.callee.module_path.as_slice(),
+                left.caller.name.as_str(),
+                left.callee.name.as_str(),
+                left.edge.call_site_id.as_u128(),
+            )
+                .cmp(&(
+                    right.caller_crate.as_str(),
+                    right.callee_crate.as_str(),
+                    right.caller.module_path.as_slice(),
+                    right.callee.module_path.as_slice(),
+                    right.caller.name.as_str(),
+                    right.callee.name.as_str(),
+                    right.edge.call_site_id.as_u128(),
+                ))
+        });
+        Ok(edges)
+    }
+
     /// Lists resolved module-boundary edges that match forbidden architecture rules.
     ///
     /// Rules use module-path prefixes over the same resolved-only boundary
@@ -1326,8 +1416,18 @@ fn source_crates_for_nodes(
     db: &Database,
     node_ids: &BTreeSet<Uuid>,
 ) -> Result<Vec<String>, DbError> {
+    let crates = source_crates_by_node(db, node_ids)?
+        .into_values()
+        .collect::<BTreeSet<_>>();
+    Ok(crates.into_iter().collect())
+}
+
+fn source_crates_by_node(
+    db: &Database,
+    node_ids: &BTreeSet<Uuid>,
+) -> Result<BTreeMap<Uuid, String>, DbError> {
     if node_ids.is_empty() {
-        return Ok(Vec::new());
+        return Ok(BTreeMap::new());
     }
 
     let input_rows = node_ids
@@ -1358,22 +1458,31 @@ node_anchor[id, mod_id] := *call_body_owner{{ id, parent_id @ 'NOW' }}, node_anc
 node_anchor[id, mod_id] := *struct{{ id @ 'NOW' }}, ancestor[id, mod_id]
 node_anchor[id, mod_id] := *variant{{ id, owner_id: enum_id @ 'NOW' }}, ancestor[enum_id, mod_id]
 
-?[name] :=
+?[id, name] :=
   input[id],
   node_anchor[id, mod_id],
   file_owner_for_module[mod_id, file_owner_id],
   *file_mod{{ owner_id: file_owner_id, namespace @ 'NOW' }},
   *crate_context{{ name, namespace @ 'NOW' }}
 
-:sort name
+:sort id, name
 "#
     );
 
     let rows = db.run_script(&script, BTreeMap::new(), ScriptMutability::Immutable)?;
-    rows.rows
-        .iter()
-        .map(|row| to_string(&row[0]))
-        .collect::<Result<Vec<_>, DbError>>()
+    let mut crates = BTreeMap::new();
+    for row in &rows.rows {
+        let id = to_uuid(&row[0])?;
+        let name = to_string(&row[1])?;
+        if let Some(existing) = crates.insert(id, name.clone())
+            && existing != name
+        {
+            return Err(DbError::Cozo(format!(
+                "node {id} maps to multiple source crates: {existing}, {name}"
+            )));
+        }
+    }
+    Ok(crates)
 }
 
 fn source_cfgs_for_summary(

@@ -562,6 +562,71 @@ fn axum_usage_questions_list_module_boundary_edges_for_architecture_review() -> 
 }
 
 #[test]
+fn axum_usage_questions_list_crate_boundary_edges_for_component_review() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Architecture review:
+    //   "Are lower-level crates depending on higher-level application code?"
+    // Build or deployment optimization:
+    //   "Which crates or binaries need rebuilding after this internal function changes?"
+    //
+    // Source oracle:
+    //   axum/src/middleware/from_fn.rs:411 in the `axum` crate calls
+    //     `Body::empty()`.
+    //   axum-core/src/body.rs:52 defines `Body::empty` in the `axum-core`
+    //     crate.
+    // Expected contract: the resolved direct edge is visible as a cross-crate
+    // edge, while same-crate resolved edges in the same owner are not reported
+    // as crate-boundary crossings.
+    let owner =
+        function_id_by_name_in_module(&db, &["crate", "middleware", "from_fn", "tests"], "basic")?;
+    let target = method_id_by_name_and_body_substring(&db, "empty", "Empty::new()")?;
+    let options = CallPathOptions {
+        max_depth: 1,
+        max_paths: 64,
+    };
+
+    let edges = db.crate_boundary_edges_from_owner(owner, options)?;
+    assert!(
+        edges
+            .iter()
+            .all(|edge| edge.caller_crate != edge.callee_crate),
+        "crate_boundary_edges should only report resolved cross-crate edges: {edges:#?}"
+    );
+    let boundary = edges
+        .iter()
+        .find(|edge| edge.edge.caller_id == owner && edge.edge.callee_id == target)
+        .unwrap_or_else(|| {
+            panic!(
+                "crate-boundary query should expose axum::middleware::from_fn::tests::basic -> axum_core::Body::empty: {edges:#?}"
+            )
+        });
+    assert_eq!(boundary.caller_crate, "axum");
+    assert_eq!(boundary.callee_crate, "axum-core");
+    assert_eq!(
+        boundary.caller.module_path,
+        path(&["crate", "middleware", "from_fn"]),
+        "call node metadata uses the existing shortest stable module path for nested test owners"
+    );
+    assert_eq!(boundary.callee.module_path, path(&["crate", "body"]));
+    assert_eq!(boundary.edge.relation, CallRelationKind::AssociatedFunction);
+    assert_eq!(boundary.edge.source_kind, CallSiteKind::Path);
+    assert_eq!(boundary.site.path.as_ref(), Some(&path(&["Body", "empty"])));
+    assert!(
+        db.call_paths_from_owner(owner, options)?
+            .iter()
+            .flat_map(|path| path.edges.iter())
+            .any(|edge| edge.caller_id == owner && edge.callee_id != target),
+        "test owner should have other resolved same-crate edges, proving crate-boundary filtering is not just returning every edge"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn axum_usage_questions_report_module_boundary_policy_violations() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
