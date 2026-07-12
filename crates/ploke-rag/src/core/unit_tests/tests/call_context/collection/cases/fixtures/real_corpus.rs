@@ -2,7 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use cozo::{DataValue, UuidWrapper};
 use ploke_db::multi_embedding::db_ext::{ANCESTOR_RULES_NOW, METHOD_NODE_ANCESTOR_RULE};
-use ploke_db::{CallStatusKind as DbCallStatusKind, ModuleBoundaryPolicyRule, ProofGraphStore};
+use ploke_db::{
+    CallReceiver, CallStatusKind as DbCallStatusKind, ModuleBoundaryPolicyRule, ProofGraphStore,
+};
 use serde_json::json;
 
 use super::super::super::super::super::*;
@@ -2709,6 +2711,106 @@ async fn call_effects_exact_reads_admitted_external_summary_effect() -> Result<(
     assert!(
         effect.call_site.targets.is_empty(),
         "summary-derived effects must not fabricate RAG target rows: {effect:#?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn call_effects_exact_reads_admitted_method_frontier_summary_effect() -> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Security/performance:
+    //   "Which reviewed external frontiers are reachable from this owner?"
+    //   "Which trusted boundary effects are covered by an admitted summary?"
+    //
+    // Source oracle:
+    //   axum-core/src/body.rs defines `impl http_body::Body for Body`.
+    //   Its `size_hint` method calls `self.0.size_hint()`, where `Body` stores
+    //   a `BoxBody` tuple field backed by the external http-body-util body.
+    // Expected contract: RAG exposes the DB-derived summary effect after the
+    // admitted `BoxBody::size_hint` summary is linked, while the callsite stays
+    // external, targetless, and edge-free.
+    let owner = method_id_by_name_and_body_substring(&db, "size_hint", "self.0.size_hint()")?;
+    let context = db.call_context_for_owner(owner)?;
+    let receiver = CallReceiver::SelfField {
+        path: vec!["0".to_string()],
+    };
+    let size_hint = context
+        .iter()
+        .find(|row| {
+            row.site.method.as_deref() == Some("size_hint")
+                && row.site.receiver.as_ref() == Some(&receiver)
+        })
+        .unwrap_or_else(|| {
+            panic!("Body::size_hint should expose self-field size_hint call: {context:#?}")
+        });
+    assert_eq!(size_hint.status.status, DbCallStatusKind::External);
+    assert!(
+        size_hint.targets.is_empty(),
+        "Body::size_hint should stay targetless before summary admission: {size_hint:#?}"
+    );
+    let projected = db.project_call_proof_facts_for_owner(owner, "bd:corpus-axum-call-graph")?;
+    assert!(
+        projected >= 2,
+        "Body::size_hint should project call_site and call_resolution proof rows: {projected}"
+    );
+
+    db.upsert_proof_fact_values(&ploke_test_utils::axum_body_size_hint_summary_records(
+        size_hint.site.id,
+    ))?;
+
+    let summary_id = ploke_test_utils::AXUM_BODY_SIZE_HINT_SUMMARY_ID;
+    let effect_id = format!("summary-effect:{summary_id}:external_summary_boundary");
+    let effects = rag
+        .exact_call_effects_reachable_from_owner(
+            owner,
+            CallPathOptions {
+                max_depth: 1,
+                max_paths: 16,
+            },
+        )?
+        .expect("call context enabled");
+    let effect = effects
+        .iter()
+        .find(|effect| effect.effect_seed_id == effect_id)
+        .unwrap_or_else(|| {
+            panic!("RAG should expose the admitted Body::size_hint summary effect: {effects:#?}")
+        });
+    assert_eq!(effect.effect_class, "external_summary_boundary");
+    assert_eq!(effect.confidence.as_deref(), Some("source-oracle-review"));
+    assert_eq!(effect.blocker_if_unresolved, Some(false));
+    assert_eq!(effect.call_site.site_id, size_hint.site.id);
+    assert_eq!(effect.call_site.owner_id, owner);
+    assert_eq!(effect.call_site.status, CallStatusKind::External);
+    assert!(
+        effect.paths_to_owner.is_empty(),
+        "direct method-frontier summary effect should not need an intermediate path: {effect:#?}"
+    );
+    assert!(
+        effect.blocker_reasons.is_empty(),
+        "admitted method-frontier summary should discharge the missing-summary blocker in RAG: {effect:#?}"
+    );
+    assert!(
+        matches!(
+            &effect.call_site.callee,
+            CallCalleeInfo::Method { name, receiver }
+                if name == "size_hint"
+                    && matches!(
+                        receiver,
+                        Some(CallReceiverInfo::SelfField { path })
+                            if path.iter().map(String::as_str).eq(["0"].into_iter())
+                    )
+        ),
+        "RAG effect payload should preserve the original Body::size_hint receiver: {effect:#?}"
+    );
+    assert!(
+        effect.call_site.targets.is_empty(),
+        "summary-derived method effects must not fabricate RAG target rows: {effect:#?}"
     );
 
     Ok(())

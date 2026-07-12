@@ -1820,6 +1820,27 @@ Completed evidence:
   `cargo test -p ploke-db --test mod axum_body_size_hint_external_summary_covers_method_frontier -- --nocapture`,
   `cargo fmt --all`, and `git diff --check`.
 
+Follow-up completed slice: downstream RAG/TUI propagation for the same admitted
+`Body::size_hint` method-frontier summary.
+
+Completed evidence:
+
+- RAG proof-context coverage now proves the owner starts with the
+  `external_dependency_summary_missing` blocker, then exposes the
+  `externally_summarized` call resolution and admitted `external_summary`
+  artifact after the shared summary record is linked.
+- RAG exact reachable-effects coverage now proves the admitted
+  `external_summary_boundary` effect is visible from the owner while preserving
+  the original `SelfField(["0"])` method receiver and zero target rows.
+- Exact TUI `code_item_lookup` and `code_item_edges` size_hint tests now admit
+  the same summary in their fixture setup and assert the cleared
+  `external_summary_needs` row plus the summary-derived reach effect.
+- Verification passed:
+  `cargo test -p ploke-rag proof_context_collection_preserves_axum_size_hint_self_field_frontier -- --nocapture`,
+  `cargo test -p ploke-rag call_effects_exact_reads_admitted_method_frontier_summary_effect -- --nocapture`,
+  `cargo test -p ploke-tui --test integration size_hint_external_real_corpus_row -- --nocapture`,
+  `cargo fmt --all`, and `git diff --check`.
+
 Previous completed slice in current bucket: proof-authoritative external
 summary admission over the real `Request::builder` alias frontier, propagated
 through DB, RAG, and TUI tool payloads.

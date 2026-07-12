@@ -328,6 +328,31 @@ impl ReceiverToolCase {
         self.owner_type
     }
 
+    pub(crate) fn db_status(&self) -> DbCallStatusKind {
+        match &self.status {
+            CallStatusKind::Resolved => DbCallStatusKind::Resolved,
+            CallStatusKind::Unresolved => DbCallStatusKind::Unresolved,
+            CallStatusKind::Ambiguous => DbCallStatusKind::Ambiguous,
+            CallStatusKind::External => DbCallStatusKind::External,
+            CallStatusKind::Unsupported => DbCallStatusKind::Unsupported,
+        }
+    }
+
+    pub(crate) fn admitted_external_summary(&self) -> Option<ExternalSummaryCase> {
+        if self.file_suffix == "axum-core/src/body.rs"
+            && self.body == "self.0.size_hint()"
+            && self.callee == "size_hint"
+        {
+            return Some(ExternalSummaryCase {
+                path: &[],
+                records: axum_body_size_hint_summary_records,
+                summary_id: AXUM_BODY_SIZE_HINT_SUMMARY_ID,
+            });
+        }
+
+        None
+    }
+
     pub(crate) fn expects_runtime_dispatch_blocker(&self) -> bool {
         self.file_suffix == "axum/src/error_handling/mod.rs"
             && self.body == "self.project().future.poll(cx)"
@@ -766,6 +791,7 @@ impl ReceiverToolFixture {
             "{} should project receiver proof rows",
             case.label
         );
+        attach_receiver_admitted_external_summary_if_needed(&db, owner.id, &case);
         attach_runtime_dispatch_blocker_if_needed(&db, owner.id, &case);
         let state = axum_state_for_target(Arc::clone(&db), &owner, case.label).await;
 
@@ -810,6 +836,34 @@ fn attach_runtime_dispatch_blocker_if_needed(db: &Database, owner: Uuid, case: &
 
     db.upsert_proof_fact_values(&[ploke_test_utils::axum_dyn_future_poll_blocker(site)])
         .unwrap_or_else(|err| panic!("{} runtime dispatch blocker insert: {err}", case.label));
+}
+
+fn attach_receiver_admitted_external_summary_if_needed(
+    db: &Database,
+    owner: Uuid,
+    case: &ReceiverToolCase,
+) {
+    let Some(summary) = case.admitted_external_summary() else {
+        return;
+    };
+    let site = db
+        .call_context_for_owner(owner)
+        .unwrap_or_else(|err| panic!("{} call context lookup: {err}", case.label))
+        .into_iter()
+        .find(|row| {
+            row.site.method.as_deref() == Some(case.callee) && row.status.status == case.db_status()
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "{} should expose the external receiver callsite before summary insertion",
+                case.label
+            )
+        })
+        .site
+        .id;
+
+    db.upsert_proof_fact_values(&(summary.records)(site))
+        .unwrap_or_else(|err| panic!("{} external summary insert: {err}", case.label));
 }
 
 pub(crate) fn request_parts_extract_target(db: &Database) -> Uuid {

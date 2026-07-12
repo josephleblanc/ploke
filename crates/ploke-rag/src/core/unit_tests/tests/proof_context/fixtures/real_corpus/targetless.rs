@@ -7,7 +7,10 @@ use super::helpers::{
     targetless_method_site_with_status, targetless_path_site,
 };
 use ploke_db::ProofGraphStore;
-use ploke_test_utils::{AXUM_STD_MEM_REPLACE_SUMMARY_ID, axum_std_mem_replace_summary_records};
+use ploke_test_utils::{
+    AXUM_BODY_SIZE_HINT_SUMMARY_ID, AXUM_STD_MEM_REPLACE_SUMMARY_ID,
+    axum_body_size_hint_summary_records, axum_std_mem_replace_summary_records,
+};
 
 struct DynamicCase {
     label: &'static str,
@@ -298,6 +301,38 @@ async fn proof_context_collection_preserves_axum_size_hint_self_field_frontier()
         site_id,
         "external_dependency_summary_missing",
         case.label,
+    );
+
+    db.upsert_proof_fact_values(&axum_body_size_hint_summary_records(site_id))?;
+
+    let admitted = rag.exact_proof_context(owner)?;
+    let site = site_id.to_string();
+    assert!(
+        admitted.iter().any(|proof| {
+            proof.kind == "call_resolution"
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.resolution_state.as_deref() == Some("externally_summarized")
+                && proof.external_summary_id.as_deref() == Some(AXUM_BODY_SIZE_HINT_SUMMARY_ID)
+                && proof.blocker_reason.is_none()
+        }),
+        "RAG proof context should expose the discharged Body::size_hint call_resolution: {admitted:#?}"
+    );
+    assert!(
+        admitted.iter().any(|proof| {
+            proof.kind == "external_summary"
+                && proof.external_summary_id.as_deref() == Some(AXUM_BODY_SIZE_HINT_SUMMARY_ID)
+                && proof.summary_class.as_deref() == Some("audited_no_process_effects")
+                && proof.status.as_deref() == Some("admitted")
+                && proof.allowed_effects == ["external_summary_boundary".to_string()]
+        }),
+        "RAG proof context should expose the admitted Body::size_hint summary artifact: {admitted:#?}"
+    );
+    assert!(
+        admitted.iter().all(|proof| {
+            proof.call_site_id.as_deref() != Some(site.as_str())
+                || proof.blocker_reason.as_deref() != Some("external_dependency_summary_missing")
+        }),
+        "RAG proof context should not retain the missing-summary blocker after Body::size_hint admission: {admitted:#?}"
     );
 
     Ok(())
