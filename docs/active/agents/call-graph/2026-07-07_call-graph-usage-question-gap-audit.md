@@ -122,3 +122,34 @@ macro-expanded/generated source bodies, async poll/resume execution proof,
 interprocedural callable argument/value-flow, broader callable trait-object
 dispatch, source/sink policy annotations, or build/test entrypoint
 execution-policy summaries.
+
+### 2026-07-12 generated-item inventory update
+
+After fixture regeneration, the real-corpus `IntoServiceFuture::new` row was
+rechecked as the most obvious generated-source candidate:
+
+- Source oracle:
+  `axum/src/handler/future.rs:11-18` invokes `opaque_future!`,
+  `axum/src/macros.rs:19-20` templates the generated inherent `new`, and
+  `axum/src/handler/service.rs:174` calls
+  `super::future::IntoServiceFuture::new(future)`.
+- Existing parser macro support is intentionally much narrower: no-arg
+  `macro_rules!` expansions inside function bodies that produce exactly one
+  local `fn`, local `const`, local `static`, or one statement-position path
+  call.
+- `opaque_future!` is a parameterized item macro that generates top-level
+  struct and impl items, so making this row traversable requires a generated
+  item modeling slice, not a small path resolver change.
+- The current DB/RAG/TUI contract is therefore still correct for this row:
+  preserve the unresolved targetless callsite, retain the admitted
+  `expansion_boundary` / `expanded_item` proof metadata, and do not fabricate a
+  local call edge until a generated method node exists.
+
+The next semantic implementation slice should avoid more targetless proof
+breadth and should choose either:
+
+- an explicitly scoped generated-item model for parameterized item macros, with
+  parser-generated struct/impl/function nodes and DB-first traversal tests; or
+- a smaller non-generated proof carrier with concrete new syntax evidence that
+  is not already represented by the current fixture-backed private callable
+  forwarding, receiver, or async future-flow rows.
