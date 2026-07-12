@@ -17,7 +17,7 @@ fn fixture_context_reads_projected_ambiguous_dynamic_candidates() -> Result<(), 
     let context = db.call_context_for_target(target)?;
     assert_eq!(
         context.len(),
-        AMBIGUOUS_DYNAMIC_OWNERS.len() + 10,
+        OTHER_TARGET_AMBIGUOUS_CANDIDATE_COUNT,
         "other_target should expose every ambiguous candidate caller: {context:#?}"
     );
 
@@ -41,21 +41,7 @@ fn fixture_context_reads_projected_ambiguous_dynamic_candidates() -> Result<(), 
         });
     assert_path_function_candidates(row, owner, &["f"], &expected, AMBIGUOUS_PATH_OWNER);
 
-    for (owner_name, expected_path) in [
-        ("call_multi_conflicting_function_pointer_param", &["f"][..]),
-        (
-            "call_forwarded_conflicting_function_pointer_leaf",
-            &["f"][..],
-        ),
-        (
-            "call_two_hop_forwarded_conflicting_function_pointer_leaf",
-            &["f"][..],
-        ),
-        (
-            "call_multi_conflicting_generic_fn_once_param",
-            &["generic_f"][..],
-        ),
-    ] {
+    for (owner_name, expected_path) in AMBIGUOUS_PATH_FUNCTION_CANDIDATES {
         let owner = function_id_by_name(&db, owner_name)?;
         let row = context
             .iter()
@@ -66,11 +52,7 @@ fn fixture_context_reads_projected_ambiguous_dynamic_candidates() -> Result<(), 
         assert_path_function_candidates(row, owner, expected_path, &expected, owner_name);
     }
 
-    for owner_name in [
-        "call_multi_conflicting_named_field_function_param",
-        "call_forwarded_conflicting_named_field_leaf",
-        "call_two_hop_forwarded_conflicting_named_field_leaf",
-    ] {
+    for (owner_name, expected_path) in AMBIGUOUS_DYNAMIC_FUNCTION_CANDIDATES {
         let owner = function_id_by_name(&db, owner_name)?;
         let row = context
             .iter()
@@ -78,19 +60,10 @@ fn fixture_context_reads_projected_ambiguous_dynamic_candidates() -> Result<(), 
             .unwrap_or_else(|| {
                 panic!("target-centered context missing {owner_name}: {context:#?}")
             });
-        assert_dynamic_path_function_candidates(
-            row,
-            owner,
-            &["holder", "callback"],
-            &expected,
-            owner_name,
-        );
+        assert_dynamic_path_function_candidates(row, owner, expected_path, &expected, owner_name);
     }
 
-    for owner_name in [
-        "call_returned_conflicting_forwarded_function_pointer_param_with_local_target",
-        "call_returned_conflicting_forwarded_function_pointer_param_with_other_target",
-    ] {
+    for owner_name in RETURNED_CONFLICTING_FUNCTION_POINTER_OWNERS {
         let owner = function_id_by_name(&db, owner_name)?;
         let owner_context = db.call_context_for_owner(owner)?;
         assert_eq!(

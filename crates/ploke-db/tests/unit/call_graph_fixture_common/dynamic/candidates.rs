@@ -11,6 +11,47 @@ pub(in crate::unit) const MIXED_DYNAMIC_OWNERS: [&str; 2] =
 pub(in crate::unit) const AMBIGUOUS_PATH_OWNER: &str =
     "call_if_ambiguous_initialized_function_item_binding";
 
+pub(in crate::unit) const AMBIGUOUS_PATH_FUNCTION_CANDIDATES: [(&str, &[&str]); 5] = [
+    ("call_multi_conflicting_function_pointer_param", &["f"]),
+    ("call_forwarded_conflicting_function_pointer_leaf", &["f"]),
+    (
+        "call_two_hop_forwarded_conflicting_function_pointer_leaf",
+        &["f"],
+    ),
+    (
+        "call_multi_conflicting_generic_fn_once_param",
+        &["generic_f"],
+    ),
+    ("call_forwarded_conflicting_boxed_dyn_fn_leaf", &["f"]),
+];
+
+pub(in crate::unit) const AMBIGUOUS_DYNAMIC_FUNCTION_CANDIDATES: [(&str, &[&str]); 3] = [
+    (
+        "call_multi_conflicting_named_field_function_param",
+        &["holder", "callback"],
+    ),
+    (
+        "call_forwarded_conflicting_named_field_leaf",
+        &["holder", "callback"],
+    ),
+    (
+        "call_two_hop_forwarded_conflicting_named_field_leaf",
+        &["holder", "callback"],
+    ),
+];
+
+pub(in crate::unit) const RETURNED_CONFLICTING_FUNCTION_POINTER_OWNERS: [&str; 2] = [
+    "call_returned_conflicting_forwarded_function_pointer_param_with_local_target",
+    "call_returned_conflicting_forwarded_function_pointer_param_with_other_target",
+];
+
+pub(in crate::unit) const OTHER_TARGET_AMBIGUOUS_CANDIDATE_COUNT: usize = AMBIGUOUS_DYNAMIC_OWNERS
+    .len()
+    + 1
+    + AMBIGUOUS_PATH_FUNCTION_CANDIDATES.len()
+    + AMBIGUOUS_DYNAMIC_FUNCTION_CANDIDATES.len()
+    + RETURNED_CONFLICTING_FUNCTION_POINTER_OWNERS.len();
+
 pub(in crate::unit) fn dynamic_candidates(db: &Database) -> Result<Vec<Uuid>, DbError> {
     let mut expected = vec![
         function_id_by_name(db, "local_target")?,

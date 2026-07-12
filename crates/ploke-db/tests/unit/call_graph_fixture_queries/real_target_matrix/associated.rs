@@ -73,7 +73,7 @@ fn axum_generated_constructor_macro_boundary_accepts_summary_proof() -> Result<(
     let site = row.site.id.to_string();
     let boundary_id = format!("boundary:{site}:opaque_future");
 
-    let mut records = axum_domain_records(domain_id);
+    let records = axum_domain_records(domain_id);
     db.upsert_proof_fact_values(&records)?;
     db.project_call_proof_facts_for_owner(owner, domain_id)?;
 
