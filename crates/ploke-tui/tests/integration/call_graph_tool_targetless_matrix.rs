@@ -1,6 +1,8 @@
 use std::borrow::Cow;
 
-use ploke_core::rag_types::{CallCalleeInfo, CallContextInfo, CallStatusKind, CallTargetKind};
+use ploke_core::rag_types::{
+    CallCalleeInfo, CallContextInfo, CallResolutionKind, CallStatusKind, CallTargetKind,
+};
 use ploke_tui::tools::{
     Tool,
     code_item_lookup::{CodeItemLookup, LookupParams},
@@ -15,7 +17,8 @@ use crate::call_graph_tool_support::{
     assert_dynamic_context, assert_dynamic_proof, assert_method_context, assert_method_proof,
     assert_path_blocker_proof, assert_path_context, assert_path_context_absent,
     assert_path_context_count, assert_path_resolution_proof, assert_resolved_method_context,
-    assert_resolved_method_proof, assert_resolved_path_context_target, assert_resolved_path_proof,
+    assert_resolved_method_proof, assert_resolved_path_context_count,
+    assert_resolved_path_context_target, assert_resolved_path_proof,
     assert_runtime_dispatch_blocker, request_parts_extract_target, ui_field,
 };
 
@@ -435,7 +438,7 @@ async fn code_item_lookup_returns_from_ref_dependency_root_path_rows() {
 }
 
 #[tokio::test]
-async fn code_item_lookup_preserves_shadowed_get_targetless_boundary() {
+async fn code_item_lookup_preserves_shadowed_get_resolved_setup_boundary() {
     for case in PathToolCase::SHADOWED_GET {
         let fixture = PathToolFixture::new(case.clone()).await;
         let params = LookupParams {
@@ -473,29 +476,19 @@ async fn code_item_lookup_preserves_shadowed_get_targetless_boundary() {
         //   axum/src/routing/tests/mod.rs:423-434 calls that closure inside
         //   `assert_eq!` macro arguments.
         // Expected traversal: exact owner lookup exposes only the two setup
-        // `get(...)` path rows, keeps them targetless, and does not fabricate
-        // edges from the later shadowed macro-argument calls to routing `get`.
+        // `get(...)` path rows, resolves those setup helper calls, and does
+        // not fabricate edges from the later shadowed macro-argument calls to
+        // routing `get`.
         let callee = fixture.case.callee();
-        let site_ids = assert_path_context_count(
+        assert_resolved_path_context_count(
             call_context,
             fixture.owner,
             &callee,
-            &fixture.case.status,
+            CallTargetKind::Function,
             2,
             fixture.case.label,
             "lookup",
         );
-        for site_id in site_ids {
-            assert_path_blocker_proof(
-                proof_context,
-                fixture.owner,
-                site_id,
-                fixture.case.build_domain(),
-                "type_resolution_missing",
-                fixture.case.label,
-                "lookup",
-            );
-        }
 
         let ui = result.ui_payload.as_ref().expect("ui payload");
         assert!(
@@ -503,14 +496,7 @@ async fn code_item_lookup_preserves_shadowed_get_targetless_boundary() {
                 .parse::<usize>()
                 .expect("outgoing count")
                 >= 2,
-            "code_item_lookup should surface both shadowed get boundary rows"
-        );
-        assert!(
-            ui_field(ui, "proof_context")
-                .parse::<usize>()
-                .expect("proof count")
-                >= 4,
-            "code_item_lookup should surface both shadowed get proof rows"
+            "code_item_lookup should surface both shadowed get setup rows"
         );
     }
 }
@@ -1323,7 +1309,7 @@ async fn code_item_edges_returns_from_ref_dependency_root_path_rows() {
 }
 
 #[tokio::test]
-async fn code_item_edges_preserves_shadowed_get_targetless_boundary() {
+async fn code_item_edges_preserves_shadowed_get_resolved_setup_boundary() {
     for case in PathToolCase::SHADOWED_GET {
         let fixture = PathToolFixture::new(case.clone()).await;
         let params = EdgesParams {
@@ -1356,26 +1342,15 @@ async fn code_item_edges_preserves_shadowed_get_targetless_boundary() {
         // Same real-corpus shadowed get oracle as the lookup test above,
         // exercised through the edge-oriented exact tool payload.
         let callee = fixture.case.callee();
-        let site_ids = assert_path_context_count(
+        assert_resolved_path_context_count(
             call_context,
             fixture.owner,
             &callee,
-            &fixture.case.status,
+            CallTargetKind::Function,
             2,
             fixture.case.label,
             "edges",
         );
-        for site_id in site_ids {
-            assert_path_blocker_proof(
-                proof_context,
-                fixture.owner,
-                site_id,
-                fixture.case.build_domain(),
-                "type_resolution_missing",
-                fixture.case.label,
-                "edges",
-            );
-        }
 
         let ui = result.ui_payload.as_ref().expect("ui payload");
         assert!(
@@ -1383,7 +1358,7 @@ async fn code_item_edges_preserves_shadowed_get_targetless_boundary() {
                 .parse::<usize>()
                 .expect("outgoing count")
                 >= 2,
-            "code_item_edges should surface both shadowed get boundary rows"
+            "code_item_edges should surface both shadowed get setup rows"
         );
         let proof_count = proof_context.len().to_string();
         assert_eq!(ui_field(ui, "proof_context"), proof_count.as_str());

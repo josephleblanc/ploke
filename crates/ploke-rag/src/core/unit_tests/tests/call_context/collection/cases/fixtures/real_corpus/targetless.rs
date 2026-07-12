@@ -737,18 +737,20 @@ async fn call_context_collection_preserves_axum_shadowed_get_boundary() -> Resul
     //   axum/src/routing/tests/mod.rs:418 binds a local closure named `get`.
     //   axum/src/routing/tests/mod.rs:423-434 calls that local closure inside
     //   `assert_eq!` macro arguments.
-    // Expected traversal: the current fixture exposes the two setup path rows,
-    // keeps them targetless, and does not fabricate edges from the later
-    // shadowed macro-argument calls to the imported routing helper.
+    // Expected traversal: the current fixture exposes and resolves the two
+    // setup path rows, but does not fabricate edges from the later shadowed
+    // macro-argument calls to the imported routing helper.
     for call in matching {
         assert_eq!(call.owner_id, owner);
         assert_eq!(call.arg_count, Some(1));
-        assert_eq!(call.status, CallStatusKind::Unsupported);
-        assert_eq!(call.resolution, None);
-        assert!(
-            call.targets.is_empty(),
-            "shadowed get boundary should remain targetless in RAG call context: {call:#?}"
+        assert_eq!(call.status, CallStatusKind::Resolved);
+        assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(
+            call.targets.len(),
+            1,
+            "shadowed get setup rows should each expose one RAG target: {call:#?}"
         );
+        assert_eq!(call.targets[0].relation, CallTargetKind::Function);
     }
 
     Ok(())

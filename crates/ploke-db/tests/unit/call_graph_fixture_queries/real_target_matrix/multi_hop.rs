@@ -70,7 +70,7 @@ fn axum_request_extract_reaches_from_request_trait_method_in_two_hops() -> Resul
         target,
         CallPathOptions {
             max_depth: 2,
-            max_paths: 16,
+            max_paths: 128,
         },
     )?;
     let reverse_path = incoming
@@ -278,7 +278,7 @@ fn axum_request_extract_expands_call_path_context_in_two_hops() -> Result<(), Db
         CallContextSeed::Target(target),
         CallPathOptions {
             max_depth: 2,
-            max_paths: 16,
+            max_paths: 128,
         },
     )?;
     let incoming_start = incoming

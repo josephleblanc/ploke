@@ -1803,11 +1803,13 @@ fn axum_real_target_shadowed_get_closure_is_documented_gap() -> Result<(), DbErr
     //   axum/src/routing/tests/mod.rs:418 binds `let get = |path| ...`.
     //   routing/tests/mod.rs:423-434 call that local closure inside
     //   `assert_eq!(get(...).await, ...)`.
-    // Current model gap: the function owner only projects the two setup
+    // Current model gap: the function owner projects and resolves the two setup
     // `routing::get` path calls at routing/tests/mod.rs:412-413 plus macro
     // rows for the assertions; it must not fabricate edges from the shadowed
     // local closure calls to the imported routing helper.
     let owner = function_id_by_name(&db, "what_matches_wildcard")?;
+    let target =
+        function_id_by_name_in_module(&db, &["crate", "routing", "method_routing"], "get")?;
     let context = db.call_context_for_owner(owner)?;
     let get_path = path(&["get"]);
     let get_rows = context
@@ -1822,23 +1824,19 @@ fn axum_real_target_shadowed_get_closure_is_documented_gap() -> Result<(), DbErr
         "what_matches_wildcard should only project the two setup routing::get rows until macro/closure body calls are modeled: {context:#?}"
     );
     for row in get_rows {
-        assert_eq!(row.status.status, CallStatusKind::Unsupported);
-        assert_eq!(row.status.resolution, None);
         assert_eq!(row.site.arg_count, Some(1));
-        assert!(
-            row.targets.is_empty(),
-            "shadowed get/routing get rows should remain targetless in current fixture: {row:#?}"
+        assert_resolved_target(
+            row,
+            target,
+            CallRelationKind::Function,
+            CallSiteKind::Path,
+            CallTargetKind::Function,
         );
-        assert!(
-            relations_for_site(&db, row.site.id)?.rows.is_empty(),
-            "shadowed get/routing get setup row should have zero persisted call edges"
+        assert_eq!(
+            relations_for_site(&db, row.site.id)?.rows.len(),
+            1,
+            "each setup routing::get source callsite should preserve one raw edge"
         );
-        assert_no_traversal_candidates_for_site(
-            &db,
-            owner,
-            row.site.id,
-            "axum/src/routing/tests/mod.rs:412-413 setup routing::get rows",
-        )?;
     }
 
     Ok(())

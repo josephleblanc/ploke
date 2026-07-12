@@ -190,6 +190,8 @@ fn chrono_try_receiver_method_rows_resolve_option_ok_or_oracles() -> Result<(), 
     //   `DateTime::from_timestamp_secs(ts).ok_or(...)?.naive_utc()`.
     //   chrono/src/format/parsed.rs:953 calls
     //   `DateTime::from_timestamp(...).ok_or(...)?.naive_utc()`.
+    //   chrono also exposes two cfg(test, feature = "clock") initialized
+    //   `Local::now()` receiver rows to the same target.
     //
     // Expected traversal: the receiver is a `?` applied after `Option::ok_or`
     // on a local `DateTime::from_timestamp*` associated function returning
@@ -226,8 +228,8 @@ fn chrono_try_receiver_method_rows_resolve_option_ok_or_oracles() -> Result<(), 
     let callers = db.callers_for_target(target)?;
     assert_eq!(
         callers.len(),
-        2,
-        "DateTime::naive_utc should expose the two inspected parsed.rs try-receiver callers: {callers:#?}"
+        4,
+        "DateTime::naive_utc should expose the two parsed.rs try-receiver callers plus two cfg(test) Local::now initialized-local callers: {callers:#?}"
     );
     assert_sites_match_callers(
         &db,
@@ -235,6 +237,28 @@ fn chrono_try_receiver_method_rows_resolve_option_ok_or_oracles() -> Result<(), 
         &callers,
         "chrono DateTime::naive_utc try callers",
     )?;
+    assert_eq!(
+        callers
+            .iter()
+            .filter(|caller| caller.site.receiver.as_ref() == Some(&receiver))
+            .count(),
+        2,
+        "DateTime::naive_utc should retain exactly the two parsed.rs ok_or try-receiver rows: {callers:#?}"
+    );
+    assert_eq!(
+        callers
+            .iter()
+            .filter(|caller| {
+                caller.site.receiver.as_ref()
+                    == Some(&CallReceiver::InitializedLocalBinding {
+                        name: "now".to_string(),
+                        init_path: path(&["Local", "now"]),
+                    })
+            })
+            .count(),
+        2,
+        "DateTime::naive_utc should retain exactly the two cfg(test) Local::now initialized-local rows: {callers:#?}"
+    );
 
     for case in cases {
         let owner = method_id_by_name_body_and_file_suffix(

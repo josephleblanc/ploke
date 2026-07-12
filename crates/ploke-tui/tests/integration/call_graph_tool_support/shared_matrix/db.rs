@@ -27,6 +27,9 @@ pub(super) fn resolve_target(db: &Database, target: CallTargetSelector) -> Targe
         CallTargetSelector::FunctionInModule { module_path, name } => {
             function_by_name_in_module(db, module_path, name, name)
         }
+        CallTargetSelector::MethodByBody { name, body, .. } => {
+            method_by_name_and_body(db, name, body, None, name)
+        }
         CallTargetSelector::Struct { name } => struct_by_name(db, name),
         CallTargetSelector::Variant {
             enum_name,

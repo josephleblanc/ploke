@@ -30,11 +30,14 @@ pub(super) fn query_node_id(
 }
 
 pub(super) fn query_for_target(target: &TargetInfo, expected: CallExpected) -> MatrixQuery {
-    let (item_name, node_kind) = match expected {
+    let (item_name, node_kind, owner_type) = match expected {
         CallExpected::Resolved { target, .. } => match target {
-            CallTargetSelector::FunctionInModule { name, .. } => (name, "function"),
-            CallTargetSelector::Struct { name } => (name, "struct"),
-            CallTargetSelector::Variant { variant_name, .. } => (variant_name, "variant"),
+            CallTargetSelector::FunctionInModule { name, .. } => (name, "function", None),
+            CallTargetSelector::MethodByBody {
+                name, owner_type, ..
+            } => (name, "method", Some(owner_type)),
+            CallTargetSelector::Struct { name } => (name, "struct", None),
+            CallTargetSelector::Variant { variant_name, .. } => (variant_name, "variant", None),
         },
         CallExpected::Targetless { .. } => unreachable!("target query requires resolved case"),
     };
@@ -44,7 +47,7 @@ pub(super) fn query_for_target(target: &TargetInfo, expected: CallExpected) -> M
         item_name,
         node_kind,
         owner_trait: None,
-        owner_type: None,
+        owner_type,
         direction: QueryDirection::Incoming,
     }
 }

@@ -196,6 +196,11 @@ fn resolve_target(db: &Database, target: CallTargetSelector) -> Result<Uuid, Err
         CallTargetSelector::FunctionInModule { module_path, name } => {
             function_id_by_name_in_module(db, module_path, name)
         }
+        CallTargetSelector::MethodByBody {
+            name,
+            body,
+            owner_type,
+        } => method_id_by_name_body_and_owner_type(db, name, body, owner_type),
         CallTargetSelector::Struct { name } => struct_id_by_name(db, name),
         CallTargetSelector::Variant {
             enum_name,

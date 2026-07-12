@@ -355,7 +355,7 @@ impl PathToolCase {
         label: "axum/src/routing/tests/mod.rs:412-434 shadowed get boundary",
         item: "what_matches_wildcard",
         path: &["get"],
-        status: CallStatusKind::Unsupported,
+        status: CallStatusKind::Resolved,
         corpus: DynamicToolCorpus::Axum,
         owner: PathOwner::Function {
             module_path: &["crate", "routing", "tests"],
@@ -1240,6 +1240,34 @@ pub(crate) fn assert_path_context_count(
             call.targets.is_empty(),
             "{tool} should not fabricate traversal targets for {label}: {call:#?}"
         );
+    }
+    matching.iter().map(|call| call.site_id).collect()
+}
+
+pub(crate) fn assert_resolved_path_context_count(
+    calls: &[serde_json::Value],
+    owner: Uuid,
+    callee: &CallCalleeInfo,
+    relation: CallTargetKind,
+    expected_count: usize,
+    label: &str,
+    tool: &str,
+) -> Vec<Uuid> {
+    let matching = matching_path_context(calls, owner, callee);
+    assert_eq!(
+        matching.len(),
+        expected_count,
+        "{tool} should return exactly {expected_count} resolved path rows for {label}: {calls:#?}"
+    );
+    for call in &matching {
+        assert_eq!(call.status, CallStatusKind::Resolved);
+        assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(
+            call.targets.len(),
+            1,
+            "{tool} target rows for {label}: {call:#?}"
+        );
+        assert_eq!(call.targets[0].relation, relation);
     }
     matching.iter().map(|call| call.site_id).collect()
 }

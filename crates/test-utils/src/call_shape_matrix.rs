@@ -94,6 +94,11 @@ pub enum CallTargetSelector {
         module_path: &'static [&'static str],
         name: &'static str,
     },
+    MethodByBody {
+        name: &'static str,
+        body: &'static str,
+        owner_type: &'static str,
+    },
     Struct {
         name: &'static str,
     },
@@ -280,8 +285,15 @@ static CALL_SHAPE_CASES: &[CallShapeCase] = &[
             segments: &["super", "future", "IntoServiceFuture", "new"],
             arg_count: Some(1),
         },
-        expected: CallExpected::Targetless {
-            status: CallStatusKind::Unresolved,
+        expected: CallExpected::Resolved {
+            target: CallTargetSelector::MethodByBody {
+                name: "new",
+                body: "Self { future }",
+                owner_type: "IntoServiceFuture",
+            },
+            relation: CallRelationKind::AssociatedFunction,
+            target_kind: CallTargetKind::Method,
+            edge_count: 1,
         },
         coverage: &[
             CallPipelineCoverage::Db,
