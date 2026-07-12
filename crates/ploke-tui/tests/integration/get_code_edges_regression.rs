@@ -4,7 +4,7 @@ use ploke_core::{
     ArcStr,
     rag_types::{
         CallCalleeInfo, CallContextInfo, CallResolutionKind, CallSiteKind, CallStatusKind,
-        CallTargetKind, ModuleBoundaryEdgeInfo, ProofContextInfo,
+        CallTargetKind, CrateBoundaryEdgeInfo, ModuleBoundaryEdgeInfo, ProofContextInfo,
     },
 };
 use ploke_db::helpers::{graph_resolve_edges, graph_resolve_exact, list_primary_nodes};
@@ -32,11 +32,11 @@ use uuid::Uuid;
 use crate::call_graph_tool_support::{
     AsyncFutureToolFixture, AxumAwaitReceiverToolFixture, AxumBodyEmptyToolFixture,
     AxumBoxedIntoRouteToolFixture, AxumErrorHandlingTraitsToolFixture, AxumExpandWithToolFixture,
-    AxumHandlerCallToolFixture, AxumJsonFromBytesToolFixture, AxumParseAttrsToolFixture,
-    AxumRequestExtractPathToolFixture, AxumRunUiTestsToolFixture, AxumTaskSpawnEffectToolFixture,
-    CallGraphToolFixture, CallableBlockerFixture, CallableBlockerShape,
-    CallableParamResolvedFixture, ChronoAliasConstructorToolFixture, ChronoNaiveUtcToolFixture,
-    FixtureBranchReceiverToolFixture, FixtureDynamicCallableToolFixture,
+    AxumFromFnBasicToolFixture, AxumHandlerCallToolFixture, AxumJsonFromBytesToolFixture,
+    AxumParseAttrsToolFixture, AxumRequestExtractPathToolFixture, AxumRunUiTestsToolFixture,
+    AxumTaskSpawnEffectToolFixture, CallGraphToolFixture, CallableBlockerFixture,
+    CallableBlockerShape, CallableParamResolvedFixture, ChronoAliasConstructorToolFixture,
+    ChronoNaiveUtcToolFixture, FixtureBranchReceiverToolFixture, FixtureDynamicCallableToolFixture,
     FixtureSelfFieldReceiverToolFixture, ResultCallbackFixture,
     assert_ambiguous_dynamic_candidates, assert_ambiguous_path_candidates,
     assert_await_result_unwrap_context, assert_await_result_unwrap_proof,
@@ -45,17 +45,17 @@ use crate::call_graph_tool_support::{
     assert_branch_receiver_context, assert_branch_receiver_proof, assert_call_path_node,
     assert_chrono_naive_utc_incoming_context, assert_dynamic_context, assert_dynamic_proof,
     assert_expected_path_incoming_context, assert_fixture_extern_c_abs_effects,
-    assert_handler_call_incoming_context, assert_incoming_context,
-    assert_initialized_local_receiver_context, assert_initialized_local_receiver_proof,
-    assert_json_from_bytes_incoming_context, assert_no_external_summary_need_for_site,
-    assert_parse_attrs_incoming_context, assert_path_blocker_proof, assert_path_context,
-    assert_path_resolution_proof, assert_process_invariant_findings,
-    assert_resolved_callable_param_proof, assert_resolved_method_target_context,
-    assert_resolved_path_context, assert_run_ui_tests_incoming_context,
-    assert_runtime_dispatch_blocker, assert_self_field_receiver_context,
-    assert_self_field_receiver_proof, assert_serde_json_summary_proof, assert_target_proof,
-    assert_task_spawn_effects, assert_task_spawn_policy_violation, assert_two_hop_call_path,
-    ui_field,
+    assert_from_fn_basic_body_empty_crate_boundary, assert_handler_call_incoming_context,
+    assert_incoming_context, assert_initialized_local_receiver_context,
+    assert_initialized_local_receiver_proof, assert_json_from_bytes_incoming_context,
+    assert_no_external_summary_need_for_site, assert_parse_attrs_incoming_context,
+    assert_path_blocker_proof, assert_path_context, assert_path_resolution_proof,
+    assert_process_invariant_findings, assert_resolved_callable_param_proof,
+    assert_resolved_method_target_context, assert_resolved_path_context,
+    assert_run_ui_tests_incoming_context, assert_runtime_dispatch_blocker,
+    assert_self_field_receiver_context, assert_self_field_receiver_proof,
+    assert_serde_json_summary_proof, assert_target_proof, assert_task_spawn_effects,
+    assert_task_spawn_policy_violation, assert_two_hop_call_path, ui_field,
 };
 
 #[tokio::test]
@@ -2857,6 +2857,68 @@ async fn code_item_edges_returns_incoming_callers_for_call_graph_target() {
             .expect("incoming count")
             >= 1,
         "code_item_edges should surface incoming caller count for target lookups"
+    );
+}
+
+#[tokio::test]
+async fn code_item_edges_returns_real_corpus_crate_boundary_edges() {
+    let fixture = AxumFromFnBasicToolFixture::new().await;
+    let ctx = fixture.ctx("axum-from-fn-basic-edges");
+    let module_path = fixture.module_path_arg();
+    let params = EdgesParams {
+        item_name: Cow::Borrowed("basic"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("function"),
+        module_path: Cow::Owned(module_path),
+        owner_trait: None,
+        owner_type: None,
+        parent_name: None,
+        allowed_effects: Vec::new(),
+    };
+
+    let result = CodeItemEdges::execute(params, ctx)
+        .await
+        .expect("from_fn::tests::basic edge lookup");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
+    let crate_boundary_edges = payload
+        .get("node_info")
+        .and_then(|node| node.get("crate_boundary_edges"))
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.crate_boundary_edges array");
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Architecture and component review:
+    //   "Are lower-level crates depending on higher-level application code?"
+    //   "Which crates or binaries need rebuilding after this internal function changes?"
+    //
+    // Source oracle:
+    //   tests/fixture_github_clones/corpus/axum/axum/src/middleware/from_fn.rs:394
+    //     defines `tests::basic`.
+    //   tests/fixture_github_clones/corpus/axum/axum/src/middleware/from_fn.rs:411
+    //     calls `Body::empty()`.
+    //   tests/fixture_github_clones/corpus/axum/axum-core/src/body.rs:52
+    //     defines `Body::empty`.
+    // Expected tool traversal: exact edge lookup of the caller owner exposes
+    // the resolved outbound cross-crate edge in the node context payload.
+    let edges = crate_boundary_edges
+        .iter()
+        .map(|edge| serde_json::from_value::<CrateBoundaryEdgeInfo>(edge.clone()))
+        .collect::<Result<Vec<_>, _>>()
+        .expect("typed crate-boundary rows");
+    assert_from_fn_basic_body_empty_crate_boundary(
+        &edges,
+        fixture.owner,
+        fixture.body_empty_target,
+        "code_item_edges",
+    );
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert_eq!(
+        ui_field(ui, "crate_boundary_edges"),
+        edges.len().to_string()
     );
 }
 

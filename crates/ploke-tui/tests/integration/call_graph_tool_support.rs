@@ -10,7 +10,7 @@ use ploke_core::{
     rag_types::{
         CallCalleeInfo, CallContextInfo, CallPathInfo, CallReachEffectInfo, CallReceiverInfo,
         CallResolutionKind, CallSiteBucketInfo, CallSiteKind, CallStatusKind, CallTargetKind,
-        ProofContextInfo,
+        CrateBoundaryEdgeInfo, ProofContextInfo,
     },
 };
 use ploke_db::{
@@ -2100,6 +2100,55 @@ fn assert_source_file_json(files: &[serde_json::Value], suffix: &str, label: &st
             .filter_map(serde_json::Value::as_str)
             .any(|path| path.ends_with(suffix)),
         "{label} Body::empty impact should include source file ending with {suffix:?}: {files:#?}"
+    );
+}
+
+pub(crate) fn assert_from_fn_basic_body_empty_crate_boundary(
+    edges: &[CrateBoundaryEdgeInfo],
+    owner: Uuid,
+    body_empty_target: Uuid,
+    label: &str,
+) {
+    assert!(
+        edges
+            .iter()
+            .all(|edge| edge.caller_crate != edge.callee_crate),
+        "{label} crate-boundary rows should only contain cross-crate edges: {edges:#?}"
+    );
+    let edge = edges
+        .iter()
+        .find(|edge| edge.edge.caller_id == owner && edge.edge.callee_id == body_empty_target)
+        .unwrap_or_else(|| {
+            panic!("{label} should expose from_fn::tests::basic -> Body::empty: {edges:#?}")
+        });
+    assert_eq!(edge.caller_crate, "axum");
+    assert_eq!(edge.callee_crate, "axum-core");
+    assert_eq!(edge.caller.id, owner);
+    assert_eq!(edge.caller.name, "basic");
+    assert_eq!(
+        edge.caller.module_path,
+        vec![
+            "crate".to_string(),
+            "middleware".to_string(),
+            "from_fn".to_string()
+        ]
+    );
+    assert_eq!(edge.callee.id, body_empty_target);
+    assert_eq!(edge.callee.name, "empty");
+    assert_eq!(
+        edge.callee.module_path,
+        vec!["crate".to_string(), "body".to_string()]
+    );
+    assert_eq!(edge.edge.source_kind, CallSiteKind::Path);
+    assert_eq!(edge.edge.relation, CallTargetKind::AssociatedFunction);
+    assert_eq!(edge.site.owner_id, owner);
+    assert_eq!(edge.site.kind, CallSiteKind::Path);
+    assert_eq!(edge.site.status, CallStatusKind::Resolved);
+    assert_eq!(
+        edge.site.callee,
+        CallCalleeInfo::Path {
+            path: vec!["Body".to_string(), "empty".to_string()]
+        }
     );
 }
 

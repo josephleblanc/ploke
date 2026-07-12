@@ -17,8 +17,9 @@ use ploke_core::rag_types::{
     CallProofInvariantFindingInfo, CallReachEffectInfo, CallReachInfo, CallReceiverInfo,
     CallResolutionKind as RagCallResolutionKind, CallSiteBucketInfo,
     CallSiteKind as RagCallSiteKind, CallStatusKind as RagCallStatusKind, CallTargetInfo,
-    CallTargetKind, CallTestEntrypointInfo, CanonPath, ExternalSummaryNeedInfo,
-    ModuleBoundaryEdgeInfo, ModuleBoundaryPolicyViolationInfo, NodeFilepath, ProofContextInfo,
+    CallTargetKind, CallTestEntrypointInfo, CanonPath, CrateBoundaryEdgeInfo,
+    ExternalSummaryNeedInfo, ModuleBoundaryEdgeInfo, ModuleBoundaryPolicyViolationInfo,
+    NodeFilepath, ProofContextInfo,
 };
 use ploke_db::{
     CallBuildDomain as DbCallBuildDomain, CallContextCandidate, CallContextOptions,
@@ -31,7 +32,8 @@ use ploke_db::{
     CallReachReport as DbCallReachReport, CallReceiver, CallRelationKind, CallResolutionKind,
     CallSiteKind, CallSiteRow, CallStatusKind as DbCallStatusKind,
     CallTargetKind as DbCallTargetKind, CallTestEntrypoint as DbCallTestEntrypoint,
-    ExternalSummaryNeed as DbExternalSummaryNeed, ModuleBoundaryEdge as DbModuleBoundaryEdge,
+    CrateBoundaryEdge as DbCrateBoundaryEdge, ExternalSummaryNeed as DbExternalSummaryNeed,
+    ModuleBoundaryEdge as DbModuleBoundaryEdge,
     ModuleBoundaryPolicyRule as DbModuleBoundaryPolicyRule,
     ModuleBoundaryPolicyViolation as DbModuleBoundaryPolicyViolation, ProofGraphContextRow,
     ProofGraphStore,
@@ -581,32 +583,48 @@ fn external_summary_need_info(
     })
 }
 
+fn boundary_site_info(
+    edge: DbCallPathEdge,
+    site: CallSiteRow,
+) -> Result<CallContextInfo, RagError> {
+    let callee = call_site_callee_info(&site)?;
+    Ok(CallContextInfo {
+        site_id: site.id,
+        owner_id: site.owner_id,
+        kind: site_kind(site.kind),
+        span: site.span,
+        path: site.path,
+        arg_count: site.arg_count,
+        generic_arg_count: site.generic_arg_count,
+        callee,
+        status: RagCallStatusKind::Resolved,
+        resolution: Some(RagCallResolutionKind::LocalExact),
+        targets: vec![CallTargetInfo {
+            target_id: edge.callee_id,
+            relation: target_kind(edge.relation),
+        }],
+    })
+}
+
 fn module_boundary_edge_info(
     row: DbModuleBoundaryEdge,
 ) -> Result<ModuleBoundaryEdgeInfo, RagError> {
-    let edge = row.edge;
-    let site = row.site;
-    let callee = call_site_callee_info(&site)?;
     Ok(ModuleBoundaryEdgeInfo {
-        edge: edge_info(edge),
+        edge: edge_info(row.edge),
         caller: call_node_info(row.caller),
         callee: call_node_info(row.callee),
-        site: CallContextInfo {
-            site_id: site.id,
-            owner_id: site.owner_id,
-            kind: site_kind(site.kind),
-            span: site.span,
-            path: site.path,
-            arg_count: site.arg_count,
-            generic_arg_count: site.generic_arg_count,
-            callee,
-            status: RagCallStatusKind::Resolved,
-            resolution: Some(RagCallResolutionKind::LocalExact),
-            targets: vec![CallTargetInfo {
-                target_id: edge.callee_id,
-                relation: target_kind(edge.relation),
-            }],
-        },
+        site: boundary_site_info(row.edge, row.site)?,
+    })
+}
+
+fn crate_boundary_edge_info(row: DbCrateBoundaryEdge) -> Result<CrateBoundaryEdgeInfo, RagError> {
+    Ok(CrateBoundaryEdgeInfo {
+        edge: edge_info(row.edge),
+        caller: call_node_info(row.caller),
+        caller_crate: row.caller_crate,
+        callee: call_node_info(row.callee),
+        callee_crate: row.callee_crate,
+        site: boundary_site_info(row.edge, row.site)?,
     })
 }
 
@@ -1232,6 +1250,24 @@ impl RagService {
                 .module_boundary_edges_from_owner(owner_id, options)?
                 .into_iter()
                 .map(module_boundary_edge_info)
+                .collect::<Result<Vec<_>, RagError>>()?,
+        ))
+    }
+
+    pub fn exact_crate_boundary_edges_from_owner(
+        &self,
+        owner_id: Uuid,
+        options: CallPathOptions,
+    ) -> Result<Option<Vec<CrateBoundaryEdgeInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .crate_boundary_edges_from_owner(owner_id, options)?
+                .into_iter()
+                .map(crate_boundary_edge_info)
                 .collect::<Result<Vec<_>, RagError>>()?,
         ))
     }

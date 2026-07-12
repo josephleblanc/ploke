@@ -2393,6 +2393,88 @@ async fn module_boundary_edges_exact_reads_axum_request_extract_summary() -> Res
 }
 
 #[tokio::test]
+async fn crate_boundary_edges_exact_reads_axum_body_empty_component_crossing() -> Result<(), Error>
+{
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Architecture and component review:
+    //   "Are lower-level crates depending on higher-level application code?"
+    //   "Which crates or binaries need rebuilding after this internal function changes?"
+    //
+    // Source oracle:
+    //   tests/fixture_github_clones/corpus/axum/axum/src/middleware/from_fn.rs:394
+    //     defines `tests::basic`.
+    //   tests/fixture_github_clones/corpus/axum/axum/src/middleware/from_fn.rs:411
+    //     calls `Body::empty()`.
+    //   tests/fixture_github_clones/corpus/axum/axum-core/src/body.rs:52
+    //     defines `Body::empty`.
+    // Expected contract: RAG exposes the enriched crate-boundary edge row,
+    // including exact edge plus source-labeled caller, callee, crate, and
+    // callsite metadata.
+    let owner =
+        function_id_by_name_in_module(&db, &["crate", "middleware", "from_fn", "tests"], "basic")?;
+    let target = method_id_by_name_and_body_substring(&db, "empty", "Empty::new()")?;
+
+    let rows = rag
+        .exact_crate_boundary_edges_from_owner(
+            owner,
+            CallPathOptions {
+                max_depth: 1,
+                max_paths: 64,
+            },
+        )?
+        .expect("call context enabled");
+    assert!(
+        rows.iter().all(|row| row.caller_crate != row.callee_crate),
+        "RAG crate-boundary rows should only contain cross-crate edges: {rows:#?}"
+    );
+    let row = rows
+        .iter()
+        .find(|row| row.edge.caller_id == owner && row.edge.callee_id == target)
+        .unwrap_or_else(|| {
+            panic!("RAG crate-boundary rows should expose from_fn::tests::basic -> Body::empty: {rows:#?}")
+        });
+    assert_eq!(row.caller_crate, "axum");
+    assert_eq!(row.callee_crate, "axum-core");
+    assert_eq!(row.edge.source_kind, CallSiteKind::Path);
+    assert_eq!(row.edge.relation, CallTargetKind::AssociatedFunction);
+    assert_eq!(row.caller.id, owner);
+    assert_eq!(row.caller.name, "basic");
+    assert_eq!(
+        row.caller.module_path,
+        path(&["crate", "middleware", "from_fn"])
+    );
+    assert_eq!(row.callee.id, target);
+    assert_eq!(row.callee.name, "empty");
+    assert_eq!(row.callee.module_path, path(&["crate", "body"]));
+    assert_eq!(row.site.owner_id, owner);
+    assert_eq!(row.site.kind, CallSiteKind::Path);
+    assert_eq!(row.site.status, CallStatusKind::Resolved);
+    assert_eq!(row.site.arg_count, Some(0));
+    assert!(
+        matches!(
+            &row.site.callee,
+            CallCalleeInfo::Path { path: call_path }
+                if call_path == &path(&["Body", "empty"])
+        ),
+        "crate-boundary site should preserve the Body::empty path call: {row:#?}"
+    );
+    assert!(
+        row.site.targets.iter().any(|target_row| {
+            target_row.target_id == target
+                && target_row.relation == CallTargetKind::AssociatedFunction
+        }),
+        "crate-boundary site should include the Body::empty target: {row:#?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn module_boundary_policy_exact_flags_axum_request_extract_boundary() -> Result<(), Error> {
     init_tracing_once();
     let (db, rag) = setup_axum_call_graph_rag()?;

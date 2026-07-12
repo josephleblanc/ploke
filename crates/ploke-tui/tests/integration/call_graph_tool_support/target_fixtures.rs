@@ -41,6 +41,14 @@ pub(crate) struct AxumRunUiTestsToolFixture {
     pub(crate) callers: Vec<ExpectedCallSite>,
 }
 
+pub(crate) struct AxumFromFnBasicToolFixture {
+    pub(crate) state: Arc<AppState>,
+    pub(crate) file_path: PathBuf,
+    pub(crate) module_path: Vec<String>,
+    pub(crate) owner: Uuid,
+    pub(crate) body_empty_target: Uuid,
+}
+
 pub(crate) struct ChronoAliasConstructorToolFixture {
     pub(crate) state: Arc<AppState>,
     pub(crate) file_path: PathBuf,
@@ -341,6 +349,53 @@ impl AxumRunUiTestsToolFixture {
             module_path: target.module_path,
             target: target.id,
             callers,
+        }
+    }
+
+    pub(crate) fn module_path_arg(&self) -> String {
+        self.module_path.join("::")
+    }
+
+    pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
+        ctx_for_state(&self.state, call_id)
+    }
+}
+
+impl AxumFromFnBasicToolFixture {
+    pub(crate) async fn new() -> Self {
+        let db = axum_call_graph_db();
+        let owner =
+            axum_function_target_by_name_and_file(&db, "basic", "axum/src/middleware/from_fn.rs");
+        let body_empty = axum_body_empty_target(&db);
+        let edges = db
+            .crate_boundary_edges_from_owner(
+                owner.id,
+                ploke_db::CallPathOptions {
+                    max_depth: 1,
+                    max_paths: 64,
+                },
+            )
+            .expect("from_fn::tests::basic crate-boundary edges");
+        assert!(
+            edges.iter().any(|edge| {
+                edge.edge.caller_id == owner.id && edge.edge.callee_id == body_empty.id
+            }),
+            "current axum fixture should expose from_fn::tests::basic -> Body::empty as a crate-boundary edge: {edges:#?}"
+        );
+        assert!(
+            db.project_call_proof_facts_for_node(owner.id, "bd:corpus-axum-call-graph")
+                .expect("project from_fn::tests::basic proof facts")
+                >= 1,
+            "from_fn::tests::basic should project proof rows for its callsites"
+        );
+        let state = axum_state_for_target(Arc::clone(&db), &owner, "from_fn::tests::basic").await;
+
+        Self {
+            state,
+            file_path: owner.file_path,
+            module_path: owner.module_path,
+            owner: owner.id,
+            body_empty_target: body_empty.id,
         }
     }
 

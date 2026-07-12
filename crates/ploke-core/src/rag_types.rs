@@ -520,6 +520,16 @@ pub struct ModuleBoundaryEdgeInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct CrateBoundaryEdgeInfo {
+    pub edge: CallPathEdgeInfo,
+    pub caller: CallNodeInfo,
+    pub caller_crate: String,
+    pub callee: CallNodeInfo,
+    pub callee_crate: String,
+    pub site: CallContextInfo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct ModuleBoundaryPolicyViolationInfo {
     pub rule_id: String,
     pub edge: ModuleBoundaryEdgeInfo,
@@ -800,6 +810,7 @@ impl From<ContextPart> for ConciseContext {
             call_proof_invariant_findings: Vec::new(),
             external_summary_needs: Vec::new(),
             module_boundary_edges: Vec::new(),
+            crate_boundary_edges: Vec::new(),
             call_build_domains: Vec::new(),
             call_test_entrypoints: Vec::new(),
             proof_context: value.proof_context,
@@ -873,6 +884,8 @@ pub struct ConciseContext {
     pub external_summary_needs: Vec<ExternalSummaryNeedInfo>,
     #[serde(default)]
     pub module_boundary_edges: Vec<ModuleBoundaryEdgeInfo>,
+    #[serde(default)]
+    pub crate_boundary_edges: Vec<CrateBoundaryEdgeInfo>,
     #[serde(default)]
     pub call_build_domains: Vec<CallBuildDomainInfo>,
     #[serde(default)]

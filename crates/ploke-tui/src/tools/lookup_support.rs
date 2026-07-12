@@ -3,7 +3,8 @@ use ploke_core::{
     rag_types::{
         CallBuildDomainInfo, CallContextInfo, CallEffectPolicyViolationInfo, CallImpactInfo,
         CallPathInfo, CallProofInvariantFindingInfo, CallReachEffectInfo, CallReachInfo,
-        CallTestEntrypointInfo, ExternalSummaryNeedInfo, ModuleBoundaryEdgeInfo, ProofContextInfo,
+        CallTestEntrypointInfo, CrateBoundaryEdgeInfo, ExternalSummaryNeedInfo,
+        ModuleBoundaryEdgeInfo, ProofContextInfo,
     },
     tool_types::ToolName,
 };
@@ -610,6 +611,25 @@ pub(super) fn module_boundary_edges_for_node(
     }
 }
 
+pub(super) fn crate_boundary_edges_for_node(
+    ctx: &super::Ctx,
+    node_id: Uuid,
+) -> Result<Vec<CrateBoundaryEdgeInfo>, ploke_error::Error> {
+    use ploke_error::InternalError;
+
+    match ctx.state.rag.as_ref() {
+        Some(rag) if !rag.call_context_degraded() => Ok(rag
+            .exact_crate_boundary_edges_from_owner(node_id, TOOL_CALL_PATH_OPTIONS)
+            .map_err(|err| {
+                ploke_error::Error::Internal(InternalError::CompilerError(format!(
+                    "failed to collect crate boundary edges for code item {node_id}: {err}"
+                )))
+            })?
+            .unwrap_or_default()),
+        _ => Ok(Vec::new()),
+    }
+}
+
 pub(super) fn call_build_domains_for_node(
     ctx: &super::Ctx,
     node_id: Uuid,
@@ -716,6 +736,7 @@ pub(super) fn with_call_usage_fields(
     invariant_findings: &[CallProofInvariantFindingInfo],
     summary_needs: &[ExternalSummaryNeedInfo],
     module_boundary_edges: &[ModuleBoundaryEdgeInfo],
+    crate_boundary_edges: &[CrateBoundaryEdgeInfo],
     build_domains: &[CallBuildDomainInfo],
     test_entrypoints: &[CallTestEntrypointInfo],
 ) -> super::ToolUiPayload {
@@ -834,6 +855,10 @@ pub(super) fn with_call_usage_fields(
         .with_field(
             "module_boundary_edges",
             module_boundary_edges.len().to_string(),
+        )
+        .with_field(
+            "crate_boundary_edges",
+            crate_boundary_edges.len().to_string(),
         )
         .with_field("call_build_domains", build_domains.len().to_string())
         .with_field("call_test_entrypoints", test_entrypoints.len().to_string())
