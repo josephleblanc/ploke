@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::{
     error::SynParserError,
     parser::{
@@ -1039,6 +1041,18 @@ impl<'a> CallRelationResolver<'a> {
         depth: usize,
         sink: &mut impl FnMut(AnyNodeId) -> Result<(), SynParserError>,
     ) -> Result<(), SynParserError> {
+        let mut visited = HashSet::new();
+        self.visit_named_binding_terminals_inner(start, segment, depth, &mut visited, sink)
+    }
+
+    fn visit_named_binding_terminals_inner(
+        &self,
+        start: AnyNodeId,
+        segment: &str,
+        depth: usize,
+        visited: &mut HashSet<AnyNodeId>,
+        sink: &mut impl FnMut(AnyNodeId) -> Result<(), SynParserError>,
+    ) -> Result<(), SynParserError> {
         if depth > MAX_IMPORT_CHAIN_DEPTH {
             return Err(SynParserError::InternalState(format!(
                 "call resolution exceeded import chain depth limit of {MAX_IMPORT_CHAIN_DEPTH} at {start}"
@@ -1055,6 +1069,10 @@ impl<'a> CallRelationResolver<'a> {
             return Ok(());
         };
 
+        if !visited.insert(import_id.as_any()) {
+            return Ok(());
+        }
+
         let mut had_sources = false;
         for relation in self.tree.get_iter_relations_to(&import_id.as_any()) {
             let SyntacticRelation::ImportedBy { source, target } = relation.rel() else {
@@ -1068,7 +1086,13 @@ impl<'a> CallRelationResolver<'a> {
                 continue;
             }
             had_sources = true;
-            self.visit_named_binding_terminals(source_any, segment, depth + 1, sink)?;
+            self.visit_named_binding_terminals_inner(
+                source_any,
+                segment,
+                depth + 1,
+                visited,
+                sink,
+            )?;
         }
 
         if had_sources {
@@ -1097,6 +1121,17 @@ impl<'a> CallRelationResolver<'a> {
         depth: usize,
         sink: &mut impl FnMut(AnyNodeId) -> Result<(), SynParserError>,
     ) -> Result<(), SynParserError> {
+        let mut visited = HashSet::new();
+        self.visit_binding_terminals_inner(start, depth, &mut visited, sink)
+    }
+
+    fn visit_binding_terminals_inner(
+        &self,
+        start: AnyNodeId,
+        depth: usize,
+        visited: &mut HashSet<AnyNodeId>,
+        sink: &mut impl FnMut(AnyNodeId) -> Result<(), SynParserError>,
+    ) -> Result<(), SynParserError> {
         if depth > MAX_IMPORT_CHAIN_DEPTH {
             return Err(SynParserError::InternalState(format!(
                 "call resolution exceeded import chain depth limit of {MAX_IMPORT_CHAIN_DEPTH} at {start}"
@@ -1106,6 +1141,10 @@ impl<'a> CallRelationResolver<'a> {
         let Ok(import_id) = ImportNodeId::try_from(start) else {
             return sink(start);
         };
+
+        if !visited.insert(import_id.as_any()) {
+            return Ok(());
+        }
 
         let mut had_sources = false;
         for relation in self.tree.get_iter_relations_to(&import_id.as_any()) {
@@ -1120,7 +1159,7 @@ impl<'a> CallRelationResolver<'a> {
                 continue;
             }
             had_sources = true;
-            self.visit_binding_terminals(source_any, depth + 1, sink)?;
+            self.visit_binding_terminals_inner(source_any, depth + 1, visited, sink)?;
         }
 
         if had_sources {
