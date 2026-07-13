@@ -3,6 +3,7 @@ use std::borrow::Cow;
 use ploke_core::rag_types::{
     CallCalleeInfo, CallContextInfo, CallResolutionKind, CallStatusKind, CallTargetKind,
 };
+use ploke_db::ProofGraphStore;
 use ploke_tui::tools::{
     Tool,
     code_item_lookup::{CodeItemLookup, LookupParams},
@@ -103,6 +104,103 @@ async fn code_item_lookup_returns_dynamic_targetless_real_corpus_rows() {
                 >= 2,
             "code_item_lookup should surface dynamic targetless proof rows"
         );
+    }
+}
+
+#[tokio::test]
+async fn code_item_lookup_omits_admitted_runtime_dispatch_summary_needs() {
+    for case in DynamicToolCase::AXUM {
+        let fixture = DynamicToolFixture::new(case).await;
+        let params = LookupParams {
+            item_name: Cow::Borrowed(case.method),
+            file_path: Cow::Owned(fixture.file_path.display().to_string()),
+            node_kind: Cow::Borrowed("method"),
+            module_path: Cow::Owned(fixture.module_path_arg()),
+            owner_trait: None,
+            owner_type: Some(Cow::Borrowed(case.owner_type)),
+            parent_name: None,
+            allowed_effects: Vec::new(),
+        };
+
+        let initial = CodeItemLookup::execute(
+            params.clone(),
+            fixture.ctx("dynamic-targetless-summary-before"),
+        )
+        .await
+        .unwrap_or_else(|err| panic!("{} initial code_item_lookup: {err}", fixture.case.label));
+        let payload: serde_json::Value =
+            serde_json::from_str(&initial.content).expect("deserialize ConciseContext");
+        let call_context = payload
+            .get("call_context")
+            .and_then(serde_json::Value::as_array)
+            .expect("call_context array");
+        let runtime_needs = payload
+            .get("runtime_dispatch_needs")
+            .and_then(serde_json::Value::as_array)
+            .expect("runtime_dispatch_needs array");
+        let site_id = assert_dynamic_context(
+            call_context,
+            fixture.owner,
+            fixture.case.expected_path,
+            fixture.case.expected_arg_count,
+            fixture.case.label,
+            "lookup",
+        );
+        assert_runtime_dispatch_need(runtime_needs, site_id, fixture.case.label, "lookup");
+
+        let expected_path = fixture
+            .case
+            .expected_path
+            .expect("dynamic callable field path");
+        let field = expected_path
+            .last()
+            .copied()
+            .expect("dynamic callable field");
+        fixture
+            .state
+            .db
+            .upsert_proof_fact_values(&[
+                ploke_test_utils::axum_callable_field_runtime_dispatch_summary(
+                    site_id,
+                    field,
+                    fixture.case.label,
+                ),
+            ])
+            .unwrap_or_else(|err| {
+                panic!(
+                    "{} runtime dispatch summary insert: {err}",
+                    fixture.case.label
+                )
+            });
+
+        let result =
+            CodeItemLookup::execute(params, fixture.ctx("dynamic-targetless-summary-after"))
+                .await
+                .unwrap_or_else(|err| {
+                    panic!("{} summary code_item_lookup: {err}", fixture.case.label)
+                });
+        let payload: serde_json::Value =
+            serde_json::from_str(&result.content).expect("deserialize ConciseContext");
+        let call_context = payload
+            .get("call_context")
+            .and_then(serde_json::Value::as_array)
+            .expect("call_context array");
+        let runtime_needs = payload
+            .get("runtime_dispatch_needs")
+            .and_then(serde_json::Value::as_array)
+            .expect("runtime_dispatch_needs array");
+        assert_dynamic_context(
+            call_context,
+            fixture.owner,
+            fixture.case.expected_path,
+            fixture.case.expected_arg_count,
+            fixture.case.label,
+            "lookup",
+        );
+        assert_no_runtime_dispatch_need(runtime_needs, site_id, fixture.case.label, "lookup");
+
+        let ui = result.ui_payload.as_ref().expect("ui payload");
+        assert_eq!(ui_field(ui, "runtime_dispatch_needs"), "0");
     }
 }
 
@@ -1331,6 +1429,24 @@ fn assert_runtime_dispatch_need(
     assert!(
         paths.is_empty(),
         "{tool} direct runtime-dispatch need should not include intermediate owner paths for {label}: {need:#?}"
+    );
+}
+
+fn assert_no_runtime_dispatch_need(
+    needs: &[serde_json::Value],
+    site_id: Uuid,
+    label: &str,
+    tool: &str,
+) {
+    let site = site_id.to_string();
+    assert!(
+        needs.iter().all(|need| {
+            need.get("call_site")
+                .and_then(|call| call.get("site_id"))
+                .and_then(serde_json::Value::as_str)
+                != Some(site.as_str())
+        }),
+        "{tool} should not expose a remaining runtime-dispatch need for admitted {label}: {needs:#?}"
     );
 }
 

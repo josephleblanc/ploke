@@ -63,8 +63,11 @@ dynamic callable field test proves the two unsupported self-field rows
 runtime-dispatch need queue, then disappear after admitted runtime-dispatch
 summaries, with `relations_for_site(...)` still empty. Focused proof-store tests
 also assert accepted summaries, rejection without `call_site_id`, and rejection
-of admitted `opaque_blocked` summaries. This is proof-authoring queue support
-only; it does not add callable-field value flow, runtime vtable modeling,
+of admitted `opaque_blocked` summaries. Follow-up downstream tests prove
+`RagService::exact_runtime_dispatch_needs_for_owner` and exact
+`code_item_lookup` payloads also drop the admitted need while preserving the
+targetless dynamic call context. This is proof-authoring queue support only; it
+does not add callable-field value flow, runtime vtable modeling,
 summary-derived effects, or local traversal edges.
 
 Latest completed slice: bounded axum middleware `impl_service!` generated

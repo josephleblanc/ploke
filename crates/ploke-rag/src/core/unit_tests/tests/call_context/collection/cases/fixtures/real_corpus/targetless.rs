@@ -31,6 +31,21 @@ struct MethodCase {
     status: CallStatusKind,
 }
 
+const AXUM_CALLABLE_FIELD_CASES: [DynamicCase; 2] = [
+    DynamicCase {
+        label: "axum/src/boxed.rs:120 MakeErasedRouter::into_route callable field",
+        method: "into_route",
+        body: "(self.into_route)(self.router, state)",
+        expected_path: &["self", "into_route"],
+    },
+    DynamicCase {
+        label: "axum/src/serve/listener.rs:236 TapIo::accept callable field",
+        method: "accept",
+        body: "(self.tap_fn)(&mut io)",
+        expected_path: &["self", "tap_fn"],
+    },
+];
+
 #[tokio::test]
 async fn call_context_collection_reads_axum_dynamic_callable_field_gaps() -> Result<(), Error> {
     init_tracing_once();
@@ -48,22 +63,7 @@ async fn call_context_collection_reads_axum_dynamic_callable_field_gaps() -> Res
     // they have zero traversable edges until callable-field proof is modeled.
     // DB tests own argument counts and source-line fanout; RAG must preserve
     // the targetless unsupported rows without guessing.
-    let cases = [
-        DynamicCase {
-            label: "axum/src/boxed.rs:120 MakeErasedRouter::into_route callable field",
-            method: "into_route",
-            body: "(self.into_route)(self.router, state)",
-            expected_path: &["self", "into_route"],
-        },
-        DynamicCase {
-            label: "axum/src/serve/listener.rs:236 TapIo::accept callable field",
-            method: "accept",
-            body: "(self.tap_fn)(&mut io)",
-            expected_path: &["self", "tap_fn"],
-        },
-    ];
-
-    for case in cases {
+    for case in AXUM_CALLABLE_FIELD_CASES {
         let owner = method_id_by_name_and_body_substring(&db, case.method, case.body)?;
         let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
         let context = call_context
@@ -97,6 +97,108 @@ async fn call_context_collection_reads_axum_dynamic_callable_field_gaps() -> Res
         assert!(
             call.targets.is_empty(),
             "{} should remain targetless in RAG call context: {call:#?}",
+            case.label
+        );
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn runtime_dispatch_needs_exact_respects_axum_callable_field_summaries() -> Result<(), Error>
+{
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+    let options = CallPathOptions {
+        max_depth: 1,
+        max_paths: 16,
+    };
+
+    // Source oracles:
+    //   axum/src/boxed.rs:120 `(self.into_route)(self.router, state)`
+    //   axum/src/serve/listener.rs:236 `(self.tap_fn)(&mut io)`
+    //
+    // Expected traversal: exact RAG exposes the proof-authoring need while the
+    // dynamic callable field is blocked, then drops that need after an
+    // admitted runtime-dispatch summary. The callsite remains targetless; this
+    // is not callable-field value-flow proof.
+    for case in AXUM_CALLABLE_FIELD_CASES {
+        let owner = method_id_by_name_and_body_substring(&db, case.method, case.body)?;
+        db.project_call_proof_facts_for_owner(owner, "bd:corpus-axum-call-graph")?;
+        let context = db.call_context_for_owner(owner)?;
+        let row = context
+            .iter()
+            .find(|row| {
+                row.site.kind == DbCallSiteKind::Dynamic
+                    && row.status.status == DbCallStatusKind::Unsupported
+                    && row.site.path.as_ref().is_some_and(|path| {
+                        path.iter()
+                            .map(String::as_str)
+                            .eq(case.expected_path.iter().copied())
+                    })
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "{} should expose the unsupported dynamic callable field callsite: {context:#?}",
+                    case.label
+                )
+            });
+        assert!(
+            row.targets.is_empty(),
+            "{} should stay targetless before and after summary admission: {row:#?}",
+            case.label
+        );
+        let field = case
+            .expected_path
+            .last()
+            .copied()
+            .expect("callable field path");
+
+        db.upsert_proof_fact_values(&[
+            ploke_test_utils::axum_callable_field_runtime_dispatch_blocker(
+                row.site.id,
+                field,
+                case.label,
+            ),
+        ])?;
+        let needs = rag
+            .exact_runtime_dispatch_needs_for_owner(owner, options)?
+            .expect("call context enabled");
+        assert!(
+            needs.iter().any(|need| {
+                need.call_site.site_id == row.site.id
+                    && need
+                        .blocker_reasons
+                        .iter()
+                        .any(|reason| reason == "dynamic_dispatch_unbounded")
+            }),
+            "{} should be visible as an exact RAG runtime-dispatch need before summary admission: {needs:#?}",
+            case.label
+        );
+
+        db.upsert_proof_fact_values(&[
+            ploke_test_utils::axum_callable_field_runtime_dispatch_summary(
+                row.site.id,
+                field,
+                case.label,
+            ),
+        ])?;
+        let after = rag
+            .exact_runtime_dispatch_needs_for_owner(owner, options)?
+            .expect("call context enabled");
+        assert!(
+            after
+                .iter()
+                .all(|need| need.call_site.site_id != row.site.id),
+            "{} admitted runtime-dispatch summary should remove the exact RAG authoring need: {after:#?}",
+            case.label
+        );
+        assert!(
+            db.call_context_for_owner(owner)?
+                .into_iter()
+                .find(|candidate| candidate.site.id == row.site.id)
+                .is_some_and(|candidate| candidate.targets.is_empty()),
+            "{} summary admission must not fabricate a local callable-field edge",
             case.label
         );
     }
