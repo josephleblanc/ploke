@@ -132,8 +132,8 @@ fn axum_real_target_trait_associated_paths_reach_trait_methods() -> Result<(), D
     let from_request_callers = db.callers_for_target(from_request)?;
     assert_eq!(
         from_request_callers.len(),
-        18,
-        "FromRequest::from_request should expose both hand-written bounded callers plus generated Handler arity callers: {from_request_callers:#?}"
+        34,
+        "FromRequest::from_request should expose hand-written bounded callers plus generated Handler and tuple extractor arity callers: {from_request_callers:#?}"
     );
     assert_sites_match_callers(
         &db,
@@ -145,8 +145,8 @@ fn axum_real_target_trait_associated_paths_reach_trait_methods() -> Result<(), D
     let from_request_parts_callers = db.callers_for_target(from_request_parts)?;
     assert_eq!(
         from_request_parts_callers.len(),
-        261,
-        "FromRequestParts::from_request_parts should expose all inspected bounded callers plus generated Handler and HandleError service extractor-prefix callers: {from_request_parts_callers:#?}"
+        517,
+        "FromRequestParts::from_request_parts should expose all inspected bounded callers plus generated Handler, HandleError service, and tuple extractor callers: {from_request_parts_callers:#?}"
     );
     assert_sites_match_callers(
         &db,
@@ -156,6 +156,185 @@ fn axum_real_target_trait_associated_paths_reach_trait_methods() -> Result<(), D
     )?;
 
     Ok(())
+}
+
+#[test]
+fn axum_core_tuple_impl_from_request_projects_generated_rows() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Matrix: generated tuple extractor impl rows.
+    // Source chain:
+    //   axum-core/src/extract/tuple.rs:18-75 defines `impl_from_request!`.
+    //   tuple.rs:77 invokes `all_the_tuples!(impl_from_request)`.
+    //   tuple.rs:29 and :52 call `$ty::from_request_parts(...)`.
+    //   tuple.rs:57 calls `$last::from_request(...)`.
+    // Expected traversal: the bounded, module-specific generated item model
+    // projects tuple arities 1 through 16 as generated impl methods with
+    // stable generic names, preserves async-block ownership for
+    // `FromRequest::from_request`, and resolves generated where-clause
+    // associated paths to the axum-core trait method bindings.
+    let from_request = method_id_by_trait_name(&db, "FromRequest", "from_request")?;
+    let from_request_parts =
+        method_id_by_trait_name(&db, "FromRequestParts", "from_request_parts")?;
+
+    let parts_owners = method_ids_by_name_body_and_file_suffix(
+        &db,
+        "from_request_parts",
+        "T1 :: from_request_parts (parts , state) . await",
+        "axum-core/src/extract/tuple.rs",
+    )?;
+    assert_eq!(
+        parts_owners.len(),
+        16,
+        "tuple impl_from_request! should generate sixteen FromRequestParts owners"
+    );
+    let mut parts_owner = None;
+    for owner in parts_owners {
+        let context = db.call_context_for_owner(owner)?;
+        let rows = context
+            .iter()
+            .filter(|row| {
+                row.site.kind == CallSiteKind::Path
+                    && row.site.path.as_ref().is_some_and(|path| {
+                        path.last().is_some_and(|part| part == "from_request_parts")
+                    })
+            })
+            .collect::<Vec<_>>();
+        if rows.len() == 1
+            && rows[0].site.path.as_ref() == Some(&path(&["T1", "from_request_parts"]))
+        {
+            parts_owner = Some(owner);
+            break;
+        }
+    }
+    let parts_owner = parts_owner.expect("expected generated arity-1 tuple FromRequestParts owner");
+    assert_method_owner_impl_trait(
+        &db,
+        parts_owner,
+        "FromRequestParts",
+        "generated arity-1 tuple FromRequestParts::from_request_parts",
+    )?;
+    let parts_context = db.call_context_for_owner(parts_owner)?;
+    let parts_row = row_by_path(&parts_context, &["T1", "from_request_parts"]);
+    assert_resolved_target(
+        parts_row,
+        from_request_parts,
+        CallRelationKind::AssociatedFunction,
+        CallSiteKind::Path,
+        CallTargetKind::Method,
+    );
+    assert_one_edge_traversal(
+        &db,
+        TraversalExpectation {
+            label: "axum-core/src/extract/tuple.rs generated arity-1 T1::from_request_parts",
+            owner: parts_owner,
+            target: from_request_parts,
+            site_id: parts_row.site.id,
+            expected_edge_count: 1,
+        },
+    )?;
+
+    let arity_sixteen = method_id_by_name_body_and_file_suffix(
+        &db,
+        "from_request_parts",
+        "T16 :: from_request_parts (parts , state) . await",
+        "axum-core/src/extract/tuple.rs",
+    )?;
+    assert_method_owner_impl_trait(
+        &db,
+        arity_sixteen,
+        "FromRequestParts",
+        "generated arity-16 tuple FromRequestParts::from_request_parts",
+    )?;
+    let arity_sixteen_context = db.call_context_for_owner(arity_sixteen)?;
+    let target_sites = db.call_sites_for_target(from_request_parts)?;
+    for index in 1..=16 {
+        let ty = format!("T{index}");
+        let expected_path = path(&[ty.as_str(), "from_request_parts"]);
+        let row = arity_sixteen_context
+            .iter()
+            .find(|row| {
+                row.site.kind == CallSiteKind::Path
+                    && row.site.path.as_ref() == Some(&expected_path)
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "generated arity-16 tuple FromRequestParts owner should expose {ty}::from_request_parts: {arity_sixteen_context:#?}"
+                )
+            });
+        assert_resolved_target(
+            row,
+            from_request_parts,
+            CallRelationKind::AssociatedFunction,
+            CallSiteKind::Path,
+            CallTargetKind::Method,
+        );
+        assert_eq!(
+            relations_for_site(&db, row.site.id)?.rows.len(),
+            1,
+            "axum-core/src/extract/tuple.rs generated arity-16 {ty}::from_request_parts should persist one call edge"
+        );
+        assert!(
+            target_sites
+                .iter()
+                .any(|site| site.owner_id == arity_sixteen && site.id == row.site.id),
+            "target-centered call_sites_for_target should include generated tuple {ty}::from_request_parts: {target_sites:#?}"
+        );
+    }
+
+    let request_owner = method_id_by_name_body_and_file_suffix(
+        &db,
+        "from_request",
+        "T2 :: from_request (req , state) . await",
+        "axum-core/src/extract/tuple.rs",
+    )?;
+    assert_method_owner_impl_trait(
+        &db,
+        request_owner,
+        "FromRequest",
+        "generated arity-2 tuple FromRequest::from_request",
+    )?;
+    let request_body = async_block_owner_for_method_parent(&db, request_owner)?;
+    let request_context = db.call_context_for_owner(request_body)?;
+    let prefix_row = row_by_path(&request_context, &["T1", "from_request_parts"]);
+    assert_resolved_target(
+        prefix_row,
+        from_request_parts,
+        CallRelationKind::AssociatedFunction,
+        CallSiteKind::Path,
+        CallTargetKind::Method,
+    );
+    assert_one_edge_traversal(
+        &db,
+        TraversalExpectation {
+            label: "axum-core/src/extract/tuple.rs generated arity-2 T1::from_request_parts",
+            owner: request_body,
+            target: from_request_parts,
+            site_id: prefix_row.site.id,
+            expected_edge_count: 1,
+        },
+    )?;
+    let last_row = row_by_path(&request_context, &["T2", "from_request"]);
+    assert_resolved_target(
+        last_row,
+        from_request,
+        CallRelationKind::AssociatedFunction,
+        CallSiteKind::Path,
+        CallTargetKind::Method,
+    );
+    assert_one_edge_traversal(
+        &db,
+        TraversalExpectation {
+            label: "axum-core/src/extract/tuple.rs generated arity-2 T2::from_request",
+            owner: request_body,
+            target: from_request,
+            site_id: last_row.site.id,
+            expected_edge_count: 1,
+        },
+    )?;
+
+    assert_no_path_rows(&db, &["ty", "from_request_parts"])?;
+    assert_no_path_rows(&db, &["last", "from_request"])
 }
 
 #[test]

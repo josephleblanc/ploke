@@ -2802,15 +2802,15 @@ async fn code_item_edges_returns_real_corpus_two_hop_call_paths() {
     );
     assert_eq!(
         target_impact_direct_call_sites.len(),
-        18,
-        "code_item_edges impact should expose all direct FromRequest::from_request callsite rows, including generated handler extraction rows: {target_impact_direct_call_sites:#?}"
+        34,
+        "code_item_edges impact should expose all direct FromRequest::from_request callsite rows, including generated handler and tuple extractor rows: {target_impact_direct_call_sites:#?}"
     );
     assert!(
         target_impact_callsite_buckets.iter().any(|bucket| {
             bucket.get("kind").and_then(serde_json::Value::as_str) == Some("path")
                 && bucket.get("relation").and_then(serde_json::Value::as_str)
                     == Some("associated_function")
-                && bucket.get("count").and_then(serde_json::Value::as_u64) == Some(18)
+                && bucket.get("count").and_then(serde_json::Value::as_u64) == Some(34)
         }),
         "code_item_edges impact should summarize direct path/associated-function callsites: {target_impact_callsite_buckets:#?}"
     );

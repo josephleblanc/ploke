@@ -50,6 +50,21 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
+Latest completed slice: bounded axum tuple extractor generated impl rows. The
+real-corpus source oracle is `axum-core/src/extract/tuple.rs:18-77`, where
+`all_the_tuples!(impl_from_request)` generates tuple `FromRequestParts` and
+`FromRequest` impls for arities 1 through 16. Parser generated-item modeling is
+module-specific to `crate::extract::tuple` and routes synthesized impls through
+the existing generated-impl visitor path. The regenerated axum fixture now
+projects stable `Tn::from_request_parts(...)` and `Tn::from_request(...)` rows
+under generated tuple owners, preserving async-block ownership for
+`FromRequest::from_request` and resolving through generated where-clause proof
+to the axum-core trait method bindings. Target-centered caller counts are now
+34 for `FromRequest::from_request` and 517 for
+`FromRequestParts::from_request_parts`; DB, RAG, and exact TUI/tool assertions
+track the expanded fanout without claiming arbitrary macro expansion or
+error-conversion closure modeling.
+
 Latest completed slice: crate-boundary dependency-policy checks over existing
 resolved edges. DB `crate_boundary_policy_violations_from_owner` now mirrors
 the existing module-boundary policy helper: caller-supplied rules use exact

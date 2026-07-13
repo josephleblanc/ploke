@@ -2126,8 +2126,8 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
         .expect("typed impact direct callsite rows");
     assert_eq!(
         direct_call_sites.len(),
-        18,
-        "code_item_lookup impact should surface all direct target-centered callsite rows, including generated handler extraction rows: {direct_call_sites:#?}"
+        34,
+        "code_item_lookup impact should surface all direct target-centered callsite rows, including generated handler and tuple extractor rows: {direct_call_sites:#?}"
     );
     assert!(
         direct_call_sites.iter().any(|call| {
@@ -2154,7 +2154,7 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
         callsite_buckets.iter().any(|bucket| {
             bucket.kind == CallSiteKind::Path
                 && bucket.relation == CallTargetKind::AssociatedFunction
-                && bucket.count == 18
+                && bucket.count == 34
         }),
         "code_item_lookup impact should summarize the direct path/associated-function callsites: {callsite_buckets:#?}"
     );

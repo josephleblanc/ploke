@@ -1458,8 +1458,8 @@ async fn call_impact_exact_reads_axum_usage_question_summary() -> Result<(), Err
     );
     assert_eq!(
         report.direct_call_sites.len(),
-        18,
-        "RAG impact summary should preserve all direct target-centered callsite rows, including generated handler extraction rows: {report:#?}"
+        34,
+        "RAG impact summary should preserve all direct target-centered callsite rows, including generated handler and tuple extractor rows: {report:#?}"
     );
     assert!(
         report.direct_call_sites.iter().any(|call| {
@@ -1481,7 +1481,7 @@ async fn call_impact_exact_reads_axum_usage_question_summary() -> Result<(), Err
         report.callsite_buckets.iter().any(|bucket| {
             bucket.kind == CallSiteKind::Path
                 && bucket.relation == CallTargetKind::AssociatedFunction
-                && bucket.count == 18
+                && bucket.count == 34
         }),
         "RAG impact summary should expose the direct path/associated-function callsite bucket: {report:#?}"
     );

@@ -277,6 +277,7 @@ external receiver type proof.
 | handler macro `$ty::from_request_parts` | `axum/src/handler/mod.rs:242` | generated `Handler::call`, async block starts `:240` | current fixture projects stable generated rows such as `T1::from_request_parts` on generated async-block owners and resolves them through generated impl where-clause proof plus the `crate::extract::FromRequestParts` re-export chain to `FromRequestParts::from_request_parts`. |
 | handler macro `$last::from_request` | `axum/src/handler/mod.rs:250` | generated `Handler::call`, async block starts `:240` | current fixture projects stable generated rows such as `T1::from_request` / `T2::from_request` on generated async-block owners and resolves them through generated impl where-clause proof plus the `crate::extract::FromRequest` re-export chain to `FromRequest::from_request`. |
 | error-handling service macro `$ty::from_request_parts` | `axum/src/error_handling/mod.rs:187`; invocations `:207-222` | generated `HandleError<S, F, T>::call`, async block starts in macro template at `:185` | current fixture projects bounded, module-specific generated rows such as `T1::from_request_parts` through `T16::from_request_parts` on generated async-block owners and resolves them through generated `FromRequestParts<()>` where-clause proof to `FromRequestParts::from_request_parts`. The synthesized body is intentionally limited to extractor proof rows and does not claim general macro expansion of the rest of the service body. |
+| tuple extractor macro `$ty::from_request_parts` / `$last::from_request` | `axum-core/src/extract/tuple.rs:29,52,57`; invocation `:77` | generated tuple `FromRequestParts` and `FromRequest` impl owners; `FromRequest::from_request` async block starts in macro template at `:49` | current fixture projects bounded, module-specific generated tuple extractor impls for arities 1 through 16. Their stable rows such as `T16::from_request_parts(parts, state)` and `T2::from_request(req, state)` resolve through generated where-clause proof to `FromRequestParts::from_request_parts` and `FromRequest::from_request`. The synthesized body is intentionally limited to extractor proof rows and does not claim general macro expansion of the error-conversion closure bodies. |
 | `FromRequest` ViaParts blanket inner call | `axum-core/src/extract/mod.rs:103` | blanket impl method body, async block | marker `private::ViaParts` at `:31`; blanket impl `:91`; bound `T: FromRequestParts<S>` at `:94`; call `Self::from_request_parts`; regenerated fixture owns this as an async-block path row that resolves through the parent blanket impl bounds to `FromRequestParts::from_request_parts`. |
 | `FromRef::from_ref` same-crate bounded calls | `axum-core/src/ext_traits/mod.rs:25,45` | axum-core state extraction test helpers | trait `FromRef` at `extract/from_ref.rs:13`; method `:15`; same-crate bounds now traverse to the trait method binding; concrete impl dispatch remains type-dependent. |
 | `FromRef::from_ref` dependency-root bounded calls | `axum/src/extract/state.rs:309`; `middleware/from_extractor.rs:328` | axum state extraction helpers and middleware tests | `FromRef` is imported through `axum_core::extract::FromRef`; both the top-level `State` extractor row and the nested middleware `local_impl_method:from_request_parts` row traverse through parsed workspace dependency proof to the axum-core `FromRef::from_ref` trait method binding. |
@@ -290,12 +291,13 @@ external receiver type proof.
 
 Current executable coverage: DB target traversal now asserts the two hand-written
 one-hop `E::from_request` / `T::from_request` edges plus 16 generated
-`Tn::from_request` handler extraction rows to `FromRequest::from_request`, the
-five hand-written `E::from_request_parts`, `T::from_request_parts`, and
-async-block-owned `Self::from_request_parts` edges plus 120 generated
-`Tn::from_request_parts` handler extraction rows to
-`FromRequestParts::from_request_parts`, and the two same-crate axum-core
-`FromRef::from_ref` bounded associated-path edges.
+`Tn::from_request` handler extraction rows and 16 generated tuple extractor
+rows to `FromRequest::from_request`, the five hand-written
+`E::from_request_parts`, `T::from_request_parts`, and async-block-owned
+`Self::from_request_parts` edges plus 120 generated handler
+`Tn::from_request_parts` rows, 136 generated HandleError service rows, and 256
+generated tuple extractor rows to `FromRequestParts::from_request_parts`, and
+the two same-crate axum-core `FromRef::from_ref` bounded associated-path edges.
 These are trait method binding edges only; concrete runtime impl dispatch
 remains a documented future slice. The top-level axum dependency-root
 `FromRef::from_ref` path row at `axum/src/extract/state.rs:309` and the nested

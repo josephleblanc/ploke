@@ -281,6 +281,12 @@ impl<'a> CodeVisitor<'a> {
                 && self.current_module_is(&["crate", "middleware", "map_request"])
             {
                 self.record_middleware_impl_service_tuples(item, MiddlewareService::MapRequest);
+                return;
+            }
+            if input.name == "impl_from_request"
+                && self.current_module_is(&["crate", "extract", "tuple"])
+            {
+                self.record_tuple_impl_from_request_tuples(item);
             }
             return;
         }
@@ -435,6 +441,10 @@ impl<'a> CodeVisitor<'a> {
             item,
             (1..=16).filter_map(|arity| middleware_impl_service_item(kind, arity)),
         );
+    }
+
+    fn record_tuple_impl_from_request_tuples(&mut self, item: &ItemMacro) {
+        self.record_generated_impls(item, (1..=16).flat_map(tuple_impl_from_request_items));
     }
 
     fn record_generated_impls(
@@ -960,6 +970,85 @@ fn middleware_impl_service_item(kind: MiddlewareService, arity: usize) -> Option
             }
         }),
     }
+}
+
+fn tuple_impl_from_request_items(arity: usize) -> Vec<ItemImpl> {
+    if !(1..=16).contains(&arity) {
+        return Vec::new();
+    }
+
+    let params = (1..=arity)
+        .map(|index| format_ident!("T{}", index))
+        .collect::<Vec<_>>();
+    let parts = &params[..params.len() - 1];
+    let last = match params.last() {
+        Some(last) => last,
+        None => return Vec::new(),
+    };
+    let mut items = Vec::new();
+
+    if let Some(item) = parse_item(quote! {
+        impl<S, #(#parts,)* #last> FromRequestParts<S> for (#(#parts,)* #last,)
+        where
+            #( #parts: FromRequestParts<S> + Send, )*
+            #last: FromRequestParts<S> + Send,
+            S: Send + Sync,
+        {
+            type Rejection = Response;
+
+            async fn from_request_parts(
+                parts: &mut Parts,
+                state: &S,
+            ) -> Result<Self, Self::Rejection> {
+                #(
+                    let #parts = #parts::from_request_parts(parts, state)
+                        .await;
+                )*
+                let #last = #last::from_request_parts(parts, state)
+                    .await;
+
+                Ok((#(#parts,)* #last,))
+            }
+        }
+    }) {
+        items.push(item);
+    }
+
+    if let Some(item) = parse_item(quote! {
+        impl<S, #(#parts,)* #last> FromRequest<S> for (#(#parts,)* #last,)
+        where
+            #( #parts: FromRequestParts<S> + Send, )*
+            #last: FromRequest<S> + Send,
+            S: Send + Sync,
+        {
+            type Rejection = Response;
+
+            fn from_request(
+                req: Request,
+                state: &S,
+            ) -> impl Future<Output = Result<Self, Self::Rejection>> {
+                let (mut parts, body) = req.into_parts();
+
+                async move {
+                    #(
+                        let #parts = #parts::from_request_parts(&mut parts, state)
+                            .await;
+                    )*
+
+                    let req = Request::from_parts(parts, body);
+
+                    let #last = #last::from_request(req, state)
+                        .await;
+
+                    Ok((#(#parts,)* #last,))
+                }
+            }
+        }
+    }) {
+        items.push(item);
+    }
+
+    items
 }
 
 fn parse_item<T: syn::parse::Parse>(tokens: TokenStream) -> Option<T> {

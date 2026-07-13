@@ -230,13 +230,38 @@ Post-regeneration verification:
   all registered active fixtures.
 - Current committed seed checksums:
   - `corpus_memchr_call_graph_2026-07-13.sqlite`:
-    `c6884934a7da70851a7092282a399c9341481665616a0bac4f8a62b16c814913`
+    `54f67c9dbacac63fc2a209934a8db1a9f08e09f64c48731191fccc4e2ee5922b`
   - `corpus_generic_array_call_graph_2026-07-11.sqlite`:
-    `e70abb46f9d4e9c41e2551b43914c01b5069998c2cae851a6da34f51fa8075da`
+    `03c2372d8aa6d2a8a788922c5638eaeb8147161a59a2f83100c97d7507a6175f`
   - `corpus_chrono_call_graph_2026-07-11.sqlite`:
-    `89b8a706851dff5b45e8b8e51068f8ec07fe2f2248c92058a63ec4920cddeb00`
+    `e7dda916ddf48f1968f04d0231937d8cdbd03feb885e104146cbdafe63c7a863`
   - `corpus_axum_call_graph_2026-07-13.sqlite`:
-    `b24545e9bbae71ae608f8d532fa361817461cdfd5ef6bc4ed2ef958ed298d111`
+    `681f37c7cc07ace575860ecb2d73552a792290916bde8132292fc86036d495cd`
+
+## 2026-07-13 Axum Tuple Extractor Generated Impl Refresh
+
+The active fixture set was regenerated with
+`cargo run -p xtask --features call_graph -- fixtures regenerate --active`
+after bounded, module-specific `all_the_tuples!(impl_from_request)` modeling
+began projecting generated tuple extractor impl methods in
+`axum-core/src/extract/tuple.rs`.
+
+Post-regeneration verification:
+
+- The regenerated `corpus_axum_call_graph_2026-07-13.sqlite` shared snapshot was
+  copied into `tests/backup_dbs/` as the committed seed artifact.
+- `cargo run -p xtask --features call_graph -- fixtures regenerate --active`
+  completed with all registered active fixtures roundtripping successfully.
+- Current seed checksum:
+  `681f37c7cc07ace575860ecb2d73552a792290916bde8132292fc86036d495cd`.
+- `axum-core/src/extract/tuple.rs:18-77` now projects generated
+  `FromRequestParts` and `FromRequest` tuple impl owners for arities 1 through
+  16. Their generated extractor rows resolve through generated where-clause
+  proof to the axum-core trait method bindings.
+- Target-centered caller queries now include those tuple extractor rows:
+  `FromRequest::from_request` has 34 callers and
+  `FromRequestParts::from_request_parts` has 517 callers in the regenerated
+  axum fixture.
 
 ## 2026-07-13 Axum Composite Rejection Generated Delegation Refresh
 
@@ -253,7 +278,7 @@ Post-regeneration verification:
 - The recreated `corpus_axum_call_graph_2026-07-13.sqlite` shared snapshot was
   copied into `tests/backup_dbs/` as the committed seed artifact.
 - Current seed checksum:
-  `b24545e9bbae71ae608f8d532fa361817461cdfd5ef6bc4ed2ef958ed298d111`.
+  `681f37c7cc07ace575860ecb2d73552a792290916bde8132292fc86036d495cd`.
 
 ## 2026-07-12 Axum Middleware Service Generated Frontier Refresh
 
@@ -313,7 +338,7 @@ Post-regeneration verification:
 - The recreated `corpus_memchr_call_graph_2026-07-13.sqlite` shared snapshot was
   copied into `tests/backup_dbs/` as the committed seed artifact.
 - Current seed checksum:
-  `c6884934a7da70851a7092282a399c9341481665616a0bac4f8a62b16c814913`.
+  `54f67c9dbacac63fc2a209934a8db1a9f08e09f64c48731191fccc4e2ee5922b`.
 - The memchr `Runner::new().fwd(...)` and `Runner::new().rev(...)` setter
   method-call rows now resolve to local methods when the receiver path is
   crate-qualified or module-qualified from the caller scope.
@@ -336,7 +361,7 @@ Post-regeneration verification:
 - The recreated `corpus_axum_call_graph_2026-07-13.sqlite` shared snapshot was
   copied into `tests/backup_dbs/` as the committed seed artifact.
 - Current seed checksum:
-  `b24545e9bbae71ae608f8d532fa361817461cdfd5ef6bc4ed2ef958ed298d111`.
+  `681f37c7cc07ace575860ecb2d73552a792290916bde8132292fc86036d495cd`.
 
 ## 2026-07-12 Axum Opaque Future Generated Constructor Refresh
 
@@ -445,10 +470,10 @@ Post-regeneration verification:
 - Those generated associated-path rows now resolve through generated impl
   where-clause proof and the local `crate::extract::{FromRequest,
   FromRequestParts}` re-export chain to the axum-core trait method bindings.
-- Target-centered caller queries now include the generated extractor rows:
-  `FromRequest::from_request` has 18 callers and
-  `FromRequestParts::from_request_parts` has 125 callers in the regenerated
-  axum fixture.
+- At this refresh, target-centered caller queries included the generated
+  handler extractor rows: `FromRequest::from_request` had 18 callers and
+  `FromRequestParts::from_request_parts` had 125 callers. See the
+  2026-07-13 tuple extractor refresh above for the current active counts.
 
 ## 2026-07-12 Axum HandleError Impl Service Refresh
 
@@ -470,10 +495,10 @@ Post-regeneration verification:
   `Tn::from_request_parts(&mut parts, &()).await` resolves through generated
   `FromRequestParts<()>` where-clause proof to the axum-core
   `FromRequestParts::from_request_parts` trait method binding.
-- Target-centered caller queries now include both generated handler and
-  generated HandleError service extractor rows:
-  `FromRequestParts::from_request_parts` has 261 callers in the regenerated
-  axum fixture.
+- At this refresh, target-centered caller queries included both generated
+  handler and generated HandleError service extractor rows:
+  `FromRequestParts::from_request_parts` had 261 callers. See the 2026-07-13
+  tuple extractor refresh above for the current active count.
 
 ## 2026-07-12 Axum Body From Impl Generated Conversion Refresh
 

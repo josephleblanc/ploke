@@ -145,11 +145,12 @@ async fn proof_context_exact_preserves_axum_supported_target_rows() -> Result<()
             // axum-core/src/extract/mod.rs:85 declares FromRequest.
             // ext_traits/request.rs:279 calls `E::from_request(...)`;
             // extract/mod.rs:127 calls `T::from_request(...)`; generated
-            // handler arity rows in axum/src/handler/mod.rs call
-            // `Tn::from_request(req, &state)` for arities 1 through 16.
+            // handler arity rows in axum/src/handler/mod.rs and tuple
+            // extractor rows in axum-core/src/extract/tuple.rs call
+            // `Tn::from_request(...)` for arities 1 through 16.
             label: "axum-core FromRequest::from_request trait paths",
             target: trait_method_id(&db, "FromRequest", "from_request")?,
-            edges: 18,
+            edges: 34,
         },
         ProofCase {
             // axum-core/src/extract/mod.rs:59 declares FromRequestParts.
@@ -157,10 +158,11 @@ async fn proof_context_exact_preserves_axum_supported_target_rows() -> Result<()
             // extract/mod.rs:115 calls `T::from_request_parts(...)`;
             // extract/mod.rs:103 calls `Self::from_request_parts(...)` from a
             // nested async-block owner. Generated Handler and HandleError
-            // service impls add extractor-prefix rows for `Tn::`.
+            // service impls plus generated tuple extractor impls add
+            // extractor-prefix rows for `Tn::`.
             label: "axum-core FromRequestParts::from_request_parts trait paths",
             target: trait_method_id(&db, "FromRequestParts", "from_request_parts")?,
-            edges: 261,
+            edges: 517,
         },
         ProofCase {
             // axum-core/src/extract/from_ref.rs:15 declares FromRef.

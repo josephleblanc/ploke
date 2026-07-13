@@ -1462,8 +1462,8 @@ fn axum_usage_questions_summarize_eventual_callers_for_impact() -> Result<(), Db
     );
     assert_eq!(
         report.direct_call_sites.len(),
-        18,
-        "FromRequest::from_request impact report should expose all direct caller-site rows, including generated handler extraction rows: {report:#?}"
+        34,
+        "FromRequest::from_request impact report should expose all direct caller-site rows, including generated handler and tuple extractor rows: {report:#?}"
     );
     assert!(
         report.direct_call_sites.iter().any(|row| {
@@ -1481,7 +1481,7 @@ fn axum_usage_questions_summarize_eventual_callers_for_impact() -> Result<(), Db
         report.callsite_buckets.iter().any(|bucket| {
             bucket.kind == CallSiteKind::Path
                 && bucket.relation == CallRelationKind::AssociatedFunction
-                && bucket.count == 18
+                && bucket.count == 34
         }),
         "FromRequest::from_request impact report should summarize direct path/associated-function callsites: {report:#?}"
     );
