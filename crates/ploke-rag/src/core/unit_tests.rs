@@ -1033,7 +1033,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "reproduces post-apply BM25 actor backpressure; fails until rebuild enqueue/ack is bounded"]
     async fn bm25_rebuild_backpressure_repro_blocks_before_ack() {
         init_tracing_once();
         let db = Arc::new(Database::init_with_schema().expect("in-memory schema database"));
@@ -1044,11 +1043,67 @@ mod tests {
         let rag = RagService::assemble(db, runtime, tx, crate::RagConfig::default(), None)
             .expect("RAG service with backpressured BM25 mailbox");
 
-        let result = tokio::time::timeout(Duration::from_millis(50), rag.bm25_rebuild()).await;
-        assert!(
-            result.is_ok(),
-            "bm25_rebuild should not be able to spend the whole post-apply wait before the rebuild is even queued/acknowledged"
-        );
+        let err = tokio::time::timeout(Duration::from_millis(50), rag.bm25_rebuild())
+            .await
+            .expect("rebuild admission must not wait for mailbox capacity")
+            .expect_err("a full rebuild mailbox must reject admission");
+        match err {
+            RagError::Channel(detail) => assert!(
+                detail.contains("full"),
+                "full mailbox error should identify the admission failure: {detail}"
+            ),
+            other => panic!("full rebuild mailbox returned the wrong error: {other}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn bm25_rebuild_rejects_closed_mailbox() {
+        init_tracing_once();
+        let db = Arc::new(Database::init_with_schema().expect("in-memory schema database"));
+        let runtime = runtime_for(&db, EmbeddingProcessor::new_mock());
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        drop(rx);
+        let rag = RagService::assemble(db, runtime, tx, crate::RagConfig::default(), None)
+            .expect("RAG service with closed BM25 mailbox");
+
+        let err = rag
+            .bm25_rebuild()
+            .await
+            .expect_err("a closed rebuild mailbox must reject admission");
+        match err {
+            RagError::Channel(detail) => assert!(
+                detail.contains("closed"),
+                "closed mailbox error should identify the admission failure: {detail}"
+            ),
+            other => panic!("closed rebuild mailbox returned the wrong error: {other}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn bm25_status_bounds_enqueue() {
+        init_tracing_once();
+        let db = Arc::new(Database::init_with_schema().expect("in-memory schema database"));
+        let runtime = runtime_for(&db, EmbeddingProcessor::new_mock());
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        tx.try_send(ploke_db::bm25_index::bm25_service::Bm25Cmd::Rebuild)
+            .expect("pre-fill BM25 mailbox");
+        let rag = RagService::assemble(db, runtime, tx, crate::RagConfig::default(), None)
+            .expect("RAG service with backpressured BM25 mailbox");
+
+        let err = tokio::time::timeout(
+            Duration::from_millis(50),
+            rag.bm25_status_with_timeout(Duration::from_millis(20)),
+        )
+        .await
+        .expect("status enqueue must honor the caller-supplied deadline")
+        .expect_err("a full status mailbox must time out");
+        match err {
+            RagError::Channel(detail) => assert!(
+                detail.contains("timeout sending BM25 status command"),
+                "status enqueue timeout should identify the failed phase: {detail}"
+            ),
+            other => panic!("status enqueue timeout returned the wrong error: {other}"),
+        }
     }
 
     #[tokio::test]
