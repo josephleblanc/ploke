@@ -2182,6 +2182,44 @@ async fn code_item_edges_reports_private_target_without_incoming_callers() {
             .collect::<Vec<_>>(),
         vec!["ffi_boundary"]
     );
+    let test_selection = node_info
+        .get("call_test_selection")
+        .and_then(serde_json::Value::as_object)
+        .expect("node_info.call_test_selection object");
+    assert_eq!(
+        test_selection
+            .get("target")
+            .and_then(|target| target.get("id"))
+            .and_then(serde_json::Value::as_str),
+        Some(target_id.as_str()),
+        "code_item_edges call_test_selection should target error_handling::traits: {test_selection:#?}"
+    );
+    for field in ["source_test_callers", "source_test_paths"] {
+        let rows = test_selection
+            .get(field)
+            .and_then(serde_json::Value::as_array)
+            .unwrap_or_else(|| panic!("call_test_selection {field} array: {test_selection:#?}"));
+        assert!(
+            rows.is_empty(),
+            "code_item_edges generated harness selection should not fabricate source {field}: {rows:#?}"
+        );
+    }
+    assert_eq!(
+        test_selection
+            .get("generated_entrypoints")
+            .and_then(serde_json::Value::as_array)
+            .map(Vec::len),
+        Some(1),
+        "code_item_edges call_test_selection should include the generated harness entrypoint: {test_selection:#?}"
+    );
+    assert_eq!(
+        test_selection
+            .get("build_domains")
+            .and_then(serde_json::Value::as_array)
+            .map(Vec::len),
+        Some(1),
+        "code_item_edges call_test_selection should include the linked build domain: {test_selection:#?}"
+    );
 
     let ui = result.ui_payload.as_ref().expect("ui payload");
     assert_eq!(
@@ -2196,6 +2234,13 @@ async fn code_item_edges_reports_private_target_without_incoming_callers() {
         ui_field(ui, "call_test_entrypoints"),
         entrypoints.len().to_string()
     );
+    assert_eq!(ui_field(ui, "call_test_selection_source_tests"), "0");
+    assert_eq!(ui_field(ui, "call_test_selection_source_paths"), "0");
+    assert_eq!(
+        ui_field(ui, "call_test_selection_generated_entrypoints"),
+        "1"
+    );
+    assert_eq!(ui_field(ui, "call_test_selection_build_domains"), "1");
     assert_eq!(ui_field(ui, "call_paths_to_target"), "0");
     assert_eq!(ui_field(ui, "impact_callers"), "0");
     assert_eq!(ui_field(ui, "impact_direct_callers"), "0");

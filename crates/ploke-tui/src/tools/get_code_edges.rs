@@ -341,6 +341,8 @@ for a more fuzzy search."#
             lookup_support::call_build_domains_for_node(&ctx, resolved_item_id)?;
         let call_test_entrypoints =
             lookup_support::call_test_entrypoints_for_node(&ctx, resolved_item_id)?;
+        let call_test_selection =
+            lookup_support::call_test_selection_for_node(&ctx, resolved_item_id)?;
         let call_path_nodes =
             call_path_nodes_for_paths(&call_paths.from_owner, &call_paths.to_target);
 
@@ -401,6 +403,7 @@ for a more fuzzy search."#
             crate_boundary_edges,
             call_build_domains,
             call_test_entrypoints,
+            call_test_selection,
             proof_context: carriers.proof_context,
         };
 
@@ -463,6 +466,7 @@ for a more fuzzy search."#
             &node_edge_info.node_info.crate_boundary_edges,
             &node_edge_info.node_info.call_build_domains,
             &node_edge_info.node_info.call_test_entrypoints,
+            node_edge_info.node_info.call_test_selection.as_ref(),
         )
         .with_field(
             "proof_context",

@@ -74,6 +74,15 @@ again preserving empty source-test callers and paths for the generated harness.
 The focused check passed, but it is expensive because it materializes the axum
 backup fixture and RAG path metadata.
 
+Follow-up completed slice: exact TUI lookup/edges call-test selection payload.
+`ConciseContext` now carries an optional `call_test_selection` summary, and
+`code_item_lookup` / `code_item_edges` populate it through the RAG exact helper
+without adding tool-local semantics. The existing generated-harness axum tool
+tests now assert that `error_handling::traits` exposes one generated
+entrypoint and one build domain in the composed selection payload while keeping
+source-test callers and source-test paths empty. UI payload counts expose the
+same four selection buckets.
+
 Latest completed slice: bounded axum tuple extractor generated impl rows. The
 real-corpus source oracle is `axum-core/src/extract/tuple.rs:18-77`, where
 `all_the_tuples!(impl_from_request)` generates tuple `FromRequestParts` and

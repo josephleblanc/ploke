@@ -848,6 +848,7 @@ impl From<ContextPart> for ConciseContext {
             crate_boundary_edges: Vec::new(),
             call_build_domains: Vec::new(),
             call_test_entrypoints: Vec::new(),
+            call_test_selection: None,
             proof_context: value.proof_context,
         }
     }
@@ -927,6 +928,9 @@ pub struct ConciseContext {
     pub call_build_domains: Vec<CallBuildDomainInfo>,
     #[serde(default)]
     pub call_test_entrypoints: Vec<CallTestEntrypointInfo>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub call_test_selection: Option<CallTestSelectionInfo>,
     #[serde(default)]
     pub proof_context: Vec<ProofContextInfo>,
 }

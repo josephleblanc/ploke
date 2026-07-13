@@ -393,6 +393,7 @@ fn serde_roundtrip_request_code_context() {
         crate_boundary_edges: Vec::new(),
         call_build_domains: Vec::new(),
         call_test_entrypoints: Vec::new(),
+        call_test_selection: None,
         proof_context,
     };
     let path_expected = ConciseContext {
@@ -417,6 +418,7 @@ fn serde_roundtrip_request_code_context() {
         crate_boundary_edges: Vec::new(),
         call_build_domains: Vec::new(),
         call_test_entrypoints: Vec::new(),
+        call_test_selection: None,
         proof_context: Vec::new(),
     };
     assert_eq!(

@@ -3,8 +3,8 @@ use ploke_core::{
     rag_types::{
         CallBuildDomainInfo, CallContextInfo, CallEffectPolicyViolationInfo, CallImpactInfo,
         CallPathInfo, CallProofInvariantFindingInfo, CallReachEffectInfo, CallReachInfo,
-        CallTestEntrypointInfo, CrateBoundaryEdgeInfo, ExternalSummaryNeedInfo,
-        ModuleBoundaryEdgeInfo, ProofContextInfo, RuntimeDispatchNeedInfo,
+        CallTestEntrypointInfo, CallTestSelectionInfo, CrateBoundaryEdgeInfo,
+        ExternalSummaryNeedInfo, ModuleBoundaryEdgeInfo, ProofContextInfo, RuntimeDispatchNeedInfo,
     },
     tool_types::ToolName,
 };
@@ -687,6 +687,24 @@ pub(super) fn call_test_entrypoints_for_node(
     }
 }
 
+pub(super) fn call_test_selection_for_node(
+    ctx: &super::Ctx,
+    node_id: Uuid,
+) -> Result<Option<CallTestSelectionInfo>, ploke_error::Error> {
+    use ploke_error::InternalError;
+
+    match ctx.state.rag.as_ref() {
+        Some(rag) if !rag.call_context_degraded() => rag
+            .exact_call_test_selection_for_target(node_id, TOOL_CALL_PATH_OPTIONS)
+            .map_err(|err| {
+                ploke_error::Error::Internal(InternalError::CompilerError(format!(
+                    "failed to collect test selection for code item {node_id}: {err}"
+                )))
+            }),
+        _ => Ok(None),
+    }
+}
+
 pub(super) fn call_effect_policy_violations_for_node(
     ctx: &super::Ctx,
     node_id: Uuid,
@@ -759,6 +777,7 @@ pub(super) fn with_call_usage_fields(
     crate_boundary_edges: &[CrateBoundaryEdgeInfo],
     build_domains: &[CallBuildDomainInfo],
     test_entrypoints: &[CallTestEntrypointInfo],
+    test_selection: Option<&CallTestSelectionInfo>,
 ) -> super::ToolUiPayload {
     payload
         .with_field(
@@ -883,6 +902,22 @@ pub(super) fn with_call_usage_fields(
         )
         .with_field("call_build_domains", build_domains.len().to_string())
         .with_field("call_test_entrypoints", test_entrypoints.len().to_string())
+        .with_field(
+            "call_test_selection_source_tests",
+            count(test_selection.map(|info| info.source_test_callers.len())),
+        )
+        .with_field(
+            "call_test_selection_source_paths",
+            count(test_selection.map(|info| info.source_test_paths.len())),
+        )
+        .with_field(
+            "call_test_selection_generated_entrypoints",
+            count(test_selection.map(|info| info.generated_entrypoints.len())),
+        )
+        .with_field(
+            "call_test_selection_build_domains",
+            count(test_selection.map(|info| info.build_domains.len())),
+        )
 }
 
 fn count(value: Option<usize>) -> String {

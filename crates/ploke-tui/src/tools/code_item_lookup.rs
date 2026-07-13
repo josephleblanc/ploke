@@ -338,6 +338,8 @@ for a more fuzzy search."#
             lookup_support::call_build_domains_for_node(&ctx, resolved_item_id)?;
         let call_test_entrypoints =
             lookup_support::call_test_entrypoints_for_node(&ctx, resolved_item_id)?;
+        let call_test_selection =
+            lookup_support::call_test_selection_for_node(&ctx, resolved_item_id)?;
         let tool_results = ctx
             .state
             .io_handle
@@ -384,6 +386,7 @@ for a more fuzzy search."#
             crate_boundary_edges,
             call_build_domains,
             call_test_entrypoints,
+            call_test_selection,
             proof_context: carriers.proof_context,
         };
         let call_counts =
@@ -421,6 +424,7 @@ for a more fuzzy search."#
             &concise_context.crate_boundary_edges,
             &concise_context.call_build_domains,
             &concise_context.call_test_entrypoints,
+            concise_context.call_test_selection.as_ref(),
         )
         .with_field(
             "proof_context",
