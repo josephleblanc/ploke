@@ -1,0 +1,74 @@
+# 2026-07-13 Call Graph Next Bucket Inventory
+
+Short description: restart-safe inventory of the remaining call-graph work after
+the current generated-item, binding/type-aware, DB/RAG/TUI, and proof-context
+slices. Use this before selecting another implementation bucket so the next
+slice does not repeat already-covered parser breadth.
+
+Related planning files:
+- [`2026-07-01_call-graph-larger-plan-map.md`](2026-07-01_call-graph-larger-plan-map.md)
+- [`2026-07-01_call-graph-goal-coverage-matrix.md`](2026-07-01_call-graph-goal-coverage-matrix.md)
+- [`2026-07-05_binding-type-aware-resolver-plan.md`](2026-07-05_binding-type-aware-resolver-plan.md)
+- [`2026-07-07_call-graph-usage-question-gap-audit.md`](2026-07-07_call-graph-usage-question-gap-audit.md)
+- [`../../../../.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md`](../../../../.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md)
+
+## Current Selection Frame
+
+Root plan: `.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md`
+
+Current phase: binding/type-aware semantic resolution plus proof-authoritative
+downstream surfacing.
+
+Current completed checkpoint:
+
+- Parser-side call-site identity, typed call-site endpoint families, and body
+  ownership are established.
+- Transform/DB projection, call context, traversal, impact, reach, proof
+  projection, RAG, and exact TUI tool surfaces are implemented for the current
+  representative matrix.
+- Active corpus fixtures have been regenerated with baseline call-graph
+  relations and verified.
+- The latest committed runtime slice classifies the axum awaited external
+  receiver frontier without converting targetless frontier rows into traversal
+  edges.
+
+Next bucket rule: pick one row below only when there is a fresh proof input and
+a DB-first assertion. Do not add another fixture-only breadth slice for shapes
+already listed as covered in the goal coverage matrix.
+
+## Remaining Candidate Buckets
+
+| Bucket | Current state | Entry criterion for implementation | First proof target |
+| --- | --- | --- | --- |
+| Broader object/field callable value flow | Axum `self.layer`, `self.tap_fn`, and router-side `self.into_route` remain targetless or candidate-only because construction/value flow is not complete. Runtime-dispatch summaries can discharge authoring needs without fabricating edges. | A source-visible construction path proves every callable value reaching a field, or the implementation introduces a typed value-flow carrier with strict incomplete-proof blockers. | DB real-corpus assertion over one field callsite, preserving no edge when proof is incomplete. |
+| Callable trait-object dispatch | Fixture-backed exact `&dyn Fn`, `Box<dyn Fn>`, and `FnMut` local-binding cases are covered only when initializer or complete private-caller proof is exact. Memchr boxed `dyn FnMut` field rows remain targetless blockers. | A bounded local source oracle proves a callable trait-object target without public API ambiguity or runtime vtable guessing. | Parser/DB proof for one exact trait-object row; otherwise keep `dynamic_dispatch_unbounded`. |
+| Async poll/resume and future value flow | Immediate/same-block async closure calls, aliases, tuple/named/indexed storage, and proof-only blockers are covered. Returned futures, non-local flow, async callable trait objects, and general poll/resume remain future work. | A typed future-flow carrier identifies the future producer and poll point without flattening async state-machine execution into ordinary source calls. | One DB traversal or one explicit blocker over a reviewed source oracle. |
+| Generated or macro-expanded source bodies | Bounded axum and fixture macro models cover reviewed item/local-item/generated-method cases. Arbitrary macro expansion remains out of scope. | A specific macro template and invocation pair can be modeled narrowly through normal item/call visitors, with proof metadata explaining the boundary. | DB real-corpus traversal for one generated owner or a targetless proof row for unsupported expansion. |
+| Workspace dependency-root/import families | Existing dependency-root proof rows cover the named axum `FromRef`, `Router::new`, `TestClient::new`, and direct `Body::empty` import families. | A new workspace-import source oracle has a resolved edge that needs an explicit proof-authority row; do not add carrier rows just to increase counts. | Target-centered DB/RAG/TUI proof row tied to exact callsite and import path. |
+| External summary/source-sink policy | External frontiers, effect seeds, effect policies, runtime summaries, and proof blockers exist for current usage questions. | A concrete usage question requires a new summary or source/sink fact that cannot be answered from current frontier/effect data. | Proof-store validation plus one DB/RAG/TUI query that consumes the new fact. |
+| Presentation/prompt policy | RAG prompts and context-plan overlays expose path, proof, and blocker policy for current tools. | A user-facing tool payload lacks a field already available in DB/RAG, or current copy risks treating blockers as edges. | Exact TUI test over existing DB/RAG data; no parser change. |
+
+## Do Not Reselect Without New Evidence
+
+- Public callable parameters and public callable fields that lack complete
+  source-visible callers.
+- More same-family private callable fixture rows unless they introduce a new
+  typed proof carrier.
+- More awaited async closure storage variants that only exercise the existing
+  same-block tracker.
+- Axum `self.tap_fn` or router-side `self.into_route` as resolved edges unless
+  the new implementation proves complete callable field value flow.
+- External frontier rows as traversal edges unless a trusted external summary
+  explicitly authorizes that boundary.
+
+## Next Implementation Checklist
+
+1. Name the selected bucket and source oracle.
+2. State whether the expected result is a resolved edge, candidate-only row,
+   external frontier, or explicit blocker.
+3. Add or adjust the DB assertion first.
+4. Extend parser/resolver/proof code only when the assertion names a missing
+   typed proof input.
+5. Propagate to RAG/TUI only if that row is exposed in those surfaces.
+6. Update this inventory and the main coverage matrix once for the completed
+   chunk.
