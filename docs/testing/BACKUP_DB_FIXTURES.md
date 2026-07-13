@@ -230,13 +230,13 @@ Post-regeneration verification:
   all registered active fixtures.
 - Current committed seed checksums:
   - `corpus_memchr_call_graph_2026-07-13.sqlite`:
-    `88ffcaa58a47f4cfd561430a08d1a7dcaf63222af70279b8e53efe60ad51954d`
+    `c6884934a7da70851a7092282a399c9341481665616a0bac4f8a62b16c814913`
   - `corpus_generic_array_call_graph_2026-07-11.sqlite`:
-    `87113a8eeabefc83adfdca1650cfb97479cafd7cffca4edb0b52a6e22e6a061f`
+    `e70abb46f9d4e9c41e2551b43914c01b5069998c2cae851a6da34f51fa8075da`
   - `corpus_chrono_call_graph_2026-07-11.sqlite`:
-    `fa1b5b2337980cb7e953452b289c9241ee455d337b9a27a62f62dfd0bb852ba6`
+    `89b8a706851dff5b45e8b8e51068f8ec07fe2f2248c92058a63ec4920cddeb00`
   - `corpus_axum_call_graph_2026-07-13.sqlite`:
-    `cc7f6f95c7a699c7275f067a974254ed9b9f261875776a9763fa4814381f7136`
+    `b24545e9bbae71ae608f8d532fa361817461cdfd5ef6bc4ed2ef958ed298d111`
 
 ## 2026-07-13 Axum Composite Rejection Generated Delegation Refresh
 
@@ -253,7 +253,7 @@ Post-regeneration verification:
 - The recreated `corpus_axum_call_graph_2026-07-13.sqlite` shared snapshot was
   copied into `tests/backup_dbs/` as the committed seed artifact.
 - Current seed checksum:
-  `cc7f6f95c7a699c7275f067a974254ed9b9f261875776a9763fa4814381f7136`.
+  `b24545e9bbae71ae608f8d532fa361817461cdfd5ef6bc4ed2ef958ed298d111`.
 
 ## 2026-07-12 Axum Middleware Service Generated Frontier Refresh
 
@@ -313,7 +313,7 @@ Post-regeneration verification:
 - The recreated `corpus_memchr_call_graph_2026-07-13.sqlite` shared snapshot was
   copied into `tests/backup_dbs/` as the committed seed artifact.
 - Current seed checksum:
-  `58d0bb1b99e3689c3c7d8c6f575a5cf79f3e3d63141b8f6f71ff449252c46e8d`.
+  `c6884934a7da70851a7092282a399c9341481665616a0bac4f8a62b16c814913`.
 - The memchr `Runner::new().fwd(...)` and `Runner::new().rev(...)` setter
   method-call rows now resolve to local methods when the receiver path is
   crate-qualified or module-qualified from the caller scope.
@@ -336,7 +336,7 @@ Post-regeneration verification:
 - The recreated `corpus_axum_call_graph_2026-07-13.sqlite` shared snapshot was
   copied into `tests/backup_dbs/` as the committed seed artifact.
 - Current seed checksum:
-  `8af6f521c418a789c1495bc72207a1df0d7e8b7cf06f436d8cabc6367a5dc7bd`.
+  `b24545e9bbae71ae608f8d532fa361817461cdfd5ef6bc4ed2ef958ed298d111`.
 
 ## 2026-07-12 Axum Opaque Future Generated Constructor Refresh
 
