@@ -50,6 +50,20 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
+Latest completed slice: conservative DB call-test selection summary.
+`call_test_selection_for_target` now composes existing source-call impact data
+with admitted generated-entrypoint and build-domain proof metadata for a
+changed target. The real-corpus axum usage-question test proves both sides of
+the contract: `Router::new` selects the source test caller
+`serve::tests::if_it_compiles_it_works` through a resolved one-hop call path,
+while private `error_handling::traits` remains zero-incoming until an admitted
+generated test-harness `entrypoint_summary` and linked build domain are
+upserted as proof rows. The helper does not fabricate generated harness source
+edges, does not remove private zero-incoming nodes from source-call queries,
+and does not model CI policy selection. Active fixtures were regenerated with
+`--features call_graph`; all active registered backup DB fixtures verified with
+`roundtrip=ok`.
+
 Latest completed slice: bounded axum tuple extractor generated impl rows. The
 real-corpus source oracle is `axum-core/src/extract/tuple.rs:18-77`, where
 `all_the_tuples!(impl_from_request)` generates tuple `FromRequestParts` and

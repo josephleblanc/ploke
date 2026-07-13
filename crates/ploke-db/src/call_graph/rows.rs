@@ -362,3 +362,13 @@ pub struct CallTestEntrypoint {
     pub allowed_effects: Vec<String>,
     pub blocker_reasons: Vec<String>,
 }
+
+/// Conservative test-selection summary for a changed call-graph target.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CallTestSelectionReport {
+    pub target: CallNodeInfo,
+    pub source_test_callers: Vec<CallNodeInfo>,
+    pub source_test_paths: Vec<CallPath>,
+    pub generated_entrypoints: Vec<CallTestEntrypoint>,
+    pub build_domains: Vec<CallBuildDomain>,
+}

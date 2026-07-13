@@ -1646,6 +1646,127 @@ fn axum_usage_questions_bucket_impact_callers_by_test_source() -> Result<(), DbE
 }
 
 #[test]
+fn axum_usage_questions_select_tests_without_fabricating_generated_edges() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Test planning / build optimization:
+    //   "Which source tests and generated harness entrypoints should be
+    //   considered for a change to this code item?"
+    //
+    // Source-test oracle:
+    //   axum/src/routing/mod.rs:162 defines `Router::new`.
+    //   axum/src/serve/mod.rs:756 calls `Router::new()` from
+    //   `serve::tests::if_it_compiles_it_works`.
+    //
+    // Generated-entrypoint oracle:
+    //   axum/src/error_handling/mod.rs:257 defines private `#[test] fn traits()`.
+    //   The Rust test harness is generated outside stored source, so it remains
+    //   an admitted `entrypoint_summary` proof row, not a source call edge.
+    let router_new = method_id_by_name_and_body_substring(&db, "new", "default_fallback: true")?;
+    let source_test = function_id_by_name_in_module(
+        &db,
+        &["crate", "serve", "tests"],
+        "if_it_compiles_it_works",
+    )?;
+
+    let router_selection = db.call_test_selection_for_target(
+        router_new,
+        CallPathOptions {
+            max_depth: 1,
+            max_paths: 512,
+        },
+    )?;
+    assert_eq!(router_selection.target.id, router_new);
+    assert_node_names(
+        &router_selection.source_test_callers,
+        &[(source_test, "if_it_compiles_it_works")],
+        "Router::new source test selection callers",
+    );
+    assert!(
+        router_selection.source_test_paths.iter().any(|path| {
+            path.start_id == source_test && path.end_id == router_new && path.depth == 1
+        }),
+        "Router::new test selection should preserve the resolved source-test path: {router_selection:#?}"
+    );
+    assert!(
+        router_selection.generated_entrypoints.is_empty(),
+        "source-test selection should not invent generated entrypoint metadata: {router_selection:#?}"
+    );
+    assert!(
+        router_selection.build_domains.is_empty(),
+        "Router::new has no admitted build-domain proof in this test: {router_selection:#?}"
+    );
+
+    let traits = function_id_by_name_in_module(&db, &["crate", "error_handling"], "traits")?;
+    let before = db.call_test_selection_for_target(
+        traits,
+        CallPathOptions {
+            max_depth: 3,
+            max_paths: 16,
+        },
+    )?;
+    assert!(before.source_test_callers.is_empty(), "{before:#?}");
+    assert!(before.source_test_paths.is_empty(), "{before:#?}");
+    assert!(before.generated_entrypoints.is_empty(), "{before:#?}");
+    assert!(before.build_domains.is_empty(), "{before:#?}");
+
+    let domain_id = "bd:corpus-axum-call-graph";
+    let mut records = axum_domain_records(domain_id);
+    records.push(ploke_test_utils::axum_entrypoint_record(domain_id, traits));
+    records.push(ploke_test_utils::axum_entrypoint_effect_policy_record(
+        domain_id,
+        traits,
+        &["ffi_boundary"],
+    ));
+    db.upsert_proof_fact_values(&records)?;
+
+    let after = db.call_test_selection_for_target(
+        traits,
+        CallPathOptions {
+            max_depth: 3,
+            max_paths: 16,
+        },
+    )?;
+    assert_eq!(after.target.id, traits);
+    assert!(after.source_test_callers.is_empty(), "{after:#?}");
+    assert!(after.source_test_paths.is_empty(), "{after:#?}");
+    assert_eq!(
+        after.generated_entrypoints.len(),
+        1,
+        "generated test-harness proof should be selected without source call edges: {after:#?}"
+    );
+    let entrypoint = &after.generated_entrypoints[0];
+    assert_eq!(
+        entrypoint.entrypoint_summary_id,
+        "entrypoint-summary:axum-error-handling-traits-test"
+    );
+    assert_eq!(entrypoint.build_domain_id.as_deref(), Some(domain_id));
+    assert_eq!(entrypoint.target_kind.as_deref(), Some("test"));
+    assert_eq!(
+        entrypoint.target_name.as_deref(),
+        Some("generated-test-harness")
+    );
+    assert_eq!(entrypoint.status.as_deref(), Some("admitted"));
+    assert_eq!(entrypoint.allowed_effects, vec!["ffi_boundary".to_string()]);
+    assert_eq!(after.build_domains.len(), 1, "{after:#?}");
+    assert_eq!(after.build_domains[0].build_domain_id, domain_id);
+    assert!(
+        after.build_domains[0].blocker_reasons.is_empty(),
+        "admitted generated harness build domain should be unblocked: {after:#?}"
+    );
+    assert_no_incoming_traversal_to_target(
+        &db,
+        traits,
+        "axum/src/error_handling/mod.rs:257 generated test selection",
+    )?;
+
+    Ok(())
+}
+
+#[test]
 fn axum_usage_questions_list_private_nodes_without_incoming_callers() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 

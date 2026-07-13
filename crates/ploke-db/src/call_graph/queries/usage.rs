@@ -14,9 +14,10 @@ use super::super::{
     CallBuildDomain, CallContextRow, CallEffectGuardReport, CallEffectPolicyViolation,
     CallGuardReport, CallImpactReport, CallNodeInfo, CallPath, CallPathEdge, CallPathOptions,
     CallProofInvariantFinding, CallReachEffect, CallReachReport, CallRelationKind, CallSiteBucket,
-    CallSiteKind, CallSiteRow, CallStatusKind, CallTestEntrypoint, CrateBoundaryEdge,
-    CrateBoundaryPolicyRule, CrateBoundaryPolicyViolation, ExternalSummaryNeed, ModuleBoundaryEdge,
-    ModuleBoundaryPolicyRule, ModuleBoundaryPolicyViolation, RuntimeDispatchNeed,
+    CallSiteKind, CallSiteRow, CallStatusKind, CallTestEntrypoint, CallTestSelectionReport,
+    CrateBoundaryEdge, CrateBoundaryPolicyRule, CrateBoundaryPolicyViolation, ExternalSummaryNeed,
+    ModuleBoundaryEdge, ModuleBoundaryPolicyRule, ModuleBoundaryPolicyViolation,
+    RuntimeDispatchNeed,
 };
 use super::metadata::{call_node_info_rank, call_node_infos, decode_call_node_info};
 
@@ -625,6 +626,39 @@ impl Database {
         }
         values.sort_by(|left, right| left.entrypoint_summary_id.cmp(&right.entrypoint_summary_id));
         Ok(values)
+    }
+
+    /// Summarizes tests that should be considered for a changed call-graph target.
+    ///
+    /// Source test callers come from the resolved incoming call graph. Generated
+    /// test entrypoints come from admitted proof metadata linked to the target.
+    /// This helper does not add generated harness edges or remove private
+    /// zero-incoming nodes from source-call queries.
+    pub fn call_test_selection_for_target(
+        &self,
+        target_id: Uuid,
+        options: CallPathOptions,
+    ) -> Result<CallTestSelectionReport, DbError> {
+        let impact = self.call_impact_for_target(target_id, options)?;
+        let source_test_ids = impact
+            .test_callers
+            .iter()
+            .map(|caller| caller.id)
+            .collect::<BTreeSet<_>>();
+        let source_test_paths = impact
+            .paths
+            .iter()
+            .filter(|path| source_test_ids.contains(&path.start_id))
+            .cloned()
+            .collect::<Vec<_>>();
+
+        Ok(CallTestSelectionReport {
+            target: impact.target,
+            source_test_callers: impact.test_callers,
+            source_test_paths,
+            generated_entrypoints: self.call_test_entrypoints_for_node(target_id)?,
+            build_domains: self.call_build_domains_for_node(target_id)?,
+        })
     }
 
     /// Lists private executable call-graph nodes with no direct resolved incoming call edge.
