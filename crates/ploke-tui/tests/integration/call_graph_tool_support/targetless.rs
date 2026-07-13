@@ -370,6 +370,13 @@ impl ReceiverToolCase {
                 summary_id: AXUM_BODY_SIZE_HINT_SUMMARY_ID,
             });
         }
+        if self.file_suffix == "axum/src/routing/route.rs" && self.callee == "oneshot" {
+            return Some(ExternalSummaryCase {
+                path: &[],
+                records: axum_route_oneshot_summary_records,
+                summary_id: AXUM_ROUTE_ONESHOT_SUMMARY_ID,
+            });
+        }
 
         None
     }

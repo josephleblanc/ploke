@@ -205,6 +205,10 @@ async fn code_item_lookup_returns_route_oneshot_targetless_real_corpus_rows() {
             .get("external_summary_needs")
             .and_then(serde_json::Value::as_array)
             .expect("external_summary_needs array");
+        let reach_effects = payload
+            .get("call_reach_effects")
+            .and_then(serde_json::Value::as_array)
+            .expect("call_reach_effects array");
 
         // Matrix:
         //   docs/active/agents/call-graph/
@@ -215,8 +219,9 @@ async fn code_item_lookup_returns_route_oneshot_targetless_real_corpus_rows() {
         //   `self.0.clone().oneshot(req)`.
         //   axum/src/routing/route.rs:57 calls `self.0.oneshot(req)`.
         // Expected traversal: exact owner lookup exposes both structural
-        // Route::oneshot receiver rows as external frontiers, with zero callee
-        // targets until external tower receiver dispatch is modeled.
+        // Route::oneshot receiver rows as external frontiers. The admitted
+        // summary discharges the missing-summary need and exposes a
+        // proof-derived effect without adding local callee targets.
         let callee = fixture.case.callee();
         let site_id = assert_method_context(
             call_context,
@@ -227,15 +232,35 @@ async fn code_item_lookup_returns_route_oneshot_targetless_real_corpus_rows() {
             fixture.case.label,
             "lookup",
         );
-        assert_method_proof(
-            proof_context,
-            fixture.owner,
-            site_id,
-            &fixture.case.status,
-            fixture.case.label,
-            "lookup",
-        );
-        assert_external_summary_need(summary_needs, site_id, fixture.case.label, "lookup");
+        if let Some(summary) = fixture.case.admitted_external_summary() {
+            assert_admitted_external_summary_proof(
+                proof_context,
+                fixture.owner,
+                site_id,
+                summary,
+                fixture.case.label,
+                "lookup",
+            );
+            assert_no_external_summary_need(summary_needs, site_id, fixture.case.label, "lookup");
+            assert_admitted_external_summary_effect(
+                reach_effects,
+                fixture.owner,
+                site_id,
+                summary,
+                fixture.case.label,
+                "lookup",
+            );
+        } else {
+            assert_method_proof(
+                proof_context,
+                fixture.owner,
+                site_id,
+                &fixture.case.status,
+                fixture.case.label,
+                "lookup",
+            );
+            assert_external_summary_need(summary_needs, site_id, fixture.case.label, "lookup");
+        }
 
         let ui = result.ui_payload.as_ref().expect("ui payload");
         assert!(
@@ -1953,9 +1978,19 @@ async fn code_item_edges_returns_route_oneshot_targetless_real_corpus_rows() {
             .and_then(|node| node.get("proof_context"))
             .and_then(serde_json::Value::as_array)
             .expect("node_info.proof_context array");
+        let summary_needs = payload
+            .get("node_info")
+            .and_then(|node| node.get("external_summary_needs"))
+            .and_then(serde_json::Value::as_array)
+            .expect("node_info.external_summary_needs array");
+        let reach_effects = payload
+            .get("node_info")
+            .and_then(|node| node.get("call_reach_effects"))
+            .and_then(serde_json::Value::as_array)
+            .expect("node_info.call_reach_effects array");
 
-        // Same real-corpus Route::oneshot targetless oracle as the lookup test
-        // above, exercised through the edge-oriented exact tool payload.
+        // Same real-corpus Route::oneshot external-summary oracle as the
+        // lookup test above, exercised through the edge-oriented payload.
         let callee = fixture.case.callee();
         let site_id = assert_method_context(
             call_context,
@@ -1966,14 +2001,34 @@ async fn code_item_edges_returns_route_oneshot_targetless_real_corpus_rows() {
             fixture.case.label,
             "edges",
         );
-        assert_method_proof(
-            proof_context,
-            fixture.owner,
-            site_id,
-            &fixture.case.status,
-            fixture.case.label,
-            "edges",
-        );
+        if let Some(summary) = fixture.case.admitted_external_summary() {
+            assert_admitted_external_summary_proof(
+                proof_context,
+                fixture.owner,
+                site_id,
+                summary,
+                fixture.case.label,
+                "edges",
+            );
+            assert_no_external_summary_need(summary_needs, site_id, fixture.case.label, "edges");
+            assert_admitted_external_summary_effect(
+                reach_effects,
+                fixture.owner,
+                site_id,
+                summary,
+                fixture.case.label,
+                "edges",
+            );
+        } else {
+            assert_method_proof(
+                proof_context,
+                fixture.owner,
+                site_id,
+                &fixture.case.status,
+                fixture.case.label,
+                "edges",
+            );
+        }
 
         let ui = result.ui_payload.as_ref().expect("ui payload");
         assert!(
@@ -1985,5 +2040,9 @@ async fn code_item_edges_returns_route_oneshot_targetless_real_corpus_rows() {
         );
         let proof_count = proof_context.len().to_string();
         assert_eq!(ui_field(ui, "proof_context"), proof_count.as_str());
+        assert_eq!(
+            ui_field(ui, "external_summary_needs"),
+            summary_needs.len().to_string()
+        );
     }
 }

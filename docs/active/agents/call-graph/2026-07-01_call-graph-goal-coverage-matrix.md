@@ -1969,6 +1969,34 @@ Completed evidence:
   `cargo test -p ploke-tui --test integration size_hint_external_real_corpus_row -- --nocapture`,
   `cargo fmt --all`, and `git diff --check`.
 
+Follow-up completed slice: admitted external-summary effect for real
+`Route::oneshot` receiver frontiers.
+
+Completed evidence:
+
+- Added shared proof-fixture records for the two real axum
+  `Route::oneshot` external receiver frontiers:
+  `axum/src/routing/route.rs:51` `self.0.clone().oneshot(req)` and
+  `axum/src/routing/route.rs:57` `self.0.oneshot(req)`.
+- Added a DB real-target matrix test that proves each row starts as a
+  targetless `External` method frontier with
+  `external_dependency_summary_missing`, accepts a linked admitted
+  `external_summary`, discharges the owner-scoped summary need, exposes the
+  proof-derived `external_summary_boundary` effect, and still has zero local
+  call edges after proof admission.
+- RAG proof-context and exact reachable-effects coverage now preserve the same
+  admitted-summary transition while keeping the original
+  `MethodCallResult(clone)` and `SelfField(["0"])` receiver payloads and zero
+  target rows.
+- Exact TUI `code_item_lookup` and `code_item_edges` route-oneshot tests now
+  admit the same summary in fixture setup and assert cleared
+  `external_summary_needs` rows plus summary-derived reach effects.
+- Verification passed:
+  `cargo test -p ploke-db axum_route_oneshot_external_summary_covers_receiver_frontiers -- --nocapture`,
+  `cargo test -p ploke-rag route_oneshot -- --nocapture`,
+  `cargo test -p ploke-tui --test integration route_oneshot -- --nocapture`,
+  and `cargo fmt --all`.
+
 Previous completed slice in current bucket: proof-authoritative external
 summary admission over the real `Request::builder` alias frontier, propagated
 through DB, RAG, and TUI tool payloads.

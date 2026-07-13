@@ -8,8 +8,9 @@ use super::helpers::{
 };
 use ploke_db::ProofGraphStore;
 use ploke_test_utils::{
-    AXUM_BODY_SIZE_HINT_SUMMARY_ID, AXUM_STD_MEM_REPLACE_SUMMARY_ID,
-    axum_body_size_hint_summary_records, axum_std_mem_replace_summary_records,
+    AXUM_BODY_SIZE_HINT_SUMMARY_ID, AXUM_ROUTE_ONESHOT_SUMMARY_ID, AXUM_STD_MEM_REPLACE_SUMMARY_ID,
+    axum_body_size_hint_summary_records, axum_route_oneshot_summary_records,
+    axum_std_mem_replace_summary_records,
 };
 
 struct DynamicCase {
@@ -160,6 +161,42 @@ async fn proof_context_collection_preserves_axum_route_oneshot_blockers() -> Res
             site_id,
             "external_dependency_summary_missing",
             case.label,
+        );
+
+        db.upsert_proof_fact_values(&axum_route_oneshot_summary_records(site_id))?;
+
+        let admitted = rag.exact_proof_context(owner)?;
+        let site = site_id.to_string();
+        assert!(
+            admitted.iter().any(|proof| {
+                proof.kind == "call_resolution"
+                    && proof.call_site_id.as_deref() == Some(site.as_str())
+                    && proof.resolution_state.as_deref() == Some("externally_summarized")
+                    && proof.external_summary_id.as_deref() == Some(AXUM_ROUTE_ONESHOT_SUMMARY_ID)
+                    && proof.blocker_reason.is_none()
+            }),
+            "{} should expose the discharged Route::oneshot call_resolution: {admitted:#?}",
+            case.label
+        );
+        assert!(
+            admitted.iter().any(|proof| {
+                proof.kind == "external_summary"
+                    && proof.external_summary_id.as_deref() == Some(AXUM_ROUTE_ONESHOT_SUMMARY_ID)
+                    && proof.summary_class.as_deref() == Some("audited_no_process_effects")
+                    && proof.status.as_deref() == Some("admitted")
+                    && proof.allowed_effects == ["external_summary_boundary".to_string()]
+            }),
+            "{} should expose the admitted Route::oneshot summary artifact: {admitted:#?}",
+            case.label
+        );
+        assert!(
+            admitted.iter().all(|proof| {
+                proof.call_site_id.as_deref() != Some(site.as_str())
+                    || proof.blocker_reason.as_deref()
+                        != Some("external_dependency_summary_missing")
+            }),
+            "{} should not retain the missing-summary blocker after Route::oneshot admission: {admitted:#?}",
+            case.label
         );
     }
 

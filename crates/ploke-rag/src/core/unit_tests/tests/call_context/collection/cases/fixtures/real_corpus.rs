@@ -2990,6 +2990,124 @@ async fn call_effects_exact_reads_admitted_method_frontier_summary_effect() -> R
 }
 
 #[tokio::test]
+async fn call_effects_exact_reads_admitted_route_oneshot_summary_effect() -> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Security/performance:
+    //   "Which reviewed external frontiers are reachable from this owner?"
+    //   "Which trusted boundary effects are covered by an admitted summary?"
+    //
+    // Source oracle:
+    //   axum/src/routing/route.rs:51 calls `self.0.clone().oneshot(req)`.
+    //   axum/src/routing/route.rs:57 calls `self.0.oneshot(req)`.
+    // Expected contract: RAG exposes the DB-derived summary effect after the
+    // admitted `Route::oneshot` summary is linked, while each callsite stays
+    // external, targetless, and edge-free.
+    let cases = [
+        (
+            "Route::oneshot_inner method-call-result receiver",
+            "oneshot_inner",
+            "self.0.clone().oneshot(req)",
+            CallReceiver::MethodCallResult {
+                method_name: "clone".to_string(),
+            },
+            CallReceiverInfo::MethodCallResult {
+                method_name: "clone".to_string(),
+            },
+        ),
+        (
+            "Route::oneshot_inner_owned tuple-field receiver",
+            "oneshot_inner_owned",
+            "self.0.oneshot(req)",
+            CallReceiver::SelfField {
+                path: vec!["0".to_string()],
+            },
+            CallReceiverInfo::SelfField {
+                path: vec!["0".to_string()],
+            },
+        ),
+    ];
+
+    for (label, method, body, db_receiver, rag_receiver) in cases {
+        let owner = method_id_by_name_and_body_substring(&db, method, body)?;
+        let context = db.call_context_for_owner(owner)?;
+        let row = context
+            .iter()
+            .find(|row| {
+                row.site.method.as_deref() == Some("oneshot")
+                    && row.site.receiver.as_ref() == Some(&db_receiver)
+            })
+            .unwrap_or_else(|| panic!("{label} should expose oneshot call: {context:#?}"));
+        assert_eq!(row.status.status, DbCallStatusKind::External);
+        assert!(
+            row.targets.is_empty(),
+            "{label} should stay targetless before summary admission: {row:#?}"
+        );
+        let projected =
+            db.project_call_proof_facts_for_owner(owner, "bd:corpus-axum-call-graph")?;
+        assert!(
+            projected >= 2,
+            "{label} should project call_site and call_resolution proof rows: {projected}"
+        );
+
+        db.upsert_proof_fact_values(&ploke_test_utils::axum_route_oneshot_summary_records(
+            row.site.id,
+        ))?;
+
+        let summary_id = ploke_test_utils::AXUM_ROUTE_ONESHOT_SUMMARY_ID;
+        let effect_id = format!("summary-effect:{summary_id}:external_summary_boundary");
+        let effects = rag
+            .exact_call_effects_reachable_from_owner(
+                owner,
+                CallPathOptions {
+                    max_depth: 1,
+                    max_paths: 16,
+                },
+            )?
+            .expect("call context enabled");
+        let effect = effects
+            .iter()
+            .find(|effect| {
+                effect.effect_seed_id == effect_id && effect.call_site.site_id == row.site.id
+            })
+            .unwrap_or_else(|| {
+                panic!("RAG should expose the admitted Route::oneshot summary effect for {label}: {effects:#?}")
+            });
+        assert_eq!(effect.effect_class, "external_summary_boundary");
+        assert_eq!(effect.confidence.as_deref(), Some("source-oracle-review"));
+        assert_eq!(effect.blocker_if_unresolved, Some(false));
+        assert_eq!(effect.call_site.owner_id, owner);
+        assert_eq!(effect.call_site.status, CallStatusKind::External);
+        assert!(
+            effect.paths_to_owner.is_empty(),
+            "direct Route::oneshot summary effect should not need an intermediate path for {label}: {effect:#?}"
+        );
+        assert!(
+            effect.blocker_reasons.is_empty(),
+            "admitted Route::oneshot summary should discharge the missing-summary blocker in RAG: {effect:#?}"
+        );
+        assert!(
+            matches!(
+                &effect.call_site.callee,
+                CallCalleeInfo::Method { name, receiver }
+                    if name == "oneshot" && receiver.as_ref() == Some(&rag_receiver)
+            ),
+            "RAG effect payload should preserve the original Route::oneshot receiver for {label}: {effect:#?}"
+        );
+        assert!(
+            effect.call_site.targets.is_empty(),
+            "summary-derived Route::oneshot effects must not fabricate RAG target rows: {effect:#?}"
+        );
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn call_effect_policy_violations_exact_reads_axum_task_spawn_sink() -> Result<(), Error> {
     init_tracing_once();
     let (db, rag) = setup_axum_call_graph_rag()?;

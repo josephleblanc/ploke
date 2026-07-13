@@ -117,3 +117,120 @@ fn axum_body_size_hint_external_summary_covers_method_frontier() -> Result<(), D
 
     Ok(())
 }
+
+#[test]
+fn axum_route_oneshot_external_summary_covers_receiver_frontiers() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+    let domain_id = "bd:corpus-axum-call-graph";
+    let options = CallPathOptions {
+        max_depth: 1,
+        max_paths: 16,
+    };
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Security/performance:
+    //   "Which reviewed external frontiers are reachable from this owner?"
+    //   "Which trusted boundary effects are covered by an admitted summary?"
+    //
+    // Source oracle:
+    //   axum/src/routing/route.rs:51 calls `self.0.clone().oneshot(req)`.
+    //   axum/src/routing/route.rs:57 calls `self.0.oneshot(req)`.
+    // Current contract: both receiver rows remain targetless external
+    // frontiers, but an admitted summary can discharge the missing-summary
+    // proof need and expose a proof-derived effect without adding call edges.
+    let cases = [
+        (
+            "Route::oneshot_inner method-call-result receiver",
+            "oneshot_inner",
+            "self.0.clone().oneshot(req)",
+            CallReceiver::MethodCallResult {
+                method_name: "clone".to_string(),
+            },
+        ),
+        (
+            "Route::oneshot_inner_owned tuple-field receiver",
+            "oneshot_inner_owned",
+            "self.0.oneshot(req)",
+            CallReceiver::SelfField {
+                path: vec!["0".to_string()],
+            },
+        ),
+    ];
+
+    for (label, method, body, receiver) in cases {
+        let owner = method_id_by_name_and_body_substring(&db, method, body)?;
+        let context = db.call_context_for_owner(owner)?;
+        let row = row_by_method_receiver(&context, "oneshot", &receiver);
+        assert_external_targetless(row);
+        assert_eq!(row.site.kind, CallSiteKind::Method);
+        assert_eq!(row.site.arg_count, Some(1));
+        let site_id = row.site.id;
+
+        let projected = db.project_call_proof_facts_for_owner(owner, domain_id)?;
+        assert!(
+            projected >= 2,
+            "{label} should project call_site and call_resolution proof rows: {projected}"
+        );
+
+        let needs = db.external_summary_needs_for_owner(owner, options)?;
+        let need = needs
+            .iter()
+            .find(|need| need.call_site.site.id == site_id)
+            .unwrap_or_else(|| {
+                panic!("{label} should be listed as an external-summary need before admission: {needs:#?}")
+            });
+        assert_external_targetless(&need.call_site);
+        assert!(
+            need.paths_to_owner.is_empty(),
+            "direct Route::oneshot frontier should not need an intermediate path: {need:#?}"
+        );
+        assert!(
+            need.blocker_reasons
+                .iter()
+                .any(|reason| reason == "external_dependency_summary_missing"),
+            "{label} summary need should retain the active missing-summary blocker: {need:#?}"
+        );
+
+        db.upsert_proof_fact_values(&ploke_test_utils::axum_route_oneshot_summary_records(
+            site_id,
+        ))?;
+
+        let after = db.external_summary_needs_for_owner(owner, options)?;
+        assert!(
+            after.iter().all(|need| need.call_site.site.id != site_id),
+            "admitted Route::oneshot summary should discharge this owner-scoped need: {after:#?}"
+        );
+
+        let summary_id = ploke_test_utils::AXUM_ROUTE_ONESHOT_SUMMARY_ID;
+        let effect_id = format!("summary-effect:{summary_id}:external_summary_boundary");
+        let effects = db.call_effects_reachable_from_owner(owner, options)?;
+        let effect = effects
+            .iter()
+            .find(|effect| effect.effect_seed_id == effect_id && effect.call_site.site.id == site_id)
+            .unwrap_or_else(|| {
+                panic!(
+                    "{label} reachable effects should include admitted Route::oneshot summary: {effects:#?}"
+                )
+            });
+        assert_eq!(effect.effect_class, "external_summary_boundary");
+        assert_eq!(effect.confidence.as_deref(), Some("source-oracle-review"));
+        assert_eq!(effect.blocker_if_unresolved, Some(false));
+        assert_eq!(effect.call_site.status.status, CallStatusKind::External);
+        assert!(
+            effect.paths_to_owner.is_empty(),
+            "direct Route::oneshot frontier should not need an intermediate path: {effect:#?}"
+        );
+        assert!(
+            effect.blocker_reasons.is_empty(),
+            "admitted summary should discharge the missing-summary blocker: {effect:#?}"
+        );
+        assert!(
+            relations_for_site(&db, site_id)?.rows.is_empty(),
+            "summary admission must not fabricate a local Route::oneshot edge"
+        );
+    }
+
+    Ok(())
+}
