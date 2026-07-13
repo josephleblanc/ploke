@@ -149,6 +149,14 @@ impl DynamicToolCase {
     pub(crate) fn build_domain(&self) -> &'static str {
         self.corpus.build_domain()
     }
+
+    pub(crate) fn expects_runtime_dispatch_blocker(&self) -> bool {
+        matches!(self.corpus, DynamicToolCorpus::Axum)
+            && matches!(
+                self.expected_path,
+                Some(["self", "into_route"] | ["self", "tap_fn"])
+            )
+    }
 }
 
 impl AmbiguousDynamicToolCase {
@@ -728,6 +736,7 @@ impl DynamicToolFixture {
             "{} should project targetless dynamic call-site proof rows",
             case.label
         );
+        attach_dynamic_runtime_dispatch_blocker_if_needed(&db, owner.id, &case);
         let state = axum_state_for_target(Arc::clone(&db), &owner, case.label).await;
 
         Self {
@@ -746,6 +755,47 @@ impl DynamicToolFixture {
     pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
         ctx_for_state(&self.state, call_id)
     }
+}
+
+fn attach_dynamic_runtime_dispatch_blocker_if_needed(
+    db: &Database,
+    owner: Uuid,
+    case: &DynamicToolCase,
+) {
+    if !case.expects_runtime_dispatch_blocker() {
+        return;
+    }
+    let expected_path = case.expected_path.expect("dynamic callable field path");
+    let site = db
+        .call_context_for_owner(owner)
+        .unwrap_or_else(|err| panic!("{} call context lookup: {err}", case.label))
+        .into_iter()
+        .find(|row| {
+            row.site.kind == DbCallSiteKind::Dynamic
+                && row.status.status == DbCallStatusKind::Unsupported
+                && row.site.path.as_ref().is_some_and(|path| {
+                    path.iter()
+                        .map(String::as_str)
+                        .eq(expected_path.iter().copied())
+                })
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "{} should expose the unsupported dynamic callable callsite before blocker insertion",
+                case.label
+            )
+        })
+        .site
+        .id;
+    let field = expected_path
+        .last()
+        .copied()
+        .expect("dynamic callable field path");
+
+    db.upsert_proof_fact_values(&[
+        ploke_test_utils::axum_callable_field_runtime_dispatch_blocker(site, field, case.label),
+    ])
+    .unwrap_or_else(|err| panic!("{} runtime dispatch blocker insert: {err}", case.label));
 }
 
 impl AmbiguousDynamicToolFixture {

@@ -605,6 +605,23 @@ pub fn axum_dyn_future_poll_blocker(call_site_id: Uuid) -> serde_json::Value {
     })
 }
 
+pub fn axum_callable_field_runtime_dispatch_blocker(
+    call_site_id: Uuid,
+    field: &str,
+    source: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "fact_kind": "proof_blocker",
+        "schema_version": "ploke-proof-facts.v1",
+        "blocker_id": format!("blocker:axum-callable-field-runtime-dispatch:{field}:{call_site_id}"),
+        "reason": "dynamic_dispatch_unbounded",
+        "status": "blocked",
+        "call_site_id": call_site_id.to_string(),
+        "detail": format!("{source} callable field `{field}` remains targetless until callable-field value-flow proof is modeled"),
+        "evidence_use": "proof_only"
+    })
+}
+
 pub fn axum_handler_async_block_poll_resume_blocker(
     call_site_id: Uuid,
     callee: &str,

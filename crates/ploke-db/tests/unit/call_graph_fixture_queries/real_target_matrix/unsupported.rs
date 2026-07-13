@@ -4,6 +4,7 @@ use super::source_lines::{
     SourceLineFanout, assert_targetless_dynamic_line_fanout_by_method_arg_count,
     assert_targetless_method_owner_kind_line_fanout,
 };
+use ploke_db::CallPathOptions;
 use ploke_test_utils::CORPUS_AXUM_CALL_GRAPH;
 
 #[test]
@@ -76,6 +77,7 @@ struct DynamicGap {
     source_line: u32,
     expected_args: u32,
     expected_path: &'static [&'static str],
+    source: &'static str,
 }
 
 #[test]
@@ -267,6 +269,7 @@ fn axum_dynamic_callable_fields_preserve_supported_and_unsupported_boundaries()
             source_line: 120,
             expected_args: 2,
             expected_path: &["self", "into_route"],
+            source: "axum/src/boxed.rs:120",
         },
         DynamicGap {
             method_name: "accept",
@@ -274,6 +277,7 @@ fn axum_dynamic_callable_fields_preserve_supported_and_unsupported_boundaries()
             source_line: 236,
             expected_args: 1,
             expected_path: &["self", "tap_fn"],
+            source: "axum/src/serve/listener.rs:236",
         },
     ];
 
@@ -316,6 +320,52 @@ fn axum_dynamic_callable_fields_preserve_supported_and_unsupported_boundaries()
         );
         let label = format!("axum dynamic callable matrix line {}", case.source_line);
         assert_no_traversal_candidates_for_site(&db, owner, row.site.id, &label)?;
+
+        let field = case
+            .expected_path
+            .last()
+            .copied()
+            .expect("dynamic callable field path");
+        db.upsert_proof_fact_values(&[
+            ploke_test_utils::axum_callable_field_runtime_dispatch_blocker(
+                row.site.id,
+                field,
+                case.source,
+            ),
+        ])?;
+        let needs = db.runtime_dispatch_needs_for_owner(
+            owner,
+            CallPathOptions {
+                max_depth: 1,
+                max_paths: 16,
+            },
+        )?;
+        let need = needs
+            .iter()
+            .find(|need| need.call_site.site.id == row.site.id)
+            .unwrap_or_else(|| {
+                panic!(
+                    "{} should be listed as an owner-scoped runtime-dispatch need: {needs:#?}",
+                    case.source
+                )
+            });
+        assert!(
+            need.paths_to_owner.is_empty(),
+            "{} is a direct dynamic callable frontier and should not need an intermediate path: {need:#?}",
+            case.source
+        );
+        assert!(
+            need.blocker_reasons
+                .iter()
+                .any(|reason| reason == "dynamic_dispatch_unbounded"),
+            "{} should retain the dynamic dispatch blocker: {need:#?}",
+            case.source
+        );
+        assert!(
+            relations_for_site(&db, row.site.id)?.rows.is_empty(),
+            "{} runtime-dispatch proof queue must not fabricate a callable-field edge",
+            case.source
+        );
     }
 
     assert_targetless_dynamic_line_fanout_by_method_arg_count(

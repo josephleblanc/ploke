@@ -52,6 +52,10 @@ async fn code_item_lookup_returns_dynamic_targetless_real_corpus_rows() {
             .get("proof_context")
             .and_then(serde_json::Value::as_array)
             .expect("proof_context array");
+        let runtime_needs = payload
+            .get("runtime_dispatch_needs")
+            .and_then(serde_json::Value::as_array)
+            .expect("runtime_dispatch_needs array");
 
         // Matrix:
         //   docs/active/agents/call-graph/
@@ -79,6 +83,10 @@ async fn code_item_lookup_returns_dynamic_targetless_real_corpus_rows() {
             fixture.case.label,
             "lookup",
         );
+        if fixture.case.expects_runtime_dispatch_blocker() {
+            assert_runtime_dispatch_blocker(proof_context, site_id, fixture.case.label, "lookup");
+            assert_runtime_dispatch_need(runtime_needs, site_id, fixture.case.label, "lookup");
+        }
 
         let ui = result.ui_payload.as_ref().expect("ui payload");
         assert!(
@@ -1019,6 +1027,11 @@ async fn code_item_edges_returns_dynamic_targetless_real_corpus_rows() {
             .and_then(|node| node.get("proof_context"))
             .and_then(serde_json::Value::as_array)
             .expect("node_info.proof_context array");
+        let runtime_needs = payload
+            .get("node_info")
+            .and_then(|node| node.get("runtime_dispatch_needs"))
+            .and_then(serde_json::Value::as_array)
+            .expect("node_info.runtime_dispatch_needs array");
 
         // Same real-corpus dynamic targetless oracle as the lookup test above,
         // exercised through the edge-oriented exact tool payload.
@@ -1038,6 +1051,10 @@ async fn code_item_edges_returns_dynamic_targetless_real_corpus_rows() {
             fixture.case.label,
             "edges",
         );
+        if fixture.case.expects_runtime_dispatch_blocker() {
+            assert_runtime_dispatch_blocker(proof_context, site_id, fixture.case.label, "edges");
+            assert_runtime_dispatch_need(runtime_needs, site_id, fixture.case.label, "edges");
+        }
 
         let ui = result.ui_payload.as_ref().expect("ui payload");
         assert!(
