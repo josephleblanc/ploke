@@ -3094,6 +3094,21 @@ generated self-call edges through RAG `collect_call_context` and exact
 `code_item_lookup` / `code_item_edges` tool payloads with
 `owner_trait=IntoResponse` and `owner_type=MissingExtension`.
 
+Update 2026-07-13: the same generated-source bucket now covers one bounded
+`composite_rejection!` enum delegation. The reviewed macro template in
+`axum-core/src/macros.rs:154-180` is modeled only for the selected axum
+rejection modules, and only by synthesizing the generated enum plus
+`IntoResponse` impl through normal item visitors. The real-corpus oracle
+`axum/src/extract/rejection.rs:92-100`
+(`QueryRejection { FailedToDeserializeQueryString }`) now proves that generated
+`QueryRejection::into_response` matches `self`, binds
+`Self::FailedToDeserializeQueryString(inner)`, and resolves
+`inner.into_response()` in one edge to generated
+`FailedToDeserializeQueryString::into_response`. Follow-up downstream proof
+verifies the same enum-variant receiver edge through RAG `collect_call_context`
+and exact `code_item_lookup` / `code_item_edges` tool payloads with
+`owner_trait=IntoResponse` and `owner_type=QueryRejection`.
+
 ## Parking Lot
 
 - Add binding tracking plan that ties syntax body ownership, local bindings, and type graph edges before attempting receiver/dynamic traversal.
