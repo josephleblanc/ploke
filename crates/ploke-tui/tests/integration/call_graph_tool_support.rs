@@ -2507,6 +2507,39 @@ pub(crate) fn assert_serde_json_summary_proof(
     );
 }
 
+pub(crate) fn assert_serde_json_surface_measure_effect(
+    effects: &[serde_json::Value],
+    owner: Uuid,
+    site_id: Uuid,
+    label: &str,
+    tool: &str,
+) {
+    let rows = effects
+        .iter()
+        .filter_map(|effect| serde_json::from_value::<CallReachEffectInfo>(effect.clone()).ok())
+        .collect::<Vec<_>>();
+    let effect = rows
+        .iter()
+        .find(|effect| effect.effect_seed_id == "effect:axum-json-parse-surface-measure")
+        .unwrap_or_else(|| {
+            panic!("{tool} should return the serde_json surface-measure effect for {label}: {effects:#?}")
+        });
+    assert_eq!(effect.effect_class, "surface_measure");
+    assert_eq!(effect.confidence.as_deref(), Some("source-oracle"));
+    assert_eq!(effect.blocker_if_unresolved, Some(false));
+    assert_eq!(effect.call_site.site_id, site_id);
+    assert_eq!(effect.call_site.owner_id, owner);
+    assert_eq!(effect.call_site.status, CallStatusKind::External);
+    assert!(
+        effect.paths_to_owner.is_empty(),
+        "{tool} direct serde_json effect should not need an intermediate path for {label}: {effect:#?}"
+    );
+    assert!(
+        effect.call_site.targets.is_empty(),
+        "{tool} surface-measure effects must not fabricate target rows for {label}: {effect:#?}"
+    );
+}
+
 pub(crate) fn assert_expected_path_incoming_context(
     calls: &[serde_json::Value],
     callers: &[ExpectedCallSite],

@@ -39,8 +39,9 @@ use crate::call_graph_tool_support::{
     assert_resolved_method_target_context, assert_resolved_path_context,
     assert_run_ui_tests_incoming_context, assert_runtime_dispatch_blocker,
     assert_self_field_receiver_context, assert_self_field_receiver_proof,
-    assert_serde_json_summary_proof, assert_target_proof, assert_task_spawn_effects,
-    assert_task_spawn_policy_violation, assert_two_hop_call_path, ui_field,
+    assert_serde_json_summary_proof, assert_serde_json_surface_measure_effect, assert_target_proof,
+    assert_task_spawn_effects, assert_task_spawn_policy_violation, assert_two_hop_call_path,
+    ui_field,
 };
 
 #[tokio::test]
@@ -3230,6 +3231,10 @@ async fn code_item_lookup_returns_real_corpus_json_from_bytes_callers() {
         .get("external_summary_needs")
         .and_then(serde_json::Value::as_array)
         .expect("external_summary_needs array");
+    let reach_effects = payload
+        .get("call_reach_effects")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_reach_effects array");
     let reach = payload
         .get("call_reach")
         .and_then(serde_json::Value::as_object)
@@ -3316,6 +3321,13 @@ async fn code_item_lookup_returns_real_corpus_json_from_bytes_callers() {
         "Json::from_bytes serde_json::Deserializer::from_slice",
         "code_item_lookup",
     );
+    assert_serde_json_surface_measure_effect(
+        reach_effects,
+        fixture.target,
+        serde_site,
+        "Json::from_bytes serde_json::Deserializer::from_slice",
+        "code_item_lookup",
+    );
     assert_no_external_summary_need_for_site(
         summary_needs,
         serde_site,
@@ -3389,6 +3401,10 @@ async fn code_item_lookup_returns_real_corpus_json_from_bytes_callers() {
     assert_eq!(
         ui_field(ui, "external_summary_needs"),
         summary_needs.len().to_string()
+    );
+    assert_eq!(
+        ui_field(ui, "reach_effects"),
+        reach_effects.len().to_string()
     );
     assert!(
         ui_field(ui, "proof_context")

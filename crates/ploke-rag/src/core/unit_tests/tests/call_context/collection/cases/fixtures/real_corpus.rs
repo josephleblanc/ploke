@@ -71,17 +71,25 @@ fn setup_memchr_call_graph_rag() -> Result<(Arc<Database>, RagService), Error> {
     Ok((db, rag))
 }
 
-fn spawn_effect_seed(call_site_id: impl ToString, effect_seed_id: &str) -> serde_json::Value {
+fn effect_seed(
+    call_site_id: impl ToString,
+    effect_seed_id: &str,
+    effect_class: &str,
+) -> serde_json::Value {
     json!({
         "fact_kind": "effect_seed",
         "schema_version": "ploke-proof-facts.v1",
         "effect_seed_id": effect_seed_id,
         "call_site_id": call_site_id.to_string(),
-        "effect_class": "async_task_spawn",
+        "effect_class": effect_class,
         "confidence": "source-oracle",
         "blocker_if_unresolved": false,
         "evidence_use": "proof_only"
     })
+}
+
+fn spawn_effect_seed(call_site_id: impl ToString, effect_seed_id: &str) -> serde_json::Value {
+    effect_seed(call_site_id, effect_seed_id, "async_task_spawn")
 }
 
 fn owner_effect_policy(
@@ -2658,6 +2666,40 @@ async fn call_reach_exact_reads_axum_usage_question_summary() -> Result<(), Erro
     assert!(
         external_frontier.targets.is_empty(),
         "external-only frontier call should remain targetless: {external_frontier:#?}"
+    );
+    db.upsert_proof_fact_values(&[effect_seed(
+        external_frontier.site_id,
+        "effect:axum-json-parse-surface-measure",
+        "surface_measure",
+    )])?;
+    let effects = rag
+        .exact_call_effects_reachable_from_owner(
+            json_owner,
+            CallPathOptions {
+                max_depth: 1,
+                max_paths: 16,
+            },
+        )?
+        .expect("call context enabled");
+    let effect = effects
+        .iter()
+        .find(|effect| effect.effect_seed_id == "effect:axum-json-parse-surface-measure")
+        .unwrap_or_else(|| {
+            panic!("RAG should expose the serde_json parse surface-measure effect: {effects:#?}")
+        });
+    assert_eq!(effect.effect_class, "surface_measure");
+    assert_eq!(effect.confidence.as_deref(), Some("source-oracle"));
+    assert_eq!(effect.blocker_if_unresolved, Some(false));
+    assert_eq!(effect.call_site.site_id, external_frontier.site_id);
+    assert_eq!(effect.call_site.owner_id, json_owner);
+    assert_eq!(effect.call_site.status, CallStatusKind::External);
+    assert!(
+        effect.paths_to_owner.is_empty(),
+        "direct serde_json surface-measure effect should not need an intermediate path: {effect:#?}"
+    );
+    assert!(
+        effect.call_site.targets.is_empty(),
+        "RAG surface-measure effect must not fabricate local target rows: {effect:#?}"
     );
     assert_call_source_file(
         &json_report.source_files,

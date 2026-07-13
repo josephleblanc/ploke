@@ -3242,6 +3242,21 @@ persisted traversal edge. RAG exact call context and exact `code_item_lookup` /
 `post_service` generated self-call rows downstream. This does not claim
 arbitrary impl-item macro expansion.
 
+Update 2026-07-13: the DB/RAG/TUI usage-summary rows now include one
+real-corpus performance-style proof query over an existing closed proof
+vocabulary. The source oracle is axum `Json::from_bytes`: request extraction
+callers in `axum/src/json.rs:112,128` call `Self::from_bytes(&bytes)`, the
+target method is defined at `:164`, and that method reaches the external
+`serde_json::Deserializer::from_slice(bytes)` frontier at `:184`. The new DB
+test attaches a reviewed `effect_seed` with `effect_class = "surface_measure"`
+to the external frontier and proves `call_effects_reachable_from_owner` finds
+the seed from both callers through the one-hop `Self::from_bytes` edge without
+fabricating a local serde_json target. The RAG exact reach/effects test and
+exact `code_item_lookup` / `code_item_edges` tests preserve the same seed in
+model-facing payloads. This intentionally reuses the existing strict
+`surface_measure` class rather than broadening the proof validator with a new
+cost category.
+
 ## Parking Lot
 
 - Add binding tracking plan that ties syntax body ownership, local bindings, and type graph edges before attempting receiver/dynamic traversal.

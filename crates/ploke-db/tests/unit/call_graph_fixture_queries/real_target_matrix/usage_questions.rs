@@ -9,17 +9,25 @@ use serde_json::json;
 use super::super::*;
 use super::common::*;
 
-fn spawn_effect_seed(call_site_id: impl ToString, effect_seed_id: &str) -> serde_json::Value {
+fn effect_seed(
+    call_site_id: impl ToString,
+    effect_seed_id: &str,
+    effect_class: &str,
+) -> serde_json::Value {
     json!({
         "fact_kind": "effect_seed",
         "schema_version": "ploke-proof-facts.v1",
         "effect_seed_id": effect_seed_id,
         "call_site_id": call_site_id.to_string(),
-        "effect_class": "async_task_spawn",
+        "effect_class": effect_class,
         "confidence": "source-oracle",
         "blocker_if_unresolved": false,
         "evidence_use": "proof_only"
     })
+}
+
+fn spawn_effect_seed(call_site_id: impl ToString, effect_seed_id: &str) -> serde_json::Value {
+    effect_seed(call_site_id, effect_seed_id, "async_task_spawn")
 }
 
 fn owner_effect_policy(
@@ -2093,6 +2101,111 @@ fn axum_usage_questions_report_reachable_effect_seed_for_task_spawn() -> Result<
             .is_empty(),
         "reachable effect annotations must not fabricate call edges"
     );
+
+    Ok(())
+}
+
+#[test]
+fn axum_usage_questions_report_reachable_performance_seed_for_json_parse() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Performance work:
+    //   "Which callers trigger repeated parsing, cloning, serialization, or
+    //   database work?"
+    //   "What call chains reach a function that is known to dominate runtime
+    //   cost?"
+    //
+    // Source-oracle chain:
+    //   axum/src/json.rs:112 and :128 call `Self::from_bytes(&bytes)` from
+    //     request extraction impls.
+    //   axum/src/json.rs:164 defines `Json::from_bytes`.
+    //   axum/src/json.rs:184 calls
+    //     `serde_json::Deserializer::from_slice(bytes)`.
+    // Expected contract: a reviewed proof `effect_seed` can classify the
+    // serde_json frontier as a closed-vocabulary performance/surface-measure
+    // sink. Owner-scoped queries should find it through the resolved
+    // `Self::from_bytes` edge, keep the original external callsite targetless,
+    // and preserve the path to the owner that contains the parse frontier.
+    let parse_owner = method_id_by_name_and_body_substring(
+        &db,
+        "from_bytes",
+        "serde_json::Deserializer::from_slice(bytes)",
+    )?;
+    let parse_context = db.call_context_for_owner(parse_owner)?;
+    let parse_row = row_by_path(
+        &parse_context,
+        &["serde_json", "Deserializer", "from_slice"],
+    );
+    assert_external_targetless(parse_row);
+    assert!(
+        parse_row
+            .site
+            .cfgs
+            .iter()
+            .any(|cfg| cfg == r#"feature = "json""#),
+        "serde_json parse frontier should preserve the json feature cfg: {parse_row:#?}"
+    );
+    assert!(
+        relations_for_site(&db, parse_row.site.id)?.rows.is_empty(),
+        "performance proof seed must not fabricate a local serde_json edge"
+    );
+
+    db.upsert_proof_fact_values(&[effect_seed(
+        parse_row.site.id,
+        "effect:axum-json-parse-surface-measure",
+        "surface_measure",
+    )])?;
+
+    let callers =
+        method_ids_by_name_and_body_substring(&db, "from_request", "Self::from_bytes(&bytes)")?;
+    assert_eq!(
+        callers.len(),
+        2,
+        "axum/src/json.rs should expose two request extraction callers for Json::from_bytes"
+    );
+
+    for caller in callers {
+        let effects = db.call_effects_reachable_from_owner(
+            caller,
+            CallPathOptions {
+                max_depth: 2,
+                max_paths: 16,
+            },
+        )?;
+        let effect = effects
+            .iter()
+            .find(|effect| effect.effect_seed_id == "effect:axum-json-parse-surface-measure")
+            .unwrap_or_else(|| {
+                panic!(
+                    "reachable performance query should report the serde_json parse sink for caller {caller}: {effects:#?}"
+                )
+            });
+        assert_eq!(effect.effect_class, "surface_measure");
+        assert_eq!(effect.confidence.as_deref(), Some("source-oracle"));
+        assert_eq!(effect.call_site.site.id, parse_row.site.id);
+        assert_eq!(effect.call_site.status.status, CallStatusKind::External);
+        assert!(
+            effect.call_site.targets.is_empty(),
+            "external performance frontier should stay targetless: {effect:#?}"
+        );
+        let path = effect
+            .paths_to_owner
+            .iter()
+            .find(|path| path.start_id == caller && path.end_id == parse_owner && path.depth == 1)
+            .unwrap_or_else(|| {
+                panic!(
+                    "performance effect should preserve caller -> Json::from_bytes path for caller {caller}: {effect:#?}"
+                )
+            });
+        assert_eq!(path.edges.len(), 1);
+        assert_eq!(path.edges[0].caller_id, caller);
+        assert_eq!(path.edges[0].callee_id, parse_owner);
+        assert_eq!(path.edges[0].source_kind, CallSiteKind::Path);
+        assert_eq!(path.edges[0].relation, CallRelationKind::AssociatedFunction);
+    }
 
     Ok(())
 }

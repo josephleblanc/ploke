@@ -436,7 +436,22 @@ impl AxumJsonFromBytesToolFixture {
             .id;
         self.state
             .db
-            .upsert_proof_fact_values(&axum_serde_json_from_slice_summary_records(site))
+            .upsert_proof_fact_values(
+                &[
+                    axum_serde_json_from_slice_summary_records(site),
+                    vec![serde_json::json!({
+                        "fact_kind": "effect_seed",
+                        "schema_version": "ploke-proof-facts.v1",
+                        "effect_seed_id": "effect:axum-json-parse-surface-measure",
+                        "call_site_id": site.to_string(),
+                        "effect_class": "surface_measure",
+                        "confidence": "source-oracle",
+                        "blocker_if_unresolved": false,
+                        "evidence_use": "proof_only"
+                    })],
+                ]
+                .concat(),
+            )
             .expect("insert Json::from_bytes serde external summary");
         site
     }
