@@ -46,6 +46,7 @@ use super::{
         parent_started_db_receipt,
     },
     schema::{EvalRelationSchema, put_eval_params},
+    setup::CAMPAIGN_EMBEDDING_ROUTE_REL,
 };
 use crate::cli::prototype1_state::{
     event::RecordedAt,
@@ -57,6 +58,7 @@ use crate::intervention::{BaselineInstance, CompleteBaseline, RecordStore};
 use crate::{
     BenchmarkFamily, CampaignManifest, ClosureClass, EvalCampaignPolicy, OperationalRunMetrics,
     PatchApplyState, ProtocolCampaignPolicy,
+    campaign::EmbeddingRoute,
     record::SubmissionArtifactState,
     spec::{EvalBudget, FrameworkConfig, FrameworkToolConfig},
     target_registry::RegistryDatasetSource,
@@ -120,6 +122,14 @@ fn non_agent_schema_scripts() -> Vec<(&'static str, String, String)> {
         },
         {
             let schema = &super::setup::CampaignEvalPolicySchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::setup::CampaignEmbeddingRouteSchema::SCHEMA;
             (
                 schema.relation(),
                 schema.script_create(),
@@ -608,6 +618,11 @@ fn eval_store_non_agent_schema_scripts_are_stable() {
             r#"?[campaign_id, include_partial, stop_on_error, limit_count, include_dataset_labels, exclude_dataset_labels, batch_prefix, embedding_model_id, embedding_provider_slug, ingested_at] <- [[$campaign_id, $include_partial, $stop_on_error, $limit_count, $include_dataset_labels, $exclude_dataset_labels, $batch_prefix, $embedding_model_id, $embedding_provider_slug, $ingested_at]] :put eval_campaign_eval_policy { campaign_id => include_partial, stop_on_error, limit_count, include_dataset_labels, exclude_dataset_labels, batch_prefix, embedding_model_id, embedding_provider_slug, ingested_at }"#,
         ),
         (
+            "eval_campaign_embedding_route",
+            r#":create eval_campaign_embedding_route { campaign_id: String => embedding_route: String, ingested_at: String }"#,
+            r#"?[campaign_id, embedding_route, ingested_at] <- [[$campaign_id, $embedding_route, $ingested_at]] :put eval_campaign_embedding_route { campaign_id => embedding_route, ingested_at }"#,
+        ),
+        (
             "eval_campaign_eval_budget",
             r#":create eval_campaign_eval_budget { campaign_id: String => max_turns: Int, max_tool_calls: Int, wall_clock_secs: Int, ingested_at: String }"#,
             r#"?[campaign_id, max_turns, max_tool_calls, wall_clock_secs, ingested_at] <- [[$campaign_id, $max_turns, $max_tool_calls, $wall_clock_secs, $ingested_at]] :put eval_campaign_eval_budget { campaign_id => max_turns, max_tool_calls, wall_clock_secs, ingested_at }"#,
@@ -994,6 +1009,10 @@ fn prototype1_eval_store_parent_start_db_schema_installs_idempotently() {
     assert!(
         eval_relation_exists(&db, CAMPAIGN_EVAL_POLICY_REL)
             .expect("campaign eval policy rel exists")
+    );
+    assert!(
+        eval_relation_exists(&db, CAMPAIGN_EMBEDDING_ROUTE_REL)
+            .expect("campaign embedding route rel exists")
     );
     assert!(
         eval_relation_exists(&db, CAMPAIGN_EVAL_BUDGET_REL)
@@ -1789,6 +1808,17 @@ fn prototype1_eval_store_setup_relations_round_trip_actual_loop_types() {
             .get::<String>("embedding_model_id")
             .expect("embedding model"),
         "text-embedding-3-small"
+    );
+    let route = query_campaign_embedding_route(&db, &campaign_id);
+    let route_row = route
+        .row_refs()
+        .next()
+        .expect("campaign embedding route row");
+    assert_eq!(
+        route_row
+            .get::<String>("embedding_route")
+            .expect("embedding route"),
+        "direct_openai"
     );
 
     let budget = query_campaign_budget(&db, &campaign_id);
@@ -2670,8 +2700,9 @@ fn sample_campaign_manifest(campaign_id: CampaignId) -> CampaignManifest {
                 wall_clock_secs: 13,
             },
             batch_prefix: Some("ripgrep".to_string()),
+            embedding_route: EmbeddingRoute::DirectOpenAi,
             embedding_model_id: Some("text-embedding-3-small".to_string()),
-            embedding_provider_slug: Some("openai".to_string()),
+            embedding_provider_slug: None,
         },
         protocol: ProtocolCampaignPolicy {
             model_id: Some("google/gemini-2.5-flash".to_string()),
@@ -2937,6 +2968,20 @@ fn query_campaign_eval(db: &Database, campaign_id: &CampaignId) -> QueryResult {
         params,
     )
     .expect("query campaign eval policy")
+}
+
+fn query_campaign_embedding_route(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    db.raw_query_params(
+        r#"
+?[embedding_route] :=
+    *eval_campaign_embedding_route { campaign_id, embedding_route },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query campaign embedding route")
 }
 
 fn query_campaign_budget(db: &Database, campaign_id: &CampaignId) -> QueryResult {

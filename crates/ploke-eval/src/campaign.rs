@@ -94,10 +94,83 @@ pub struct EvalCampaignPolicy {
     pub budget: EvalBudget,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub batch_prefix: Option<String>,
+    #[serde(default, skip_serializing_if = "EmbeddingRoute::is_openrouter")]
+    pub embedding_route: EmbeddingRoute,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub embedding_model_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub embedding_provider_slug: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EmbeddingRoute {
+    #[default]
+    #[serde(rename = "openrouter")]
+    OpenRouter,
+    #[serde(rename = "direct_openai")]
+    DirectOpenAi,
+}
+
+impl EmbeddingRoute {
+    pub const fn is_openrouter(&self) -> bool {
+        matches!(self, Self::OpenRouter)
+    }
+
+    pub const fn provider_slug(self) -> &'static str {
+        match self {
+            Self::OpenRouter => "openrouter",
+            Self::DirectOpenAi => "openai",
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::OpenRouter => "openrouter",
+            Self::DirectOpenAi => "direct_openai",
+        }
+    }
+}
+
+fn validate_embedding_policy(policy: &EvalCampaignPolicy) -> Result<(), PrepareError> {
+    if policy.embedding_route != EmbeddingRoute::DirectOpenAi {
+        return Ok(());
+    }
+    if let Some(provider) = policy.embedding_provider_slug.as_deref() {
+        return Err(PrepareError::DatabaseSetup {
+            phase: "campaign_embedding_route",
+            detail: format!(
+                "direct OpenAI embedding route does not accept OpenRouter provider preference '{provider}'"
+            ),
+        });
+    }
+    let Some(model) = policy.embedding_model_id.as_deref() else {
+        return Ok(());
+    };
+    if model.trim().is_empty() {
+        return Err(PrepareError::DatabaseSetup {
+            phase: "campaign_embedding_route",
+            detail: "direct OpenAI embedding model must not be empty".to_string(),
+        });
+    }
+    if !model.contains('/') {
+        return Ok(());
+    }
+    let model: ModelId =
+        model
+            .parse()
+            .map_err(|error: ploke_llm::IdError| PrepareError::DatabaseSetup {
+                phase: "campaign_embedding_route",
+                detail: error.to_string(),
+            })?;
+    if model.key.author.as_str() != "openai" {
+        return Err(PrepareError::DatabaseSetup {
+            phase: "campaign_embedding_route",
+            detail: format!(
+                "direct OpenAI embedding route requires an OpenAI model, got '{model}'"
+            ),
+        });
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -605,6 +678,7 @@ pub(crate) fn resolve_manifest_config(
     manifest: CampaignManifest,
     overrides: &CampaignOverrides,
 ) -> Result<ResolvedCampaignConfig, PrepareError> {
+    validate_embedding_policy(&manifest.eval)?;
     let dataset_sources = if overrides.dataset_keys.is_empty() && overrides.dataset_files.is_empty()
     {
         manifest.dataset_sources.clone()
@@ -1065,6 +1139,58 @@ fn route_source_label(route_source: ModelRouteSource) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn embedding_route_has_stable_serde_and_openrouter_default() {
+        let default_policy: EvalCampaignPolicy =
+            serde_json::from_str("{}").expect("default eval policy parses");
+        assert_eq!(default_policy.embedding_route, EmbeddingRoute::OpenRouter);
+
+        assert_eq!(
+            serde_json::to_string(&EmbeddingRoute::DirectOpenAi)
+                .expect("direct OpenAI route serializes"),
+            r#""direct_openai""#
+        );
+        assert_eq!(
+            serde_json::from_str::<EmbeddingRoute>(r#""openrouter""#)
+                .expect("OpenRouter route parses"),
+            EmbeddingRoute::OpenRouter
+        );
+    }
+
+    #[test]
+    fn direct_embedding_policy_rejects_openrouter_fields() {
+        let mut policy = EvalCampaignPolicy {
+            embedding_route: EmbeddingRoute::DirectOpenAi,
+            ..EvalCampaignPolicy::default()
+        };
+        policy.embedding_provider_slug = Some("perplexity".to_string());
+        let error = validate_embedding_policy(&policy)
+            .expect_err("direct OpenAI must reject provider preference");
+        assert!(
+            error
+                .to_string()
+                .contains("does not accept OpenRouter provider")
+        );
+
+        policy.embedding_provider_slug = None;
+        policy.embedding_model_id = Some("perplexity/pplx-embed-v1-4b".to_string());
+        let error = validate_embedding_policy(&policy)
+            .expect_err("direct OpenAI must reject a non-OpenAI qualified model");
+        assert!(error.to_string().contains("requires an OpenAI model"));
+    }
+
+    #[test]
+    fn direct_embedding_policy_accepts_default_or_openai_model() {
+        let mut policy = EvalCampaignPolicy {
+            embedding_route: EmbeddingRoute::DirectOpenAi,
+            ..EvalCampaignPolicy::default()
+        };
+        validate_embedding_policy(&policy).expect("default direct OpenAI model is valid");
+
+        policy.embedding_model_id = Some("openai/text-embedding-3-small".to_string());
+        validate_embedding_policy(&policy).expect("qualified OpenAI model is valid");
+    }
 
     #[test]
     fn supplied_manifest_matches_stored_resolution() {

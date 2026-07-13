@@ -13,7 +13,7 @@ use tokio::task::JoinSet;
 
 use crate::{
     ClosureClass, ResolvedCampaignConfig,
-    campaign::{PROTOTYPE1_PROTOCOL_MIN_SAFE_MAX_TOKENS, resolve_campaign_config},
+    campaign::{EmbeddingRoute, PROTOTYPE1_PROTOCOL_MIN_SAFE_MAX_TOKENS, resolve_campaign_config},
     campaign_manifest_path,
     cli::{
         InspectOutputFormat, Prototype1CandidateGenerator, Prototype1ControlCommand,
@@ -202,6 +202,8 @@ pub(crate) enum EvalEmbeddingPreflight {
 pub(crate) enum EmbeddingBackend {
     #[serde(rename = "openrouter")]
     OpenRouter,
+    #[serde(rename = "openai")]
+    DirectOpenAi,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -757,8 +759,9 @@ fn attach_embedding_preflight_report(
 }
 
 async fn run_embedding_live_preflight(context: &RuntimeContext) -> EvalEmbeddingPreflight {
-    run_embedding_live_preflight_with(context, |model, provider| async move {
-        crate::runner::resolve_eval_embedding_selection(model.as_deref(), provider.as_ref()).await
+    run_embedding_live_preflight_with(context, |route, model, provider| async move {
+        crate::runner::preflight_embedding_selection(route, model.as_deref(), provider.as_ref())
+            .await
     })
     .await
 }
@@ -768,14 +771,21 @@ async fn run_embedding_live_preflight_with<F, Fut>(
     resolve: F,
 ) -> EvalEmbeddingPreflight
 where
-    F: FnOnce(Option<String>, Option<ploke_llm::ProviderKey>) -> Fut,
+    F: FnOnce(EmbeddingRoute, Option<String>, Option<ploke_llm::ProviderKey>) -> Fut,
     Fut: std::future::Future<Output = Result<crate::runner::EvalEmbeddingSelection, PrepareError>>,
 {
     let policy = &context.resolved_campaign.eval;
+    let route = policy.embedding_route;
     let model_request = policy.embedding_model_id.clone();
     let provider_preference = policy.embedding_provider_slug.clone();
-    let backend = EmbeddingBackend::OpenRouter;
-    let registry_path = crate::runner::eval_embedding_registry_path().ok();
+    let backend = match route {
+        EmbeddingRoute::OpenRouter => EmbeddingBackend::OpenRouter,
+        EmbeddingRoute::DirectOpenAi => EmbeddingBackend::DirectOpenAi,
+    };
+    let registry_path = match route {
+        EmbeddingRoute::OpenRouter => crate::runner::eval_embedding_registry_path().ok(),
+        EmbeddingRoute::DirectOpenAi => None,
+    };
     let provider = match crate::cli::provider::parse_provider_key(provider_preference.clone()) {
         Ok(provider) => provider,
         Err(error) => {
@@ -789,9 +799,9 @@ where
         }
     };
 
-    match resolve(model_request.clone(), provider).await {
+    match resolve(route, model_request.clone(), provider).await {
         Ok(selection) => EvalEmbeddingPreflight::Passed {
-            model_id: selection.model.id,
+            model_id: selection.model,
             model_request,
             provider_preference,
             backend,
@@ -1217,6 +1227,7 @@ fn embedding_failure_label(class: EmbeddingFailureClass) -> &'static str {
 fn embedding_backend_label(backend: EmbeddingBackend) -> &'static str {
     match backend {
         EmbeddingBackend::OpenRouter => "openrouter",
+        EmbeddingBackend::DirectOpenAi => "openai",
     }
 }
 
@@ -3617,7 +3628,8 @@ mod tests {
         let context = resolve_context(Some(&world.repo_root)).expect("context");
         let mut status = into_status(diagnose(&context).expect("diagnosis"));
         assert_eq!(status.phase, DiagnosedPhase::Blocked);
-        let report = run_embedding_live_preflight_with(&context, |model, provider| {
+        let report = run_embedding_live_preflight_with(&context, |route, model, provider| {
+            assert_eq!(route, EmbeddingRoute::OpenRouter);
             assert_eq!(model, None, "default model must remain auto-selected");
             assert_eq!(provider, None, "default provider must remain auto-selected");
             async {
@@ -3698,29 +3710,19 @@ mod tests {
         save_campaign_manifest(&manifest).expect("save embedding policy");
         let context = resolve_context(Some(&world.repo_root)).expect("context");
 
-        let report = run_embedding_live_preflight_with(&context, |model, provider| {
+        let report = run_embedding_live_preflight_with(&context, |route, model, provider| {
+            assert_eq!(route, EmbeddingRoute::OpenRouter);
             assert_eq!(model.as_deref(), Some("perplexity/pplx-embed-v1-4b"));
             assert_eq!(
                 provider.as_ref().map(|provider| provider.slug.as_str()),
                 Some("perplexity")
             );
             async move {
-                let model = serde_json::from_value(serde_json::json!({
-                    "id": "perplexity/pplx-embed-v1-4b",
-                    "name": "Perplexity PPLX Embed",
-                    "created": 0,
-                    "description": "test embedding model",
-                    "architecture": {
-                        "input_modalities": ["text"],
-                        "modality": "text->text",
-                        "output_modalities": ["text"],
-                        "tokenizer": "Gemini"
-                    },
-                    "top_provider": {"is_moderated": false},
-                    "pricing": {"prompt": 0.0, "completion": 0.0}
-                }))
-                .expect("embedding registry item");
+                let model = "perplexity/pplx-embed-v1-4b"
+                    .parse()
+                    .expect("embedding model id");
                 Ok(crate::runner::EvalEmbeddingSelection {
+                    route,
                     model,
                     provider,
                     dimensions: 2560,
@@ -3737,6 +3739,52 @@ mod tests {
         );
         assert_eq!(value["backend"], serde_json::json!("openrouter"));
         assert_eq!(value["dimensions"], serde_json::json!(2560));
+    }
+
+    #[tokio::test]
+    async fn embedding_preflight_uses_persisted_direct_openai_route() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let eval_home = temp.path().join("eval-home");
+        let _env = crate::test_support::env_guard_os(vec![(
+            "PLOKE_EVAL_HOME",
+            eval_home.clone().into_os_string(),
+        )]);
+        let world = ChildPlanWorld::mint_at_child_plan_phase(&eval_home);
+        let campaign_id = CampaignId::from("campaign");
+        let mut manifest =
+            crate::campaign::load_campaign_manifest(&campaign_id).expect("load campaign");
+        manifest.eval.embedding_route = EmbeddingRoute::DirectOpenAi;
+        manifest.eval.embedding_model_id = None;
+        manifest.eval.embedding_provider_slug = None;
+        save_campaign_manifest(&manifest).expect("save embedding route");
+        let context = resolve_context(Some(&world.repo_root)).expect("context");
+
+        let report = run_embedding_live_preflight_with(&context, |route, model, provider| {
+            assert_eq!(route, EmbeddingRoute::DirectOpenAi);
+            assert_eq!(model, None);
+            assert_eq!(provider, None);
+            async move {
+                Ok(crate::runner::EvalEmbeddingSelection {
+                    route,
+                    model: "openai/text-embedding-3-small"
+                        .parse()
+                        .expect("embedding model id"),
+                    provider,
+                    dimensions: 1536,
+                })
+            }
+        })
+        .await;
+
+        let value = serde_json::to_value(&report).expect("serialize passed preflight");
+        assert_eq!(value["outcome"], serde_json::json!("passed"));
+        assert_eq!(value["backend"], serde_json::json!("openai"));
+        assert_eq!(
+            value["model_id"],
+            serde_json::json!("openai/text-embedding-3-small")
+        );
+        assert_eq!(value["dimensions"], serde_json::json!(1536));
+        assert_eq!(value["registry_path"], serde_json::Value::Null);
     }
 
     #[test]

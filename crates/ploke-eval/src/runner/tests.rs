@@ -25,6 +25,7 @@ use ploke_tui::user_config::ChatTimeoutStrategy;
 use ploke_tui::utils::parse_errors::FlattenedParserDiagnostic;
 use tracing::info;
 
+use crate::campaign::EmbeddingRoute;
 use crate::inner::registry::{RunLifecyclePhase, RunPhaseStatus, RunRegistration};
 use crate::record::{RunRecord, SubmissionArtifactState, write_compressed_record};
 use crate::spec::{PrepareError, PreparedSingleRun, RunSource};
@@ -264,33 +265,9 @@ mod tests {
     }
 
     fn test_eval_embedding_selection() -> EvalEmbeddingSelection {
-        let model: ResponseItem = serde_json::from_value(serde_json::json!({
-            "id": OPENROUTER_CODESTRAL_MODEL,
-            "name": "Codestral Embed",
-            "created": 1_i64,
-            "description": "test embedding model",
-            "architecture": {
-                "modality": "text->embeddings",
-                "input_modalities": ["text"],
-                "output_modalities": ["embeddings"],
-                "tokenizer": "Mistral",
-                "instruct_type": null
-            },
-            "pricing": {
-                "prompt": "0.00000015",
-                "completion": "0"
-            },
-            "top_provider": {
-                "context_length": 32768,
-                "max_completion_tokens": null,
-                "is_moderated": false
-            },
-            "context_length": 32768
-        }))
-        .expect("test embedding model parses");
-
         EvalEmbeddingSelection {
-            model,
+            route: EmbeddingRoute::OpenRouter,
+            model: default_eval_embedding_model_id(),
             provider: None,
             dimensions: 1536,
         }
@@ -729,10 +706,13 @@ mod tests {
 
     #[test]
     fn eval_embedding_preflight_request_prefers_provider_but_allows_fallbacks() {
-        let selection = test_eval_embedding_selection();
+        let model = test_model_response_item(
+            OPENROUTER_CODESTRAL_MODEL,
+            ploke_llm::request::models::ModelRouteSource::OpenRouter,
+        );
         let provider = test_provider_key();
 
-        let request = eval_embedding_preflight_request(&selection.model, Some(&provider));
+        let request = eval_embedding_preflight_request(&model, Some(&provider));
         let value = serde_json::to_value(&request).expect("serialize preflight request");
 
         assert_eq!(
@@ -3048,6 +3028,70 @@ mod tests {
         assert!(detail.contains("do not mix embedding models"));
     }
 
+    #[tokio::test]
+    async fn direct_openai_route_rejects_provider_preference() {
+        let provider = ProviderKey::new("azure").expect("provider key");
+        let error =
+            resolve_embedding_selection(EmbeddingRoute::DirectOpenAi, None, Some(&provider))
+                .await
+                .expect_err("direct OpenAI must reject OpenRouter provider preference");
+
+        assert!(
+            error
+                .to_string()
+                .contains("does not accept OpenRouter provider")
+        );
+    }
+
+    #[test]
+    fn direct_openai_config_requires_api_key() {
+        let error = openai_config(&default_openai_model(), None, None)
+            .expect_err("direct OpenAI must require an API key");
+
+        assert!(
+            error
+                .to_string()
+                .contains("requires non-empty OPENAI_API_KEY")
+        );
+    }
+
+    #[test]
+    fn direct_openai_embedding_set_uses_openai_identity() {
+        let selection = EvalEmbeddingSelection {
+            route: EmbeddingRoute::DirectOpenAi,
+            model: default_openai_model(),
+            provider: None,
+            dimensions: 1536,
+        };
+
+        let set = eval_embedding_set(&selection);
+        assert_eq!(set.provider.to_string(), "openai");
+        assert_eq!(set.model.to_string(), "openai/text-embedding-3-small");
+    }
+
+    #[test]
+    fn fresh_embedding_preflight_bypasses_stale_cache() {
+        let selection = EvalEmbeddingSelection {
+            route: EmbeddingRoute::DirectOpenAi,
+            model: default_openai_model(),
+            provider: None,
+            dimensions: 0,
+        };
+        embedding_preflight_cache()
+            .lock()
+            .expect("embedding preflight cache poisoned")
+            .insert(selection.cache_key(), 42);
+
+        assert_eq!(
+            cached_embedding_dimensions(&selection, PreflightCache::Reuse),
+            Some(42)
+        );
+        assert_eq!(
+            cached_embedding_dimensions(&selection, PreflightCache::Refresh),
+            None
+        );
+    }
+
     #[cfg(feature = "live_api_tests")]
     #[tokio::test]
     #[ignore = "hits live OpenRouter embeddings; requires OPENROUTER_API_KEY"]
@@ -3061,7 +3105,26 @@ mod tests {
             .await
             .expect("eval embedding selection should resolve from exported OPENROUTER_API_KEY");
 
-        assert_eq!(selection.model.id, default_eval_embedding_model_id());
+        assert_eq!(selection.model, default_eval_embedding_model_id());
         assert!(selection.dimensions > 0);
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    #[tokio::test]
+    #[ignore = "hits live OpenAI embeddings; requires OPENAI_API_KEY"]
+    async fn live_direct_openai_embedding_preflight_uses_openai_env() {
+        assert!(
+            std::env::var_os("OPENAI_API_KEY").is_some(),
+            "OPENAI_API_KEY must be exported for direct OpenAI embedding preflight"
+        );
+
+        let selection = preflight_embedding_selection(EmbeddingRoute::DirectOpenAi, None, None)
+            .await
+            .expect("direct OpenAI selection should preflight through OpenAIBackend");
+
+        assert_eq!(selection.route, EmbeddingRoute::DirectOpenAi);
+        assert_eq!(selection.model, default_openai_model());
+        assert_eq!(selection.dimensions, 1536);
+        assert!(selection.provider.is_none());
     }
 }

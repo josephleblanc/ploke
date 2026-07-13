@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use ploke_llm::ProviderKey;
 
+use crate::campaign::EmbeddingRoute;
 use crate::model_registry::resolve_model_for_run;
 use crate::spec::PrepareError;
 
@@ -19,6 +20,7 @@ impl RunMsbBatchRequest {
             self.provider,
             None,
             None,
+            EmbeddingRoute::OpenRouter,
             self.stop_on_error,
             false,
         )
@@ -28,6 +30,13 @@ impl RunMsbBatchRequest {
 
 impl RunMsbAgentBatchRequest {
     pub async fn run(self) -> Result<BatchRunArtifactPaths, PrepareError> {
+        self.run_with_route(EmbeddingRoute::OpenRouter).await
+    }
+
+    pub(crate) async fn run_with_route(
+        self,
+        embedding_route: EmbeddingRoute,
+    ) -> Result<BatchRunArtifactPaths, PrepareError> {
         run_batch(
             self.batch_manifest,
             self.index_debug_snapshots,
@@ -36,6 +45,7 @@ impl RunMsbAgentBatchRequest {
             self.provider,
             self.embedding_model_id,
             self.embedding_provider,
+            embedding_route,
             self.stop_on_error,
             true,
         )
@@ -51,6 +61,7 @@ pub(crate) async fn run_batch(
     provider: Option<ProviderKey>,
     embedding_model_id: Option<String>,
     embedding_provider: Option<ProviderKey>,
+    embedding_route: EmbeddingRoute,
     stop_on_error: bool,
     agent_mode: bool,
 ) -> Result<BatchRunArtifactPaths, PrepareError> {
@@ -97,7 +108,7 @@ pub(crate) async fn run_batch(
                 embedding_provider.clone(),
                 &prepared.batch_id,
             )
-            .run()
+            .run_with_route(embedding_route)
             .await
             {
                 Ok(artifacts) => {
@@ -153,7 +164,7 @@ pub(crate) async fn run_batch(
                 embedding_model_id: embedding_model_id.clone(),
                 embedding_provider: embedding_provider.clone(),
             })
-            .run()
+            .run_with_route(embedding_route)
             .await
             {
                 Ok(artifacts) => {

@@ -1674,6 +1674,34 @@ fn loop_prototype1_setup_preview_command_parses() {
 }
 
 #[test]
+fn loop_prototype1_setup_direct_embedding_route_parses() {
+    let parsed = Cli::try_parse_from([
+        "ploke-eval",
+        "loop",
+        "prototype1-setup",
+        "--batch",
+        "/tmp/batch.json",
+        "--campaign",
+        "p1-direct-embedding",
+        "--profile",
+        "/tmp/run-profile.toml",
+        "--embedding-route",
+        "direct-openai",
+    ])
+    .expect("direct OpenAI embedding route should parse");
+
+    match parsed.command {
+        Command::Loop(LoopCommand {
+            command: LoopSubcommand::Prototype1Setup(cmd),
+        }) => assert_eq!(
+            cmd.input.embedding_route,
+            Some(crate::campaign::EmbeddingRoute::DirectOpenAi)
+        ),
+        other => panic!("unexpected command shape: {other:?}"),
+    }
+}
+
+#[test]
 fn loop_prototype1_setup_expected_plan_parses_and_conflicts_with_preview() {
     let digest = "a".repeat(64);
     let parsed = Cli::try_parse_from([

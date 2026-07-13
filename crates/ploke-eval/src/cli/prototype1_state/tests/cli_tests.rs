@@ -852,6 +852,7 @@ fn setup_preview_command(batch: PathBuf, profile: PathBuf) -> Prototype1LoopComm
         provider: Some("google".to_string()),
         route_source: Some(ModelRouteSource::DirectGoogle),
         embedding_model_id: Some("perplexity/pplx-embed-v1-4b".to_string()),
+        embedding_route: None,
         embedding_provider: Some("perplexity".to_string()),
         stop_on_error: false,
         protocol_model_id: Some("google/gemini-3.5-flash".to_string()),
@@ -930,6 +931,7 @@ provider = "google"
     assert_eq!(authority.protocol_model, "resolved_eval_model");
     assert_eq!(authority.protocol_route, "run_profile.protocol.model");
     assert_eq!(authority.protocol_provider, "run_profile.protocol.model");
+    assert_eq!(authority.embedding_route, "campaign.eval.default");
     assert_eq!(authority.embedding_model, "command.embedding_model_id");
     assert_eq!(authority.embedding_provider, "runtime_provider_resolution");
 
@@ -1001,6 +1003,46 @@ name = "setup-preview"
             .as_deref(),
         Some("perplexity")
     );
+    assert_eq!(
+        plan.content.campaign.resolved.eval.embedding_route,
+        EmbeddingRoute::OpenRouter
+    );
+    assert_eq!(plan.content.embedding_route, EmbeddingRoute::OpenRouter);
+    assert_eq!(
+        plan.content.authority.embedding_route,
+        "campaign.eval.default"
+    );
+    let plan_json = serde_json::to_value(&plan).expect("serialize setup preview");
+    assert_eq!(
+        plan_json["content"]["embedding_route"],
+        serde_json::json!("openrouter")
+    );
+
+    let mut invalid_route = setup_preview_command(batch_manifest.clone(), profile_path.clone());
+    invalid_route.embedding_route = Some(EmbeddingRoute::DirectOpenAi);
+    let error = preview_prototype1_parent_setup(&invalid_route)
+        .expect_err("direct OpenAI setup must reject an OpenRouter provider preference");
+    assert!(
+        error
+            .to_string()
+            .contains("does not accept OpenRouter provider")
+    );
+    invalid_route.embedding_provider = None;
+    let error = preview_prototype1_parent_setup(&invalid_route)
+        .expect_err("direct OpenAI setup must reject a non-OpenAI model");
+    assert!(error.to_string().contains("requires an OpenAI model"));
+
+    let mut direct_route = setup_preview_command(batch_manifest.clone(), profile_path.clone());
+    direct_route.embedding_route = Some(EmbeddingRoute::DirectOpenAi);
+    direct_route.embedding_model_id = None;
+    direct_route.embedding_provider = None;
+    let direct_plan = preview_prototype1_parent_setup(&direct_route)
+        .expect("direct OpenAI route should enter the reviewed setup plan");
+    assert_eq!(
+        direct_plan.content.campaign.resolved.eval.embedding_route,
+        EmbeddingRoute::DirectOpenAi
+    );
+    assert_ne!(direct_plan.plan_sha256, plan.plan_sha256);
     let planned_manifest = serde_json::to_value(plan.content.campaign.manifest_plan.manifest())
         .expect("serialize planned manifest");
     let planned_json = plan
@@ -1395,6 +1437,7 @@ fn prototype1_setup_campaign_manifest_preserves_embedding_overrides() {
         provider: Some("google".to_string()),
         route_source: Some(ModelRouteSource::DirectGoogle),
         embedding_model_id: Some("perplexity/pplx-embed-v1-4b".to_string()),
+        embedding_route: Some(EmbeddingRoute::OpenRouter),
         embedding_provider: Some("perplexity".to_string()),
         stop_on_error: false,
         protocol_model_id: None,
@@ -1473,6 +1516,20 @@ fn prototype1_eval_set_id_includes_embedding_overrides() {
     );
 
     assert_ne!(base_id, embedding_id);
+
+    let mut direct_policy = embedding_policy;
+    direct_policy.embedding_route = EmbeddingRoute::DirectOpenAi;
+    direct_policy.embedding_provider_slug = None;
+    let direct_id = prototype1_eval_set_id(
+        &baseline_campaign,
+        &treatment_campaign,
+        crate::target_registry::BenchmarkFamily::MultiSweBenchRust,
+        &sources,
+        &direct_policy,
+        &instance_ids,
+    );
+
+    assert_ne!(embedding_id, direct_id);
 }
 
 #[test]
@@ -7714,6 +7771,7 @@ fn test_evaluation_report(node: &Prototype1NodeRecord) -> Prototype1BranchEvalua
                 exclude_dataset_labels: Vec::new(),
                 budget: EvalBudget::default(),
                 batch_prefix: Some("test-batch".to_string()),
+                embedding_route: EmbeddingRoute::OpenRouter,
                 embedding_model_id: None,
                 embedding_provider_slug: None,
             },
@@ -7772,6 +7830,7 @@ fn test_eval_policy() -> EvalCampaignPolicy {
         exclude_dataset_labels: Vec::new(),
         budget: EvalBudget::default(),
         batch_prefix: Some("test-batch".to_string()),
+        embedding_route: EmbeddingRoute::OpenRouter,
         embedding_model_id: None,
         embedding_provider_slug: None,
     }

@@ -44,7 +44,7 @@ use crate::{
     OperationalRunMetrics, OutputMode, PrepareMsbBatchRequest, PrepareWrite, PreparedMsbBatch,
     ProtocolCampaignPolicy, RegistryDatasetSource, ResolvedCampaignConfig, batches_dir,
     campaign::{
-        CampaignManifestPlan, admit_campaign_manifest, campaign_closure_state_path,
+        CampaignManifestPlan, EmbeddingRoute, admit_campaign_manifest, campaign_closure_state_path,
         plan_campaign_manifest, resolve_manifest_config,
     },
     campaign_manifest_path,
@@ -181,6 +181,7 @@ pub(crate) struct Prototype1SetupReport {
     node_id: String,
     generation: u32,
     branch_id: String,
+    embedding_route: EmbeddingRoute,
     search_policy: Prototype1SearchPolicy,
     run_profile: profile::RunProfileCommitment,
 }
@@ -204,6 +205,7 @@ struct Prototype1SetupContent {
     checkout: SetupCheckoutBase,
     artifact_branch: String,
     search_policy: Prototype1SearchPolicy,
+    embedding_route: EmbeddingRoute,
     authority: Prototype1SetupAuthority,
     scope: Prototype1PreviewScope,
 }
@@ -227,6 +229,7 @@ struct Prototype1SetupAuthority {
     protocol_model: &'static str,
     protocol_route: &'static str,
     protocol_provider: &'static str,
+    embedding_route: &'static str,
     embedding_model: &'static str,
     embedding_provider: &'static str,
     instances_root: &'static str,
@@ -470,6 +473,7 @@ fn plan_prototype1_parent_setup(
     );
     let search_policy = profile.profile().search_policy();
     let authority = setup_authority(command, &operator_profile.profile);
+    let embedding_route = campaign.resolved.eval.embedding_route;
     let content = Prototype1SetupContent {
         batch_manifest,
         batch: prepared_batch,
@@ -481,6 +485,7 @@ fn plan_prototype1_parent_setup(
         checkout,
         artifact_branch,
         search_policy,
+        embedding_route,
         authority,
         scope: Prototype1PreviewScope {
             writes: "none",
@@ -600,6 +605,11 @@ fn setup_authority(
             "run_profile.protocol.model"
         } else {
             "resolved_eval_provider"
+        },
+        embedding_route: if command.embedding_route.is_some() {
+            "command.embedding_route"
+        } else {
+            "campaign.eval.default"
         },
         embedding_model: if command.embedding_model_id.is_some() {
             "command.embedding_model_id"
@@ -1186,6 +1196,7 @@ fn setup_report_from_admission(
         node_id: identity.node_id().to_string(),
         generation: identity.generation(),
         branch_id: identity.branch_id().to_string(),
+        embedding_route: content.campaign.resolved.eval.embedding_route,
         search_policy: content.search_policy.clone(),
         run_profile: commitment,
     })
@@ -1235,6 +1246,7 @@ pub(crate) fn print_prototype1_setup_report(report: &Prototype1SetupReport) {
     println!("node_id: {}", report.node_id);
     println!("generation: {}", report.generation);
     println!("branch_id: {}", report.branch_id);
+    println!("embedding_route: {}", report.embedding_route.as_str());
     println!(
         "search_policy: generations<={} nodes<={} children={}..={} mode={} stop_on_first_keep={} require_keep_for_continuation={} explore_from_rejected={}",
         report.search_policy.max_generations,
@@ -1302,6 +1314,10 @@ pub(crate) fn print_prototype1_setup_plan(plan: &Prototype1SetupPlan) {
             .unwrap_or("<route-default>")
     );
     println!("eval_route: {}", serde_name(&resolved.route_source));
+    println!(
+        "embedding_route: {}",
+        resolved.eval.embedding_route.as_str()
+    );
     println!(
         "embedding_model: {}",
         resolved
@@ -1376,13 +1392,14 @@ pub(crate) fn print_prototype1_setup_plan(plan: &Prototype1SetupPlan) {
         content.authority.control
     );
     println!(
-        "model_authority: eval={}/{}/{} protocol={}/{}/{} embedding={}/{}",
+        "model_authority: eval={}/{}/{} protocol={}/{}/{} embedding={}/{}/{}",
         content.authority.eval_model,
         content.authority.eval_route,
         content.authority.eval_provider,
         content.authority.protocol_model,
         content.authority.protocol_route,
         content.authority.protocol_provider,
+        content.authority.embedding_route,
         content.authority.embedding_model,
         content.authority.embedding_provider
     );
@@ -10147,6 +10164,8 @@ fn prototype1_eval_set_id(
         hasher.update(batch_prefix.as_bytes());
     }
     hasher.update(b"\0");
+    hasher.update(eval_policy.embedding_route.as_str().as_bytes());
+    hasher.update(b"\0");
     if let Some(embedding_model_id) = eval_policy.embedding_model_id.as_deref() {
         hasher.update(embedding_model_id.as_bytes());
     }
@@ -10160,7 +10179,7 @@ fn prototype1_eval_set_id(
         hasher.update(b"\0");
     }
     format!(
-        "prototype1.eval_set.closure_instance_slice.v1:{:x}",
+        "prototype1.eval_set.closure_instance_slice.v2:{:x}",
         hasher.finalize()
     )
 }
@@ -10376,6 +10395,7 @@ fn plan_prototype1_loop_campaign(
         exclude_dataset_labels: Vec::new(),
         budget: prepared_batch.budget.clone(),
         batch_prefix: Some(prepared_batch.batch_id.clone()),
+        embedding_route: command.embedding_route.unwrap_or_default(),
         embedding_model_id: command.embedding_model_id.clone(),
         embedding_provider_slug: command.embedding_provider.clone(),
     };

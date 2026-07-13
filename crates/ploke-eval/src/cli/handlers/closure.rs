@@ -15,8 +15,8 @@ use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
 use crate::campaign::{
-    EvalCampaignPolicy, ProtocolCampaignPolicy, ResolvedCampaignConfig, dataset_files_from_sources,
-    dataset_keys_from_sources, resolve_campaign_config,
+    EmbeddingRoute, EvalCampaignPolicy, ProtocolCampaignPolicy, ResolvedCampaignConfig,
+    dataset_files_from_sources, dataset_keys_from_sources, resolve_campaign_config,
 };
 use crate::cli::provider::parse_provider_key;
 use crate::cli::{
@@ -53,6 +53,7 @@ async fn execute_batch_eval_for_manifest(
     provider: Option<ProviderKey>,
     embedding_model_id: Option<String>,
     embedding_provider: Option<ProviderKey>,
+    embedding_route: EmbeddingRoute,
     stop_on_error: bool,
 ) -> Result<BatchRunArtifactPaths, PrepareError> {
     RunMsbAgentBatchRequest {
@@ -65,7 +66,7 @@ async fn execute_batch_eval_for_manifest(
         embedding_provider,
         stop_on_error,
     }
-    .run()
+    .run_with_route(embedding_route)
     .await
 }
 #[derive(Debug)]
@@ -745,6 +746,7 @@ pub(crate) async fn advance_eval_closure(
                 provider.clone(),
                 policy.embedding_model_id.clone(),
                 parse_provider_key(policy.embedding_provider_slug.clone())?,
+                policy.embedding_route,
                 policy.stop_on_error,
             )
             .await?;

@@ -12,6 +12,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     CampaignManifest, EvalCampaignPolicy, ProtocolCampaignPolicy,
+    campaign::EmbeddingRoute,
     cli::prototype1_state::{
         identity::ParentIdentity,
         profile::{AdmittedRunProfile, EvalStorageBackend},
@@ -63,6 +64,13 @@ define_eval_schema!(CampaignEvalPolicySchema {
     batch_prefix: "String?",
     embedding_model_id: "String?",
     embedding_provider_slug: "String?",
+    ingested_at: "String",
+});
+
+define_eval_schema!(CampaignEmbeddingRouteSchema {
+    "eval_campaign_embedding_route",
+    campaign_id: "String" =>
+    embedding_route: "String",
     ingested_at: "String",
 });
 
@@ -273,6 +281,7 @@ define_eval_schema!(BaselineInstanceMetricsSchema {
 
 pub(crate) const CAMPAIGN_REL: &str = CampaignSchema::RELATION;
 pub(crate) const CAMPAIGN_EVAL_POLICY_REL: &str = CampaignEvalPolicySchema::RELATION;
+pub(crate) const CAMPAIGN_EMBEDDING_ROUTE_REL: &str = CampaignEmbeddingRouteSchema::RELATION;
 pub(crate) const CAMPAIGN_EVAL_BUDGET_REL: &str = CampaignEvalBudgetSchema::RELATION;
 pub(crate) const CAMPAIGN_PROTOCOL_POLICY_REL: &str = CampaignProtocolPolicySchema::RELATION;
 pub(crate) const PROFILE_COMMITMENT_REL: &str = ProfileCommitmentSchema::RELATION;
@@ -289,6 +298,8 @@ pub(crate) const BASELINE_INSTANCE_METRICS_REL: &str = BaselineInstanceMetricsSc
 pub(super) fn ensure_setup_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(), EvalStoreError> {
     CampaignSchema::SCHEMA.ensure_installed(db, "schema.eval_campaign")?;
     CampaignEvalPolicySchema::SCHEMA.ensure_installed(db, "schema.eval_campaign_eval_policy")?;
+    CampaignEmbeddingRouteSchema::SCHEMA
+        .ensure_installed(db, "schema.eval_campaign_embedding_route")?;
     CampaignEvalBudgetSchema::SCHEMA.ensure_installed(db, "schema.eval_campaign_eval_budget")?;
     CampaignProtocolPolicySchema::SCHEMA
         .ensure_installed(db, "schema.eval_campaign_protocol_policy")?;
@@ -716,6 +727,27 @@ fn put_campaign_eval_rows<D: EvalDb + ?Sized>(
         "put.eval_campaign_eval_policy",
     )?;
 
+    let mut params = BTreeMap::new();
+    params.insert(
+        "campaign_id".to_string(),
+        manifest.campaign_id.to_string().into(),
+    );
+    params.insert(
+        "embedding_route".to_string(),
+        enum_string(
+            &eval.embedding_route,
+            "eval_campaign_embedding_route.embedding_route",
+        )?
+        .into(),
+    );
+    params.insert("ingested_at".to_string(), ingested_at.to_string().into());
+    put_eval_params(
+        db,
+        &CampaignEmbeddingRouteSchema::SCHEMA,
+        params,
+        "put.eval_campaign_embedding_route",
+    )?;
+
     let budget = &eval.budget;
     let mut params = BTreeMap::new();
     params.insert(
@@ -929,9 +961,31 @@ fn read_campaign_eval<D: EvalDb + ?Sized>(
         exclude_dataset_labels: read_string_list(&rows, row, "exclude_dataset_labels")?,
         budget: EvalBudget::default(),
         batch_prefix: read_optional_string(&rows, row, "batch_prefix")?,
+        embedding_route: read_campaign_embedding_route(db, campaign_id)?,
         embedding_model_id: read_optional_string(&rows, row, "embedding_model_id")?,
         embedding_provider_slug: read_optional_string(&rows, row, "embedding_provider_slug")?,
     })
+}
+
+fn read_campaign_embedding_route<D: EvalDb + ?Sized>(
+    db: &D,
+    campaign_id: &ploke_records::ids::CampaignId,
+) -> Result<EmbeddingRoute, EvalStoreError> {
+    let rows = query_campaign_rows(
+        db,
+        r#"
+?[embedding_route] :=
+    *eval_campaign_embedding_route { campaign_id, embedding_route },
+    campaign_id = $campaign_id
+"#,
+        campaign_id,
+        "read.eval_campaign_embedding_route",
+    )?;
+    let row = single_row(&rows, "eval_campaign_embedding_route")?;
+    parse_enum(
+        read_string(&rows, row, "embedding_route")?,
+        "eval_campaign_embedding_route.embedding_route",
+    )
 }
 
 fn read_campaign_budget<D: EvalDb + ?Sized>(

@@ -6,7 +6,8 @@ use clap::{ArgAction, Parser, Subcommand};
 use ploke_llm::request::models::ModelRouteSource;
 use serde::{Deserialize, Serialize};
 
-use super::common::{InspectOutputFormat, parse_model_route_source};
+use super::common::{InspectOutputFormat, parse_embedding_route, parse_model_route_source};
+use crate::campaign::EmbeddingRoute;
 use crate::cli::prototype1_state::walk::phase::WalkPhase;
 
 #[derive(Debug, Parser)]
@@ -1110,6 +1111,14 @@ pub struct Prototype1LoopCommand {
     /// Explicit embedding model id to use for eval indexing/retrieval.
     #[arg(long)]
     pub embedding_model_id: Option<String>,
+
+    /// Backend route for eval embeddings.
+    #[arg(
+        long,
+        value_name = "ROUTE",
+        value_parser = parse_embedding_route
+    )]
+    pub embedding_route: Option<EmbeddingRoute>,
 
     /// Explicit provider slug to pin for the embedding model.
     #[arg(long, value_name = "PROVIDER")]

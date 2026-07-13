@@ -21,6 +21,7 @@ use tokio::time::{Instant, sleep};
 use tracing::{info, warn};
 
 use crate::LlmResponseRecord;
+use crate::campaign::EmbeddingRoute;
 use crate::inner::registry::{RunLifecyclePhase, RunPhaseStatus};
 use crate::model_registry::resolve_model_for_run;
 use crate::record::{
@@ -36,11 +37,19 @@ use super::*;
 
 impl RunMsbSingleRequest {
     pub async fn run(self) -> Result<RunArtifactPaths, PrepareError> {
+        self.run_with_route(EmbeddingRoute::OpenRouter).await
+    }
+
+    pub(crate) async fn run_with_route(
+        self,
+        embedding_route: EmbeddingRoute,
+    ) -> Result<RunArtifactPaths, PrepareError> {
         let run_arm = RunArm::shell_only_control();
         let setup_start_time = chrono::Utc::now();
         let run_start_instant = Instant::now();
         let (manifest_path, prepared) = load_prepared_run(self.run_manifest)?;
-        let embedding_selection = resolve_eval_embedding_selection(
+        let embedding_selection = resolve_embedding_selection(
+            embedding_route,
             self.embedding_model_id.as_deref(),
             self.embedding_provider.as_ref(),
         )
@@ -482,11 +491,19 @@ impl RunMsbSingleRequest {
 
 impl RunMsbAgentSingleRequest {
     pub async fn run(self) -> Result<AgentRunArtifactPaths, PrepareError> {
+        self.run_with_route(EmbeddingRoute::OpenRouter).await
+    }
+
+    pub(crate) async fn run_with_route(
+        self,
+        embedding_route: EmbeddingRoute,
+    ) -> Result<AgentRunArtifactPaths, PrepareError> {
         let setup_start_time = chrono::Utc::now();
         let run_start_instant = Instant::now();
         let run_arm = RunArm::structured_current_policy_treatment();
         let (manifest_path, prepared) = load_prepared_run(self.run_manifest)?;
-        let embedding_selection = resolve_eval_embedding_selection(
+        let embedding_selection = resolve_embedding_selection(
+            embedding_route,
             self.embedding_model_id.as_deref(),
             self.embedding_provider.as_ref(),
         )
