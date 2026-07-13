@@ -66,8 +66,9 @@ use crate::{
         prototype1_state::{
             backend::{
                 AdmittedBroadHarnessResult, AttemptRejection, CheckedSurfaceEdit,
-                EVAL_CORE_SURFACE_ROOT, EditProposal, EditSurfaceAdmission, GitWorktreeBackend,
-                ProposedTouch, TuiAttemptOutcome, WorkspaceBackend, edit_surface_paths,
+                EVAL_CORE_SURFACE_ROOT, EditProposal, EditSurfaceAdmission, GitCommit,
+                GitWorktreeBackend, ProposedTouch, TuiAttemptOutcome, WorkspaceBackend,
+                edit_surface_paths,
             },
             c1::{
                 Acknowledged, Artifact, Binary, C1, Child as ChildLineage, MaterializeBranch,
@@ -113,6 +114,12 @@ use crate::{
                 LockChildPlan, Parent, Planned, Ready, Selectable, UnlockChildPlan,
             },
             profile, selection as state_selection,
+            setup_admission::{
+                Prototype1SetupAdmission, SetupAdmissionIntent, SetupAdmissionState,
+                SetupArtifactHashes, SetupCheckoutBase, acquire_setup_lock, cleanup_setup_staging,
+                create_setup_admission, load_matching_admission, load_setup_admission,
+                replace_setup_admission, setup_admission_path, write_json_atomic,
+            },
             telemetry::RuntimeTelemetry,
         },
         resolve_batch_manifest, resolve_protocol_model_id, resolve_protocol_provider_slug,
@@ -126,12 +133,12 @@ use crate::{
         Prototype1ChildScheduleMode, Prototype1ContinuationDecision,
         Prototype1ContinuationDisposition, Prototype1NodeRecord, Prototype1NodeStatus,
         Prototype1RunnerDisposition, Prototype1RunnerResult, Prototype1SearchPolicy, RecordStore,
-        TreatmentBranchNode, TreatmentBranchStatus, ValidationPolicy, branch_log,
-        execute_intervention_apply, load_node_record, load_runner_result, load_runner_result_at,
-        load_scheduler_state, project_node_status, prototype1_branch_registry_path,
-        prototype1_node_id, prototype1_nodes_dir, prototype1_scheduler_path,
-        register_root_parent_node, resolved_treatment_branches_from_synthesis,
-        select_primary_issue, treatment_branch_id, write_node_projection,
+        RootParentSetup, TreatmentBranchNode, TreatmentBranchStatus, ValidationPolicy, branch_log,
+        ensure_root_parent_node, execute_intervention_apply, load_node_record, load_runner_result,
+        load_runner_result_at, load_scheduler_state, plan_root_parent_node, project_node_status,
+        prototype1_branch_registry_path, prototype1_node_id, prototype1_nodes_dir,
+        prototype1_scheduler_path, resolved_treatment_branches_from_synthesis,
+        select_primary_issue, treatment_branch_id, verify_root_parent_node, write_node_projection,
         write_parent_node_projection, write_treatment_evaluation_projection,
     },
     load_campaign_manifest, load_closure_state,
@@ -141,7 +148,7 @@ use crate::{
     provider_prefs::load_provider_for_model,
     recompute_closure_state,
     record::read_compressed_record,
-    repos_dir, resolve_campaign_config, save_campaign_manifest,
+    repos_dir, resolve_campaign_config, resolve_registry_dataset_sources, save_campaign_manifest,
     selection::{
         ActivePrototype1MonitorTarget, load_active_selection, save_active_prototype1_monitor_target,
     },
@@ -156,6 +163,9 @@ use crate::{
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct Prototype1SetupReport {
     pub(crate) campaign_id: CampaignId,
+    admission_path: PathBuf,
+    admission_state: SetupAdmissionState,
+    plan_sha256: String,
     campaign_manifest: PathBuf,
     closure_state_path: PathBuf,
     slice_dataset_path: PathBuf,
@@ -191,6 +201,7 @@ struct Prototype1SetupContent {
     profile: profile::RunProfilePlan,
     effective_control: profile::EffectiveRunControl,
     repo_root: PathBuf,
+    checkout: SetupCheckoutBase,
     artifact_branch: String,
     search_policy: Prototype1SearchPolicy,
     authority: Prototype1SetupAuthority,
@@ -209,6 +220,7 @@ struct Prototype1SetupAuthority {
     execution: &'static str,
     storage: &'static str,
     control: &'static str,
+    checkout: &'static str,
     eval_model: &'static str,
     eval_route: &'static str,
     eval_provider: &'static str,
@@ -229,10 +241,17 @@ struct Prototype1PreviewScope {
     deferred_checks: Vec<&'static str>,
 }
 
-const PROTOTYPE1_SETUP_PLAN_SCHEMA_VERSION: &str = "prototype1-setup-plan.v1";
+const PROTOTYPE1_SETUP_PLAN_SCHEMA_VERSION: &str = "prototype1-setup-plan.v2";
 
 pub(crate) fn preview_prototype1_parent_setup(
     command: &Prototype1LoopCommand,
+) -> Result<Prototype1SetupPlan, PrepareError> {
+    preview_prototype1_parent_setup_at(command, current_setup_root()?)
+}
+
+fn preview_prototype1_parent_setup_at(
+    command: &Prototype1LoopCommand,
+    repo_root: PathBuf,
 ) -> Result<Prototype1SetupPlan, PrepareError> {
     validate_setup_command(command)?;
     if command.batch.is_none() && command.batch_id.is_none() {
@@ -245,7 +264,13 @@ pub(crate) fn preview_prototype1_parent_setup(
         command.batch.clone(),
         command.batch_id.clone(),
     )?)?;
-    plan_prototype1_parent_setup(command, operator_profile, batch_manifest, prepared_batch)
+    plan_prototype1_parent_setup(
+        command,
+        operator_profile,
+        batch_manifest,
+        prepared_batch,
+        repo_root,
+    )
 }
 
 pub(crate) fn prepare_prototype1_parent_setup(
@@ -255,13 +280,33 @@ pub(crate) fn prepare_prototype1_parent_setup(
     if let Some(expected_sha) = expected_sha {
         return admit_prototype1_parent_setup(resolve_expected_setup(command, expected_sha)?);
     }
+    prepare_prototype1_parent_setup_at(command, expected_sha, current_setup_root()?)
+}
+
+fn prepare_prototype1_parent_setup_at(
+    command: &Prototype1LoopCommand,
+    expected_sha: Option<&str>,
+    repo_root: PathBuf,
+) -> Result<Prototype1SetupReport, PrepareError> {
+    if let Some(expected_sha) = expected_sha {
+        return admit_prototype1_parent_setup(resolve_expected_setup_at(
+            command,
+            expected_sha,
+            repo_root,
+        )?);
+    }
 
     validate_setup_command(command)?;
     let operator_profile = load_setup_profile(command)?;
     let (batch_manifest, prepared_batch) =
         prepare_or_load_prototype1_batch(command, Some(&operator_profile.profile))?;
-    let plan =
-        plan_prototype1_parent_setup(command, operator_profile, batch_manifest, prepared_batch)?;
+    let plan = plan_prototype1_parent_setup(
+        command,
+        operator_profile,
+        batch_manifest,
+        prepared_batch,
+        repo_root,
+    )?;
     admit_prototype1_parent_setup(plan)
 }
 
@@ -269,7 +314,15 @@ fn resolve_expected_setup(
     command: &Prototype1LoopCommand,
     expected_sha: &str,
 ) -> Result<Prototype1SetupPlan, PrepareError> {
-    let plan = preview_prototype1_parent_setup(command)?;
+    resolve_expected_setup_at(command, expected_sha, current_setup_root()?)
+}
+
+fn resolve_expected_setup_at(
+    command: &Prototype1LoopCommand,
+    expected_sha: &str,
+    repo_root: PathBuf,
+) -> Result<Prototype1SetupPlan, PrepareError> {
+    let plan = preview_prototype1_parent_setup_at(command, repo_root)?;
     if plan.plan_sha256 != expected_sha {
         return Err(PrepareError::InvalidBatchSelection {
             detail: format!(
@@ -279,6 +332,13 @@ fn resolve_expected_setup(
         });
     }
     Ok(plan)
+}
+
+fn current_setup_root() -> Result<PathBuf, PrepareError> {
+    std::env::current_dir().map_err(|source| PrepareError::ReadManifest {
+        path: PathBuf::from("."),
+        source,
+    })
 }
 
 fn validate_setup_command(command: &Prototype1LoopCommand) -> Result<(), PrepareError> {
@@ -350,6 +410,7 @@ fn plan_prototype1_parent_setup(
     operator_profile: profile::OperatorRunProfile,
     batch_manifest: PathBuf,
     prepared_batch: PreparedMsbBatch,
+    repo_root: PathBuf,
 ) -> Result<Prototype1SetupPlan, PrepareError> {
     if prepared_batch.instances.is_empty() {
         return Err(PrepareError::InvalidBatchSelection {
@@ -390,10 +451,19 @@ fn plan_prototype1_parent_setup(
         profile.profile_path().to_path_buf(),
         profile.profile(),
     )?;
-    let repo_root = std::env::current_dir().map_err(|source| PrepareError::ReadManifest {
-        path: PathBuf::from("."),
-        source,
-    })?;
+    let receipt = load_setup_admission(&setup_admission_path(campaign.manifest_path()))?;
+    let backend = GitWorktreeBackend;
+    let checkout = match &receipt {
+        Some(receipt) => receipt.intent.checkout.clone(),
+        None => SetupCheckoutBase {
+            branch: backend.active_branch(&repo_root).map_err(|source| {
+                setup_backend_error("prototype1_setup_preview_checkout", source)
+            })?,
+            head: backend.head_commit(&repo_root).map_err(|source| {
+                setup_backend_error("prototype1_setup_preview_checkout", source)
+            })?,
+        },
+    };
     let artifact_branch = format!(
         "prototype1-parent-{}-gen0",
         sanitize_batch_component(campaign.campaign_id().as_str())
@@ -408,6 +478,7 @@ fn plan_prototype1_parent_setup(
         profile,
         effective_control,
         repo_root,
+        checkout,
         artifact_branch,
         search_policy,
         authority,
@@ -418,6 +489,7 @@ fn plan_prototype1_parent_setup(
                 "campaign manifest serialization and resolved routes",
                 "normalized run profile and commitment digest",
                 "storage, search, and effective control configuration",
+                "active Git branch and HEAD, or an existing receipt's reviewed checkout, bound into the plan digest",
             ],
             deferred_checks: vec![
                 "closure creation and owner database writes",
@@ -428,7 +500,11 @@ fn plan_prototype1_parent_setup(
             ],
         },
     };
-    seal_prototype1_setup_plan(content)
+    let plan = seal_prototype1_setup_plan(content)?;
+    if let Some(receipt) = &receipt {
+        validate_setup_admission(&plan, receipt)?;
+    }
+    Ok(plan)
 }
 
 fn seal_prototype1_setup_plan(
@@ -475,6 +551,7 @@ fn setup_authority(
         execution: "run_profile.execution",
         storage: "run_profile.storage",
         control: "run_profile.control",
+        checkout: "active_git_checkout",
         eval_model: if command.model_id.is_some() {
             "command.model_id"
         } else if command.use_default_model {
@@ -571,102 +648,578 @@ fn admit_prototype1_parent_setup(
             ),
         });
     }
-    let Prototype1SetupContent {
-        batch_manifest,
-        batch: prepared_batch,
-        primary_instance_id,
-        campaign,
-        profile,
-        effective_control: _,
-        repo_root,
-        artifact_branch,
-        search_policy,
-        authority: _,
-        scope: _,
-    } = plan.content;
-    let campaign = admit_prototype1_loop_campaign(campaign)?;
-    let admitted_profile = profile::admit_run_profile_plan(profile)?;
-    let closure_state_path = ensure_prototype1_baseline_closure_state(&campaign.resolved)?;
-    let storage = admitted_profile.profile.storage.eval.backend;
-    if storage.mirrors_owner_db() {
-        let manifest = load_campaign_manifest(&campaign.campaign_id)?;
-        let closure_state = load_closure_state(&campaign.campaign_id)?;
+    let backend = GitWorktreeBackend;
+    let admission_path = setup_admission_path(plan.content.campaign.manifest_path());
+    let lock_path = backend
+        .setup_lock_path(&plan.content.repo_root)
+        .map_err(|source| setup_backend_error("prototype1_setup_lock", source))?;
+    let _setup_lock = acquire_setup_lock(&lock_path)?;
+    let mut admission = load_or_capture_setup_admission(&plan, &backend, &admission_path)?;
+    validate_setup_admission(&plan, &admission)?;
+
+    if matches!(admission.state, SetupAdmissionState::Complete { .. }) {
+        let admitted = verify_completed_setup(&plan, &admission, &backend)?;
+        return setup_report_from_admission(&plan, &admission, admitted.commitment);
+    }
+
+    let campaign = ensure_prototype1_loop_campaign(plan.content.campaign.clone())?;
+    let admitted_at = recorded_at_rfc3339(admission.intent.started_at)?;
+    let admitted = profile::ensure_run_profile_plan(plan.content.profile.clone(), &admitted_at)?;
+    let closure_path = ensure_setup_closure_state(&campaign.resolved)?;
+    ensure_setup_owner_db(&campaign, &admitted, &closure_path)?;
+    let root = RootParentSetup {
+        node: admission.intent.node.clone(),
+        request: admission.intent.request.clone(),
+    };
+    ensure_root_parent_node(
+        &campaign.campaign_id,
+        &campaign.manifest_path,
+        &root,
+        plan.content.search_policy.clone(),
+    )?;
+    let head = reconcile_setup_checkout(&backend, &admission)?;
+    let complete = admission.clone().complete(head, RecordedAt::now())?;
+    replace_setup_admission(&admission_path, &admission, &complete)?;
+    admission = complete;
+
+    setup_report_from_admission(&plan, &admission, admitted.commitment)
+}
+
+/// Resume or publish receipt-first setup intent under the worktree lock.
+fn load_or_capture_setup_admission(
+    plan: &Prototype1SetupPlan,
+    backend: &GitWorktreeBackend,
+    admission_path: &Path,
+) -> Result<Prototype1SetupAdmission, PrepareError> {
+    cleanup_setup_staging(admission_path)?;
+    let plan_hash = ContentHash(plan.plan_sha256.clone());
+    match load_matching_admission(
+        admission_path,
+        &plan_hash,
+        plan.content.campaign.campaign_id(),
+        plan.content.campaign.manifest_path(),
+        &plan.content.repo_root,
+    )? {
+        Some(admission) => Ok(admission),
+        None => capture_setup_admission(plan, backend, admission_path),
+    }
+}
+
+fn capture_setup_admission(
+    plan: &Prototype1SetupPlan,
+    backend: &GitWorktreeBackend,
+    path: &Path,
+) -> Result<Prototype1SetupAdmission, PrepareError> {
+    reject_unreceipted_setup_state(plan, backend)?;
+    let dirty = backend
+        .dirty_paths(&plan.content.repo_root)
+        .map_err(|source| setup_backend_error("prototype1_setup_receipt", source))?;
+    if !dirty.is_empty() {
+        return Err(setup_reconciliation_conflict(
+            "setup_receipt",
+            &plan.content.repo_root,
+            &format!("active checkout has uncommitted paths: {dirty:?}"),
+        ));
+    }
+    let checkout = SetupCheckoutBase {
+        branch: backend
+            .active_branch(&plan.content.repo_root)
+            .map_err(|source| setup_backend_error("prototype1_setup_receipt", source))?,
+        head: backend
+            .head_commit(&plan.content.repo_root)
+            .map_err(|source| setup_backend_error("prototype1_setup_receipt", source))?,
+    };
+    if checkout != plan.content.checkout {
+        return Err(setup_reconciliation_conflict(
+            "setup_receipt",
+            &plan.content.repo_root,
+            &format!(
+                "checkout changed after preview: expected branch '{}' at '{}', observed branch '{}' at '{}'",
+                plan.content.checkout.branch,
+                plan.content.checkout.head.0,
+                checkout.branch,
+                checkout.head.0
+            ),
+        ));
+    }
+    let started_at = RecordedAt::now();
+    let recorded_at = recorded_at_rfc3339(started_at)?;
+    let root = plan_root_parent_node(
+        plan.content.campaign.campaign_id(),
+        plan.content.campaign.manifest_path(),
+        &plan.content.primary_instance_id,
+        &plan.content.artifact_branch,
+        &plan.content.repo_root,
+        &recorded_at,
+    );
+    let identity = ParentIdentity::from_node_at(
+        plan.content.campaign.campaign_id().clone(),
+        &root.node,
+        None,
+        Some(plan.content.artifact_branch.clone()),
+        root.node.created_at.clone(),
+    );
+    let intent = SetupAdmissionIntent {
+        plan_hash: ContentHash(plan.plan_sha256.clone()),
+        campaign_id: plan.content.campaign.campaign_id().clone(),
+        manifest_path: plan.content.campaign.manifest_path().to_path_buf(),
+        repo_root: plan.content.repo_root.clone(),
+        artifact_branch: plan.content.artifact_branch.clone(),
+        batch_manifest: plan.content.batch_manifest.clone(),
+        hashes: SetupArtifactHashes {
+            manifest: ContentHash(plan.content.campaign.manifest_plan.sha256().to_string()),
+            slice: ContentHash(plan.content.campaign.slice_sha256.clone()),
+            profile: ContentHash(plan.content.profile.sha256().to_string()),
+        },
+        checkout: plan.content.checkout.clone(),
+        node: root.node,
+        request: root.request,
+        identity,
+        started_at,
+    };
+    create_setup_admission(path, intent)
+}
+
+fn validate_setup_admission(
+    plan: &Prototype1SetupPlan,
+    admission: &Prototype1SetupAdmission,
+) -> Result<(), PrepareError> {
+    let recorded_at = recorded_at_rfc3339(admission.intent.started_at)?;
+    let root = plan_root_parent_node(
+        plan.content.campaign.campaign_id(),
+        plan.content.campaign.manifest_path(),
+        &plan.content.primary_instance_id,
+        &plan.content.artifact_branch,
+        &plan.content.repo_root,
+        &recorded_at,
+    );
+    let identity = ParentIdentity::from_node_at(
+        plan.content.campaign.campaign_id().clone(),
+        &root.node,
+        None,
+        Some(plan.content.artifact_branch.clone()),
+        root.node.created_at.clone(),
+    );
+    let expected = SetupAdmissionIntent {
+        plan_hash: ContentHash(plan.plan_sha256.clone()),
+        campaign_id: plan.content.campaign.campaign_id().clone(),
+        manifest_path: plan.content.campaign.manifest_path().to_path_buf(),
+        repo_root: plan.content.repo_root.clone(),
+        artifact_branch: plan.content.artifact_branch.clone(),
+        batch_manifest: plan.content.batch_manifest.clone(),
+        hashes: SetupArtifactHashes {
+            manifest: ContentHash(plan.content.campaign.manifest_plan.sha256().to_string()),
+            slice: ContentHash(plan.content.campaign.slice_sha256.clone()),
+            profile: ContentHash(plan.content.profile.sha256().to_string()),
+        },
+        checkout: plan.content.checkout.clone(),
+        node: root.node,
+        request: root.request,
+        identity,
+        started_at: admission.intent.started_at,
+    };
+    if admission.intent == expected {
+        Ok(())
+    } else {
+        Err(setup_reconciliation_conflict(
+            "setup_receipt",
+            &setup_admission_path(plan.content.campaign.manifest_path()),
+            "stored receipt intent is not the deterministic intent of the reviewed plan",
+        ))
+    }
+}
+
+fn reject_unreceipted_setup_state(
+    plan: &Prototype1SetupPlan,
+    backend: &GitWorktreeBackend,
+) -> Result<(), PrepareError> {
+    let prototype_root = setup_admission_path(plan.content.campaign.manifest_path())
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
+    let mut occupied = [
+        plan.content.campaign.manifest_path().to_path_buf(),
+        plan.content.campaign.slice_dataset_path.clone(),
+        plan.content.campaign.closure_state_path.clone(),
+        prototype1_scheduler_path(plan.content.campaign.manifest_path()),
+    ]
+    .into_iter()
+    .find(|candidate| candidate.exists());
+    if occupied.is_none() && prototype_root.exists() {
+        let mut entries =
+            fs::read_dir(&prototype_root).map_err(|source| PrepareError::ReadManifest {
+                path: prototype_root.clone(),
+                source,
+            })?;
+        occupied = entries
+            .next()
+            .transpose()
+            .map_err(|source| PrepareError::ReadManifest {
+                path: prototype_root.clone(),
+                source,
+            })?
+            .map(|entry| entry.path());
+    }
+    if let Some(occupied) = occupied {
+        return Err(setup_reconciliation_conflict(
+            "setup_receipt",
+            &occupied,
+            "setup artifact exists without a durable admission receipt; automatic adoption is unsafe",
+        ));
+    }
+    let branch_exists = backend
+        .parent_branch_exists(&plan.content.repo_root, &plan.content.artifact_branch)
+        .map_err(|source| setup_backend_error("prototype1_setup_receipt", source))?;
+    if branch_exists {
+        return Err(setup_reconciliation_conflict(
+            "setup_receipt",
+            &plan.content.repo_root,
+            &format!(
+                "bootstrap branch '{}' exists without a durable admission receipt",
+                plan.content.artifact_branch
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn reconcile_setup_checkout(
+    backend: &GitWorktreeBackend,
+    admission: &Prototype1SetupAdmission,
+) -> Result<GitCommit, PrepareError> {
+    let intent = &admission.intent;
+    let mut branch = backend
+        .active_branch(&intent.repo_root)
+        .map_err(|source| setup_backend_error("prototype1_setup_parent_branch", source))?;
+    let mut head = backend
+        .head_commit(&intent.repo_root)
+        .map_err(|source| setup_backend_error("prototype1_setup_parent_branch", source))?;
+    let dirty = backend
+        .dirty_paths(&intent.repo_root)
+        .map_err(|source| setup_backend_error("prototype1_setup_parent_branch", source))?;
+
+    if branch == intent.checkout.branch && head == intent.checkout.head {
+        if !dirty.is_empty() {
+            return Err(setup_reconciliation_conflict(
+                "parent_branch",
+                &intent.repo_root,
+                &format!("source checkout became dirty: {dirty:?}"),
+            ));
+        }
+        head = backend
+            .checkout_fresh_parent_branch(&intent.repo_root, &intent.artifact_branch)
+            .map_err(|source| setup_backend_error("prototype1_setup_parent_branch", source))?;
+        branch = intent.artifact_branch.clone();
+    }
+    if branch != intent.artifact_branch {
+        return Err(setup_reconciliation_conflict(
+            "parent_branch",
+            &intent.repo_root,
+            &format!(
+                "active branch '{branch}' is neither receipt source '{}' nor bootstrap '{}'",
+                intent.checkout.branch, intent.artifact_branch
+            ),
+        ));
+    }
+    if head != intent.checkout.head {
+        backend
+            .validate_parent_checkout(&intent.repo_root, &intent.identity)
+            .map_err(|source| setup_backend_error("prototype1_setup_parent_checkout", source))?;
+        let parent = backend
+            .head_parent_commit(&intent.repo_root)
+            .map_err(|source| setup_backend_error("prototype1_setup_parent_checkout", source))?;
+        if parent != intent.checkout.head {
+            return Err(setup_reconciliation_conflict(
+                "parent_checkout",
+                &intent.repo_root,
+                &format!(
+                    "bootstrap parent '{}' differs from previewed base '{}'",
+                    parent.0, intent.checkout.head.0
+                ),
+            ));
+        }
+        return Ok(head);
+    }
+
+    let identity_rel = parent_identity_relpath();
+    let dirty = backend
+        .dirty_paths(&intent.repo_root)
+        .map_err(|source| setup_backend_error("prototype1_setup_parent_identity", source))?;
+    if dirty.iter().any(|candidate| candidate != &identity_rel) {
+        return Err(setup_reconciliation_conflict(
+            "parent_identity",
+            &intent.repo_root,
+            &format!("bootstrap checkout has unrelated dirty paths: {dirty:?}"),
+        ));
+    }
+    let identity_path = intent.repo_root.join(&identity_rel);
+    match load_parent_identity_optional(&intent.repo_root)? {
+        Some(observed) if observed == intent.identity => {}
+        Some(_) if !dirty.contains(&identity_rel) => {
+            write_json_atomic(&identity_path, &intent.identity)?;
+        }
+        Some(_) => {
+            return Err(setup_reconciliation_conflict(
+                "parent_identity",
+                &identity_path,
+                "stored identity differs from the setup admission receipt",
+            ));
+        }
+        None => write_json_atomic(&identity_path, &intent.identity)?,
+    }
+    let message = parent_identity_commit_message(&intent.identity);
+    head = backend
+        .persist_active_checkout_files(&intent.repo_root, &[identity_rel], &message)
+        .map_err(|source| setup_backend_error("prototype1_setup_parent_identity_commit", source))?;
+    backend
+        .validate_parent_checkout(&intent.repo_root, &intent.identity)
+        .map_err(|source| setup_backend_error("prototype1_setup_parent_checkout", source))?;
+    Ok(head)
+}
+
+fn ensure_setup_owner_db(
+    campaign: &Prototype1LoopCampaign,
+    admitted: &profile::AdmittedRunProfile,
+    closure_path: &Path,
+) -> Result<(), PrepareError> {
+    let storage = admitted.profile.storage.eval.backend;
+    if !storage.mirrors_owner_db() {
+        return Ok(());
+    }
+    let manifest = load_campaign_manifest(&campaign.campaign_id)?;
+    let closure = load_closure_state(&campaign.campaign_id)?;
+    let db_path = eval_store::prototype1_eval_store_db_path(&campaign.manifest_path);
+    let result = if db_path.exists() {
+        return verify_setup_owner_db(campaign, admitted, closure_path);
+    } else {
         eval_store::write_r0_context_to_owner_db(
-            &eval_store::prototype1_eval_store_db_path(&campaign.manifest_path),
+            &db_path,
             &campaign.manifest_path,
             &manifest,
             storage,
-            Some(&admitted_profile),
-            &closure_state_path,
-            &closure_state,
+            Some(admitted),
+            closure_path,
+            &closure,
         )
+    };
+    result.map_err(|err| {
+        prototype1_state_transition_error("prototype1_setup_r0_context", err.to_string())
+    })
+}
+
+fn verify_setup_owner_db(
+    campaign: &Prototype1LoopCampaign,
+    admitted: &profile::AdmittedRunProfile,
+    closure_path: &Path,
+) -> Result<(), PrepareError> {
+    let storage = admitted.profile.storage.eval.backend;
+    if !storage.mirrors_owner_db() {
+        return Ok(());
+    }
+    let manifest = load_campaign_manifest(&campaign.campaign_id)?;
+    let closure = load_closure_state(&campaign.campaign_id)?;
+    let db_path = eval_store::prototype1_eval_store_db_path(&campaign.manifest_path);
+    if !db_path.exists() {
+        return Err(setup_reconciliation_conflict(
+            "owner_db",
+            &db_path,
+            "completed setup is missing its owner database",
+        ));
+    }
+    eval_store::verify_r0_context_in_owner_db(&db_path, &manifest, admitted, closure_path, &closure)
         .map_err(|err| {
             prototype1_state_transition_error("prototype1_setup_r0_context", err.to_string())
+        })
+}
+
+fn verify_completed_setup(
+    plan: &Prototype1SetupPlan,
+    admission: &Prototype1SetupAdmission,
+    backend: &GitWorktreeBackend,
+) -> Result<profile::AdmittedRunProfile, PrepareError> {
+    verify_setup_hash(
+        plan.content.campaign.manifest_path(),
+        &admission.intent.hashes.manifest,
+    )?;
+    verify_setup_hash(
+        &plan.content.campaign.slice_dataset_path,
+        &admission.intent.hashes.slice,
+    )?;
+    verify_setup_hash(
+        plan.content.profile.profile_path(),
+        &admission.intent.hashes.profile,
+    )?;
+    let admitted = profile::load_admitted_run_profile(plan.content.campaign.manifest_path())?
+        .ok_or_else(|| {
+            setup_reconciliation_conflict(
+                "run_profile",
+                plan.content.profile.profile_path(),
+                "completed setup is missing its admitted run profile",
+            )
         })?;
+    let expected_at = recorded_at_rfc3339(admission.intent.started_at)?;
+    if admitted.commitment.sha256 != admission.intent.hashes.profile.0
+        || admitted.commitment.admitted_at != expected_at
+        || admitted.profile != *plan.content.profile.profile()
+    {
+        return Err(setup_reconciliation_conflict(
+            "run_profile",
+            plan.content.profile.profile_path(),
+            "completed setup profile differs from its durable receipt",
+        ));
     }
-    let node = register_root_parent_node(
+    let campaign = load_existing_prototype1_campaign(&admission.intent.campaign_id)?;
+    validate_setup_closure(&campaign.resolved, &campaign.closure_state_path)?;
+    verify_setup_owner_db(&campaign, &admitted, &campaign.closure_state_path)?;
+    let root = RootParentSetup {
+        node: admission.intent.node.clone(),
+        request: admission.intent.request.clone(),
+    };
+    verify_root_parent_node(
         &campaign.campaign_id,
         &campaign.manifest_path,
-        &primary_instance_id,
-        &artifact_branch,
-        &repo_root,
-        search_policy.clone(),
+        &root,
+        &plan.content.search_policy,
     )?;
+    verify_completed_checkout(backend, admission)?;
+    Ok(admitted)
+}
 
-    let backend = GitWorktreeBackend;
-    let _ = backend
-        .checkout_fresh_parent_branch(&repo_root, &artifact_branch)
-        .map_err(|source| PrepareError::DatabaseSetup {
-            phase: "prototype1_setup_parent_branch",
-            detail: source.to_string(),
+fn verify_completed_checkout(
+    backend: &GitWorktreeBackend,
+    admission: &Prototype1SetupAdmission,
+) -> Result<(), PrepareError> {
+    let expected_head = admission.completed_head().ok_or_else(|| {
+        setup_reconciliation_conflict(
+            "parent_checkout",
+            &admission.intent.repo_root,
+            "setup receipt is not complete",
+        )
+    })?;
+    let observed_head = backend
+        .head_commit(&admission.intent.repo_root)
+        .map_err(|source| setup_backend_error("prototype1_setup_parent_checkout", source))?;
+    if &observed_head != expected_head {
+        return Err(setup_reconciliation_conflict(
+            "parent_checkout",
+            &admission.intent.repo_root,
+            &format!(
+                "active HEAD '{}' differs from completed setup witness '{}'",
+                observed_head.0, expected_head.0
+            ),
+        ));
+    }
+    let observed_parent = backend
+        .head_parent_commit(&admission.intent.repo_root)
+        .map_err(|source| setup_backend_error("prototype1_setup_parent_checkout", source))?;
+    if observed_parent != admission.intent.checkout.head {
+        return Err(setup_reconciliation_conflict(
+            "parent_checkout",
+            &admission.intent.repo_root,
+            &format!(
+                "bootstrap parent '{}' differs from previewed base '{}'",
+                observed_parent.0, admission.intent.checkout.head.0
+            ),
+        ));
+    }
+    let observed_identity = load_parent_identity_optional(&admission.intent.repo_root)?
+        .ok_or_else(|| {
+            setup_reconciliation_conflict(
+                "parent_identity",
+                &admission.intent.repo_root.join(parent_identity_relpath()),
+                "completed setup identity is missing",
+            )
         })?;
-    let identity = ParentIdentity::from_node(
-        campaign.campaign_id.clone(),
-        &node,
-        None,
-        Some(artifact_branch.clone()),
-    );
-    let parent_identity_path = write_parent_identity(&repo_root, &identity)?;
-    let message = parent_identity_commit_message(&identity);
-    let _ = backend
-        .persist_active_checkout_files(&repo_root, &[parent_identity_relpath()], &message)
-        .map_err(|source| PrepareError::DatabaseSetup {
-            phase: "prototype1_setup_parent_identity_commit",
-            detail: source.to_string(),
-        })?;
+    if observed_identity != admission.intent.identity {
+        return Err(setup_reconciliation_conflict(
+            "parent_identity",
+            &admission.intent.repo_root.join(parent_identity_relpath()),
+            "completed setup identity differs from its receipt",
+        ));
+    }
     backend
-        .validate_parent_checkout(&repo_root, &identity)
-        .map_err(|source| PrepareError::DatabaseSetup {
-            phase: "prototype1_setup_parent_checkout",
-            detail: source.to_string(),
-        })?;
+        .validate_parent_checkout(&admission.intent.repo_root, &admission.intent.identity)
+        .map_err(|source| setup_backend_error("prototype1_setup_parent_checkout", source))
+}
 
+fn verify_setup_hash(path: &Path, expected: &ContentHash) -> Result<(), PrepareError> {
+    let bytes = fs::read(path).map_err(|source| PrepareError::ReadManifest {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let actual = ContentHash(format!("{:x}", Sha256::digest(bytes)));
+    if &actual == expected {
+        Ok(())
+    } else {
+        Err(setup_reconciliation_conflict(
+            "setup_artifact",
+            path,
+            &format!("content hash '{actual}' differs from receipt hash '{expected}'"),
+        ))
+    }
+}
+
+fn setup_report_from_admission(
+    plan: &Prototype1SetupPlan,
+    admission: &Prototype1SetupAdmission,
+    commitment: profile::RunProfileCommitment,
+) -> Result<Prototype1SetupReport, PrepareError> {
+    let content = &plan.content;
+    let identity = &admission.intent.identity;
     Ok(Prototype1SetupReport {
-        campaign_id: campaign.campaign_id,
-        campaign_manifest: campaign.manifest_path.clone(),
-        closure_state_path,
-        slice_dataset_path: campaign.slice_dataset_path,
-        scheduler_path: prototype1_scheduler_path(&campaign.manifest_path),
-        batch_id: prepared_batch.batch_id,
-        batch_manifest,
-        primary_instance_id,
-        eval_instances: prepared_batch.instances,
-        repo_root,
-        artifact_branch,
-        parent_identity_path,
+        campaign_id: admission.intent.campaign_id.clone(),
+        admission_path: setup_admission_path(&admission.intent.manifest_path),
+        admission_state: admission.state.clone(),
+        plan_sha256: plan.plan_sha256.clone(),
+        campaign_manifest: admission.intent.manifest_path.clone(),
+        closure_state_path: content.campaign.closure_state_path.clone(),
+        slice_dataset_path: content.campaign.slice_dataset_path.clone(),
+        scheduler_path: prototype1_scheduler_path(&admission.intent.manifest_path),
+        batch_id: content.batch.batch_id.clone(),
+        batch_manifest: content.batch_manifest.clone(),
+        primary_instance_id: content.primary_instance_id.clone(),
+        eval_instances: content.batch.instances.clone(),
+        repo_root: admission.intent.repo_root.clone(),
+        artifact_branch: admission.intent.artifact_branch.clone(),
+        parent_identity_path: admission.intent.repo_root.join(parent_identity_relpath()),
         parent_id: identity.parent_id().to_string(),
         node_id: identity.node_id().to_string(),
         generation: identity.generation(),
         branch_id: identity.branch_id().to_string(),
-        search_policy,
-        run_profile: admitted_profile.commitment,
+        search_policy: content.search_policy.clone(),
+        run_profile: commitment,
     })
+}
+
+fn recorded_at_rfc3339(recorded: RecordedAt) -> Result<String, PrepareError> {
+    chrono::DateTime::<Utc>::from_timestamp_millis(recorded.0)
+        .map(|value| value.to_rfc3339())
+        .ok_or_else(|| PrepareError::InvalidBatchSelection {
+            detail: format!("setup receipt timestamp '{}' is out of range", recorded.0),
+        })
+}
+
+fn setup_backend_error(phase: &'static str, source: impl std::fmt::Display) -> PrepareError {
+    PrepareError::DatabaseSetup {
+        phase,
+        detail: source.to_string(),
+    }
+}
+
+fn setup_state_name(state: &SetupAdmissionState) -> &'static str {
+    match state {
+        SetupAdmissionState::Admitting => "admitting",
+        SetupAdmissionState::Complete { .. } => "complete",
+    }
 }
 
 pub(crate) fn print_prototype1_setup_report(report: &Prototype1SetupReport) {
     println!("prototype1 setup");
     println!("{}", "-".repeat(40));
     println!("campaign_id: {}", report.campaign_id);
+    println!("setup_admission: {}", report.admission_path.display());
+    println!("setup_state: {}", setup_state_name(&report.admission_state));
+    println!("plan_sha256: {}", report.plan_sha256);
     println!("campaign_manifest: {}", report.campaign_manifest.display());
     println!("closure_state: {}", report.closure_state_path.display());
     println!("slice_dataset: {}", report.slice_dataset_path.display());
@@ -731,6 +1284,8 @@ pub(crate) fn print_prototype1_setup_plan(plan: &Prototype1SetupPlan) {
     println!("primary_instance_id: {}", content.primary_instance_id);
     println!("eval_instances: {}", content.batch.instances.join(", "));
     println!("repo_root: {}", content.repo_root.display());
+    println!("checkout_branch: {}", content.checkout.branch);
+    println!("checkout_head: {}", content.checkout.head.0);
     println!("artifact_branch: {}", content.artifact_branch);
     println!(
         "run_profile_source: {}",
@@ -913,6 +1468,41 @@ pub(crate) fn ensure_prototype1_baseline_closure_state(
         return Ok(path);
     }
     recompute_closure_state(config.closure_recompute_request()).map(|(path, _)| path)
+}
+
+fn ensure_setup_closure_state(config: &ResolvedCampaignConfig) -> Result<PathBuf, PrepareError> {
+    let path = ensure_prototype1_baseline_closure_state(config)?;
+    validate_setup_closure(config, &path)?;
+    Ok(path)
+}
+
+fn validate_setup_closure(
+    config: &ResolvedCampaignConfig,
+    path: &Path,
+) -> Result<(), PrepareError> {
+    let observed = load_closure_state(&config.campaign_id)?;
+    let request = config.closure_recompute_request();
+    let expected_sources =
+        resolve_registry_dataset_sources(&request.dataset_keys, &request.dataset_files)?;
+    let exact = observed.campaign_id == config.campaign_id
+        && observed.config.benchmark_family == config.benchmark_family
+        && observed.config.model_id.as_deref() == Some(config.model_id.as_str())
+        && observed.config.provider_slug == config.provider_slug
+        && observed.config.route_source == Some(config.route_source)
+        && observed.config.dataset_sources == expected_sources
+        && observed.config.required_procedures == config.required_procedures
+        && observed.config.instances_root == config.instances_root
+        && observed.config.batches_root == config.batches_root
+        && observed.config.framework == config.framework;
+    if exact {
+        Ok(())
+    } else {
+        Err(setup_reconciliation_conflict(
+            "closure_state",
+            &path,
+            "stored closure configuration differs from the admitted campaign",
+        ))
+    }
 }
 
 pub(crate) async fn establish_parent_baseline(
@@ -9744,15 +10334,6 @@ fn plan_prototype1_loop_campaign(
         ))
     });
     let manifest_path = campaign_manifest_path(&campaign_id)?;
-    if manifest_path.exists() {
-        return Err(PrepareError::InvalidBatchSelection {
-            detail: format!(
-                "campaign '{}' already has a manifest at '{}'; choose a new --campaign or run the existing campaign",
-                campaign_id,
-                manifest_path.display()
-            ),
-        });
-    }
     let campaign_dir = manifest_path
         .parent()
         .unwrap_or_else(|| Path::new("."))
@@ -9858,6 +10439,86 @@ fn admit_prototype1_loop_campaign(
     })
 }
 
+fn ensure_prototype1_loop_campaign(
+    plan: Prototype1CampaignPlan,
+) -> Result<Prototype1LoopCampaign, PrepareError> {
+    let campaign_id = plan.campaign_id().clone();
+    let manifest_path = plan.manifest_path().to_path_buf();
+    let Prototype1CampaignPlan {
+        manifest_plan,
+        closure_state_path,
+        slice_dataset_path,
+        resolved,
+        slice_sha256,
+        slice_dataset,
+    } = plan;
+    let actual_sha = format!("{:x}", Sha256::digest(slice_dataset.as_bytes()));
+    if actual_sha != slice_sha256 {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "prototype1 slice plan integrity mismatch: recorded '{}', resolved '{}'",
+                slice_sha256, actual_sha
+            ),
+        });
+    }
+
+    if slice_dataset_path.exists() {
+        let observed = fs::read_to_string(&slice_dataset_path).map_err(|source| {
+            PrepareError::ReadManifest {
+                path: slice_dataset_path.clone(),
+                source,
+            }
+        })?;
+        if observed != slice_dataset {
+            return Err(setup_reconciliation_conflict(
+                "campaign_slice",
+                &slice_dataset_path,
+                "stored slice differs from the admitted plan",
+            ));
+        }
+    }
+    if manifest_path.exists() {
+        let observed = fs::read_to_string(&manifest_path).map_err(|source| {
+            PrepareError::ReadCampaignManifest {
+                path: manifest_path.clone(),
+                source,
+            }
+        })?;
+        if observed != manifest_plan.normalized_json() {
+            return Err(setup_reconciliation_conflict(
+                "campaign_manifest",
+                &manifest_path,
+                "stored manifest differs from the admitted plan",
+            ));
+        }
+    }
+
+    if !slice_dataset_path.exists() {
+        write_prototype1_slice_text(&slice_dataset_path, &slice_dataset)?;
+    }
+    if !manifest_path.exists() {
+        admit_campaign_manifest(manifest_plan)?;
+    }
+
+    Ok(Prototype1LoopCampaign {
+        campaign_id,
+        manifest_path,
+        closure_state_path,
+        slice_dataset_path,
+        resolved,
+    })
+}
+
+fn setup_reconciliation_conflict(phase: &'static str, path: &Path, detail: &str) -> PrepareError {
+    PrepareError::DatabaseSetup {
+        phase,
+        detail: format!(
+            "setup reconciliation conflict at '{}': {detail}",
+            path.display()
+        ),
+    }
+}
+
 fn prepare_prototype1_loop_campaign(
     command: &Prototype1LoopCommand,
     prepared_batch: &PreparedMsbBatch,
@@ -9923,9 +10584,11 @@ fn write_prototype1_slice_text(output_path: &Path, text: &str) -> Result<(), Pre
             source,
         })?;
     }
-    fs::write(output_path, text).map_err(|source| PrepareError::WriteManifest {
-        path: output_path.to_path_buf(),
-        source,
+    crate::durable_io::write_atomic(output_path, text.as_bytes()).map_err(|source| {
+        PrepareError::WriteManifest {
+            path: output_path.to_path_buf(),
+            source,
+        }
     })
 }
 

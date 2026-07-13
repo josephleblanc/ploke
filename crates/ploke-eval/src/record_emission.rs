@@ -58,9 +58,11 @@ where
             })?;
         }
         let bytes = serde_json::to_vec_pretty(record).map_err(PrepareError::Serialize)?;
-        fs::write(self.path, &bytes).map_err(|source| PrepareError::WriteManifest {
-            path: self.path.to_path_buf(),
-            source,
+        crate::durable_io::write_atomic(self.path, &bytes).map_err(|source| {
+            PrepareError::WriteManifest {
+                path: self.path.to_path_buf(),
+                source,
+            }
         })?;
         mirror_record::<R>(self.path, &bytes)?;
         Ok(EmittedRecord {

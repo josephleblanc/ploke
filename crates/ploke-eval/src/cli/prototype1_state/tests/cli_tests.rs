@@ -1089,6 +1089,197 @@ name = "setup-preview"
 }
 
 #[test]
+fn prototype1_setup_recovers_and_completed_retry_is_read_only() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let eval_home = tmp.path().join("eval-home");
+    let repo_root = tmp.path().join("repo");
+    let _guard =
+        crate::test_support::env_guard_os(vec![("PLOKE_EVAL_HOME", eval_home.as_os_str().into())]);
+    write_direct_google_registry(&eval_home);
+
+    init_indexed_repo(&repo_root);
+    let old_identity = parent_identity_for("old-parent", 0);
+    let identity_path = repo_root.join(parent_identity_relpath());
+    fs::create_dir_all(identity_path.parent().expect("identity parent"))
+        .expect("create identity parent");
+    fs::write(
+        &identity_path,
+        serde_json::to_vec_pretty(&old_identity).expect("serialize old identity"),
+    )
+    .expect("write old identity");
+    index_repo(&repo_root);
+    commit_indexed_repo(&repo_root, "seed old identity");
+
+    let dataset_file = eval_home.join("dataset.jsonl");
+    fs::write(
+        &dataset_file,
+        r#"{"instance_id":"BurntSushi__ripgrep-2209","org":"BurntSushi","repo":"ripgrep","number":2209,"title":"Fix multiline replacement","body":"body one","base":{"sha":"abc123"},"fix_patch":"diff --git a/crates/printer/src/util.rs b/crates/printer/src/util.rs\n--- a/crates/printer/src/util.rs\n+++ b/crates/printer/src/util.rs\n@@ -1 +1 @@\n-old\n+new\n"}"#,
+    )
+    .expect("write dataset");
+    let batch = crate::spec::PreparedMsbBatch {
+        batch_id: "setup-recovery-batch".to_string(),
+        dataset_file,
+        dataset_url: None,
+        repo_cache: eval_home.join("repo-cache"),
+        instances_root: eval_home.join("instances"),
+        output_dir: eval_home.join("batches/setup-recovery-batch"),
+        budget: crate::spec::EvalBudget::default(),
+        instances: vec!["BurntSushi__ripgrep-2209".to_string()],
+        campaign: None,
+    };
+    let batch_manifest = eval_home.join("prepared-batch.json");
+    fs::write(
+        &batch_manifest,
+        serde_json::to_vec_pretty(&batch).expect("serialize batch"),
+    )
+    .expect("write batch");
+    let profile_path = eval_home.join("run-profile.toml");
+    fs::write(
+        &profile_path,
+        "schema_version = \"prototype1-run-profile.v1\"\nname = \"setup-recovery\"\n\n[storage.eval]\nbackend = \"dual-strict\"\n",
+    )
+    .expect("write profile");
+    let mut command = setup_preview_command(batch_manifest, profile_path);
+    command.campaign = Some(CampaignId::from("setup-recovery-campaign"));
+    let plan =
+        preview_prototype1_parent_setup_at(&command, repo_root.clone()).expect("preview setup");
+    let expected_sha = plan.plan_sha256.clone();
+
+    let admission_path = setup_admission_path(plan.content.campaign.manifest_path());
+    let receipt_root = admission_path.parent().expect("receipt root");
+    fs::create_dir_all(receipt_root).expect("create receipt root");
+    let meaningful = receipt_root.join("unexpected.json");
+    fs::write(&meaningful, b"{}\n").expect("write meaningful unreceipted artifact");
+    let lock_path = GitWorktreeBackend
+        .setup_lock_path(&repo_root)
+        .expect("setup lock path");
+    {
+        let _lock = acquire_setup_lock(&lock_path).expect("setup lock");
+        let error = load_or_capture_setup_admission(&plan, &GitWorktreeBackend, &admission_path)
+            .expect_err("meaningful unreceipted state must fail closed");
+        assert!(error.to_string().contains("automatic adoption is unsafe"));
+    }
+    assert!(meaningful.exists(), "meaningful state must not be removed");
+    fs::remove_file(&meaningful).expect("remove meaningful test artifact");
+
+    let staging = receipt_root.join(".setup-admission.json.tmp-99999-1");
+    fs::write(&staging, b"partial receipt").expect("write receipt staging remnant");
+    let admission = {
+        let _lock = acquire_setup_lock(&lock_path).expect("setup lock after simulated crash");
+        load_or_capture_setup_admission(&plan, &GitWorktreeBackend, &admission_path)
+            .expect("recover crash before receipt publication")
+    };
+    assert!(!staging.exists(), "stale receipt staging must be removed");
+    let campaign = ensure_prototype1_loop_campaign(plan.content.campaign.clone())
+        .expect("persist campaign partial");
+    let admitted_at = recorded_at_rfc3339(admission.intent.started_at).expect("receipt timestamp");
+    let admitted = profile::ensure_run_profile_plan(plan.content.profile.clone(), &admitted_at)
+        .expect("persist profile partial");
+    let closure = ensure_setup_closure_state(&campaign.resolved).expect("persist closure partial");
+    ensure_setup_owner_db(&campaign, &admitted, &closure).expect("persist owner DB partial");
+    let root = RootParentSetup {
+        node: admission.intent.node.clone(),
+        request: admission.intent.request.clone(),
+    };
+    ensure_root_parent_node(
+        &campaign.campaign_id,
+        &campaign.manifest_path,
+        &root,
+        plan.content.search_policy.clone(),
+    )
+    .expect("persist root partial");
+    assert!(matches!(admission.state, SetupAdmissionState::Admitting));
+    assert_eq!(
+        GitWorktreeBackend
+            .active_branch(&repo_root)
+            .expect("branch before recovery"),
+        plan.content.checkout.branch
+    );
+
+    GitWorktreeBackend
+        .checkout_fresh_parent_branch(&repo_root, &plan.content.artifact_branch)
+        .expect("simulate crash after branch switch");
+    let recovered_plan = resolve_expected_setup_at(&command, &expected_sha, repo_root.clone())
+        .expect("public retry must recover the receipt-bound plan");
+    assert_eq!(recovered_plan.plan_sha256, expected_sha);
+    assert_eq!(recovered_plan.content.checkout, plan.content.checkout);
+
+    let report =
+        prepare_prototype1_parent_setup_at(&command, Some(&expected_sha), repo_root.clone())
+            .expect("recover partial setup through public setup service");
+    assert!(matches!(
+        report.admission_state,
+        SetupAdmissionState::Complete { .. }
+    ));
+    let admitted_identity = load_parent_identity_optional(&repo_root)
+        .expect("load admitted identity")
+        .expect("stored admitted identity");
+    assert_ne!(admitted_identity, old_identity);
+    assert_eq!(admitted_identity.node_id(), report.node_id);
+
+    let before = snapshot_setup_tree(&eval_home);
+    let head = GitWorktreeBackend
+        .head_commit(&repo_root)
+        .expect("bootstrap head");
+    let retried =
+        prepare_prototype1_parent_setup_at(&command, Some(&expected_sha), repo_root.clone())
+            .expect("retry completed setup");
+
+    assert!(matches!(
+        retried.admission_state,
+        SetupAdmissionState::Complete { .. }
+    ));
+    assert_eq!(retried.node_id, report.node_id);
+    assert_eq!(snapshot_setup_tree(&eval_home), before);
+    assert_eq!(
+        GitWorktreeBackend
+            .head_commit(&repo_root)
+            .expect("unchanged bootstrap head"),
+        head
+    );
+
+    let status = std::process::Command::new("git")
+        .current_dir(&repo_root)
+        .args(["switch", "-c", "setup-drift"])
+        .status()
+        .expect("create drift branch");
+    assert!(status.success(), "create drift branch failed");
+    let error =
+        prepare_prototype1_parent_setup_at(&command, Some(&expected_sha), repo_root.clone())
+            .expect_err("completed setup must reject active branch drift");
+    assert!(error.to_string().contains("active branch"));
+    let status = std::process::Command::new("git")
+        .current_dir(&repo_root)
+        .args(["switch", &report.artifact_branch])
+        .status()
+        .expect("restore setup branch");
+    assert!(status.success(), "restore setup branch failed");
+
+    let scheduler_path = prototype1_scheduler_path(plan.content.campaign.manifest_path());
+    let scheduler_bytes = fs::read(&scheduler_path).expect("read scheduler");
+    fs::remove_file(&scheduler_path).expect("remove scheduler");
+    let error =
+        prepare_prototype1_parent_setup_at(&command, Some(&expected_sha), repo_root.clone())
+            .expect_err("completed setup must reject missing scheduler");
+    assert!(error.to_string().contains("scheduler.json"));
+    assert!(
+        !scheduler_path.exists(),
+        "completed retry must not repair state"
+    );
+    crate::durable_io::write_atomic(&scheduler_path, &scheduler_bytes).expect("restore scheduler");
+
+    let mut drifted =
+        crate::cli::prototype1_state::setup_admission::load_setup_admission(&admission_path)
+            .expect("load completed receipt")
+            .expect("completed receipt exists");
+    drifted.intent.batch_manifest = eval_home.join("other-batch.json");
+    write_json_atomic(&admission_path, &drifted).expect("write drifted receipt");
+    let error = prepare_prototype1_parent_setup_at(&command, Some(&expected_sha), repo_root)
+        .expect_err("receipt fields must remain bound to the reviewed plan");
+    assert!(error.to_string().contains("deterministic intent"));
+}
+
+#[test]
 fn prototype1_setup_preview_rejects_mutating_or_ambiguous_inputs() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let _guard =

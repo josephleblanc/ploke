@@ -437,26 +437,32 @@ pub fn prototype1_node_id(branch_id: &str, generation: u32) -> String {
     format!("node-{}", &digest[..16])
 }
 
-pub fn register_root_parent_node(
+/// Exact generation-zero scheduler artifacts minted before setup effects begin.
+///
+/// Setup admission persists this value in its durable receipt so retries reuse
+/// the same timestamps and identity-bearing records instead of regenerating a
+/// superficially equivalent root.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct RootParentSetup {
+    pub(crate) node: Prototype1NodeRecord,
+    pub(crate) request: Prototype1RunnerRequest,
+}
+
+pub(crate) fn plan_root_parent_node(
     campaign_id: &CampaignId,
     campaign_manifest_path: &Path,
     instance_id: &str,
     artifact_branch: &str,
     repo_root: &Path,
-    policy: Prototype1SearchPolicy,
-) -> Result<Prototype1NodeRecord, PrepareError> {
-    let mut scheduler = load_or_default_scheduler_state(campaign_id, campaign_manifest_path)?;
-    scheduler.policy = policy;
-
+    recorded_at: &str,
+) -> RootParentSetup {
     let generation = 0;
     let node_id = prototype1_node_id(artifact_branch, generation);
     let node_dir = prototype1_node_dir(campaign_manifest_path, &node_id);
     let binary_path = node_dir.join("bin/ploke-eval");
     let runner_request_path = prototype1_runner_request_path(campaign_manifest_path, &node_id);
     let runner_result_path = prototype1_runner_result_path(campaign_manifest_path, &node_id);
-    let now = Utc::now().to_rfc3339();
-
-    let record = Prototype1NodeRecord {
+    let node = Prototype1NodeRecord {
         schema_version: PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION.to_string(),
         node_id: node_id.clone(),
         parent_node_id: None,
@@ -471,34 +477,28 @@ pub fn register_root_parent_node(
         branch_id: artifact_branch.to_string(),
         candidate_id: "root-parent".to_string(),
         target_relpath: PathBuf::from(PARENT_IDENTITY_RELPATH_FOR_SCHEDULER),
-        node_dir: node_dir.clone(),
+        node_dir,
         workspace_root: repo_root.to_path_buf(),
         binary_path: binary_path.clone(),
-        runner_request_path: runner_request_path.clone(),
+        runner_request_path,
         runner_result_path,
         status: Prototype1NodeStatus::Planned,
-        created_at: scheduler
-            .nodes
-            .iter()
-            .find(|node| node.node_id == node_id)
-            .map(|node| node.created_at.clone())
-            .unwrap_or_else(|| now.clone()),
-        updated_at: now.clone(),
+        created_at: recorded_at.to_string(),
+        updated_at: recorded_at.to_string(),
     };
-
     let request = Prototype1RunnerRequest {
         schema_version: PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION.to_string(),
         campaign_id: campaign_id.clone(),
-        node_id: node_id.clone(),
+        node_id,
         generation,
         instance_id: instance_id.to_string(),
-        source_state_id: record.source_state_id.clone(),
+        source_state_id: node.source_state_id.clone(),
         operation_target: None,
         base_artifact_id: None,
         patch_id: None,
         derived_artifact_id: None,
         branch_id: artifact_branch.to_string(),
-        target_relpath: record.target_relpath.clone(),
+        target_relpath: node.target_relpath.clone(),
         workspace_root: repo_root.to_path_buf(),
         binary_path,
         stop_on_error: false,
@@ -509,21 +509,54 @@ pub fn register_root_parent_node(
             repo_root.display().to_string(),
         ],
     };
+    RootParentSetup { node, request }
+}
 
-    fs::create_dir_all(node_dir.join("bin")).map_err(|source| PrepareError::WriteManifest {
-        path: node_dir.join("bin"),
-        source,
+pub fn register_root_parent_node(
+    campaign_id: &CampaignId,
+    campaign_manifest_path: &Path,
+    instance_id: &str,
+    artifact_branch: &str,
+    repo_root: &Path,
+    policy: Prototype1SearchPolicy,
+) -> Result<Prototype1NodeRecord, PrepareError> {
+    let mut scheduler = load_or_default_scheduler_state(campaign_id, campaign_manifest_path)?;
+    scheduler.policy = policy;
+
+    let now = Utc::now().to_rfc3339();
+    let mut setup = plan_root_parent_node(
+        campaign_id,
+        campaign_manifest_path,
+        instance_id,
+        artifact_branch,
+        repo_root,
+        &now,
+    );
+    if let Some(existing) = scheduler
+        .nodes
+        .iter()
+        .find(|node| node.node_id == setup.node.node_id)
+    {
+        setup.node.created_at.clone_from(&existing.created_at);
+    }
+    let node_id = setup.node.node_id.clone();
+
+    fs::create_dir_all(setup.node.node_dir.join("bin")).map_err(|source| {
+        PrepareError::WriteManifest {
+            path: setup.node.node_dir.join("bin"),
+            source,
+        }
     })?;
-    write_parent_node_projection(campaign_id, &record)?;
-    save_runner_request(&request, &runner_request_path)?;
+    write_parent_node_projection(campaign_id, &setup.node)?;
+    save_runner_request(&setup.request, &setup.node.runner_request_path)?;
 
     match scheduler
         .nodes
         .iter_mut()
         .find(|node| node.node_id == node_id)
     {
-        Some(existing) => *existing = record.clone(),
-        None => scheduler.nodes.push(record.clone()),
+        Some(existing) => *existing = setup.node.clone(),
+        None => scheduler.nodes.push(setup.node.clone()),
     }
     scheduler.frontier_node_ids.clear();
     scheduler.frontier_node_ids.push(node_id);
@@ -533,7 +566,164 @@ pub fn register_root_parent_node(
     scheduler.updated_at = now;
     save_scheduler_state(campaign_manifest_path, &scheduler)?;
 
-    Ok(record)
+    Ok(setup.node)
+}
+
+/// Reconcile the exact generation-zero scheduler artifacts from a setup
+/// admission receipt without resetting a scheduler that has already advanced.
+pub(crate) fn ensure_root_parent_node(
+    campaign_id: &CampaignId,
+    campaign_manifest_path: &Path,
+    setup: &RootParentSetup,
+    policy: Prototype1SearchPolicy,
+) -> Result<Prototype1NodeRecord, PrepareError> {
+    let node_path = prototype1_node_record_path(campaign_manifest_path, &setup.node.node_id);
+    let request_path = prototype1_runner_request_path(campaign_manifest_path, &setup.node.node_id);
+    let scheduler_path = prototype1_scheduler_path(campaign_manifest_path);
+
+    if node_path.exists() {
+        let observed = load_node_record(
+            campaign_manifest_path,
+            &setup.node.node_id,
+            OperatorProjectionRead::projection_module(),
+        )?;
+        if observed != setup.node {
+            return Err(root_setup_conflict(
+                "root_node",
+                &node_path,
+                "existing node does not match the setup admission receipt",
+            ));
+        }
+    }
+    if request_path.exists() {
+        let observed = load_runner_request(
+            campaign_manifest_path,
+            &setup.node.node_id,
+            OperatorProjectionRead::projection_module(),
+        )?;
+        if observed != setup.request {
+            return Err(root_setup_conflict(
+                "runner_request",
+                &request_path,
+                "existing request does not match the setup admission receipt",
+            ));
+        }
+    }
+    if scheduler_path.exists() {
+        let observed = load_scheduler_state(
+            campaign_manifest_path,
+            OperatorProjectionRead::projection_module(),
+        )?;
+        validate_initial_root_scheduler(&observed, campaign_id, setup, &policy, &scheduler_path)?;
+    }
+
+    if !node_path.exists() {
+        fs::create_dir_all(setup.node.node_dir.join("bin")).map_err(|source| {
+            PrepareError::WriteManifest {
+                path: setup.node.node_dir.join("bin"),
+                source,
+            }
+        })?;
+    }
+    // Re-emitting exact carriers while admission is incomplete also repairs a
+    // crash between the filesystem write and its owner-DB projection.
+    write_parent_node_projection(campaign_id, &setup.node)?;
+    save_runner_request(&setup.request, &request_path)?;
+    if !scheduler_path.exists() {
+        let scheduler = Prototype1SchedulerState {
+            schema_version: PROTOTYPE1_SCHEDULER_SCHEMA_VERSION.to_string(),
+            campaign_id: campaign_id.clone(),
+            updated_at: setup.node.updated_at.clone(),
+            policy,
+            frontier_node_ids: vec![setup.node.node_id.clone()],
+            completed_node_ids: Vec::new(),
+            failed_node_ids: Vec::new(),
+            last_continuation_decision: None,
+            nodes: vec![setup.node.clone()],
+        };
+        save_scheduler_state(campaign_manifest_path, &scheduler)?;
+    }
+
+    Ok(setup.node.clone())
+}
+
+/// Verify a completed setup's initial root artifacts without rewriting them.
+pub(crate) fn verify_root_parent_node(
+    campaign_id: &CampaignId,
+    campaign_manifest_path: &Path,
+    setup: &RootParentSetup,
+    policy: &Prototype1SearchPolicy,
+) -> Result<(), PrepareError> {
+    let node_path = prototype1_node_record_path(campaign_manifest_path, &setup.node.node_id);
+    let observed_node = load_node_record(
+        campaign_manifest_path,
+        &setup.node.node_id,
+        OperatorProjectionRead::projection_module(),
+    )?;
+    if observed_node != setup.node {
+        return Err(root_setup_conflict(
+            "root_node",
+            &node_path,
+            "stored node does not match the completed setup receipt",
+        ));
+    }
+
+    let request_path = prototype1_runner_request_path(campaign_manifest_path, &setup.node.node_id);
+    let observed_request = load_runner_request(
+        campaign_manifest_path,
+        &setup.node.node_id,
+        OperatorProjectionRead::projection_module(),
+    )?;
+    if observed_request != setup.request {
+        return Err(root_setup_conflict(
+            "runner_request",
+            &request_path,
+            "stored request does not match the completed setup receipt",
+        ));
+    }
+
+    let scheduler_path = prototype1_scheduler_path(campaign_manifest_path);
+    let scheduler = load_scheduler_state(
+        campaign_manifest_path,
+        OperatorProjectionRead::projection_module(),
+    )?;
+    validate_initial_root_scheduler(&scheduler, campaign_id, setup, policy, &scheduler_path)
+}
+
+fn validate_initial_root_scheduler(
+    observed: &Prototype1SchedulerState,
+    campaign_id: &CampaignId,
+    setup: &RootParentSetup,
+    policy: &Prototype1SearchPolicy,
+    path: &Path,
+) -> Result<(), PrepareError> {
+    let exact = observed.schema_version == PROTOTYPE1_SCHEDULER_SCHEMA_VERSION
+        && &observed.campaign_id == campaign_id
+        && &observed.policy == policy
+        && observed.frontier_node_ids == [setup.node.node_id.clone()]
+        && observed.completed_node_ids.is_empty()
+        && observed.failed_node_ids.is_empty()
+        && observed.last_continuation_decision.is_none()
+        && observed.nodes == [setup.node.clone()];
+    if exact {
+        Ok(())
+    } else {
+        Err(root_setup_conflict(
+            "scheduler",
+            path,
+            "existing scheduler is divergent or has progressed beyond the initial root",
+        ))
+    }
+}
+
+fn root_setup_conflict(phase: &'static str, path: &Path, detail: &str) -> PrepareError {
+    PrepareError::DatabaseSetup {
+        phase,
+        detail: format!(
+            "setup reconciliation conflict at '{}': {detail}",
+            path.display()
+        ),
+    }
 }
 
 const PARENT_IDENTITY_RELPATH_FOR_SCHEDULER: &str = ".ploke/prototype1/parent_identity.json";
@@ -592,7 +782,8 @@ fn save_scheduler_state(
     })?;
     let path = prototype1_scheduler_path(campaign_manifest_path);
     let bytes = serde_json::to_vec_pretty(scheduler).map_err(PrepareError::Serialize)?;
-    fs::write(&path, bytes).map_err(|source| PrepareError::WriteManifest { path, source })
+    crate::durable_io::write_atomic(&path, &bytes)
+        .map_err(|source| PrepareError::WriteManifest { path, source })
 }
 
 fn save_node_record(record: &Prototype1NodeRecord) -> Result<(), PrepareError> {
@@ -1623,6 +1814,98 @@ mod tests {
         assert_eq!(
             <ploke_records::scheduler::RunnerRequestRecord as ploke_records::record::Record>::FAMILY,
             ploke_records::record::RecordFamily::RunnerRequest
+        );
+    }
+
+    #[test]
+    fn ensure_root_parent_recovers_exact_partial_artifacts() {
+        let tmp = tempdir().expect("tmp");
+        let manifest = campaign_manifest_path(tmp.path());
+        let campaign_id = CampaignId::from("test-campaign");
+        let setup = plan_root_parent_node(
+            &campaign_id,
+            &manifest,
+            "root-instance",
+            "parent-gen0",
+            tmp.path(),
+            "2026-07-13T12:00:00Z",
+        );
+        write_parent_node_projection(&campaign_id, &setup.node).expect("seed exact node");
+
+        let first = ensure_root_parent_node(
+            &campaign_id,
+            &manifest,
+            &setup,
+            Prototype1SearchPolicy::default(),
+        )
+        .expect("recover request and scheduler");
+        let second = ensure_root_parent_node(
+            &campaign_id,
+            &manifest,
+            &setup,
+            Prototype1SearchPolicy::default(),
+        )
+        .expect("exact retry remains admissible");
+
+        assert_eq!(first, setup.node);
+        assert_eq!(second, setup.node);
+        assert_eq!(
+            load_runner_request(
+                &manifest,
+                &setup.node.node_id,
+                OperatorProjectionRead::projection_module(),
+            )
+            .expect("load request"),
+            setup.request
+        );
+        let scheduler =
+            load_scheduler_state(&manifest, OperatorProjectionRead::projection_module())
+                .expect("load scheduler");
+        assert_eq!(scheduler.nodes, [setup.node]);
+    }
+
+    #[test]
+    fn ensure_root_parent_rejects_progressed_scheduler_without_reset() {
+        let tmp = tempdir().expect("tmp");
+        let manifest = campaign_manifest_path(tmp.path());
+        let campaign_id = CampaignId::from("test-campaign");
+        let setup = plan_root_parent_node(
+            &campaign_id,
+            &manifest,
+            "root-instance",
+            "parent-gen0",
+            tmp.path(),
+            "2026-07-13T12:00:00Z",
+        );
+        ensure_root_parent_node(
+            &campaign_id,
+            &manifest,
+            &setup,
+            Prototype1SearchPolicy::default(),
+        )
+        .expect("initial root");
+        let mut progressed =
+            load_scheduler_state(&manifest, OperatorProjectionRead::projection_module())
+                .expect("load scheduler");
+        progressed.frontier_node_ids.clear();
+        progressed
+            .completed_node_ids
+            .push(setup.node.node_id.clone());
+        save_scheduler_state(&manifest, &progressed).expect("persist progress");
+
+        let error = ensure_root_parent_node(
+            &campaign_id,
+            &manifest,
+            &setup,
+            Prototype1SearchPolicy::default(),
+        )
+        .expect_err("progressed scheduler must not be reset");
+
+        assert!(error.to_string().contains("has progressed"));
+        assert_eq!(
+            load_scheduler_state(&manifest, OperatorProjectionRead::projection_module(),)
+                .expect("reload scheduler"),
+            progressed
         );
     }
 

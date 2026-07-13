@@ -563,6 +563,7 @@ fn resolve_context(repo_root: Option<&Path>) -> Result<RuntimeContext, PrepareEr
                 source,
             })?,
         );
+    let repo_root = canonical_repo_root(repo_root)?;
     // Parent identity links the checkout to its campaign and lineage. Child
     // worktrees are rejected because they do not carry parent control state.
     let Some(parent_identity) = load_parent_identity_optional(&repo_root)? else {
@@ -604,6 +605,13 @@ fn resolve_context(repo_root: Option<&Path>) -> Result<RuntimeContext, PrepareEr
         parent_identity,
         admitted_profile,
         effective_control,
+    })
+}
+
+fn canonical_repo_root(repo_root: PathBuf) -> Result<PathBuf, PrepareError> {
+    fs::canonicalize(&repo_root).map_err(|source| PrepareError::ReadManifest {
+        path: repo_root,
+        source,
     })
 }
 
@@ -3090,6 +3098,16 @@ mod tests {
     use crate::target_registry::RegistryDatasetSource;
     use ploke_core::tool_types::ToolName;
     use ploke_llm::request::models::ModelRouteSource;
+
+    #[test]
+    fn control_repo_root_is_canonical() {
+        let expected = fs::canonicalize(".").expect("canonical current directory");
+
+        assert_eq!(
+            canonical_repo_root(PathBuf::from(".")).expect("canonical control root"),
+            expected
+        );
+    }
 
     fn profile(schedule: Prototype1ChildScheduleMode, min: u32, max: u32) -> Prototype1RunProfile {
         Prototype1RunProfile {

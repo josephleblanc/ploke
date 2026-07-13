@@ -73,7 +73,6 @@ impl CampaignManifestPlan {
         &self.sha256
     }
 
-    #[cfg(test)]
     pub(crate) fn normalized_json(&self) -> &str {
         &self.normalized_json
     }
@@ -433,9 +432,11 @@ pub(crate) fn admit_campaign_manifest(plan: CampaignManifestPlan) -> Result<Path
             source,
         })?;
     }
-    fs::write(&path, normalized_json).map_err(|source| PrepareError::WriteCampaignManifest {
-        path: path.clone(),
-        source,
+    crate::durable_io::write_atomic(&path, normalized_json.as_bytes()).map_err(|source| {
+        PrepareError::WriteCampaignManifest {
+            path: path.clone(),
+            source,
+        }
     })?;
     Ok(path)
 }

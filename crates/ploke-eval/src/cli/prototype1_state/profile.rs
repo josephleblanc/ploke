@@ -1101,7 +1101,8 @@ pub(crate) fn admit_run_profile_plan(
     };
     let commitment_bytes =
         serde_json::to_vec_pretty(&commitment).map_err(PrepareError::Serialize)?;
-    if let Err(source) = fs::write(&profile_path, normalized_toml.as_bytes()) {
+    if let Err(source) = crate::durable_io::write_atomic(&profile_path, normalized_toml.as_bytes())
+    {
         let _ = fs::remove_file(&profile_path);
         return Err(PrepareError::WriteManifest {
             path: profile_path.clone(),
@@ -1116,6 +1117,115 @@ pub(crate) fn admit_run_profile_plan(
     Ok(AdmittedRunProfile {
         commitment,
         profile,
+    })
+}
+
+/// Reconcile a setup-owned profile plan without accepting divergent or
+/// commitment-first partial state.
+pub(crate) fn ensure_run_profile_plan(
+    plan: RunProfilePlan,
+    admitted_at: &str,
+) -> Result<AdmittedRunProfile, PrepareError> {
+    let RunProfilePlan {
+        source_path,
+        profile_path,
+        profile,
+        normalized_toml,
+        sha256,
+    } = plan;
+    let actual_sha = sha256_hex(&normalized_toml);
+    if actual_sha != sha256 {
+        return Err(profile_error(format!(
+            "run profile plan digest mismatch: recorded '{}', resolved '{}'",
+            sha256, actual_sha
+        )));
+    }
+    let stored_path = profile_path.with_file_name(RUN_PROFILE_COMMITMENT_FILE);
+    let commitment = RunProfileCommitment {
+        schema_version: RUN_PROFILE_COMMITMENT_SCHEMA_VERSION.to_string(),
+        profile_path: profile_path.clone(),
+        sha256,
+        source_path: Some(source_path),
+        admitted_at: admitted_at.to_string(),
+    };
+
+    let profile_exists = profile_path.exists();
+    let commitment_exists = stored_path.exists();
+    if profile_exists {
+        let observed =
+            fs::read_to_string(&profile_path).map_err(|source| PrepareError::ReadManifest {
+                path: profile_path.clone(),
+                source,
+            })?;
+        if observed != normalized_toml {
+            return Err(profile_error(format!(
+                "setup profile reconciliation conflict at '{}': stored profile differs from the admitted plan",
+                profile_path.display()
+            )));
+        }
+    }
+    if commitment_exists {
+        let observed = load_commitment_from_path(&stored_path)?.ok_or_else(|| {
+            profile_error(format!(
+                "setup profile reconciliation could not read commitment '{}'",
+                stored_path.display()
+            ))
+        })?;
+        if observed != commitment {
+            return Err(profile_error(format!(
+                "setup profile reconciliation conflict at '{}': stored commitment differs from the admission receipt",
+                stored_path.display()
+            )));
+        }
+    }
+    if !profile_exists && commitment_exists {
+        return Err(profile_error(format!(
+            "setup profile reconciliation found commitment '{}' without profile '{}'; automatic recovery is unsafe",
+            stored_path.display(),
+            profile_path.display()
+        )));
+    }
+
+    if let Some(parent) = profile_path.parent() {
+        fs::create_dir_all(parent).map_err(|source| PrepareError::WriteManifest {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    if !profile_exists {
+        crate::durable_io::write_atomic(&profile_path, normalized_toml.as_bytes()).map_err(
+            |source| PrepareError::WriteManifest {
+                path: profile_path.clone(),
+                source,
+            },
+        )?;
+    }
+    if !commitment_exists {
+        let bytes = serde_json::to_vec_pretty(&commitment).map_err(PrepareError::Serialize)?;
+        write_commitment(&profile_path, &bytes)?;
+    }
+
+    let stored_profile =
+        fs::read_to_string(&profile_path).map_err(|source| PrepareError::ReadManifest {
+            path: profile_path.clone(),
+            source,
+        })?;
+    let observed_profile = parse_profile(&profile_path, &stored_profile)?;
+    let observed_commitment = load_commitment_from_path(&stored_path)?.ok_or_else(|| {
+        profile_error(format!(
+            "setup profile reconciliation did not produce commitment '{}'",
+            stored_path.display()
+        ))
+    })?;
+    if observed_commitment != commitment || observed_profile != profile {
+        return Err(profile_error(format!(
+            "setup profile reconciliation read-back mismatch at '{}'",
+            profile_path.display()
+        )));
+    }
+    Ok(AdmittedRunProfile {
+        commitment: observed_commitment,
+        profile: observed_profile,
     })
 }
 
@@ -1222,7 +1332,8 @@ fn prototype1_root(campaign_manifest_path: &Path) -> PathBuf {
 
 fn write_commitment(profile_path: &Path, bytes: &[u8]) -> Result<(), PrepareError> {
     let path = profile_path.with_file_name(RUN_PROFILE_COMMITMENT_FILE);
-    fs::write(&path, bytes).map_err(|source| PrepareError::WriteManifest { path, source })
+    crate::durable_io::write_atomic(&path, bytes)
+        .map_err(|source| PrepareError::WriteManifest { path, source })
 }
 
 fn load_commitment(
@@ -1597,6 +1708,68 @@ graph_nearest = 13
             .expect("admitted profile");
         assert_eq!(loaded.commitment, admitted.commitment);
         assert_eq!(loaded.profile, admitted.profile);
+    }
+
+    #[test]
+    fn setup_profile_reconciliation_repairs_marker_last_partial_state() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = tmp.path().join("campaign.json");
+        let operator = OperatorRunProfile {
+            source_path: tmp.path().join("operator.toml"),
+            profile: parse_profile(Path::new("profile.toml"), PROFILE).expect("profile parses"),
+        };
+        let plan = plan_run_profile(&manifest_path, &operator).expect("plan profile");
+        let profile_path = plan.profile_path.clone();
+        fs::create_dir_all(profile_path.parent().expect("profile parent"))
+            .expect("create profile parent");
+        fs::write(&profile_path, plan.normalized_toml.as_bytes()).expect("seed exact profile");
+
+        let admitted = ensure_run_profile_plan(plan, "2026-07-13T12:00:00+00:00")
+            .expect("repair missing marker");
+
+        assert_eq!(admitted.commitment.admitted_at, "2026-07-13T12:00:00+00:00");
+        assert_eq!(
+            load_admitted_run_profile(&manifest_path)
+                .expect("load profile")
+                .expect("profile exists")
+                .commitment,
+            admitted.commitment
+        );
+    }
+
+    #[test]
+    fn setup_profile_reconciliation_rejects_commitment_first_state() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = tmp.path().join("campaign.json");
+        let operator = OperatorRunProfile {
+            source_path: tmp.path().join("operator.toml"),
+            profile: parse_profile(Path::new("profile.toml"), PROFILE).expect("profile parses"),
+        };
+        let plan = plan_run_profile(&manifest_path, &operator).expect("plan profile");
+        let commitment = RunProfileCommitment {
+            schema_version: RUN_PROFILE_COMMITMENT_SCHEMA_VERSION.to_string(),
+            profile_path: plan.profile_path.clone(),
+            sha256: plan.sha256.clone(),
+            source_path: Some(plan.source_path.clone()),
+            admitted_at: "2026-07-13T12:00:00+00:00".to_string(),
+        };
+        fs::create_dir_all(
+            commitment_path(&manifest_path)
+                .parent()
+                .expect("commitment parent"),
+        )
+        .expect("create commitment parent");
+        fs::write(
+            commitment_path(&manifest_path),
+            serde_json::to_vec_pretty(&commitment).expect("serialize commitment"),
+        )
+        .expect("seed commitment");
+
+        let error = ensure_run_profile_plan(plan, "2026-07-13T12:00:00+00:00")
+            .expect_err("commitment-first state is unsafe");
+
+        assert!(error.to_string().contains("without profile"));
+        assert!(!run_profile_path(&manifest_path).exists());
     }
 
     #[test]

@@ -6971,6 +6971,7 @@ dependencies = [
  "crossterm 0.29.0",
  "dirs 6.0.0",
  "flate2",
+ "libc",
  "ploke-core",
  "ploke-db",
  "ploke-embed",

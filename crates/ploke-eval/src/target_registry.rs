@@ -153,9 +153,11 @@ pub fn recompute_target_registry(
         })?;
     }
     let serialized = serde_json::to_string_pretty(&registry).map_err(PrepareError::Serialize)?;
-    fs::write(&path, serialized).map_err(|source| PrepareError::WriteManifest {
-        path: path.clone(),
-        source,
+    crate::durable_io::write_atomic(&path, serialized.as_bytes()).map_err(|source| {
+        PrepareError::WriteManifest {
+            path: path.clone(),
+            source,
+        }
     })?;
 
     Ok((path, registry))

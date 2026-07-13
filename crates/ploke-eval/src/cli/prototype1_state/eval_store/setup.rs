@@ -1285,6 +1285,112 @@ pub(super) fn put_closure_ref<D: EvalDb + ?Sized>(
     Ok(closure_ref_id)
 }
 
+pub(super) fn verify_r0_context<D: EvalDb + ?Sized>(
+    db: &D,
+    manifest: &CampaignManifest,
+    admitted: &AdmittedRunProfile,
+    closure_path: &Path,
+    closure: &ClosureState,
+) -> Result<(), EvalStoreError> {
+    let observed = CampaignManifest::read_from_eval_db(db, &manifest.campaign_id)?;
+    let expected_json =
+        serde_json::to_value(manifest).map_err(|source| EvalStoreError::Validation {
+            field: "eval_campaign",
+            detail: source.to_string(),
+        })?;
+    let observed_json =
+        serde_json::to_value(&observed).map_err(|source| EvalStoreError::Validation {
+            field: "eval_campaign",
+            detail: source.to_string(),
+        })?;
+    if observed_json != expected_json {
+        return Err(EvalStoreError::Validation {
+            field: "eval_campaign",
+            detail: "stored campaign differs from setup admission".to_string(),
+        });
+    }
+
+    let expected_profile = profile_ref_id(&manifest.campaign_id, admitted);
+    let mut profile_params = BTreeMap::new();
+    profile_params.insert(
+        "campaign_id".to_string(),
+        manifest.campaign_id.to_string().into(),
+    );
+    let profile_rows = db
+        .eval_query_params(
+            r#"
+?[profile_ref_id, schema_version, profile_path, content_sha256, source_path, admitted_at] :=
+    *eval_profile_commitment { profile_ref_id, campaign_id, schema_version, profile_path, content_sha256, source_path, admitted_at },
+    campaign_id = $campaign_id
+"#,
+            profile_params,
+        )
+        .map_err(|source| EvalStoreError::Db {
+            phase: "verify.eval_profile_commitment",
+            source,
+        })?;
+    let profile_row = single_row(&profile_rows, "eval_profile_commitment")?;
+    let source_path = admitted
+        .commitment
+        .source_path
+        .as_ref()
+        .map(|path| path.display().to_string());
+    let profile_exact = read_string(&profile_rows, profile_row, "profile_ref_id")?
+        == expected_profile
+        && read_string(&profile_rows, profile_row, "schema_version")?
+            == admitted.commitment.schema_version
+        && read_string(&profile_rows, profile_row, "profile_path")?
+            == admitted.commitment.profile_path.display().to_string()
+        && read_string(&profile_rows, profile_row, "content_sha256")? == admitted.commitment.sha256
+        && read_optional_string(&profile_rows, profile_row, "source_path")? == source_path
+        && read_string(&profile_rows, profile_row, "admitted_at")?
+            == admitted.commitment.admitted_at;
+    if !profile_exact {
+        return Err(EvalStoreError::Validation {
+            field: "eval_profile_commitment",
+            detail: "stored profile commitment differs from setup admission".to_string(),
+        });
+    }
+
+    let closure_hash = file_sha256(closure_path, "eval_closure_ref.source_ref")?;
+    let expected_closure =
+        closure_ref_id_from_parts(&manifest.campaign_id, closure_path, &closure_hash);
+    let mut closure_params = BTreeMap::new();
+    closure_params.insert(
+        "closure_ref_id".to_string(),
+        expected_closure.clone().into(),
+    );
+    let closure_rows = db
+        .eval_query_params(
+            r#"
+?[closure_ref_id, campaign_id, source_ref, content_sha256, schema_version] :=
+    *eval_closure_ref { closure_ref_id, campaign_id, source_ref, content_sha256, schema_version },
+    closure_ref_id = $closure_ref_id
+"#,
+            closure_params,
+        )
+        .map_err(|source| EvalStoreError::Db {
+            phase: "verify.eval_closure_ref",
+            source,
+        })?;
+    let closure_row = single_row(&closure_rows, "eval_closure_ref")?;
+    let closure_exact = read_string(&closure_rows, closure_row, "closure_ref_id")?
+        == expected_closure
+        && read_string(&closure_rows, closure_row, "campaign_id")?
+            == manifest.campaign_id.to_string()
+        && read_string(&closure_rows, closure_row, "source_ref")?
+            == closure_path.display().to_string()
+        && read_string(&closure_rows, closure_row, "content_sha256")? == closure_hash
+        && read_string(&closure_rows, closure_row, "schema_version")? == closure.schema_version;
+    if !closure_exact {
+        return Err(EvalStoreError::Validation {
+            field: "eval_closure_ref",
+            detail: "stored closure reference differs from setup admission".to_string(),
+        });
+    }
+    Ok(())
+}
+
 pub(super) fn put_baseline<D: EvalDb + ?Sized>(
     db: &D,
     parent: &ParentIdentity,

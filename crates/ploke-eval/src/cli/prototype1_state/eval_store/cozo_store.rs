@@ -460,6 +460,17 @@ pub(crate) fn write_r0_context_to_owner_db(
     })
 }
 
+pub(crate) fn verify_r0_context_in_owner_db(
+    db_path: &Path,
+    manifest: &CampaignManifest,
+    admitted_profile: &AdmittedRunProfile,
+    closure_path: &Path,
+    closure_state: &ClosureState,
+) -> Result<(), EvalStoreError> {
+    let db = load_owner_eval_database(db_path)?;
+    setup::verify_r0_context(&db, manifest, admitted_profile, closure_path, closure_state)
+}
+
 pub(crate) fn write_baseline_to_owner_db(
     db_path: &Path,
     parent: &ParentIdentity,

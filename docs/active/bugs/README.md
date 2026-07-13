@@ -155,3 +155,7 @@ file and current code before treating a report as still open.
   Repaired readiness gap plus external blocker: doctor now exercises the production embedding path without run-evidence writes; a key-specific OpenRouter monthly limit still prevents a fresh live loop.
 - [`2026-07-13-walk-summary-pre-child-plan.md`](./2026-07-13-walk-summary-pre-child-plan.md)
   Open read-model bug: `walk summary` treats a legitimately absent pre-child-plan directory as a malformed run instead of rendering the baseline/pre-plan phase, while later missing authority must still fail closed.
+- [`2026-07-13-prototype1-setup-receipt-recovery.md`](./2026-07-13-prototype1-setup-receipt-recovery.md)
+  Fixed and live verified: receipt-first setup now resumes partial campaign, closure, database, scheduler, branch, and inherited-identity effects, while completed retries are read-only.
+- [`2026-07-13-prototype1-doctor-relative-repo-root.md`](./2026-07-13-prototype1-doctor-relative-repo-root.md)
+  Fixed and live verified: shared Prototype 1 control context canonicalizes `--repo-root .` before absolute-path headless indexing and other driver work.

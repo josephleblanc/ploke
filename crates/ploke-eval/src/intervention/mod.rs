@@ -52,6 +52,9 @@ pub use scheduler::{
     update_scheduler_policy, write_node_projection, write_parent_node_projection,
     write_runner_request_projection, write_runner_result_at, write_treatment_evaluation_projection,
 };
+pub(crate) use scheduler::{
+    RootParentSetup, ensure_root_parent_node, plan_root_parent_node, verify_root_parent_node,
+};
 pub use spec::{
     AppliedEdit, ArtifactEdit, InterventionApplyInput, InterventionApplyOutput,
     InterventionCandidate, InterventionCandidateSet, InterventionExecutionInput,

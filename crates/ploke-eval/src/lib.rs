@@ -6,6 +6,7 @@ pub mod branch_evaluation;
 pub mod campaign;
 pub mod cli;
 pub mod closure;
+pub(crate) mod durable_io;
 pub mod intervention;
 pub mod intervention_issue_aggregate;
 pub mod layout;

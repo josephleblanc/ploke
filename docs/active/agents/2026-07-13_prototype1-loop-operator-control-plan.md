@@ -2,7 +2,29 @@
 
 - Date: 2026-07-13
 - Baseline: `de76eaee34e6f4c4c3a19543c4cf91b217aa3bb9`
-- Status: proposed restart spine; no implementation or live run has been performed from this plan
+- Status: active implementation; Stage 0 complete, Stage 1 in pre-commit verification
+
+## Implementation progress
+
+- Stage 0 configuration and readiness evidence is recorded through
+  `df5d8ec79` (`docs: record Stage 0 operator findings`). Google eval and
+  protocol routes passed live preflight. The explicit OpenRouter Perplexity
+  embedding route remains externally blocked by the key-specific monthly
+  limit, so no loop mutation was attempted.
+- The canonical setup preview landed in `697c7468a` (`Add canonical Prototype 1
+  setup preview`). It binds normalized campaign/profile payloads and their
+  digests into one reviewed plan.
+- The current Stage 1 slice adds receipt-first, resumable setup admission,
+  exact completed-state verification, atomic authority-file replacement, and
+  an exclusive Git-worktree setup lock. Its focused regressions pass, the full
+  `ploke-eval` library suite passes 1007/1007 with 27 ignored tests, and the
+  independent review reports no blocker. It remains uncommitted until final
+  staged change detection; a fresh live no-write retry follows the checkpoint
+  commit.
+
+The later stages remain planned, not implemented. In particular, no UI or CLI
+mutation path should yet be described as sharing an exclusive durable loop
+session; that is the Stage 2 gate.
 
 ## Purpose
 

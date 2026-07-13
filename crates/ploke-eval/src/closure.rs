@@ -287,9 +287,11 @@ pub fn recompute_closure_state(
         })?;
     }
     let json = serde_json::to_string_pretty(&state).map_err(PrepareError::Serialize)?;
-    fs::write(&path, json).map_err(|source| PrepareError::WriteManifest {
-        path: path.clone(),
-        source,
+    crate::durable_io::write_atomic(&path, json.as_bytes()).map_err(|source| {
+        PrepareError::WriteManifest {
+            path: path.clone(),
+            source,
+        }
     })?;
     Ok((path, state))
 }
