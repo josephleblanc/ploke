@@ -883,6 +883,89 @@ async fn call_context_exact_reads_axum_handler_call_trait_method_caller() -> Res
 }
 
 #[tokio::test]
+async fn call_context_exact_reads_axum_generated_chained_method_edges() -> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    // Matrix: generated chained `MethodRouter` methods.
+    // Source chain:
+    //   axum/src/routing/method_routing.rs:263-326 templates
+    //   `chained_handler_fn!`; invocation :648 generates `post`, whose body
+    //   calls `self.on(MethodFilter::POST, handler)`.
+    //   axum/src/routing/method_routing.rs:176-259 templates
+    //   `chained_service_fn!`; invocation :998 generates `post_service`,
+    //   whose body calls `self.on_service(MethodFilter::POST, svc)`.
+    // Expected traversal: RAG exact call context preserves representative
+    // generated impl-item macro method edges already proven by the DB matrix.
+    let cases = [
+        (
+            method_id_by_file(
+                &db,
+                "post",
+                "self.on(MethodFilter::",
+                "axum/src/routing/method_routing.rs",
+            )?,
+            method_id_by_file(
+                &db,
+                "on",
+                "self.on_endpoint(filter, &MethodEndpoint::BoxedHandler",
+                "axum/src/routing/method_routing.rs",
+            )?,
+            "on",
+        ),
+        (
+            method_id_by_file(
+                &db,
+                "post_service",
+                "self.on_service(MethodFilter::",
+                "axum/src/routing/method_routing.rs",
+            )?,
+            method_id_by_file(
+                &db,
+                "on_service",
+                "self.on_endpoint(filter, &MethodEndpoint::Route",
+                "axum/src/routing/method_routing.rs",
+            )?,
+            "on_service",
+        ),
+    ];
+
+    for (owner, target, method) in cases {
+        let context = rag.exact_call_context(owner)?;
+        let call = context
+            .iter()
+            .find(|call| {
+                call.kind == CallSiteKind::Method
+                    && call.callee
+                        == CallCalleeInfo::Method {
+                            name: method.to_string(),
+                            receiver: Some(CallReceiverInfo::SelfValue),
+                        }
+                    && call
+                        .targets
+                        .iter()
+                        .any(|candidate| candidate.target_id == target)
+            })
+            .unwrap_or_else(|| {
+                panic!("RAG should expose generated chained method edge {method}: {context:#?}")
+            });
+        assert_eq!(call.owner_id, owner);
+        assert_eq!(call.status, CallStatusKind::Resolved);
+        assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(
+            call.targets.len(),
+            1,
+            "generated chained {method} edge should expose one target: {call:#?}"
+        );
+        assert_eq!(call.targets[0].target_id, target);
+        assert_eq!(call.targets[0].relation, CallTargetKind::Method);
+        assert_eq!(call.arg_count, Some(2));
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn call_paths_exact_reads_axum_request_extract_two_hop_trait_path() -> Result<(), Error> {
     init_tracing_once();
     let (db, rag) = setup_axum_call_graph_rag()?;
