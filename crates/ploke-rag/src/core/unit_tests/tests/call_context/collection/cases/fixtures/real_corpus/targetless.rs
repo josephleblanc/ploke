@@ -1052,18 +1052,6 @@ async fn call_context_collection_reads_axum_generated_middleware_replace_frontie
     init_tracing_once();
     let (db, rag) = setup_axum_call_graph_rag()?;
 
-    let owners = method_ids_by_file(
-        &db,
-        "call",
-        "std::mem::replace(&mut self.inner, not_ready_inner)",
-        "axum/src/middleware/from_fn.rs",
-    )?;
-    assert_eq!(
-        owners.len(),
-        16,
-        "from_fn all_the_tuples!(impl_service) should project one generated Service::call owner per tuple arity"
-    );
-
     let callee = CallCalleeInfo::Path {
         path: path(&["std", "mem", "replace"]),
     };
@@ -1077,33 +1065,67 @@ async fn call_context_collection_reads_axum_generated_middleware_replace_frontie
     //   `impl_service!` macro template.
     //   axum/src/middleware/from_fn.rs:305 invokes
     //   `all_the_tuples!(impl_service)`.
+    //   axum/src/middleware/map_request.rs:245-298 follows the same
+    //   `all_the_tuples!(impl_service)` shape.
+    //   axum/src/middleware/map_response.rs:244-302 invokes
+    //   `impl_service!()` plus sixteen typed arity variants directly.
     //   The generated `Service::call` bodies preserve the template
     //   `std::mem::replace(&mut self.inner, not_ready_inner)` row.
     // Expected traversal: each generated std-root path call is visible to RAG
     // call-context collection as an external frontier and has no local target.
-    for owner in owners {
-        let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
-        let context = call_context
-            .get(&owner)
-            .unwrap_or_else(|| panic!("generated from_fn owner {owner} should receive context"));
-        let matching = context
-            .iter()
-            .filter(|call| call.kind == CallSiteKind::Path && call.callee == callee)
-            .collect::<Vec<_>>();
+    for (label, file_suffix, expected) in [
+        (
+            "from_fn all_the_tuples!(impl_service)",
+            "axum/src/middleware/from_fn.rs",
+            16,
+        ),
+        (
+            "map_request all_the_tuples!(impl_service)",
+            "axum/src/middleware/map_request.rs",
+            16,
+        ),
+        (
+            "map_response direct impl_service!(...) arities",
+            "axum/src/middleware/map_response.rs",
+            17,
+        ),
+    ] {
+        let owners = method_ids_by_file(
+            &db,
+            "call",
+            "std::mem::replace(&mut self.inner, not_ready_inner)",
+            file_suffix,
+        )?;
         assert_eq!(
-            matching.len(),
-            1,
-            "generated from_fn owner {owner} should expose one std::mem::replace frontier row: {context:#?}"
+            owners.len(),
+            expected,
+            "{label} should project one generated Service::call owner per supported arity"
         );
-        let call = matching[0];
-        assert_eq!(call.owner_id, owner);
-        assert_eq!(call.arg_count, Some(2));
-        assert_eq!(call.status, CallStatusKind::External);
-        assert_eq!(call.resolution, None);
-        assert!(
-            call.targets.is_empty(),
-            "generated from_fn std::mem::replace frontier should remain targetless: {call:#?}"
-        );
+
+        for owner in owners {
+            let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+            let context = call_context.get(&owner).unwrap_or_else(|| {
+                panic!("generated {label} owner {owner} should receive context")
+            });
+            let matching = context
+                .iter()
+                .filter(|call| call.kind == CallSiteKind::Path && call.callee == callee)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                matching.len(),
+                1,
+                "generated {label} owner {owner} should expose one std::mem::replace frontier row: {context:#?}"
+            );
+            let call = matching[0];
+            assert_eq!(call.owner_id, owner);
+            assert_eq!(call.arg_count, Some(2));
+            assert_eq!(call.status, CallStatusKind::External);
+            assert_eq!(call.resolution, None);
+            assert!(
+                call.targets.is_empty(),
+                "generated {label} std::mem::replace frontier should remain targetless: {call:#?}"
+            );
+        }
     }
 
     Ok(())
