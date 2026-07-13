@@ -35,8 +35,10 @@ use crate::cli::prototype1_state::{
 };
 
 const SCHEMA_VERSION_V1: &str = "prototype1-control-session.v1";
-const SCHEMA_VERSION: &str = "prototype1-control-session.v2";
-const TRANSITION_KEY_VERSION: &str = "prototype1-control-transition-key.v1";
+const SCHEMA_VERSION_V2: &str = "prototype1-control-session.v2";
+const SCHEMA_VERSION: &str = "prototype1-control-session.v3";
+const TRANSITION_KEY_VERSION_V1: &str = "prototype1-control-transition-key.v1";
+const TRANSITION_KEY_VERSION: &str = "prototype1-control-transition-key.v2";
 const LOCK_FILE: &str = "controller.lock";
 const JOURNAL_FILE: &str = "control-journal.jsonl";
 const GRAPH_VERSION_V1: &str = "walk-r0-r14a-v1";
@@ -852,12 +854,21 @@ impl<S> Lease<S> {
 
 impl Lease<Idle> {
     pub(crate) fn intent(&self, allow_git_changes: bool) -> Result<AttemptIntent, Error> {
+        self.intent_with_live_api(false, allow_git_changes)
+    }
+
+    pub(crate) fn intent_with_live_api(
+        &self,
+        allow_live_api: bool,
+        allow_git_changes: bool,
+    ) -> Result<AttemptIntent, Error> {
         let mut retry = 0_u32;
         for attempt in self.attempts.values() {
             let Some(receipt) = attempt.terminal() else {
                 continue;
             };
             if receipt.intent.cursor() != self.cursor
+                || receipt.intent.allow_live_api != allow_live_api
                 || receipt.intent.allow_git_changes != allow_git_changes
                 || receipt.intent.epoch.transition_graph_version
                     != self.epoch.transition_graph_version
@@ -879,6 +890,7 @@ impl Lease<Idle> {
         AttemptIntent::with_retry(
             self.session_id,
             self.cursor.clone(),
+            allow_live_api,
             allow_git_changes,
             self.epoch.clone(),
             retry,
@@ -1116,6 +1128,8 @@ pub(crate) struct AttemptIntent {
     pub(crate) transition_id: TransitionId,
     pub(crate) expected: WalkPhase,
     pub(crate) targets: Vec<WalkPhase>,
+    #[serde(default)]
+    pub(crate) allow_live_api: bool,
     pub(crate) allow_git_changes: bool,
     pub(crate) epoch: ServerEpoch,
     pub(crate) evidence: ContentHash,
@@ -1130,12 +1144,22 @@ impl AttemptIntent {
         allow_git_changes: bool,
         epoch: ServerEpoch,
     ) -> Result<Self, Error> {
-        Self::with_retry(session_id, cursor, allow_git_changes, epoch, 0)
+        Self::with_retry(session_id, cursor, false, allow_git_changes, epoch, 0)
+    }
+
+    pub(crate) fn with_live_api(
+        session_id: SessionId,
+        cursor: Cursor,
+        allow_git_changes: bool,
+        epoch: ServerEpoch,
+    ) -> Result<Self, Error> {
+        Self::with_retry(session_id, cursor, true, allow_git_changes, epoch, 0)
     }
 
     fn with_retry(
         session_id: SessionId,
         cursor: Cursor,
+        allow_live_api: bool,
         allow_git_changes: bool,
         epoch: ServerEpoch,
         retry: u32,
@@ -1146,6 +1170,7 @@ impl AttemptIntent {
             session_id,
             &cursor,
             &targets,
+            allow_live_api,
             allow_git_changes,
             &epoch.transition_graph_version,
             retry,
@@ -1154,6 +1179,7 @@ impl AttemptIntent {
             transition_id,
             expected: cursor.phase,
             targets,
+            allow_live_api,
             allow_git_changes,
             epoch,
             evidence: cursor.evidence,
@@ -1176,6 +1202,7 @@ impl AttemptIntent {
             session_id,
             &self.cursor(),
             &self.targets,
+            self.allow_live_api,
             self.allow_git_changes,
             &self.epoch.transition_graph_version,
             self.retry,
@@ -1272,10 +1299,21 @@ impl AttemptIntent {
 }
 
 #[derive(Serialize)]
+struct TransitionKeyV1<'a> {
+    schema_version: &'static str,
+    cursor: &'a Cursor,
+    targets: &'a [WalkPhase],
+    allow_git_changes: bool,
+    graph_version: &'a str,
+    retry: u32,
+}
+
+#[derive(Serialize)]
 struct TransitionKey<'a> {
     schema_version: &'static str,
     cursor: &'a Cursor,
     targets: &'a [WalkPhase],
+    allow_live_api: bool,
     allow_git_changes: bool,
     graph_version: &'a str,
     retry: u32,
@@ -1285,19 +1323,32 @@ fn transition_id(
     session_id: SessionId,
     cursor: &Cursor,
     targets: &[WalkPhase],
+    allow_live_api: bool,
     allow_git_changes: bool,
     graph_version: &str,
     retry: u32,
 ) -> Result<TransitionId, Error> {
-    let key = TransitionKey {
-        schema_version: TRANSITION_KEY_VERSION,
-        cursor,
-        targets,
-        allow_git_changes,
-        graph_version,
-        retry,
+    let bytes = if allow_live_api {
+        serde_json::to_vec(&TransitionKey {
+            schema_version: TRANSITION_KEY_VERSION,
+            cursor,
+            targets,
+            allow_live_api,
+            allow_git_changes,
+            graph_version,
+            retry,
+        })
+    } else {
+        serde_json::to_vec(&TransitionKeyV1 {
+            schema_version: TRANSITION_KEY_VERSION_V1,
+            cursor,
+            targets,
+            allow_git_changes,
+            graph_version,
+            retry,
+        })
     };
-    let bytes = serde_json::to_vec(&key).map_err(Error::Serialize)?;
+    let bytes = bytes.map_err(Error::Serialize)?;
     Ok(TransitionId(Uuid::new_v5(&session_id.0, &bytes)))
 }
 
@@ -1310,6 +1361,13 @@ fn current_targets(expected: WalkPhase, allow_git_changes: bool) -> Vec<WalkPhas
         })
         .map(|step| step.phase)
         .collect()
+}
+
+fn target_requires_live_api(phase: WalkPhase) -> bool {
+    matches!(
+        phase,
+        WalkPhase::R8 | WalkPhase::R11a | WalkPhase::R11 | WalkPhase::R13b | WalkPhase::R13c
+    )
 }
 
 /// Resolve the exact target table that created a durable intent.
@@ -1682,7 +1740,10 @@ impl Replay {
                 cursor,
                 ..
             } => {
-                if schema_version != SCHEMA_VERSION && schema_version != SCHEMA_VERSION_V1 {
+                if schema_version != SCHEMA_VERSION
+                    && schema_version != SCHEMA_VERSION_V2
+                    && schema_version != SCHEMA_VERSION_V1
+                {
                     return Err(sequence(format!(
                         "unsupported session schema '{schema_version}'"
                     )));
@@ -1693,13 +1754,13 @@ impl Replay {
                     ));
                 }
                 match (schema_version.as_str(), cursor) {
-                    (SCHEMA_VERSION, Some(cursor)) => cursor
+                    (SCHEMA_VERSION | SCHEMA_VERSION_V2, Some(cursor)) => cursor
                         .validate()
                         .map_err(|error| sequence(error.to_string()))?,
-                    (SCHEMA_VERSION, None) => {
-                        return Err(sequence(
-                            "v2 session creation is missing its committed cursor".to_string(),
-                        ));
+                    (SCHEMA_VERSION | SCHEMA_VERSION_V2, None) => {
+                        return Err(sequence(format!(
+                            "{schema_version} session creation is missing its committed cursor"
+                        )));
                     }
                     (SCHEMA_VERSION_V1, None) => {}
                     (SCHEMA_VERSION_V1, Some(_)) => {
@@ -1772,6 +1833,20 @@ impl Replay {
                     .map_err(|error| sequence(error.to_string()))?;
                 let created = self.created.as_ref().expect("session was required");
                 if created.schema_version == SCHEMA_VERSION {
+                    intent
+                        .cursor()
+                        .validate()
+                        .map_err(|error| sequence(error.to_string()))?;
+                    intent
+                        .validate_for(*session_id)
+                        .map_err(|error| sequence(error.to_string()))?;
+                } else if created.schema_version == SCHEMA_VERSION_V2 {
+                    if intent.allow_live_api {
+                        return Err(sequence(
+                            "v2 transition intent cannot contain v3 live-provider authority"
+                                .to_string(),
+                        ));
+                    }
                     intent
                         .cursor()
                         .validate()
@@ -1853,14 +1928,15 @@ impl Replay {
                         .map_err(|error| sequence(error.to_string()))?;
                 }
                 match (created.schema_version.as_str(), epoch) {
-                    (SCHEMA_VERSION, Some(epoch)) => {
+                    (SCHEMA_VERSION | SCHEMA_VERSION_V2, Some(epoch)) => {
                         validate_epoch(&intent, result, epoch)
                             .map_err(|error| sequence(error.to_string()))?;
                     }
-                    (SCHEMA_VERSION, None) => {
-                        return Err(sequence(
-                            "v2 transition result is missing its epoch receipt".to_string(),
-                        ));
+                    (SCHEMA_VERSION | SCHEMA_VERSION_V2, None) => {
+                        return Err(sequence(format!(
+                            "{} transition result is missing its epoch receipt",
+                            created.schema_version
+                        )));
                     }
                     (SCHEMA_VERSION_V1, None) => {}
                     (SCHEMA_VERSION_V1, Some(_)) => {
@@ -1906,6 +1982,9 @@ impl Replay {
                 let created = self.created.as_ref().expect("session was required");
                 if created.schema_version == SCHEMA_VERSION {
                     validate_resolution_current(self, &cause, resolution)
+                        .map_err(|error| sequence(error.to_string()))?;
+                } else if created.schema_version == SCHEMA_VERSION_V2 {
+                    validate_resolution_v2(self, &cause, resolution)
                         .map_err(|error| sequence(error.to_string()))?;
                 } else {
                     validate_resolution(self, &cause, resolution)
@@ -2403,6 +2482,16 @@ fn validate_result(intent: &AttemptIntent, result: &AttemptResult) -> Result<(),
 
 fn validate_result_current(intent: &AttemptIntent, result: &AttemptResult) -> Result<(), Error> {
     validate_result(intent, result)?;
+    if let AttemptResult::Committed { phase, .. } = result
+        && target_requires_live_api(*phase)
+        && !intent.allow_live_api
+    {
+        return Err(Error::ResultMismatch {
+            detail: format!(
+                "committed phase {phase} requires live-provider admission on the transition intent"
+            ),
+        });
+    }
     let evidence = match result {
         AttemptResult::Committed { evidence, .. }
         | AttemptResult::Rejected { evidence, .. }
@@ -2482,6 +2571,23 @@ fn validate_resolution_current(
     cause: &RecoveryCause,
     resolution: &RecoveryResolution,
 ) -> Result<(), Error> {
+    validate_resolution_epoch(replay, cause, resolution, true)
+}
+
+fn validate_resolution_v2(
+    replay: &Replay,
+    cause: &RecoveryCause,
+    resolution: &RecoveryResolution,
+) -> Result<(), Error> {
+    validate_resolution_epoch(replay, cause, resolution, false)
+}
+
+fn validate_resolution_epoch(
+    replay: &Replay,
+    cause: &RecoveryCause,
+    resolution: &RecoveryResolution,
+    require_live_api: bool,
+) -> Result<(), Error> {
     validate_resolution(replay, cause, resolution)?;
     if let RecoveryResolution::ResolveAttempt {
         transition_id,
@@ -2493,9 +2599,13 @@ fn validate_resolution_current(
             return Ok(());
         };
         let intent = attempt.intent();
-        validate_result_current(intent, result)?;
+        if require_live_api {
+            validate_result_current(intent, result)?;
+        } else {
+            validate_result(intent, result)?;
+        }
         let epoch = epoch.as_ref().ok_or_else(|| Error::InvalidResolution {
-            detail: "v2 attempt recovery requires the observed epoch receipt".to_string(),
+            detail: "epoch-aware attempt recovery requires the observed epoch receipt".to_string(),
         })?;
         validate_recovery_epoch(intent, result, epoch)?;
         if let Attempt::Finished(receipt) = attempt
@@ -3669,6 +3779,7 @@ mode = "continuous"
             transition_id,
             expected: WalkPhase::R12,
             targets: vec![WalkPhase::R13a, WalkPhase::R13b],
+            allow_live_api: false,
             allow_git_changes: true,
             epoch: prior.clone(),
             evidence: ContentHash("legacy-r12-evidence".to_string()),
@@ -3739,6 +3850,96 @@ mode = "continuous"
                 supported,
                 ..
             }) if active == SCHEMA_VERSION_V1 && supported == SCHEMA_VERSION
+        ));
+    }
+
+    #[test]
+    fn live_result_from_v2_replays_read_only() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = Store::new(temp.path().join("control"));
+        let target = cursor(WalkPhase::R8, "legacy-v2-r8-evidence");
+        let request = claim_at(temp.path(), RunMode::Step, target.clone());
+        let session_id = SessionId::new();
+        let fence = Fence(1);
+        let source = cursor(WalkPhase::R7, "legacy-v2-r7-evidence");
+        let intent = AttemptIntent::new(session_id, source.clone(), false, request.epoch.clone())
+            .expect("legacy v2 intent");
+        let transition_id = intent.transition_id;
+        let began = Entry::Began {
+            session_id,
+            fence,
+            intent,
+            recorded_at: RecordedAt::now(),
+        };
+        let mut value = serde_json::to_value(began).expect("serialize v2 began entry");
+        value
+            .get_mut("intent")
+            .and_then(serde_json::Value::as_object_mut)
+            .expect("began intent object")
+            .remove("allow_live_api");
+        let began: Entry = serde_json::from_value(value).expect("deserialize legacy v2 entry");
+        let Entry::Began { intent, .. } = &began else {
+            panic!("legacy began entry changed variant");
+        };
+        assert!(!intent.allow_live_api);
+        let epoch = EpochReceipt {
+            before: request.epoch.clone(),
+            after: Some(request.epoch.clone()),
+        };
+        let entries = [
+            Entry::Created {
+                schema_version: SCHEMA_VERSION_V2.to_string(),
+                session_id,
+                origin: request.origin.clone(),
+                parent: request.parent.clone(),
+                profile: request.profile.clone(),
+                mode: request.mode,
+                cursor: Some(source),
+                recorded_at: RecordedAt::now(),
+            },
+            Entry::Acquired {
+                session_id,
+                fence,
+                epoch: request.epoch.clone(),
+                runtime_id: None,
+                pid: 4242,
+                recorded_at: RecordedAt::now(),
+            },
+            began,
+            Entry::Finished {
+                session_id,
+                transition_id,
+                fence,
+                result: AttemptResult::Committed {
+                    phase: WalkPhase::R8,
+                    evidence: target.evidence.clone(),
+                },
+                epoch: Some(epoch),
+                recorded_at: RecordedAt::now(),
+            },
+            Entry::Released {
+                session_id,
+                fence,
+                recorded_at: RecordedAt::now(),
+            },
+        ];
+        let journal = store.paths(&request.parent).journal;
+        for (index, entry) in entries.iter().enumerate() {
+            append_entry(&journal, entry, index).expect("write v2 journal");
+        }
+
+        let snapshot = store
+            .inspect(&request.parent)
+            .expect("inspect v2 journal")
+            .expect("v2 snapshot");
+        assert_eq!(snapshot.cursor, Some(target));
+        assert!(matches!(
+            store.claim(request).expect("legacy v2 claim"),
+            Outcome::Conflict(Conflict::Schema {
+                active,
+                supported,
+                ..
+            }) if active == SCHEMA_VERSION_V2 && supported == SCHEMA_VERSION
         ));
     }
 
@@ -4039,7 +4240,9 @@ mode = "continuous"
                 .claim(claim(temp.path(), RunMode::Step))
                 .expect("owner claim"),
         );
-        let intent = intent(&owner);
+        let intent = owner
+            .intent_with_live_api(true, false)
+            .expect("valid live transition intent");
         let transition_id = intent.transition_id;
         let epoch = same_epoch(&intent.epoch);
         let pending = match owner.begin(intent).expect("begin") {
@@ -4160,21 +4363,30 @@ mode = "continuous"
             epoch.clone(),
         )
         .expect("other cursor intent");
-        let other_capability =
-            AttemptIntent::new(session, source, true, epoch).expect("other capability intent");
+        let other_capability = AttemptIntent::new(session, source.clone(), true, epoch.clone())
+            .expect("other capability intent");
+        let live = AttemptIntent::with_live_api(session, source, false, epoch)
+            .expect("live-provider intent");
         let mut restarted = repeated.epoch.clone();
         restarted.exe_modified_unix_ms = restarted.exe_modified_unix_ms.map(|value| value + 1);
         let same_key = AttemptIntent::new(session, repeated.cursor(), false, restarted)
             .expect("restart intent");
-        let retry =
-            AttemptIntent::with_retry(session, repeated.cursor(), false, repeated.epoch.clone(), 1)
-                .expect("retry intent");
+        let retry = AttemptIntent::with_retry(
+            session,
+            repeated.cursor(),
+            false,
+            false,
+            repeated.epoch.clone(),
+            1,
+        )
+        .expect("retry intent");
 
         assert_eq!(first.transition_id, repeated.transition_id);
         assert_eq!(first.transition_id, same_key.transition_id);
         assert_ne!(first.transition_id, other_session.transition_id);
         assert_ne!(first.transition_id, other_cursor.transition_id);
         assert_ne!(first.transition_id, other_capability.transition_id);
+        assert_ne!(first.transition_id, live.transition_id);
         assert_ne!(first.transition_id, retry.transition_id);
     }
 
@@ -4204,7 +4416,7 @@ mode = "continuous"
                 .contains("not one of the admitted targets")
         );
 
-        let admitted = AttemptIntent::new(
+        let admitted = AttemptIntent::with_live_api(
             SessionId::new(),
             cursor(WalkPhase::R12, "r12-evidence"),
             true,
@@ -4215,7 +4427,36 @@ mode = "continuous"
             admitted.targets,
             vec![WalkPhase::R13a, WalkPhase::R13b, WalkPhase::R13c]
         );
+        assert!(admitted.allow_live_api);
         assert!(admitted.allow_git_changes);
+    }
+
+    #[test]
+    fn live_target_rejects_an_unadmitted_result() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let blocked = AttemptIntent::new(
+            SessionId::new(),
+            cursor(WalkPhase::R7, "r7-evidence"),
+            false,
+            epoch(temp.path()),
+        )
+        .expect("non-live intent remains inspectable");
+        let result = AttemptResult::Committed {
+            phase: WalkPhase::R8,
+            evidence: ContentHash::of("r8-evidence"),
+        };
+        let error = validate_result_current(&blocked, &result)
+            .expect_err("R8 must require live-provider admission");
+        assert!(error.to_string().contains("live-provider admission"));
+
+        let admitted = AttemptIntent::with_live_api(
+            SessionId::new(),
+            cursor(WalkPhase::R7, "r7-evidence"),
+            false,
+            epoch(temp.path()),
+        )
+        .expect("live intent");
+        validate_result_current(&admitted, &result).expect("live R8 result");
     }
 
     #[test]
@@ -4296,7 +4537,7 @@ mode = "continuous"
     fn recovery_cannot_commit_an_illegal_epoch_change() {
         let temp = tempfile::tempdir().expect("tempdir");
         let session_id = SessionId::new();
-        let intent = AttemptIntent::new(
+        let intent = AttemptIntent::with_live_api(
             session_id,
             cursor(WalkPhase::R7, "r7-evidence"),
             false,
@@ -4418,6 +4659,7 @@ mode = "continuous"
             transition_id: TransitionId::new(),
             expected: WalkPhase::R0,
             targets: vec![WalkPhase::R14b],
+            allow_live_api: false,
             allow_git_changes: false,
             epoch: owner.epoch().clone(),
             evidence: ContentHash::of("r0-evidence"),
@@ -4531,7 +4773,9 @@ mode = "continuous"
                 .claim(claim(temp.path(), RunMode::Step))
                 .expect("first claim"),
         );
-        let original = intent(&owner);
+        let original = owner
+            .intent_with_live_api(true, false)
+            .expect("valid live transition intent");
         let transition_id = original.transition_id;
         let pending = match owner.begin(original.clone()).expect("begin") {
             Begin::Started { lease, .. } => lease,
@@ -4590,7 +4834,7 @@ mode = "continuous"
                 .claim(claim(temp.path(), RunMode::Step))
                 .expect("owner claim"),
         );
-        let first = owner.intent(false).expect("R7 intent");
+        let first = owner.intent_with_live_api(true, false).expect("R7 intent");
         let first_id = first.transition_id;
         let pending = match owner.begin(first).expect("begin R7") {
             Begin::Started { lease, .. } => lease,

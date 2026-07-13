@@ -35,14 +35,14 @@ use ploke_tui::tools::{
 };
 
 use crate::{
-    ResolvedCampaignConfig, campaign_manifest_path,
+    campaign_manifest_path,
     cli::{
         Prototype1StateWalkAuditScope, Prototype1StateWalkAuditTransition,
         Prototype1StateWalkLlmStepSource,
         prototype1_state::{
-            cli_facing::Prototype1StateRunShape,
             driver::{
-                reconstruct::{self, EarlyState},
+                control::{ControlState as WalkState, StepAdmission, advance_one},
+                reconstruct,
                 replay::ReplayCursor,
             },
             edit_surface::{
@@ -53,17 +53,7 @@ use crate::{
             },
             identity::{load_parent_identity_optional, parent_identity_path},
             journal::prototype1_transition_journal_path,
-            live_edges::{
-                r0_to_r1, r1_to_r2a_or_r3, r2a_to_r3, r3_to_r4a, r4a_to_r4b_or_r4c,
-                r4b_to_r4c_genesis, r4c_to_r5, r5_to_r6, r6_to_r7, r7_to_r8, r8_to_r9, r9_to_r10,
-                r10_to_r11, r11_to_r12, r12_to_r13, r13_to_r14,
-            },
-            typestate::{
-                self, AsyncStepInput, R0, R1, R2a, R3, R4a, R4bGenesisChecked, R4cReady, R5, R6,
-                R7, R8, R9, R10, R11FanoutComplete, R11aRejectedOnly, R12, R13aStopped,
-                R13bHandoffCommitted, R13cHandoffIncomplete, R14aFinalStopped, R14bFinalHandoff,
-                StepInput,
-            },
+            typestate,
         },
         provider::{headless_model_selection, load_parent_patcher_model_selection},
     },
@@ -87,9 +77,6 @@ use super::{
 
 const MAX_HISTORY: usize = 80;
 const MAX_FILE_BYTES: usize = 128 * 1024;
-
-type RunShape = Prototype1StateRunShape;
-type CampaignConfig = ResolvedCampaignConfig;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LlmMove {
@@ -118,51 +105,6 @@ pub(crate) struct WalkController {
     llm_cursors: BTreeMap<String, usize>,
 }
 // ANCHOR_END: prototype1_walk_controller
-
-// ANCHOR: prototype1_walk_state
-/// Owned typestate value currently held by the server.
-///
-/// The enum is intentionally private: external callers address state through
-/// `WalkPhase`, while only the controller can consume and replace typed values.
-enum WalkState {
-    Empty,
-    R0(R0),
-    R1(R1<RunShape, CampaignConfig>),
-    R2a(R2a<RunShape, CampaignConfig>),
-    R3(R3<RunShape, CampaignConfig>),
-    R4a(R4a<RunShape, CampaignConfig>),
-    R4b(R4bGenesisChecked<RunShape, CampaignConfig>),
-    R4c(R4cReady<RunShape, CampaignConfig>),
-    R5(R5<RunShape, CampaignConfig>),
-    R6(R6<RunShape, CampaignConfig>),
-    R7(R7<RunShape, CampaignConfig>),
-    R8(R8<RunShape, CampaignConfig>),
-    R9(R9<RunShape, CampaignConfig>),
-    R10(R10<RunShape, CampaignConfig>),
-    R11a(R11aRejectedOnly<RunShape, CampaignConfig>),
-    R11(R11FanoutComplete<RunShape, CampaignConfig>),
-    R12(R12<RunShape, CampaignConfig>),
-    R13a(R13aStopped<RunShape, CampaignConfig>),
-    R13b(R13bHandoffCommitted<RunShape, CampaignConfig>),
-    R13c(R13cHandoffIncomplete<RunShape, CampaignConfig>),
-    R14a(R14aFinalStopped<RunShape, CampaignConfig>),
-    R14b(R14bFinalHandoff<RunShape, CampaignConfig>),
-    /// Durable evidence identifies a trustworthy cursor, but the exact typed
-    /// authority required to continue cannot be reconstructed safely.
-    Blocked {
-        phase: WalkPhase,
-        detail: String,
-    },
-    /// A consuming transition failed after the previous typed value was moved.
-    ///
-    /// Rust cannot restore the consumed value after an edge returns `Err`, so
-    /// the server keeps an inspectable failed cursor and requires a fresh walk.
-    Failed {
-        phase: WalkPhase,
-        detail: String,
-    },
-}
-// ANCHOR_END: prototype1_walk_state
 
 /// Human-facing summary of one `walk step` request.
 #[derive(Clone)]
@@ -1472,7 +1414,7 @@ impl WalkController {
             self.reconstruction = None;
         }
 
-        self.state = WalkState::R0(typestate::R0::new(config.into_state_command()));
+        self.state = WalkState::new(config.into_state_command());
         self.record(format!(
             "start: created r0 for repo_root '{}'",
             repo_root.display()
@@ -1574,8 +1516,9 @@ impl WalkController {
             };
             self.record(format!("reconstruction blocked at {phase}: {detail}"));
         } else if let Some(state) = state {
-            let phase = phase_for_early(&state);
-            self.state = WalkState::from_early(state);
+            let state = WalkState::from_reconstructed(state);
+            let phase = state.phase();
+            self.state = state;
             self.record(format!("reconstructed durable walk state at {phase}"));
         }
         Ok(())
@@ -1617,197 +1560,44 @@ impl WalkController {
         allow_git_changes: bool,
     ) -> Result<WalkTransition, PrepareError> {
         let state = std::mem::replace(&mut self.state, WalkState::Empty);
-        let previous = state.phase();
-        let next = match state {
-            WalkState::Empty => {
-                return Err(PrepareError::InvalidBatchSelection {
-                    detail: "walk has not been started; run start first".to_string(),
-                });
-            }
-            WalkState::Failed { phase, detail } => {
-                self.state = WalkState::Failed { phase, detail };
-                return Err(PrepareError::InvalidBatchSelection {
-                    detail: "walk is failed; start a new walk to continue".to_string(),
-                });
-            }
-            WalkState::Blocked { phase, detail } => {
-                self.state = WalkState::Blocked {
-                    phase,
-                    detail: detail.clone(),
-                };
-                return Err(PrepareError::InvalidBatchSelection {
-                    detail: format!(
-                        "walk is blocked at {phase}; repair the durable state or run reset before starting a different walk: {detail}"
-                    ),
-                });
-            }
-            WalkState::R0(r0) => match r0.advance(r0_to_r1) {
-                Ok(r1) => {
+        match advance_one(
+            &self.repo_root,
+            state,
+            StepAdmission::new(watch, allow_git_changes),
+        )
+        .await
+        {
+            Ok(step) => {
+                if let WalkState::R1(r1) = &step.state {
                     self.files.remember_campaign(r1.campaign_id());
-                    Ok(WalkState::R1(r1))
                 }
-                Err(error) => Err(error),
-            },
-            WalkState::R1(r1) => r1.advance(r1_to_r2a_or_r3).map(|branch| match branch {
-                typestate::R1Branch::R2a(r2a) => WalkState::R2a(r2a),
-                typestate::R1Branch::R3(r3) => WalkState::R3(r3),
-            }),
-            WalkState::R2a(r2a) => r2a.advance(r2a_to_r3).map(WalkState::R3),
-            WalkState::R3(r3) => r3.advance(r3_to_r4a).map(WalkState::R4a),
-            WalkState::R4a(r4a) => r4a.advance(r4a_to_r4b_or_r4c).map(|branch| match branch {
-                typestate::R4aStartupBranch::GenesisChecked(r4b) => WalkState::R4b(r4b),
-                typestate::R4aStartupBranch::PredecessorReady(r4c) => WalkState::R4c(r4c),
-            }),
-            WalkState::R4b(r4b) => r4b.advance(r4b_to_r4c_genesis).map(WalkState::R4c),
-            WalkState::R4c(r4c) => r4c.advance(r4c_to_r5).map(WalkState::R5),
-            WalkState::R5(r5) => r5.advance_async(r5_to_r6).await.map(WalkState::R6),
-            WalkState::R6(r6) => r6.advance(r6_to_r7).map(WalkState::R7),
-            WalkState::R7(r7) => {
-                if watch {
-                    r7.advance_async(r7_to_r8).await.map(WalkState::R8)
-                } else {
-                    self.state = WalkState::R7(r7);
-                    let detail = "walk reached R7 policy-ready boundary; rerun `walk step --watch` to admit the live R8 child-plan authority edge";
-                    self.record(format!("blocked at {previous}: {detail}"));
-                    return Err(PrepareError::InvalidBatchSelection {
-                        detail: detail.to_string(),
-                    });
-                }
-            }
-            WalkState::R8(r8) => r8.advance(r8_to_r9).map(WalkState::R9),
-            WalkState::R9(r9) => r9.advance(r9_to_r10).map(WalkState::R10),
-            WalkState::R10(r10) => {
-                if watch {
-                    r10.advance_async(r10_to_r11)
-                        .await
-                        .map(|branch| match branch {
-                            typestate::R10FanoutBranch::RejectedOnly(r11a) => WalkState::R11a(r11a),
-                            typestate::R10FanoutBranch::FanoutComplete(r11) => WalkState::R11(r11),
-                        })
-                } else {
-                    self.state = WalkState::R10(r10);
-                    let detail = "walk reached R10 selection-strategy boundary; rerun `walk step --watch` to admit the live R11 rejected-only/fanout edge";
-                    self.record(format!("blocked at {previous}: {detail}"));
-                    return Err(PrepareError::InvalidBatchSelection {
-                        detail: detail.to_string(),
-                    });
-                }
-            }
-            WalkState::R11a(r11a) => {
-                r11_to_r12(typestate::R10FanoutBranch::RejectedOnly(r11a)).map(WalkState::R12)
-            }
-            WalkState::R11(r11) => {
-                r11_to_r12(typestate::R10FanoutBranch::FanoutComplete(r11)).map(WalkState::R12)
-            }
-            WalkState::R12(r12) => {
-                // A selected successor may be a rejected child when traversal
-                // policy admits `explore_from_rejected`; the selected coordinate
-                // is still the handoff target. The extra gates here are about
-                // handoff side effects: active checkout mutation, History seal,
-                // parent retirement, and successor spawn/ready evidence.
-                // See docs/active/agents/2026-06-17_typestate-loop-driver-plan.md
-                // Slice 10 and
-                // docs/workflow/evalnomicon/src/prototype1/selection-and-evaluation.md.
-                if r12.has_successor_selection() && !watch {
-                    self.state = WalkState::R12(r12);
-                    let detail = "walk reached R12 with selected-successor evidence; rerun `walk step --watch --allow git-changes` to admit R13b handoff";
-                    self.record(format!("blocked at {previous}: {detail}"));
-                    return Err(PrepareError::InvalidBatchSelection {
-                        detail: detail.to_string(),
-                    });
-                }
-                if r12.has_successor_selection() && !allow_git_changes {
-                    self.state = WalkState::R12(r12);
-                    let detail = "walk R13b handoff installs the selected successor into the active checkout; rerun with `--allow git-changes`";
-                    self.record(format!("blocked at {previous}: {detail}"));
-                    return Err(PrepareError::InvalidBatchSelection {
-                        detail: detail.to_string(),
-                    });
-                }
-                r12.advance(r12_to_r13).map(|branch| match branch {
-                    typestate::R12ContinuationBranch::Stopped(r13a) => WalkState::R13a(r13a),
-                    typestate::R12ContinuationBranch::HandoffCommitted(r13b) => {
-                        WalkState::R13b(r13b)
-                    }
-                    typestate::R12ContinuationBranch::HandoffIncomplete(r13c) => {
-                        WalkState::R13c(r13c)
-                    }
-                })
-            }
-            WalkState::R13a(r13a) => r13_to_r14(typestate::R12ContinuationBranch::Stopped(r13a))
-                .map(|branch| match branch {
-                    typestate::R14FinalBranch::Stopped(r14a) => WalkState::R14a(r14a),
-                    typestate::R14FinalBranch::Handoff(_) => {
-                        unreachable!("R13a stopped branch cannot produce handoff final state")
-                    }
-                }),
-            WalkState::R13b(r13b) => {
-                r13_to_r14(typestate::R12ContinuationBranch::HandoffCommitted(r13b)).map(|branch| {
-                    match branch {
-                        typestate::R14FinalBranch::Stopped(_) => {
-                            unreachable!("R13b handoff branch cannot produce stopped final state")
-                        }
-                        typestate::R14FinalBranch::Handoff(r14b) => WalkState::R14b(r14b),
-                    }
-                })
-            }
-            WalkState::R13c(r13c) => {
-                self.state = WalkState::R13c(r13c);
-                let detail = "walk reached R13c with the predecessor retired and successor handoff incomplete; inspect and reconcile durable handoff evidence before continuing";
-                self.record(format!("blocked at {previous}: {detail}"));
-                return Err(PrepareError::InvalidBatchSelection {
-                    detail: detail.to_string(),
-                });
-            }
-            WalkState::R14a(r14a) => {
-                self.state = WalkState::R14a(r14a);
-                let detail = "walk reached R14a final stopped-report boundary";
-                self.record(format!("blocked at {previous}: {detail}"));
-                return Err(PrepareError::InvalidBatchSelection {
-                    detail: detail.to_string(),
-                });
-            }
-            WalkState::R14b(r14b) => {
-                self.state = WalkState::R14b(r14b);
-                let detail = "walk reached R14b final successor-handoff report boundary";
-                self.record(format!("blocked at {previous}: {detail}"));
-                return Err(PrepareError::InvalidBatchSelection {
-                    detail: detail.to_string(),
-                });
-            }
-        };
-        match next {
-            Ok(state) => {
-                let current = state.phase();
-                self.state = state;
+                let transition = WalkTransition {
+                    from: step.transition.from,
+                    to: step.transition.to,
+                };
+                self.state = step.state;
                 self.steps += 1;
                 self.reconstruction = None;
-                self.record(format!("step {}: {previous} -> {current}", self.steps));
-                Ok(WalkTransition {
-                    from: previous,
-                    to: current,
-                })
+                self.record(format!(
+                    "step {}: {} -> {}",
+                    self.steps, transition.from, transition.to
+                ));
+                Ok(transition)
             }
-            Err(error) => {
-                let error = if previous == WalkPhase::R4a {
-                    PrepareError::DatabaseSetup {
-                        phase: "prototype1_parent_checkout",
-                        detail: reconstruct::format_r4a_blocker(&self.repo_root, &error),
-                    }
+            Err(failure) => {
+                let phase = failure.state.phase();
+                let detail = failure.error.to_string();
+                let failed = matches!(failure.state, WalkState::Failed { .. });
+                self.state = failure.state;
+                if failed {
+                    self.record(format!("failed at {phase}: {detail}"));
                 } else {
-                    error
-                };
-                let detail = error.to_string();
-                self.state = WalkState::Failed {
-                    phase: previous,
-                    detail: detail.clone(),
-                };
-                self.record(format!("failed at {previous}: {detail}"));
-                Err(error)
+                    self.record(format!("blocked at {phase}: {detail}"));
+                }
+                Err(failure.error)
             }
         }
     }
-
     fn replay_cursor_mut(&mut self) -> Result<&mut ReplayCursor, PrepareError> {
         if self.replay.is_none() {
             self.replay = Some(ReplayCursor::load(&self.repo_root)?);
@@ -1817,77 +1607,6 @@ impl WalkController {
 
     fn record(&mut self, entry: impl Into<String>) {
         self.previous.push(entry.into());
-    }
-}
-
-impl WalkState {
-    fn phase(&self) -> WalkPhase {
-        match self {
-            WalkState::Empty => WalkPhase::Empty,
-            WalkState::R0(_) => WalkPhase::R0,
-            WalkState::R1(_) => WalkPhase::R1,
-            WalkState::R2a(_) => WalkPhase::R2a,
-            WalkState::R3(_) => WalkPhase::R3,
-            WalkState::R4a(_) => WalkPhase::R4a,
-            WalkState::R4b(_) => WalkPhase::R4b,
-            WalkState::R4c(_) => WalkPhase::R4c,
-            WalkState::R5(_) => WalkPhase::R5,
-            WalkState::R6(_) => WalkPhase::R6,
-            WalkState::R7(_) => WalkPhase::R7,
-            WalkState::R8(_) => WalkPhase::R8,
-            WalkState::R9(_) => WalkPhase::R9,
-            WalkState::R10(_) => WalkPhase::R10,
-            WalkState::R11a(_) => WalkPhase::R11a,
-            WalkState::R11(_) => WalkPhase::R11,
-            WalkState::R12(_) => WalkPhase::R12,
-            WalkState::R13a(_) => WalkPhase::R13a,
-            WalkState::R13b(_) => WalkPhase::R13b,
-            WalkState::R13c(_) => WalkPhase::R13c,
-            WalkState::R14a(_) => WalkPhase::R14a,
-            WalkState::R14b(_) => WalkPhase::R14b,
-            WalkState::Blocked { phase, .. } => *phase,
-            WalkState::Failed { phase, .. } => *phase,
-        }
-    }
-
-    fn from_early(state: EarlyState) -> Self {
-        match state {
-            EarlyState::R1(r1) => WalkState::R1(r1),
-            EarlyState::R3(r3) => WalkState::R3(r3),
-            EarlyState::R4a(r4a) => WalkState::R4a(r4a),
-            EarlyState::R4b(r4b) => WalkState::R4b(r4b),
-            EarlyState::R4c(r4c) => WalkState::R4c(r4c),
-            EarlyState::R5(r5) => WalkState::R5(r5),
-            EarlyState::R6(r6) => WalkState::R6(r6),
-            EarlyState::R7(r7) => WalkState::R7(r7),
-            EarlyState::R10(r10) => WalkState::R10(r10),
-            EarlyState::R12(r12) => WalkState::R12(r12),
-            EarlyState::R13a(r13a) => WalkState::R13a(r13a),
-            EarlyState::R13b(r13b) => WalkState::R13b(r13b),
-            EarlyState::R13c(r13c) => WalkState::R13c(r13c),
-            EarlyState::R14a(r14a) => WalkState::R14a(r14a),
-            EarlyState::R14b(r14b) => WalkState::R14b(r14b),
-        }
-    }
-}
-
-fn phase_for_early(state: &EarlyState) -> WalkPhase {
-    match state {
-        EarlyState::R1(_) => WalkPhase::R1,
-        EarlyState::R3(_) => WalkPhase::R3,
-        EarlyState::R4a(_) => WalkPhase::R4a,
-        EarlyState::R4b(_) => WalkPhase::R4b,
-        EarlyState::R4c(_) => WalkPhase::R4c,
-        EarlyState::R5(_) => WalkPhase::R5,
-        EarlyState::R6(_) => WalkPhase::R6,
-        EarlyState::R7(_) => WalkPhase::R7,
-        EarlyState::R10(_) => WalkPhase::R10,
-        EarlyState::R12(_) => WalkPhase::R12,
-        EarlyState::R13a(_) => WalkPhase::R13a,
-        EarlyState::R13b(_) => WalkPhase::R13b,
-        EarlyState::R13c(_) => WalkPhase::R13c,
-        EarlyState::R14a(_) => WalkPhase::R14a,
-        EarlyState::R14b(_) => WalkPhase::R14b,
     }
 }
 

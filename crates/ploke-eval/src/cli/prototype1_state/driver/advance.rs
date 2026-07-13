@@ -1,28 +1,38 @@
-//! Canonical typed forward driver for Prototype 1 parent turns.
-//!
-//! This module owns the R0 -> R14 direct-edge loop used by the public
-//! `prototype1-state` command. Operator/debug surfaces such as `walk` may step
-//! the same edges incrementally, but this file is the batch terminal driver.
+//! Batch adapter over the canonical one-edge Prototype 1 controller.
+
+use std::path::PathBuf;
 
 use ploke_core::EXECUTION_DEBUG_TARGET;
 
 use crate::{cli::Prototype1StateCommand, spec::PrepareError};
 
-use super::super::{
-    live_edges::{
-        r0_to_r1, r1_to_r2a_or_r3, r2a_to_r3, r3_to_r4a, r4a_to_r4b_or_r4c, r4b_to_r4c_genesis,
-        r4c_to_r5, r5_to_r6, r6_to_r7, r7_to_r8, r8_to_r9, r9_to_r10, r10_to_r11, r11_to_r12,
-        r12_to_r13, r13_to_r14,
-    },
-    typestate::{self, AsyncStepInput, Step, StepInput},
-};
+use super::control::{ControlState, StepAdmission, advance_one};
 
 // ANCHOR: prototype1_run_to_terminal
 /// Run a complete typed parent turn from command capture to final report.
 pub(crate) async fn run_to_terminal(command: Prototype1StateCommand) -> Result<(), PrepareError> {
-    let r0 = typestate::R0::new(command);
-    let r1 = r0.advance(r0_to_r1)?;
-    let span_campaign_id = r1.campaign_id().clone();
+    let repo_root = command
+        .repo_root
+        .clone()
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    let first = advance_one(
+        &repo_root,
+        ControlState::new(command),
+        StepAdmission::continuous(),
+    )
+    .await
+    .map_err(|failure| failure.error)?;
+    let span_campaign_id = match &first.state {
+        ControlState::R1(r1) => r1.campaign_id().clone(),
+        state => {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "first controlled Prototype 1 edge reached {} instead of R1",
+                    state.phase()
+                ),
+            });
+        }
+    };
     let turn_span = tracing::info_span!(
         target: EXECUTION_DEBUG_TARGET,
         "prototype1.parent.turn",
@@ -32,23 +42,20 @@ pub(crate) async fn run_to_terminal(command: Prototype1StateCommand) -> Result<(
     );
     let _turn_entered = turn_span.enter();
 
-    let r3 = match r1.advance(r1_to_r2a_or_r3)? {
-        typestate::R1Branch::R2a(r2a) => r2a.advance(r2a_to_r3)?,
-        typestate::R1Branch::R3(r3) => r3,
-    };
-    let r4a = r3.advance(r3_to_r4a)?;
-    let r4c = match r4a.advance(r4a_to_r4b_or_r4c)? {
-        typestate::R4aStartupBranch::GenesisChecked(r4b) => r4b.advance(r4b_to_r4c_genesis)?,
-        typestate::R4aStartupBranch::PredecessorReady(r4c) => r4c,
-    };
-    let r5 = r4c.advance(r4c_to_r5)?;
-    let r6 = r5.advance_async(r5_to_r6).await?;
-    let r7 = r6.advance(r6_to_r7)?;
-    let r8 = r7.advance_async(r7_to_r8).await?;
-    let r10 = r8.advance(r8_to_r9.then(r9_to_r10))?;
-    let r11 = r10.advance_async(r10_to_r11).await?;
-    let r13 = r11.advance(r11_to_r12.then(r12_to_r13))?;
-    let _r14 = r13.advance(r13_to_r14)?;
+    let mut state = first.state;
+    let mut guard = 0_u8;
+    while !state.complete() {
+        guard = guard.saturating_add(1);
+        if guard > 24 {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: "controlled Prototype 1 batch exceeded the R0-R14 step bound".to_string(),
+            });
+        }
+        state = advance_one(&repo_root, state, StepAdmission::continuous())
+            .await
+            .map_err(|failure| failure.error)?
+            .state;
+    }
     Ok(())
 }
 // ANCHOR_END: prototype1_run_to_terminal
