@@ -9,7 +9,7 @@ use std::{
     collections::BTreeMap,
     fmt,
     fs::{self, File, OpenOptions},
-    io::{self, Write},
+    io::{self, Read, Write},
     path::{Path, PathBuf},
 };
 
@@ -34,7 +34,9 @@ use crate::cli::prototype1_state::{
     },
 };
 
-const SCHEMA_VERSION: &str = "prototype1-control-session.v1";
+const SCHEMA_VERSION_V1: &str = "prototype1-control-session.v1";
+const SCHEMA_VERSION: &str = "prototype1-control-session.v2";
+const TRANSITION_KEY_VERSION: &str = "prototype1-control-transition-key.v1";
 const LOCK_FILE: &str = "controller.lock";
 const JOURNAL_FILE: &str = "control-journal.jsonl";
 const GRAPH_VERSION_V1: &str = "walk-r0-r14a-v1";
@@ -53,6 +55,29 @@ impl SessionId {
 impl fmt::Display for SessionId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
+    }
+}
+
+/// Last transition boundary proven committed for one controller session.
+///
+/// The session kernel treats `evidence` as an opaque canonical digest. The
+/// driver that reconstructs the typed state owns the evidence preimage.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Cursor {
+    pub(crate) phase: WalkPhase,
+    pub(crate) evidence: ContentHash,
+}
+
+impl Cursor {
+    pub(crate) fn new(phase: WalkPhase, evidence: ContentHash) -> Result<Self, Error> {
+        let cursor = Self { phase, evidence };
+        cursor.validate()?;
+        Ok(cursor)
+    }
+
+    fn validate(&self) -> Result<(), Error> {
+        validate_hash(&self.evidence).map_err(|detail| Error::InvalidIntent { detail })
     }
 }
 
@@ -123,6 +148,7 @@ pub(crate) struct Claim {
     parent: ParentIdentity,
     profile: RunProfileCommitment,
     mode: RunMode,
+    cursor: Cursor,
     epoch: ServerEpoch,
     runtime_id: Option<RuntimeId>,
     pid: u32,
@@ -135,6 +161,7 @@ impl Claim {
         parent: ParentIdentity,
         admitted: &AdmittedRunProfile,
         mode: RunMode,
+        cursor: Cursor,
         epoch: ServerEpoch,
     ) -> Result<Self, Error> {
         epoch
@@ -181,11 +208,13 @@ impl Claim {
                 ),
             });
         }
+        cursor.validate()?;
         Ok(Self {
             origin: Origin::Admitted { setup },
             parent,
             profile: admitted.commitment.clone(),
             mode,
+            cursor,
             epoch,
             runtime_id: None,
             pid: std::process::id(),
@@ -199,6 +228,7 @@ impl Claim {
         parent: ParentIdentity,
         profile: RunProfileCommitment,
         mode: RunMode,
+        cursor: Cursor,
         epoch: ServerEpoch,
     ) -> Self {
         Self {
@@ -206,6 +236,7 @@ impl Claim {
             parent,
             profile,
             mode,
+            cursor,
             epoch,
             runtime_id: None,
             pid: std::process::id(),
@@ -258,6 +289,16 @@ pub(crate) enum Conflict {
         active: RunMode,
         requested: RunMode,
     },
+    Cursor {
+        session_id: SessionId,
+        active: Option<Cursor>,
+        requested: Cursor,
+    },
+    Schema {
+        session_id: SessionId,
+        active: String,
+        supported: String,
+    },
 }
 
 /// A lock-holding authority for explicit recovery or takeover.
@@ -302,6 +343,9 @@ impl RecoveryLease {
 
     fn repair_tail_inner(&mut self, expected: &ContentHash) -> Result<PathBuf, Error> {
         ensure_fresh(&self.request.epoch)?;
+        if let Some(replay) = self.replay.as_ref() {
+            replay.ensure_mutable()?;
+        }
         if !matches!(
             self.cause,
             Some(RecoveryCause::Journal(Damage::Truncated { .. }))
@@ -383,7 +427,8 @@ impl RecoveryLease {
             .ok_or_else(|| Error::RepairUnsupported {
                 detail: "journal sequence damage must be repaired before resolution".to_string(),
             })?;
-        validate_resolution(replay, &cause, &resolution)?;
+        replay.ensure_mutable()?;
+        validate_resolution_current(replay, &cause, &resolution)?;
         let created = replay
             .created
             .as_ref()
@@ -439,6 +484,10 @@ impl RecoveryLease {
             return Err(failure(self, source));
         }
         let mut replay = self.replay.take().unwrap_or_default();
+        if let Err(source) = replay.ensure_mutable() {
+            self.replay = Some(replay);
+            return Err(failure(self, source));
+        }
         let mut next_index = self.next_index;
         let session_id = if let Some(created) = replay.created.as_ref() {
             created.session_id
@@ -451,6 +500,7 @@ impl RecoveryLease {
                 parent: self.request.parent.clone(),
                 profile: self.request.profile.clone(),
                 mode: self.request.mode,
+                cursor: Some(self.request.cursor.clone()),
                 recorded_at: RecordedAt::now(),
             };
             if let Err(source) = append_entry(&self.paths.journal, &entry, next_index) {
@@ -458,12 +508,14 @@ impl RecoveryLease {
                 return Err(failure(self, source));
             }
             replay.created = Some(Created {
+                schema_version: SCHEMA_VERSION.to_string(),
                 session_id,
                 origin: self.request.origin.clone(),
                 parent: self.request.parent.clone(),
                 profile: self.request.profile.clone(),
                 mode: self.request.mode,
             });
+            replay.cursor = Some(self.request.cursor.clone());
             next_index += 1;
             self.next_index = next_index;
             session_id
@@ -492,6 +544,10 @@ impl RecoveryLease {
             return Err(failure(self, source));
         }
         next_index += 1;
+        let cursor = replay
+            .cursor
+            .clone()
+            .expect("mutable controller session has a committed cursor");
         let lock = self.lock.take().expect("recovery lease owns its lock");
         Ok(Lease {
             lock,
@@ -499,6 +555,7 @@ impl RecoveryLease {
             session_id,
             parent: self.request.parent,
             mode: self.request.mode,
+            cursor,
             epoch: self.request.epoch,
             runtime_id: self.request.runtime_id,
             fence,
@@ -546,6 +603,8 @@ pub(crate) enum RecoveryResolution {
     ResolveAttempt {
         transition_id: TransitionId,
         result: AttemptResult,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        epoch: Option<EpochReceipt>,
     },
     AdmitEpoch {
         prior: ServerEpoch,
@@ -567,6 +626,23 @@ pub(crate) struct Store {
     root: PathBuf,
 }
 
+/// Lock-free projection of durable session evidence.
+///
+/// An active owner here means only that the journal has not recorded release;
+/// inspection does not acquire the kernel lock and therefore does not label an
+/// owner live or lost.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SessionSnapshot {
+    pub(crate) paths: Paths,
+    pub(crate) journal_revision: usize,
+    pub(crate) created: Option<Created>,
+    pub(crate) cursor: Option<Cursor>,
+    pub(crate) last_epoch: Option<ServerEpoch>,
+    pub(crate) active: Option<Owner>,
+    pub(crate) attempts: Vec<Attempt>,
+    pub(crate) damage: Option<Damage>,
+}
+
 impl Store {
     pub(crate) fn new(root: impl Into<PathBuf>) -> Self {
         Self { root: root.into() }
@@ -584,6 +660,48 @@ impl Store {
             journal: root.join(JOURNAL_FILE),
             root,
         }
+    }
+
+    /// Inspect durable evidence without creating paths, opening the lock file,
+    /// incrementing a fence, or deciding whether a recorded owner is alive.
+    pub(crate) fn inspect(
+        &self,
+        parent: &ParentIdentity,
+    ) -> Result<Option<SessionSnapshot>, Error> {
+        let paths = self.paths(parent);
+        match fs::metadata(&paths.journal) {
+            Ok(_) => {}
+            Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(source) => {
+                return Err(Error::Read {
+                    path: paths.journal.clone(),
+                    source,
+                });
+            }
+        }
+        let (lines, damage) = match load_entries(&paths.journal)? {
+            Load::Ready(lines) => (lines, None),
+            Load::Damaged { lines, cause, .. } => (lines, Some(cause)),
+        };
+        if lines.is_empty() && damage.is_none() {
+            return Ok(None);
+        }
+        let replay = Replay::from_lines(&lines).map_err(Error::Replay)?;
+        let attempts = replay
+            .attempt_order
+            .iter()
+            .filter_map(|id| replay.attempts.get(id).cloned())
+            .collect();
+        Ok(Some(SessionSnapshot {
+            paths,
+            journal_revision: lines.len(),
+            created: replay.created,
+            cursor: replay.cursor,
+            last_epoch: replay.last_epoch,
+            active: replay.active,
+            attempts,
+            damage,
+        }))
     }
 
     /// Try to claim the stable lock inode without waiting.
@@ -685,6 +803,7 @@ pub(crate) struct Lease<S> {
     session_id: SessionId,
     parent: ParentIdentity,
     mode: RunMode,
+    cursor: Cursor,
     epoch: ServerEpoch,
     runtime_id: Option<RuntimeId>,
     fence: Fence,
@@ -710,6 +829,10 @@ impl<S> Lease<S> {
         self.mode
     }
 
+    pub(crate) fn cursor(&self) -> &Cursor {
+        &self.cursor
+    }
+
     pub(crate) fn epoch(&self) -> &ServerEpoch {
         &self.epoch
     }
@@ -728,8 +851,72 @@ impl<S> Lease<S> {
 }
 
 impl Lease<Idle> {
+    pub(crate) fn intent(&self, allow_git_changes: bool) -> Result<AttemptIntent, Error> {
+        let mut retry = 0_u32;
+        for attempt in self.attempts.values() {
+            let Some(receipt) = attempt.terminal() else {
+                continue;
+            };
+            if receipt.intent.cursor() != self.cursor
+                || receipt.intent.allow_git_changes != allow_git_changes
+                || receipt.intent.epoch.transition_graph_version
+                    != self.epoch.transition_graph_version
+                || !matches!(
+                    receipt.result,
+                    AttemptResult::Rejected { .. } | AttemptResult::Cancelled { .. }
+                )
+            {
+                continue;
+            }
+            retry = retry.max(
+                receipt
+                    .intent
+                    .retry
+                    .checked_add(1)
+                    .ok_or(Error::RetryExhausted)?,
+            );
+        }
+        AttemptIntent::with_retry(
+            self.session_id,
+            self.cursor.clone(),
+            allow_git_changes,
+            self.epoch.clone(),
+            retry,
+        )
+    }
+
     /// Durably admit one exact typed edge and evidence revision.
     pub(crate) fn begin(self, intent: AttemptIntent) -> Result<Begin, AdmissionFailure> {
+        if let Some(attempt) = self.attempts.get(&intent.transition_id).cloned() {
+            return match attempt {
+                Attempt::Pending { .. } => Err(failure(
+                    self,
+                    Error::AttemptPending {
+                        transition_id: intent.transition_id,
+                    },
+                )),
+                Attempt::Finished(receipt) | Attempt::Recovered { receipt, .. }
+                    if receipt.intent == intent =>
+                {
+                    Ok(Begin::Existing {
+                        lease: self,
+                        receipt,
+                    })
+                }
+                Attempt::Finished(_) | Attempt::Recovered { .. } => Err(failure(
+                    self,
+                    Error::AttemptMismatch {
+                        transition_id: intent.transition_id,
+                    },
+                )),
+            };
+        }
+        if let Err(source) = intent.validate_current() {
+            return Err(failure(self, source));
+        }
+        if let Err(source) = intent.validate_for(self.session_id) {
+            return Err(failure(self, source));
+        }
         if intent.epoch != self.epoch {
             return Err(failure(self, Error::EpochMismatch));
         }
@@ -741,28 +928,10 @@ impl Lease<Idle> {
                 },
             ));
         }
-        if let Err(source) = intent.validate_current() {
-            return Err(failure(self, source));
-        }
-        if let Some(attempt) = self.attempts.get(&intent.transition_id).cloned() {
-            return match attempt {
-                Attempt::Pending { .. } => Err(failure(
-                    self,
-                    Error::AttemptPending {
-                        transition_id: intent.transition_id,
-                    },
-                )),
-                Attempt::Finished(receipt) if receipt.intent == intent => Ok(Begin::Existing {
-                    lease: self,
-                    receipt,
-                }),
-                Attempt::Finished(_) => Err(failure(
-                    self,
-                    Error::AttemptMismatch {
-                        transition_id: intent.transition_id,
-                    },
-                )),
-            };
+        let requested = intent.cursor();
+        if requested != self.cursor {
+            let active = self.cursor.clone();
+            return Err(failure(self, Error::CursorMismatch { active, requested }));
         }
 
         let entry = Entry::Began {
@@ -792,6 +961,7 @@ impl Lease<Idle> {
                 session_id: self.session_id,
                 parent: self.parent,
                 mode: self.mode,
+                cursor: self.cursor,
                 epoch: self.epoch,
                 runtime_id: self.runtime_id,
                 fence: self.fence,
@@ -825,23 +995,49 @@ impl Lease<Pending> {
 
     /// Finish the one attempt admitted under this lease and fence.
     pub(crate) fn finish(self, result: AttemptResult) -> Result<Finished, FinishFailure> {
-        let result = match self.epoch.ensure_not_stale_now() {
-            Ok(()) => result,
-            Err(source) => AttemptResult::Indeterminate {
-                phase: None,
-                evidence: None,
-                detail: format!("controller epoch changed while the edge was running: {source}"),
-            },
-        };
-        if let Err(source) = validate_result(&self.state.intent, &result) {
+        if let Err(source) = validate_result_current(&self.state.intent, &result) {
             return Err(failure(self, source));
         }
+        let before = self.epoch.clone();
+        let (after, capture_error) = match ServerEpoch::capture(&before.repo_root) {
+            Ok(after) => (Some(after), None),
+            Err(source) => (None, Some(source.to_string())),
+        };
+        let epoch_receipt = EpochReceipt {
+            before: before.clone(),
+            after: after.clone(),
+        };
+        let (result, next_epoch) = if let Some(detail) = capture_error {
+            (
+                AttemptResult::Indeterminate {
+                    phase: None,
+                    evidence: None,
+                    detail: format!("controller epoch capture failed after the edge: {detail}"),
+                },
+                before,
+            )
+        } else {
+            settle_epoch(&self.state.intent, result, &epoch_receipt)
+        };
+        if let Err(source) = validate_result_current(&self.state.intent, &result) {
+            return Err(failure(self, source));
+        }
+        let next_cursor = match &result {
+            AttemptResult::Committed { phase, evidence } => Cursor {
+                phase: *phase,
+                evidence: evidence.clone(),
+            },
+            AttemptResult::Rejected { .. }
+            | AttemptResult::Cancelled { .. }
+            | AttemptResult::Indeterminate { .. } => self.cursor.clone(),
+        };
         let transition_id = self.state.intent.transition_id;
         let entry = Entry::Finished {
             session_id: self.session_id,
             transition_id,
             fence: self.fence,
             result: result.clone(),
+            epoch: Some(epoch_receipt.clone()),
             recorded_at: RecordedAt::now(),
         };
         let append = match append_entry(&self.paths.journal, &entry, self.next_index) {
@@ -855,6 +1051,7 @@ impl Lease<Pending> {
             intent: self.state.intent,
             fence: self.fence,
             result,
+            epoch: Some(epoch_receipt),
         };
         let mut attempts = self.attempts;
         attempts.insert(transition_id, Attempt::Finished(receipt.clone()));
@@ -864,7 +1061,6 @@ impl Lease<Pending> {
             session_id,
             parent,
             mode,
-            epoch,
             runtime_id,
             fence,
             next_index,
@@ -879,7 +1075,8 @@ impl Lease<Pending> {
                     session_id,
                     parent,
                     mode,
-                    epoch,
+                    cursor: next_cursor,
+                    epoch: next_epoch,
                     runtime_id,
                     fence,
                     next_index: next_index + 1,
@@ -897,7 +1094,8 @@ impl Lease<Pending> {
                     session_id,
                     parent,
                     mode,
-                    epoch,
+                    cursor: next_cursor,
+                    epoch: next_epoch,
                     runtime_id,
                     fence,
                     next_index: next_index + 1,
@@ -921,27 +1119,76 @@ pub(crate) struct AttemptIntent {
     pub(crate) allow_git_changes: bool,
     pub(crate) epoch: ServerEpoch,
     pub(crate) evidence: ContentHash,
+    #[serde(default)]
+    pub(crate) retry: u32,
 }
 
 impl AttemptIntent {
     pub(crate) fn new(
-        transition_id: TransitionId,
-        expected: WalkPhase,
+        session_id: SessionId,
+        cursor: Cursor,
         allow_git_changes: bool,
         epoch: ServerEpoch,
-        evidence: ContentHash,
     ) -> Result<Self, Error> {
-        let targets = current_targets(expected, allow_git_changes);
+        Self::with_retry(session_id, cursor, allow_git_changes, epoch, 0)
+    }
+
+    fn with_retry(
+        session_id: SessionId,
+        cursor: Cursor,
+        allow_git_changes: bool,
+        epoch: ServerEpoch,
+        retry: u32,
+    ) -> Result<Self, Error> {
+        cursor.validate()?;
+        let targets = current_targets(cursor.phase, allow_git_changes);
+        let transition_id = transition_id(
+            session_id,
+            &cursor,
+            &targets,
+            allow_git_changes,
+            &epoch.transition_graph_version,
+            retry,
+        )?;
         let intent = Self {
             transition_id,
-            expected,
+            expected: cursor.phase,
             targets,
             allow_git_changes,
             epoch,
-            evidence,
+            evidence: cursor.evidence,
+            retry,
         };
         intent.validate_current()?;
         Ok(intent)
+    }
+
+    fn cursor(&self) -> Cursor {
+        Cursor {
+            phase: self.expected,
+            evidence: self.evidence.clone(),
+        }
+    }
+
+    fn validate_for(&self, session_id: SessionId) -> Result<(), Error> {
+        self.validate_record()?;
+        let expected = transition_id(
+            session_id,
+            &self.cursor(),
+            &self.targets,
+            self.allow_git_changes,
+            &self.epoch.transition_graph_version,
+            self.retry,
+        )?;
+        if self.transition_id != expected {
+            return Err(Error::InvalidIntent {
+                detail: format!(
+                    "transition id {} does not match deterministic session key {expected}",
+                    self.transition_id
+                ),
+            });
+        }
+        Ok(())
     }
 
     fn validate_current(&self) -> Result<(), Error> {
@@ -954,6 +1201,7 @@ impl AttemptIntent {
             });
         }
         self.validate_record()?;
+        self.cursor().validate()?;
         Ok(())
     }
 
@@ -1021,6 +1269,36 @@ impl AttemptIntent {
         }
         Ok(())
     }
+}
+
+#[derive(Serialize)]
+struct TransitionKey<'a> {
+    schema_version: &'static str,
+    cursor: &'a Cursor,
+    targets: &'a [WalkPhase],
+    allow_git_changes: bool,
+    graph_version: &'a str,
+    retry: u32,
+}
+
+fn transition_id(
+    session_id: SessionId,
+    cursor: &Cursor,
+    targets: &[WalkPhase],
+    allow_git_changes: bool,
+    graph_version: &str,
+    retry: u32,
+) -> Result<TransitionId, Error> {
+    let key = TransitionKey {
+        schema_version: TRANSITION_KEY_VERSION,
+        cursor,
+        targets,
+        allow_git_changes,
+        graph_version,
+        retry,
+    };
+    let bytes = serde_json::to_vec(&key).map_err(Error::Serialize)?;
+    Ok(TransitionId(Uuid::new_v5(&session_id.0, &bytes)))
 }
 
 fn current_targets(expected: WalkPhase, allow_git_changes: bool) -> Vec<WalkPhase> {
@@ -1099,6 +1377,15 @@ pub(crate) struct AttemptReceipt {
     pub(crate) intent: AttemptIntent,
     pub(crate) fence: Fence,
     pub(crate) result: AttemptResult,
+    pub(crate) epoch: Option<EpochReceipt>,
+}
+
+/// Controller epoch observed immediately before and after an attempted edge.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct EpochReceipt {
+    pub(crate) before: ServerEpoch,
+    pub(crate) after: Option<ServerEpoch>,
 }
 
 /// Durable classification of the effect boundary reached by one attempt.
@@ -1180,6 +1467,8 @@ enum Entry {
         parent: ParentIdentity,
         profile: RunProfileCommitment,
         mode: RunMode,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cursor: Option<Cursor>,
         recorded_at: RecordedAt,
     },
     Acquired {
@@ -1201,6 +1490,8 @@ enum Entry {
         transition_id: TransitionId,
         fence: Fence,
         result: AttemptResult,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        epoch: Option<EpochReceipt>,
         recorded_at: RecordedAt,
     },
     Recovered {
@@ -1249,8 +1540,9 @@ struct Tail {
     bytes: Vec<u8>,
 }
 
-#[derive(Debug, Clone)]
-struct Created {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Created {
+    schema_version: String,
     session_id: SessionId,
     origin: Origin,
     parent: ParentIdentity,
@@ -1258,8 +1550,30 @@ struct Created {
     mode: RunMode,
 }
 
-#[derive(Debug, Clone)]
-struct Owner {
+impl Created {
+    pub(crate) fn schema_version(&self) -> &str {
+        &self.schema_version
+    }
+
+    pub(crate) fn session_id(&self) -> SessionId {
+        self.session_id
+    }
+
+    pub(crate) fn parent(&self) -> &ParentIdentity {
+        &self.parent
+    }
+
+    pub(crate) fn profile(&self) -> &RunProfileCommitment {
+        &self.profile
+    }
+
+    pub(crate) fn mode(&self) -> RunMode {
+        self.mode
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Owner {
     session_id: SessionId,
     fence: Fence,
     epoch: ServerEpoch,
@@ -1267,19 +1581,62 @@ struct Owner {
     pid: u32,
 }
 
-#[derive(Debug, Clone)]
-enum Attempt {
-    Pending { fence: Fence, intent: AttemptIntent },
+impl Owner {
+    pub(crate) fn fence(&self) -> Fence {
+        self.fence
+    }
+
+    pub(crate) fn epoch(&self) -> &ServerEpoch {
+        &self.epoch
+    }
+
+    pub(crate) fn runtime_id(&self) -> Option<RuntimeId> {
+        self.runtime_id
+    }
+
+    pub(crate) fn pid(&self) -> u32 {
+        self.pid
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Attempt {
+    Pending {
+        fence: Fence,
+        intent: AttemptIntent,
+    },
     Finished(AttemptReceipt),
+    Recovered {
+        prior: Box<Attempt>,
+        receipt: AttemptReceipt,
+    },
+}
+
+impl Attempt {
+    fn intent(&self) -> &AttemptIntent {
+        match self {
+            Self::Pending { intent, .. } => intent,
+            Self::Finished(receipt) | Self::Recovered { receipt, .. } => &receipt.intent,
+        }
+    }
+
+    fn terminal(&self) -> Option<&AttemptReceipt> {
+        match self {
+            Self::Pending { .. } => None,
+            Self::Finished(receipt) | Self::Recovered { receipt, .. } => Some(receipt),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
 struct Replay {
     created: Option<Created>,
+    cursor: Option<Cursor>,
     active: Option<Owner>,
     last_epoch: Option<ServerEpoch>,
     max_fence: u64,
     attempts: BTreeMap<TransitionId, Attempt>,
+    attempt_order: Vec<TransitionId>,
 }
 
 impl Replay {
@@ -1289,6 +1646,24 @@ impl Replay {
             replay.apply(line)?;
         }
         Ok(replay)
+    }
+
+    fn ensure_mutable(&self) -> Result<(), Error> {
+        let Some(created) = self.created.as_ref() else {
+            return Ok(());
+        };
+        if created.schema_version != SCHEMA_VERSION {
+            return Err(Error::LegacySchema {
+                active: created.schema_version.clone(),
+                supported: SCHEMA_VERSION.to_string(),
+            });
+        }
+        if self.cursor.is_none() {
+            return Err(Error::CursorUnbound {
+                session_id: created.session_id,
+            });
+        }
+        Ok(())
     }
 
     fn apply(&mut self, line: &Line) -> Result<(), Damage> {
@@ -1304,9 +1679,10 @@ impl Replay {
                 parent,
                 profile,
                 mode,
+                cursor,
                 ..
             } => {
-                if schema_version != SCHEMA_VERSION {
+                if schema_version != SCHEMA_VERSION && schema_version != SCHEMA_VERSION_V1 {
                     return Err(sequence(format!(
                         "unsupported session schema '{schema_version}'"
                     )));
@@ -1316,13 +1692,32 @@ impl Replay {
                         "session creation must be the first and only created entry".to_string(),
                     ));
                 }
+                match (schema_version.as_str(), cursor) {
+                    (SCHEMA_VERSION, Some(cursor)) => cursor
+                        .validate()
+                        .map_err(|error| sequence(error.to_string()))?,
+                    (SCHEMA_VERSION, None) => {
+                        return Err(sequence(
+                            "v2 session creation is missing its committed cursor".to_string(),
+                        ));
+                    }
+                    (SCHEMA_VERSION_V1, None) => {}
+                    (SCHEMA_VERSION_V1, Some(_)) => {
+                        return Err(sequence(
+                            "v1 session creation cannot contain a v2 cursor".to_string(),
+                        ));
+                    }
+                    _ => unreachable!("supported schemas were checked"),
+                }
                 self.created = Some(Created {
+                    schema_version: schema_version.clone(),
                     session_id: *session_id,
                     origin: origin.clone(),
                     parent: parent.clone(),
                     profile: profile.clone(),
                     mode: *mode,
                 });
+                self.cursor = cursor.clone();
             }
             Entry::Acquired {
                 session_id,
@@ -1375,6 +1770,34 @@ impl Replay {
                 intent
                     .validate_record()
                     .map_err(|error| sequence(error.to_string()))?;
+                let created = self.created.as_ref().expect("session was required");
+                if created.schema_version == SCHEMA_VERSION {
+                    intent
+                        .cursor()
+                        .validate()
+                        .map_err(|error| sequence(error.to_string()))?;
+                    intent
+                        .validate_for(*session_id)
+                        .map_err(|error| sequence(error.to_string()))?;
+                }
+                let requested = intent.cursor();
+                match self.cursor.as_ref() {
+                    Some(active) if active != &requested => {
+                        return Err(sequence(format!(
+                            "transition {} expected cursor {requested:?}, active cursor is {active:?}",
+                            intent.transition_id
+                        )));
+                    }
+                    None if created.schema_version == SCHEMA_VERSION_V1 => {
+                        self.cursor = Some(requested);
+                    }
+                    None => {
+                        return Err(sequence(
+                            "transition began before a session cursor was established".to_string(),
+                        ));
+                    }
+                    Some(_) => {}
+                }
                 if self.attempts.contains_key(&intent.transition_id) {
                     return Err(sequence(format!(
                         "transition {} was started more than once",
@@ -1395,12 +1818,14 @@ impl Replay {
                         intent: intent.clone(),
                     },
                 );
+                self.attempt_order.push(intent.transition_id);
             }
             Entry::Finished {
                 session_id,
                 transition_id,
                 fence,
                 result,
+                epoch,
                 ..
             } => {
                 self.require_owner(*session_id, *fence, line.number)?;
@@ -1418,14 +1843,55 @@ impl Replay {
                         "transition {transition_id} changed fence from {began} to {fence}"
                     )));
                 }
-                validate_result(intent, result).map_err(|error| sequence(error.to_string()))?;
+                let intent = intent.clone();
+                let created = self.created.as_ref().expect("session was required");
+                if created.schema_version == SCHEMA_VERSION {
+                    validate_result_current(&intent, result)
+                        .map_err(|error| sequence(error.to_string()))?;
+                } else {
+                    validate_result(&intent, result)
+                        .map_err(|error| sequence(error.to_string()))?;
+                }
+                match (created.schema_version.as_str(), epoch) {
+                    (SCHEMA_VERSION, Some(epoch)) => {
+                        validate_epoch(&intent, result, epoch)
+                            .map_err(|error| sequence(error.to_string()))?;
+                    }
+                    (SCHEMA_VERSION, None) => {
+                        return Err(sequence(
+                            "v2 transition result is missing its epoch receipt".to_string(),
+                        ));
+                    }
+                    (SCHEMA_VERSION_V1, None) => {}
+                    (SCHEMA_VERSION_V1, Some(_)) => {
+                        return Err(sequence(
+                            "v1 transition result cannot contain a v2 epoch receipt".to_string(),
+                        ));
+                    }
+                    _ => unreachable!("supported schemas were checked"),
+                }
                 let receipt = AttemptReceipt {
                     intent: intent.clone(),
                     fence: *fence,
                     result: result.clone(),
+                    epoch: epoch.clone(),
                 };
                 self.attempts
                     .insert(*transition_id, Attempt::Finished(receipt));
+                if let AttemptResult::Committed { phase, evidence } = result {
+                    self.cursor = Some(Cursor {
+                        phase: *phase,
+                        evidence: evidence.clone(),
+                    });
+                }
+                if let Some(epoch) = epoch
+                    && let Some(after) = epoch.after.as_ref()
+                    && after != &epoch.before
+                    && admits_epoch_change(&intent, result, &epoch.before, after)
+                {
+                    self.last_epoch = Some(after.clone());
+                    self.active.as_mut().expect("owner was required").epoch = after.clone();
+                }
             }
             Entry::Recovered {
                 session_id,
@@ -1437,31 +1903,52 @@ impl Replay {
                 let cause = self.recovery().ok_or_else(|| {
                     sequence("recovery event appeared without a recovery cause".to_string())
                 })?;
-                validate_resolution(self, &cause, resolution)
-                    .map_err(|error| sequence(error.to_string()))?;
+                let created = self.created.as_ref().expect("session was required");
+                if created.schema_version == SCHEMA_VERSION {
+                    validate_resolution_current(self, &cause, resolution)
+                        .map_err(|error| sequence(error.to_string()))?;
+                } else {
+                    validate_resolution(self, &cause, resolution)
+                        .map_err(|error| sequence(error.to_string()))?;
+                }
                 match resolution {
                     RecoveryResolution::AbandonOwner => {}
                     RecoveryResolution::ResolveAttempt {
                         transition_id,
                         result,
+                        epoch,
                     } => {
-                        let intent = match self.attempts.get(transition_id) {
-                            Some(Attempt::Pending { intent, .. }) => intent.clone(),
-                            Some(Attempt::Finished(receipt)) => receipt.intent.clone(),
-                            None => {
-                                return Err(sequence(format!(
-                                    "recovery transition {transition_id} was not recorded"
-                                )));
-                            }
-                        };
+                        let prior = self.attempts.remove(transition_id).ok_or_else(|| {
+                            sequence(format!(
+                                "recovery transition {transition_id} was not recorded"
+                            ))
+                        })?;
+                        let intent = prior.intent().clone();
                         self.attempts.insert(
                             *transition_id,
-                            Attempt::Finished(AttemptReceipt {
-                                intent,
-                                fence: *fence,
-                                result: result.clone(),
-                            }),
+                            Attempt::Recovered {
+                                prior: Box::new(prior),
+                                receipt: AttemptReceipt {
+                                    intent: intent.clone(),
+                                    fence: *fence,
+                                    result: result.clone(),
+                                    epoch: epoch.clone(),
+                                },
+                            },
                         );
+                        if let AttemptResult::Committed { phase, evidence } = result {
+                            self.cursor = Some(Cursor {
+                                phase: *phase,
+                                evidence: evidence.clone(),
+                            });
+                        }
+                        if let Some(epoch) = epoch
+                            && let Some(after) = epoch.after.as_ref()
+                            && after != &epoch.before
+                            && admits_epoch_change(&intent, result, &epoch.before, after)
+                        {
+                            self.last_epoch = Some(after.clone());
+                        }
                     }
                     RecoveryResolution::AdmitEpoch { .. } => {
                         return Err(sequence(
@@ -1572,6 +2059,7 @@ impl Replay {
                     receipt.fence == fence
                         && matches!(receipt.result, AttemptResult::Indeterminate { .. })
                 }
+                Attempt::Recovered { .. } => false,
             };
             unresolved.then_some((*transition_id, attempt))
         })
@@ -1636,6 +2124,7 @@ fn acquire_lease(
             parent: request.parent.clone(),
             profile: request.profile.clone(),
             mode: request.mode,
+            cursor: Some(request.cursor.clone()),
             recorded_at: RecordedAt::now(),
         };
         append_entry(&paths.journal, &entry, next_index)?;
@@ -1665,6 +2154,7 @@ fn acquire_lease(
         session_id,
         parent: request.parent,
         mode: request.mode,
+        cursor: replay.cursor.unwrap_or(request.cursor),
         epoch: request.epoch,
         runtime_id: request.runtime_id,
         fence,
@@ -1684,6 +2174,13 @@ fn ensure_fresh(epoch: &ServerEpoch) -> Result<(), Error> {
 
 fn binding_conflict(replay: &Replay, request: &Claim) -> Option<Conflict> {
     let created = replay.created.as_ref()?;
+    if created.schema_version != SCHEMA_VERSION {
+        return Some(Conflict::Schema {
+            session_id: created.session_id,
+            active: created.schema_version.clone(),
+            supported: SCHEMA_VERSION.to_string(),
+        });
+    }
     if created.origin != request.origin {
         return Some(Conflict::Setup {
             session_id: created.session_id,
@@ -1712,7 +2209,105 @@ fn binding_conflict(replay: &Replay, request: &Claim) -> Option<Conflict> {
             requested: request.mode,
         });
     }
+    if replay.cursor.as_ref() != Some(&request.cursor) {
+        return Some(Conflict::Cursor {
+            session_id: created.session_id,
+            active: replay.cursor.clone(),
+            requested: request.cursor.clone(),
+        });
+    }
     None
+}
+
+fn settle_epoch(
+    intent: &AttemptIntent,
+    result: AttemptResult,
+    receipt: &EpochReceipt,
+) -> (AttemptResult, ServerEpoch) {
+    let Some(after) = receipt.after.as_ref() else {
+        return (
+            AttemptResult::Indeterminate {
+                phase: None,
+                evidence: None,
+                detail: "controller epoch could not be captured after the edge".to_string(),
+            },
+            receipt.before.clone(),
+        );
+    };
+    if after == &receipt.before {
+        return (result, receipt.before.clone());
+    }
+    if admits_epoch_change(intent, &result, &receipt.before, after) {
+        return (result, after.clone());
+    }
+    (
+        AttemptResult::Indeterminate {
+            phase: None,
+            evidence: None,
+            detail: "controller epoch changed across an edge that does not admit checkout mutation"
+                .to_string(),
+        },
+        receipt.before.clone(),
+    )
+}
+
+fn admits_epoch_change(
+    intent: &AttemptIntent,
+    result: &AttemptResult,
+    before: &ServerEpoch,
+    after: &ServerEpoch,
+) -> bool {
+    let edge = matches!(
+        (intent.expected, result),
+        (
+            WalkPhase::R1,
+            AttemptResult::Committed {
+                phase: WalkPhase::R2a,
+                ..
+            }
+        ) | (
+            WalkPhase::R12,
+            AttemptResult::Committed {
+                phase: WalkPhase::R13b | WalkPhase::R13c,
+                ..
+            }
+        )
+    );
+    edge && before.protocol_version == after.protocol_version
+        && before.transition_graph_version == after.transition_graph_version
+        && before.repo_root == after.repo_root
+        && before.exe_path == after.exe_path
+        && before.exe_modified_unix_ms == after.exe_modified_unix_ms
+}
+
+fn validate_epoch(
+    intent: &AttemptIntent,
+    result: &AttemptResult,
+    receipt: &EpochReceipt,
+) -> Result<(), Error> {
+    if receipt.before != intent.epoch {
+        return Err(Error::ResultMismatch {
+            detail: "transition epoch receipt does not start at the admitted epoch".to_string(),
+        });
+    }
+    let Some(after) = receipt.after.as_ref() else {
+        if matches!(result, AttemptResult::Indeterminate { .. }) {
+            return Ok(());
+        }
+        return Err(Error::ResultMismatch {
+            detail: "terminal transition result is missing its observed after epoch".to_string(),
+        });
+    };
+    if after == &receipt.before
+        || admits_epoch_change(intent, result, &receipt.before, after)
+        || matches!(result, AttemptResult::Indeterminate { .. })
+    {
+        return Ok(());
+    }
+    Err(Error::ResultMismatch {
+        detail: "controller epoch changed across a result that did not admit checkout mutation"
+            .to_string(),
+    })
 }
 
 fn validate_result(intent: &AttemptIntent, result: &AttemptResult) -> Result<(), Error> {
@@ -1806,6 +2401,35 @@ fn validate_result(intent: &AttemptIntent, result: &AttemptResult) -> Result<(),
     Ok(())
 }
 
+fn validate_result_current(intent: &AttemptIntent, result: &AttemptResult) -> Result<(), Error> {
+    validate_result(intent, result)?;
+    let evidence = match result {
+        AttemptResult::Committed { evidence, .. }
+        | AttemptResult::Rejected { evidence, .. }
+        | AttemptResult::Cancelled { evidence, .. } => Some(evidence),
+        AttemptResult::Indeterminate { evidence, .. } => evidence.as_ref(),
+    };
+    if let Some(hash) = evidence
+        && let Err(detail) = validate_hash(hash)
+    {
+        return Err(Error::ResultMismatch {
+            detail: format!("result evidence is invalid: {detail}"),
+        });
+    }
+    Ok(())
+}
+
+fn validate_hash(hash: &ContentHash) -> Result<(), String> {
+    let bytes = hash.0.as_bytes();
+    if bytes.len() != 64 || !bytes.iter().all(u8::is_ascii_hexdigit) {
+        return Err("evidence must be a 64-character SHA-256 digest".to_string());
+    }
+    if bytes.iter().any(u8::is_ascii_uppercase) {
+        return Err("evidence SHA-256 digest must use canonical lowercase hex".to_string());
+    }
+    Ok(())
+}
+
 fn validate_resolution(
     replay: &Replay,
     cause: &RecoveryCause,
@@ -1819,6 +2443,7 @@ fn validate_resolution(
             RecoveryResolution::ResolveAttempt {
                 transition_id,
                 result,
+                ..
             },
         ) if *transition_id == intent.transition_id
             && !matches!(result, AttemptResult::Indeterminate { .. }) =>
@@ -1852,19 +2477,82 @@ fn validate_resolution(
     Ok(())
 }
 
+fn validate_resolution_current(
+    replay: &Replay,
+    cause: &RecoveryCause,
+    resolution: &RecoveryResolution,
+) -> Result<(), Error> {
+    validate_resolution(replay, cause, resolution)?;
+    if let RecoveryResolution::ResolveAttempt {
+        transition_id,
+        result,
+        epoch,
+    } = resolution
+    {
+        let Some(attempt) = replay.attempts.get(transition_id) else {
+            return Ok(());
+        };
+        let intent = attempt.intent();
+        validate_result_current(intent, result)?;
+        let epoch = epoch.as_ref().ok_or_else(|| Error::InvalidResolution {
+            detail: "v2 attempt recovery requires the observed epoch receipt".to_string(),
+        })?;
+        validate_recovery_epoch(intent, result, epoch)?;
+        if let Attempt::Finished(receipt) = attempt
+            && let Some(recorded) = receipt
+                .epoch
+                .as_ref()
+                .and_then(|epoch| epoch.after.as_ref())
+            && epoch.after.as_ref() != Some(recorded)
+        {
+            return Err(Error::InvalidResolution {
+                detail: "attempt recovery contradicted the previously observed after epoch"
+                    .to_string(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_recovery_epoch(
+    intent: &AttemptIntent,
+    result: &AttemptResult,
+    receipt: &EpochReceipt,
+) -> Result<(), Error> {
+    if receipt.before != intent.epoch || receipt.after.is_none() {
+        return Err(Error::InvalidResolution {
+            detail: "attempt recovery requires complete epoch evidence from the admitted epoch"
+                .to_string(),
+        });
+    }
+    match result {
+        AttemptResult::Committed { .. } => validate_epoch(intent, result, receipt),
+        AttemptResult::Rejected { .. } | AttemptResult::Cancelled { .. } => Ok(()),
+        AttemptResult::Indeterminate { .. } => Err(Error::InvalidResolution {
+            detail: "attempt recovery must terminalize the indeterminate result".to_string(),
+        }),
+    }
+}
+
 fn load_entries(path: &Path) -> Result<Load, Error> {
-    let bytes = match fs::read(path) {
-        Ok(bytes) => bytes,
+    let mut file = match OpenOptions::new().read(true).open(path) {
+        Ok(file) => file,
         Err(source) if source.kind() == io::ErrorKind::NotFound => {
             return Ok(Load::Ready(Vec::new()));
         }
         Err(source) => {
-            return Err(Error::Read {
+            return Err(Error::Open {
                 path: path.to_path_buf(),
                 source,
             });
         }
     };
+    lock_shared(&file, path)?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).map_err(|source| Error::Read {
+        path: path.to_path_buf(),
+        source,
+    })?;
     if bytes.is_empty() {
         return Ok(Load::Ready(Vec::new()));
     }
@@ -1938,16 +2626,6 @@ fn append_entry(
         source,
     })?;
     let existed = path.exists();
-    let byte_start = match fs::metadata(path) {
-        Ok(metadata) => metadata.len(),
-        Err(source) if source.kind() == io::ErrorKind::NotFound => 0,
-        Err(source) => {
-            return Err(Error::Read {
-                path: path.to_path_buf(),
-                source,
-            });
-        }
-    };
     let payload_json = serde_json::to_string(entry).map_err(Error::Serialize)?;
     let byte_len = payload_json.len();
     let content_sha256 = sha256_hex(payload_json.as_bytes());
@@ -1962,6 +2640,14 @@ fn append_entry(
             path: path.to_path_buf(),
             source,
         })?;
+    lock_exclusive(&file, path)?;
+    let byte_start = file
+        .metadata()
+        .map_err(|source| Error::Read {
+            path: path.to_path_buf(),
+            source,
+        })?
+        .len();
     file.write_all(&line)
         .map_err(|source| Error::AppendUncertain {
             path: path.to_path_buf(),
@@ -2053,48 +2739,60 @@ fn replace_tail(
         .and_then(|name| name.to_str())
         .unwrap_or(JOURNAL_FILE);
     let repair_path = path.with_file_name(format!(".{name}.repair-{}.tmp", Uuid::new_v4()));
-    let write_repair = || -> Result<(), Error> {
-        let mut file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&repair_path)
-            .map_err(|source| Error::Open {
-                path: repair_path.clone(),
-                source,
-            })?;
-        file.write_all(&bytes[..valid_len])
-            .and_then(|()| file.write_all(&payload))
-            .and_then(|()| file.write_all(b"\n"))
-            .map_err(|source| Error::Write {
-                path: repair_path.clone(),
-                source,
-            })?;
-        file.sync_all().map_err(|source| Error::Sync {
+    let mut repair = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&repair_path)
+        .map_err(|source| Error::Open {
             path: repair_path.clone(),
             source,
-        })
-    };
-    if let Err(error) = write_repair() {
+        })?;
+    if let Err(error) = lock_exclusive(&repair, &repair_path) {
+        drop(repair);
         let _ = fs::remove_file(&repair_path);
         return Err(error);
     }
+    if let Err(source) = repair
+        .write_all(&bytes[..valid_len])
+        .and_then(|()| repair.write_all(&payload))
+        .and_then(|()| repair.write_all(b"\n"))
+    {
+        drop(repair);
+        let _ = fs::remove_file(&repair_path);
+        return Err(Error::Write {
+            path: repair_path,
+            source,
+        });
+    }
+    if let Err(source) = repair.sync_all() {
+        drop(repair);
+        let _ = fs::remove_file(&repair_path);
+        return Err(Error::Sync {
+            path: repair_path,
+            source,
+        });
+    }
     if let Err(error) = ensure_fresh(epoch) {
+        drop(repair);
         let _ = fs::remove_file(&repair_path);
         return Err(error);
     }
     if let Err(source) = fs::rename(&repair_path, path) {
+        drop(repair);
         let _ = fs::remove_file(&repair_path);
         return Err(Error::Write {
             path: path.to_path_buf(),
             source,
         });
     }
-    sync_dir(path.parent().unwrap_or_else(|| Path::new("."))).map_err(|error| {
+    let published = sync_dir(path.parent().unwrap_or_else(|| Path::new("."))).map_err(|error| {
         Error::AppendUncertain {
             path: path.to_path_buf(),
             detail: error.to_string(),
         }
-    })
+    });
+    drop(repair);
+    published
 }
 
 fn damaged_path(journal: &Path, hash: &ContentHash) -> PathBuf {
@@ -2156,8 +2854,46 @@ fn try_lock(file: &File, path: &Path) -> Result<bool, Error> {
     })
 }
 
+#[cfg(unix)]
+fn lock_shared(file: &File, path: &Path) -> Result<(), Error> {
+    lock_journal(file, path, libc::LOCK_SH)
+}
+
+#[cfg(unix)]
+fn lock_exclusive(file: &File, path: &Path) -> Result<(), Error> {
+    lock_journal(file, path, libc::LOCK_EX)
+}
+
+#[cfg(unix)]
+fn lock_journal(file: &File, path: &Path, operation: libc::c_int) -> Result<(), Error> {
+    // SAFETY: `file` owns a valid descriptor and remains alive for the entire
+    // protected journal read or append. The lock is released when it drops.
+    let result = unsafe { libc::flock(file.as_raw_fd(), operation) };
+    if result == 0 {
+        return Ok(());
+    }
+    Err(Error::Lock {
+        path: path.to_path_buf(),
+        source: io::Error::last_os_error(),
+    })
+}
+
 #[cfg(not(unix))]
 fn try_lock(_file: &File, path: &Path) -> Result<bool, Error> {
+    Err(Error::Unsupported {
+        path: path.to_path_buf(),
+    })
+}
+
+#[cfg(not(unix))]
+fn lock_shared(_file: &File, path: &Path) -> Result<(), Error> {
+    Err(Error::Unsupported {
+        path: path.to_path_buf(),
+    })
+}
+
+#[cfg(not(unix))]
+fn lock_exclusive(_file: &File, path: &Path) -> Result<(), Error> {
     Err(Error::Unsupported {
         path: path.to_path_buf(),
     })
@@ -2195,6 +2931,14 @@ pub(crate) enum Error {
     AttemptPending { transition_id: TransitionId },
     #[error("transition {transition_id} reused an idempotency key with different intent")]
     AttemptMismatch { transition_id: TransitionId },
+    #[error("transition retry generation is exhausted")]
+    RetryExhausted,
+    #[error("transition source cursor {requested:?} does not match committed cursor {active:?}")]
+    CursorMismatch { active: Cursor, requested: Cursor },
+    #[error("controller session {session_id} has no durable committed cursor")]
+    CursorUnbound { session_id: SessionId },
+    #[error("controller session schema '{active}' is read-only; mutation requires '{supported}'")]
+    LegacySchema { active: String, supported: String },
     #[error("transition request used a different controller epoch")]
     EpochMismatch,
     #[error("controller epoch is no longer current: {detail}")]
@@ -2219,6 +2963,8 @@ mod tests {
     use std::{
         fs::{self, OpenOptions},
         io::Write,
+        sync::mpsc,
+        time::Duration,
     };
 
     use std::os::unix::fs::MetadataExt;
@@ -2280,12 +3026,21 @@ mod tests {
         ServerEpoch::capture(root).expect("capture test epoch")
     }
 
+    fn cursor(phase: WalkPhase, evidence: &str) -> Cursor {
+        Cursor::new(phase, ContentHash::of(evidence)).expect("valid test cursor")
+    }
+
     fn claim(root: &Path, mode: RunMode) -> Claim {
+        claim_at(root, mode, cursor(WalkPhase::R7, "r7-evidence"))
+    }
+
+    fn claim_at(root: &Path, mode: RunMode, cursor: Cursor) -> Claim {
         Claim::historical(
             ContentHash::of("session-test-origin"),
             parent(),
             profile(),
             mode,
+            cursor,
             epoch(root),
         )
     }
@@ -2402,15 +3157,15 @@ mode = "continuous"
         }
     }
 
-    fn intent(root: &Path, transition_id: TransitionId) -> AttemptIntent {
-        AttemptIntent::new(
-            transition_id,
-            WalkPhase::R7,
-            false,
-            epoch(root),
-            ContentHash::of("r7-evidence"),
-        )
-        .expect("valid R7 to R8 intent")
+    fn intent(lease: &Lease<Idle>) -> AttemptIntent {
+        lease.intent(false).expect("valid transition intent")
+    }
+
+    fn same_epoch(epoch: &ServerEpoch) -> Option<EpochReceipt> {
+        Some(EpochReceipt {
+            before: epoch.clone(),
+            after: Some(epoch.clone()),
+        })
     }
 
     fn stage_fixture(name: &str, destination: &Path, expected: &str) -> Vec<u8> {
@@ -2474,6 +3229,98 @@ mode = "continuous"
             conflict,
             Outcome::Conflict(Conflict::Locked { .. })
         ));
+        owner.release().expect("owner release");
+    }
+
+    #[test]
+    fn inspect_missing_session_does_not_create_paths() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = Store::new(temp.path().join("control"));
+        let paths = store.paths(&parent());
+        assert!(!paths.root().exists());
+
+        assert!(store.inspect(&parent()).expect("inspect missing").is_none());
+        assert!(
+            !paths.root().exists(),
+            "inspection must not create authority paths"
+        );
+    }
+
+    #[test]
+    fn two_readers_inspect_active_session_without_writes() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = Store::new(temp.path().join("control"));
+        let owner = acquired(
+            store
+                .claim(claim(temp.path(), RunMode::Continuous))
+                .expect("owner claim"),
+        );
+        let journal = owner.paths().journal().to_path_buf();
+        let before = fs::read(&journal).expect("read journal before inspection");
+
+        let first = store
+            .inspect(owner.parent())
+            .expect("first inspect")
+            .expect("first snapshot");
+        let second = store
+            .inspect(owner.parent())
+            .expect("second inspect")
+            .expect("second snapshot");
+
+        assert_eq!(first, second);
+        assert_eq!(first.journal_revision, 2);
+        assert_eq!(first.cursor, Some(owner.cursor().clone()));
+        assert_eq!(
+            first.active.as_ref().map(|active| active.fence),
+            Some(Fence(1))
+        );
+        assert_eq!(
+            fs::read(&journal).expect("read journal after inspection"),
+            before
+        );
+        owner.release().expect("owner release");
+    }
+
+    #[test]
+    fn inspection_waits_for_the_journal_publication_barrier() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = Store::new(temp.path().join("control"));
+        let owner = acquired(
+            store
+                .claim(claim(temp.path(), RunMode::Continuous))
+                .expect("owner claim"),
+        );
+        let journal = owner.paths().journal().to_path_buf();
+        let guard = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&journal)
+            .expect("open journal barrier");
+        lock_exclusive(&guard, &journal).expect("hold publication barrier");
+
+        let reader = store.clone();
+        let parent = owner.parent().clone();
+        let (send, receive) = mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            send.send(reader.inspect(&parent)).expect("send inspection");
+        });
+        assert!(matches!(
+            receive.recv_timeout(Duration::from_millis(25)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+
+        // SAFETY: `guard` owns the descriptor locked above and remains alive.
+        assert_eq!(
+            unsafe { libc::flock(std::os::fd::AsRawFd::as_raw_fd(&guard), libc::LOCK_UN) },
+            0
+        );
+        let snapshot = receive
+            .recv_timeout(Duration::from_secs(1))
+            .expect("inspection resumes after publication")
+            .expect("inspect published journal")
+            .expect("session snapshot");
+        assert_eq!(snapshot.journal_revision, 2);
+        thread.join().expect("join inspection thread");
         owner.release().expect("owner release");
     }
 
@@ -2563,6 +3410,7 @@ mode = "continuous"
                         parent.clone(),
                         commitment.clone(),
                         RunMode::Continuous,
+                        cursor(WalkPhase::R7, "historical-r7"),
                         epoch.clone(),
                     )
                     .with_runtime(successor.runtime_id()),
@@ -2577,6 +3425,7 @@ mode = "continuous"
                 parent,
                 commitment,
                 RunMode::Step,
+                cursor(WalkPhase::R7, "historical-r7"),
                 epoch,
             ))
             .expect("walk driver claim");
@@ -2621,6 +3470,41 @@ mode = "continuous"
     }
 
     #[test]
+    fn established_session_rejects_a_different_cursor() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = Store::new(temp.path().join("control"));
+        acquired(
+            store
+                .claim(claim(temp.path(), RunMode::Step))
+                .expect("initial claim"),
+        )
+        .release()
+        .expect("initial release");
+
+        let outcome = store
+            .claim(claim_at(
+                temp.path(),
+                RunMode::Step,
+                cursor(WalkPhase::R6, "different-r6"),
+            ))
+            .expect("drifted claim");
+        assert!(matches!(
+            outcome,
+            Outcome::Conflict(Conflict::Cursor {
+                active: Some(Cursor {
+                    phase: WalkPhase::R7,
+                    ..
+                }),
+                requested: Cursor {
+                    phase: WalkPhase::R6,
+                    ..
+                },
+                ..
+            })
+        ));
+    }
+
+    #[test]
     fn production_claim_requires_exact_admission() {
         let temp = tempfile::tempdir().expect("tempdir");
         let (setup, admitted) = admitted_setup(temp.path());
@@ -2629,6 +3513,7 @@ mode = "continuous"
             parent(),
             &admitted,
             RunMode::Continuous,
+            cursor(WalkPhase::R0, "setup-r0"),
             epoch(temp.path()),
         )
         .expect("valid production claim");
@@ -2644,6 +3529,7 @@ mode = "continuous"
                         parent(),
                         &admitted,
                         RunMode::Continuous,
+                        cursor(WalkPhase::R0, "setup-r0"),
                         epoch(temp.path()),
                     )
                     .expect("rebuild exact production claim"),
@@ -2660,6 +3546,7 @@ mode = "continuous"
             parent(),
             &admitted,
             RunMode::Continuous,
+            cursor(WalkPhase::R0, "setup-r0"),
             epoch(temp.path()),
         )
         .expect_err("incomplete setup must fail");
@@ -2672,6 +3559,7 @@ mode = "continuous"
             parent(),
             &drifted,
             RunMode::Continuous,
+            cursor(WalkPhase::R0, "setup-r0"),
             epoch(temp.path()),
         )
         .expect_err("profile drift must fail");
@@ -2682,6 +3570,7 @@ mode = "continuous"
             parent_in("other-campaign"),
             &admitted,
             RunMode::Continuous,
+            cursor(WalkPhase::R0, "setup-r0"),
             epoch(temp.path()),
         )
         .expect_err("campaign drift must fail");
@@ -2692,6 +3581,7 @@ mode = "continuous"
             parent(),
             &admitted,
             RunMode::Step,
+            cursor(WalkPhase::R0, "setup-r0"),
             epoch(temp.path()),
         )
         .expect_err("mode drift must fail");
@@ -2703,6 +3593,7 @@ mode = "continuous"
             parent(),
             &admitted,
             RunMode::Continuous,
+            cursor(WalkPhase::R0, "setup-r0"),
             epoch(other.path()),
         )
         .expect_err("repository drift must fail");
@@ -2761,12 +3652,15 @@ mode = "continuous"
     }
 
     #[test]
-    fn prior_graph_replays_before_epoch_admission() {
+    fn prior_graph_v1_replays_read_only() {
         let temp = tempfile::tempdir().expect("tempdir");
         let store = Store::new(temp.path().join("control"));
-        let requested = claim(temp.path(), RunMode::Continuous);
-        let next_epoch = requested.epoch.clone();
-        let mut prior = next_epoch.clone();
+        let requested = claim_at(
+            temp.path(),
+            RunMode::Continuous,
+            cursor(WalkPhase::R13b, "legacy-r13b-evidence"),
+        );
+        let mut prior = requested.epoch.clone();
         prior.transition_graph_version = GRAPH_VERSION_V1.to_string();
         let session_id = SessionId::new();
         let fence = Fence(1);
@@ -2777,16 +3671,18 @@ mode = "continuous"
             targets: vec![WalkPhase::R13a, WalkPhase::R13b],
             allow_git_changes: true,
             epoch: prior.clone(),
-            evidence: ContentHash::of("legacy-r12-evidence"),
+            evidence: ContentHash("legacy-r12-evidence".to_string()),
+            retry: 0,
         };
         let entries = [
             Entry::Created {
-                schema_version: SCHEMA_VERSION.to_string(),
+                schema_version: SCHEMA_VERSION_V1.to_string(),
                 session_id,
                 origin: requested.origin.clone(),
                 parent: requested.parent.clone(),
                 profile: requested.profile.clone(),
                 mode: requested.mode,
+                cursor: None,
                 recorded_at: RecordedAt::now(),
             },
             Entry::Acquired {
@@ -2809,8 +3705,9 @@ mode = "continuous"
                 fence,
                 result: AttemptResult::Committed {
                     phase: WalkPhase::R13b,
-                    evidence: ContentHash::of("legacy-r13b-evidence"),
+                    evidence: ContentHash("legacy-r13b-evidence".to_string()),
                 },
+                epoch: None,
                 recorded_at: RecordedAt::now(),
             },
             Entry::Released {
@@ -2824,45 +3721,40 @@ mode = "continuous"
             append_entry(&journal, entry, index).expect("write legacy journal");
         }
 
-        let mut recovery = match store.claim(requested).expect("recovery claim") {
-            Outcome::Recoverable(recovery) => recovery,
-            other => panic!("expected recovery lease, got {other:?}"),
-        };
-        assert!(matches!(
-            recovery.cause(),
-            Some(RecoveryCause::EpochChanged {
-                prior,
-                requested,
-                ..
-            }) if prior.transition_graph_version == GRAPH_VERSION_V1 && requested == &next_epoch
-        ));
-        recovery = recovery
-            .resolve(RecoveryResolution::AdmitEpoch {
-                prior,
-                next: next_epoch.clone(),
+        let snapshot = store
+            .inspect(&requested.parent)
+            .expect("inspect v1 journal")
+            .expect("v1 snapshot");
+        assert_eq!(
+            snapshot.cursor,
+            Some(Cursor {
+                phase: WalkPhase::R13b,
+                evidence: ContentHash("legacy-r13b-evidence".to_string()),
             })
-            .expect("admit replacement epoch");
-        assert!(recovery.cause().is_none());
-        let next = recovery.take_over().expect("take over admitted epoch");
-        assert_eq!(next.epoch(), &next_epoch);
-        assert_eq!(next.fence().get(), 2);
-        next.release().expect("release replacement owner");
+        );
+        assert!(matches!(
+            store.claim(requested).expect("legacy claim"),
+            Outcome::Conflict(Conflict::Schema {
+                active,
+                supported,
+                ..
+            }) if active == SCHEMA_VERSION_V1 && supported == SCHEMA_VERSION
+        ));
     }
 
     #[test]
     fn pending_attempt_requires_explicit_cancelled_reconciliation() {
         let temp = tempfile::tempdir().expect("tempdir");
         let store = Store::new(temp.path().join("control"));
-        let transition_id = TransitionId::new();
         let owner = acquired(
             store
                 .claim(claim(temp.path(), RunMode::Continuous))
                 .expect("owner claim"),
         );
-        let pending = match owner
-            .begin(intent(temp.path(), transition_id))
-            .expect("begin")
-        {
+        let intent = intent(&owner);
+        let transition_id = intent.transition_id;
+        let epoch = same_epoch(&intent.epoch);
+        let pending = match owner.begin(intent).expect("begin") {
             Begin::Started { lease, .. } => lease,
             Begin::Existing { .. } => panic!("new transition should start"),
         };
@@ -2888,6 +3780,7 @@ mode = "continuous"
                     evidence: ContentHash::of("r7-evidence"),
                     detail: "no committed R8 evidence found".to_string(),
                 },
+                epoch,
             })
             .expect("reconcile pending attempt");
         recovery
@@ -2901,16 +3794,14 @@ mode = "continuous"
     fn indeterminate_attempt_blocks_idle_authority() {
         let temp = tempfile::tempdir().expect("tempdir");
         let store = Store::new(temp.path().join("control"));
-        let transition_id = TransitionId::new();
         let owner = acquired(
             store
                 .claim(claim(temp.path(), RunMode::Step))
                 .expect("owner claim"),
         );
-        let pending = match owner
-            .begin(intent(temp.path(), transition_id))
-            .expect("begin")
-        {
+        let intent = intent(&owner);
+        let transition_id = intent.transition_id;
+        let pending = match owner.begin(intent).expect("begin") {
             Begin::Started { lease, .. } => lease,
             Begin::Existing { .. } => panic!("new transition should start"),
         };
@@ -2921,9 +3812,15 @@ mode = "continuous"
                 detail: "effect boundary could not be reconstructed".to_string(),
             })
             .expect("record indeterminate result");
-        let Finished::Uncertain { lease, .. } = finished else {
+        let Finished::Uncertain { lease, receipt, .. } = finished else {
             panic!("indeterminate result must not restore idle authority");
         };
+        assert_eq!(lease.cursor(), &cursor(WalkPhase::R7, "r7-evidence"));
+        let snapshot = store
+            .inspect(&parent())
+            .expect("inspect indeterminate")
+            .expect("session snapshot");
+        assert_eq!(snapshot.cursor, Some(cursor(WalkPhase::R7, "r7-evidence")));
         drop(lease);
 
         let recovery = match store
@@ -2946,6 +3843,7 @@ mode = "continuous"
                     evidence: ContentHash::of("r7-evidence"),
                     detail: "reconstruction found no committed R8 evidence".to_string(),
                 },
+                epoch: receipt.epoch,
             })
             .expect("reconcile indeterminate result");
         recovery
@@ -2956,7 +3854,106 @@ mode = "continuous"
     }
 
     #[test]
-    fn branch_intent_records_observed_target() {
+    fn missing_after_epoch_is_recovered_by_a_separate_observation() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = Store::new(temp.path().join("control"));
+        let request = claim(temp.path(), RunMode::Step);
+        let session_id = SessionId::new();
+        let fence = Fence(1);
+        let intent = AttemptIntent::new(
+            session_id,
+            request.cursor.clone(),
+            false,
+            request.epoch.clone(),
+        )
+        .expect("valid transition intent");
+        let transition_id = intent.transition_id;
+        let missing = EpochReceipt {
+            before: intent.epoch.clone(),
+            after: None,
+        };
+        let entries = [
+            Entry::Created {
+                schema_version: SCHEMA_VERSION.to_string(),
+                session_id,
+                origin: request.origin.clone(),
+                parent: request.parent.clone(),
+                profile: request.profile.clone(),
+                mode: request.mode,
+                cursor: Some(request.cursor.clone()),
+                recorded_at: RecordedAt::now(),
+            },
+            Entry::Acquired {
+                session_id,
+                fence,
+                epoch: request.epoch.clone(),
+                runtime_id: None,
+                pid: 4242,
+                recorded_at: RecordedAt::now(),
+            },
+            Entry::Began {
+                session_id,
+                fence,
+                intent: intent.clone(),
+                recorded_at: RecordedAt::now(),
+            },
+            Entry::Finished {
+                session_id,
+                transition_id,
+                fence,
+                result: AttemptResult::Indeterminate {
+                    phase: None,
+                    evidence: None,
+                    detail: "controller epoch could not be captured after the edge".to_string(),
+                },
+                epoch: Some(missing.clone()),
+                recorded_at: RecordedAt::now(),
+            },
+        ];
+        let journal = store.paths(&request.parent).journal;
+        for (index, entry) in entries.iter().enumerate() {
+            append_entry(&journal, entry, index).expect("write incomplete epoch journal");
+        }
+
+        let recovery = match store.claim(request).expect("recovery claim") {
+            Outcome::Recoverable(recovery) => recovery,
+            other => panic!("expected recovery lease, got {other:?}"),
+        };
+        let observed = same_epoch(&intent.epoch);
+        let recovery = recovery
+            .resolve(RecoveryResolution::ResolveAttempt {
+                transition_id,
+                result: AttemptResult::Cancelled {
+                    phase: WalkPhase::R7,
+                    evidence: ContentHash::of("r7-evidence"),
+                    detail: "reconstruction found no committed R8 evidence".to_string(),
+                },
+                epoch: observed.clone(),
+            })
+            .expect("record separate recovery observation");
+        recovery
+            .take_over()
+            .expect("take over recovered session")
+            .release()
+            .expect("release recovered owner");
+
+        let snapshot = store
+            .inspect(&parent())
+            .expect("inspect recovered attempt")
+            .expect("session snapshot");
+        let Attempt::Recovered { prior, receipt } = &snapshot.attempts[0] else {
+            panic!("attempt must retain its original receipt and recovery observation");
+        };
+        assert!(matches!(
+            prior.as_ref(),
+            Attempt::Finished(prior) if prior.epoch == Some(missing)
+        ));
+        assert_eq!(receipt.epoch, observed);
+        assert!(matches!(receipt.result, AttemptResult::Cancelled { .. }));
+    }
+
+    #[test]
+    fn rejected_result_retains_committed_cursor() {
         let temp = tempfile::tempdir().expect("tempdir");
         let store = Store::new(temp.path().join("control"));
         let owner = acquired(
@@ -2964,14 +3961,129 @@ mode = "continuous"
                 .claim(claim(temp.path(), RunMode::Step))
                 .expect("owner claim"),
         );
-        let intent = AttemptIntent::new(
-            TransitionId::new(),
-            WalkPhase::R1,
-            false,
-            epoch(temp.path()),
-            ContentHash::of("r1-evidence"),
-        )
-        .expect("valid branch intent");
+        let intent = intent(&owner);
+        let first_id = intent.transition_id;
+        let pending = match owner.begin(intent).expect("begin") {
+            Begin::Started { lease, .. } => lease,
+            Begin::Existing { .. } => panic!("new transition should start"),
+        };
+        let finished = pending
+            .finish(AttemptResult::Rejected {
+                phase: WalkPhase::R7,
+                evidence: ContentHash::of("r7-evidence"),
+                detail: "typed edge rejected before commit".to_string(),
+            })
+            .expect("record rejection");
+        let Finished::Terminal { lease, .. } = finished else {
+            panic!("rejection must restore idle authority");
+        };
+        assert_eq!(lease.cursor(), &cursor(WalkPhase::R7, "r7-evidence"));
+        let retry = lease.intent(false).expect("retry rejected edge");
+        assert_eq!(retry.retry, 1);
+        assert_ne!(retry.transition_id, first_id);
+        lease.release().expect("release owner");
+    }
+
+    #[test]
+    fn cancelled_result_retains_committed_cursor() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = Store::new(temp.path().join("control"));
+        let owner = acquired(
+            store
+                .claim(claim(temp.path(), RunMode::Step))
+                .expect("owner claim"),
+        );
+        let intent = intent(&owner);
+        let first_id = intent.transition_id;
+        let pending = match owner.begin(intent).expect("begin") {
+            Begin::Started { lease, .. } => lease,
+            Begin::Existing { .. } => panic!("new transition should start"),
+        };
+        let finished = pending
+            .finish(AttemptResult::Cancelled {
+                phase: WalkPhase::R7,
+                evidence: ContentHash::of("r7-evidence"),
+                detail: "cancelled before the effect boundary".to_string(),
+            })
+            .expect("record cancellation");
+        let Finished::Terminal { lease, .. } = finished else {
+            panic!("cancellation must restore idle authority");
+        };
+        assert_eq!(lease.cursor(), &cursor(WalkPhase::R7, "r7-evidence"));
+        let retry = lease.intent(false).expect("retry cancelled edge");
+        assert_eq!(retry.retry, 1);
+        assert_ne!(retry.transition_id, first_id);
+        let pending = match lease.begin(retry).expect("begin retry") {
+            Begin::Started { lease, .. } => lease,
+            Begin::Existing { .. } => panic!("retry must start a new attempt"),
+        };
+        let finished = pending
+            .finish(AttemptResult::Cancelled {
+                phase: WalkPhase::R7,
+                evidence: ContentHash::of("r7-evidence"),
+                detail: "cancel retry before the effect boundary".to_string(),
+            })
+            .expect("record retry cancellation");
+        let Finished::Terminal { lease, .. } = finished else {
+            panic!("retry cancellation must restore idle authority");
+        };
+        lease.release().expect("release owner");
+    }
+
+    #[test]
+    fn recovered_commit_advances_cursor() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = Store::new(temp.path().join("control"));
+        let owner = acquired(
+            store
+                .claim(claim(temp.path(), RunMode::Step))
+                .expect("owner claim"),
+        );
+        let intent = intent(&owner);
+        let transition_id = intent.transition_id;
+        let epoch = same_epoch(&intent.epoch);
+        let pending = match owner.begin(intent).expect("begin") {
+            Begin::Started { lease, .. } => lease,
+            Begin::Existing { .. } => panic!("new transition should start"),
+        };
+        drop(pending);
+
+        let recovery = match store
+            .claim(claim(temp.path(), RunMode::Step))
+            .expect("recovery claim")
+        {
+            Outcome::Recoverable(recovery) => recovery,
+            other => panic!("expected recovery lease, got {other:?}"),
+        };
+        let recovery = recovery
+            .resolve(RecoveryResolution::ResolveAttempt {
+                transition_id,
+                result: AttemptResult::Committed {
+                    phase: WalkPhase::R8,
+                    evidence: ContentHash::of("recovered-r8"),
+                },
+                epoch,
+            })
+            .expect("resolve committed attempt");
+        let owner = recovery.take_over().expect("take over recovered session");
+        assert_eq!(owner.cursor(), &cursor(WalkPhase::R8, "recovered-r8"));
+        owner.release().expect("release recovered owner");
+    }
+
+    #[test]
+    fn branch_intent_records_observed_target() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = Store::new(temp.path().join("control"));
+        let owner = acquired(
+            store
+                .claim(claim_at(
+                    temp.path(),
+                    RunMode::Step,
+                    cursor(WalkPhase::R1, "r1-evidence"),
+                ))
+                .expect("owner claim"),
+        );
+        let intent = owner.intent(false).expect("valid branch intent");
         assert_eq!(intent.targets, vec![WalkPhase::R2a, WalkPhase::R3]);
         let pending = match owner.begin(intent).expect("begin branch edge") {
             Begin::Started { lease, .. } => lease,
@@ -2993,18 +4105,87 @@ mode = "continuous"
                 ..
             }
         ));
+        let epoch = receipt.epoch.expect("v2 attempt has epoch receipt");
+        assert_eq!(epoch.after.as_ref(), Some(&epoch.before));
         lease.release().expect("release branch owner");
+    }
+
+    #[test]
+    fn begin_rejects_cursor_mismatch_before_append() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = Store::new(temp.path().join("control"));
+        let owner = acquired(
+            store
+                .claim(claim(temp.path(), RunMode::Step))
+                .expect("owner claim"),
+        );
+        let journal = owner.paths().journal().to_path_buf();
+        let before = fs::read(&journal).expect("read journal");
+        let mismatch = AttemptIntent::new(
+            owner.session_id(),
+            cursor(WalkPhase::R6, "different-source"),
+            false,
+            owner.epoch().clone(),
+        )
+        .expect("valid mismatched intent");
+
+        let Failure::Retained { authority, source } = owner
+            .begin(mismatch)
+            .expect_err("cursor mismatch must fail closed")
+        else {
+            panic!("cursor mismatch is known before append");
+        };
+        assert!(matches!(source, Error::CursorMismatch { .. }));
+        assert_eq!(fs::read(&journal).expect("read unchanged journal"), before);
+        authority.release().expect("release retained authority");
+    }
+
+    #[test]
+    fn transition_id_is_deterministic_and_domain_separated() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let epoch = epoch(temp.path());
+        let session = SessionId::new();
+        let source = cursor(WalkPhase::R7, "r7-evidence");
+        let first = AttemptIntent::new(session, source.clone(), false, epoch.clone())
+            .expect("first intent");
+        let repeated = AttemptIntent::new(session, source.clone(), false, epoch.clone())
+            .expect("repeated intent");
+        let other_session =
+            AttemptIntent::new(SessionId::new(), source.clone(), false, epoch.clone())
+                .expect("other session intent");
+        let other_cursor = AttemptIntent::new(
+            session,
+            cursor(WalkPhase::R6, "r6-evidence"),
+            false,
+            epoch.clone(),
+        )
+        .expect("other cursor intent");
+        let other_capability =
+            AttemptIntent::new(session, source, true, epoch).expect("other capability intent");
+        let mut restarted = repeated.epoch.clone();
+        restarted.exe_modified_unix_ms = restarted.exe_modified_unix_ms.map(|value| value + 1);
+        let same_key = AttemptIntent::new(session, repeated.cursor(), false, restarted)
+            .expect("restart intent");
+        let retry =
+            AttemptIntent::with_retry(session, repeated.cursor(), false, repeated.epoch.clone(), 1)
+                .expect("retry intent");
+
+        assert_eq!(first.transition_id, repeated.transition_id);
+        assert_eq!(first.transition_id, same_key.transition_id);
+        assert_ne!(first.transition_id, other_session.transition_id);
+        assert_ne!(first.transition_id, other_cursor.transition_id);
+        assert_ne!(first.transition_id, other_capability.transition_id);
+        assert_ne!(first.transition_id, retry.transition_id);
     }
 
     #[test]
     fn r12_intent_preserves_git_changes_authority() {
         let temp = tempfile::tempdir().expect("tempdir");
         let blocked = AttemptIntent::new(
-            TransitionId::new(),
-            WalkPhase::R12,
+            SessionId::new(),
+            cursor(WalkPhase::R12, "r12-evidence"),
             false,
             epoch(temp.path()),
-            ContentHash::of("r12-evidence"),
         )
         .expect("R13a remains admitted without checkout authority");
         assert_eq!(blocked.targets, vec![WalkPhase::R13a]);
@@ -3024,11 +4205,10 @@ mode = "continuous"
         );
 
         let admitted = AttemptIntent::new(
-            TransitionId::new(),
-            WalkPhase::R12,
+            SessionId::new(),
+            cursor(WalkPhase::R12, "r12-evidence"),
             true,
             epoch(temp.path()),
-            ContentHash::of("r12-evidence"),
         )
         .expect("explicit checkout authority admits all typed outcomes");
         assert_eq!(
@@ -3036,6 +4216,193 @@ mode = "continuous"
             vec![WalkPhase::R13a, WalkPhase::R13b, WalkPhase::R13c]
         );
         assert!(admitted.allow_git_changes);
+    }
+
+    #[test]
+    fn epoch_change_only_advances_admitted_checkout_edges() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let before = epoch(temp.path());
+        let mut after = before.clone();
+        after.git_head = Some("changed-checkout".to_string());
+
+        let r1 = AttemptIntent::new(
+            SessionId::new(),
+            cursor(WalkPhase::R1, "r1-evidence"),
+            false,
+            before.clone(),
+        )
+        .expect("R1 intent");
+        let receipt = EpochReceipt {
+            before: before.clone(),
+            after: Some(after.clone()),
+        };
+        let committed = AttemptResult::Committed {
+            phase: WalkPhase::R2a,
+            evidence: ContentHash::of("r2a-evidence"),
+        };
+        let (result, epoch) = settle_epoch(&r1, committed.clone(), &receipt);
+        assert_eq!(result, committed);
+        assert_eq!(epoch, after);
+
+        let mut rebuilt = after.clone();
+        rebuilt.exe_modified_unix_ms = Some(
+            rebuilt
+                .exe_modified_unix_ms
+                .unwrap_or_default()
+                .saturating_add(1),
+        );
+        let rebuilt_receipt = EpochReceipt {
+            before: before.clone(),
+            after: Some(rebuilt),
+        };
+        let (result, epoch) = settle_epoch(&r1, committed, &rebuilt_receipt);
+        assert!(matches!(result, AttemptResult::Indeterminate { .. }));
+        assert_eq!(epoch, before);
+
+        let disallowed = AttemptResult::Committed {
+            phase: WalkPhase::R3,
+            evidence: ContentHash::of("r3-evidence"),
+        };
+        let (result, epoch) = settle_epoch(&r1, disallowed, &receipt);
+        assert!(matches!(result, AttemptResult::Indeterminate { .. }));
+        assert_eq!(epoch, before);
+
+        let r12 = AttemptIntent::new(
+            SessionId::new(),
+            cursor(WalkPhase::R12, "r12-evidence"),
+            true,
+            before.clone(),
+        )
+        .expect("R12 intent");
+        for phase in [WalkPhase::R13b, WalkPhase::R13c] {
+            let committed = AttemptResult::Committed {
+                phase,
+                evidence: ContentHash::of(phase.as_str()),
+            };
+            let (result, epoch) = settle_epoch(&r12, committed.clone(), &receipt);
+            assert_eq!(result, committed);
+            assert_eq!(epoch, after);
+        }
+        let stopped = AttemptResult::Committed {
+            phase: WalkPhase::R13a,
+            evidence: ContentHash::of("r13a-evidence"),
+        };
+        let (result, epoch) = settle_epoch(&r12, stopped, &receipt);
+        assert!(matches!(result, AttemptResult::Indeterminate { .. }));
+        assert_eq!(epoch, before);
+    }
+
+    #[test]
+    fn recovery_cannot_commit_an_illegal_epoch_change() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let session_id = SessionId::new();
+        let intent = AttemptIntent::new(
+            session_id,
+            cursor(WalkPhase::R7, "r7-evidence"),
+            false,
+            epoch(temp.path()),
+        )
+        .expect("R7 intent");
+        let mut after = intent.epoch.clone();
+        after.git_head = Some("unexpected-checkout".to_string());
+        let epoch = EpochReceipt {
+            before: intent.epoch.clone(),
+            after: Some(after),
+        };
+        let fence = Fence(1);
+        let receipt = AttemptReceipt {
+            intent: intent.clone(),
+            fence,
+            result: AttemptResult::Indeterminate {
+                phase: None,
+                evidence: None,
+                detail: "unexpected epoch change".to_string(),
+            },
+            epoch: Some(epoch.clone()),
+        };
+        let mut replay = Replay::default();
+        replay
+            .attempts
+            .insert(intent.transition_id, Attempt::Finished(receipt));
+        let cause = RecoveryCause::AttemptIndeterminate {
+            session_id,
+            fence,
+            intent: intent.clone(),
+            detail: "unexpected epoch change".to_string(),
+        };
+        let resolution = RecoveryResolution::ResolveAttempt {
+            transition_id: intent.transition_id,
+            result: AttemptResult::Committed {
+                phase: WalkPhase::R8,
+                evidence: ContentHash::of("r8-evidence"),
+            },
+            epoch: Some(epoch),
+        };
+
+        let error = validate_resolution_current(&replay, &cause, &resolution)
+            .expect_err("illegal epoch drift must remain indeterminate");
+        assert!(
+            error
+                .to_string()
+                .contains("did not admit checkout mutation")
+        );
+    }
+
+    #[test]
+    fn recovery_cannot_contradict_a_recorded_after_epoch() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let session_id = SessionId::new();
+        let intent = AttemptIntent::new(
+            session_id,
+            cursor(WalkPhase::R7, "r7-evidence"),
+            false,
+            epoch(temp.path()),
+        )
+        .expect("R7 intent");
+        let recorded = EpochReceipt {
+            before: intent.epoch.clone(),
+            after: Some(intent.epoch.clone()),
+        };
+        let mut changed = intent.epoch.clone();
+        changed.git_head = Some("later-observation".to_string());
+        let observed = EpochReceipt {
+            before: intent.epoch.clone(),
+            after: Some(changed),
+        };
+        let fence = Fence(1);
+        let receipt = AttemptReceipt {
+            intent: intent.clone(),
+            fence,
+            result: AttemptResult::Indeterminate {
+                phase: None,
+                evidence: None,
+                detail: "effect boundary remained uncertain".to_string(),
+            },
+            epoch: Some(recorded),
+        };
+        let mut replay = Replay::default();
+        replay
+            .attempts
+            .insert(intent.transition_id, Attempt::Finished(receipt));
+        let cause = RecoveryCause::AttemptIndeterminate {
+            session_id,
+            fence,
+            intent: intent.clone(),
+            detail: "effect boundary remained uncertain".to_string(),
+        };
+        let resolution = RecoveryResolution::ResolveAttempt {
+            transition_id: intent.transition_id,
+            result: AttemptResult::Cancelled {
+                phase: WalkPhase::R7,
+                evidence: ContentHash::of("r7-evidence"),
+                detail: "no committed R8 evidence found".to_string(),
+            },
+            epoch: Some(observed),
+        };
+
+        let error = validate_resolution_current(&replay, &cause, &resolution)
+            .expect_err("recovery must preserve a concrete after epoch");
+        assert!(error.to_string().contains("contradicted"));
     }
 
     #[test]
@@ -3054,6 +4421,7 @@ mode = "continuous"
             allow_git_changes: false,
             epoch: owner.epoch().clone(),
             evidence: ContentHash::of("r0-evidence"),
+            retry: 0,
         };
         append_entry(
             owner.paths().journal(),
@@ -3081,19 +4449,91 @@ mode = "continuous"
     }
 
     #[test]
+    fn replay_rejects_began_cursor_mismatch() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = Store::new(temp.path().join("control"));
+        let owner = acquired(
+            store
+                .claim(claim(temp.path(), RunMode::Step))
+                .expect("owner claim"),
+        );
+        let mismatch = AttemptIntent::new(
+            owner.session_id(),
+            cursor(WalkPhase::R6, "mismatched-r6"),
+            false,
+            owner.epoch().clone(),
+        )
+        .expect("valid mismatched intent");
+        append_entry(
+            owner.paths().journal(),
+            &Entry::Began {
+                session_id: owner.session_id(),
+                fence: owner.fence(),
+                intent: mismatch,
+                recorded_at: RecordedAt::now(),
+            },
+            2,
+        )
+        .expect("stage mismatched durable cursor");
+        drop(owner);
+
+        assert!(matches!(
+            store
+                .claim(claim(temp.path(), RunMode::Step))
+                .expect("replay mismatched cursor"),
+            Outcome::Recoverable(RecoveryLease {
+                cause: Some(RecoveryCause::Journal(Damage::Sequence { .. })),
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn empty_v1_session_is_read_only_and_cursor_unbound() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = Store::new(temp.path().join("control"));
+        let request = claim(temp.path(), RunMode::Step);
+        let session_id = SessionId::new();
+        append_entry(
+            store.paths(&request.parent).journal(),
+            &Entry::Created {
+                schema_version: SCHEMA_VERSION_V1.to_string(),
+                session_id,
+                origin: request.origin.clone(),
+                parent: request.parent.clone(),
+                profile: request.profile.clone(),
+                mode: request.mode,
+                cursor: None,
+                recorded_at: RecordedAt::now(),
+            },
+            0,
+        )
+        .expect("write empty v1 session");
+
+        let snapshot = store
+            .inspect(&request.parent)
+            .expect("inspect v1 session")
+            .expect("v1 snapshot");
+        assert_eq!(snapshot.cursor, None);
+        assert!(matches!(
+            store.claim(request).expect("claim v1 session"),
+            Outcome::Conflict(Conflict::Schema { active, .. })
+                if active == SCHEMA_VERSION_V1
+        ));
+    }
+
+    #[test]
     fn committed_transition_id_replays_without_a_second_attempt() {
         let temp = tempfile::tempdir().expect("tempdir");
         let store = Store::new(temp.path().join("control"));
-        let transition_id = TransitionId::new();
         let owner = acquired(
             store
                 .claim(claim(temp.path(), RunMode::Step))
                 .expect("first claim"),
         );
-        let pending = match owner
-            .begin(intent(temp.path(), transition_id))
-            .expect("begin")
-        {
+        let original = intent(&owner);
+        let transition_id = original.transition_id;
+        let pending = match owner.begin(original.clone()).expect("begin") {
             Begin::Started { lease, .. } => lease,
             Begin::Existing { .. } => panic!("new transition should start"),
         };
@@ -3106,16 +4546,24 @@ mode = "continuous"
         let Finished::Terminal { lease, .. } = first else {
             panic!("committed attempt must restore idle authority");
         };
+        assert_eq!(lease.cursor(), &cursor(WalkPhase::R8, "committed-r8"));
         lease.release().expect("first release");
+        let snapshot = store
+            .inspect(&parent())
+            .expect("inspect committed cursor")
+            .expect("session snapshot");
+        assert_eq!(snapshot.cursor, Some(cursor(WalkPhase::R8, "committed-r8")));
 
         let second = acquired(
             store
-                .claim(claim(temp.path(), RunMode::Step))
+                .claim(claim_at(
+                    temp.path(),
+                    RunMode::Step,
+                    cursor(WalkPhase::R8, "committed-r8"),
+                ))
                 .expect("second claim"),
         );
-        let existing = second
-            .begin(intent(temp.path(), transition_id))
-            .expect("idempotent begin");
+        let existing = second.begin(original).expect("idempotent begin");
         match existing {
             Begin::Existing { lease, receipt } => {
                 assert_eq!(receipt.intent.transition_id, transition_id);
@@ -3131,6 +4579,66 @@ mode = "continuous"
             }
             Begin::Started { .. } => panic!("idempotent transition must not restart"),
         }
+    }
+
+    #[test]
+    fn inspection_preserves_attempt_order() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = Store::new(temp.path().join("control"));
+        let owner = acquired(
+            store
+                .claim(claim(temp.path(), RunMode::Step))
+                .expect("owner claim"),
+        );
+        let first = owner.intent(false).expect("R7 intent");
+        let first_id = first.transition_id;
+        let pending = match owner.begin(first).expect("begin R7") {
+            Begin::Started { lease, .. } => lease,
+            Begin::Existing { .. } => panic!("R7 attempt must start"),
+        };
+        let owner = match pending
+            .finish(AttemptResult::Committed {
+                phase: WalkPhase::R8,
+                evidence: ContentHash::of("ordered-r8"),
+            })
+            .expect("finish R7")
+        {
+            Finished::Terminal { lease, .. } => lease,
+            Finished::Uncertain { .. } => panic!("R7 commit must be terminal"),
+        };
+        let second = owner.intent(false).expect("R8 intent");
+        let second_id = second.transition_id;
+        let pending = match owner.begin(second).expect("begin R8") {
+            Begin::Started { lease, .. } => lease,
+            Begin::Existing { .. } => panic!("R8 attempt must start"),
+        };
+        let owner = match pending
+            .finish(AttemptResult::Committed {
+                phase: WalkPhase::R9,
+                evidence: ContentHash::of("ordered-r9"),
+            })
+            .expect("finish R8")
+        {
+            Finished::Terminal { lease, .. } => lease,
+            Finished::Uncertain { .. } => panic!("R8 commit must be terminal"),
+        };
+        owner.release().expect("release owner");
+
+        let snapshot = store
+            .inspect(&parent())
+            .expect("inspect ordered attempts")
+            .expect("session snapshot");
+        let ids = snapshot
+            .attempts
+            .iter()
+            .map(|attempt| match attempt {
+                Attempt::Pending { intent, .. } => intent.transition_id,
+                Attempt::Finished(receipt) => receipt.intent.transition_id,
+                Attempt::Recovered { receipt, .. } => receipt.intent.transition_id,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(ids, vec![first_id, second_id]);
+        assert_eq!(snapshot.cursor, Some(cursor(WalkPhase::R9, "ordered-r9")));
     }
 
     #[test]
