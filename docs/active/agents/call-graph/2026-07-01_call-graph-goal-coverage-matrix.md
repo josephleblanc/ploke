@@ -670,16 +670,18 @@ incoming source-call paths and no synthetic traversal edge.
 
 Latest completed slice: dynamic self-field callee proof for callable fields.
 Parser, transform, DB, and RAG tests now use regenerated axum fixture
-`corpus_axum_call_graph_2026-07-12`: `axum/src/boxed.rs:85`
+`corpus_axum_call_graph_2026-07-13`: `axum/src/boxed.rs:85`
 `["self", "into_route"]` resolves to the unique
 `BoxedIntoRoute::from_handler` closure initializer; `boxed.rs:159,163`
 `["self", "layer"]` preserve finite ambiguous `DynamicClosure` candidates from
-visible `MethodRouter::{layer,route_layer}` closure bindings without admitting
-a local traversal edge; `boxed.rs:120` `["self", "into_route"]` and
-`serve/listener.rs:236` `["self", "tap_fn"]` remain unsupported, targetless,
-and edge-free with `dynamic_dispatch_unbounded` proof blockers. Exact TUI
-lookup/edges tests now assert the ambiguous layer candidate rows and only keep
-the remaining targetless dynamic self-field rows in the targetless matrix.
+visible `MethodRouter::{layer,route_layer}` closure bindings plus the
+transparent `Router::layer` `map_inner!` source expression
+`|route| route.layer(layer)` without admitting a local traversal edge;
+`boxed.rs:120` `["self", "into_route"]` and `serve/listener.rs:236`
+`["self", "tap_fn"]` remain unsupported, targetless, and edge-free with
+`dynamic_dispatch_unbounded` proof blockers. Exact TUI lookup/edges tests now
+assert the ambiguous layer candidate rows and only keep the remaining
+targetless dynamic self-field rows in the targetless matrix.
 
 Previous completed bucket: build/test-domain summary surface for generated
 test-entrypoint proof.

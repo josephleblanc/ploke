@@ -32,6 +32,12 @@ Current completed checkpoint:
   `middleware/map_response.rs` generated `impl_service!(...)` frontier rows,
   regenerates active fixtures, and preserves `std::mem::replace` as targetless
   `External` rows without converting frontiers into traversal edges.
+- The latest committed callable-field slice regenerates the active axum fixture
+  and keeps `axum/src/boxed.rs:159,163` `self.layer` as ambiguous
+  `DynamicClosure` candidates from the two visible `MethodRouter` closures plus
+  the transparent `Router::layer` `map_inner!` closure, with no local traversal
+  edge. The remaining `self.into_route` and `self.tap_fn` rows stay targetless
+  blockers.
 
 Next bucket rule: pick one row below only when there is a fresh proof input and
 a DB-first assertion. Do not add another fixture-only breadth slice for shapes
