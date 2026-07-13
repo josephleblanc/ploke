@@ -1542,10 +1542,107 @@ impl<RunShape, CampaignConfig> R13bHandoffCommitted<RunShape, CampaignConfig> {
     }
 }
 
+// ANCHOR: prototype1_alias_r13c_handoff_incomplete
+runtime_alias! {
+    /// R13c: successor handoff did not reach acknowledgement.
+    ///
+    /// The parent retirement and sealed History advance are already durable,
+    /// so this state preserves that consumed authority instead of projecting
+    /// the attempt as either R12 or a committed R13b handoff. The selected
+    /// successor remains explicit while `handoff::Incomplete<successor::Record>`
+    /// records that acknowledgement authority was not established.
+    pub(crate) type R13cHandoffIncomplete<RunShape = (), CampaignConfig = ()> = Runtime<
+        phase::R13c,
+        parent_role::Parent<parent_role::Retired>,
+        Context<context::Collected<RunShape, CampaignConfig>>,
+        Plan<
+            plan::authority::Received<Received<parent_role::ChildPlan>>,
+            plan::schedule::Ready<Prototype1ChildBudget, Prototype1ChildScheduleMode>,
+        >,
+        Children<children::set::Successor<PlannedChildOutcome>, children::attempt::Complete>,
+        History<
+            history_axis::startup::Validated<history_axis::startup::Any>,
+            history_axis::head::Advanced<Block<history_model::block::Sealed>>,
+            history_axis::epoch::Sealed<Block<history_model::block::Sealed>>,
+        >,
+        Evidence<
+            evidence::parent_start::Recorded<ParentStartedEntry>,
+            evidence::baseline::Ready<CompleteBaseline>,
+            evidence::policy::Ready<Prototype1SearchPolicy, Prototype1ChildBudget>,
+            evidence::selection::Seal<SelectionSealMaterial>,
+            evidence::completion::None,
+        >,
+        Continuation<
+            continuation::selection::Selected<SuccessorDecision>,
+            continuation::decision::Allowed<Prototype1ContinuationDecision>,
+            continuation::handoff::Incomplete<successor::Record>,
+        >,
+        Report<report::Facts>,
+    >;
+    shape R13C_SHAPE;
+}
+// ANCHOR_END: prototype1_alias_r13c_handoff_incomplete
+
+impl<RunShape, CampaignConfig> R13cHandoffIncomplete<RunShape, CampaignConfig> {
+    pub(crate) fn from_collected_parent(
+        collected: context::Collected<RunShape, CampaignConfig>,
+        parent: parent_role::Parent<parent_role::Retired>,
+    ) -> Self {
+        Self {
+            phase: phase::R13c,
+            role: parent,
+            context: Context::new(collected),
+            plan: Plan {
+                _authority: PhantomData,
+                _schedule: PhantomData,
+                _private: Private,
+            },
+            children: Children {
+                _set: PhantomData,
+                _attempt: PhantomData,
+                _private: Private,
+            },
+            history: History {
+                _startup: PhantomData,
+                _head: PhantomData,
+                _epoch: PhantomData,
+                _private: Private,
+            },
+            evidence: Evidence {
+                _parent_start: PhantomData,
+                _baseline: PhantomData,
+                _policy: PhantomData,
+                _selection: PhantomData,
+                _completion: PhantomData,
+                _private: Private,
+            },
+            continuation: Continuation {
+                _selection: PhantomData,
+                _decision: PhantomData,
+                _handoff: PhantomData,
+                _private: Private,
+            },
+            report: Report {
+                _state: PhantomData,
+                _private: Private,
+            },
+            _private: Private,
+        }
+    }
+
+    pub(crate) fn into_parts(self) -> RetiredParts<RunShape, CampaignConfig> {
+        RetiredParts {
+            collected: self.context.into_state(),
+            parent: self.role,
+        }
+    }
+}
+
 // ANCHOR: prototype1_branch_r12_continuation
 pub(crate) enum R12ContinuationBranch<RunShape, CampaignConfig> {
     Stopped(R13aStopped<RunShape, CampaignConfig>),
     HandoffCommitted(R13bHandoffCommitted<RunShape, CampaignConfig>),
+    HandoffIncomplete(R13cHandoffIncomplete<RunShape, CampaignConfig>),
 }
 // ANCHOR_END: prototype1_branch_r12_continuation
 

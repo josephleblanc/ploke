@@ -34,7 +34,7 @@ use crate::cli::handlers::closure::{
     advance_eval_closure, advance_protocol_or_block, protocol_llm_config,
 };
 use crate::cli::prototype1_process::{
-    SuccessorHandoffMode, persist_prototype1_buildable_child_artifact,
+    HandoffOutcome, SuccessorHandoffMode, persist_prototype1_buildable_child_artifact,
     spawn_and_handoff_prototype1_successor,
 };
 use crate::cli::prototype1_state::backend::GitWorktreeBackend;
@@ -265,8 +265,9 @@ struct SuccessorMarker {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SuccessorMarkerState {
-    Selected,
-    Terminal,
+    InProgress,
+    Incomplete,
+    Committed,
 }
 
 #[derive(Debug, Clone)]
@@ -2033,8 +2034,9 @@ fn phase_or_blocked(phase: DiagnosedPhase, blockers: &[String]) -> DiagnosedPhas
 
 fn terminal_phase_from_marker(marker: SuccessorMarkerState) -> DiagnosedPhase {
     match marker {
-        SuccessorMarkerState::Selected => DiagnosedPhase::Handoff,
-        SuccessorMarkerState::Terminal => DiagnosedPhase::Complete,
+        SuccessorMarkerState::InProgress => DiagnosedPhase::Handoff,
+        SuccessorMarkerState::Incomplete => DiagnosedPhase::Blocked,
+        SuccessorMarkerState::Committed => DiagnosedPhase::Complete,
     }
 }
 
@@ -2377,61 +2379,244 @@ fn latest_successor_marker(
         .map_err(|err| PrepareError::InvalidBatchSelection {
             detail: format!("failed to read transition journal: {err}"),
         })?;
-    for entry in entries.iter().rev() {
+    if let Some(predecessor) = active_predecessor(&entries, &context.parent_identity) {
+        let relevant = collect_successor_entries(
+            context,
+            &entries,
+            predecessor,
+            Some(context.parent_identity.node_id()),
+            blockers,
+        );
+        let state = classify_successor_entries(&relevant);
+        if predecessor_blocks(state) {
+            blockers.push(format!(
+                "active checkout advanced from predecessor '{}' to successor '{}', but predecessor handoff evidence is {:?}; successor mutation remains blocked until a durable same-runtime acknowledgement is committed",
+                predecessor.node_id(),
+                context.parent_identity.node_id(),
+                state
+            ));
+            push_handoff_blocker(blockers);
+            return Ok(Some(SuccessorMarker {
+                state: SuccessorMarkerState::Incomplete,
+            }));
+        }
+    }
+
+    let relevant =
+        collect_successor_entries(context, &entries, &context.parent_identity, None, blockers);
+    let Some(state) = classify_successor_entries(&relevant) else {
+        return Ok(None);
+    };
+    if state == SuccessorMarkerState::Incomplete {
+        push_handoff_blocker(blockers);
+    }
+    Ok(Some(SuccessorMarker { state }))
+}
+
+fn predecessor_blocks(state: Option<SuccessorMarkerState>) -> bool {
+    !matches!(state, Some(SuccessorMarkerState::Committed))
+}
+
+fn active_predecessor<'a>(
+    entries: &'a [JournalEntry],
+    active: &ParentIdentity,
+) -> Option<&'a ParentIdentity> {
+    entries.iter().rev().find_map(|entry| match entry {
+        JournalEntry::ActiveCheckoutAdvanced(entry)
+            if entry.selected_parent_identity == *active =>
+        {
+            entry.previous_parent_identity.as_ref()
+        }
+        _ => None,
+    })
+}
+
+fn collect_successor_entries<'a>(
+    context: &RuntimeContext,
+    entries: &'a [JournalEntry],
+    parent: &ParentIdentity,
+    selected_node: Option<&str>,
+    blockers: &mut Vec<String>,
+) -> Vec<&'a JournalEntry> {
+    let mut relevant = Vec::new();
+    for entry in entries {
+        let node_id = match entry {
+            JournalEntry::Successor(record) => &record.node_id,
+            JournalEntry::SuccessorHandoff(entry) => &entry.node_id,
+            _ => continue,
+        };
+        if selected_node.is_some_and(|selected| selected != node_id) {
+            continue;
+        }
+        let node = match load_node_record(
+            &context.manifest_path,
+            node_id,
+            OperatorProjectionRead::cli_operator(),
+        ) {
+            Ok(node) => node,
+            Err(_) => {
+                blockers.push(format!(
+                    "successor record for node '{node_id}' cannot be matched to a node record"
+                ));
+                continue;
+            }
+        };
+        if node.parent_node_id.as_deref() == Some(parent.node_id())
+            && node.generation == parent.generation() + 1
+        {
+            relevant.push(entry);
+        }
+    }
+    relevant
+}
+
+fn push_handoff_blocker(blockers: &mut Vec<String>) {
+    blockers.push(
+        "successor handoff is incomplete: spawn/ready evidence requires a durable same-runtime successor_handoff acknowledgement, and timeout/exit evidence cannot complete the parent turn"
+            .to_string(),
+    );
+}
+
+fn classify_successor_entries(entries: &[&JournalEntry]) -> Option<SuccessorMarkerState> {
+    type AttemptKey = (RuntimeId, String);
+
+    let mut spawned = BTreeMap::<AttemptKey, &successor::Record>::new();
+    let mut failed = BTreeSet::<AttemptKey>::new();
+    let mut acknowledgements = BTreeSet::new();
+    let mut saw_process = false;
+    let mut latest = None;
+    for entry in entries {
         match entry {
             JournalEntry::Successor(record) => {
-                let node = match load_node_record(
-                    &context.manifest_path,
-                    &record.node_id,
-                    OperatorProjectionRead::cli_operator(),
-                ) {
-                    Ok(node) => node,
-                    Err(_) => {
-                        blockers.push(format!(
-                            "successor record for node '{}' cannot be matched to a node record",
-                            record.node_id
-                        ));
-                        continue;
+                let state = match &record.state {
+                    successor::State::Selected { .. } | successor::State::Checkout { .. } => {
+                        SuccessorMarkerState::InProgress
+                    }
+                    successor::State::Stopped { .. } => {
+                        if !saw_process {
+                            SuccessorMarkerState::Committed
+                        } else {
+                            SuccessorMarkerState::Incomplete
+                        }
+                    }
+                    successor::State::Spawned { .. } => {
+                        saw_process = true;
+                        if let Some(runtime) = record.runtime_id {
+                            let attempt = (runtime, record.node_id.clone());
+                            spawned.insert(attempt.clone(), record);
+                            acknowledgements.remove(&attempt);
+                        }
+                        SuccessorMarkerState::Incomplete
+                    }
+                    successor::State::Ready { pid, ready_path } => {
+                        saw_process = true;
+                        let Some(attempt) = record
+                            .runtime_id
+                            .map(|runtime| (runtime, record.node_id.clone()))
+                        else {
+                            latest = Some(SuccessorMarkerState::Incomplete);
+                            continue;
+                        };
+                        let ready_matches = spawned
+                            .get(&attempt)
+                            .is_some_and(|spawn| spawn_matches_ready(spawn, *pid, ready_path));
+                        if ready_matches
+                            && !failed.contains(&attempt)
+                            && acknowledgements.contains(&attempt)
+                        {
+                            SuccessorMarkerState::Committed
+                        } else {
+                            SuccessorMarkerState::Incomplete
+                        }
+                    }
+                    successor::State::TimedOut { .. }
+                    | successor::State::ExitedBeforeReady { .. } => {
+                        saw_process = true;
+                        if let Some(runtime) = record.runtime_id {
+                            let attempt = (runtime, record.node_id.clone());
+                            failed.insert(attempt.clone());
+                            acknowledgements.remove(&attempt);
+                        }
+                        SuccessorMarkerState::Incomplete
+                    }
+                    successor::State::Completed { .. } => {
+                        saw_process = true;
+                        let attempt = record
+                            .runtime_id
+                            .map(|runtime| (runtime, record.node_id.clone()));
+                        attempt
+                            .as_ref()
+                            .filter(|attempt| spawned.contains_key(*attempt))
+                            .filter(|attempt| !failed.contains(*attempt))
+                            .filter(|attempt| acknowledgements.contains(*attempt))
+                            .map_or(SuccessorMarkerState::Incomplete, |_| {
+                                SuccessorMarkerState::Committed
+                            })
                     }
                 };
-                if node.parent_node_id.as_deref() != Some(context.parent_identity.node_id())
-                    || node.generation != context.parent_identity.generation() + 1
-                {
-                    continue;
-                }
-                let state = match &record.state {
-                    successor::State::Selected { .. } => SuccessorMarkerState::Selected,
-                    successor::State::Stopped { .. }
-                    | successor::State::Spawned { .. }
-                    | successor::State::Checkout { .. }
-                    | successor::State::Ready { .. }
-                    | successor::State::TimedOut { .. }
-                    | successor::State::ExitedBeforeReady { .. }
-                    | successor::State::Completed { .. } => SuccessorMarkerState::Terminal,
-                };
-                return Ok(Some(SuccessorMarker { state }));
+                latest = Some(state);
             }
             JournalEntry::SuccessorHandoff(entry) => {
-                let node = match load_node_record(
-                    &context.manifest_path,
-                    &entry.node_id,
-                    OperatorProjectionRead::cli_operator(),
-                ) {
-                    Ok(node) => node,
-                    Err(_) => continue,
-                };
-                if node.parent_node_id.as_deref() == Some(context.parent_identity.node_id())
-                    && node.generation == context.parent_identity.generation() + 1
+                let acknowledged = (entry.runtime_id, entry.node_id.clone());
+                if !failed.contains(&acknowledged)
+                    && spawned
+                        .get(&acknowledged)
+                        .is_some_and(|spawn| spawn_matches_handoff(spawn, entry))
                 {
-                    return Ok(Some(SuccessorMarker {
-                        state: SuccessorMarkerState::Terminal,
-                    }));
+                    acknowledgements.insert(acknowledged.clone());
+                    latest = Some(SuccessorMarkerState::Committed);
+                } else {
+                    latest = Some(SuccessorMarkerState::Incomplete);
                 }
             }
             _ => {}
         }
     }
-    Ok(None)
+    latest
+}
+
+fn spawn_matches_ready(record: &successor::Record, pid: u32, ready_path: &Path) -> bool {
+    matches!(
+        &record.state,
+        successor::State::Spawned {
+            pid: spawned_pid,
+            ready_path: spawned_path,
+            ..
+        } if *spawned_pid == pid && spawned_path == ready_path
+    )
+}
+
+fn spawn_matches_handoff(
+    record: &successor::Record,
+    handoff: &crate::cli::prototype1_state::journal::SuccessorHandoffEntry,
+) -> bool {
+    if record.campaign_id != handoff.campaign_id
+        || record.node_id != handoff.node_id
+        || record.runtime_id != Some(handoff.runtime_id)
+    {
+        return false;
+    }
+    match &record.state {
+        successor::State::Spawned {
+            pid,
+            active_parent_root,
+            binary_path,
+            invocation_path,
+            ready_path,
+            streams,
+        } => {
+            *pid == handoff.pid
+                && active_parent_root == &handoff.active_parent_root
+                && binary_path == &handoff.binary_path
+                && invocation_path == &handoff.invocation_path
+                && ready_path == &handoff.ready_path
+                && handoff
+                    .streams
+                    .as_ref()
+                    .is_none_or(|handoff_streams| handoff_streams == streams)
+        }
+        _ => false,
+    }
 }
 
 fn is_terminal_status(status: Prototype1NodeStatus) -> bool {
@@ -3021,7 +3206,7 @@ async fn advance_handoff(diagnosis: Diagnosis) -> Result<(), PrepareError> {
         .parent;
         let selected_artifact = select_artifact_for_handoff(&selection_decision, &material)?;
         let selection_entry = material.into_entry(selection_decision)?;
-        let _ = spawn_and_handoff_prototype1_successor(
+        let (_retired, outcome) = spawn_and_handoff_prototype1_successor(
             &diagnosis.context.campaign_id,
             selected_artifact,
             &diagnosis.context.repo_root,
@@ -3029,6 +3214,20 @@ async fn advance_handoff(diagnosis: Diagnosis) -> Result<(), PrepareError> {
             selection_entry,
             SuccessorHandoffMode::Detached,
         )?;
+        if let HandoffOutcome::Incomplete(record) = outcome {
+            let detail = match &record.state {
+                successor::State::TimedOut { waited_ms, .. } => format!(
+                    "successor handoff timed out after {waited_ms}ms without a durable same-runtime acknowledgement"
+                ),
+                successor::State::ExitedBeforeReady { exit_code } => format!(
+                    "successor process exited before handoff acknowledgement (exit_code={exit_code:?})"
+                ),
+                state => {
+                    format!("successor handoff returned incomplete with unexpected state {state:?}")
+                }
+            };
+            return Err(PrepareError::InvalidBatchSelection { detail });
+        }
     } else {
         journal
             .append(JournalEntry::Successor(successor::Record::stopped(
@@ -5061,12 +5260,279 @@ Suggested validation after editing: run `cargo test`.
     #[test]
     fn terminal_phase_from_marker_preserves_handoff_and_complete() {
         assert_eq!(
-            terminal_phase_from_marker(SuccessorMarkerState::Selected),
+            terminal_phase_from_marker(SuccessorMarkerState::InProgress),
             DiagnosedPhase::Handoff
         );
         assert_eq!(
-            terminal_phase_from_marker(SuccessorMarkerState::Terminal),
+            terminal_phase_from_marker(SuccessorMarkerState::Incomplete),
+            DiagnosedPhase::Blocked
+        );
+        assert_eq!(
+            terminal_phase_from_marker(SuccessorMarkerState::Committed),
             DiagnosedPhase::Complete
+        );
+    }
+
+    fn successor_entry(runtime_id: Option<RuntimeId>, state: successor::State) -> JournalEntry {
+        JournalEntry::Successor(successor::Record {
+            runtime_id,
+            recorded_at: crate::cli::prototype1_state::event::RecordedAt(1),
+            campaign_id: CampaignId::from("campaign"),
+            node_id: "node-successor".to_string(),
+            state,
+        })
+    }
+
+    fn handoff_entry(runtime_id: RuntimeId) -> JournalEntry {
+        JournalEntry::SuccessorHandoff(
+            crate::cli::prototype1_state::journal::SuccessorHandoffEntry {
+                recorded_at: crate::cli::prototype1_state::event::RecordedAt(2),
+                campaign_id: CampaignId::from("campaign"),
+                node_id: "node-successor".to_string(),
+                runtime_id,
+                active_parent_root: PathBuf::from("/tmp/repo"),
+                binary_path: PathBuf::from("/tmp/ploke-eval"),
+                invocation_path: PathBuf::from("/tmp/invocation.json"),
+                ready_path: PathBuf::from("/tmp/ready.jsonl"),
+                streams: None,
+                pid: 42,
+            },
+        )
+    }
+
+    fn marker_state(entries: &[JournalEntry]) -> Option<SuccessorMarkerState> {
+        classify_successor_entries(&entries.iter().collect::<Vec<_>>())
+    }
+
+    #[test]
+    fn checkout_advance_recovers_active_predecessor() {
+        let campaign_id = CampaignId::from("campaign");
+        let predecessor = ParentIdentity::root_bootstrap(
+            campaign_id.clone(),
+            "node-predecessor",
+            "instance",
+            "branch-predecessor",
+            None,
+        );
+        let active = ParentIdentity::root_bootstrap(
+            campaign_id.clone(),
+            "node-successor",
+            "instance",
+            "branch-successor",
+            None,
+        );
+        let entries = [JournalEntry::ActiveCheckoutAdvanced(
+            crate::cli::prototype1_state::journal::ActiveCheckoutAdvancedEntry {
+                recorded_at: crate::cli::prototype1_state::event::RecordedAt(1),
+                campaign_id,
+                previous_parent_identity: Some(predecessor.clone()),
+                selected_parent_identity: active.clone(),
+                active_parent_root: PathBuf::from("/tmp/repo"),
+                selected_branch: "branch-successor".to_string(),
+                installed_commit: "abc123".to_string(),
+            },
+        )];
+
+        assert_eq!(active_predecessor(&entries, &active), Some(&predecessor));
+    }
+
+    #[test]
+    fn active_predecessor_requires_committed_handoff() {
+        assert!(predecessor_blocks(None));
+        assert!(predecessor_blocks(Some(SuccessorMarkerState::InProgress)));
+        assert!(predecessor_blocks(Some(SuccessorMarkerState::Incomplete)));
+        assert!(!predecessor_blocks(Some(SuccessorMarkerState::Committed)));
+    }
+
+    #[test]
+    fn successor_markers_require_same_runtime_handoff() {
+        use crate::intervention::{
+            CommitPhase, Prototype1ContinuationDecision, Prototype1ContinuationDisposition,
+        };
+
+        let runtime_id = RuntimeId(uuid::Uuid::from_u128(1));
+        let other_id = RuntimeId(uuid::Uuid::from_u128(2));
+        let decision = Prototype1ContinuationDecision {
+            disposition: Prototype1ContinuationDisposition::ContinueReady,
+            selected_next_branch_id: Some("branch-successor".to_string()),
+            selected_branch_disposition: Some("keep".to_string()),
+            next_generation: 1,
+            total_nodes_after_continue: 2,
+        };
+        let selected = JournalEntry::Successor(successor::Record::selected(
+            CampaignId::from("campaign"),
+            "node-successor".to_string(),
+            decision.clone(),
+        ));
+        let stopped = successor_entry(
+            None,
+            successor::State::Stopped {
+                decision: decision.clone(),
+                selection_decision: None,
+            },
+        );
+        let checkout = successor_entry(
+            None,
+            successor::State::Checkout {
+                phase: CommitPhase::After,
+                active_parent_root: PathBuf::from("/tmp/repo"),
+                selected_branch: "branch-successor".to_string(),
+                installed_commit: Some("abc123".to_string()),
+            },
+        );
+        assert_eq!(
+            marker_state(&[selected]),
+            Some(SuccessorMarkerState::InProgress)
+        );
+        assert_eq!(
+            marker_state(&[checkout]),
+            Some(SuccessorMarkerState::InProgress)
+        );
+
+        let spawned = successor_entry(
+            Some(runtime_id),
+            successor::State::Spawned {
+                pid: 42,
+                active_parent_root: PathBuf::from("/tmp/repo"),
+                binary_path: PathBuf::from("/tmp/ploke-eval"),
+                invocation_path: PathBuf::from("/tmp/invocation.json"),
+                ready_path: PathBuf::from("/tmp/ready.jsonl"),
+                streams: crate::cli::prototype1_state::journal::Streams {
+                    stdout: PathBuf::from("/tmp/stdout"),
+                    stderr: PathBuf::from("/tmp/stderr"),
+                },
+            },
+        );
+        let ready = successor_entry(
+            Some(runtime_id),
+            successor::State::Ready {
+                pid: 42,
+                ready_path: PathBuf::from("/tmp/ready.jsonl"),
+            },
+        );
+        let timed_out = successor_entry(
+            Some(runtime_id),
+            successor::State::TimedOut {
+                waited_ms: 10_000,
+                ready_path: PathBuf::from("/tmp/ready.jsonl"),
+            },
+        );
+        let exited = successor_entry(
+            Some(runtime_id),
+            successor::State::ExitedBeforeReady { exit_code: Some(1) },
+        );
+        for entry in [
+            spawned.clone(),
+            ready.clone(),
+            timed_out.clone(),
+            exited.clone(),
+        ] {
+            assert_eq!(
+                marker_state(&[entry]),
+                Some(SuccessorMarkerState::Incomplete)
+            );
+        }
+
+        let completion = |runtime_id| {
+            successor_entry(
+                Some(runtime_id),
+                successor::State::Completed {
+                    status: crate::cli::prototype1_state::invocation::SuccessorCompletionStatus::Succeeded,
+                    completion_path: PathBuf::from("/tmp/completion.json"),
+                    trace_path: None,
+                    detail: None,
+                },
+            )
+        };
+        assert_eq!(
+            marker_state(&[handoff_entry(runtime_id), completion(other_id)]),
+            Some(SuccessorMarkerState::Incomplete)
+        );
+        assert_eq!(
+            marker_state(&[spawned.clone(), handoff_entry(other_id)]),
+            Some(SuccessorMarkerState::Incomplete)
+        );
+        assert_eq!(
+            marker_state(&[ready.clone(), handoff_entry(runtime_id)]),
+            Some(SuccessorMarkerState::Incomplete),
+            "ready plus handoff cannot replace missing spawn evidence"
+        );
+        assert_eq!(
+            marker_state(&[
+                spawned.clone(),
+                timed_out.clone(),
+                handoff_entry(runtime_id),
+            ]),
+            Some(SuccessorMarkerState::Incomplete),
+            "timeout permanently dominates a late acknowledgement"
+        );
+        assert_eq!(
+            marker_state(&[spawned.clone(), exited.clone(), handoff_entry(runtime_id),]),
+            Some(SuccessorMarkerState::Incomplete),
+            "early exit permanently dominates a late acknowledgement"
+        );
+        assert_eq!(
+            marker_state(&[spawned.clone(), timed_out, stopped.clone()]),
+            Some(SuccessorMarkerState::Incomplete),
+            "stopped cannot replace a timed-out runtime attempt"
+        );
+        assert_eq!(
+            marker_state(&[spawned.clone(), exited, stopped]),
+            Some(SuccessorMarkerState::Incomplete),
+            "stopped cannot replace an exited runtime attempt"
+        );
+        let malformed_states = [
+            successor::State::Spawned {
+                pid: 42,
+                active_parent_root: PathBuf::from("/tmp/repo"),
+                binary_path: PathBuf::from("/tmp/ploke-eval"),
+                invocation_path: PathBuf::from("/tmp/invocation.json"),
+                ready_path: PathBuf::from("/tmp/ready.jsonl"),
+                streams: crate::cli::prototype1_state::journal::Streams {
+                    stdout: PathBuf::from("/tmp/stdout"),
+                    stderr: PathBuf::from("/tmp/stderr"),
+                },
+            },
+            successor::State::TimedOut {
+                waited_ms: 10_000,
+                ready_path: PathBuf::from("/tmp/ready.jsonl"),
+            },
+            successor::State::ExitedBeforeReady { exit_code: Some(1) },
+        ];
+        for state in malformed_states {
+            assert_eq!(
+                marker_state(&[
+                    successor_entry(None, state),
+                    successor_entry(
+                        None,
+                        successor::State::Stopped {
+                            decision: decision.clone(),
+                            selection_decision: None,
+                        },
+                    ),
+                ]),
+                Some(SuccessorMarkerState::Incomplete),
+                "stopped cannot replace malformed process evidence without a runtime id"
+            );
+        }
+        let mut wrong_path = handoff_entry(runtime_id);
+        let JournalEntry::SuccessorHandoff(handoff) = &mut wrong_path else {
+            unreachable!("handoff helper must return handoff evidence")
+        };
+        handoff.binary_path = PathBuf::from("/tmp/wrong-ploke-eval");
+        assert_eq!(
+            marker_state(&[spawned.clone(), wrong_path]),
+            Some(SuccessorMarkerState::Incomplete),
+            "same-id handoff with mismatched process evidence must fail closed"
+        );
+        assert_eq!(
+            marker_state(&[
+                spawned,
+                handoff_entry(runtime_id),
+                ready,
+                completion(runtime_id),
+            ]),
+            Some(SuccessorMarkerState::Committed)
         );
     }
 

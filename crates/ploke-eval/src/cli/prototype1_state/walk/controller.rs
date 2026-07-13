@@ -54,14 +54,15 @@ use crate::{
             identity::{load_parent_identity_optional, parent_identity_path},
             journal::prototype1_transition_journal_path,
             live_edges::{
-                r0_to_r1, r1_to_r2a_or_r3, r3_to_r4a, r4a_to_r4b_or_r4c, r4b_to_r4c_genesis,
-                r4c_to_r5, r5_to_r6, r6_to_r7, r7_to_r8, r8_to_r9, r9_to_r10, r10_to_r11,
-                r11_to_r12, r12_to_r13, r13_to_r14,
+                r0_to_r1, r1_to_r2a_or_r3, r2a_to_r3, r3_to_r4a, r4a_to_r4b_or_r4c,
+                r4b_to_r4c_genesis, r4c_to_r5, r5_to_r6, r6_to_r7, r7_to_r8, r8_to_r9, r9_to_r10,
+                r10_to_r11, r11_to_r12, r12_to_r13, r13_to_r14,
             },
             typestate::{
                 self, AsyncStepInput, R0, R1, R2a, R3, R4a, R4bGenesisChecked, R4cReady, R5, R6,
                 R7, R8, R9, R10, R11FanoutComplete, R11aRejectedOnly, R12, R13aStopped,
-                R13bHandoffCommitted, R14aFinalStopped, R14bFinalHandoff, StepInput,
+                R13bHandoffCommitted, R13cHandoffIncomplete, R14aFinalStopped, R14bFinalHandoff,
+                StepInput,
             },
         },
         provider::{headless_model_selection, load_parent_patcher_model_selection},
@@ -143,8 +144,15 @@ enum WalkState {
     R12(R12<RunShape, CampaignConfig>),
     R13a(R13aStopped<RunShape, CampaignConfig>),
     R13b(R13bHandoffCommitted<RunShape, CampaignConfig>),
+    R13c(R13cHandoffIncomplete<RunShape, CampaignConfig>),
     R14a(R14aFinalStopped<RunShape, CampaignConfig>),
     R14b(R14bFinalHandoff<RunShape, CampaignConfig>),
+    /// Durable evidence identifies a trustworthy cursor, but the exact typed
+    /// authority required to continue cannot be reconstructed safely.
+    Blocked {
+        phase: WalkPhase,
+        detail: String,
+    },
     /// A consuming transition failed after the previous typed value was moved.
     ///
     /// Rust cannot restore the consumed value after an edge returns `Err`, so
@@ -311,6 +319,10 @@ impl WalkController {
         let phase = self.phase();
         let mut lines = Vec::new();
         match &self.state {
+            WalkState::Blocked { phase, detail } => lines.push(format!(
+                "walk blocked at {phase}; steps={}; detail={detail}",
+                self.steps
+            )),
             WalkState::Failed { phase, detail } => lines.push(format!(
                 "walk failed while advancing from {phase}; steps={}; detail={detail}",
                 self.steps
@@ -1498,7 +1510,9 @@ impl WalkController {
         });
         ensure_supported_target(target)?;
         self.ensure_branch_target(target)?;
-        let transitions = if self.phase() == target && !branch_step {
+        let transitions = if until.is_none() && self.phase() == target && !branch_step {
+            vec![self.step_once(watch, allow_git_changes).await?]
+        } else if self.phase() == target && !branch_step {
             Vec::new()
         } else if until.is_some() {
             self.advance_until(target, watch, allow_git_changes).await?
@@ -1524,7 +1538,7 @@ impl WalkController {
                     ),
                 });
             }
-            if !selected && matches!(target, WalkPhase::R13b | WalkPhase::R14b) {
+            if !selected && matches!(target, WalkPhase::R13b | WalkPhase::R13c | WalkPhase::R14b) {
                 return Err(PrepareError::InvalidBatchSelection {
                     detail: format!(
                         "target {target} is the successor-handoff branch, but R12 has no selected-successor evidence; use --until r13a or --until r14a"
@@ -1542,6 +1556,7 @@ impl WalkController {
         let snapshot = reconstruct::reconstruct_early(&self.repo_root)?;
         let reconstruct::EarlySnapshot {
             state,
+            blocked,
             campaign_id,
             notes,
             blockers,
@@ -1550,7 +1565,15 @@ impl WalkController {
             self.files.remember_campaign(campaign_id);
         }
         self.reconstruction = Some(WalkReconstruction { notes, blockers });
-        if let Some(state) = state {
+        if let Some(blocked) = blocked {
+            let phase = blocked.phase;
+            let detail = blocked.detail;
+            self.state = WalkState::Blocked {
+                phase,
+                detail: detail.clone(),
+            };
+            self.record(format!("reconstruction blocked at {phase}: {detail}"));
+        } else if let Some(state) = state {
             let phase = phase_for_early(&state);
             self.state = WalkState::from_early(state);
             self.record(format!("reconstructed durable walk state at {phase}"));
@@ -1607,6 +1630,17 @@ impl WalkController {
                     detail: "walk is failed; start a new walk to continue".to_string(),
                 });
             }
+            WalkState::Blocked { phase, detail } => {
+                self.state = WalkState::Blocked {
+                    phase,
+                    detail: detail.clone(),
+                };
+                return Err(PrepareError::InvalidBatchSelection {
+                    detail: format!(
+                        "walk is blocked at {phase}; repair the durable state or run reset before starting a different walk: {detail}"
+                    ),
+                });
+            }
             WalkState::R0(r0) => match r0.advance(r0_to_r1) {
                 Ok(r1) => {
                     self.files.remember_campaign(r1.campaign_id());
@@ -1618,14 +1652,7 @@ impl WalkController {
                 typestate::R1Branch::R2a(r2a) => WalkState::R2a(r2a),
                 typestate::R1Branch::R3(r3) => WalkState::R3(r3),
             }),
-            WalkState::R2a(r2a) => {
-                self.state = WalkState::R2a(r2a);
-                let detail = "walk reached R2a parent-identity initialization boundary; no next admitted step is defined";
-                self.record(format!("blocked at {previous}: {detail}"));
-                return Err(PrepareError::InvalidBatchSelection {
-                    detail: detail.to_string(),
-                });
-            }
+            WalkState::R2a(r2a) => r2a.advance(r2a_to_r3).map(WalkState::R3),
             WalkState::R3(r3) => r3.advance(r3_to_r4a).map(WalkState::R4a),
             WalkState::R4a(r4a) => r4a.advance(r4a_to_r4b_or_r4c).map(|branch| match branch {
                 typestate::R4aStartupBranch::GenesisChecked(r4b) => WalkState::R4b(r4b),
@@ -1702,6 +1729,9 @@ impl WalkController {
                     typestate::R12ContinuationBranch::HandoffCommitted(r13b) => {
                         WalkState::R13b(r13b)
                     }
+                    typestate::R12ContinuationBranch::HandoffIncomplete(r13c) => {
+                        WalkState::R13c(r13c)
+                    }
                 })
             }
             WalkState::R13a(r13a) => r13_to_r14(typestate::R12ContinuationBranch::Stopped(r13a))
@@ -1720,6 +1750,14 @@ impl WalkController {
                         typestate::R14FinalBranch::Handoff(r14b) => WalkState::R14b(r14b),
                     }
                 })
+            }
+            WalkState::R13c(r13c) => {
+                self.state = WalkState::R13c(r13c);
+                let detail = "walk reached R13c with the predecessor retired and successor handoff incomplete; inspect and reconcile durable handoff evidence before continuing";
+                self.record(format!("blocked at {previous}: {detail}"));
+                return Err(PrepareError::InvalidBatchSelection {
+                    detail: detail.to_string(),
+                });
             }
             WalkState::R14a(r14a) => {
                 self.state = WalkState::R14a(r14a);
@@ -1804,8 +1842,10 @@ impl WalkState {
             WalkState::R12(_) => WalkPhase::R12,
             WalkState::R13a(_) => WalkPhase::R13a,
             WalkState::R13b(_) => WalkPhase::R13b,
+            WalkState::R13c(_) => WalkPhase::R13c,
             WalkState::R14a(_) => WalkPhase::R14a,
             WalkState::R14b(_) => WalkPhase::R14b,
+            WalkState::Blocked { phase, .. } => *phase,
             WalkState::Failed { phase, .. } => *phase,
         }
     }
@@ -1824,6 +1864,7 @@ impl WalkState {
             EarlyState::R12(r12) => WalkState::R12(r12),
             EarlyState::R13a(r13a) => WalkState::R13a(r13a),
             EarlyState::R13b(r13b) => WalkState::R13b(r13b),
+            EarlyState::R13c(r13c) => WalkState::R13c(r13c),
             EarlyState::R14a(r14a) => WalkState::R14a(r14a),
             EarlyState::R14b(r14b) => WalkState::R14b(r14b),
         }
@@ -1844,6 +1885,7 @@ fn phase_for_early(state: &EarlyState) -> WalkPhase {
         EarlyState::R12(_) => WalkPhase::R12,
         EarlyState::R13a(_) => WalkPhase::R13a,
         EarlyState::R13b(_) => WalkPhase::R13b,
+        EarlyState::R13c(_) => WalkPhase::R13c,
         EarlyState::R14a(_) => WalkPhase::R14a,
         EarlyState::R14b(_) => WalkPhase::R14b,
     }
@@ -1948,7 +1990,7 @@ fn phase_rank(phase: WalkPhase) -> u8 {
         WalkPhase::R10 => 11,
         WalkPhase::R11a | WalkPhase::R11 => 12,
         WalkPhase::R12 => 13,
-        WalkPhase::R13a | WalkPhase::R13b => 14,
+        WalkPhase::R13a | WalkPhase::R13b | WalkPhase::R13c => 14,
         WalkPhase::R14a | WalkPhase::R14b => 15,
     }
 }
@@ -1963,7 +2005,7 @@ impl NextPhase for WalkPhase {
             WalkPhase::Empty => Some(WalkPhase::R0),
             WalkPhase::R0 => Some(WalkPhase::R1),
             WalkPhase::R1 => Some(WalkPhase::R3),
-            WalkPhase::R2a => None,
+            WalkPhase::R2a => Some(WalkPhase::R3),
             WalkPhase::R3 => Some(WalkPhase::R4a),
             WalkPhase::R4a => Some(WalkPhase::R4c),
             WalkPhase::R4b => Some(WalkPhase::R4c),
@@ -1979,6 +2021,7 @@ impl NextPhase for WalkPhase {
             WalkPhase::R12 => Some(WalkPhase::R13a),
             WalkPhase::R13a => Some(WalkPhase::R14a),
             WalkPhase::R13b => Some(WalkPhase::R14b),
+            WalkPhase::R13c => None,
             WalkPhase::R14a => None,
             WalkPhase::R14b => None,
         }
@@ -4314,6 +4357,26 @@ mod tests {
         },
         test_support::env_guard_os,
     };
+
+    #[tokio::test]
+    async fn default_step_surfaces_reconstructed_r13c_blocker() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut controller = WalkController::new(temp.path().join("repo"));
+        controller.state = WalkState::Blocked {
+            phase: WalkPhase::R13c,
+            detail: "persisted successor handoff is incomplete".to_string(),
+        };
+
+        let error = controller
+            .step(None, true, true)
+            .await
+            .err()
+            .expect("default step must not report a successful no-op at R13c");
+
+        assert_eq!(controller.phase(), WalkPhase::R13c);
+        assert!(error.to_string().contains("walk is blocked at r13c"));
+        assert!(error.to_string().contains("persisted successor handoff"));
+    }
 
     fn content_response(index: usize) -> RawFullResponseRecord {
         let response = serde_json::from_value(serde_json::json!({

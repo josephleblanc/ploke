@@ -6,16 +6,13 @@
 
 use ploke_core::EXECUTION_DEBUG_TARGET;
 
-use crate::{
-    cli::{InspectOutputFormat, Prototype1StateCommand},
-    spec::PrepareError,
-};
+use crate::{cli::Prototype1StateCommand, spec::PrepareError};
 
 use super::super::{
     live_edges::{
-        r0_to_r1, r1_to_r2a_or_r3, r3_to_r4a, r4a_to_r4b_or_r4c, r4b_to_r4c_genesis, r4c_to_r5,
-        r5_to_r6, r6_to_r7, r7_to_r8, r8_to_r9, r9_to_r10, r10_to_r11, r11_to_r12, r12_to_r13,
-        r13_to_r14,
+        r0_to_r1, r1_to_r2a_or_r3, r2a_to_r3, r3_to_r4a, r4a_to_r4b_or_r4c, r4b_to_r4c_genesis,
+        r4c_to_r5, r5_to_r6, r6_to_r7, r7_to_r8, r8_to_r9, r9_to_r10, r10_to_r11, r11_to_r12,
+        r12_to_r13, r13_to_r14,
     },
     typestate::{self, AsyncStepInput, Step, StepInput},
 };
@@ -36,35 +33,7 @@ pub(crate) async fn run_to_terminal(command: Prototype1StateCommand) -> Result<(
     let _turn_entered = turn_span.enter();
 
     let r3 = match r1.advance(r1_to_r2a_or_r3)? {
-        typestate::R1Branch::R2a(r2a) => {
-            let typestate::R2aParts {
-                collected,
-                identity,
-            } = r2a.into_parts();
-            let command = collected.into_parts().command;
-            match command.format {
-                InspectOutputFormat::Json => {
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&identity).map_err(PrepareError::Serialize)?
-                    );
-                }
-                InspectOutputFormat::Table => {
-                    println!("prototype1 parent identity");
-                    println!("{}", "-".repeat(40));
-                    println!("campaign_id: {}", identity.campaign_id());
-                    println!("parent_id: {}", identity.parent_id());
-                    println!("node_id: {}", identity.node_id());
-                    println!("generation: {}", identity.generation());
-                    println!("branch_id: {}", identity.branch_id());
-                    println!(
-                        "artifact_branch: {}",
-                        identity.artifact_branch().unwrap_or("-")
-                    );
-                }
-            }
-            return Ok(());
-        }
+        typestate::R1Branch::R2a(r2a) => r2a.advance(r2a_to_r3)?,
         typestate::R1Branch::R3(r3) => r3,
     };
     let r4a = r3.advance(r3_to_r4a)?;

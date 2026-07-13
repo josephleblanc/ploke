@@ -4,7 +4,7 @@ Generated from `prototype1_state::transition_inventory`. Update the source
 classification and rerender this file when a transition splits, merges, or
 changes its authority/checkpoint contract.
 
-Generated row count: 26
+Generated row count: 28
 
 | edge_id | from | to | source | live_api | checkpoint | authority | producers | consumers | negative case |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -12,6 +12,7 @@ Generated row count: 26
 | `r0_to_r1` | `r0` | `r1` | `live_edges.rs:prototype1_live_edge_r0_to_r1` | `no` | `F0_setup -> F0_setup` | bootstrap<br>evidence_projection | campaign manifest path<br>run shape<br>transition journal handle<br>active monitor target | parent identity resolution<br>profile validation | projection rows cannot replace campaign/profile commitment |
 | `r1_to_r2a` | `r1` | `r2a` | `live_edges.rs:prototype1_live_edge_r1_to_r2a_or_r3` | `no` | `F0_setup -> F0_setup` | bootstrap<br>artifact | parent_identity.json<br>active checkout commit | operator setup report | DB identity row cannot replace committed parent identity file |
 | `r1_to_r3` | `r1` | `r3` | `live_edges.rs:prototype1_live_edge_r1_to_r2a_or_r3` | `no` | `F0_setup -> F0_setup` | bootstrap<br>artifact | resolved parent identity fact | r3_to_r4a | DB identity row cannot bypass active checkout or invocation validation |
+| `r2a_to_r3` | `r2a` | `r3` | `live_edges.rs:prototype1_live_edge_r2a_to_r3` | `no` | `F0_setup -> F0_setup` | bootstrap<br>artifact | initialized parent identity carrier | r3_to_r4a | a second filesystem lookup cannot replace the identity admitted by this session |
 | `r3_to_r4a` | `r3` | `r4a` | `live_edges.rs:prototype1_live_edge_r3_to_r4a` | `no` | `F0_setup -> F0_setup` | bootstrap<br>artifact | Parent<Unchecked> carrier | r4a_to_r4b_or_r4c | unchecked parent cannot run child planning |
 | `r4a_to_r4b` | `r4a` | `r4b` | `live_edges.rs:prototype1_live_edge_r4a_to_r4b_or_r4c` | `no` | `F0_setup -> F1_ready_parent` | bootstrap<br>artifact<br>history | genesis startup proof | r4b_to_r4c_genesis | parent-start DB row cannot make genesis startup valid |
 | `r4a_to_r4c` | `r4a` | `r4c` | `live_edges.rs:prototype1_live_edge_r4a_to_r4b_or_r4c` | `no` | `F8_handoff_committed -> F1_ready_parent` | history<br>artifact<br>bootstrap | successor-ready record<br>predecessor startup proof | r4c_to_r5 | DB row cannot replace successor invocation or sealed History proof |
@@ -28,6 +29,7 @@ Generated row count: 26
 | `r11_to_r12` | `r11` | `r12` | `live_edges.rs:prototype1_live_edge_r11_to_r12` | `no` | `F6_child_compared -> F7_selection_ready` | evidence_projection | report facts<br>candidate selection evidence | r12_to_r13 | selection projection cannot advance active checkout alone |
 | `r12_to_r13a` | `r12` | `r13a` | `live_edges.rs:prototype1_live_edge_r12_to_r13` | `no` | `F7_selection_ready -> stopped_continuation` | evidence_projection<br>history | stopped continuation journal<br>final report inputs | r13_to_r14 | DB continuation row cannot replace sealed stopped decision evidence |
 | `r12_to_r13b` | `r12` | `r13b` | `live_edges.rs:prototype1_live_edge_r12_to_r13` | `no` | `F7_selection_ready -> F8_handoff_committed` | history<br>artifact<br>channel<br>bootstrap | sealed History block<br>selected artifact install<br>successor invocation<br>successor ready | successor startup<br>handoff final report | DB handoff row cannot replace sealed History or selected artifact install |
+| `r12_to_r13c` | `r12` | `r13c` | `live_edges.rs:prototype1_live_edge_r12_to_r13` | `no` | `F7_selection_ready -> handoff_incomplete` | history<br>artifact<br>channel<br>bootstrap | sealed History block<br>selected artifact install<br>successor invocation<br>successor timeout or exit evidence | handoff reconstruction<br>operator reconciliation | timeout or exit evidence cannot restore selectable parent authority or claim committed handoff |
 | `r13a_to_r14a` | `r13a` | `r14a` | `live_edges.rs:prototype1_live_edge_r13_to_r14` | `no` | `stopped_continuation -> stopped_report_emitted` | evidence_projection | final stopped report | operator review | report file cannot retrofit earlier authority failures |
 | `r13b_to_r14b` | `r13b` | `r14b` | `live_edges.rs:prototype1_live_edge_r13_to_r14` | `no` | `F8_handoff_committed -> handoff_report_emitted` | evidence_projection | final handoff report | operator review<br>successor audit | final report cannot replace successor ready/invocation authority |
 | `c1_to_c2` | `c1` | `c2` | `c1.rs:prototype1_c1_to_c2` | `no` | `F3_child_plan_received -> materialized_child` | artifact<br>evidence_projection | child workspace<br>materialization journal<br>runner workspace root | c2_to_c3<br>build/artifact checks | DB artifact ref cannot prove workspace materialization |

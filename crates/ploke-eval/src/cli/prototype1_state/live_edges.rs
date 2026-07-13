@@ -16,8 +16,9 @@ use crate::{
     cli::{
         InspectOutputFormat, Prototype1StateStopAfter,
         prototype1_process::{
-            record_prototype1_successor_completion, record_prototype1_successor_ready,
-            spawn_and_handoff_prototype1_successor, validate_prototype1_successor_continuation,
+            HandoffOutcome, record_prototype1_successor_completion,
+            record_prototype1_successor_ready, spawn_and_handoff_prototype1_successor,
+            validate_prototype1_successor_continuation,
         },
         prototype1_state::{
             backend::GitWorktreeBackend,
@@ -199,6 +200,22 @@ pub(crate) fn r1_to_r2a_or_r3(
     ))
 }
 // ANCHOR_END: prototype1_live_edge_r1_to_r2a_or_r3
+
+/// Continue from parent-identity initialization into the normal parent path.
+///
+/// This is a pure typestate edge: the identity created by `R1 -> R2a` is
+/// carried forward directly rather than resolved from disk a second time.
+// ANCHOR: prototype1_live_edge_r2a_to_r3
+pub(crate) fn r2a_to_r3(
+    r2a: typestate::R2a<Prototype1StateRunShape, ResolvedCampaignConfig>,
+) -> Result<typestate::R3<Prototype1StateRunShape, ResolvedCampaignConfig>, PrepareError> {
+    let typestate::R2aParts {
+        collected,
+        identity,
+    } = r2a.into_parts();
+    Ok(typestate::R3::from_collected_identity(collected, identity))
+}
+// ANCHOR_END: prototype1_live_edge_r2a_to_r3
 
 /// Load the resolved parent identity as `Parent<Unchecked>`.
 ///
@@ -1002,7 +1019,7 @@ pub(crate) fn r12_to_r13(
                 selection_entry,
                 prototype1_state_successor_handoff_mode(),
             )? {
-                (retired, Some(successor)) => {
+                (retired, HandoffOutcome::Ready(successor)) => {
                     let report = parts.facts.report.as_mut().ok_or_else(|| {
                         PrepareError::InvalidBatchSelection {
                             detail: "R12 handoff transition missing report facts".to_string(),
@@ -1019,18 +1036,33 @@ pub(crate) fn r12_to_r13(
                         ),
                     ))
                 }
-                (retired, None) => {
-                    parts
-                        .facts
-                        .report
-                        .as_mut()
-                        .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                (retired, HandoffOutcome::Incomplete(record)) => {
+                    let status = match &record.state {
+                        crate::cli::prototype1_state::successor::State::TimedOut { .. } => {
+                            "timed_out"
+                        }
+                        crate::cli::prototype1_state::successor::State::ExitedBeforeReady {
+                            ..
+                        } => "exited_before_ready",
+                        state => {
+                            return Err(PrepareError::InvalidBatchSelection {
+                                detail: format!(
+                                    "incomplete successor outcome carried non-terminal state {state:?}"
+                                ),
+                            });
+                        }
+                    };
+                    let report = parts.facts.report.as_mut().ok_or_else(|| {
+                        PrepareError::InvalidBatchSelection {
                             detail: "R12 handoff transition missing report facts".to_string(),
-                        })?
+                        }
+                    })?;
+                    report.successor_runtime = record.runtime_id.map(|id| id.to_string());
+                    report
                         .outcome
-                        .push_str(";successor_handoff=timed_out");
-                    Ok(typestate::R12ContinuationBranch::HandoffCommitted(
-                        typestate::R13bHandoffCommitted::from_collected_parent(
+                        .push_str(&format!(";successor_handoff={status}"));
+                    Ok(typestate::R12ContinuationBranch::HandoffIncomplete(
+                        typestate::R13cHandoffIncomplete::from_collected_parent(
                             parts.into_collected(),
                             retired,
                         ),
@@ -1231,7 +1263,30 @@ pub(crate) fn r13_to_r14(
                 typestate::R14bFinalHandoff::from_collected_parent(collected, parent),
             ))
         }
+        typestate::R12ContinuationBranch::HandoffIncomplete(_) => {
+            Err(PrepareError::InvalidBatchSelection {
+                detail: "R13c is a retired predecessor with incomplete successor handoff; reconstruct and reconcile it before any further mutation"
+                    .to_string(),
+            })
+        }
     }
 }
 // ANCHOR_END: prototype1_live_edge_r13_to_r14
 // ANCHOR_END: prototype1_live_edges
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn r2a_to_r3_has_typed_shape() {
+        let edge: fn(
+            typestate::R2a<Prototype1StateRunShape, ResolvedCampaignConfig>,
+        ) -> Result<
+            typestate::R3<Prototype1StateRunShape, ResolvedCampaignConfig>,
+            PrepareError,
+        > = r2a_to_r3;
+
+        let _ = edge;
+    }
+}

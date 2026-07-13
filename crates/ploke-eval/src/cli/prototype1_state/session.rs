@@ -37,8 +37,7 @@ use crate::cli::prototype1_state::{
 const SCHEMA_VERSION: &str = "prototype1-control-session.v1";
 const LOCK_FILE: &str = "controller.lock";
 const JOURNAL_FILE: &str = "control-journal.jsonl";
-#[cfg(test)]
-const TEST_GRAPH_VERSION: &str = "session-test-r2a-v0";
+const GRAPH_VERSION_V1: &str = "walk-r0-r14a-v1";
 
 /// Durable identity for one parent-scoped controller session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -1004,11 +1003,15 @@ impl AttemptIntent {
                 ),
             });
         }
-        if !self.allow_git_changes && self.targets.contains(&WalkPhase::R13b) {
+        if !self.allow_git_changes
+            && self
+                .targets
+                .iter()
+                .any(|target| matches!(target, WalkPhase::R13b | WalkPhase::R13c))
+        {
             return Err(Error::InvalidIntent {
-                detail:
-                    "R12 intent cannot admit checkout-mutating R13b without git-changes authority"
-                        .to_string(),
+                detail: "transition intent cannot admit a checkout-mutating handoff target without git-changes authority"
+                    .to_string(),
             });
         }
         if self.evidence.0.trim().is_empty() {
@@ -1025,8 +1028,7 @@ fn current_targets(expected: WalkPhase, allow_git_changes: bool) -> Vec<WalkPhas
         .next_steps()
         .iter()
         .filter(|step| {
-            allow_git_changes
-                || !matches!((expected, step.phase), (WalkPhase::R12, WalkPhase::R13b))
+            allow_git_changes || !matches!(step.phase, WalkPhase::R13b | WalkPhase::R13c)
         })
         .map(|step| step.phase)
         .collect()
@@ -1045,11 +1047,37 @@ fn targets_for_version(
     if version == TRANSITION_GRAPH_VERSION {
         return Some(current_targets(expected, allow_git_changes));
     }
-    #[cfg(test)]
-    if version == TEST_GRAPH_VERSION && expected == WalkPhase::R2a {
-        return Some(vec![WalkPhase::R3]);
+    if version == GRAPH_VERSION_V1 {
+        return v1_targets(expected, allow_git_changes);
     }
     None
+}
+
+fn v1_targets(expected: WalkPhase, allow_git_changes: bool) -> Option<Vec<WalkPhase>> {
+    let targets = match expected {
+        WalkPhase::Empty => vec![WalkPhase::R0],
+        WalkPhase::R0 => vec![WalkPhase::R1],
+        WalkPhase::R1 => vec![WalkPhase::R2a, WalkPhase::R3],
+        WalkPhase::R2a => Vec::new(),
+        WalkPhase::R3 => vec![WalkPhase::R4a],
+        WalkPhase::R4a => vec![WalkPhase::R4b, WalkPhase::R4c],
+        WalkPhase::R4b => vec![WalkPhase::R4c],
+        WalkPhase::R4c => vec![WalkPhase::R5],
+        WalkPhase::R5 => vec![WalkPhase::R6],
+        WalkPhase::R6 => vec![WalkPhase::R7],
+        WalkPhase::R7 => vec![WalkPhase::R8],
+        WalkPhase::R8 => vec![WalkPhase::R9],
+        WalkPhase::R9 => vec![WalkPhase::R10],
+        WalkPhase::R10 => vec![WalkPhase::R11a, WalkPhase::R11],
+        WalkPhase::R11a | WalkPhase::R11 => vec![WalkPhase::R12],
+        WalkPhase::R12 if allow_git_changes => vec![WalkPhase::R13a, WalkPhase::R13b],
+        WalkPhase::R12 => vec![WalkPhase::R13a],
+        WalkPhase::R13a => vec![WalkPhase::R14a],
+        WalkPhase::R13b => vec![WalkPhase::R14b],
+        WalkPhase::R13c => return None,
+        WalkPhase::R14a | WalkPhase::R14b => Vec::new(),
+    };
+    Some(targets)
 }
 
 /// Result of admitting an idempotency key.
@@ -2739,17 +2767,17 @@ mode = "continuous"
         let requested = claim(temp.path(), RunMode::Continuous);
         let next_epoch = requested.epoch.clone();
         let mut prior = next_epoch.clone();
-        prior.transition_graph_version = TEST_GRAPH_VERSION.to_string();
+        prior.transition_graph_version = GRAPH_VERSION_V1.to_string();
         let session_id = SessionId::new();
         let fence = Fence(1);
         let transition_id = TransitionId::new();
         let intent = AttemptIntent {
             transition_id,
-            expected: WalkPhase::R2a,
-            targets: vec![WalkPhase::R3],
-            allow_git_changes: false,
+            expected: WalkPhase::R12,
+            targets: vec![WalkPhase::R13a, WalkPhase::R13b],
+            allow_git_changes: true,
             epoch: prior.clone(),
-            evidence: ContentHash::of("legacy-r2a-evidence"),
+            evidence: ContentHash::of("legacy-r12-evidence"),
         };
         let entries = [
             Entry::Created {
@@ -2780,8 +2808,8 @@ mode = "continuous"
                 transition_id,
                 fence,
                 result: AttemptResult::Committed {
-                    phase: WalkPhase::R3,
-                    evidence: ContentHash::of("legacy-r3-evidence"),
+                    phase: WalkPhase::R13b,
+                    evidence: ContentHash::of("legacy-r13b-evidence"),
                 },
                 recorded_at: RecordedAt::now(),
             },
@@ -2806,7 +2834,7 @@ mode = "continuous"
                 prior,
                 requested,
                 ..
-            }) if prior.transition_graph_version == TEST_GRAPH_VERSION && requested == &next_epoch
+            }) if prior.transition_graph_version == GRAPH_VERSION_V1 && requested == &next_epoch
         ));
         recovery = recovery
             .resolve(RecoveryResolution::AdmitEpoch {
@@ -3002,8 +3030,11 @@ mode = "continuous"
             epoch(temp.path()),
             ContentHash::of("r12-evidence"),
         )
-        .expect("explicit checkout authority admits both typed outcomes");
-        assert_eq!(admitted.targets, vec![WalkPhase::R13a, WalkPhase::R13b]);
+        .expect("explicit checkout authority admits all typed outcomes");
+        assert_eq!(
+            admitted.targets,
+            vec![WalkPhase::R13a, WalkPhase::R13b, WalkPhase::R13c]
+        );
         assert!(admitted.allow_git_changes);
     }
 

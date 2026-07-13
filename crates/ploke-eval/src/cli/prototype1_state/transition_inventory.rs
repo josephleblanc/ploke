@@ -111,6 +111,7 @@ fn parent_source_phases() -> &'static [WalkPhase] {
         WalkPhase::Empty,
         WalkPhase::R0,
         WalkPhase::R1,
+        WalkPhase::R2a,
         WalkPhase::R3,
         WalkPhase::R4a,
         WalkPhase::R4b,
@@ -198,6 +199,20 @@ fn parent_transition_row(
             checkpoint_out: "F0_setup",
             downstream: &["startup validation"],
             authority_negative_case: "DB identity row cannot bypass active checkout or invocation validation",
+        },
+        (WalkPhase::R2a, WalkPhase::R3, "r2a_to_r3") => TransitionInventoryRow {
+            edge_id: "r2a_to_r3",
+            source_anchor: "live_edges.rs:prototype1_live_edge_r2a_to_r3",
+            from_phase: "r2a",
+            to_phase: "r3",
+            producer_surfaces: &["initialized parent identity carrier"],
+            consumer_surfaces: &["r3_to_r4a"],
+            authority_classes: &[AuthorityClass::Bootstrap, AuthorityClass::Artifact],
+            live_api: LiveApi::No,
+            checkpoint_in: "F0_setup",
+            checkpoint_out: "F0_setup",
+            downstream: &["startup validation"],
+            authority_negative_case: "a second filesystem lookup cannot replace the identity admitted by this session",
         },
         (WalkPhase::R3, WalkPhase::R4a, "r3_to_r4a") => TransitionInventoryRow {
             edge_id: "r3_to_r4a",
@@ -463,6 +478,32 @@ fn parent_transition_row(
                 authority_negative_case: "DB handoff row cannot replace sealed History or selected artifact install",
             }
         }
+        (WalkPhase::R12, WalkPhase::R13c, "r12_to_r13 --watch --allow git-changes") => {
+            TransitionInventoryRow {
+                edge_id: "r12_to_r13c",
+                source_anchor: "live_edges.rs:prototype1_live_edge_r12_to_r13",
+                from_phase: "r12",
+                to_phase: "r13c",
+                producer_surfaces: &[
+                    "sealed History block",
+                    "selected artifact install",
+                    "successor invocation",
+                    "successor timeout or exit evidence",
+                ],
+                consumer_surfaces: &["handoff reconstruction", "operator reconciliation"],
+                authority_classes: &[
+                    AuthorityClass::History,
+                    AuthorityClass::Artifact,
+                    AuthorityClass::Channel,
+                    AuthorityClass::Bootstrap,
+                ],
+                live_api: LiveApi::No,
+                checkpoint_in: "F7_selection_ready",
+                checkpoint_out: "handoff_incomplete",
+                downstream: &["reconstruction and explicit reconciliation"],
+                authority_negative_case: "timeout or exit evidence cannot restore selectable parent authority or claim committed handoff",
+            }
+        }
         (WalkPhase::R13a, WalkPhase::R14a, "r13_to_r14") => TransitionInventoryRow {
             edge_id: "r13a_to_r14a",
             source_anchor: "live_edges.rs:prototype1_live_edge_r13_to_r14",
@@ -599,7 +640,7 @@ mod tests {
 
     use super::*;
 
-    const EXPECTED_ROWS: usize = 26;
+    const EXPECTED_ROWS: usize = 28;
     const DOC_PATH: &str = "../../docs/active/agents/2026-06-22_prototype1-eval-store-data-model/transition-inventory.generated.md";
 
     #[test]

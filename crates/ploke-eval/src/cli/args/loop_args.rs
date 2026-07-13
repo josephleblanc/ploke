@@ -257,6 +257,7 @@ pub enum Prototype1StateWalkAuditTransition {
     R0ToR1,
     R1ToR2a,
     R1ToR3,
+    R2aToR3,
     R3ToR4a,
     R4aToR4b,
     R4aToR4c,
@@ -273,6 +274,7 @@ pub enum Prototype1StateWalkAuditTransition {
     R11ToR12,
     R12ToR13a,
     R12ToR13b,
+    R12ToR13c,
     R13aToR14a,
     R13bToR14b,
 }

@@ -16,6 +16,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use ploke_records::ids::CampaignId;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
 use toml::Value as TomlValue;
@@ -25,14 +26,16 @@ use crate::{
     cli::{
         InspectOutputFormat, Prototype1StateWalkSummaryCommand,
         prototype1_state::{
+            event::RuntimeId,
             identity::{load_parent_identity, parent_identity_path},
-            journal::prototype1_transition_journal_path,
+            journal::{self, JournalEntry, prototype1_transition_journal_path},
+            successor,
         },
     },
     spec::PrepareError,
 };
 
-use super::paths;
+use super::{paths, phase::WalkPhase};
 
 const SUMMARY_SCHEMA_VERSION: &str = "prototype1.walk.summary.v1";
 
@@ -108,6 +111,202 @@ struct JournalCursor {
     meaning: String,
     node_id: Option<String>,
     generation: Option<u32>,
+}
+
+type AttemptKey = (CampaignId, String, RuntimeId);
+type ParentKey = (CampaignId, String, String, u32);
+type SelectionKey = (CampaignId, String);
+
+#[derive(Default)]
+struct JournalProjection {
+    spawns: BTreeMap<AttemptKey, successor::Record>,
+    acknowledged: BTreeMap<AttemptKey, journal::SuccessorHandoffEntry>,
+    failed: BTreeSet<AttemptKey>,
+    checkouts: BTreeMap<SelectionKey, journal::ActiveCheckoutAdvancedEntry>,
+    parents: BTreeMap<ParentKey, WalkPhase>,
+    latest: Option<WalkPhase>,
+}
+
+impl JournalProjection {
+    fn observe(&mut self, entry: &JournalEntry) {
+        match entry {
+            JournalEntry::ActiveCheckoutAdvanced(entry) => {
+                let Some(predecessor) = entry.previous_parent_identity.as_ref() else {
+                    return;
+                };
+                if predecessor.campaign_id() != &entry.campaign_id
+                    || entry.selected_parent_identity.campaign_id() != &entry.campaign_id
+                {
+                    return;
+                }
+                self.checkouts.insert(
+                    (
+                        entry.campaign_id.clone(),
+                        entry.selected_parent_identity.node_id().to_string(),
+                    ),
+                    entry.clone(),
+                );
+            }
+            JournalEntry::Successor(record) => {
+                let Some(key) = summary_attempt_key(record) else {
+                    return;
+                };
+                match &record.state {
+                    successor::State::Spawned { .. } => {
+                        self.spawns.insert(key.clone(), record.clone());
+                        let phase = if self.is_acknowledged(&key) {
+                            WalkPhase::R13b
+                        } else {
+                            WalkPhase::R13c
+                        };
+                        self.mark_parent(&key, phase);
+                    }
+                    successor::State::Ready { .. } => {
+                        let phase = if self.is_acknowledged(&key) {
+                            WalkPhase::R13b
+                        } else {
+                            WalkPhase::R13c
+                        };
+                        self.mark_parent(&key, phase);
+                    }
+                    successor::State::TimedOut { .. }
+                    | successor::State::ExitedBeforeReady { .. } => {
+                        self.failed.insert(key.clone());
+                        self.acknowledged.remove(&key);
+                        self.mark_parent(&key, WalkPhase::R13c);
+                    }
+                    successor::State::Selected { .. }
+                    | successor::State::Stopped { .. }
+                    | successor::State::Checkout { .. }
+                    | successor::State::Completed { .. } => {}
+                }
+            }
+            JournalEntry::SuccessorHandoff(entry) => {
+                let key = (
+                    entry.campaign_id.clone(),
+                    entry.node_id.clone(),
+                    entry.runtime_id,
+                );
+                if !self.failed.contains(&key) && self.spawn_matches_handoff(&key, entry) {
+                    self.acknowledged.insert(key.clone(), entry.clone());
+                    self.mark_parent(&key, WalkPhase::R13b);
+                } else {
+                    self.acknowledged.remove(&key);
+                    self.mark_parent(&key, WalkPhase::R13c);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn is_acknowledged(&self, key: &AttemptKey) -> bool {
+        !self.failed.contains(key)
+            && self
+                .acknowledged
+                .get(key)
+                .is_some_and(|entry| self.spawn_matches_handoff(key, entry))
+    }
+
+    fn spawn_matches_handoff(
+        &self,
+        key: &AttemptKey,
+        entry: &journal::SuccessorHandoffEntry,
+    ) -> bool {
+        let Some(spawn) = self.spawns.get(key) else {
+            return false;
+        };
+        let successor::State::Spawned {
+            pid,
+            active_parent_root,
+            binary_path,
+            invocation_path,
+            ready_path,
+            streams,
+        } = &spawn.state
+        else {
+            return false;
+        };
+        let selected = (entry.campaign_id.clone(), entry.node_id.clone());
+        let Some(checkout) = self.checkouts.get(&selected) else {
+            return false;
+        };
+
+        spawn.campaign_id == entry.campaign_id
+            && spawn.node_id == entry.node_id
+            && spawn.runtime_id == Some(entry.runtime_id)
+            && key.0 == entry.campaign_id
+            && key.1 == entry.node_id
+            && key.2 == entry.runtime_id
+            && pid == &entry.pid
+            && active_parent_root == &entry.active_parent_root
+            && binary_path == &entry.binary_path
+            && invocation_path == &entry.invocation_path
+            && ready_path == &entry.ready_path
+            && entry
+                .streams
+                .as_ref()
+                .is_none_or(|handoff_streams| handoff_streams == streams)
+            && checkout.campaign_id == entry.campaign_id
+            && checkout.selected_parent_identity.campaign_id() == &entry.campaign_id
+            && checkout.selected_parent_identity.node_id() == entry.node_id
+            && checkout.active_parent_root == entry.active_parent_root
+    }
+
+    fn mark_parent(&mut self, key: &AttemptKey, phase: WalkPhase) {
+        let selected = (key.0.clone(), key.1.clone());
+        let parent = self
+            .checkouts
+            .get(&selected)
+            .and_then(|entry| entry.previous_parent_identity.as_ref())
+            .map(|identity| {
+                (
+                    identity.campaign_id().clone(),
+                    identity.parent_id().to_string(),
+                    identity.node_id().to_string(),
+                    identity.generation(),
+                )
+            });
+        if let Some(parent) = parent {
+            self.parents.insert(parent, phase);
+        }
+    }
+
+    fn handoff_phase(&self, entry: &journal::SuccessorHandoffEntry) -> WalkPhase {
+        let key = (
+            entry.campaign_id.clone(),
+            entry.node_id.clone(),
+            entry.runtime_id,
+        );
+        if self.is_acknowledged(&key) {
+            WalkPhase::R13b
+        } else {
+            WalkPhase::R13c
+        }
+    }
+
+    fn parent_phase(&self, sample: &journal::resource::Sample) -> WalkPhase {
+        let key = (
+            sample.campaign_id.clone(),
+            sample.parent_id.clone(),
+            sample.node_id.clone(),
+            sample.generation,
+        );
+        match self.parents.get(&key) {
+            Some(WalkPhase::R13b | WalkPhase::R14b) => WalkPhase::R14b,
+            Some(WalkPhase::R13c) => WalkPhase::R13c,
+            _ => WalkPhase::R14a,
+        }
+    }
+}
+
+fn summary_attempt_key(record: &successor::Record) -> Option<AttemptKey> {
+    record.runtime_id.map(|runtime_id| {
+        (
+            record.campaign_id.clone(),
+            record.node_id.clone(),
+            runtime_id,
+        )
+    })
 }
 
 #[derive(Debug, Serialize)]
@@ -718,6 +917,7 @@ fn load_journal(path: &Path) -> Result<JournalSummary, PrepareError> {
             });
         }
     };
+    let mut projection = JournalProjection::default();
     let mut latest = None;
     let mut count = 0usize;
     for line in text.lines().filter(|line| !line.trim().is_empty()) {
@@ -726,7 +926,22 @@ fn load_journal(path: &Path) -> Result<JournalSummary, PrepareError> {
                 path: path.to_path_buf(),
                 source,
             })?;
-        latest = Some(cursor_from_entry(count, &value));
+        let kind = string_field(&value, "kind");
+        let entry = if matches!(
+            kind.as_deref(),
+            Some("resource.parentstart" | "resource.parentcomplete")
+        ) {
+            None
+        } else {
+            Some(serde_json::from_value(value.clone()).map_err(|source| {
+                PrepareError::ParseManifest {
+                    path: path.to_path_buf(),
+                    source,
+                }
+            })?)
+        };
+        let cursor = cursor_from_entry(count, &value, entry.as_ref(), &mut projection);
+        latest = Some(cursor);
         count += 1;
     }
     Ok(JournalSummary {
@@ -736,49 +951,72 @@ fn load_journal(path: &Path) -> Result<JournalSummary, PrepareError> {
     })
 }
 
-fn cursor_from_entry(index: usize, value: &JsonValue) -> JournalCursor {
+fn cursor_from_entry(
+    index: usize,
+    value: &JsonValue,
+    entry: Option<&JournalEntry>,
+    projection: &mut JournalProjection,
+) -> JournalCursor {
+    if let Some(entry) = entry {
+        projection.observe(entry);
+    }
     let kind = string_field(value, "kind").unwrap_or_else(|| "unknown".to_string());
-    let phase = string_field(value, "phase");
-    let state = value.get("state");
-    let (label, meaning) = match (kind.as_str(), phase.as_deref(), state) {
-        ("parent_started", _, _) => (
-            "r5 parent_started".to_string(),
-            "parent runtime started".to_string(),
-        ),
-        ("resource", Some("parent_start"), _) | ("resource.parentstart", _, _) => (
+    let (label, meaning, phase) = match (kind.as_str(), entry) {
+        ("resource.parentstart", None) => (
             "r5 parent_start_resource".to_string(),
             "parent-start resource was recorded for reconstruction/audit evidence".to_string(),
+            WalkPhase::R5,
         ),
-        ("resource", Some("parent_complete"), _) | ("resource.parentcomplete", _, _) => (
-            "r14a parent_complete".to_string(),
-            "parent turn reached final report/parent-complete evidence; campaign may still be non-terminal".to_string(),
+        ("resource.parentcomplete", None) => parent_complete_cursor(WalkPhase::R14a),
+        (_, Some(JournalEntry::ParentStarted(_))) => (
+            "r5 parent_started".to_string(),
+            "parent runtime started".to_string(),
+            WalkPhase::R5,
         ),
-        ("successor_handoff", _, _) => (
-            "r13b successor_handoff".to_string(),
-            "successor handoff was recorded".to_string(),
+        (_, Some(JournalEntry::Resource(sample)))
+            if sample.phase == journal::resource::Phase::ParentStart =>
+        {
+            (
+                "r5 parent_start_resource".to_string(),
+                "parent-start resource was recorded for reconstruction/audit evidence".to_string(),
+                WalkPhase::R5,
+            )
+        }
+        (_, Some(JournalEntry::Resource(sample)))
+            if sample.phase == journal::resource::Phase::ParentComplete =>
+        {
+            parent_complete_cursor(projection.parent_phase(sample))
+        }
+        (_, Some(JournalEntry::SuccessorHandoff(entry))) => {
+            if projection.handoff_phase(entry) == WalkPhase::R13b {
+                (
+                    "r13b successor_handoff".to_string(),
+                    "durable same-runtime successor handoff acknowledgement was recorded"
+                        .to_string(),
+                    WalkPhase::R13b,
+                )
+            } else {
+                (
+                    "r13c successor_handoff_mismatch".to_string(),
+                    "successor handoff acknowledgement does not match the active runtime attempt"
+                        .to_string(),
+                    WalkPhase::R13c,
+                )
+            }
+        }
+        (_, Some(JournalEntry::Successor(record))) => successor_cursor(record, projection),
+        (_, Some(JournalEntry::ActiveCheckoutAdvanced(_))) => (
+            "r12 active_checkout_advanced".to_string(),
+            "selected successor checkout was installed; handoff remains in progress".to_string(),
+            WalkPhase::R12,
         ),
-        ("successor", _, Some(state)) if state.get("selected").is_some() => (
-            "r13b successor.selected".to_string(),
-            "successor selection was recorded".to_string(),
+        _ => (
+            kind.clone(),
+            "durable transition-journal evidence".to_string(),
+            projection.latest.unwrap_or(WalkPhase::Empty),
         ),
-        ("successor", _, Some(state)) if state.get("checkout").is_some() => (
-            "r13b successor.checkout".to_string(),
-            "selected successor checkout was installed".to_string(),
-        ),
-        ("successor", _, Some(state)) if state.get("spawned").is_some() => (
-            "r13b successor.spawned".to_string(),
-            "successor runtime was spawned".to_string(),
-        ),
-        ("successor", _, Some(state)) if state.get("ready").is_some() => (
-            "r13b successor.ready".to_string(),
-            "successor runtime reported ready".to_string(),
-        ),
-        ("successor", _, Some(state)) if state.get("completed").is_some() => (
-            "r14b successor.completed".to_string(),
-            "successor handoff parent emitted final completion evidence".to_string(),
-        ),
-        _ => (kind.clone(), "durable transition-journal evidence".to_string()),
     };
+    projection.latest = Some(phase);
     JournalCursor {
         index,
         label,
@@ -787,6 +1025,95 @@ fn cursor_from_entry(index: usize, value: &JsonValue) -> JournalCursor {
             .or_else(|| nested_string(value, &["refs", "node_id"])),
         generation: u32_field(value, "generation")
             .or_else(|| nested_u32(value, &["refs", "generation"])),
+    }
+}
+
+fn parent_complete_cursor(phase: WalkPhase) -> (String, String, WalkPhase) {
+    match phase {
+        WalkPhase::R13b | WalkPhase::R14b => (
+            "r14b parent_complete".to_string(),
+            "handoff parent turn reached final report after durable same-runtime successor acknowledgement; campaign may still be non-terminal".to_string(),
+            WalkPhase::R14b,
+        ),
+        WalkPhase::R13c => (
+            "r13c parent_complete_unacknowledged".to_string(),
+            "parent-complete evidence cannot promote an incomplete successor handoff".to_string(),
+            WalkPhase::R13c,
+        ),
+        _ => (
+            "r14a parent_complete".to_string(),
+            "stopped parent turn reached final report/parent-complete evidence; campaign may still be non-terminal".to_string(),
+            WalkPhase::R14a,
+        ),
+    }
+}
+
+fn successor_cursor(
+    record: &successor::Record,
+    projection: &JournalProjection,
+) -> (String, String, WalkPhase) {
+    let acknowledged = summary_attempt_key(record)
+        .as_ref()
+        .is_some_and(|key| projection.is_acknowledged(key));
+    match &record.state {
+        successor::State::Selected { .. } => (
+            "r12 successor.selected".to_string(),
+            "successor selection is recorded; checkout and handoff remain in progress".to_string(),
+            WalkPhase::R12,
+        ),
+        successor::State::Checkout { .. } => (
+            "r12 successor.checkout".to_string(),
+            "selected successor checkout is being installed; handoff is not yet acknowledged"
+                .to_string(),
+            WalkPhase::R12,
+        ),
+        successor::State::Stopped { .. } => (
+            "r13a successor.stopped".to_string(),
+            "parent recorded a stopped continuation without spawning a successor".to_string(),
+            WalkPhase::R13a,
+        ),
+        successor::State::Spawned { .. } | successor::State::Ready { .. } if acknowledged => (
+            "r13b successor.acknowledged".to_string(),
+            "successor runtime evidence is backed by a durable same-runtime handoff acknowledgement"
+                .to_string(),
+            WalkPhase::R13b,
+        ),
+        successor::State::Spawned { .. } => (
+            "r13c successor.spawned".to_string(),
+            "successor runtime was spawned but durable same-runtime handoff acknowledgement is missing"
+                .to_string(),
+            WalkPhase::R13c,
+        ),
+        successor::State::Ready { .. } => (
+            "r13c successor.ready".to_string(),
+            "successor runtime reported ready but the predecessor did not durably acknowledge the same runtime"
+                .to_string(),
+            WalkPhase::R13c,
+        ),
+        successor::State::TimedOut { .. } => (
+            "r13c successor.timed_out".to_string(),
+            "predecessor retired with an incomplete successor handoff after the ready wait timed out"
+                .to_string(),
+            WalkPhase::R13c,
+        ),
+        successor::State::ExitedBeforeReady { .. } => (
+            "r13c successor.exited_before_ready".to_string(),
+            "predecessor retired with an incomplete handoff after the successor exited before acknowledgement"
+                .to_string(),
+            WalkPhase::R13c,
+        ),
+        successor::State::Completed { .. } if acknowledged => (
+            "r14b successor.completed".to_string(),
+            "successor handoff parent emitted completion evidence after durable same-runtime acknowledgement"
+                .to_string(),
+            WalkPhase::R14b,
+        ),
+        successor::State::Completed { .. } => (
+            "r13c successor.completed_unacknowledged".to_string(),
+            "successor completion evidence lacks a durable same-runtime predecessor acknowledgement"
+                .to_string(),
+            WalkPhase::R13c,
+        ),
     }
 }
 
@@ -1003,6 +1330,13 @@ fn yes(value: bool) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::prototype1_state::{
+        identity::ParentIdentity,
+        journal::{
+            ActiveCheckoutAdvancedEntry, ParentStartedEntry, PrototypeJournal,
+            SuccessorHandoffEntry,
+        },
+    };
 
     #[test]
     fn display_under_uses_campaign_dir_placeholder() {
@@ -1019,24 +1353,289 @@ mod tests {
 
     #[test]
     fn parent_complete_cursor_explains_non_terminal_campaign() {
-        for value in [
-            serde_json::json!({
-                "kind": "resource.parentcomplete",
-                "node_id": "node-root"
-            }),
-            serde_json::json!({
-                "kind": "resource",
-                "phase": "parent_complete",
-                "node_id": "node-root"
-            }),
-        ] {
-            let cursor = cursor_from_entry(2, &value);
+        let legacy = serde_json::json!({
+            "kind": "resource.parentcomplete",
+            "node_id": "node-root"
+        });
+        let cursor = cursor_from_entry(2, &legacy, None, &mut JournalProjection::default());
+        assert_eq!(cursor.label, "r14a parent_complete");
+        assert!(
+            cursor
+                .meaning
+                .contains("campaign may still be non-terminal")
+        );
+    }
 
-            assert_eq!(cursor.label, "r14a parent_complete");
-            assert!(
-                cursor
-                    .meaning
-                    .contains("campaign may still be non-terminal")
+    fn identity(node_id: &str) -> ParentIdentity {
+        ParentIdentity::root_bootstrap(
+            CampaignId::from("campaign"),
+            node_id,
+            format!("instance-{node_id}"),
+            format!("branch-{node_id}"),
+            Some(format!("artifact-{node_id}")),
+        )
+    }
+
+    fn summary_record(runtime_id: RuntimeId, state: successor::State) -> successor::Record {
+        successor::Record {
+            runtime_id: Some(runtime_id),
+            recorded_at: crate::cli::prototype1_state::event::RecordedAt(1),
+            campaign_id: ploke_records::ids::CampaignId::from("campaign"),
+            node_id: "node-successor".to_string(),
+            state,
+        }
+    }
+
+    fn checkout() -> JournalEntry {
+        JournalEntry::ActiveCheckoutAdvanced(ActiveCheckoutAdvancedEntry {
+            recorded_at: crate::cli::prototype1_state::event::RecordedAt(1),
+            campaign_id: CampaignId::from("campaign"),
+            previous_parent_identity: Some(identity("node-parent")),
+            selected_parent_identity: identity("node-successor"),
+            active_parent_root: PathBuf::from("/tmp/repo"),
+            selected_branch: "artifact-successor".to_string(),
+            installed_commit: "abc123".to_string(),
+        })
+    }
+
+    fn spawned(runtime_id: RuntimeId) -> JournalEntry {
+        JournalEntry::Successor(summary_record(
+            runtime_id,
+            successor::State::Spawned {
+                pid: 42,
+                active_parent_root: PathBuf::from("/tmp/repo"),
+                binary_path: PathBuf::from("/tmp/ploke-eval"),
+                invocation_path: PathBuf::from("/tmp/invocation.json"),
+                ready_path: PathBuf::from("/tmp/ready.jsonl"),
+                streams: journal::Streams {
+                    stdout: PathBuf::from("/tmp/stdout"),
+                    stderr: PathBuf::from("/tmp/stderr"),
+                },
+            },
+        ))
+    }
+
+    fn ready(runtime_id: RuntimeId) -> JournalEntry {
+        JournalEntry::Successor(summary_record(
+            runtime_id,
+            successor::State::Ready {
+                pid: 42,
+                ready_path: PathBuf::from("/tmp/ready.jsonl"),
+            },
+        ))
+    }
+
+    fn handoff(runtime_id: RuntimeId) -> JournalEntry {
+        JournalEntry::SuccessorHandoff(SuccessorHandoffEntry {
+            recorded_at: crate::cli::prototype1_state::event::RecordedAt(2),
+            campaign_id: CampaignId::from("campaign"),
+            node_id: "node-successor".to_string(),
+            runtime_id,
+            active_parent_root: PathBuf::from("/tmp/repo"),
+            binary_path: PathBuf::from("/tmp/ploke-eval"),
+            invocation_path: PathBuf::from("/tmp/invocation.json"),
+            ready_path: PathBuf::from("/tmp/ready.jsonl"),
+            streams: None,
+            pid: 42,
+        })
+    }
+
+    fn parent_started(runtime_id: RuntimeId) -> JournalEntry {
+        JournalEntry::ParentStarted(ParentStartedEntry {
+            recorded_at: crate::cli::prototype1_state::event::RecordedAt(3),
+            campaign_id: CampaignId::from("campaign"),
+            parent_identity: identity("node-successor"),
+            repo_root: PathBuf::from("/tmp/repo"),
+            handoff_runtime_id: Some(runtime_id),
+            pid: 43,
+        })
+    }
+
+    fn parent_complete() -> JournalEntry {
+        let parent = identity("node-parent");
+        JournalEntry::Resource(journal::resource::Sample {
+            recorded_at: crate::cli::prototype1_state::event::RecordedAt(4),
+            campaign_id: CampaignId::from("campaign"),
+            parent_id: parent.parent_id().to_string(),
+            node_id: parent.node_id().to_string(),
+            generation: parent.generation(),
+            runtime_id: None,
+            subject: journal::resource::Subject::CargoTarget,
+            phase: journal::resource::Phase::ParentComplete,
+            path: PathBuf::from("/tmp/repo/target"),
+            status: journal::resource::Status::Measured,
+            bytes: Some(1),
+            error: None,
+        })
+    }
+
+    fn load_persisted(entries: Vec<JournalEntry>) -> JournalSummary {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("transition-journal.jsonl");
+        let mut journal = PrototypeJournal::new(path.clone());
+        for entry in entries {
+            journal
+                .append_with_receipt(entry)
+                .expect("persist journal entry");
+        }
+        load_journal(&path).expect("load persisted journal summary")
+    }
+
+    #[test]
+    fn persisted_summary_keeps_predecessor_ack_across_successor_r5() {
+        let runtime_id = RuntimeId(uuid::Uuid::from_u128(1));
+        let ready_summary = load_persisted(vec![
+            checkout(),
+            spawned(runtime_id),
+            handoff(runtime_id),
+            parent_started(runtime_id),
+            ready(runtime_id),
+        ]);
+        let cursor = ready_summary.latest_cursor.expect("latest ready cursor");
+        assert_eq!(cursor.label, "r13b successor.acknowledged");
+
+        let complete_summary = load_persisted(vec![
+            checkout(),
+            spawned(runtime_id),
+            handoff(runtime_id),
+            parent_started(runtime_id),
+            ready(runtime_id),
+            parent_complete(),
+        ]);
+        let cursor = complete_summary
+            .latest_cursor
+            .expect("latest complete cursor");
+        assert_eq!(cursor.label, "r14b parent_complete");
+    }
+
+    #[test]
+    fn persisted_summary_rejects_orphan_mismatch_and_late_ack() {
+        let runtime_id = RuntimeId(uuid::Uuid::from_u128(1));
+        let other_id = RuntimeId(uuid::Uuid::from_u128(2));
+        let orphan = load_persisted(vec![spawned(runtime_id), handoff(runtime_id)]);
+        assert_eq!(
+            orphan.latest_cursor.expect("orphan cursor").label,
+            "r13c successor_handoff_mismatch"
+        );
+
+        let mismatch = load_persisted(vec![checkout(), spawned(runtime_id), handoff(other_id)]);
+        assert_eq!(
+            mismatch.latest_cursor.expect("mismatch cursor").label,
+            "r13c successor_handoff_mismatch"
+        );
+
+        let failed = load_persisted(vec![
+            checkout(),
+            spawned(runtime_id),
+            JournalEntry::Successor(summary_record(
+                runtime_id,
+                successor::State::ExitedBeforeReady { exit_code: Some(1) },
+            )),
+            handoff(runtime_id),
+            parent_complete(),
+        ]);
+        assert_eq!(
+            failed.latest_cursor.expect("failed cursor").label,
+            "r13c parent_complete_unacknowledged"
+        );
+    }
+
+    #[test]
+    fn persisted_summary_rejects_same_id_handoff_path_and_pid_mismatch() {
+        let runtime_id = RuntimeId(uuid::Uuid::from_u128(1));
+        for field in [
+            "active_parent_root",
+            "binary_path",
+            "invocation_path",
+            "ready_path",
+            "pid",
+        ] {
+            let mut mismatched = handoff(runtime_id);
+            let JournalEntry::SuccessorHandoff(entry) = &mut mismatched else {
+                unreachable!("handoff fixture must be a successor handoff")
+            };
+            match field {
+                "active_parent_root" => entry.active_parent_root = PathBuf::from("/tmp/other"),
+                "binary_path" => entry.binary_path = PathBuf::from("/tmp/other-ploke-eval"),
+                "invocation_path" => entry.invocation_path = PathBuf::from("/tmp/other.json"),
+                "ready_path" => entry.ready_path = PathBuf::from("/tmp/other-ready.jsonl"),
+                "pid" => entry.pid = 99,
+                _ => unreachable!("all mismatch fields are covered"),
+            }
+
+            let summary = load_persisted(vec![checkout(), spawned(runtime_id), mismatched.clone()]);
+            assert_eq!(
+                summary.latest_cursor.expect("mismatch cursor").label,
+                "r13c successor_handoff_mismatch",
+                "same-ID {field} mismatch must fail closed"
+            );
+
+            let summary = load_persisted(vec![
+                checkout(),
+                spawned(runtime_id),
+                handoff(runtime_id),
+                mismatched,
+                parent_complete(),
+            ]);
+            assert_eq!(
+                summary.latest_cursor.expect("complete cursor").label,
+                "r13c parent_complete_unacknowledged"
+            );
+        }
+    }
+
+    #[test]
+    fn persisted_summary_rejects_checkout_root_mismatch() {
+        let runtime_id = RuntimeId(uuid::Uuid::from_u128(1));
+        let mut mismatched = checkout();
+        let JournalEntry::ActiveCheckoutAdvanced(entry) = &mut mismatched else {
+            unreachable!("checkout fixture must be an active checkout advance")
+        };
+        entry.active_parent_root = PathBuf::from("/tmp/other");
+
+        let summary = load_persisted(vec![mismatched, spawned(runtime_id), handoff(runtime_id)]);
+        assert_eq!(
+            summary.latest_cursor.expect("mismatch cursor").label,
+            "r13c successor_handoff_mismatch"
+        );
+    }
+
+    #[test]
+    fn persisted_summary_correlates_present_handoff_streams() {
+        let runtime_id = RuntimeId(uuid::Uuid::from_u128(1));
+        let streams = journal::Streams {
+            stdout: PathBuf::from("/tmp/stdout"),
+            stderr: PathBuf::from("/tmp/stderr"),
+        };
+        let mut exact = handoff(runtime_id);
+        let JournalEntry::SuccessorHandoff(entry) = &mut exact else {
+            unreachable!("handoff fixture must be a successor handoff")
+        };
+        entry.streams = Some(streams.clone());
+        let summary = load_persisted(vec![checkout(), spawned(runtime_id), exact]);
+        assert_eq!(
+            summary.latest_cursor.expect("exact cursor").label,
+            "r13b successor_handoff"
+        );
+
+        for field in ["stdout", "stderr"] {
+            let mut mismatched = handoff(runtime_id);
+            let JournalEntry::SuccessorHandoff(entry) = &mut mismatched else {
+                unreachable!("handoff fixture must be a successor handoff")
+            };
+            let mut handoff_streams = streams.clone();
+            match field {
+                "stdout" => handoff_streams.stdout = PathBuf::from("/tmp/other-stdout"),
+                "stderr" => handoff_streams.stderr = PathBuf::from("/tmp/other-stderr"),
+                _ => unreachable!("all stream fields are covered"),
+            }
+            entry.streams = Some(handoff_streams);
+
+            let summary = load_persisted(vec![checkout(), spawned(runtime_id), mismatched]);
+            assert_eq!(
+                summary.latest_cursor.expect("mismatch cursor").label,
+                "r13c successor_handoff_mismatch",
+                "same-ID {field} mismatch must fail closed"
             );
         }
     }

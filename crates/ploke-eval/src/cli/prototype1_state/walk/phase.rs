@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::cli::prototype1_state::typestate::{
     R0_SHAPE, R1_SHAPE, R2A_SHAPE, R3_SHAPE, R4A_SHAPE, R4B_SHAPE, R4C_SHAPE, R5_SHAPE, R6_SHAPE,
     R7_SHAPE, R8_SHAPE, R9_SHAPE, R10_SHAPE, R11_SHAPE, R11A_SHAPE, R12_SHAPE, R13A_SHAPE,
-    R13B_SHAPE, R14A_SHAPE, R14B_SHAPE, RuntimeAxisDelta, RuntimeShape,
+    R13B_SHAPE, R13C_SHAPE, R14A_SHAPE, R14B_SHAPE, RuntimeAxisDelta, RuntimeShape,
 };
 
 /// Serializable cursor for the Prototype 1 typestate walk.
@@ -62,6 +62,8 @@ pub enum WalkPhase {
     R13a,
     /// Successor handoff committed; parent retired.
     R13b,
+    /// Parent retired, but successor handoff acknowledgement is incomplete.
+    R13c,
     /// Final report emitted for stopped/no-selection continuation.
     R14a,
     /// Final report emitted after successor handoff.
@@ -100,6 +102,12 @@ const R1_NEXT: &[WalkNextStep] = &[
         detail: "resolve existing parent identity",
     },
 ];
+
+const R2A_NEXT: &[WalkNextStep] = &[WalkNextStep {
+    edge: "r2a_to_r3",
+    phase: WalkPhase::R3,
+    detail: "continue with the parent identity initialized in this session",
+}];
 
 const R3_NEXT: &[WalkNextStep] = &[WalkNextStep {
     edge: "r3_to_r4a",
@@ -198,6 +206,11 @@ const R12_NEXT: &[WalkNextStep] = &[
         phase: WalkPhase::R13b,
         detail: "seal History, install selected successor, retire parent, and wait for successor ready",
     },
+    WalkNextStep {
+        edge: "r12_to_r13 --watch --allow git-changes",
+        phase: WalkPhase::R13c,
+        detail: "preserve retired-parent authority when successor ready acknowledgement does not complete",
+    },
 ];
 
 const R13A_NEXT: &[WalkNextStep] = &[WalkNextStep {
@@ -237,6 +250,7 @@ impl WalkPhase {
             WalkPhase::R12 => "r12",
             WalkPhase::R13a => "r13a",
             WalkPhase::R13b => "r13b",
+            WalkPhase::R13c => "r13c",
             WalkPhase::R14a => "r14a",
             WalkPhase::R14b => "r14b",
         }
@@ -264,6 +278,7 @@ impl WalkPhase {
             WalkPhase::R12 => "report facts ready",
             WalkPhase::R13a => "stopped continuation ready",
             WalkPhase::R13b => "successor handoff committed",
+            WalkPhase::R13c => "successor handoff incomplete",
             WalkPhase::R14a => "final stopped report emitted",
             WalkPhase::R14b => "final handoff report emitted",
         }
@@ -291,6 +306,7 @@ impl WalkPhase {
                 | WalkPhase::R12
                 | WalkPhase::R13a
                 | WalkPhase::R13b
+                | WalkPhase::R13c
                 | WalkPhase::R14a
                 | WalkPhase::R14b
         )
@@ -302,7 +318,7 @@ impl WalkPhase {
             WalkPhase::Empty => EMPTY_NEXT,
             WalkPhase::R0 => R0_NEXT,
             WalkPhase::R1 => R1_NEXT,
-            WalkPhase::R2a => NO_NEXT,
+            WalkPhase::R2a => R2A_NEXT,
             WalkPhase::R3 => R3_NEXT,
             WalkPhase::R4a => R4A_NEXT,
             WalkPhase::R4b => R4B_NEXT,
@@ -318,6 +334,7 @@ impl WalkPhase {
             WalkPhase::R12 => R12_NEXT,
             WalkPhase::R13a => R13A_NEXT,
             WalkPhase::R13b => R13B_NEXT,
+            WalkPhase::R13c => NO_NEXT,
             WalkPhase::R14a => NO_NEXT,
             WalkPhase::R14b => NO_NEXT,
         }
@@ -364,6 +381,7 @@ impl WalkPhase {
             WalkPhase::R12 => Some(R12_SHAPE),
             WalkPhase::R13a => Some(R13A_SHAPE),
             WalkPhase::R13b => Some(R13B_SHAPE),
+            WalkPhase::R13c => Some(R13C_SHAPE),
             WalkPhase::R14a => Some(R14A_SHAPE),
             WalkPhase::R14b => Some(R14B_SHAPE),
         }

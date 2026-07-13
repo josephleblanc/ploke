@@ -26,7 +26,11 @@ use crate::{
 };
 
 use super::phase::WalkPhase;
-use crate::cli::prototype1_state::eval_store::prototype1_eval_store_db_path;
+use crate::cli::prototype1_state::{
+    eval_store::prototype1_eval_store_db_path,
+    journal::{JournalEntry, PrototypeJournal},
+    successor,
+};
 
 const SCHEMA_VERSION: &str = "prototype1.walk.audit.v1";
 
@@ -676,6 +680,15 @@ fn transition_checklist(
             )],
         ),
         checklist_transition(
+            "r2a->r3",
+            WalkPhase::R2a,
+            WalkPhase::R3,
+            vec![no_write_item(
+                "initialized parent",
+                "moves the identity initialized by r1->r2a into the normal parent path without another filesystem read or write",
+            )],
+        ),
+        checklist_transition(
             "r3->r4a",
             WalkPhase::R3,
             WalkPhase::R4a,
@@ -1318,6 +1331,72 @@ fn transition_checklist(
             ],
         ),
         checklist_transition(
+            "r12->r13c",
+            WalkPhase::R12,
+            WalkPhase::R13c,
+            vec![
+                item(
+                    "selected journal",
+                    count_side(journal.clone(), |path| {
+                        count_successor_state(path, "selected")
+                    }),
+                    PersistenceSide::not_applicable("selected successor journal is JSONL evidence"),
+                    "selected successor evidence precedes the incomplete handoff outcome",
+                ),
+                item(
+                    "active checkout advanced",
+                    count_side(journal.clone(), |path| {
+                        count_journal_kind(path, "active_checkout_advanced")
+                    }),
+                    PersistenceSide::not_applicable(
+                        "active checkout advancement is journal/artifact authority",
+                    ),
+                    "R13c retains the already-installed successor checkout rather than restoring R12",
+                ),
+                item(
+                    "history blocks",
+                    count_side(
+                        history
+                            .as_ref()
+                            .map(|root| root.join("blocks/segment-000000.jsonl")),
+                        count_jsonl_rows,
+                    ),
+                    PersistenceSide::not_applicable(
+                        "sealed History blocks are authority, not eval-store rows",
+                    ),
+                    "R13c requires the sealed predecessor History advance",
+                ),
+                item(
+                    "successor invocation",
+                    count_side(nodes.clone(), |path| {
+                        count_files_named(path, "invocations", Some("json"))
+                    }),
+                    db_side_for_file(database, "eval_invocation", &root, |root| {
+                        count_files_named(&root.join("nodes"), "invocations", Some("json"))
+                    }),
+                    "the incomplete attempt remains correlated to its executable invocation",
+                ),
+                item(
+                    "successor spawn journal",
+                    count_side(journal.clone(), |path| {
+                        count_successor_state(path, "spawned")
+                    }),
+                    PersistenceSide::not_applicable("successor spawn journal is JSONL evidence"),
+                    "predecessor retirement is correlated with the spawned runtime",
+                ),
+                item(
+                    "incomplete successor outcome",
+                    count_side(journal.clone(), |path| {
+                        count_latest_outcome(path, &["timed_out", "exited_before_ready"])
+                    }),
+                    PersistenceSide::not_applicable(
+                        "timeout or early exit is successor journal evidence",
+                    ),
+                    "exactly one timeout-or-exit path is sufficient incomplete handoff evidence; neither outcome is committed readiness",
+                ),
+            ],
+        ),
+        checklist_transition(
             "r13a->r14a",
             WalkPhase::R13a,
             WalkPhase::R14a,
@@ -1847,6 +1926,59 @@ fn count_successor_state(path: &Path, state: &str) -> Result<i64, String> {
                 .and_then(|state_value| state_value.get(state))
                 .is_some()
     })
+}
+
+fn count_latest_outcome(path: &Path, outcomes: &[&str]) -> Result<i64, String> {
+    let entries = PrototypeJournal::new(path.to_path_buf())
+        .load_entries()
+        .map_err(|source| source.to_string())?;
+    let Some(node_id) = entries.iter().rev().find_map(|entry| match entry {
+        JournalEntry::ActiveCheckoutAdvanced(entry) => {
+            Some(entry.selected_parent_identity.node_id().to_string())
+        }
+        _ => None,
+    }) else {
+        return Ok(0);
+    };
+
+    let mut attempt = None;
+    let mut incomplete = false;
+    for entry in &entries {
+        let JournalEntry::Successor(record) = entry else {
+            continue;
+        };
+        if record.node_id != node_id {
+            continue;
+        }
+        let key = record
+            .runtime_id
+            .map(|runtime| (runtime, record.node_id.as_str()));
+        match &record.state {
+            successor::State::Spawned { .. } => {
+                attempt = key;
+                incomplete = false;
+            }
+            successor::State::TimedOut { .. } => {
+                if key == attempt {
+                    incomplete = outcomes.contains(&"timed_out");
+                }
+            }
+            successor::State::ExitedBeforeReady { .. } => {
+                if key == attempt {
+                    incomplete = outcomes.contains(&"exited_before_ready");
+                }
+            }
+            successor::State::Ready { .. } | successor::State::Completed { .. } => {
+                if key == attempt && !incomplete {
+                    incomplete = false;
+                }
+            }
+            successor::State::Selected { .. }
+            | successor::State::Stopped { .. }
+            | successor::State::Checkout { .. } => {}
+        }
+    }
+    Ok(i64::from(incomplete))
 }
 
 fn count_resource_phase(path: &Path, expected: &str) -> Result<i64, String> {
@@ -2487,6 +2619,7 @@ fn audit_transition_label(transition: Prototype1StateWalkAuditTransition) -> &'s
         Prototype1StateWalkAuditTransition::R0ToR1 => "r0->r1",
         Prototype1StateWalkAuditTransition::R1ToR2a => "r1->r2a",
         Prototype1StateWalkAuditTransition::R1ToR3 => "r1->r3",
+        Prototype1StateWalkAuditTransition::R2aToR3 => "r2a->r3",
         Prototype1StateWalkAuditTransition::R3ToR4a => "r3->r4a",
         Prototype1StateWalkAuditTransition::R4aToR4b => "r4a->r4b",
         Prototype1StateWalkAuditTransition::R4aToR4c => "r4a->r4c",
@@ -2503,6 +2636,7 @@ fn audit_transition_label(transition: Prototype1StateWalkAuditTransition) -> &'s
         Prototype1StateWalkAuditTransition::R11ToR12 => "r11->r12",
         Prototype1StateWalkAuditTransition::R12ToR13a => "r12->r13a",
         Prototype1StateWalkAuditTransition::R12ToR13b => "r12->r13b",
+        Prototype1StateWalkAuditTransition::R12ToR13c => "r12->r13c",
         Prototype1StateWalkAuditTransition::R13aToR14a => "r13a->r14a",
         Prototype1StateWalkAuditTransition::R13bToR14b => "r13b->r14b",
     }
@@ -2568,5 +2702,160 @@ mod tests {
         .expect("journal");
 
         assert_eq!(count_continuation(&journal).expect("count continuation"), 2);
+    }
+
+    #[test]
+    fn incomplete_outcome_accepts_timeout_or_exit() {
+        use crate::cli::prototype1_state::{
+            event::{RecordedAt, RuntimeId},
+            identity::ParentIdentity,
+            journal::{ActiveCheckoutAdvancedEntry, Streams},
+        };
+
+        let tmp = tempfile::tempdir().expect("tmp");
+        let journal = tmp.path().join("transition-journal.jsonl");
+        let campaign_id = CampaignId::from("campaign");
+        let predecessor = ParentIdentity::root_bootstrap(
+            campaign_id.clone(),
+            "node-parent",
+            "instance",
+            "branch-parent",
+            None,
+        );
+        let selected = ParentIdentity::root_bootstrap(
+            campaign_id.clone(),
+            "node-successor",
+            "instance",
+            "branch-successor",
+            None,
+        );
+        let checkout = JournalEntry::ActiveCheckoutAdvanced(ActiveCheckoutAdvancedEntry {
+            recorded_at: RecordedAt(1),
+            campaign_id: campaign_id.clone(),
+            previous_parent_identity: Some(predecessor),
+            selected_parent_identity: selected,
+            active_parent_root: PathBuf::from("/tmp/repo"),
+            selected_branch: "branch-successor".to_string(),
+            installed_commit: "abc123".to_string(),
+        });
+        let runtime = RuntimeId(uuid::Uuid::from_u128(1));
+        let spawned = |node: &str, runtime_id| {
+            JournalEntry::Successor(successor::Record {
+                runtime_id: Some(runtime_id),
+                recorded_at: RecordedAt(2),
+                campaign_id: campaign_id.clone(),
+                node_id: node.to_string(),
+                state: successor::State::Spawned {
+                    pid: 42,
+                    active_parent_root: PathBuf::from("/tmp/repo"),
+                    binary_path: PathBuf::from("/tmp/ploke-eval"),
+                    invocation_path: PathBuf::from("/tmp/invocation.json"),
+                    ready_path: PathBuf::from("/tmp/ready.jsonl"),
+                    streams: Streams {
+                        stdout: PathBuf::from("/tmp/stdout"),
+                        stderr: PathBuf::from("/tmp/stderr"),
+                    },
+                },
+            })
+        };
+        let successor_outcome = |node: &str, runtime_id, state| {
+            JournalEntry::Successor(successor::Record {
+                runtime_id: Some(runtime_id),
+                recorded_at: RecordedAt(3),
+                campaign_id: campaign_id.clone(),
+                node_id: node.to_string(),
+                state,
+            })
+        };
+        let write_entries = |entries: &[JournalEntry]| {
+            let text = entries
+                .iter()
+                .map(|entry| serde_json::to_string(entry).expect("serialize journal entry"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            fs::write(&journal, format!("{text}\n")).expect("journal");
+        };
+
+        for label in ["timed_out", "exited_before_ready"] {
+            let state = match label {
+                "timed_out" => successor::State::TimedOut {
+                    waited_ms: 1,
+                    ready_path: PathBuf::from("/tmp/ready.jsonl"),
+                },
+                "exited_before_ready" => successor::State::ExitedBeforeReady { exit_code: Some(1) },
+                _ => unreachable!(),
+            };
+            write_entries(&[
+                checkout.clone(),
+                spawned("node-successor", runtime),
+                successor_outcome("node-successor", runtime, state),
+            ]);
+
+            assert_eq!(
+                count_latest_outcome(&journal, &["timed_out", "exited_before_ready"])
+                    .expect("count incomplete outcome"),
+                1,
+                "{label} alone must satisfy the alternative terminal evidence"
+            );
+        }
+
+        let timed_out = successor_outcome(
+            "node-successor",
+            runtime,
+            successor::State::TimedOut {
+                waited_ms: 1,
+                ready_path: PathBuf::from("/tmp/ready.jsonl"),
+            },
+        );
+        let unrelated = RuntimeId(uuid::Uuid::from_u128(2));
+        write_entries(&[
+            checkout.clone(),
+            spawned("node-successor", runtime),
+            timed_out,
+            spawned("node-unrelated", unrelated),
+            successor_outcome(
+                "node-unrelated",
+                unrelated,
+                successor::State::Ready {
+                    pid: 43,
+                    ready_path: PathBuf::from("/tmp/unrelated-ready.jsonl"),
+                },
+            ),
+        ]);
+        assert_eq!(
+            count_latest_outcome(&journal, &["timed_out", "exited_before_ready"])
+                .expect("count latest outcome"),
+            1,
+            "an unrelated later attempt must not replace the selected successor outcome"
+        );
+
+        let retry = RuntimeId(uuid::Uuid::from_u128(3));
+        write_entries(&[
+            checkout,
+            spawned("node-successor", runtime),
+            successor_outcome(
+                "node-successor",
+                runtime,
+                successor::State::TimedOut {
+                    waited_ms: 1,
+                    ready_path: PathBuf::from("/tmp/ready.jsonl"),
+                },
+            ),
+            spawned("node-successor", retry),
+            successor_outcome(
+                "node-successor",
+                retry,
+                successor::State::Ready {
+                    pid: 44,
+                    ready_path: PathBuf::from("/tmp/retry-ready.jsonl"),
+                },
+            ),
+        ]);
+        assert_eq!(
+            count_latest_outcome(&journal, &["timed_out", "exited_before_ready"])
+                .expect("count retry outcome"),
+            0,
+            "a newer attempt for the selected node owns the audit outcome"
+        );
     }
 }

@@ -57,4 +57,10 @@ pub(crate) mod handoff {
         _carrier: PhantomData<T>,
         _private: Private,
     }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(crate) struct Incomplete<T> {
+        _carrier: PhantomData<T>,
+        _private: Private,
+    }
 }

@@ -205,6 +205,14 @@ pub(crate) struct Prototype1SuccessorHandoff {
     pub ready_path: PathBuf,
 }
 
+/// Parent-observed outcome after predecessor authority has been retired.
+pub(crate) enum HandoffOutcome {
+    /// The successor acknowledged readiness and the predecessor recorded handoff.
+    Ready(Prototype1SuccessorHandoff),
+    /// The attempt ended with durable evidence but without handoff acknowledgement.
+    Incomplete(SuccessorRecord),
+}
+
 /// How a selected successor runtime is launched.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SuccessorHandoffMode {
@@ -3254,7 +3262,7 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
     parent: Parent<Selectable>,
     selection_entry: crate::cli::prototype1_state::history::SelectionDecisionEntry,
     mode: SuccessorHandoffMode,
-) -> Result<(Parent<Retired>, Option<Prototype1SuccessorHandoff>), PrepareError> {
+) -> Result<(Parent<Retired>, HandoffOutcome), PrepareError> {
     let manifest_path = campaign_manifest_path(campaign_id)?;
     let artifact = selected.selected();
     let node = artifact.node();
@@ -3559,7 +3567,7 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
             )?;
             Ok((
                 retired_parent,
-                Some(Prototype1SuccessorHandoff {
+                HandoffOutcome::Ready(Prototype1SuccessorHandoff {
                     runtime_id,
                     pid,
                     ready_path,
@@ -3568,26 +3576,23 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
         }
         SuccessorWait::TimedOut { waited_ms } => {
             ready_step.timed_out();
+            let record = SuccessorRecord::timed_out(&invocation, waited_ms, ready_path);
             append_successor_record(
                 invocation.journal_path(),
-                SuccessorRecord::timed_out(&invocation, waited_ms, ready_path),
+                record.clone(),
                 "prototype1_successor_timeout_journal",
             )?;
-            Ok((retired_parent, None))
+            Ok((retired_parent, HandoffOutcome::Incomplete(record)))
         }
         SuccessorWait::ExitedBeforeReady { exit_code } => {
             ready_step.exited_before_ready();
+            let record = SuccessorRecord::exited_before_ready(&invocation, exit_code);
             append_successor_record(
                 invocation.journal_path(),
-                SuccessorRecord::exited_before_ready(&invocation, exit_code),
+                record.clone(),
                 "prototype1_successor_exit_journal",
             )?;
-            Err(PrepareError::DatabaseSetup {
-                phase: "prototype1_successor_ready",
-                detail: format!(
-                    "successor exited before acknowledging handoff (exit_code={exit_code:?})"
-                ),
-            })
+            Ok((retired_parent, HandoffOutcome::Incomplete(record)))
         }
     }
 }
