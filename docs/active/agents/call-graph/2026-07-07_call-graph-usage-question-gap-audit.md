@@ -26,6 +26,10 @@ inputs:
 - value-flow and binding proof for unsupported receiver/dynamic callsites;
 - external dependency summaries for frontier rows that should become trusted
   external effects;
+- runtime-dispatch summaries can now discharge reviewed
+  `dynamic_dispatch_unbounded` proof-authoring needs for exact callsite
+  frontiers, but they do not infer callable-field value flow or create local
+  traversal edges;
 - broader source/sink, cost, and policy annotations for
   security/performance/refactoring questions that need domain semantics beyond
   current `effect_seed`, admitted owner `effect_policy` allowlists,

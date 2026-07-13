@@ -72,8 +72,8 @@ pub(in crate::proof_graph::projection) fn validate_enum_fields(
             ],
         )?;
     }
-    if kind == "external_summary" {
-        validate_external_summary_admission(value)?;
+    if kind == "external_summary" || kind == "runtime_dispatch_summary" {
+        validate_summary_admission(value, kind)?;
     }
     Ok(())
 }
@@ -177,13 +177,13 @@ fn validate_optional_enum_array(
     Ok(())
 }
 
-fn validate_external_summary_admission(value: &Value) -> Result<(), DbError> {
+fn validate_summary_admission(value: &Value, kind: &str) -> Result<(), DbError> {
     if value.get("status").and_then(Value::as_str) == Some("admitted")
         && value.get("summary_class").and_then(Value::as_str) == Some("opaque_blocked")
     {
-        return Err(DbError::QueryConstruction(
-            "external_summary with summary_class opaque_blocked cannot be admitted".to_string(),
-        ));
+        return Err(DbError::QueryConstruction(format!(
+            "{kind} with summary_class opaque_blocked cannot be admitted"
+        )));
     }
     Ok(())
 }

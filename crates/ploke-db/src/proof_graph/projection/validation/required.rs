@@ -122,6 +122,23 @@ pub(in crate::proof_graph::projection) fn validate_required_fields(
             )?;
             require_json_string_array(value, "allowed_effects")
         }
+        "runtime_dispatch_summary" => require_fields(
+            value,
+            &[
+                "dispatch_summary_id",
+                "build_domain_id",
+                "call_site_id",
+                "summary_class",
+                "artifact_hash",
+                "version",
+                "review_method",
+                "scope_of_validity",
+                "required_containment",
+                "invalidation_conditions",
+                "status",
+                "evidence_use",
+            ],
+        ),
         "entrypoint_summary" => require_fields(
             value,
             &[

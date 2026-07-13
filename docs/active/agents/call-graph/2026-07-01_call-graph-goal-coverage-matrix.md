@@ -10,7 +10,7 @@ Related planning files:
 - [`2026-06-28_real-corpus-call-site-oracle-matrices.md`](2026-06-28_real-corpus-call-site-oracle-matrices.md)
 - [`2026-07-07_call-graph-usage-question-gap-audit.md`](2026-07-07_call-graph-usage-question-gap-audit.md)
 
-Status date: 2026-07-12
+Status date: 2026-07-13
 Baseline HEAD when created: `19860cc40`
 
 ## Operating Rule
@@ -49,6 +49,23 @@ An unsupported bucket is done for now when it has:
 No bucket should receive more than four consecutive commits without re-checking this matrix and either switching buckets or recording a concrete reason to stay.
 
 ## Current And Recent Buckets
+
+Latest completed slice: runtime-dispatch summary proof queue discharge. The
+proof graph now admits a strict `runtime_dispatch_summary` fact kind with
+`dispatch_summary_id`, build domain, call-site identity, summary metadata,
+status, and evidence-use validation. Owner-scoped
+`runtime_dispatch_needs_for_owner` now treats an admitted runtime-dispatch
+summary as covering the matching `dynamic_dispatch_unbounded` authoring need,
+while leaving the callsite targetless and edge-free. The axum real-corpus
+dynamic callable field test proves the two unsupported self-field rows
+`axum/src/boxed.rs:120 (self.into_route)(self.router, state)` and
+`axum/src/serve/listener.rs:236 (self.tap_fn)(&mut io)` first appear in the
+runtime-dispatch need queue, then disappear after admitted runtime-dispatch
+summaries, with `relations_for_site(...)` still empty. Focused proof-store tests
+also assert accepted summaries, rejection without `call_site_id`, and rejection
+of admitted `opaque_blocked` summaries. This is proof-authoring queue support
+only; it does not add callable-field value flow, runtime vtable modeling,
+summary-derived effects, or local traversal edges.
 
 Latest completed slice: bounded axum middleware `impl_service!` generated
 external frontier rows. The real-corpus axum macro sources

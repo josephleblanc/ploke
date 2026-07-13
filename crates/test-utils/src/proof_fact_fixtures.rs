@@ -622,6 +622,29 @@ pub fn axum_callable_field_runtime_dispatch_blocker(
     })
 }
 
+pub fn axum_callable_field_runtime_dispatch_summary(
+    call_site_id: Uuid,
+    field: &str,
+    source: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "fact_kind": "runtime_dispatch_summary",
+        "schema_version": "ploke-proof-facts.v1",
+        "dispatch_summary_id": format!("runtime-dispatch-summary:axum-callable-field:{field}:{call_site_id}"),
+        "build_domain_id": AXUM_CALL_GRAPH_DOMAIN_ID,
+        "call_site_id": call_site_id.to_string(),
+        "summary_class": "allowed_only_under_containment",
+        "artifact_hash": format!("sha256:axum-callable-field-runtime-dispatch-{field}"),
+        "version": "axum-callable-field-runtime-dispatch-summary-v1",
+        "review_method": "source-oracle-review",
+        "scope_of_validity": format!("{source} callable field `{field}` targetless runtime dispatch frontier in corpus_axum_call_graph"),
+        "required_containment": "runtime-dispatch summary does not create local traversal edges",
+        "invalidation_conditions": "source oracle, fixture hash, callable field value-flow modeling, or proof policy changes",
+        "status": "admitted",
+        "evidence_use": "proof_only"
+    })
+}
+
 pub fn axum_handler_async_block_poll_resume_blocker(
     call_site_id: Uuid,
     callee: &str,

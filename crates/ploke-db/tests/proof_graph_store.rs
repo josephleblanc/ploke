@@ -13,6 +13,8 @@ mod evidence_use;
 mod external_summary;
 #[path = "proof_graph_store/proof_domain.rs"]
 mod proof_domain;
+#[path = "proof_graph_store/runtime_dispatch_summary.rs"]
+mod runtime_dispatch_summary;
 
 const PROOF_FACT_SCHEMA_VERSION: &str = "ploke-proof-facts.v1";
 

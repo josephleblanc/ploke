@@ -1090,6 +1090,11 @@ fn proof_needs_for_owner(
     let paths = db.call_paths_from_owner(owner_id, options)?;
     let context_by_site = reachable_callsite_context_rows(db, owner_id, &paths)?;
     let blockers_by_site = proof_blockers_by_call_site(db, context_by_site.keys())?;
+    let discharged_sites = if reason == "dynamic_dispatch_unbounded" {
+        covered_dispatch_sites(db)?
+    } else {
+        BTreeSet::new()
+    };
     let mut paths_by_owner = BTreeMap::<Uuid, Vec<CallPath>>::new();
     for path in &paths {
         paths_by_owner
@@ -1100,7 +1105,11 @@ fn proof_needs_for_owner(
 
     let mut needs = Vec::new();
     for (site, reasons) in blockers_by_site {
-        if !reasons.iter().any(|candidate| candidate == reason) {
+        let mut blocker_reasons = reasons.into_iter().collect::<BTreeSet<_>>();
+        if discharged_sites.contains(&site) {
+            blocker_reasons.remove(reason);
+        }
+        if !blocker_reasons.iter().any(|candidate| candidate == reason) {
             continue;
         }
         let Ok(site_id) = Uuid::parse_str(&site) else {
@@ -1109,7 +1118,6 @@ fn proof_needs_for_owner(
         let Some(call_site) = context_by_site.get(&site_id) else {
             continue;
         };
-        let blocker_reasons = reasons.into_iter().collect::<BTreeSet<_>>();
         needs.push(ReachableProofNeed {
             paths_to_owner: paths_by_owner
                 .get(&call_site.site.owner_id)
@@ -1128,6 +1136,22 @@ fn proof_needs_for_owner(
         )
     });
     Ok(needs)
+}
+
+fn covered_dispatch_sites(db: &Database) -> Result<BTreeSet<String>, DbError> {
+    Ok(ProofGraphStore::proof_graphrag_context(db, "")?
+        .into_iter()
+        .filter(|row| row.kind == "runtime_dispatch_summary")
+        .filter(|row| row.status.as_deref() == Some("admitted"))
+        .filter(|row| row.summary_class.as_deref() != Some("opaque_blocked"))
+        .filter(|row| {
+            matches!(
+                row.evidence_use.as_deref(),
+                Some("proof_only" | "proof_and_navigation")
+            )
+        })
+        .filter_map(|row| row.call_site_id)
+        .collect())
 }
 
 fn reachable_callsite_context_rows(

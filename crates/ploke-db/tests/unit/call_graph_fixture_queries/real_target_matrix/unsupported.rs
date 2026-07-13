@@ -366,6 +366,33 @@ fn axum_dynamic_callable_fields_preserve_supported_and_unsupported_boundaries()
             "{} runtime-dispatch proof queue must not fabricate a callable-field edge",
             case.source
         );
+
+        db.upsert_proof_fact_values(&[
+            ploke_test_utils::axum_callable_field_runtime_dispatch_summary(
+                row.site.id,
+                field,
+                case.source,
+            ),
+        ])?;
+        let after = db.runtime_dispatch_needs_for_owner(
+            owner,
+            CallPathOptions {
+                max_depth: 1,
+                max_paths: 16,
+            },
+        )?;
+        assert!(
+            after
+                .iter()
+                .all(|need| need.call_site.site.id != row.site.id),
+            "{} admitted runtime-dispatch summary should discharge the proof-authoring need: {after:#?}",
+            case.source
+        );
+        assert!(
+            relations_for_site(&db, row.site.id)?.rows.is_empty(),
+            "{} admitted runtime-dispatch summary must not fabricate a callable-field edge",
+            case.source
+        );
     }
 
     assert_targetless_dynamic_line_fanout_by_method_arg_count(
