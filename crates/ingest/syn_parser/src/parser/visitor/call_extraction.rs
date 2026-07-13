@@ -1761,6 +1761,8 @@ fn awaited_future_spans(block: &syn::Block) -> Vec<(usize, usize)> {
             future_bindings.push(binding);
         } else if let Some(bindings) = future_tuple_bindings(stmt) {
             future_bindings.extend(bindings);
+        } else if let Some(bindings) = future_array_bindings(stmt) {
+            future_bindings.extend(bindings);
         } else if let Some(bindings) = future_struct_bindings(stmt) {
             future_bindings.extend(bindings);
         } else if let Some((name, source)) = future_alias_binding(stmt)
@@ -1815,6 +1817,41 @@ fn future_tuple_bindings(stmt: &syn::Stmt) -> Option<Vec<FutureBinding>> {
     };
 
     let bindings = tuple
+        .elems
+        .iter()
+        .enumerate()
+        .filter_map(|(index, expr)| {
+            let syn::Expr::Call(call) = unparen_expr(expr) else {
+                return None;
+            };
+            let syn::Expr::Path(path) = unparen_expr(call.func.as_ref()) else {
+                return None;
+            };
+            if path.qself.is_some() || path.path.segments.len() != 1 {
+                return None;
+            }
+            let byte_range = call.span().byte_range();
+            Some(FutureBinding {
+                path: vec![name.clone(), index.to_string()],
+                span: (byte_range.start, byte_range.end),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    (!bindings.is_empty()).then_some(bindings)
+}
+
+fn future_array_bindings(stmt: &syn::Stmt) -> Option<Vec<FutureBinding>> {
+    let syn::Stmt::Local(local) = stmt else {
+        return None;
+    };
+    let name = pat_ident_name(&local.pat)?;
+    let init_expr = local.init.as_ref()?.expr.as_ref();
+    let syn::Expr::Array(array) = unparen_expr(init_expr) else {
+        return None;
+    };
+
+    let bindings = array
         .elems
         .iter()
         .enumerate()
@@ -1948,6 +1985,20 @@ fn await_expr_path(expr: &syn::Expr) -> Option<Vec<String>> {
                 return None;
             };
             Some(vec![name.clone(), member_name(&field.member)])
+        }
+        syn::Expr::Index(index) => {
+            let syn::Expr::Path(base) = unparen_expr(index.expr.as_ref()) else {
+                return None;
+            };
+            if base.qself.is_some() {
+                return None;
+            }
+            let segments = path_segments(&base.path);
+            let [name] = segments.as_slice() else {
+                return None;
+            };
+            let index = literal_usize(index.index.as_ref())?;
+            Some(vec![name.clone(), index.to_string()])
         }
         _ => None,
     }

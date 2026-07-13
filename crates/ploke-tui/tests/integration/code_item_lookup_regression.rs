@@ -986,6 +986,16 @@ async fn code_item_lookup_returns_awaited_async_closure_future_named_field_alias
     .await;
 }
 
+#[tokio::test]
+async fn code_item_lookup_returns_awaited_async_closure_future_indexed_array_context() {
+    assert_awaited_async_closure_future_lookup(
+        AsyncFutureToolFixture::indexed_array().await,
+        "awaited async closure future indexed array",
+        "async-future-indexed-array-lookup",
+    )
+    .await;
+}
+
 async fn assert_awaited_async_closure_future_lookup(
     fixture: AsyncFutureToolFixture,
     label: &'static str,
@@ -1022,6 +1032,7 @@ async fn assert_awaited_async_closure_future_lookup(
     //     `let holder = AsyncFutureHolder { future: closure() };
     //      holder.future.await;`
     //     `let alias = holder.future; alias.await;`
+    //     `let futures = [closure()]; futures[0].await;`
     //   prove the stored future is polled without adding returned-future or
     //   arbitrary future value-flow semantics.
     let callee = CallCalleeInfo::Path {

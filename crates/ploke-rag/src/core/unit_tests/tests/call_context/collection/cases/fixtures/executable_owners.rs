@@ -631,6 +631,16 @@ async fn call_context_collection_resolves_awaited_async_closure_future_named_fie
     .await
 }
 
+#[tokio::test]
+async fn call_context_collection_resolves_awaited_async_closure_future_indexed_array_rows()
+-> Result<(), Error> {
+    assert_awaited_async_closure_future_context(
+        "call_awaited_async_closure_future_indexed_array_with_body_call",
+        "awaited async-closure future indexed array",
+    )
+    .await
+}
+
 async fn assert_awaited_async_closure_future_context(
     owner_name: &str,
     label: &str,
@@ -669,8 +679,9 @@ async fn assert_awaited_async_closure_future_context(
     // `futures = (closure(),); futures.0.await;`, `holder =
     // AsyncFutureHolder { future: closure() }; holder.future.await;`, and
     // `holder = AsyncFutureHolder { future: closure() }; alias =
-    // holder.future; alias.await;` prove the original closure() call is polled
-    // through bounded same-block evidence.
+    // holder.future; alias.await;`, and `futures = [closure()];
+    // futures[0].await;` prove the original closure() call is polled through
+    // bounded same-block evidence.
     let closure_call = outer_context
         .iter()
         .find(|call| {

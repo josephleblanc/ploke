@@ -1128,6 +1128,16 @@ fn fixture_context_resolves_awaited_async_closure_future_named_field_alias_to_ex
     )
 }
 
+#[test]
+fn fixture_context_resolves_awaited_async_closure_future_indexed_array_to_executable_owner()
+-> Result<(), DbError> {
+    assert_awaited_async_closure_future_path(
+        "call_awaited_async_closure_future_indexed_array_with_body_call",
+        "awaited async-closure future indexed array",
+        "awaited async closure future indexed array",
+    )
+}
+
 fn assert_awaited_async_closure_future_path(
     owner_name: &str,
     body_label: &str,
@@ -1158,8 +1168,9 @@ fn assert_awaited_async_closure_future_path(
     // second.await;`, `futures = (closure(),); futures.0.await;`, and
     // `holder = AsyncFutureHolder { future: closure() }; holder.future.await;`,
     // and `holder = AsyncFutureHolder { future: closure() }; alias =
-    // holder.future; alias.await;` prove the original async-closure binding
-    // call is polled through bounded same-block evidence.
+    // holder.future; alias.await;`, and `futures = [closure()];
+    // futures[0].await;` prove the original async-closure binding call is
+    // polled through bounded same-block evidence.
     let closure_call = row_by_path(&outer_context, &["closure"]);
     assert_resolved_target(
         closure_call,

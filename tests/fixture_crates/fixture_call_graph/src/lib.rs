@@ -2341,3 +2341,9 @@ impl DirectSelfFieldDispatcher {
         }
     }
 }
+
+pub async fn call_awaited_async_closure_future_indexed_array_with_body_call() {
+    let closure = async || local_target();
+    let futures = [closure()];
+    futures[0].await;
+}

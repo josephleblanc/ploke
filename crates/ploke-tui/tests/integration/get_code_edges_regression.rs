@@ -1566,6 +1566,16 @@ async fn code_item_edges_returns_awaited_async_closure_future_named_field_alias_
     .await;
 }
 
+#[tokio::test]
+async fn code_item_edges_returns_awaited_async_closure_future_indexed_array_context() {
+    assert_awaited_async_closure_future_edges(
+        AsyncFutureToolFixture::indexed_array().await,
+        "awaited async closure future indexed array",
+        "async-future-indexed-array-edges",
+    )
+    .await;
+}
+
 async fn assert_awaited_async_closure_future_edges(
     fixture: AsyncFutureToolFixture,
     label: &'static str,
@@ -1600,8 +1610,9 @@ async fn assert_awaited_async_closure_future_edges(
 
     // Same fixture oracles as lookup: `let futures = (closure(),);
     // futures.0.await;` and `holder = AsyncFutureHolder { future: closure() };
-    // holder.future.await;` plus `let alias = holder.future; alias.await;`
-    // prove the exact stored future is polled.
+    // holder.future.await;` plus `let alias = holder.future; alias.await;` and
+    // `let futures = [closure()]; futures[0].await;` prove the exact stored
+    // future is polled.
     let callee = CallCalleeInfo::Path {
         path: vec!["closure".to_string()],
     };

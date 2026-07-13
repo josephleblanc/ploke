@@ -767,6 +767,10 @@ impl AsyncFutureToolFixture {
         Self::for_owner("call_awaited_async_closure_future_named_field_alias_with_body_call").await
     }
 
+    pub(crate) async fn indexed_array() -> Self {
+        Self::for_owner("call_awaited_async_closure_future_indexed_array_with_body_call").await
+    }
+
     async fn for_owner(owner_name: &'static str) -> Self {
         let db = Arc::new(Database::new(
             setup_db_full_multi_embedding("fixture_call_graph").expect("fixture_call_graph db"),
