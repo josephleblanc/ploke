@@ -1,6 +1,6 @@
 # Call Graph Coverage
 
-Date: 2026-07-11
+Date: 2026-07-13
 
 This document inventories the current call-graph coverage surface. It follows
 the same purpose as `TYPE_RESOLUTION_COVERAGE.md`: identify the source rows,
@@ -30,7 +30,7 @@ The most useful companion documents are:
 | RAG exact APIs | `crates/ploke-rag/src/core/unit_tests/tests/call_context/` and `proof_context/` | Strong exact coverage | Preserves DB call context, paths, impact, reach, effects, targetless rows, and proof context without search ambiguity. |
 | TUI/tool payloads | `crates/ploke-tui/tests/integration/` call-graph lookup/edges/path tests | Strong exact coverage | `code_item_lookup`, `code_item_edges`, `code_item_call_path`, `code_private_uncalled`, and `request_code_context` cover selected strict rows. |
 | Proof graph | `crates/ploke-db/tests/proof_graph_store*` and proof-context tests | Substantial | Includes resolved call projection, blockers, external summaries, expansion boundaries, reachable effects, entrypoint summaries, and dependency-root proof rows. |
-| Fixture regeneration | `cargo xtask fixtures regenerate --active`; `cargo xtask verify-backup-dbs` | Green after 2026-07-11 real-corpus call-graph seed refresh | `call_graph` is only a compatibility feature alias; backup DBs remain schema-coupled fixtures and should be regenerated instead of loosening imports. |
+| Fixture regeneration | `cargo xtask fixtures regenerate --active`; `cargo xtask verify-backup-dbs` | Green after 2026-07-13 real-corpus call-graph seed refresh | `call_graph` is only a compatibility feature alias; backup DBs remain schema-coupled fixtures and should be regenerated instead of loosening imports. |
 
 ## Fixture Inventory
 
@@ -38,9 +38,9 @@ The most useful companion documents are:
 | --- | --- | --- | --- |
 | `fixture_call_graph` | `tests/fixture_crates/fixture_call_graph` | Parser, transform, DB, RAG, and TUI fixture-backed call-shape contracts | Main artificial fixture for exact supported and fail-closed callsite shapes. |
 | `fixture_nodes` and related parser fixtures | `tests/fixture_crates/fixture_nodes`, `fixture_path_resolution`, `fixture_edge_cases`, `fixture_generics`, `fixture_type_resolution_v2` | Structural and resolver edge cases outside the dedicated call-graph fixture | Covered by parser call-site rows and selected DB/RAG/TUI propagation tests. |
-| `corpus_axum_call_graph_2026-07-11.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | Main real-corpus DB/RAG/TUI call graph matrix | Covers functions, methods, imports, re-exports, generated frontiers, proc macros, trait bodies, local items, proof facts, targetless dynamic self-field callees, and usage questions. |
+| `corpus_axum_call_graph_2026-07-13.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | Main real-corpus DB/RAG/TUI call graph matrix | Covers functions, methods, imports, re-exports, generated frontiers, proc macros, trait bodies, local items, proof facts, targetless dynamic self-field callees, and usage questions. |
 | `corpus_chrono_call_graph_2026-07-11.sqlite` | `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be` | Alias constructors, try receivers, external slice receiver frontiers | Covered by real-corpus fallback tests. |
-| `corpus_memchr_call_graph_2026-07-11.sqlite` | `github:BurntSushi/memchr@24f5daa5257e00e87007c936761600e034827905` | Dynamic field/function-pointer fallback rows and callable trait-object blockers | Covered by fallback DB/RAG/TUI targetless tests. |
+| `corpus_memchr_call_graph_2026-07-13.sqlite` | `github:BurntSushi/memchr@24f5daa5257e00e87007c936761600e034827905` | Dynamic field/function-pointer fallback rows, associated-constructor receiver chains, and callable trait-object blockers | Covered by fallback DB/RAG/TUI targetless tests and shared call-shape matrix rows. |
 | `corpus_generic_array_call_graph_2026-07-11.sqlite` | `github:fizyk20/generic-array@80bab87431c2e29823dc551a3311324812838a23` | Guarded match-arm method-result receiver rows | Covered by DB fallback tests. |
 
 ## Parser Fixture Coverage
@@ -111,6 +111,28 @@ These are intentionally not claimed as solved:
 - Search-seeded or live-provider TUI flows as proof of graph correctness.
 
 ## Recent Verification Reference
+
+On 2026-07-13 active call-graph fixtures were refreshed after associated
+constructor receiver handling began resolving path-call receiver chains such as
+`crate::tests::substring::Runner::new().fwd(...)`. The resolver now chains
+through associated constructor return types only when the constructor method is
+local to the current parsed graph; cross-crate associated constructor receiver
+chains remain unsupported until the resolver carries graph context for the
+foreign target method. Verification passed:
+
+- `cargo run -p xtask --features call_graph -- recreate-backup-db --fixture corpus_axum_call_graph`
+- `cargo run -p xtask --features call_graph -- verify-backup-dbs`
+- `cargo check -p syn_parser --features call_graph`
+- `cargo test -p ploke-db shared_call_shape_matrix_cases_match_registered_backups -- --nocapture`
+- `cargo test -p ploke-rag shared_call_shape_matrix_rows_reach_rag_call_context -- --nocapture`
+- `cargo test -p syn_parser --features call_graph call_sites`
+- `cargo test -p ploke-transform --features call_graph transform::tests`
+
+The refreshed memchr fixture resolves the inspected `Runner::new().fwd(...)`
+and `Runner::new().rev(...)` setter method rows where the receiver constructor
+path is local and visible. The `Runner::run` boxed `dyn FnMut` field bindings
+remain explicit targetless blockers because complete finite callable proof for
+all visible setter arguments is not established.
 
 Recent focused verification during the active call-graph goal included:
 
