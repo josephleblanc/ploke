@@ -133,7 +133,9 @@ impl EmbeddingProcessor {
                     })?)
             }
             EmbeddingSource::HuggingFace(backend) => backend.compute_batch(snippets).await,
-            EmbeddingSource::OpenAI(backend) => backend.compute_batch(snippets).await,
+            EmbeddingSource::OpenAI(backend) => {
+                backend.compute_batch_with_cancel(snippets, cancel).await
+            }
             EmbeddingSource::OpenRouter(backend) => backend.compute_batch(snippets, cancel).await,
             EmbeddingSource::Cozo(backend) => backend.compute_batch(snippets).await,
         }

@@ -1,3 +1,5 @@
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Serialize)]
@@ -13,10 +15,22 @@ pub struct HuggingFaceConfig {
     pub dimensions: usize,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Default, Deserialize, PartialEq, Serialize)]
 pub struct OpenAIConfig {
     pub api_key: String,
     pub model: String,
+}
+
+/// Redacts the credential while retaining provider diagnostics.
+/// Derived `Debug` implementations on enclosing configuration types delegate to this formatter.
+impl fmt::Debug for OpenAIConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("OpenAIConfig")
+            .field("api_key", &"<redacted>")
+            .field("model", &self.model)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Serialize)]
@@ -139,5 +153,19 @@ mod tests {
         assert_eq!(cfg.max_backoff_ms, 10_000);
         assert_eq!(cfg.timeout_secs, 30);
         assert_eq!(cfg.request_dimensions, None);
+    }
+
+    #[test]
+    fn openai_config_debug_redacts_api_key() {
+        let config = OpenAIConfig {
+            api_key: "secret-openai-key".into(),
+            model: "text-embedding-3-small".into(),
+        };
+
+        let debug = format!("{config:?}");
+
+        assert!(!debug.contains("secret-openai-key"));
+        assert!(debug.contains("<redacted>"));
+        assert!(debug.contains("text-embedding-3-small"));
     }
 }
