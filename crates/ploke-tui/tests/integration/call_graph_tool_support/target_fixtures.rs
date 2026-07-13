@@ -97,6 +97,19 @@ pub(crate) struct AxumExpandWithToolFixture {
     pub(crate) target: Uuid,
 }
 
+pub(crate) struct AxumRouteMethodToolFixture {
+    pub(crate) state: Arc<AppState>,
+    pub(crate) cases: Vec<RouteMethodCase>,
+}
+
+pub(crate) struct RouteMethodCase {
+    pub(crate) name: &'static str,
+    pub(crate) file_path: PathBuf,
+    pub(crate) module_path: Vec<String>,
+    pub(crate) owner: Uuid,
+    pub(crate) call: ExpectedMethodEdge,
+}
+
 pub(crate) struct AxumErrorHandlingTraitsToolFixture {
     pub(crate) state: Arc<AppState>,
     pub(crate) file_path: PathBuf,
@@ -777,6 +790,107 @@ impl AxumExpandWithToolFixture {
 
     pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
         ctx_for_state(&self.state, call_id)
+    }
+}
+
+impl AxumRouteMethodToolFixture {
+    pub(crate) async fn new() -> Self {
+        let db = axum_call_graph_db();
+        let on = axum_method_target_by_body_and_file(
+            &db,
+            "on",
+            "self.on_endpoint(filter, &MethodEndpoint::BoxedHandler",
+            "axum/src/routing/method_routing.rs",
+        );
+        let on_service = axum_method_target_by_body_and_file(
+            &db,
+            "on_service",
+            "self.on_endpoint(filter, &MethodEndpoint::Route",
+            "axum/src/routing/method_routing.rs",
+        );
+        let cases = vec![
+            route_method_case(&db, "post", "self.on(MethodFilter::", "on", on.id),
+            route_method_case(
+                &db,
+                "post_service",
+                "self.on_service(MethodFilter::",
+                "on_service",
+                on_service.id,
+            ),
+        ];
+        for case in &cases {
+            assert!(
+                db.project_call_proof_facts_for_node(case.owner, "bd:corpus-axum-call-graph")
+                    .expect("project generated route method proof facts")
+                    >= 1,
+                "generated {} should project its self-call proof row",
+                case.name
+            );
+        }
+        let state = axum_state_for_target(Arc::clone(&db), &on, "generated route method").await;
+
+        Self { state, cases }
+    }
+
+    pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
+        ctx_for_state(&self.state, call_id)
+    }
+}
+
+impl RouteMethodCase {
+    pub(crate) fn module_path_arg(&self) -> String {
+        self.module_path.join("::")
+    }
+}
+
+fn route_method_case(
+    db: &Database,
+    name: &'static str,
+    body: &str,
+    callee: &'static str,
+    target: Uuid,
+) -> RouteMethodCase {
+    let owner =
+        axum_method_target_by_body_and_file(db, name, body, "axum/src/routing/method_routing.rs");
+    let context = db
+        .call_context_for_owner(owner.id)
+        .unwrap_or_else(|err| panic!("generated {name} call context: {err}"));
+    let row = context
+        .iter()
+        .find(|row| {
+            row.site.kind == DbCallSiteKind::Method
+                && row.site.method.as_deref() == Some(callee)
+                && row.site.receiver.as_ref() == Some(&CallReceiver::SelfValue)
+        })
+        .unwrap_or_else(|| panic!("generated {name} should call self.{callee}(): {context:#?}"));
+    assert_eq!(row.status.status, DbCallStatusKind::Resolved);
+    assert_eq!(
+        row.status.resolution,
+        Some(DbCallResolutionKind::LocalExact)
+    );
+    assert_eq!(
+        row.targets.len(),
+        1,
+        "generated {name} should resolve self.{callee}() to one target: {row:#?}"
+    );
+    assert_eq!(row.targets[0].target_id, target);
+    assert_eq!(row.targets[0].relation, DbCallRelationKind::Method);
+    assert_eq!(row.targets[0].target_kind, DbCallTargetKind::Method);
+
+    RouteMethodCase {
+        name,
+        file_path: owner.file_path,
+        module_path: owner.module_path,
+        owner: owner.id,
+        call: ExpectedMethodEdge {
+            owner: owner.id,
+            site: row.site.id,
+            target,
+            callee: CallCalleeInfo::Method {
+                name: callee.to_string(),
+                receiver: Some(CallReceiverInfo::SelfValue),
+            },
+        },
     }
 }
 

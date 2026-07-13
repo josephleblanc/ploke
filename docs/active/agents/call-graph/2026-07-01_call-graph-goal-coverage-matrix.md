@@ -3233,8 +3233,10 @@ existing impl owner, and routes their bodies through normal call-site
 extraction/resolution. The regenerated axum fixture and DB real-target test
 now prove nine generated handler methods resolve `self.on(...)` and nine
 generated service methods resolve `self.on_service(...)`, each with one
-persisted traversal edge. This does not claim arbitrary impl-item macro
-expansion.
+persisted traversal edge. RAG exact call context and exact `code_item_lookup` /
+`code_item_edges` TUI payloads now preserve representative `post` and
+`post_service` generated self-call rows downstream. This does not claim
+arbitrary impl-item macro expansion.
 
 ## Parking Lot
 
