@@ -947,6 +947,75 @@ pub(crate) struct OperatorRunProfile {
     pub(crate) profile: Prototype1RunProfile,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct RunProfilePlan {
+    source_path: PathBuf,
+    profile_path: PathBuf,
+    profile: Prototype1RunProfile,
+    #[serde(skip)]
+    normalized_toml: String,
+    sha256: String,
+}
+
+impl RunProfilePlan {
+    pub(crate) fn source_path(&self) -> &Path {
+        &self.source_path
+    }
+
+    pub(crate) fn profile_path(&self) -> &Path {
+        &self.profile_path
+    }
+
+    pub(crate) fn profile(&self) -> &Prototype1RunProfile {
+        &self.profile
+    }
+
+    pub(crate) fn sha256(&self) -> &str {
+        &self.sha256
+    }
+
+    #[cfg(test)]
+    pub(crate) fn normalized_toml(&self) -> &str {
+        &self.normalized_toml
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct EffectiveRunControl {
+    pub(crate) path: PathBuf,
+    pub(crate) mode: RunMode,
+    pub(crate) parallel_cap: u32,
+    pub(crate) patch_generation_parallel_cap: u32,
+    pub(crate) defaulted_from_profile: bool,
+    pub(crate) patch_generation_defaulted_from_profile: bool,
+}
+
+pub(crate) fn resolve_effective_control(
+    path: PathBuf,
+    profile: &Prototype1RunProfile,
+) -> Result<EffectiveRunControl, PrepareError> {
+    let derived_parallel_cap = profile.default_parallel_cap();
+    let parallel_cap = profile.control.parallel_cap.unwrap_or(derived_parallel_cap);
+    if parallel_cap == 0 || parallel_cap > derived_parallel_cap {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "profile control.parallel_cap {} widens admitted fanout {} at '{}'",
+                parallel_cap,
+                derived_parallel_cap,
+                path.display()
+            ),
+        });
+    }
+    Ok(EffectiveRunControl {
+        path,
+        mode: profile.control.mode,
+        parallel_cap,
+        patch_generation_parallel_cap: profile.patch_generation_parallel_cap(),
+        defaulted_from_profile: profile.control.parallel_cap.is_none(),
+        patch_generation_defaulted_from_profile: profile.search.children.parallel_targets.is_none(),
+    })
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct AdmittedRunProfile {
     pub(crate) commitment: RunProfileCommitment,
@@ -968,34 +1037,85 @@ pub(crate) fn load_operator_profile(
     })
 }
 
+pub(crate) fn plan_run_profile(
+    campaign_manifest_path: &Path,
+    operator: &OperatorRunProfile,
+) -> Result<RunProfilePlan, PrepareError> {
+    let normalized_toml =
+        toml::to_string_pretty(&operator.profile).map_err(|err| profile_error(err.to_string()))?;
+    Ok(RunProfilePlan {
+        source_path: operator.source_path.clone(),
+        profile_path: run_profile_path(campaign_manifest_path),
+        profile: operator.profile.clone(),
+        sha256: sha256_hex(&normalized_toml),
+        normalized_toml,
+    })
+}
+
 pub(crate) fn admit_run_profile(
     campaign_manifest_path: &Path,
     operator: &OperatorRunProfile,
 ) -> Result<AdmittedRunProfile, PrepareError> {
-    let profile_path = run_profile_path(campaign_manifest_path);
-    let text =
-        toml::to_string_pretty(&operator.profile).map_err(|err| profile_error(err.to_string()))?;
+    admit_run_profile_plan(plan_run_profile(campaign_manifest_path, operator)?)
+}
+
+pub(crate) fn admit_run_profile_plan(
+    plan: RunProfilePlan,
+) -> Result<AdmittedRunProfile, PrepareError> {
+    let RunProfilePlan {
+        source_path,
+        profile_path,
+        profile,
+        normalized_toml,
+        sha256,
+    } = plan;
+    let actual_sha = sha256_hex(&normalized_toml);
+    if actual_sha != sha256 {
+        return Err(profile_error(format!(
+            "run profile plan digest mismatch: recorded '{}', resolved '{}'",
+            sha256, actual_sha
+        )));
+    }
     if let Some(parent) = profile_path.parent() {
         fs::create_dir_all(parent).map_err(|source| PrepareError::WriteManifest {
             path: parent.to_path_buf(),
             source,
         })?;
     }
-    fs::write(&profile_path, text.as_bytes()).map_err(|source| PrepareError::WriteManifest {
-        path: profile_path.clone(),
-        source,
-    })?;
+    let stored_path = profile_path.with_file_name(RUN_PROFILE_COMMITMENT_FILE);
+    if profile_path.exists() || stored_path.exists() {
+        return Err(profile_error(format!(
+            "run profile admission requires new profile and commitment paths; found existing state under '{}'",
+            profile_path
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .display()
+        )));
+    }
     let commitment = RunProfileCommitment {
         schema_version: RUN_PROFILE_COMMITMENT_SCHEMA_VERSION.to_string(),
         profile_path: profile_path.clone(),
-        sha256: sha256_hex(&text),
-        source_path: Some(operator.source_path.clone()),
+        sha256,
+        source_path: Some(source_path),
         admitted_at: Utc::now().to_rfc3339(),
     };
-    write_commitment(campaign_manifest_path, &commitment)?;
+    let commitment_bytes =
+        serde_json::to_vec_pretty(&commitment).map_err(PrepareError::Serialize)?;
+    if let Err(source) = fs::write(&profile_path, normalized_toml.as_bytes()) {
+        let _ = fs::remove_file(&profile_path);
+        return Err(PrepareError::WriteManifest {
+            path: profile_path.clone(),
+            source,
+        });
+    }
+    if let Err(error) = write_commitment(&profile_path, &commitment_bytes) {
+        let _ = fs::remove_file(&profile_path);
+        let _ = fs::remove_file(&stored_path);
+        return Err(error);
+    }
     Ok(AdmittedRunProfile {
         commitment,
-        profile: operator.profile.clone(),
+        profile,
     })
 }
 
@@ -1003,33 +1123,54 @@ pub(crate) fn load_admitted_run_profile(
     campaign_manifest_path: &Path,
 ) -> Result<Option<AdmittedRunProfile>, PrepareError> {
     let profile_path = run_profile_path(campaign_manifest_path);
+    let commitment = load_commitment(campaign_manifest_path)?;
     let text = match fs::read_to_string(&profile_path) {
-        Ok(text) => text,
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Ok(text) => Some(text),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => None,
         Err(source) => {
             return Err(PrepareError::ReadManifest {
-                path: profile_path,
+                path: profile_path.clone(),
                 source,
             });
         }
     };
-    let profile = parse_profile(&profile_path, &text)?;
-    let commitment = match load_commitment(campaign_manifest_path)? {
-        Some(commitment) => commitment,
-        None => RunProfileCommitment {
-            schema_version: RUN_PROFILE_COMMITMENT_SCHEMA_VERSION.to_string(),
-            profile_path: profile_path.clone(),
-            sha256: sha256_hex(&text),
-            source_path: None,
-            admitted_at: String::new(),
-        },
+    let (text, commitment) = match (text, commitment) {
+        (None, None) => return Ok(None),
+        (Some(_), None) => {
+            return Err(profile_error(format!(
+                "campaign run profile '{}' has no admission commitment",
+                profile_path.display()
+            )));
+        }
+        (None, Some(_)) => {
+            return Err(profile_error(format!(
+                "campaign run profile commitment exists but '{}' is missing",
+                profile_path.display()
+            )));
+        }
+        (Some(text), Some(commitment)) => (text, commitment),
     };
+    if commitment.schema_version != RUN_PROFILE_COMMITMENT_SCHEMA_VERSION {
+        return Err(profile_error(format!(
+            "campaign run profile commitment at '{}' has unsupported schema '{}'",
+            commitment_path(campaign_manifest_path).display(),
+            commitment.schema_version
+        )));
+    }
+    if commitment.profile_path != profile_path {
+        return Err(profile_error(format!(
+            "campaign run profile commitment path '{}' does not match expected '{}'",
+            commitment.profile_path.display(),
+            profile_path.display()
+        )));
+    }
     if commitment.sha256 != sha256_hex(&text) {
         return Err(profile_error(format!(
             "campaign run profile digest mismatch for '{}'",
             profile_path.display()
         )));
     }
+    let profile = parse_profile(&profile_path, &text)?;
     Ok(Some(AdmittedRunProfile {
         commitment,
         profile,
@@ -1079,12 +1220,8 @@ fn prototype1_root(campaign_manifest_path: &Path) -> PathBuf {
         .join("prototype1")
 }
 
-fn write_commitment(
-    campaign_manifest_path: &Path,
-    commitment: &RunProfileCommitment,
-) -> Result<(), PrepareError> {
-    let path = commitment_path(campaign_manifest_path);
-    let bytes = serde_json::to_vec_pretty(commitment).map_err(PrepareError::Serialize)?;
+fn write_commitment(profile_path: &Path, bytes: &[u8]) -> Result<(), PrepareError> {
+    let path = profile_path.with_file_name(RUN_PROFILE_COMMITMENT_FILE);
     fs::write(&path, bytes).map_err(|source| PrepareError::WriteManifest { path, source })
 }
 
@@ -1408,6 +1545,78 @@ graph_nearest = 13
     }
 
     #[test]
+    fn plan_is_non_writing() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let campaign_root = tmp.path().join("campaign");
+        let manifest_path = campaign_root.join("campaign.json");
+        let source_path = tmp.path().join("profiles").join("overnight.toml");
+        let operator = OperatorRunProfile {
+            source_path: source_path.clone(),
+            profile: parse_profile(Path::new("profile.toml"), PROFILE).expect("profile parses"),
+        };
+
+        let plan = plan_run_profile(&manifest_path, &operator).expect("plan profile");
+
+        assert_eq!(plan.source_path, source_path);
+        assert_eq!(
+            plan.profile_path,
+            campaign_root.join("prototype1").join(RUN_PROFILE_FILE)
+        );
+        assert_eq!(plan.profile, operator.profile);
+        assert_eq!(plan.sha256, sha256_hex(&plan.normalized_toml));
+        assert!(!campaign_root.exists());
+        assert_eq!(fs::read_dir(tmp.path()).expect("read tempdir").count(), 0);
+    }
+
+    #[test]
+    fn plan_admits_exact_bytes() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = tmp.path().join("campaign.json");
+        let operator = OperatorRunProfile {
+            source_path: tmp.path().join("profiles").join("overnight.toml"),
+            profile: parse_profile(Path::new("profile.toml"), PROFILE).expect("profile parses"),
+        };
+        let plan = plan_run_profile(&manifest_path, &operator).expect("plan profile");
+        let profile_path = plan.profile_path.clone();
+        let normalized_toml = plan.normalized_toml.clone();
+        let planned_sha = plan.sha256.clone();
+
+        let admitted = admit_run_profile_plan(plan).expect("admit planned profile");
+        let admitted_bytes = fs::read(&profile_path).expect("read admitted profile");
+        let stored_commitment = load_commitment(&manifest_path)
+            .expect("load commitment")
+            .expect("commitment exists");
+
+        assert_eq!(admitted_bytes.as_slice(), normalized_toml.as_bytes());
+        assert_eq!(sha256_hex(&normalized_toml), planned_sha);
+        assert_eq!(admitted.commitment.sha256, planned_sha);
+        assert_eq!(stored_commitment.sha256, planned_sha);
+        assert_eq!(stored_commitment, admitted.commitment);
+        let loaded = load_admitted_run_profile(&manifest_path)
+            .expect("strict load")
+            .expect("admitted profile");
+        assert_eq!(loaded.commitment, admitted.commitment);
+        assert_eq!(loaded.profile, admitted.profile);
+    }
+
+    #[test]
+    fn admission_rejects_inconsistent_profile_plan_before_writes() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = tmp.path().join("campaign/campaign.json");
+        let operator = OperatorRunProfile {
+            source_path: tmp.path().join("operator.toml"),
+            profile: parse_profile(Path::new("profile.toml"), PROFILE).expect("profile parses"),
+        };
+        let mut plan = plan_run_profile(&manifest_path, &operator).expect("plan profile");
+        plan.normalized_toml.push_str("\n# drift\n");
+
+        let error = admit_run_profile_plan(plan).expect_err("inconsistent plan must fail");
+
+        assert!(error.to_string().contains("plan digest mismatch"));
+        assert!(!tmp.path().join("campaign").exists());
+    }
+
+    #[test]
     fn admitted_run_profile_carries_digest() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let manifest_path = tmp.path().join("campaign.json");
@@ -1432,6 +1641,116 @@ graph_nearest = 13
                 .expect("read admitted profile");
         assert!(admitted_text.contains("[control]"));
         assert!(admitted_text.contains("mode = \"continuous\""));
+    }
+
+    #[test]
+    fn absent_profile_pair_returns_none() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = tmp.path().join("campaign.json");
+
+        assert!(
+            load_admitted_run_profile(&manifest_path)
+                .expect("absent pair is readable")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn partial_profile_pairs_are_rejected() {
+        let profile_only = tempfile::tempdir().expect("profile tempdir");
+        let manifest_path = profile_only.path().join("campaign.json");
+        let profile_path = run_profile_path(&manifest_path);
+        fs::create_dir_all(profile_path.parent().expect("profile parent"))
+            .expect("create profile parent");
+        fs::write(&profile_path, PROFILE).expect("write profile only");
+        let error = load_admitted_run_profile(&manifest_path)
+            .expect_err("profile without commitment must fail");
+        assert!(error.to_string().contains("has no admission commitment"));
+
+        let commitment_only = tempfile::tempdir().expect("commitment tempdir");
+        let manifest_path = commitment_only.path().join("campaign.json");
+        let profile_path = run_profile_path(&manifest_path);
+        fs::create_dir_all(profile_path.parent().expect("commitment parent"))
+            .expect("create commitment parent");
+        let commitment = RunProfileCommitment {
+            schema_version: RUN_PROFILE_COMMITMENT_SCHEMA_VERSION.to_string(),
+            profile_path: profile_path.clone(),
+            sha256: sha256_hex(PROFILE),
+            source_path: None,
+            admitted_at: Utc::now().to_rfc3339(),
+        };
+        let bytes = serde_json::to_vec_pretty(&commitment).expect("serialize commitment");
+        fs::write(commitment_path(&manifest_path), bytes).expect("write commitment only");
+        let error = load_admitted_run_profile(&manifest_path)
+            .expect_err("commitment without profile must fail");
+        assert!(error.to_string().contains("commitment exists"));
+        assert!(error.to_string().contains("is missing"));
+    }
+
+    #[test]
+    fn commitment_schema_path_and_digest_are_authoritative() {
+        for corruption in ["schema", "path", "digest"] {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let manifest_path = tmp.path().join("campaign.json");
+            let operator = OperatorRunProfile {
+                source_path: tmp.path().join("operator.toml"),
+                profile: parse_profile(Path::new("profile.toml"), PROFILE).expect("profile parses"),
+            };
+            admit_run_profile(&manifest_path, &operator).expect("admit profile");
+            let path = commitment_path(&manifest_path);
+            let mut commitment = load_commitment(&manifest_path)
+                .expect("load commitment")
+                .expect("commitment exists");
+            match corruption {
+                "schema" => commitment.schema_version = "unsupported.v0".to_string(),
+                "path" => commitment.profile_path = tmp.path().join("other-profile.toml"),
+                "digest" => commitment.sha256 = "0".repeat(64),
+                _ => unreachable!(),
+            }
+            fs::write(
+                &path,
+                serde_json::to_vec_pretty(&commitment).expect("serialize corruption"),
+            )
+            .expect("write corruption");
+
+            let error = load_admitted_run_profile(&manifest_path)
+                .expect_err("corrupt commitment must fail");
+            assert!(
+                error.to_string().contains(corruption)
+                    || (corruption == "schema" && error.to_string().contains("unsupported schema"))
+            );
+        }
+    }
+
+    #[test]
+    fn second_profile_admission_preserves_existing_pair() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = tmp.path().join("campaign.json");
+        let operator = OperatorRunProfile {
+            source_path: tmp.path().join("operator.toml"),
+            profile: parse_profile(Path::new("profile.toml"), PROFILE).expect("profile parses"),
+        };
+        admit_run_profile(&manifest_path, &operator).expect("first admission");
+        let profile_path = run_profile_path(&manifest_path);
+        let stored_path = commitment_path(&manifest_path);
+        let profile_before = fs::read(&profile_path).expect("read profile");
+        let commitment_before = fs::read(&stored_path).expect("read commitment");
+
+        let error = admit_run_profile(&manifest_path, &operator)
+            .expect_err("second admission must not overwrite authority");
+        assert!(
+            error
+                .to_string()
+                .contains("requires new profile and commitment paths")
+        );
+        assert_eq!(
+            fs::read(profile_path).expect("reread profile"),
+            profile_before
+        );
+        assert_eq!(
+            fs::read(stored_path).expect("reread commitment"),
+            commitment_before
+        );
     }
 
     #[test]

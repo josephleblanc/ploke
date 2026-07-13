@@ -56,8 +56,9 @@ admission are below it.
 
 | Command | Current role |
 | --- | --- |
-| `./target/debug/ploke-eval loop prototype1-setup --profile "${P1_PROFILE:?set P1_PROFILE to a profile name or TOML path}"` | Creates or adopts the campaign, admits `run-profile.toml`, registers the generation-0 parent node, creates the parent branch, writes `.ploke/prototype1/parent_identity.json`, and commits that identity into the active checkout. |
-| `./target/debug/ploke-eval loop prototype1-doctor --repo-root "${P1_PARENT_ROOT:?set P1_PARENT_ROOT to the active parent checkout}"` | Read-only diagnosis of the active parent checkout. It loads parent identity, admitted run profile, prompt preflight, child-plan state, node status, and successor markers, then prints allowed next actions. Add `--live-protocol-preflight` only when you explicitly want a tiny live JSON request against the admitted protocol model/provider/reasoning tuple. |
+| `./target/debug/ploke-eval loop prototype1-setup --preview --batch "${P1_BATCH:?set P1_BATCH}" --campaign "${P1_CAMPAIGN:?set P1_CAMPAIGN}" --profile "${P1_PROFILE:?set P1_PROFILE}"` | Builds a read-only, versioned configuration plan with a plan SHA-256, exact campaign/slice/profile payload digests, resolved values, source authority, and explicitly deferred admission checks. Preview requires an existing prepared batch; it never performs inline dataset preparation or DB/Git/identity/provider-readiness checks. |
+| `./target/debug/ploke-eval loop prototype1-setup --batch "${P1_BATCH:?set P1_BATCH}" --campaign "${P1_CAMPAIGN:?set P1_CAMPAIGN}" --profile "${P1_PROFILE:?set P1_PROFILE}" --expect-plan-sha256 "${P1_PLAN_SHA:?copy plan_sha256 from preview}"` | Rebuilds the configuration plan and fails before admission writes if it differs from the reviewed preview. On a match, creates the campaign, admits the exact run-profile pair, registers Parent(0), creates the parent branch, writes `.ploke/prototype1/parent_identity.json`, and commits that identity into the active checkout. |
+| `./target/debug/ploke-eval loop prototype1-doctor --repo-root "${P1_PARENT_ROOT:?set P1_PARENT_ROOT to the active parent checkout}"` | Read-only diagnosis of the active parent checkout. It loads parent identity, admitted run profile, prompt preflight, child-plan state, node status, and successor markers, then prints allowed next actions. Add `--live-embedding-preflight` to exercise the exact production embedding selection/request without run-evidence writes, and `--live-protocol-preflight` for a tiny request against the admitted protocol tuple. |
 | `./target/debug/ploke-eval loop prototype1-prompt --repo-root "${P1_PARENT_ROOT:?set P1_PARENT_ROOT to the active parent checkout}"` | Prints the current broad-harness prompt for the active parent when the admitted run profile uses the broad-harness request generator. |
 | `./target/debug/ploke-eval loop prototype1-step --repo-root "${P1_PARENT_ROOT:?set P1_PARENT_ROOT to the active parent checkout}"` | Advances exactly one diagnosed parent phase. Child phases run at cap 1. |
 | `./target/debug/ploke-eval loop prototype1-continue --repo-root "${P1_PARENT_ROOT:?set P1_PARENT_ROOT to the active parent checkout}"` | Repeatedly advances diagnosed phases until the current turn is complete, blocked, or hands off. It has a 256-advance guard. |
@@ -69,6 +70,13 @@ admission are below it.
 
 History and metrics inspection live under `ploke-eval history ...`; those
 commands are read-only projections, not active loop authority.
+
+The plan digest binds configuration comparison only. Matched setup admission is
+still sequential across campaign/profile, closure/DB, node, Git, and identity
+effects. Until the admission-receipt stage lands, preserve and abandon a
+partially created campaign after a setup error rather than retrying it or
+removing evidence. This is why UI mutation controls remain gated even though
+the preview is suitable for CLI/UI display.
 
 Source excerpts for the trust-order help, walk-step admission guard, and
 projection-read capability:

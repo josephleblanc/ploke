@@ -299,7 +299,11 @@ Refs: `profile.rs:747-753`. Validation rejects zero and rejects any cap that wid
 - `source_path`
 - `admitted_at`
 
-`write_commitment` serializes it as pretty JSON (`profile.rs:948-954`). `load_admitted_run_profile` reads `run-profile.toml`, loads or creates a commitment, and rejects digest mismatch (`profile.rs:868-903`).
+`write_commitment` serializes it as pretty JSON. `load_admitted_run_profile`
+accepts only the complete profile/commitment pair and validates the commitment
+schema, exact campaign-local profile path, and digest before parsing the
+profile. It does not synthesize missing commitments; either one-sided state is
+a failed partial admission.
 
 ### 2.4 How `prototype1-state` chooses profile vs CLI config
 
@@ -315,9 +319,13 @@ This is important for stability: after setup admits a profile, `prototype1-state
 
 ### 3.1 Setup/admission path
 
-`loop prototype1-setup` dispatches to `Prototype1LoopCommand::run_setup`, which calls `prepare_prototype1_parent_setup` (`cli_facing.rs:154-170`). Setup:
+`loop prototype1-setup` dispatches to `Prototype1SetupCommand::run_setup`.
+`--preview` requires an existing batch and explicit profile, returns the
+versioned configuration plan, and performs no admission writes. A later
+`--expect-plan-sha256` invocation rebuilds that plan and rejects drift before
+calling `prepare_prototype1_parent_setup`. Successful setup:
 
-1. loads optional operator profile;
+1. loads the required operator profile;
 2. prepares or loads a benchmark batch;
 3. resolves the primary instance;
 4. prepares the campaign;

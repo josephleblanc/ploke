@@ -8,16 +8,34 @@ longer reads a separate `run-control.toml`.
 
 ## Validation Surfaces
 
-There is currently no standalone `ploke-eval loop ... validate-config` command
-that validates an arbitrary Prototype 1 config file without otherwise operating
-on a campaign.
+`prototype1-setup --preview` builds a non-mutating, versioned configuration
+plan. It requires an explicit profile and an already-prepared `--batch` or
+`--batch-id`, then resolves the campaign manifest, exact selected slice,
+normalized profile, model/provider routes, storage policy, search policy, and
+effective concurrency. The JSON/table output includes SHA-256 commitments for
+the full plan and each exact persisted payload.
+
+Preview is not complete admission or live-provider readiness validation. It
+does not create or validate the closure, owner database rows, scheduler/root
+node, Git branch, parent identity, identity commit, or final checkout. Those
+checks remain deferred until admission; provider requests remain explicit
+`prototype1-doctor` preflights after admission. Preview writes no campaign,
+closure, run, scheduler, Git, parent-identity, or monitor evidence.
 
 Validation happens at the command boundaries that already read the config:
 
-- `./target/debug/ploke-eval loop prototype1-setup --profile "${P1_PROFILE:?set P1_PROFILE to a profile name or TOML path}"`
-  reads, parses, validates, admits, and digests the operator profile into the
-  campaign as `prototype1/run-profile.toml`. This is the pre-admission
-  validation surface for a profile file.
+- `./target/debug/ploke-eval loop prototype1-setup --preview --batch "${P1_BATCH:?set P1_BATCH to a prepared batch manifest}" --campaign "${P1_CAMPAIGN:?set P1_CAMPAIGN}" --profile "${P1_PROFILE:?set P1_PROFILE to a profile name or TOML path}" --format json`
+  reads, parses, validates, normalizes, and digests the operator profile and
+  resolves the configuration plan without admission writes. Inline dataset
+  selection is intentionally rejected because preparing a batch can create
+  directories or download data.
+- To bind a later command to reviewed inputs, run the same setup command without
+  `--preview` and add
+  `--expect-plan-sha256 <plan_sha256-from-preview>`. Setup replans from the
+  current batch, dataset slice, profile, registry, preferences, and environment,
+  then fails before its first admission write if any committed input changed.
+  Setup without `--expect-plan-sha256` remains available for one-shot operation
+  and inline batch preparation.
 - `./target/debug/ploke-eval loop prototype1-doctor --repo-root "${P1_PARENT_ROOT:?set P1_PARENT_ROOT to the active parent checkout}"`
   reads the active parent identity, loads the admitted `run-profile.toml`,
   verifies its digest, and reports the effective `[control]` state. This is the
@@ -26,10 +44,38 @@ Validation happens at the command boundaries that already read the config:
   while loading invalid admitted config, but they are execution commands rather
   than parse-only validators.
 
-The control commands require an admitted run profile. A campaign created without
-`--profile` may still have legacy loop artifacts, but the current
-doctor/continue/step path expects `prototype1/run-profile.toml` and its
-commitment to exist.
+Setup and the control commands require an explicit/admitted run profile. An
+admitted profile is one fail-closed pair:
+
+- `prototype1/run-profile.toml` contains the exact normalized profile bytes.
+- `prototype1/run-profile.commitment.json` is the final admission marker. It
+  must use the current commitment schema, name the exact campaign-local profile
+  path, and match the profile's SHA-256.
+
+If both files are absent, the campaign has no admitted profile. If exactly one
+exists, or schema/path/digest validation fails, the state is a partial or
+corrupt admission and the loader stops. It never synthesizes or repairs a
+commitment while reading. Start a fresh campaign or use an explicit repair
+workflow rather than treating a profile-only legacy artifact as admitted.
+
+Setup configuration authority is explicit in preview output. The prepared
+batch owns its cohort and eval budget; `--instance` can select only the primary
+Parent(0) identity from that cohort. The run profile owns search, generation,
+selection, execution, storage, and control. Legacy `prototype1` search and
+`--stop-after` flags are rejected as setup overrides instead of being silently
+ignored.
+
+### Current admission-recovery boundary
+
+Plan comparison fails before admission writes, but the matched setup operation
+is not yet a filesystem/DB/Git transaction. After the campaign/profile pair is
+written, a later closure, owner-DB, node, branch, identity, commit, or checkout
+failure can leave a partial campaign, and the ordinary setup command does not
+yet carry a resumable admission receipt. Preserve that evidence and use a fresh
+campaign rather than deleting artifacts or weakening validation. This is the
+remaining Stage 1 admission-recovery work and is a hard gate before enabling UI
+Start/Retry controls; a successful setup report still means every listed stage
+completed.
 
 ## `control`
 
@@ -49,8 +95,9 @@ parallel_cap = 3
   operator preference.
 - `parallel_cap`: Optional cap on concurrent child phase execution. If omitted,
   it defaults from `[search]`. For `search.schedule = "full-batch"`, the
-  derived cap is `search.children.max`; for `adaptive-batch`, it is
-  `search.children.min`.
+  derived cap is the effective `search.children.parallel_targets` (explicit or
+  `min(3, children.max)`). For `adaptive-batch`, it is the smaller of
+  `search.children.min` and that effective patch-generation cap.
 
 `control.parallel_cap` does not conflict when it is nonzero and less than or
 equal to the derived cap. For example, a full-batch profile with

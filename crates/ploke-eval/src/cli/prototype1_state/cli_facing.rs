@@ -43,7 +43,10 @@ use crate::{
     CampaignManifest, CampaignOverrides, ClosureClass, EvalBudget, EvalCampaignPolicy,
     OperationalRunMetrics, OutputMode, PrepareMsbBatchRequest, PrepareWrite, PreparedMsbBatch,
     ProtocolCampaignPolicy, RegistryDatasetSource, ResolvedCampaignConfig, batches_dir,
-    campaign::campaign_closure_state_path,
+    campaign::{
+        CampaignManifestPlan, admit_campaign_manifest, campaign_closure_state_path,
+        plan_campaign_manifest, resolve_manifest_config,
+    },
     campaign_manifest_path,
     cli::{
         HistoryCommand, Prototype1CandidateGenerator, Prototype1ChildEvidenceCommand,
@@ -169,19 +172,185 @@ pub(crate) struct Prototype1SetupReport {
     generation: u32,
     branch_id: String,
     search_policy: Prototype1SearchPolicy,
-    run_profile: Option<profile::RunProfileCommitment>,
+    run_profile: profile::RunProfileCommitment,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct Prototype1SetupPlan {
+    schema_version: &'static str,
+    plan_sha256: String,
+    content: Prototype1SetupContent,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct Prototype1SetupContent {
+    batch_manifest: PathBuf,
+    batch: PreparedMsbBatch,
+    primary_instance_id: String,
+    campaign: Prototype1CampaignPlan,
+    profile: profile::RunProfilePlan,
+    effective_control: profile::EffectiveRunControl,
+    repo_root: PathBuf,
+    artifact_branch: String,
+    search_policy: Prototype1SearchPolicy,
+    authority: Prototype1SetupAuthority,
+    scope: Prototype1PreviewScope,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct Prototype1SetupAuthority {
+    batch: &'static str,
+    budget: &'static str,
+    primary_instance: &'static str,
+    profile: &'static str,
+    search: &'static str,
+    generation: &'static str,
+    selection: &'static str,
+    execution: &'static str,
+    storage: &'static str,
+    control: &'static str,
+    eval_model: &'static str,
+    eval_route: &'static str,
+    eval_provider: &'static str,
+    protocol_model: &'static str,
+    protocol_route: &'static str,
+    protocol_provider: &'static str,
+    embedding_model: &'static str,
+    embedding_provider: &'static str,
+    instances_root: &'static str,
+    batches_root: &'static str,
+    notes: Vec<&'static str>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct Prototype1PreviewScope {
+    writes: &'static str,
+    validates: Vec<&'static str>,
+    deferred_checks: Vec<&'static str>,
+}
+
+const PROTOTYPE1_SETUP_PLAN_SCHEMA_VERSION: &str = "prototype1-setup-plan.v1";
+
+pub(crate) fn preview_prototype1_parent_setup(
+    command: &Prototype1LoopCommand,
+) -> Result<Prototype1SetupPlan, PrepareError> {
+    validate_setup_command(command)?;
+    if command.batch.is_none() && command.batch_id.is_none() {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: "prototype1-setup --preview is read-only and requires an existing --batch or --batch-id; prepare inline datasets before previewing setup".to_string(),
+        });
+    }
+    let operator_profile = load_setup_profile(command)?;
+    let (batch_manifest, prepared_batch) = load_prepared_batch_for_loop(resolve_batch_manifest(
+        command.batch.clone(),
+        command.batch_id.clone(),
+    )?)?;
+    plan_prototype1_parent_setup(command, operator_profile, batch_manifest, prepared_batch)
 }
 
 pub(crate) fn prepare_prototype1_parent_setup(
     command: &Prototype1LoopCommand,
+    expected_sha: Option<&str>,
 ) -> Result<Prototype1SetupReport, PrepareError> {
-    let operator_profile = command
+    if let Some(expected_sha) = expected_sha {
+        return admit_prototype1_parent_setup(resolve_expected_setup(command, expected_sha)?);
+    }
+
+    validate_setup_command(command)?;
+    let operator_profile = load_setup_profile(command)?;
+    let (batch_manifest, prepared_batch) =
+        prepare_or_load_prototype1_batch(command, Some(&operator_profile.profile))?;
+    let plan =
+        plan_prototype1_parent_setup(command, operator_profile, batch_manifest, prepared_batch)?;
+    admit_prototype1_parent_setup(plan)
+}
+
+fn resolve_expected_setup(
+    command: &Prototype1LoopCommand,
+    expected_sha: &str,
+) -> Result<Prototype1SetupPlan, PrepareError> {
+    let plan = preview_prototype1_parent_setup(command)?;
+    if plan.plan_sha256 != expected_sha {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "prototype1 setup plan changed: expected sha256 '{}', resolved '{}'; rerun --preview and review the new plan (no setup writes occurred)",
+                expected_sha, plan.plan_sha256
+            ),
+        });
+    }
+    Ok(plan)
+}
+
+fn validate_setup_command(command: &Prototype1LoopCommand) -> Result<(), PrepareError> {
+    if command.dry_run {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: "--dry-run belongs to legacy intervention synthesis and is not a setup preview; use prototype1-setup --preview".to_string(),
+        });
+    }
+    if command.max_generations != 1
+        || command.max_total_nodes != 32
+        || command.min_children != 2
+        || command.max_children != 6
+        || !matches!(command.child_schedule_mode, CliChildScheduleMode::FullBatch)
+        || command.stop_on_first_keep
+        || !command.require_keep_for_continuation
+        || !command.explore_from_rejected
+    {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: "prototype1-setup does not accept legacy loop search-policy overrides; configure [search] in the required run profile".to_string(),
+        });
+    }
+    if command.source_campaign.is_some() || command.source_branch_id.is_some() {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: "prototype1-setup creates Parent(0) and does not accept legacy continuation source flags".to_string(),
+        });
+    }
+    if command.stop_after != Prototype1LoopStopAfter::InterventionApply {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: "prototype1-setup does not accept the legacy controller --stop-after override; configure [execution].stop_after in the required run profile".to_string(),
+        });
+    }
+    if (command.batch.is_some() || command.batch_id.is_some())
+        && (command.all
+            || !command.specific.is_empty()
+            || command.limit.is_some()
+            || command.prepare_batch_id.is_some()
+            || command.repo_cache.is_some()
+            || command.max_turns != 40
+            || command.max_tool_calls != 200
+            || command.wall_clock_secs != 1800
+            || !command.index_debug_snapshots)
+    {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: "prototype1-setup with an existing batch takes dataset selection and eval budget from the prepared batch manifest; remove inline preparation flags or prepare a new batch first".to_string(),
+        });
+    }
+    if (command.batch.is_some() || command.batch_id.is_some()) && command.instance.len() > 1 {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: "prototype1-setup with an existing batch accepts at most one --instance as the primary Parent(0) identity; the prepared batch owns the eval cohort".to_string(),
+        });
+    }
+    Ok(())
+}
+
+fn load_setup_profile(
+    command: &Prototype1LoopCommand,
+) -> Result<profile::OperatorRunProfile, PrepareError> {
+    let profile = command
         .profile
         .as_deref()
-        .map(profile::load_operator_profile)
-        .transpose()?;
-    let profile_ref = operator_profile.as_ref().map(|profile| &profile.profile);
-    let (batch_manifest, prepared_batch) = prepare_or_load_prototype1_batch(command, profile_ref)?;
+        .ok_or_else(|| PrepareError::InvalidBatchSelection {
+            detail: "prototype1-setup requires an explicit --profile so preview and runtime control share one admitted configuration".to_string(),
+        })?;
+    profile::load_operator_profile(profile)
+}
+
+fn plan_prototype1_parent_setup(
+    command: &Prototype1LoopCommand,
+    operator_profile: profile::OperatorRunProfile,
+    batch_manifest: PathBuf,
+    prepared_batch: PreparedMsbBatch,
+) -> Result<Prototype1SetupPlan, PrepareError> {
     if prepared_batch.instances.is_empty() {
         return Err(PrepareError::InvalidBatchSelection {
             detail: "prototype1 setup requires at least one prepared benchmark instance"
@@ -189,9 +358,10 @@ pub(crate) fn prepare_prototype1_parent_setup(
         });
     }
     if prepared_batch.instances.len() != 1
-        && !profile_ref.is_some_and(|profile| {
-            !matches!(profile.generation.source, profile::GenerationSource::Legacy)
-        })
+        && matches!(
+            operator_profile.profile.generation.source,
+            profile::GenerationSource::Legacy
+        )
     {
         return Err(PrepareError::InvalidBatchSelection {
             detail: format!(
@@ -200,47 +370,240 @@ pub(crate) fn prepare_prototype1_parent_setup(
             ),
         });
     }
-    let primary_instance_id =
-        resolve_setup_primary_instance(command, profile_ref, &prepared_batch.instances)?;
-
-    let campaign = prepare_prototype1_loop_campaign(command, &prepared_batch, profile_ref)?;
-    let admitted_profile = operator_profile
-        .as_ref()
-        .map(|profile| profile::admit_run_profile(&campaign.manifest_path, profile))
-        .transpose()?;
-    let closure_state_path = ensure_prototype1_baseline_closure_state(&campaign.resolved)?;
-    if let Some(admitted) = admitted_profile.as_ref() {
-        let backend = admitted.profile.storage.eval.backend;
-        if backend.mirrors_owner_db() {
-            let manifest = load_campaign_manifest(&campaign.campaign_id)?;
-            let closure_state = load_closure_state(&campaign.campaign_id)?;
-            eval_store::write_r0_context_to_owner_db(
-                &eval_store::prototype1_eval_store_db_path(&campaign.manifest_path),
-                &campaign.manifest_path,
-                &manifest,
-                backend,
-                Some(admitted),
-                &closure_state_path,
-                &closure_state,
-            )
-            .map_err(|err| {
-                prototype1_state_transition_error("prototype1_setup_r0_context", err.to_string())
-            })?;
-        }
+    let primary_instance_id = resolve_setup_primary_instance(
+        command,
+        Some(&operator_profile.profile),
+        &prepared_batch.instances,
+    )?;
+    if !prepared_batch.instances.contains(&primary_instance_id) {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "primary Parent(0) instance '{}' is not present in prepared batch '{}'",
+                primary_instance_id, prepared_batch.batch_id
+            ),
+        });
     }
+    let campaign =
+        plan_prototype1_loop_campaign(command, &prepared_batch, Some(&operator_profile.profile))?;
+    let profile = profile::plan_run_profile(campaign.manifest_path(), &operator_profile)?;
+    let effective_control = profile::resolve_effective_control(
+        profile.profile_path().to_path_buf(),
+        profile.profile(),
+    )?;
     let repo_root = std::env::current_dir().map_err(|source| PrepareError::ReadManifest {
         path: PathBuf::from("."),
         source,
     })?;
-    let search_policy = if let Some(profile) = admitted_profile.as_ref() {
-        profile.profile.search_policy()
-    } else {
-        search_policy_from_command(command)?
-    };
     let artifact_branch = format!(
         "prototype1-parent-{}-gen0",
-        sanitize_batch_component(campaign.campaign_id.as_str())
+        sanitize_batch_component(campaign.campaign_id().as_str())
     );
+    let search_policy = profile.profile().search_policy();
+    let authority = setup_authority(command, &operator_profile.profile);
+    let content = Prototype1SetupContent {
+        batch_manifest,
+        batch: prepared_batch,
+        primary_instance_id,
+        campaign,
+        profile,
+        effective_control,
+        repo_root,
+        artifact_branch,
+        search_policy,
+        authority,
+        scope: Prototype1PreviewScope {
+            writes: "none",
+            validates: vec![
+                "prepared batch manifest and selected slice",
+                "campaign manifest serialization and resolved routes",
+                "normalized run profile and commitment digest",
+                "storage, search, and effective control configuration",
+            ],
+            deferred_checks: vec![
+                "closure creation and owner database writes",
+                "root node and scheduler registration",
+                "Git branch and checkout mutation",
+                "parent identity write, commit, and checkout validation",
+                "live provider readiness; use prototype1-doctor preflights after admission",
+            ],
+        },
+    };
+    seal_prototype1_setup_plan(content)
+}
+
+fn seal_prototype1_setup_plan(
+    content: Prototype1SetupContent,
+) -> Result<Prototype1SetupPlan, PrepareError> {
+    #[derive(Serialize)]
+    struct DigestInput<'a> {
+        schema_version: &'a str,
+        content: &'a Prototype1SetupContent,
+    }
+
+    let bytes = serde_json::to_vec(&DigestInput {
+        schema_version: PROTOTYPE1_SETUP_PLAN_SCHEMA_VERSION,
+        content: &content,
+    })
+    .map_err(PrepareError::Serialize)?;
+    Ok(Prototype1SetupPlan {
+        schema_version: PROTOTYPE1_SETUP_PLAN_SCHEMA_VERSION,
+        plan_sha256: format!("{:x}", Sha256::digest(bytes)),
+        content,
+    })
+}
+
+fn setup_authority(
+    command: &Prototype1LoopCommand,
+    run_profile: &profile::Prototype1RunProfile,
+) -> Prototype1SetupAuthority {
+    let eval_model_id = run_profile.model.id.is_some();
+    let protocol_model_id = run_profile.protocol.model.id.is_some();
+    Prototype1SetupAuthority {
+        batch: "prepared_batch_manifest",
+        budget: "prepared_batch_manifest",
+        primary_instance: if !command.instance.is_empty() {
+            "command.instance"
+        } else if run_profile.target.primary_instance().is_some() {
+            "run_profile.target"
+        } else {
+            "prepared_batch_manifest"
+        },
+        profile: "command.profile",
+        search: "run_profile.search",
+        generation: "run_profile.generation",
+        selection: "run_profile.selection",
+        execution: "run_profile.execution",
+        storage: "run_profile.storage",
+        control: "run_profile.control",
+        eval_model: if command.model_id.is_some() {
+            "command.model_id"
+        } else if command.use_default_model {
+            "command.use_default_model"
+        } else if eval_model_id {
+            "run_profile.model"
+        } else {
+            "active_model_registry"
+        },
+        eval_route: if command.route_source.is_some() {
+            "command.route_source"
+        } else if run_profile.model.route_source.is_some() {
+            "run_profile.model"
+        } else {
+            "resolved_model_registry"
+        },
+        eval_provider: if command.provider.is_some() {
+            "command.provider"
+        } else if run_profile.model.provider.is_some() {
+            "run_profile.model"
+        } else {
+            "provider_preference_or_route_default"
+        },
+        protocol_model: if command.protocol_model_id.is_some() {
+            "command.protocol_model_id"
+        } else if protocol_model_id {
+            "run_profile.protocol.model"
+        } else if !run_profile.model.is_empty()
+            || command.model_id.is_some()
+            || command.use_default_model
+        {
+            "resolved_eval_model"
+        } else {
+            "protocol_model_selection"
+        },
+        protocol_route: if command.protocol_route_source.is_some() {
+            "command.protocol_route_source"
+        } else if run_profile.protocol.model.route_source.is_some() {
+            "run_profile.protocol.model"
+        } else {
+            "resolved_eval_route"
+        },
+        protocol_provider: if command.protocol_provider.is_some() {
+            "command.protocol_provider"
+        } else if run_profile.protocol.model.provider.is_some() {
+            "run_profile.protocol.model"
+        } else {
+            "resolved_eval_provider"
+        },
+        embedding_model: if command.embedding_model_id.is_some() {
+            "command.embedding_model_id"
+        } else {
+            "runtime_auto_selection"
+        },
+        embedding_provider: if command.embedding_provider.is_some() {
+            "command.embedding_provider"
+        } else {
+            "runtime_provider_resolution"
+        },
+        instances_root: if command.instances_root.is_some() {
+            "command.instances_root"
+        } else {
+            "layout.instances_dir"
+        },
+        batches_root: if command.batches_root.is_some() {
+            "command.batches_root"
+        } else {
+            "layout.batches_dir"
+        },
+        notes: vec![
+            "the run profile, not legacy prototype1 loop search or stop flags, owns setup search and execution policy",
+            "an existing prepared batch owns its eval cohort and budget; --instance only selects the primary Parent(0) identity",
+        ],
+    }
+}
+
+fn admit_prototype1_parent_setup(
+    plan: Prototype1SetupPlan,
+) -> Result<Prototype1SetupReport, PrepareError> {
+    if plan.schema_version != PROTOTYPE1_SETUP_PLAN_SCHEMA_VERSION {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "unsupported prototype1 setup plan schema '{}'",
+                plan.schema_version
+            ),
+        });
+    }
+    let expected_sha = seal_prototype1_setup_plan(plan.content.clone())?.plan_sha256;
+    if plan.plan_sha256 != expected_sha {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "prototype1 setup plan integrity mismatch: recorded '{}', resolved '{}'",
+                plan.plan_sha256, expected_sha
+            ),
+        });
+    }
+    let Prototype1SetupContent {
+        batch_manifest,
+        batch: prepared_batch,
+        primary_instance_id,
+        campaign,
+        profile,
+        effective_control: _,
+        repo_root,
+        artifact_branch,
+        search_policy,
+        authority: _,
+        scope: _,
+    } = plan.content;
+    let campaign = admit_prototype1_loop_campaign(campaign)?;
+    let admitted_profile = profile::admit_run_profile_plan(profile)?;
+    let closure_state_path = ensure_prototype1_baseline_closure_state(&campaign.resolved)?;
+    let storage = admitted_profile.profile.storage.eval.backend;
+    if storage.mirrors_owner_db() {
+        let manifest = load_campaign_manifest(&campaign.campaign_id)?;
+        let closure_state = load_closure_state(&campaign.campaign_id)?;
+        eval_store::write_r0_context_to_owner_db(
+            &eval_store::prototype1_eval_store_db_path(&campaign.manifest_path),
+            &campaign.manifest_path,
+            &manifest,
+            storage,
+            Some(&admitted_profile),
+            &closure_state_path,
+            &closure_state,
+        )
+        .map_err(|err| {
+            prototype1_state_transition_error("prototype1_setup_r0_context", err.to_string())
+        })?;
+    }
     let node = register_root_parent_node(
         &campaign.campaign_id,
         &campaign.manifest_path,
@@ -296,7 +659,7 @@ pub(crate) fn prepare_prototype1_parent_setup(
         generation: identity.generation(),
         branch_id: identity.branch_id().to_string(),
         search_policy,
-        run_profile: admitted_profile.map(|profile| profile.commitment),
+        run_profile: admitted_profile.commitment,
     })
 }
 
@@ -330,10 +693,8 @@ pub(crate) fn print_prototype1_setup_report(report: &Prototype1SetupReport) {
         yes_no(report.search_policy.require_keep_for_continuation),
         yes_no(report.search_policy.explore_from_rejected)
     );
-    if let Some(commitment) = report.run_profile.as_ref() {
-        println!("run_profile: {}", commitment.profile_path.display());
-        println!("run_profile_sha256: {}", commitment.sha256);
-    }
+    println!("run_profile: {}", report.run_profile.profile_path.display());
+    println!("run_profile_sha256: {}", report.run_profile.sha256);
     println!();
     println!("next:");
     println!(
@@ -345,6 +706,144 @@ pub(crate) fn print_prototype1_setup_report(report: &Prototype1SetupReport) {
         report.primary_instance_id
     );
     println!("  ./target/debug/ploke-eval loop prototype1-state --repo-root .");
+}
+
+pub(crate) fn print_prototype1_setup_plan(plan: &Prototype1SetupPlan) {
+    let content = &plan.content;
+    let campaign = &content.campaign;
+    let resolved = &campaign.resolved;
+    let profile = content.profile.profile();
+    println!("prototype1 setup preview");
+    println!("{}", "-".repeat(40));
+    println!("schema_version: {}", plan.schema_version);
+    println!("plan_sha256: {}", plan.plan_sha256);
+    println!("writes: {}", content.scope.writes);
+    println!("campaign_id: {}", campaign.campaign_id());
+    println!("campaign_manifest: {}", campaign.manifest_path().display());
+    println!(
+        "campaign_manifest_sha256: {}",
+        campaign.manifest_plan.sha256()
+    );
+    println!("slice_dataset: {}", campaign.slice_dataset_path.display());
+    println!("slice_dataset_sha256: {}", campaign.slice_sha256);
+    println!("batch_id: {}", content.batch.batch_id);
+    println!("batch_manifest: {}", content.batch_manifest.display());
+    println!("primary_instance_id: {}", content.primary_instance_id);
+    println!("eval_instances: {}", content.batch.instances.join(", "));
+    println!("repo_root: {}", content.repo_root.display());
+    println!("artifact_branch: {}", content.artifact_branch);
+    println!(
+        "run_profile_source: {}",
+        content.profile.source_path().display()
+    );
+    println!("run_profile: {}", content.profile.profile_path().display());
+    println!("run_profile_sha256: {}", content.profile.sha256());
+    println!("eval_model: {}", resolved.model_id);
+    println!(
+        "eval_provider: {}",
+        resolved
+            .provider_slug
+            .as_deref()
+            .unwrap_or("<route-default>")
+    );
+    println!("eval_route: {}", serde_name(&resolved.route_source));
+    println!(
+        "embedding_model: {}",
+        resolved
+            .eval
+            .embedding_model_id
+            .as_deref()
+            .unwrap_or("<auto>")
+    );
+    println!(
+        "embedding_provider_preference: {}",
+        resolved
+            .eval
+            .embedding_provider_slug
+            .as_deref()
+            .unwrap_or("<auto>")
+    );
+    println!(
+        "protocol_model: {}",
+        resolved
+            .protocol
+            .model_id
+            .as_deref()
+            .unwrap_or("<eval-model>")
+    );
+    println!(
+        "protocol_provider: {}",
+        resolved
+            .protocol
+            .provider_slug
+            .as_deref()
+            .unwrap_or("<route-default>")
+    );
+    println!(
+        "storage_backend: {}",
+        serde_name(&profile.storage.eval.backend)
+    );
+    println!(
+        "search_policy: generations<={} nodes<={} children={}..={} mode={}",
+        content.search_policy.max_generations,
+        content.search_policy.max_total_nodes,
+        content.search_policy.child_budget.min,
+        content.search_policy.child_budget.max,
+        serde_name(&content.search_policy.child_schedule_mode)
+    );
+    println!(
+        "patch_generation_parallel_targets: configured={} effective={}",
+        profile
+            .search
+            .children
+            .parallel_targets
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "<derived>".to_string()),
+        content.effective_control.patch_generation_parallel_cap
+    );
+    println!(
+        "control: mode={} parallel_cap={} configured={}",
+        serde_name(&content.effective_control.mode),
+        content.effective_control.parallel_cap,
+        if content.effective_control.defaulted_from_profile {
+            "derived"
+        } else {
+            "explicit"
+        }
+    );
+    println!(
+        "authority: batch={} budget={} primary={} search={} storage={} control={}",
+        content.authority.batch,
+        content.authority.budget,
+        content.authority.primary_instance,
+        content.authority.search,
+        content.authority.storage,
+        content.authority.control
+    );
+    println!(
+        "model_authority: eval={}/{}/{} protocol={}/{}/{} embedding={}/{}",
+        content.authority.eval_model,
+        content.authority.eval_route,
+        content.authority.eval_provider,
+        content.authority.protocol_model,
+        content.authority.protocol_route,
+        content.authority.protocol_provider,
+        content.authority.embedding_model,
+        content.authority.embedding_provider
+    );
+    println!(
+        "path_authority: instances_root={} batches_root={}",
+        content.authority.instances_root, content.authority.batches_root
+    );
+    println!("deferred admission checks:");
+    for check in &content.scope.deferred_checks {
+        println!("  - {check}");
+    }
+    println!();
+    println!(
+        "admit only this plan with: --expect-plan-sha256 {}",
+        plan.plan_sha256
+    );
 }
 
 fn resolve_setup_primary_instance(
@@ -9145,11 +9644,11 @@ fn load_prepared_batch_for_loop(
     Ok((manifest_path, prepared))
 }
 
-fn prepare_prototype1_loop_campaign(
+fn plan_prototype1_loop_campaign(
     command: &Prototype1LoopCommand,
     prepared_batch: &PreparedMsbBatch,
     run_profile: Option<&profile::Prototype1RunProfile>,
-) -> Result<Prototype1LoopCampaign, PrepareError> {
+) -> Result<Prototype1CampaignPlan, PrepareError> {
     let profile_model = run_profile.map(|profile| &profile.model);
     let profile_protocol_model = run_profile.map(|profile| &profile.protocol.model);
     let profile_model_id = profile_model
@@ -9259,11 +9758,8 @@ fn prepare_prototype1_loop_campaign(
         .unwrap_or_else(|| Path::new("."))
         .to_path_buf();
     let slice_dataset_path = campaign_dir.join("slice.jsonl");
-    write_prototype1_slice_dataset(
-        &prepared_batch.dataset_file,
-        &prepared_batch.instances,
-        &slice_dataset_path,
-    )?;
+    let slice_dataset =
+        select_prototype1_slice_dataset(&prepared_batch.dataset_file, &prepared_batch.instances)?;
 
     let mut manifest = CampaignManifest::new(campaign_id.clone());
     manifest.dataset_sources = vec![RegistryDatasetSource {
@@ -9306,10 +9802,53 @@ fn prepare_prototype1_loop_campaign(
         stop_on_error: command.stop_on_error,
         ..protocol_policy
     };
-    save_campaign_manifest(&manifest)?;
-    let resolved = resolve_campaign_config(&campaign_id, &CampaignOverrides::default())?;
+    let resolved = resolve_manifest_config(manifest.clone(), &CampaignOverrides::default())?;
     let closure_state_path = campaign_closure_state_path(&campaign_id)?;
 
+    let manifest_plan = plan_campaign_manifest(&manifest)?;
+    Ok(Prototype1CampaignPlan {
+        manifest_plan,
+        closure_state_path,
+        slice_dataset_path,
+        resolved,
+        slice_sha256: format!("{:x}", Sha256::digest(slice_dataset.as_bytes())),
+        slice_dataset,
+    })
+}
+
+fn admit_prototype1_loop_campaign(
+    plan: Prototype1CampaignPlan,
+) -> Result<Prototype1LoopCampaign, PrepareError> {
+    let campaign_id = plan.campaign_id().clone();
+    let manifest_path = plan.manifest_path().to_path_buf();
+    if manifest_path.exists() {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "campaign '{}' already has a manifest at '{}'; choose a new --campaign or run the existing campaign",
+                campaign_id,
+                manifest_path.display()
+            ),
+        });
+    }
+    let Prototype1CampaignPlan {
+        manifest_plan,
+        closure_state_path,
+        slice_dataset_path,
+        resolved,
+        slice_sha256,
+        slice_dataset,
+    } = plan;
+    let actual_sha = format!("{:x}", Sha256::digest(slice_dataset.as_bytes()));
+    if actual_sha != slice_sha256 {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "prototype1 slice plan integrity mismatch: recorded '{}', resolved '{}'",
+                slice_sha256, actual_sha
+            ),
+        });
+    }
+    write_prototype1_slice_text(&slice_dataset_path, &slice_dataset)?;
+    admit_campaign_manifest(manifest_plan)?;
     Ok(Prototype1LoopCampaign {
         campaign_id,
         manifest_path,
@@ -9319,11 +9858,22 @@ fn prepare_prototype1_loop_campaign(
     })
 }
 
-fn write_prototype1_slice_dataset(
+fn prepare_prototype1_loop_campaign(
+    command: &Prototype1LoopCommand,
+    prepared_batch: &PreparedMsbBatch,
+    run_profile: Option<&profile::Prototype1RunProfile>,
+) -> Result<Prototype1LoopCampaign, PrepareError> {
+    admit_prototype1_loop_campaign(plan_prototype1_loop_campaign(
+        command,
+        prepared_batch,
+        run_profile,
+    )?)
+}
+
+fn select_prototype1_slice_dataset(
     dataset_path: &Path,
     instances: &[String],
-    output_path: &Path,
-) -> Result<(), PrepareError> {
+) -> Result<String, PrepareError> {
     let wanted = instances.iter().cloned().collect::<BTreeSet<_>>();
     let text = fs::read_to_string(dataset_path).map_err(|source| PrepareError::ReadManifest {
         path: dataset_path.to_path_buf(),
@@ -9363,13 +9913,17 @@ fn write_prototype1_slice_dataset(
         });
     }
 
+    Ok(kept.join("\n") + "\n")
+}
+
+fn write_prototype1_slice_text(output_path: &Path, text: &str) -> Result<(), PrepareError> {
     if let Some(parent) = output_path.parent() {
         fs::create_dir_all(parent).map_err(|source| PrepareError::CreateOutputDir {
             path: parent.to_path_buf(),
             source,
         })?;
     }
-    fs::write(output_path, kept.join("\n") + "\n").map_err(|source| PrepareError::WriteManifest {
+    fs::write(output_path, text).map_err(|source| PrepareError::WriteManifest {
         path: output_path.to_path_buf(),
         source,
     })
@@ -9589,6 +10143,27 @@ pub(crate) fn selection_input_from_child_report(
         report.evaluation_artifact_path.clone(),
         comparisons,
     )
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct Prototype1CampaignPlan {
+    manifest_plan: CampaignManifestPlan,
+    closure_state_path: PathBuf,
+    slice_dataset_path: PathBuf,
+    resolved: ResolvedCampaignConfig,
+    slice_sha256: String,
+    #[serde(skip)]
+    slice_dataset: String,
+}
+
+impl Prototype1CampaignPlan {
+    fn campaign_id(&self) -> &CampaignId {
+        &self.manifest_plan.manifest().campaign_id
+    }
+
+    fn manifest_path(&self) -> &Path {
+        self.manifest_plan.path()
+    }
 }
 
 pub(crate) struct Prototype1LoopCampaign {

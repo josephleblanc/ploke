@@ -21,7 +21,7 @@ pub enum LoopSubcommand {
     /// Run Prototype 1 through eval configuration, baseline arm, synthesis, treatment, and compare.
     Prototype1(Prototype1LoopCommand),
     /// Create a Prototype 1 campaign and admit the current checkout as Parent(0).
-    Prototype1Setup(Prototype1LoopCommand),
+    Prototype1Setup(Prototype1SetupCommand),
     /// Diagnose the active Prototype 1 parent checkout and print the next exact commands.
     Prototype1Doctor(Prototype1DoctorCommand),
     /// Print the broad-harness prompt for the active Prototype 1 parent checkout.
@@ -976,6 +976,24 @@ pub enum Prototype1LoopStopAfter {
     TargetSelection,
     InterventionApply,
     Compare,
+}
+
+#[derive(Debug, Parser)]
+#[command(
+    about = "Plan or admit a Prototype 1 Parent(0) setup",
+    long_about = "Plan or admit a Prototype 1 Parent(0) setup.\n\nSetup requires an explicit run profile. The run profile owns search, generation, selection, execution, storage, and control; legacy prototype1 search and --stop-after flags are not setup authority. With an existing batch, that batch owns its cohort and eval budget, while --instance may select one member as the primary Parent(0) identity. Use --preview first, then --expect-plan-sha256 to bind admission to the reviewed plan."
+)]
+pub struct Prototype1SetupCommand {
+    #[command(flatten)]
+    pub input: Prototype1LoopCommand,
+
+    /// Build a read-only configuration plan without performing admission-time DB, Git, identity, or provider-readiness checks.
+    #[arg(long)]
+    pub preview: bool,
+
+    /// Admit only if a fresh read-only plan matches this SHA-256 from an earlier --preview.
+    #[arg(long, value_name = "SHA256", conflicts_with = "preview")]
+    pub expect_plan_sha256: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, clap::ValueEnum)]

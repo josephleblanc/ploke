@@ -760,6 +760,27 @@ observe_child_stale_after_secs = 17
 }
 
 #[test]
+fn state_run_shape_rejects_profile_without_commitment() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let profile_path = tmp.path().join("prototype1/run-profile.toml");
+    fs::create_dir_all(profile_path.parent().expect("profile parent"))
+        .expect("create profile parent");
+    fs::write(
+        &profile_path,
+        r#"schema_version = "prototype1-run-profile.v1"
+name = "partial-admission"
+"#,
+    )
+    .expect("write partial profile");
+
+    let error = Prototype1StateRunShape::resolve(&state_command_without_ids(), &manifest_path)
+        .expect_err("profile-only campaign must not fall back to command defaults");
+
+    assert!(error.to_string().contains("has no admission commitment"));
+}
+
+#[test]
 fn state_run_shape_defaults_eval_storage_backend_to_fs() {
     let command = state_command_without_ids();
     let shape = Prototype1StateRunShape::from_command(&command);
@@ -767,12 +788,8 @@ fn state_run_shape_defaults_eval_storage_backend_to_fs() {
     assert_eq!(shape.eval_storage_backend, profile::EvalStorageBackend::Fs);
 }
 
-#[test]
-fn prototype1_setup_campaign_manifest_preserves_embedding_overrides() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let _guard =
-        crate::test_support::env_guard_os(vec![("PLOKE_EVAL_HOME", tmp.path().as_os_str().into())]);
-    let models_dir = tmp.path().join("models");
+fn write_direct_google_registry(eval_home: &Path) {
+    let models_dir = eval_home.join("models");
     fs::create_dir_all(&models_dir).expect("models dir");
     fs::write(
         models_dir.join("registry.json"),
@@ -808,6 +825,343 @@ fn prototype1_setup_campaign_manifest_preserves_embedding_overrides() {
         .expect("registry json"),
     )
     .expect("write registry");
+}
+
+fn setup_preview_command(batch: PathBuf, profile: PathBuf) -> Prototype1LoopCommand {
+    Prototype1LoopCommand {
+        batch: Some(batch),
+        batch_id: None,
+        dataset: None,
+        dataset_key: None,
+        all: false,
+        instance: Vec::new(),
+        specific: Vec::new(),
+        limit: None,
+        prepare_batch_id: None,
+        campaign: Some(CampaignId::from("setup-preview-campaign")),
+        profile: Some(profile.display().to_string()),
+        repo_cache: None,
+        instances_root: None,
+        batches_root: None,
+        max_turns: 40,
+        max_tool_calls: 200,
+        wall_clock_secs: 1800,
+        index_debug_snapshots: true,
+        use_default_model: false,
+        model_id: Some("google/gemini-3.5-flash".to_string()),
+        provider: Some("google".to_string()),
+        route_source: Some(ModelRouteSource::DirectGoogle),
+        embedding_model_id: Some("perplexity/pplx-embed-v1-4b".to_string()),
+        embedding_provider: Some("perplexity".to_string()),
+        stop_on_error: false,
+        protocol_model_id: Some("google/gemini-3.5-flash".to_string()),
+        protocol_provider: Some("google".to_string()),
+        protocol_route_source: Some(ModelRouteSource::DirectGoogle),
+        source_campaign: None,
+        source_branch_id: None,
+        max_generations: 1,
+        max_total_nodes: 32,
+        min_children: 2,
+        max_children: 6,
+        child_schedule_mode: CliPrototype1ChildScheduleMode::FullBatch,
+        stop_on_first_keep: false,
+        require_keep_for_continuation: true,
+        explore_from_rejected: true,
+        stop_after: Prototype1LoopStopAfter::InterventionApply,
+        dry_run: false,
+        format: InspectOutputFormat::Json,
+    }
+}
+
+fn snapshot_setup_tree(root: &Path) -> BTreeMap<PathBuf, Option<Vec<u8>>> {
+    fn visit(root: &Path, path: &Path, entries: &mut BTreeMap<PathBuf, Option<Vec<u8>>>) {
+        for entry in fs::read_dir(path).expect("read snapshot directory") {
+            let entry = entry.expect("snapshot directory entry");
+            let path = entry.path();
+            let relative = path
+                .strip_prefix(root)
+                .expect("snapshot path under root")
+                .to_path_buf();
+            if path.is_dir() {
+                entries.insert(relative, None);
+                visit(root, &path, entries);
+            } else if path.is_file() {
+                entries.insert(relative, Some(fs::read(path).expect("snapshot file")));
+            }
+        }
+    }
+
+    let mut entries = BTreeMap::new();
+    visit(root, root, &mut entries);
+    entries
+}
+
+#[test]
+fn setup_authority_tracks_partial_model_sources() {
+    let mut command =
+        setup_preview_command(PathBuf::from("batch.json"), PathBuf::from("profile.toml"));
+    command.model_id = None;
+    command.use_default_model = false;
+    command.route_source = None;
+    command.provider = None;
+    command.protocol_model_id = None;
+    command.protocol_route_source = None;
+    command.protocol_provider = None;
+    command.embedding_provider = None;
+    let mut run_profile = toml::from_str::<profile::Prototype1RunProfile>(
+        r#"schema_version = "prototype1-run-profile.v1"
+name = "partial-model-authority"
+
+[model]
+route_source = "direct-google"
+provider = "google"
+
+[protocol.model]
+route_source = "direct-google"
+provider = "google"
+"#,
+    )
+    .expect("profile parses");
+
+    let authority = setup_authority(&command, &run_profile);
+    assert_eq!(authority.eval_model, "active_model_registry");
+    assert_eq!(authority.eval_route, "run_profile.model");
+    assert_eq!(authority.eval_provider, "run_profile.model");
+    assert_eq!(authority.protocol_model, "resolved_eval_model");
+    assert_eq!(authority.protocol_route, "run_profile.protocol.model");
+    assert_eq!(authority.protocol_provider, "run_profile.protocol.model");
+    assert_eq!(authority.embedding_model, "command.embedding_model_id");
+    assert_eq!(authority.embedding_provider, "runtime_provider_resolution");
+
+    run_profile.model = profile::ModelDefaults::default();
+    let authority = setup_authority(&command, &run_profile);
+    assert_eq!(authority.eval_model, "active_model_registry");
+    assert_eq!(authority.protocol_model, "protocol_model_selection");
+}
+
+#[test]
+fn prototype1_setup_preview_is_non_writing_and_admits_exact_plan() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let _guard =
+        crate::test_support::env_guard_os(vec![("PLOKE_EVAL_HOME", tmp.path().as_os_str().into())]);
+    write_direct_google_registry(tmp.path());
+    let dataset_file = tmp.path().join("dataset.jsonl");
+    let dataset_text = r#"{"instance_id":"BurntSushi__ripgrep-2209"}"#;
+    fs::write(&dataset_file, dataset_text).expect("write dataset");
+    let batch = crate::spec::PreparedMsbBatch {
+        batch_id: "setup-preview-batch".to_string(),
+        dataset_file: dataset_file.clone(),
+        dataset_url: None,
+        repo_cache: tmp.path().join("repo-cache"),
+        instances_root: tmp.path().join("instances"),
+        output_dir: tmp.path().join("batches/setup-preview-batch"),
+        budget: crate::spec::EvalBudget::default(),
+        instances: vec!["BurntSushi__ripgrep-2209".to_string()],
+        campaign: None,
+    };
+    let batch_manifest = tmp.path().join("prepared-batch.json");
+    fs::write(
+        &batch_manifest,
+        serde_json::to_vec_pretty(&batch).expect("serialize batch"),
+    )
+    .expect("write batch");
+    let profile_path = tmp.path().join("run-profile.toml");
+    let profile_text = r#"schema_version = "prototype1-run-profile.v1"
+name = "setup-preview"
+"#;
+    fs::write(&profile_path, profile_text).expect("write profile");
+    let command = setup_preview_command(batch_manifest.clone(), profile_path.clone());
+    let before = snapshot_setup_tree(tmp.path());
+
+    let plan = preview_prototype1_parent_setup(&command).expect("preview setup");
+
+    assert_eq!(snapshot_setup_tree(tmp.path()), before);
+    assert_eq!(
+        plan.schema_version,
+        super::PROTOTYPE1_SETUP_PLAN_SCHEMA_VERSION
+    );
+    assert_eq!(plan.plan_sha256.len(), 64);
+    assert!(!plan.content.campaign.manifest_path().exists());
+    assert!(!plan.content.profile.profile_path().exists());
+    assert_eq!(
+        plan.content
+            .campaign
+            .resolved
+            .eval
+            .embedding_model_id
+            .as_deref(),
+        Some("perplexity/pplx-embed-v1-4b")
+    );
+    assert_eq!(
+        plan.content
+            .campaign
+            .resolved
+            .eval
+            .embedding_provider_slug
+            .as_deref(),
+        Some("perplexity")
+    );
+    let planned_manifest = serde_json::to_value(plan.content.campaign.manifest_plan.manifest())
+        .expect("serialize planned manifest");
+    let planned_json = plan
+        .content
+        .campaign
+        .manifest_plan
+        .normalized_json()
+        .to_string();
+    let planned_config =
+        serde_json::to_value(&plan.content.campaign.resolved).expect("serialize planned config");
+    let planned_toml = plan.content.profile.normalized_toml().to_string();
+    let planned_sha = plan.content.profile.sha256().to_string();
+    let planned_slice = plan.content.campaign.slice_dataset.clone();
+
+    fs::write(
+        &profile_path,
+        profile_text.replace("setup-preview", "setup-drift"),
+    )
+    .expect("write profile drift");
+    let error = resolve_expected_setup(&command, &plan.plan_sha256)
+        .expect_err("profile drift must invalidate preview");
+    assert!(error.to_string().contains("setup plan changed"));
+    assert!(!plan.content.campaign.manifest_path().exists());
+    fs::write(&profile_path, profile_text).expect("restore profile");
+
+    fs::write(
+        &dataset_file,
+        r#"{"instance_id":"BurntSushi__ripgrep-2209","drift":true}"#,
+    )
+    .expect("write slice drift");
+    let error = resolve_expected_setup(&command, &plan.plan_sha256)
+        .expect_err("slice drift must invalidate preview");
+    assert!(error.to_string().contains("setup plan changed"));
+    assert!(!plan.content.campaign.manifest_path().exists());
+    fs::write(&dataset_file, dataset_text).expect("restore dataset");
+
+    let mut changed_batch = batch.clone();
+    changed_batch.budget.max_turns += 1;
+    fs::write(
+        &batch_manifest,
+        serde_json::to_vec_pretty(&changed_batch).expect("serialize batch drift"),
+    )
+    .expect("write batch drift");
+    let error = resolve_expected_setup(&command, &plan.plan_sha256)
+        .expect_err("batch drift must invalidate preview");
+    assert!(error.to_string().contains("setup plan changed"));
+    assert!(!plan.content.campaign.manifest_path().exists());
+    fs::write(
+        &batch_manifest,
+        serde_json::to_vec_pretty(&batch).expect("serialize restored batch"),
+    )
+    .expect("restore batch");
+
+    let admitted_plan = resolve_expected_setup(&command, &plan.plan_sha256)
+        .expect("separate admission planning matches preview");
+    assert_eq!(snapshot_setup_tree(tmp.path()), before);
+
+    let campaign = admit_prototype1_loop_campaign(admitted_plan.content.campaign)
+        .expect("admit planned campaign");
+    let admitted = profile::admit_run_profile_plan(admitted_plan.content.profile)
+        .expect("admit planned profile");
+
+    let stored_manifest = crate::campaign::load_campaign_manifest(&campaign.campaign_id)
+        .expect("load admitted manifest");
+    assert_eq!(
+        serde_json::to_value(stored_manifest).expect("serialize stored manifest"),
+        planned_manifest
+    );
+    assert_eq!(
+        fs::read_to_string(&campaign.manifest_path).expect("read admitted manifest"),
+        planned_json
+    );
+    assert_eq!(
+        serde_json::to_value(&campaign.resolved).expect("serialize admitted config"),
+        planned_config
+    );
+    assert_eq!(
+        fs::read_to_string(&campaign.slice_dataset_path).expect("read admitted slice"),
+        planned_slice
+    );
+    assert_eq!(
+        fs::read_to_string(&admitted.commitment.profile_path).expect("read admitted profile"),
+        planned_toml
+    );
+    assert_eq!(admitted.commitment.sha256, planned_sha);
+}
+
+#[test]
+fn prototype1_setup_preview_rejects_mutating_or_ambiguous_inputs() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let _guard =
+        crate::test_support::env_guard_os(vec![("PLOKE_EVAL_HOME", tmp.path().as_os_str().into())]);
+    let before = snapshot_setup_tree(tmp.path());
+
+    let mut inline = setup_preview_command(
+        tmp.path().join("missing-batch.json"),
+        tmp.path().join("missing-profile.toml"),
+    );
+    inline.batch = None;
+    inline.dataset = Some(tmp.path().join("dataset.jsonl"));
+    let error = preview_prototype1_parent_setup(&inline)
+        .expect_err("preview must reject inline preparation");
+    assert!(
+        error
+            .to_string()
+            .contains("requires an existing --batch or --batch-id")
+    );
+
+    let mut dry_run = setup_preview_command(
+        tmp.path().join("missing-batch.json"),
+        tmp.path().join("missing-profile.toml"),
+    );
+    dry_run.dry_run = true;
+    let error = preview_prototype1_parent_setup(&dry_run)
+        .expect_err("legacy dry-run must not masquerade as preview");
+    assert!(error.to_string().contains("use prototype1-setup --preview"));
+
+    let mut missing_profile = setup_preview_command(
+        tmp.path().join("missing-batch.json"),
+        tmp.path().join("missing-profile.toml"),
+    );
+    missing_profile.profile = None;
+    let error = prepare_prototype1_parent_setup(&missing_profile, None)
+        .expect_err("setup must require an explicit profile");
+    assert!(error.to_string().contains("requires an explicit --profile"));
+
+    let mut legacy_search = setup_preview_command(
+        tmp.path().join("missing-batch.json"),
+        tmp.path().join("missing-profile.toml"),
+    );
+    legacy_search.max_generations = 2;
+    let error = preview_prototype1_parent_setup(&legacy_search)
+        .expect_err("setup must reject legacy search authority");
+    assert!(error.to_string().contains("run profile"));
+
+    let mut legacy_stop = setup_preview_command(
+        tmp.path().join("missing-batch.json"),
+        tmp.path().join("missing-profile.toml"),
+    );
+    legacy_stop.stop_after = Prototype1LoopStopAfter::BaselineEval;
+    let error = preview_prototype1_parent_setup(&legacy_stop)
+        .expect_err("setup must reject legacy stop authority");
+    assert!(error.to_string().contains("[execution].stop_after"));
+
+    let mut batch_selector = setup_preview_command(
+        tmp.path().join("missing-batch.json"),
+        tmp.path().join("missing-profile.toml"),
+    );
+    batch_selector.specific.push("ripgrep".to_string());
+    let error = preview_prototype1_parent_setup(&batch_selector)
+        .expect_err("prepared batch must own its cohort");
+    assert!(error.to_string().contains("prepared batch manifest"));
+    assert_eq!(snapshot_setup_tree(tmp.path()), before);
+}
+
+#[test]
+fn prototype1_setup_campaign_manifest_preserves_embedding_overrides() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let _guard =
+        crate::test_support::env_guard_os(vec![("PLOKE_EVAL_HOME", tmp.path().as_os_str().into())]);
+    write_direct_google_registry(tmp.path());
 
     let dataset_file = tmp.path().join("dataset.jsonl");
     fs::write(

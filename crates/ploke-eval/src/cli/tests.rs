@@ -1616,20 +1616,101 @@ fn loop_prototype1_setup_command_parses() {
         Command::Loop(LoopCommand {
             command: LoopSubcommand::Prototype1Setup(cmd),
         }) => {
-            assert_eq!(cmd.dataset_key.as_deref(), Some("clap-rs__clap"));
-            assert_eq!(cmd.instance, vec!["clap-rs__clap-3670".to_string()]);
-            assert_eq!(cmd.model_id.as_deref(), Some("x-ai/grok-4-fast"));
-            assert_eq!(cmd.provider.as_deref(), Some("xai"));
+            assert!(!cmd.preview);
+            assert!(cmd.expect_plan_sha256.is_none());
+            assert_eq!(cmd.input.dataset_key.as_deref(), Some("clap-rs__clap"));
+            assert_eq!(cmd.input.instance, vec!["clap-rs__clap-3670".to_string()]);
+            assert_eq!(cmd.input.model_id.as_deref(), Some("x-ai/grok-4-fast"));
+            assert_eq!(cmd.input.provider.as_deref(), Some("xai"));
             assert_eq!(
-                cmd.embedding_model_id.as_deref(),
+                cmd.input.embedding_model_id.as_deref(),
                 Some("perplexity/pplx-embed-v1-4b")
             );
-            assert_eq!(cmd.embedding_provider.as_deref(), Some("perplexity"));
-            assert_eq!(cmd.campaign.as_ref().map(|id| id.as_str()), Some("p1-clap"));
-            assert_eq!(cmd.profile.as_deref(), Some("overnight-edit-surface"));
+            assert_eq!(cmd.input.embedding_provider.as_deref(), Some("perplexity"));
+            assert_eq!(
+                cmd.input.campaign.as_ref().map(|id| id.as_str()),
+                Some("p1-clap")
+            );
+            assert_eq!(cmd.input.profile.as_deref(), Some("overnight-edit-surface"));
         }
         other => panic!("unexpected command shape: {:?}", other),
     }
+}
+
+#[test]
+fn loop_prototype1_setup_preview_command_parses() {
+    let parsed = Cli::try_parse_from([
+        "ploke-eval",
+        "loop",
+        "prototype1-setup",
+        "--batch",
+        "/tmp/batch.json",
+        "--campaign",
+        "p1-preview",
+        "--profile",
+        "/tmp/run-profile.toml",
+        "--preview",
+        "--format",
+        "json",
+    ])
+    .expect("loop prototype1-setup preview should parse");
+
+    match parsed.command {
+        Command::Loop(LoopCommand {
+            command: LoopSubcommand::Prototype1Setup(cmd),
+        }) => {
+            assert!(cmd.preview);
+            assert!(cmd.expect_plan_sha256.is_none());
+            assert_eq!(cmd.input.batch, Some(PathBuf::from("/tmp/batch.json")));
+            assert_eq!(
+                cmd.input.campaign.as_ref().map(|id| id.as_str()),
+                Some("p1-preview")
+            );
+            assert_eq!(cmd.input.profile.as_deref(), Some("/tmp/run-profile.toml"));
+            assert_eq!(cmd.input.format, InspectOutputFormat::Json);
+        }
+        other => panic!("unexpected command shape: {:?}", other),
+    }
+}
+
+#[test]
+fn loop_prototype1_setup_expected_plan_parses_and_conflicts_with_preview() {
+    let digest = "a".repeat(64);
+    let parsed = Cli::try_parse_from([
+        "ploke-eval",
+        "loop",
+        "prototype1-setup",
+        "--batch",
+        "/tmp/batch.json",
+        "--campaign",
+        "p1-admit",
+        "--profile",
+        "/tmp/run-profile.toml",
+        "--expect-plan-sha256",
+        &digest,
+    ])
+    .expect("expected setup plan should parse");
+
+    match parsed.command {
+        Command::Loop(LoopCommand {
+            command: LoopSubcommand::Prototype1Setup(cmd),
+        }) => {
+            assert!(!cmd.preview);
+            assert_eq!(cmd.expect_plan_sha256.as_deref(), Some(digest.as_str()));
+        }
+        other => panic!("unexpected command shape: {:?}", other),
+    }
+
+    let error = Cli::try_parse_from([
+        "ploke-eval",
+        "loop",
+        "prototype1-setup",
+        "--preview",
+        "--expect-plan-sha256",
+        &digest,
+    ])
+    .expect_err("preview and expected admission must conflict");
+    assert!(error.to_string().contains("cannot be used with"));
 }
 
 #[test]

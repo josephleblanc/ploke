@@ -2,6 +2,7 @@ use crate::prelude::*;
 
 use ploke_llm::{ModelId, ProviderKey, request::models::ModelRouteSource};
 use ploke_protocol::ProtocolReasoningPolicy;
+use sha2::{Digest, Sha256};
 
 use crate::closure::ClosureRecomputeRequest;
 use crate::layout::{batches_dir, campaigns_dir, instances_dir};
@@ -48,6 +49,34 @@ pub struct CampaignManifest {
     pub protocol: ProtocolCampaignPolicy,
     #[serde(default, skip_serializing_if = "FrameworkConfig::is_default")]
     pub framework: FrameworkConfig,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct CampaignManifestPlan {
+    path: PathBuf,
+    manifest: CampaignManifest,
+    sha256: String,
+    #[serde(skip)]
+    normalized_json: String,
+}
+
+impl CampaignManifestPlan {
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub(crate) fn manifest(&self) -> &CampaignManifest {
+        &self.manifest
+    }
+
+    pub(crate) fn sha256(&self) -> &str {
+        &self.sha256
+    }
+
+    #[cfg(test)]
+    pub(crate) fn normalized_json(&self) -> &str {
+        &self.normalized_json
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -364,16 +393,47 @@ pub fn load_campaign_manifest(campaign_id: &CampaignId) -> Result<CampaignManife
 }
 
 pub fn save_campaign_manifest(manifest: &CampaignManifest) -> Result<PathBuf, PrepareError> {
+    admit_campaign_manifest(plan_campaign_manifest(manifest)?)
+}
+
+pub(crate) fn plan_campaign_manifest(
+    manifest: &CampaignManifest,
+) -> Result<CampaignManifestPlan, PrepareError> {
     let path = campaign_manifest_path(&manifest.campaign_id)?;
+    let normalized_json =
+        serde_json::to_string_pretty(manifest).map_err(PrepareError::SerializeCampaignManifest)?;
+    let sha256 = format!("{:x}", Sha256::digest(normalized_json.as_bytes()));
+    Ok(CampaignManifestPlan {
+        path,
+        manifest: manifest.clone(),
+        sha256,
+        normalized_json,
+    })
+}
+
+pub(crate) fn admit_campaign_manifest(plan: CampaignManifestPlan) -> Result<PathBuf, PrepareError> {
+    let CampaignManifestPlan {
+        path,
+        manifest: _,
+        sha256,
+        normalized_json,
+    } = plan;
+    let actual_sha = format!("{:x}", Sha256::digest(normalized_json.as_bytes()));
+    if actual_sha != sha256 {
+        return Err(PrepareError::DatabaseSetup {
+            phase: "campaign_manifest_plan",
+            detail: format!(
+                "campaign manifest plan digest mismatch: recorded '{sha256}', resolved '{actual_sha}'"
+            ),
+        });
+    }
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|source| PrepareError::WriteCampaignManifest {
             path: parent.to_path_buf(),
             source,
         })?;
     }
-    let json =
-        serde_json::to_string_pretty(manifest).map_err(PrepareError::SerializeCampaignManifest)?;
-    fs::write(&path, json).map_err(|source| PrepareError::WriteCampaignManifest {
+    fs::write(&path, normalized_json).map_err(|source| PrepareError::WriteCampaignManifest {
         path: path.clone(),
         source,
     })?;
@@ -532,7 +592,18 @@ pub fn resolve_campaign_config(
     overrides: &CampaignOverrides,
 ) -> Result<ResolvedCampaignConfig, PrepareError> {
     let manifest = load_campaign_manifest(campaign_id)?;
+    resolve_manifest_config(manifest, overrides)
+}
 
+/// Resolves a supplied manifest without reading or writing campaign manifest storage.
+///
+/// Existing resolution semantics remain unchanged: omitted values can still trigger read-only
+/// lookups of active-model, model-registry, provider-preference, and layout defaults, while
+/// dataset overrides can resolve and validate local dataset paths.
+pub(crate) fn resolve_manifest_config(
+    manifest: CampaignManifest,
+    overrides: &CampaignOverrides,
+) -> Result<ResolvedCampaignConfig, PrepareError> {
     let dataset_sources = if overrides.dataset_keys.is_empty() && overrides.dataset_files.is_empty()
     {
         manifest.dataset_sources.clone()
@@ -611,7 +682,7 @@ pub fn resolve_campaign_config(
         .unwrap_or(batches_dir()?);
 
     Ok(ResolvedCampaignConfig {
-        campaign_id: campaign_id.clone(),
+        campaign_id: manifest.campaign_id.clone(),
         benchmark_family: manifest.benchmark_family,
         dataset_sources,
         model_id,
@@ -993,6 +1064,39 @@ fn route_source_label(route_source: ModelRouteSource) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn supplied_manifest_matches_stored_resolution() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _env = crate::test_support::env_guard_os(vec![(
+            "PLOKE_EVAL_HOME",
+            temp.path().as_os_str().to_os_string(),
+        )]);
+        let campaign_id = CampaignId::from("manifest-resolution-parity");
+        let mut manifest = CampaignManifest::new(campaign_id.clone());
+        manifest.dataset_sources = vec![RegistryDatasetSource {
+            key: None,
+            path: temp.path().join("dataset.jsonl"),
+            label: "fixture".to_string(),
+            url: None,
+        }];
+        manifest.model_id = Some("x-ai/grok-4-fast".to_string());
+        manifest.provider_slug = Some("xai".to_string());
+        manifest.route_source = Some(ModelRouteSource::OpenRouter);
+        manifest.instances_root = Some(temp.path().join("instances"));
+        manifest.batches_root = Some(temp.path().join("batches"));
+        save_campaign_manifest(&manifest).expect("save manifest");
+
+        let supplied = resolve_manifest_config(manifest, &CampaignOverrides::default())
+            .expect("resolve supplied manifest");
+        let stored = resolve_campaign_config(&campaign_id, &CampaignOverrides::default())
+            .expect("resolve stored manifest");
+
+        assert_eq!(
+            serde_json::to_value(supplied).expect("serialize supplied config"),
+            serde_json::to_value(stored).expect("serialize stored config")
+        );
+    }
 
     #[test]
     fn render_handles_empty_framework() {

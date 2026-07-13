@@ -72,19 +72,9 @@ use crate::cli::prototype1_state::{
         Check, ChildFiles, ChildPlanFile, ChildPlanFiles, Genesis, Parent, Predecessor, Ready,
         Startup, Unchecked,
     },
-    profile::{self, AdmittedRunProfile, RunProfileCommitment},
+    profile::{self, AdmittedRunProfile, EffectiveRunControl, RunProfileCommitment},
     successor,
 };
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub(crate) struct EffectiveRunControl {
-    pub(crate) path: PathBuf,
-    pub(crate) mode: profile::RunMode,
-    pub(crate) parallel_cap: u32,
-    pub(crate) patch_generation_parallel_cap: u32,
-    pub(crate) defaulted_from_profile: bool,
-    pub(crate) patch_generation_defaulted_from_profile: bool,
-}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -620,37 +610,7 @@ fn resolve_context(repo_root: Option<&Path>) -> Result<RuntimeContext, PrepareEr
 fn load_effective_control(
     admitted: &AdmittedRunProfile,
 ) -> Result<EffectiveRunControl, PrepareError> {
-    let path = admitted.commitment.profile_path.clone();
-    let derived_parallel_cap = admitted.profile.default_parallel_cap();
-    let parallel_cap = admitted
-        .profile
-        .control
-        .parallel_cap
-        .unwrap_or(derived_parallel_cap);
-    if parallel_cap == 0 || parallel_cap > derived_parallel_cap {
-        return Err(PrepareError::InvalidBatchSelection {
-            detail: format!(
-                "profile control.parallel_cap {} widens admitted fanout {} at '{}'",
-                parallel_cap,
-                derived_parallel_cap,
-                path.display()
-            ),
-        });
-    }
-    let patch_generation_parallel_cap = admitted.profile.patch_generation_parallel_cap();
-    Ok(EffectiveRunControl {
-        path,
-        mode: admitted.profile.control.mode,
-        parallel_cap,
-        patch_generation_parallel_cap,
-        defaulted_from_profile: admitted.profile.control.parallel_cap.is_none(),
-        patch_generation_defaulted_from_profile: admitted
-            .profile
-            .search
-            .children
-            .parallel_targets
-            .is_none(),
-    })
+    profile::resolve_effective_control(admitted.commitment.profile_path.clone(), &admitted.profile)
 }
 
 fn prompt_text(context: &RuntimeContext) -> Result<String, PrepareError> {
