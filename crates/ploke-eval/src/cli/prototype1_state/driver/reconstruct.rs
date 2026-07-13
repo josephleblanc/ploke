@@ -65,13 +65,43 @@ pub(crate) enum EarlyState {
     R5(typestate::R5<Prototype1StateRunShape, ResolvedCampaignConfig>),
     R6(typestate::R6<Prototype1StateRunShape, ResolvedCampaignConfig>),
     R7(typestate::R7<Prototype1StateRunShape, ResolvedCampaignConfig>),
+    R8(typestate::R8<Prototype1StateRunShape, ResolvedCampaignConfig>),
+    R9(typestate::R9<Prototype1StateRunShape, ResolvedCampaignConfig>),
     R10(typestate::R10<Prototype1StateRunShape, ResolvedCampaignConfig>),
+    R11a(typestate::R11aRejectedOnly<Prototype1StateRunShape, ResolvedCampaignConfig>),
+    R11(typestate::R11FanoutComplete<Prototype1StateRunShape, ResolvedCampaignConfig>),
     R12(typestate::R12<Prototype1StateRunShape, ResolvedCampaignConfig>),
     R13a(typestate::R13aStopped<Prototype1StateRunShape, ResolvedCampaignConfig>),
     R13b(typestate::R13bHandoffCommitted<Prototype1StateRunShape, ResolvedCampaignConfig>),
     R13c(typestate::R13cHandoffIncomplete<Prototype1StateRunShape, ResolvedCampaignConfig>),
     R14a(typestate::R14aFinalStopped<Prototype1StateRunShape, ResolvedCampaignConfig>),
     R14b(typestate::R14bFinalHandoff<Prototype1StateRunShape, ResolvedCampaignConfig>),
+}
+
+impl EarlyState {
+    pub(crate) fn phase(&self) -> WalkPhase {
+        match self {
+            Self::R1(_) => WalkPhase::R1,
+            Self::R3(_) => WalkPhase::R3,
+            Self::R4a(_) => WalkPhase::R4a,
+            Self::R4b(_) => WalkPhase::R4b,
+            Self::R4c(_) => WalkPhase::R4c,
+            Self::R5(_) => WalkPhase::R5,
+            Self::R6(_) => WalkPhase::R6,
+            Self::R7(_) => WalkPhase::R7,
+            Self::R8(_) => WalkPhase::R8,
+            Self::R9(_) => WalkPhase::R9,
+            Self::R10(_) => WalkPhase::R10,
+            Self::R11a(_) => WalkPhase::R11a,
+            Self::R11(_) => WalkPhase::R11,
+            Self::R12(_) => WalkPhase::R12,
+            Self::R13a(_) => WalkPhase::R13a,
+            Self::R13b(_) => WalkPhase::R13b,
+            Self::R13c(_) => WalkPhase::R13c,
+            Self::R14a(_) => WalkPhase::R14a,
+            Self::R14b(_) => WalkPhase::R14b,
+        }
+    }
 }
 
 /// Result of a durable reconstruction attempt.
@@ -107,6 +137,55 @@ pub(crate) struct ReconstructionBlocker {
 /// parent identity, child terminality, branch evaluations, History, or checkout
 /// state.
 pub(crate) fn reconstruct_early(repo_root: &Path) -> Result<EarlySnapshot, PrepareError> {
+    reconstruct(repo_root, None)
+}
+
+/// Rebuild exactly the phase named by a verified controller-session cursor.
+///
+/// Pure projection edges such as R8 -> R9 -> R10 do not create filesystem
+/// evidence of their own. The durable controller journal therefore supplies
+/// the target boundary, while this function revalidates every production fact
+/// required to rebuild that exact typed carrier. R1 and R2a are deliberately
+/// excluded: the original command carrier is not yet durable, so rebuilding
+/// either phase from fallback defaults would fabricate authority.
+pub(crate) fn reconstruct_at(
+    repo_root: &Path,
+    target: WalkPhase,
+) -> Result<EarlySnapshot, PrepareError> {
+    if matches!(target, WalkPhase::R1 | WalkPhase::R2a) {
+        return Ok(EarlySnapshot {
+            state: None,
+            blocked: Some(ReconstructionBlocker {
+                phase: target,
+                detail: format!(
+                    "controller cursor at {target} cannot be resumed because the original Prototype1StateCommand carrier is not durable; controller sessions begin at R3"
+                ),
+            }),
+            campaign_id: None,
+            notes: Vec::new(),
+            blockers: Vec::new(),
+        });
+    }
+    let mut snapshot = reconstruct(repo_root, Some(target))?;
+    if snapshot.blocked.is_none() && snapshot.state.as_ref().map(EarlyState::phase) != Some(target)
+    {
+        let reached = snapshot
+            .state
+            .as_ref()
+            .map(EarlyState::phase)
+            .map_or_else(|| "none".to_string(), |phase| phase.to_string());
+        snapshot.state = None;
+        snapshot.blocked = Some(ReconstructionBlocker {
+            phase: target,
+            detail: format!(
+                "controller cursor requires {target}, but durable reconstruction reached {reached}"
+            ),
+        });
+    }
+    Ok(snapshot)
+}
+
+fn reconstruct(repo_root: &Path, target: Option<WalkPhase>) -> Result<EarlySnapshot, PrepareError> {
     let mut notes = Vec::new();
     let mut blockers = Vec::new();
     let identity_path = parent_identity_path(repo_root);
@@ -168,6 +247,14 @@ pub(crate) fn reconstruct_early(repo_root: &Path) -> Result<EarlySnapshot, Prepa
         }
     };
     notes.push("reconstructed R1 from campaign manifest and admitted run profile/defaults".into());
+    if target == Some(WalkPhase::R1) {
+        return Ok(state_snapshot(
+            EarlyState::R1(r1),
+            campaign_id,
+            notes,
+            blockers,
+        ));
+    }
 
     let r3 = match r1.advance(r1_to_r2a_or_r3) {
         Ok(typestate::R1Branch::R2a(r2a)) => {
@@ -208,6 +295,14 @@ pub(crate) fn reconstruct_early(repo_root: &Path) -> Result<EarlySnapshot, Prepa
         }
     };
     notes.push("reconstructed R3 from checkout parent identity".into());
+    if target == Some(WalkPhase::R3) {
+        return Ok(state_snapshot(
+            EarlyState::R3(r3),
+            campaign_id,
+            notes,
+            blockers,
+        ));
+    }
 
     let r4a = match r3.advance(r3_to_r4a) {
         Ok(r4a) => r4a,
@@ -226,6 +321,14 @@ pub(crate) fn reconstruct_early(repo_root: &Path) -> Result<EarlySnapshot, Prepa
         }
     };
     notes.push("reconstructed R4a by loading Parent<Unchecked>".into());
+    if target == Some(WalkPhase::R4a) {
+        return Ok(state_snapshot(
+            EarlyState::R4a(r4a),
+            campaign_id,
+            notes,
+            blockers,
+        ));
+    }
 
     let startup = match reconstruct_startup(r4a, handoff_invocation.as_deref()) {
         Ok(startup) => startup,
@@ -245,32 +348,61 @@ pub(crate) fn reconstruct_early(repo_root: &Path) -> Result<EarlySnapshot, Prepa
     };
 
     let r4c = match startup {
-        typestate::R4aStartupBranch::GenesisChecked(r4b) => match r4b.advance(r4b_to_r4c_genesis) {
-            Ok(r4c) => {
-                notes.push("reconstructed R4c from genesis startup validation".into());
-                r4c
-            }
-            Err(error) => {
-                blockers.push(format!("r4b_to_r4c_genesis blocked: {error}"));
-                return Ok(EarlySnapshot {
-                    state: Some(reconstruct_r4b(repo_root, &campaign_id).map(EarlyState::R4b)?),
-                    blocked: None,
-                    campaign_id: Some(campaign_id),
+        typestate::R4aStartupBranch::GenesisChecked(r4b) => {
+            if target == Some(WalkPhase::R4b) {
+                return Ok(state_snapshot(
+                    EarlyState::R4b(r4b),
+                    campaign_id,
                     notes,
                     blockers,
-                });
+                ));
             }
-        },
+            match r4b.advance(r4b_to_r4c_genesis) {
+                Ok(r4c) => {
+                    notes.push("reconstructed R4c from genesis startup validation".into());
+                    r4c
+                }
+                Err(error) => {
+                    blockers.push(format!("r4b_to_r4c_genesis blocked: {error}"));
+                    return Ok(EarlySnapshot {
+                        state: Some(reconstruct_r4b(repo_root, &campaign_id).map(EarlyState::R4b)?),
+                        blocked: None,
+                        campaign_id: Some(campaign_id),
+                        notes,
+                        blockers,
+                    });
+                }
+            }
+        }
         typestate::R4aStartupBranch::PredecessorReady(r4c) => {
             notes.push("reconstructed R4c from predecessor startup validation".into());
             r4c
         }
     };
+    if target == Some(WalkPhase::R4c) {
+        return Ok(state_snapshot(
+            EarlyState::R4c(r4c),
+            campaign_id,
+            notes,
+            blockers,
+        ));
+    }
 
     let typestate::R4cParts { collected, parent } = r4c.into_parts();
     if parent_start_recorded(repo_root, &campaign_id, parent.identity())? {
         notes.push("reconstructed R5 from matching parent-start journal evidence".into());
         let mut parts = collected.into_parts();
+        if target == Some(WalkPhase::R5) {
+            return Ok(state_snapshot(
+                EarlyState::R5(typestate::R5::from_collected_parent(
+                    parts.into_collected(),
+                    parent,
+                )),
+                campaign_id,
+                notes,
+                blockers,
+            ));
+        }
         if let Some(baseline) = load_parent_baseline(
             &parts.campaign_id,
             &parts.campaign_config,
@@ -279,6 +411,17 @@ pub(crate) fn reconstruct_early(repo_root: &Path) -> Result<EarlySnapshot, Prepa
         )? {
             parts.facts.parent_baseline = Some(baseline);
             notes.push("reconstructed R6 from durable parent baseline evidence".into());
+            if target == Some(WalkPhase::R6) {
+                return Ok(state_snapshot(
+                    EarlyState::R6(typestate::R6::from_collected_parent(
+                        parts.into_collected(),
+                        parent,
+                    )),
+                    campaign_id,
+                    notes,
+                    blockers,
+                ));
+            }
             match resolve_parent_policy_budget(
                 &parts.manifest_path,
                 &parts.run_shape,
@@ -288,6 +431,17 @@ pub(crate) fn reconstruct_early(repo_root: &Path) -> Result<EarlySnapshot, Prepa
                     parts.facts.complete_search_policy = policy;
                     parts.facts.plan_child_budget = Some(budget);
                     notes.push("reconstructed R7 from run policy and child budget inputs".into());
+                    if target == Some(WalkPhase::R7) {
+                        return Ok(state_snapshot(
+                            EarlyState::R7(typestate::R7::from_collected_parent(
+                                parts.into_collected(),
+                                parent,
+                            )),
+                            campaign_id,
+                            notes,
+                            blockers,
+                        ));
+                    }
                     let plan_path =
                         child_plan_message_path_for_parent(&parts.manifest_path, parent.identity());
                     if plan_path.exists() {
@@ -315,7 +469,8 @@ pub(crate) fn reconstruct_early(repo_root: &Path) -> Result<EarlySnapshot, Prepa
                                     parts.into_collected(),
                                     parent,
                                 );
-                                let state = reconstruct_after_r8(r8, &mut notes, &mut blockers)?;
+                                let state =
+                                    reconstruct_after_r8(r8, target, &mut notes, &mut blockers)?;
                                 return Ok(EarlySnapshot {
                                     state: Some(state),
                                     blocked: None,
@@ -380,15 +535,40 @@ pub(crate) fn reconstruct_early(repo_root: &Path) -> Result<EarlySnapshot, Prepa
 }
 // ANCHOR_END: prototype1_reconstruct_early
 
+fn state_snapshot(
+    state: EarlyState,
+    campaign_id: CampaignId,
+    notes: Vec<String>,
+    blockers: Vec<String>,
+) -> EarlySnapshot {
+    EarlySnapshot {
+        state: Some(state),
+        blocked: None,
+        campaign_id: Some(campaign_id),
+        notes,
+        blockers,
+    }
+}
+
 fn reconstruct_after_r8(
     r8: typestate::R8<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    target: Option<WalkPhase>,
     notes: &mut Vec<String>,
     blockers: &mut Vec<String>,
 ) -> Result<EarlyState, PrepareError> {
+    if target == Some(WalkPhase::R8) {
+        return Ok(EarlyState::R8(r8));
+    }
     let r9 = r8.advance(r8_to_r9)?;
     notes.push("reconstructed R9 by shaping existing child-plan schedule".into());
+    if target == Some(WalkPhase::R9) {
+        return Ok(EarlyState::R9(r9));
+    }
     let r10 = r9.advance(r9_to_r10)?;
     notes.push("reconstructed R10 by resolving selection strategy inputs".into());
+    if target == Some(WalkPhase::R10) {
+        return Ok(EarlyState::R10(r10));
+    }
 
     let typestate::SelectableParts { collected, parent } = r10.into_parts();
     let mut parts = collected.into_parts();
@@ -445,9 +625,12 @@ fn reconstruct_after_r8(
         let r11a =
             typestate::R11aRejectedOnly::from_collected_parent(parts.into_collected(), parent);
         notes.push("reconstructed R11a from rejected surface-attempt payloads".into());
+        if target == Some(WalkPhase::R11a) {
+            return Ok(EarlyState::R11a(r11a));
+        }
         let r12 = r11_to_r12(typestate::R10FanoutBranch::RejectedOnly(r11a))?;
         notes.push("reconstructed R12 report facts from rejected-only evidence".into());
-        return reconstruct_after_r12(r12, notes, blockers);
+        return reconstruct_after_r12(r12, target, notes, blockers);
     }
 
     let child_outcomes = match reconstruct_child_outcomes_from_store(
@@ -497,16 +680,23 @@ fn reconstruct_after_r8(
     notes.push(format!(
         "reconstructed R11 from {outcome_count} channel-derived child outcomes"
     ));
+    if target == Some(WalkPhase::R11) {
+        return Ok(EarlyState::R11(r11));
+    }
     let r12 = r11_to_r12(typestate::R10FanoutBranch::FanoutComplete(r11))?;
     notes.push("reconstructed R12 report facts from child outcomes".into());
-    reconstruct_after_r12(r12, notes, blockers)
+    reconstruct_after_r12(r12, target, notes, blockers)
 }
 
 fn reconstruct_after_r12(
     r12: typestate::R12<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    target: Option<WalkPhase>,
     notes: &mut Vec<String>,
     blockers: &mut Vec<String>,
 ) -> Result<EarlyState, PrepareError> {
+    if target == Some(WalkPhase::R12) {
+        return Ok(EarlyState::R12(r12));
+    }
     let typestate::SelectableParts { collected, parent } = r12.into_parts();
     let mut parts = collected.into_parts();
     if let Some((selection_decision, selection_material)) = parts.facts.selection.as_ref() {
@@ -594,7 +784,7 @@ fn reconstruct_after_r12(
                         "reconstructed R13b successor handoff from same-runtime checkout, sealed History, invocation, and acknowledgement evidence"
                             .into(),
                     );
-                    if !complete_recorded {
+                    if target == Some(WalkPhase::R13b) || !complete_recorded {
                         return Ok(EarlyState::R13b(r13b));
                     }
                     let typestate::RetiredParts { collected, parent } = r13b.into_parts();
@@ -682,7 +872,7 @@ fn reconstruct_after_r12(
             parent_complete_recorded(&parts.repo_root, &parts.campaign_id, parent.identity())?;
         let r13a = typestate::R13aStopped::from_collected_parent(parts.into_collected(), parent);
         notes.push("reconstructed R13a selected-successor stopped continuation from durable successor record".into());
-        if !complete_recorded {
+        if target == Some(WalkPhase::R13a) || !complete_recorded {
             return Ok(EarlyState::R13a(r13a));
         }
         let typestate::SelectableParts { collected, parent } = r13a.into_parts();
@@ -713,7 +903,7 @@ fn reconstruct_after_r12(
         "reconstructed R13a no-selection stopped continuation from absent successor selection"
             .into(),
     );
-    if !complete_recorded {
+    if target == Some(WalkPhase::R13a) || !complete_recorded {
         return Ok(EarlyState::R13a(r13a));
     }
 
@@ -1559,6 +1749,36 @@ mod tests {
 
     fn runtime(value: u128) -> RuntimeId {
         RuntimeId(Uuid::from_u128(value))
+    }
+
+    #[test]
+    fn command_phase_cursor_is_not_reconstructed_from_defaults() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+
+        for phase in [WalkPhase::R1, WalkPhase::R2a] {
+            let snapshot = reconstruct_at(tmp.path(), phase).expect("blocked snapshot");
+
+            assert!(snapshot.state.is_none());
+            let blocked = snapshot.blocked.expect("structured blocker");
+            assert_eq!(blocked.phase, phase);
+            assert!(blocked.detail.contains("original Prototype1StateCommand"));
+        }
+    }
+
+    #[test]
+    fn requested_phase_mismatch_is_not_promotable() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+
+        let snapshot = reconstruct_at(tmp.path(), WalkPhase::R3).expect("blocked snapshot");
+
+        assert!(snapshot.state.is_none());
+        let blocked = snapshot.blocked.expect("structured blocker");
+        assert_eq!(blocked.phase, WalkPhase::R3);
+        assert!(
+            blocked
+                .detail
+                .contains("durable reconstruction reached none")
+        );
     }
 
     fn successor(runtime_id: RuntimeId, state: successor::State) -> JournalEntry {
