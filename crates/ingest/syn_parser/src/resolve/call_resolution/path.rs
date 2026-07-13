@@ -4,7 +4,8 @@ use crate::{
         graph::GraphAccess,
         nodes::{
             AnyCallSiteId, AsAnyNodeId, CallArgument, CallBodyOwnerId, CallNode, ExecutableBodyId,
-            FunctionNodeId, MethodNodeId, PathCallCallee, PathCallNode,
+            FunctionNodeId, MethodCallNode, MethodCallReceiver, MethodNodeId, PathCallCallee,
+            PathCallNode,
         },
         relations::{CallRelation, CallResolutionKind, CallResolutionStatus, TypeRelation},
         types::{TypeNode, VisibilityKind},
@@ -31,6 +32,7 @@ pub(super) enum ParameterCallResolution {
 #[derive(Debug, Clone, Copy)]
 enum ParameterProof<'a> {
     Value,
+    CallableField(&'a str),
     Field(&'a [String]),
 }
 
@@ -470,6 +472,23 @@ impl CallRelationResolver<'_> {
         self.resolve_parameter_value_call_with_depth(
             owner,
             path,
+            ParameterProof::Value,
+            type_relations,
+            PARAMETER_FORWARDING_DEPTH,
+        )
+    }
+
+    pub(super) fn resolve_parameter_value_call_for_callable_field(
+        &self,
+        owner: CallBodyOwnerId,
+        path: &[String],
+        field_name: &str,
+        type_relations: &[TypeRelation],
+    ) -> Result<Option<ParameterCallResolution>, SynParserError> {
+        self.resolve_parameter_value_call_with_depth(
+            owner,
+            path,
+            ParameterProof::CallableField(field_name),
             type_relations,
             PARAMETER_FORWARDING_DEPTH,
         )
@@ -479,6 +498,7 @@ impl CallRelationResolver<'_> {
         &self,
         owner: CallBodyOwnerId,
         path: &[String],
+        proof: ParameterProof<'_>,
         type_relations: &[TypeRelation],
         depth: usize,
     ) -> Result<Option<ParameterCallResolution>, SynParserError> {
@@ -486,7 +506,7 @@ impl CallRelationResolver<'_> {
             return Ok(None);
         };
 
-        self.resolve_parameter_call(owner, name, ParameterProof::Value, type_relations, depth)
+        self.resolve_parameter_call(owner, name, proof, type_relations, depth)
     }
 
     pub(super) fn resolve_parameter_field_call(
@@ -606,6 +626,7 @@ impl CallRelationResolver<'_> {
                 }
             }
             ParameterOwner::Method(method_id) => {
+                let method_name = self.method_node(method_id)?.name.as_str();
                 for site in self.graph.call_sites() {
                     let CallNode::MethodCall(site) = site else {
                         continue;
@@ -634,6 +655,16 @@ impl CallRelationResolver<'_> {
                     };
                     extend_parameter_targets(&mut targets, resolution);
                 }
+                caller_count += self.resolve_unsupported_method_argument_callers(
+                    method_name,
+                    index,
+                    param_type,
+                    proof,
+                    expected_type,
+                    type_relations,
+                    depth,
+                    &mut targets,
+                )?;
             }
         }
 
@@ -744,16 +775,31 @@ impl CallRelationResolver<'_> {
     ) -> Result<bool, SynParserError> {
         match (proof, param_type) {
             (ParameterProof::Value, TypeNode::Function(_)) => Ok(true),
+            (ParameterProof::CallableField(_), TypeNode::Function(_)) => Ok(true),
             (ParameterProof::Value, param_type) if self.boxed_callable_type(param_type)? => {
+                Ok(true)
+            }
+            (ParameterProof::CallableField(_), param_type)
+                if self.boxed_callable_type(param_type)? =>
+            {
                 Ok(true)
             }
             (ParameterProof::Value, TypeNode::Named(node)) => {
                 self.owner_type_parameter_has_callable_bound(owner, &node.path)
             }
+            (ParameterProof::CallableField(_), TypeNode::Named(node)) => {
+                self.owner_type_parameter_has_callable_bound(owner, &node.path)
+            }
             (ParameterProof::Value, TypeNode::ImplTrait(node)) => {
                 self.bounds_include_callable_trait(&node.bounds)
             }
+            (ParameterProof::CallableField(_), TypeNode::ImplTrait(node)) => {
+                self.bounds_include_callable_trait(&node.bounds)
+            }
             (ParameterProof::Value, TypeNode::Reference(node)) => {
+                self.referenced_callable_type(node.referenced)
+            }
+            (ParameterProof::CallableField(_), TypeNode::Reference(node)) => {
                 self.referenced_callable_type(node.referenced)
             }
             (ParameterProof::Field(_), TypeNode::Named(_)) => Ok(true),
@@ -875,8 +921,14 @@ impl CallRelationResolver<'_> {
         depth: usize,
     ) -> Result<Option<ParameterCallResolution>, SynParserError> {
         match (proof, arg) {
-            (ParameterProof::Value, CallArgument::Path { path })
-            | (ParameterProof::Value, CallArgument::ReferencedPath { path }) => {
+            (
+                ParameterProof::Value | ParameterProof::CallableField(_),
+                CallArgument::Path { path },
+            )
+            | (
+                ParameterProof::Value | ParameterProof::CallableField(_),
+                CallArgument::ReferencedPath { path },
+            ) => {
                 if let Some(target) = self.resolve_argument_path(owner, path)? {
                     return Ok(Some(ParameterCallResolution::Exact(
                         ParameterCallTarget::Function(target),
@@ -885,19 +937,32 @@ impl CallRelationResolver<'_> {
                 if depth == 0 {
                     return Ok(None);
                 }
-                self.resolve_parameter_value_call_with_depth(owner, path, type_relations, depth - 1)
+                self.resolve_parameter_value_call_with_depth(
+                    owner,
+                    path,
+                    proof,
+                    type_relations,
+                    depth - 1,
+                )
             }
-            (ParameterProof::Value, CallArgument::BoxedPath { path })
-                if self.boxed_callable_type(param_type)? =>
-            {
+            (
+                ParameterProof::Value | ParameterProof::CallableField(_),
+                CallArgument::BoxedPath { path },
+            ) if self.boxed_callable_type(param_type)? => {
                 Ok(self.resolve_argument_path(owner, path)?.map(|target| {
                     ParameterCallResolution::Exact(ParameterCallTarget::Function(target))
                 }))
             }
-            (ParameterProof::Value, CallArgument::Closure { closure_id })
-            | (ParameterProof::Value, CallArgument::ClosureBinding { closure_id, .. }) => Ok(Some(
-                ParameterCallResolution::Exact(ParameterCallTarget::Closure(*closure_id)),
-            )),
+            (
+                ParameterProof::Value | ParameterProof::CallableField(_),
+                CallArgument::Closure { closure_id },
+            )
+            | (
+                ParameterProof::Value | ParameterProof::CallableField(_),
+                CallArgument::ClosureBinding { closure_id, .. },
+            ) => Ok(Some(ParameterCallResolution::Exact(
+                ParameterCallTarget::Closure(*closure_id),
+            ))),
             (
                 ParameterProof::Field(field_path),
                 CallArgument::Constructed { type_path, fields },
@@ -942,6 +1007,98 @@ impl CallRelationResolver<'_> {
             }
             _ => Ok(None),
         }
+    }
+
+    fn resolve_unsupported_method_argument_callers(
+        &self,
+        method_name: &str,
+        index: usize,
+        param_type: &TypeNode,
+        proof: ParameterProof<'_>,
+        expected_type: Option<&[String]>,
+        type_relations: &[TypeRelation],
+        depth: usize,
+        targets: &mut Vec<ParameterCallTarget>,
+    ) -> Result<usize, SynParserError> {
+        let mut caller_count = 0usize;
+
+        for site in self.graph.call_sites() {
+            let CallNode::MethodCall(site) = site else {
+                continue;
+            };
+            if site.method_name != method_name || site.arguments.len() <= index {
+                continue;
+            }
+            if !matches!(site.receiver, MethodCallReceiver::Unsupported) {
+                continue;
+            }
+            if !matches!(
+                self.resolve_method_call_target(site, type_relations)?,
+                AssocPathResolution::Unsupported
+            ) {
+                continue;
+            }
+            let Some(resolution) = self.resolve_unsupported_method_argument(
+                site,
+                &site.arguments[index],
+                param_type,
+                proof,
+                expected_type,
+                type_relations,
+                depth,
+            )?
+            else {
+                continue;
+            };
+            caller_count += 1;
+            extend_parameter_targets(targets, resolution);
+        }
+
+        Ok(caller_count)
+    }
+
+    fn resolve_unsupported_method_argument(
+        &self,
+        site: &MethodCallNode,
+        arg: &CallArgument,
+        param_type: &TypeNode,
+        proof: ParameterProof<'_>,
+        expected_type: Option<&[String]>,
+        type_relations: &[TypeRelation],
+        depth: usize,
+    ) -> Result<Option<ParameterCallResolution>, SynParserError> {
+        match (proof, arg) {
+            (ParameterProof::CallableField(field_name), CallArgument::Closure { closure_id })
+                if self.closure_body_calls_field_method(*closure_id, field_name) =>
+            {
+                self.resolve_call_argument(
+                    site.owner,
+                    arg,
+                    param_type,
+                    proof,
+                    expected_type,
+                    type_relations,
+                    depth,
+                )
+            }
+            _ => Ok(None),
+        }
+    }
+
+    fn closure_body_calls_field_method(
+        &self,
+        closure_id: ExecutableBodyId,
+        field_name: &str,
+    ) -> bool {
+        self.graph.call_sites().iter().any(|site| {
+            matches!(
+                site,
+                CallNode::MethodCall(site)
+                    if site.owner == CallBodyOwnerId::Executable(closure_id)
+                        && site.method_name == field_name
+                        && site.arg_count > 0
+            )
+        })
     }
 
     fn parameter_type_matches(

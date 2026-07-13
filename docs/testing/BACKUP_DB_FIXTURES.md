@@ -236,7 +236,7 @@ Post-regeneration verification:
   - `corpus_chrono_call_graph_2026-07-11.sqlite`:
     `8bdb2e4772f64e105b27f27e07cb2653059007dde3460e84cbe23e031a0f0e98`
   - `corpus_axum_call_graph_2026-07-13.sqlite`:
-    `e8a0dc7e5ef27a93ece5ae10f608c7e4b30d38c9c3d7e9eae1ca3b1886f74418`
+    `41a2292b822b37ac6276d337d601974da90f385279f79ec28faf4a0c77b4b470`
 
 ## 2026-07-13 Axum Tuple Extractor Generated Impl Refresh
 

@@ -96,13 +96,11 @@ fn axum_dynamic_callable_fields_preserve_supported_and_unsupported_boundaries()
     //   axum/src/boxed.rs:163 (self.layer)(self.inner.into_route(state)).call(request)
     //     boxed dynamic `LayerFn` trait object supplied by
     //     `BoxedIntoRoute::map(self, f)`. The finite visible candidate set is
-    //     supplied by the recorded method-body closure bindings:
+    //     supplied by the recorded method-body closure bindings and the
+    //     transparent `map_inner!` source expression:
     //       axum/src/routing/method_routing.rs:1026 `layer_fn`
     //       axum/src/routing/method_routing.rs:1070 `layer_fn`
-    //     `Router::layer` also supplies `|route| route.layer(layer)` at
-    //     axum/src/routing/mod.rs:307, but that closure is inside
-    //     `map_inner!` input and remains outside this proof until the
-    //     generated/macro-body bucket models that source.
+    //       axum/src/routing/mod.rs:307 `|route| route.layer(layer)`
     //   axum/src/serve/listener.rs:236 (self.tap_fn)(&mut io)
     //     generic `FnMut` field supplied by caller.
     let supported_owner = method_id_by_name_and_body_substring(
@@ -173,9 +171,16 @@ fn axum_dynamic_callable_fields_preserve_supported_and_unsupported_boundaries()
         "route_layer",
         "let layer_fn = move |svc| Route::new(layer.layer(svc));",
     )?;
+    let router_layer = method_id_by_name_body_and_file_suffix(
+        &db,
+        "layer",
+        "catch_all_fallback: this.catch_all_fallback.map(|route| route.layer(layer))",
+        "axum/src/routing/mod.rs",
+    )?;
     let mut expected_layer_candidates = vec![
         closure_owner_for_method_parent(&db, method_router_layer)?,
         closure_owner_for_method_parent(&db, method_router_route_layer)?,
+        closure_owner_for_method_parent(&db, router_layer)?,
     ];
     expected_layer_candidates.sort_unstable();
 

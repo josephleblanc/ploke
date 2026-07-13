@@ -154,8 +154,12 @@ impl CallRelationResolver<'_> {
                     continue;
                 }
                 matched = true;
-                let Some(resolution) =
-                    self.resolve_parameter_value_call(owner, &init.parameter_path, type_relations)?
+                let Some(resolution) = self.resolve_parameter_value_call_for_callable_field(
+                    owner,
+                    &init.parameter_path,
+                    field_name,
+                    type_relations,
+                )?
                 else {
                     return Ok(None);
                 };
@@ -182,9 +186,10 @@ impl CallRelationResolver<'_> {
                         continue;
                     }
                     matched = true;
-                    let Some(resolution) = self.resolve_parameter_value_call(
+                    let Some(resolution) = self.resolve_parameter_value_call_for_callable_field(
                         owner,
                         &init.parameter_path,
+                        field_name,
                         type_relations,
                     )?
                     else {
