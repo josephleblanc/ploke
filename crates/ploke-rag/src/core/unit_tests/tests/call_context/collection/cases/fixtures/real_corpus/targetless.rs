@@ -276,10 +276,12 @@ async fn call_context_collection_reads_axum_layer_dynamic_callable_candidates() 
     //   axum/src/boxed.rs:159 `(self.layer)(self.inner.into_route(state))`
     //   axum/src/boxed.rs:163 `(self.layer)(self.inner.into_route(state)).call(request)`
     // The reviewed finite candidates are the method-body `layer_fn` closures
-    // in `MethodRouter::layer` and `MethodRouter::route_layer`; the
-    // `Router::layer` macro-input closure remains outside this proof bucket.
+    // in `MethodRouter::layer` and `MethodRouter::route_layer`, plus the
+    // transparent `Router::layer` `map_inner!` source expression
+    // `|route| route.layer(layer)`.
     // Expected traversal: RAG exposes the candidate-only ambiguity and does
-    // not promote either candidate to an admitted traversal edge.
+    // not promote any candidate to an admitted traversal edge.
+    let expected = axum_layer_dynamic_candidate_ids(&db)?;
     for case in [
         DynamicCase {
             label: "axum/src/boxed.rs:159 Map::into_route layer trait object",
@@ -323,21 +325,7 @@ async fn call_context_collection_reads_axum_layer_dynamic_callable_candidates() 
             case.label
         );
         assert_eq!(call.arg_count, Some(1));
-        assert_eq!(call.status, CallStatusKind::Ambiguous);
-        assert_eq!(call.resolution, None);
-        assert_eq!(
-            call.targets.len(),
-            2,
-            "{} should expose both reviewed layer closure candidates: {call:#?}",
-            case.label
-        );
-        assert!(
-            call.targets
-                .iter()
-                .all(|target| target.relation == CallTargetKind::DynamicClosure),
-            "{} should expose only dynamic-closure candidates: {call:#?}",
-            case.label
-        );
+        assert_dynamic_candidates(call, &expected, CallTargetKind::DynamicClosure, case.label);
     }
 
     Ok(())
@@ -1242,6 +1230,48 @@ fn function_ids_by_names(db: &Database, names: &[&str]) -> Result<Vec<Uuid>, Err
         .collect::<Result<Vec<_>, _>>()?;
     ids.sort_unstable();
     Ok(ids)
+}
+
+fn axum_layer_dynamic_candidate_ids(db: &Database) -> Result<Vec<Uuid>, Error> {
+    let method_router_layer = method_id_by_name_and_body_substring(
+        db,
+        "layer",
+        "let layer_fn = move |route: Route<E>| route.layer(layer.clone());",
+    )?;
+    let method_router_route_layer = method_id_by_name_and_body_substring(
+        db,
+        "route_layer",
+        "let layer_fn = move |svc| Route::new(layer.layer(svc));",
+    )?;
+    let router_layer = method_id_by_name_body_and_file_suffix(
+        db,
+        "layer",
+        "catch_all_fallback: this.catch_all_fallback.map(|route| route.layer(layer))",
+        "axum/src/routing/mod.rs",
+    )?;
+
+    let mut ids = vec![
+        closure_owner_for_method_parent(db, method_router_layer)?,
+        closure_owner_for_method_parent(db, method_router_route_layer)?,
+        closure_owner_for_method_parent(db, router_layer)?,
+    ];
+    ids.sort_unstable();
+    Ok(ids)
+}
+
+fn method_id_by_name_body_and_file_suffix(
+    db: &Database,
+    name: &str,
+    body_marker: &str,
+    file_suffix: &str,
+) -> Result<Uuid, Error> {
+    let ids = method_ids_by_file(db, name, body_marker, file_suffix)?;
+    assert_eq!(
+        ids.len(),
+        1,
+        "expected exactly one method {name:?} with body marker {body_marker:?} in {file_suffix}: {ids:#?}"
+    );
+    Ok(ids[0])
 }
 
 fn function_id_by_exact_name(db: &Database, name: &str) -> Result<Uuid, Error> {

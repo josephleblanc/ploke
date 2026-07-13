@@ -468,6 +468,10 @@ mod tests {
         executable_owner_for_parent(db, parent, "Closure", "closure")
     }
 
+    fn closure_owner_for_method_parent(db: &Database, parent: Uuid) -> Result<Uuid, DbError> {
+        executable_owner_for_parent_kind(db, parent, "Method", "Closure", "closure")
+    }
+
     fn async_block_owner_for_parent(db: &Database, parent: Uuid) -> Result<Uuid, DbError> {
         executable_owner_for_parent(db, parent, "AsyncBlock", "async_block")
     }

@@ -2044,9 +2044,20 @@ fn axum_layer_dynamic_candidates(db: &Database) -> Vec<Uuid> {
         "MethodRouter::route_layer layer_fn closure",
     )
     .id;
+    let router_layer = owner_by_body(
+        db,
+        "layer",
+        "Router",
+        Some(&["crate", "routing"]),
+        "axum/src/routing/mod.rs",
+        "catch_all_fallback: this.catch_all_fallback.map(|route| route.layer(layer))",
+        "Router::layer map_inner closure",
+    )
+    .id;
     let mut candidates = vec![
         closure_owner_for_method_parent(db, layer),
         closure_owner_for_method_parent(db, route_layer),
+        closure_owner_for_method_parent(db, router_layer),
     ];
     candidates.sort_unstable();
     candidates
