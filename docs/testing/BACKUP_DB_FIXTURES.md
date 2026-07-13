@@ -236,7 +236,24 @@ Post-regeneration verification:
   - `corpus_chrono_call_graph_2026-07-11.sqlite`:
     `fa1b5b2337980cb7e953452b289c9241ee455d337b9a27a62f62dfd0bb852ba6`
   - `corpus_axum_call_graph_2026-07-13.sqlite`:
-    `7cf1100c52fabf182a2e1e48a4bb8ffa8052e9f552c71e80462acf4c8ba9d236`
+    `cc7f6f95c7a699c7275f067a974254ed9b9f261875776a9763fa4814381f7136`
+
+## 2026-07-13 Axum Composite Rejection Generated Delegation Refresh
+
+The `corpus_axum_call_graph` fixture was recreated with
+`cargo run -p xtask --features call_graph -- recreate-backup-db --fixture corpus_axum_call_graph`
+after bounded, module-specific `composite_rejection!` modeling began
+projecting generated rejection enums and their `IntoResponse` delegation impls.
+Generated zero-span method-call identity was also made occurrence-aware so
+repeated generated match arms keep distinct parser-local call-site IDs without
+weakening duplicate relation validation.
+
+Post-regeneration verification:
+
+- The recreated `corpus_axum_call_graph_2026-07-13.sqlite` shared snapshot was
+  copied into `tests/backup_dbs/` as the committed seed artifact.
+- Current seed checksum:
+  `cc7f6f95c7a699c7275f067a974254ed9b9f261875776a9763fa4814381f7136`.
 
 ## 2026-07-12 Axum Middleware Service Generated Frontier Refresh
 
@@ -1368,6 +1385,11 @@ Expected searchable corpus embedding config:
   - `*_service(...)` callsites reach generated top-level service functions
     projected from the bounded `top_level_service_fn!` item-position macro
     invocations
+  - `QueryRejection::into_response` reaches generated
+    `FailedToDeserializeQueryString::into_response` through the
+    `Self::FailedToDeserializeQueryString(inner)`
+    enum-variant binding projected from the bounded `composite_rejection!`
+    item-position macro invocation
   - axum `TestClient::new` reaches the cfg-gated local test helper target for
     168 projected structural rows through nested glob re-export rows,
     inherited parent glob imports, direct `test_helpers::TestClient` imports,

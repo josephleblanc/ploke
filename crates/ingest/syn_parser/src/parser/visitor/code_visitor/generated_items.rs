@@ -2,8 +2,8 @@ use proc_macro2::TokenStream;
 use quote::{ToTokens, format_ident, quote};
 use syn::parse::{Parse, ParseStream};
 use syn::{
-    Attribute, Generics, Ident, ItemFn, ItemImpl, ItemMacro, ItemStruct, LitStr, ReturnType, Token,
-    Type, Visibility, bracketed, parenthesized,
+    Attribute, Generics, Ident, ItemEnum, ItemFn, ItemImpl, ItemMacro, ItemStruct, LitStr,
+    ReturnType, Token, Type, Visibility, braced, bracketed, parenthesized,
 };
 
 use super::*;
@@ -112,6 +112,8 @@ impl Parse for ImplService {
 }
 
 struct DefineRejection {
+    attrs: Vec<Attribute>,
+    vis: Visibility,
     status: Ident,
     body: LitStr,
     name: Ident,
@@ -122,8 +124,8 @@ impl Parse for DefineRejection {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         let status = parse_ident_attr(input, "status")?;
         let body = parse_lit_attr(input, "body")?;
-        let _attrs = Attribute::parse_outer(input)?;
-        let _vis: Visibility = input.parse()?;
+        let attrs = Attribute::parse_outer(input)?;
+        let vis: Visibility = input.parse()?;
         input.parse::<Token![struct]>()?;
         let name: Ident = input.parse()?;
         let has_error = if input.peek(syn::token::Paren) {
@@ -143,10 +145,52 @@ impl Parse for DefineRejection {
         }
 
         Ok(Self {
+            attrs,
+            vis,
             status,
             body,
             name,
             has_error,
+        })
+    }
+}
+
+struct CompositeRejection {
+    attrs: Vec<Attribute>,
+    vis: Visibility,
+    name: Ident,
+    variants: Vec<Ident>,
+}
+
+impl Parse for CompositeRejection {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let attrs = Attribute::parse_outer(input)?;
+        let vis: Visibility = input.parse()?;
+        input.parse::<Token![enum]>()?;
+        let name: Ident = input.parse()?;
+
+        let content;
+        braced!(content in input);
+        let mut variants = Vec::new();
+        while !content.is_empty() {
+            variants.push(content.parse()?);
+            if content.is_empty() {
+                break;
+            }
+            content.parse::<Token![,]>()?;
+        }
+        if variants.is_empty() {
+            return Err(content.error("unsupported composite_rejection! empty enum"));
+        }
+        if !input.is_empty() {
+            return Err(input.error("unsupported composite_rejection! trailing tokens"));
+        }
+
+        Ok(Self {
+            attrs,
+            vis,
+            name,
+            variants,
         })
     }
 }
@@ -202,6 +246,20 @@ impl<'a> CodeVisitor<'a> {
                 return;
             };
             self.record_define_rejection(item, input);
+            return;
+        }
+
+        if item.mac.path.is_ident("composite_rejection")
+            && self.current_module_is_one_of(&[
+                &["crate", "extract", "rejection"],
+                &["crate", "extract", "multipart"],
+                &["crate", "extract", "ws", "rejection"],
+            ])
+        {
+            let Ok(input) = syn::parse2::<CompositeRejection>(item.mac.tokens.clone()) else {
+                return;
+            };
+            self.record_composite_rejection(item, input);
             return;
         }
 
@@ -341,10 +399,24 @@ impl<'a> CodeVisitor<'a> {
     }
 
     fn record_define_rejection(&mut self, item: &ItemMacro, input: DefineRejection) {
+        let Some(mut struct_item) = define_rejection_struct_item(&input) else {
+            return;
+        };
         let Some(items) = define_rejection_items(&input) else {
             return;
         };
+        struct_item.attrs.extend(item.attrs.clone());
+        syn::visit::Visit::visit_item_struct(self, &struct_item);
         self.record_generated_impls(item, items);
+    }
+
+    fn record_composite_rejection(&mut self, item: &ItemMacro, input: CompositeRejection) {
+        let Some((mut enum_item, impl_item)) = composite_rejection_items(&input) else {
+            return;
+        };
+        enum_item.attrs.extend(item.attrs.clone());
+        syn::visit::Visit::visit_item_enum(self, &enum_item);
+        self.record_generated_impls(item, [impl_item]);
     }
 
     fn record_impl_handler_tuples(&mut self, item: &ItemMacro) {
@@ -666,6 +738,27 @@ fn define_rejection_items(input: &DefineRejection) -> Option<Vec<ItemImpl>> {
     Some(vec![inherent, response])
 }
 
+fn define_rejection_struct_item(input: &DefineRejection) -> Option<ItemStruct> {
+    let attrs = &input.attrs;
+    let vis = &input.vis;
+    let name = &input.name;
+
+    if input.has_error {
+        parse_item(quote! {
+            #(#attrs)*
+            #[derive(Debug)]
+            #vis struct #name(pub(crate) Error);
+        })
+    } else {
+        parse_item(quote! {
+            #(#attrs)*
+            #[derive(Debug)]
+            #[non_exhaustive]
+            #vis struct #name;
+        })
+    }
+}
+
 fn define_rejection_inherent_item(input: &DefineRejection) -> Option<ItemImpl> {
     let name = &input.name;
     let status = &input.status;
@@ -730,6 +823,38 @@ fn define_rejection_response_item(input: &DefineRejection) -> Option<ItemImpl> {
             }
         }
     })
+}
+
+fn composite_rejection_items(input: &CompositeRejection) -> Option<(ItemEnum, ItemImpl)> {
+    let attrs = &input.attrs;
+    let vis = &input.vis;
+    let name = &input.name;
+    let variants = &input.variants;
+
+    let enum_item = parse_item(quote! {
+        #(#attrs)*
+        #[derive(Debug)]
+        #[non_exhaustive]
+        #vis enum #name {
+            #(
+                #[allow(missing_docs)]
+                #variants(#variants),
+            )*
+        }
+    })?;
+    let impl_item = parse_item(quote! {
+        impl IntoResponse for #name {
+            fn into_response(self) -> Response {
+                match self {
+                    #(
+                        Self::#variants(inner) => inner.into_response(),
+                    )*
+                }
+            }
+        }
+    })?;
+
+    Some((enum_item, impl_item))
 }
 
 fn handler_impl_item(arity: usize) -> Option<ItemImpl> {

@@ -52,6 +52,80 @@ fn axum_real_target_define_rejection_generated_methods_resolve() -> Result<(), D
     Ok(())
 }
 
+#[test]
+fn axum_real_target_composite_rejection_generated_variant_delegates() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Matrix: bounded generated `composite_rejection!` enum delegation.
+    // Source chain:
+    //   axum-core/src/macros.rs:154-180 defines `__composite_rejection!`.
+    //   axum/src/extract/rejection.rs:92-100 invokes it for
+    //   `QueryRejection { FailedToDeserializeQueryString }`.
+    //   axum/src/extract/rejection.rs:84-90 invokes `define_rejection!`
+    //   for `FailedToDeserializeQueryString`.
+    //
+    // Expected traversal:
+    //   the generated `IntoResponse::into_response` owner for
+    //   `QueryRejection` matches `self`, binds the enum payload as `inner`,
+    //   and calls `inner.into_response()`. The enum-variant receiver proof
+    //   resolves that call in one edge to generated
+    //   `FailedToDeserializeQueryString::into_response`.
+    let owner = method_id_by_name_body_and_file_suffix(
+        &db,
+        "into_response",
+        "Self::FailedToDeserializeQueryString(inner)=>inner.into_response()",
+        "axum/src/extract/rejection.rs",
+    )?;
+    assert_method_owner_type(
+        &db,
+        owner,
+        "into_response",
+        "QueryRejection",
+        "axum QueryRejection generated into_response owner",
+    )?;
+
+    let context = db.call_context_for_owner(owner)?;
+    let receiver = CallReceiver::EnumVariantBinding {
+        name: "inner".to_string(),
+        enum_path: path(&["Self"]),
+        variant_name: "FailedToDeserializeQueryString".to_string(),
+        field_index: 0,
+    };
+    let row = row_by_method_receiver(&context, "into_response", &receiver);
+    assert_eq!(
+        row.targets.len(),
+        1,
+        "QueryRejection inner.into_response should resolve to one target: {row:#?}"
+    );
+    let target = row.targets[0].target_id;
+    assert_method_owner_type(
+        &db,
+        target,
+        "into_response",
+        "FailedToDeserializeQueryString",
+        "axum FailedToDeserializeQueryString generated into_response target",
+    )?;
+    assert_resolved_target(
+        row,
+        target,
+        CallRelationKind::Method,
+        CallSiteKind::Method,
+        CallTargetKind::Method,
+    );
+    assert_one_edge_traversal(
+        &db,
+        TraversalExpectation {
+            label: "axum QueryRejection generated inner.into_response delegation",
+            owner,
+            target,
+            site_id: row.site.id,
+            expected_edge_count: 1,
+        },
+    )?;
+
+    Ok(())
+}
+
 fn assert_generated_rejection_method(
     db: &Database,
     owner: Uuid,

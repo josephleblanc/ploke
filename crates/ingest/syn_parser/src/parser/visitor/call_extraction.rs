@@ -4,6 +4,8 @@
 //! stops at structural facts: no target method/function resolution is attempted
 //! here.
 
+use std::collections::BTreeMap;
+
 use syn::spanned::Spanned;
 use syn::visit::{self, Visit};
 
@@ -25,7 +27,7 @@ use crate::parser::nodes::{
     generate_dynamic_call_site_id, generate_local_item_body_id, generate_macro_call_site_id,
     generate_method_call_site_id, generate_path_call_site_id,
 };
-use crate::parser::relations::CallSiteRelation;
+use crate::parser::{nodes::CallSiteKind, relations::CallSiteRelation};
 
 /// Extracts structural call-site facts from one function-like body.
 ///
@@ -53,6 +55,7 @@ pub(super) fn extract_body_call_sites(
         relations: Vec::new(),
         executable_bodies: Vec::new(),
         awaited_call_spans: Vec::new(),
+        zero_span_keys: BTreeMap::new(),
         unsafe_depth: 0,
     };
     visitor.visit_block(block);
@@ -80,6 +83,7 @@ pub(super) fn extract_expr_call_sites(
         relations: Vec::new(),
         executable_bodies: Vec::new(),
         awaited_call_spans: Vec::new(),
+        zero_span_keys: BTreeMap::new(),
         unsafe_depth: 0,
     };
     visitor.visit_expr(expr);
@@ -96,6 +100,7 @@ struct BodyCallVisitor<'a> {
     relations: Vec<CallSiteRelation>,
     executable_bodies: Vec<ExecutableBodyNode>,
     awaited_call_spans: Vec<(usize, usize)>,
+    zero_span_keys: BTreeMap<(CallSiteKind, String), usize>,
     unsafe_depth: usize,
 }
 
@@ -292,7 +297,8 @@ impl BodyCallVisitor<'_> {
         let method_name = call.method.to_string();
         let byte_range = call.span().byte_range();
         let span = (byte_range.start, byte_range.end);
-        let id = generate_method_call_site_id(self.owner, &method_name, span, self.cfgs);
+        let id_key = self.method_call_key(&method_name, span);
+        let id = generate_method_call_site_id(self.owner, &id_key, span, self.cfgs);
         let target = id.into();
 
         self.calls.push(CallNode::MethodCall(MethodCallNode {
@@ -320,6 +326,27 @@ impl BodyCallVisitor<'_> {
             source: self.owner,
             target,
         });
+    }
+
+    fn method_call_key(&mut self, method_name: &str, span: (usize, usize)) -> String {
+        if span != (0, 0) {
+            return method_name.to_string();
+        }
+
+        // Quoted generated bodies can assign (0, 0) to repeated call
+        // expressions. Keep the public method name unchanged on MethodCallNode,
+        // but make the parser-local call-site identity key occurrence-aware.
+        let count = self
+            .zero_span_keys
+            .entry((CallSiteKind::Method, method_name.to_string()))
+            .or_insert(0);
+        let key = if *count == 0 {
+            method_name.to_string()
+        } else {
+            format!("{method_name}#{}", *count)
+        };
+        *count += 1;
+        key
     }
 }
 
@@ -496,6 +523,7 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
                 relations: Vec::new(),
                 executable_bodies: Vec::new(),
                 awaited_call_spans: Vec::new(),
+                zero_span_keys: BTreeMap::new(),
                 unsafe_depth: 0,
             };
             visitor.visit_block(&method.block);
@@ -534,6 +562,7 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
             relations: Vec::new(),
             executable_bodies: Vec::new(),
             awaited_call_spans: Vec::new(),
+            zero_span_keys: BTreeMap::new(),
             unsafe_depth: self.unsafe_depth,
         };
         visitor.visit_expr(closure.body.as_ref());
@@ -566,6 +595,7 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
             relations: Vec::new(),
             executable_bodies: Vec::new(),
             awaited_call_spans: Vec::new(),
+            zero_span_keys: BTreeMap::new(),
             unsafe_depth: self.unsafe_depth,
         };
         visitor.visit_block(&async_block.block);
@@ -605,6 +635,7 @@ impl BodyCallVisitor<'_> {
             relations: Vec::new(),
             executable_bodies: Vec::new(),
             awaited_call_spans: Vec::new(),
+            zero_span_keys: BTreeMap::new(),
             unsafe_depth: 0,
         };
         visitor.visit_expr(item_const.expr.as_ref());
@@ -624,6 +655,7 @@ impl BodyCallVisitor<'_> {
             relations: Vec::new(),
             executable_bodies: Vec::new(),
             awaited_call_spans: Vec::new(),
+            zero_span_keys: BTreeMap::new(),
             unsafe_depth: 0,
         };
         visitor.visit_expr(item_static.expr.as_ref());
@@ -656,6 +688,7 @@ impl BodyCallVisitor<'_> {
             relations: Vec::new(),
             executable_bodies: Vec::new(),
             awaited_call_spans: Vec::new(),
+            zero_span_keys: BTreeMap::new(),
             unsafe_depth: 0,
         };
         visitor.visit_block(item_fn.block.as_ref());
