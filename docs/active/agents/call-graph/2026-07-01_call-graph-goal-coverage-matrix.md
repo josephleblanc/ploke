@@ -3109,6 +3109,17 @@ verifies the same enum-variant receiver edge through RAG `collect_call_context`
 and exact `code_item_lookup` / `code_item_edges` tool payloads with
 `owner_trait=IntoResponse` and `owner_type=QueryRejection`.
 
+Update 2026-07-13: the dynamic callable-value row now includes one adjacent
+same-block async poll proof for indexed array storage. The fixture
+`call_awaited_async_closure_future_indexed_array_with_body_call()` records
+`let futures = [closure()]; futures[0].await;` by keying the original
+`closure()` call as `futures.0`. Parser extraction marks only that source-visible
+async-closure future call as awaited, then the existing resolver emits the
+async-closure owner edge. Parser, DB traversal, RAG call-context, and exact
+`code_item_lookup` / `code_item_edges` assertions cover this bounded array-index
+shape. Returned futures, non-literal indexes, arbitrary aggregate aliases, and
+general poll/resume semantics remain out of scope.
+
 ## Parking Lot
 
 - Add binding tracking plan that ties syntax body ownership, local bindings, and type graph edges before attempting receiver/dynamic traversal.
