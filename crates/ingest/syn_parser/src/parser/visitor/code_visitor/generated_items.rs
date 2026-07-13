@@ -199,6 +199,7 @@ impl Parse for CompositeRejection {
 enum MiddlewareService {
     FromFn,
     MapRequest,
+    MapResponse,
 }
 
 impl<'a> CodeVisitor<'a> {
@@ -298,6 +299,21 @@ impl<'a> CodeVisitor<'a> {
                 return;
             };
             self.record_error_handling_impl_service(item, input);
+            return;
+        }
+
+        if item.mac.path.is_ident("impl_service")
+            && self.current_module_is(&["crate", "middleware", "map_response"])
+        {
+            let Ok(input) = syn::parse2::<ImplService>(item.mac.tokens.clone()) else {
+                return;
+            };
+            let Some(item_impl) =
+                middleware_impl_service_item(MiddlewareService::MapResponse, input.params.len())
+            else {
+                return;
+            };
+            self.record_generated_impls(item, [item_impl]);
         }
     }
 
@@ -1002,35 +1018,57 @@ fn error_handling_impl_service_item(input: &ImplService) -> Option<ItemImpl> {
 }
 
 fn middleware_impl_service_item(kind: MiddlewareService, arity: usize) -> Option<ItemImpl> {
-    if !(1..=16).contains(&arity) {
-        return None;
-    }
-
-    let params = (1..=arity)
-        .map(|index| format_ident!("T{}", index))
-        .collect::<Vec<_>>();
-    let parts = &params[..params.len() - 1];
-    let last = params.last()?;
-
     match kind {
-        MiddlewareService::FromFn => parse_item(quote! {
-            impl<F, S, I, #(#parts,)* #last> Service<Request>
-                for FromFn<F, S, I, (#(#parts,)* #last,)>
-            {
-                fn call(&mut self, req: Request) -> Self::Future {
-                    std::mem::replace(&mut self.inner, not_ready_inner);
-                }
+        MiddlewareService::FromFn | MiddlewareService::MapRequest => {
+            if !(1..=16).contains(&arity) {
+                return None;
             }
-        }),
-        MiddlewareService::MapRequest => parse_item(quote! {
-            impl<F, S, I, B, #(#parts,)* #last> Service<Request<B>>
-                for MapRequest<F, S, I, (#(#parts,)* #last,)>
-            {
-                fn call(&mut self, req: Request<B>) -> Self::Future {
-                    std::mem::replace(&mut self.inner, not_ready_inner);
-                }
+            let params = (1..=arity)
+                .map(|index| format_ident!("T{}", index))
+                .collect::<Vec<_>>();
+            let parts = &params[..params.len() - 1];
+            let last = params.last()?;
+
+            match kind {
+                MiddlewareService::FromFn => parse_item(quote! {
+                    impl<F, S, I, #(#parts,)* #last> Service<Request>
+                        for FromFn<F, S, I, (#(#parts,)* #last,)>
+                    {
+                        fn call(&mut self, req: Request) -> Self::Future {
+                            std::mem::replace(&mut self.inner, not_ready_inner);
+                        }
+                    }
+                }),
+                MiddlewareService::MapRequest => parse_item(quote! {
+                    impl<F, S, I, B, #(#parts,)* #last> Service<Request<B>>
+                        for MapRequest<F, S, I, (#(#parts,)* #last,)>
+                    {
+                        fn call(&mut self, req: Request<B>) -> Self::Future {
+                            std::mem::replace(&mut self.inner, not_ready_inner);
+                        }
+                    }
+                }),
+                MiddlewareService::MapResponse => None,
             }
-        }),
+        }
+        MiddlewareService::MapResponse => {
+            if arity > 16 {
+                return None;
+            }
+            let params = (1..=arity)
+                .map(|index| format_ident!("T{}", index))
+                .collect::<Vec<_>>();
+
+            parse_item(quote! {
+                impl<F, Fut, S, I, B, ResBody #(, #params)*> Service<Request<B>>
+                    for MapResponse<F, S, I, (#(#params,)*)>
+                {
+                    fn call(&mut self, req: Request<B>) -> Self::Future {
+                        std::mem::replace(&mut self.inner, not_ready_inner);
+                    }
+                }
+            })
+        }
     }
 }
 

@@ -230,13 +230,13 @@ Post-regeneration verification:
   all registered active fixtures.
 - Current committed seed checksums:
   - `corpus_memchr_call_graph_2026-07-13.sqlite`:
-    `8bdc7c0d69552d40e0af2499fb8c91fe9b84b63396156d680a414008b271b287`
+    `644a8d158b201ee8d6f3874aa26e34328b579a8c67af19884f246510dfceffee`
   - `corpus_generic_array_call_graph_2026-07-11.sqlite`:
-    `d65999f5f9cc9cc4ea183ad7be33bcca03ee1b5a4d65aaa121ce8d6a93f7f295`
+    `9ef79d23ab1e25743ec06ede708a365eb5a424201c264630ac612f8e23275d79`
   - `corpus_chrono_call_graph_2026-07-11.sqlite`:
-    `1f8993732f42927e54ad153909b64861cf0761a7edb70f07b17936765ddd9174`
+    `8bdb2e4772f64e105b27f27e07cb2653059007dde3460e84cbe23e031a0f0e98`
   - `corpus_axum_call_graph_2026-07-13.sqlite`:
-    `2892bfa19635dc71ee62babc87cdadd8c8409272c493f3f3cf9e79fb41eb4bfc`
+    `e8a0dc7e5ef27a93ece5ae10f608c7e4b30d38c9c3d7e9eae1ca3b1886f74418`
 
 ## 2026-07-13 Axum Tuple Extractor Generated Impl Refresh
 
@@ -296,11 +296,30 @@ Post-regeneration verification:
   passed.
 - Current seed checksum:
   `e2e0d8fbd76cf4924560e80723fff6812de29309c5d796bdc2c27ea29b1f37d0`.
-- The axum real-target matrix now asserts thirty-four external targetless
+- The axum real-target matrix asserted thirty-four external targetless
   `std::mem::replace` rows: the existing hand-written `error_handling` and
   `response/sse` rows plus sixteen generated `from_fn` rows and sixteen
-  generated `map_request` rows. The same-named `map_response` middleware macro
-  remains out of scope for this bounded template slice.
+  generated `map_request` rows. The 2026-07-13 refresh below supersedes this
+  count with bounded `map_response` generated rows.
+
+## 2026-07-13 Axum MapResponse Middleware Generated Frontier Refresh
+
+The active call-graph fixtures were regenerated with
+`cargo run -p xtask --features call_graph -- fixtures regenerate --active`
+after bounded, module-specific `impl_service!(...)` modeling began projecting
+generated `Service::call` frontier rows for
+`axum/src/middleware/map_response.rs`.
+
+Post-regeneration verification:
+
+- `cargo run -p xtask --features call_graph -- verify-backup-dbs` passed for
+  all registered active fixtures.
+- The axum real-target matrix now asserts fifty-one external targetless
+  `std::mem::replace` rows: the existing hand-written `error_handling` and
+  `response/sse` rows plus sixteen generated `from_fn` rows, sixteen generated
+  `map_request` rows, and seventeen generated `map_response` rows.
+- Current committed seed checksums are listed in the 2026-07-13 active
+  call-graph fixture regeneration block above.
 
 ## 2026-07-12 Memchr Generated IFunc Call Refresh
 

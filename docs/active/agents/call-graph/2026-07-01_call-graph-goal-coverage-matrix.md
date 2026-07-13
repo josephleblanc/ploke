@@ -135,24 +135,24 @@ summary-derived effects, or local traversal edges.
 
 Latest completed slice: bounded axum middleware `impl_service!` generated
 external frontier rows. The real-corpus axum macro sources
-`axum/src/middleware/from_fn.rs:244-302` and
-`axum/src/middleware/map_request.rs:245-298` are invoked through
-`all_the_tuples!(impl_service)`. Parser generated-item modeling now projects
-module-specific `Service::call` owners for those two templates and preserves
-their `std::mem::replace(&mut self.inner, not_ready_inner)` rows as targetless
-`External` std-root frontiers. The regenerated
-`corpus_axum_call_graph_2026-07-12.sqlite` fixture and ploke-db real-target
-matrix prove thirty-four total `std::mem::replace` rows: the two existing
-hand-written rows plus sixteen generated `from_fn` rows and sixteen generated
-`map_request` rows. RAG call-context collection now asserts the sixteen
-generated `from_fn` owners preserve one targetless external `std::mem::replace`
-row each. Exact TUI lookup/edge tools are not extended for this chunk because
-the generated arities produce duplicate `call` methods with the same public
-coordinate tuple; adding a tool assertion needs an addressability extension
-rather than a brittle representative pick. This remains bounded to the reviewed
-external-frontier source row; it does not add arbitrary macro expansion, local
-traversal for `std::mem::replace`, or the same-named `map_response` middleware
-macro template.
+`axum/src/middleware/from_fn.rs:244-302`,
+`axum/src/middleware/map_request.rs:245-298`, and
+`axum/src/middleware/map_response.rs:244-302` are invoked through
+`all_the_tuples!(impl_service)` or direct `impl_service!(...)` arity
+invocations. Parser generated-item modeling now projects module-specific
+`Service::call` owners for those templates and preserves their
+`std::mem::replace(&mut self.inner, not_ready_inner)` rows as targetless
+`External` std-root frontiers. The regenerated active axum fixture and
+ploke-db real-target matrix prove fifty-one total `std::mem::replace` rows: the
+two existing hand-written rows plus sixteen generated `from_fn` rows, sixteen
+generated `map_request` rows, and seventeen generated `map_response` rows. RAG
+call-context collection asserts the representative generated owners preserve
+targetless external `std::mem::replace` rows. Exact TUI lookup/edge tools are
+not extended for every generated arity because duplicate `call` methods share
+the same public coordinate tuple; adding exhaustive tool assertions needs an
+addressability extension rather than a brittle representative pick. This
+remains bounded to the reviewed external-frontier source row; it does not add
+arbitrary macro expansion or local traversal for `std::mem::replace`.
 
 Recent completed slice: direct self-field function-pointer initializer
 candidates. The fixture-backed source oracle

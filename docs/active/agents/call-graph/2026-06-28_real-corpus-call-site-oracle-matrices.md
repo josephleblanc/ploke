@@ -66,15 +66,15 @@ one-hop `parse_attrs` edges, including the explicit
 `crate::attr_parsing::parse_attrs` row through the file-module declaration at
 `axum-macros/src/lib.rs:9` and three nested closure-body rows from
 `from_request/mod.rs:471,1029,1039`. The external path test asserts
-`serde_json::Deserializer::from_slice` and thirty-four targetless external
+`serde_json::Deserializer::from_slice` and fifty-one targetless external
 `std::mem::replace` rows: the hand-written rows at
 `axum/src/error_handling/mod.rs:138` and
 `axum/src/response/sse.rs:449`, plus sixteen generated
 `middleware/from_fn.rs:285` rows and sixteen generated
 `middleware/map_request.rs:281` rows from bounded module-specific
-`all_the_tuples!(impl_service)` modeling. The same-named
-`middleware/map_response.rs:260` template remains absent from this fixture
-slice. The routing helper
+`all_the_tuples!(impl_service)` modeling, plus seventeen generated
+`middleware/map_response.rs:260` rows from bounded direct `impl_service!(...)`
+arity modeling. The routing helper
 test now asserts the two normal-build `tap_inner!` source-input closure rows at
 `axum/src/routing/mod.rs:410,430`, both resolving to
 `take_route_or_internal_error`; the debug-only

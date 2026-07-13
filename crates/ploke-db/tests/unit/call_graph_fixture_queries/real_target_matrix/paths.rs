@@ -603,8 +603,7 @@ fn axum_real_target_external_path_rows_remain_targetless() -> Result<(), DbError
     //   `std::mem::replace(...)`.
     // Expected traversal: zero local call edges. The current fixture projects
     // std-root rows as external, including the bounded generated middleware
-    // `from_fn` and `map_request` wrapper-body rows. The unrelated
-    // `map_response` macro template remains absent for this slice.
+    // `from_fn`, `map_request`, and `map_response` wrapper-body rows.
     let json_owner = method_id_by_name_and_body_substring(
         &db,
         "from_bytes",
@@ -660,7 +659,7 @@ fn axum_real_target_external_path_rows_remain_targetless() -> Result<(), DbError
         &db,
         &["std", "mem", "replace"],
         CallStatusKind::External,
-        34,
+        51,
     )?;
     assert_no_method_owner_by_body_and_file_suffix(
         &db,
@@ -680,6 +679,11 @@ fn axum_real_target_external_path_rows_remain_targetless() -> Result<(), DbError
             "axum/src/middleware/from_fn.rs:285",
             "axum/src/middleware/from_fn.rs",
             16,
+        ),
+        (
+            "axum/src/middleware/map_response.rs:260",
+            "axum/src/middleware/map_response.rs",
+            17,
         ),
     ] {
         let owners = method_ids_by_name_body_and_file_suffix(
@@ -703,14 +707,6 @@ fn axum_real_target_external_path_rows_remain_targetless() -> Result<(), DbError
             )?;
         }
     }
-
-    assert_no_method_owner_by_body_and_file_suffix(
-        &db,
-        "call",
-        "std::mem::replace(&mut self.inner, not_ready_inner)",
-        "axum/src/middleware/map_response.rs",
-        "axum/src/middleware/map_response.rs:260",
-    )?;
 
     Ok(())
 }
