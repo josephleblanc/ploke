@@ -15,8 +15,8 @@ use super::super::{
     CallGuardReport, CallImpactReport, CallNodeInfo, CallPath, CallPathEdge, CallPathOptions,
     CallProofInvariantFinding, CallReachEffect, CallReachReport, CallRelationKind, CallSiteBucket,
     CallSiteKind, CallSiteRow, CallStatusKind, CallTestEntrypoint, CrateBoundaryEdge,
-    ExternalSummaryNeed, ModuleBoundaryEdge, ModuleBoundaryPolicyRule,
-    ModuleBoundaryPolicyViolation, RuntimeDispatchNeed,
+    CrateBoundaryPolicyRule, CrateBoundaryPolicyViolation, ExternalSummaryNeed, ModuleBoundaryEdge,
+    ModuleBoundaryPolicyRule, ModuleBoundaryPolicyViolation, RuntimeDispatchNeed,
 };
 use super::metadata::{call_node_info_rank, call_node_infos, decode_call_node_info};
 
@@ -841,6 +841,50 @@ incoming[id] := *call_relation {{ target_id: id @ 'NOW' }}
         Ok(edges)
     }
 
+    /// Lists resolved crate-boundary edges that match forbidden dependency rules.
+    ///
+    /// Rules use exact crate names over the same resolved-only boundary edges
+    /// returned by [`Self::crate_boundary_edges_from_owner`]. This helper does
+    /// not infer dependency policy from package layout and does not promote
+    /// targetless dependency frontiers into architecture-policy evidence.
+    pub fn crate_boundary_policy_violations_from_owner(
+        &self,
+        owner_id: Uuid,
+        options: CallPathOptions,
+        rules: &[CrateBoundaryPolicyRule],
+    ) -> Result<Vec<CrateBoundaryPolicyViolation>, DbError> {
+        validate_crate_boundary_policy_rules(rules)?;
+
+        let mut violations = Vec::new();
+        for edge in self.crate_boundary_edges_from_owner(owner_id, options)? {
+            for rule in rules {
+                if edge.caller_crate == rule.caller_crate && edge.callee_crate == rule.callee_crate
+                {
+                    violations.push(CrateBoundaryPolicyViolation {
+                        rule_id: rule.rule_id.clone(),
+                        edge: edge.clone(),
+                    });
+                }
+            }
+        }
+
+        violations.sort_by(|left, right| {
+            (
+                left.rule_id.as_str(),
+                left.edge.caller_crate.as_str(),
+                left.edge.callee_crate.as_str(),
+                left.edge.edge.call_site_id.as_u128(),
+            )
+                .cmp(&(
+                    right.rule_id.as_str(),
+                    right.edge.caller_crate.as_str(),
+                    right.edge.callee_crate.as_str(),
+                    right.edge.edge.call_site_id.as_u128(),
+                ))
+        });
+        Ok(violations)
+    }
+
     /// Lists resolved module-boundary edges that match forbidden architecture rules.
     ///
     /// Rules use module-path prefixes over the same resolved-only boundary
@@ -885,6 +929,29 @@ incoming[id] := *call_relation {{ target_id: id @ 'NOW' }}
         });
         Ok(violations)
     }
+}
+
+fn validate_crate_boundary_policy_rules(rules: &[CrateBoundaryPolicyRule]) -> Result<(), DbError> {
+    for rule in rules {
+        if rule.rule_id.is_empty() {
+            return Err(DbError::QueryConstruction(
+                "crate boundary policy rule requires non-empty rule_id".to_string(),
+            ));
+        }
+        if rule.caller_crate.is_empty() {
+            return Err(DbError::QueryConstruction(format!(
+                "crate boundary policy rule {} requires non-empty caller_crate",
+                rule.rule_id
+            )));
+        }
+        if rule.callee_crate.is_empty() {
+            return Err(DbError::QueryConstruction(format!(
+                "crate boundary policy rule {} requires non-empty callee_crate",
+                rule.rule_id
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn validate_module_boundary_policy_rules(

@@ -177,6 +177,21 @@ pub struct CrateBoundaryEdge {
     pub site: CallSiteRow,
 }
 
+/// Caller-supplied dependency rule that marks a crate boundary as forbidden.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CrateBoundaryPolicyRule {
+    pub rule_id: String,
+    pub caller_crate: String,
+    pub callee_crate: String,
+}
+
+/// Resolved crate-boundary edge that matched a forbidden dependency rule.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CrateBoundaryPolicyViolation {
+    pub rule_id: String,
+    pub edge: CrateBoundaryEdge,
+}
+
 /// Caller-supplied architecture rule that marks a module boundary as forbidden.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ModuleBoundaryPolicyRule {

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use ploke_db::{
     CallContextRelation, CallContextSeed, CallNodeKind, CallPathOptions, CallRelationKind,
-    ModuleBoundaryPolicyRule, ProofGraphStore,
+    CrateBoundaryPolicyRule, ModuleBoundaryPolicyRule, ProofGraphStore,
 };
 use serde_json::json;
 
@@ -621,6 +621,91 @@ fn axum_usage_questions_list_crate_boundary_edges_for_component_review() -> Resu
             .flat_map(|path| path.edges.iter())
             .any(|edge| edge.caller_id == owner && edge.callee_id != target),
         "test owner should have other resolved same-crate edges, proving crate-boundary filtering is not just returning every edge"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn axum_usage_questions_report_crate_boundary_policy_violations() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Architecture review:
+    //   "Are lower-level crates depending on higher-level application code?"
+    //   "Which crate-boundary calls violate the intended dependency direction?"
+    //
+    // Source oracle:
+    //   axum/src/middleware/from_fn.rs:411 in the `axum` crate calls
+    //     `Body::empty()`.
+    //   axum-core/src/body.rs:52 defines `Body::empty` in the `axum-core`
+    //     crate.
+    // Expected policy contract: a caller-supplied forbidden dependency rule
+    // reports the resolved `axum -> axum-core` edge without inventing policy
+    // evidence for same-crate calls or targetless dependency frontiers.
+    let owner =
+        function_id_by_name_in_module(&db, &["crate", "middleware", "from_fn", "tests"], "basic")?;
+    let target = method_id_by_name_and_body_substring(&db, "empty", "Empty::new()")?;
+    let options = CallPathOptions {
+        max_depth: 1,
+        max_paths: 64,
+    };
+
+    let violations = db.crate_boundary_policy_violations_from_owner(
+        owner,
+        options,
+        &[CrateBoundaryPolicyRule {
+            rule_id: "axum-must-not-call-axum-core".to_string(),
+            caller_crate: "axum".to_string(),
+            callee_crate: "axum-core".to_string(),
+        }],
+    )?;
+    assert_eq!(
+        violations.len(),
+        1,
+        "crate policy should flag exactly the inspected cross-crate edge: {violations:#?}"
+    );
+    let violation = &violations[0];
+    assert_eq!(violation.rule_id, "axum-must-not-call-axum-core");
+    assert_eq!(violation.edge.edge.caller_id, owner);
+    assert_eq!(violation.edge.edge.callee_id, target);
+    assert_eq!(violation.edge.caller_crate, "axum");
+    assert_eq!(violation.edge.callee_crate, "axum-core");
+    assert_eq!(
+        violation.edge.site.path.as_ref(),
+        Some(&path(&["Body", "empty"]))
+    );
+
+    let allowed = db.crate_boundary_policy_violations_from_owner(
+        owner,
+        options,
+        &[CrateBoundaryPolicyRule {
+            rule_id: "axum-core-must-not-call-axum".to_string(),
+            caller_crate: "axum-core".to_string(),
+            callee_crate: "axum".to_string(),
+        }],
+    )?;
+    assert!(
+        allowed.is_empty(),
+        "nonmatching crate policy should not report violations: {allowed:#?}"
+    );
+
+    let empty_crate = db
+        .crate_boundary_policy_violations_from_owner(
+            owner,
+            options,
+            &[CrateBoundaryPolicyRule {
+                rule_id: "invalid-empty-crate".to_string(),
+                caller_crate: String::new(),
+                callee_crate: "axum-core".to_string(),
+            }],
+        )
+        .expect_err("empty crate names should fail closed");
+    assert!(
+        empty_crate.to_string().contains("non-empty caller_crate"),
+        "empty-crate error should explain the invalid rule: {empty_crate}"
     );
 
     Ok(())

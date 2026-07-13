@@ -6,7 +6,7 @@ use ploke_db::{
     CallReceiver, CallRelationKind as DbCallRelationKind,
     CallResolutionKind as DbCallResolutionKind, CallSiteKind as DbCallSiteKind,
     CallStatusKind as DbCallStatusKind, CallTargetKind as DbCallTargetKind,
-    ModuleBoundaryPolicyRule, ProofGraphStore,
+    CrateBoundaryPolicyRule, ModuleBoundaryPolicyRule, ProofGraphStore,
 };
 use serde_json::json;
 
@@ -2683,6 +2683,85 @@ async fn crate_boundary_edges_exact_reads_axum_body_empty_component_crossing() -
                 && target_row.relation == CallTargetKind::AssociatedFunction
         }),
         "crate-boundary site should include the Body::empty target: {row:#?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn crate_boundary_policy_exact_flags_axum_body_empty_component_crossing() -> Result<(), Error>
+{
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Architecture review:
+    //   "Which crate-boundary calls violate the intended dependency direction?"
+    //
+    // Source oracle:
+    //   axum/src/middleware/from_fn.rs:411 in the `axum` crate calls
+    //     `Body::empty()`.
+    //   axum-core/src/body.rs:52 defines `Body::empty`.
+    // Expected contract: RAG can answer caller-supplied dependency policy
+    // questions over resolved crate-boundary edges without adding local edges
+    // for targetless dependency frontiers.
+    let owner =
+        function_id_by_name_in_module(&db, &["crate", "middleware", "from_fn", "tests"], "basic")?;
+    let target = method_id_by_name_and_body_substring(&db, "empty", "Empty::new()")?;
+
+    let rows = rag
+        .exact_crate_boundary_policy_violations_from_owner(
+            owner,
+            CallPathOptions {
+                max_depth: 1,
+                max_paths: 64,
+            },
+            &[CrateBoundaryPolicyRule {
+                rule_id: "axum-must-not-call-axum-core".to_string(),
+                caller_crate: "axum".to_string(),
+                callee_crate: "axum-core".to_string(),
+            }],
+        )?
+        .expect("call context enabled");
+    assert_eq!(
+        rows.len(),
+        1,
+        "crate policy helper should flag exactly the Body::empty crossing: {rows:#?}"
+    );
+    let row = &rows[0];
+    assert_eq!(row.rule_id, "axum-must-not-call-axum-core");
+    assert_eq!(row.edge.edge.caller_id, owner);
+    assert_eq!(row.edge.edge.callee_id, target);
+    assert_eq!(row.edge.caller_crate, "axum");
+    assert_eq!(row.edge.callee_crate, "axum-core");
+    assert!(
+        matches!(
+            &row.edge.site.callee,
+            CallCalleeInfo::Path { path: call_path }
+                if call_path == &path(&["Body", "empty"])
+        ),
+        "crate policy violation should preserve the source callsite path: {row:#?}"
+    );
+
+    let reverse_rows = rag
+        .exact_crate_boundary_policy_violations_from_owner(
+            owner,
+            CallPathOptions {
+                max_depth: 1,
+                max_paths: 64,
+            },
+            &[CrateBoundaryPolicyRule {
+                rule_id: "axum-core-must-not-call-axum".to_string(),
+                caller_crate: "axum-core".to_string(),
+                callee_crate: "axum".to_string(),
+            }],
+        )?
+        .expect("call context enabled");
+    assert!(
+        reverse_rows.is_empty(),
+        "reverse crate policy should not match this axum owner: {reverse_rows:#?}"
     );
 
     Ok(())

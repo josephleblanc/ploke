@@ -34,7 +34,7 @@ inputs:
   security/performance/refactoring questions that need domain semantics beyond
   current `effect_seed`, admitted owner `effect_policy` allowlists,
   caller-supplied effect guard reports, module-boundary policy reports, and
-  crate-boundary inventory;
+  crate-boundary policy reports;
 - generated harness/build-entrypoint execution policy for full binary/test/CI
   reachability beyond admitted proof-only entrypoint summaries.
 
@@ -49,7 +49,7 @@ inputs:
 | Performance work | Reach/path/frontier queries expose known helpers, external calls, cfgs, and argument shape. | Partial: hot-path/cost/blocking annotations are not modeled. |
 | Refactoring support | Impact, direct callsites, source files/modules/crates, boundary edges, and callsite buckets support migration planning. | Strong for caller inventory; move-safety/cycle prediction needs dependency-policy rules. |
 | Test planning | Impact test/non-test buckets, source metadata, admitted generated test-harness entrypoint summaries, and typed `call_test_entrypoints` identify stored test callers and proof-only generated entrypoints. | Partial: generated harness summaries remain proof facts, and CI test selection is not modeled. |
-| Architecture review | `module_boundary_edges_from_owner`, `crate_boundary_edges_from_owner`, RAG `exact_module_boundary_edges_from_owner`, RAG `exact_crate_boundary_edges_from_owner`, reach `boundary_edges`, lookup/edges `module_boundary_edges` and `crate_boundary_edges` payloads, source modules, and source crates expose cross-module/cross-crate call edges with caller/callee/site metadata. DB `module_boundary_policy_violations_from_owner`, RAG `exact_module_boundary_policy_violations_from_owner`, and exact TUI `code_item_boundary_policy` now evaluate caller-supplied forbidden module-prefix rules over resolved-only boundary edges. | Strong for module-boundary and crate-boundary inventory plus exact module-prefix policy checks; broader dependency-policy semantics are not modeled. |
+| Architecture review | `module_boundary_edges_from_owner`, `crate_boundary_edges_from_owner`, RAG `exact_module_boundary_edges_from_owner`, RAG `exact_crate_boundary_edges_from_owner`, reach `boundary_edges`, lookup/edges `module_boundary_edges` and `crate_boundary_edges` payloads, source modules, and source crates expose cross-module/cross-crate call edges with caller/callee/site metadata. DB `module_boundary_policy_violations_from_owner` / `crate_boundary_policy_violations_from_owner`, RAG exact policy helpers, and exact TUI `code_item_boundary_policy` now evaluate caller-supplied forbidden module-prefix and crate-name rules over resolved-only boundary edges. | Strong for module-boundary and crate-boundary inventory plus exact caller-supplied policy checks; broader dependency-policy semantics are not modeled. |
 | Debugging | Owner/target context, exact paths, frontier status buckets, proof context, and source spans map persisted edges/blockers back to source callsites. | Strong current surface. |
 | API understanding | Impact buckets, argument/generic argument counts, constructor relation kinds, path-shape counts, aliases/re-exports, and source crates show real target usage. | Strong current surface. |
 | Documentation and RAG | RAG exact call context, exact paths, impact/reach summaries, proof context, and tool payloads expose caller/callee context and fail-closed blockers. | Strong current surface. |

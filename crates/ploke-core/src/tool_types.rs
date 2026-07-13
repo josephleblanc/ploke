@@ -247,7 +247,9 @@ mod tests {
     #[test]
     fn code_item_boundary_policy_description_mentions_resolved_boundaries() {
         let description = tool_description(ToolName::CodeItemBoundaryPolicy).to_lowercase();
-        assert!(description.contains("module-boundary policy"));
+        assert!(description.contains("module-boundary"));
+        assert!(description.contains("crate-boundary"));
+        assert!(description.contains("policy"));
         assert!(description.contains("resolved call graph"));
         assert!(description.contains("targetless frontier"));
     }

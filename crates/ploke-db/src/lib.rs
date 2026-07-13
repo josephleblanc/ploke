@@ -28,9 +28,9 @@ pub use call_graph::{
     CallPathEdge, CallPathOptions, CallProofInvariantFinding, CallReachEffect, CallReachReport,
     CallReceiver, CallRelationKind, CallResolutionKind, CallResolutionRow, CallSiteBucket,
     CallSiteKind, CallSiteRow, CallStatusKind, CallTargetKind, CallTargetRow, CallTestEntrypoint,
-    CrateBoundaryEdge, ExternalSummaryNeed, ModuleBoundaryEdge, ModuleBoundaryPolicyRule,
-    ModuleBoundaryPolicyViolation, RuntimeDispatchNeed, call_target_endpoint_relation,
-    valid_call_target_family,
+    CrateBoundaryEdge, CrateBoundaryPolicyRule, CrateBoundaryPolicyViolation, ExternalSummaryNeed,
+    ModuleBoundaryEdge, ModuleBoundaryPolicyRule, ModuleBoundaryPolicyViolation,
+    RuntimeDispatchNeed, call_target_endpoint_relation, valid_call_target_family,
 };
 pub use database::RestoredEmbeddingSet;
 pub use database::{

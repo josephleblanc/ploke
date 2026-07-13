@@ -1,11 +1,13 @@
 use std::{collections::BTreeSet, ops::Deref};
 
 use ploke_core::{
-    rag_types::{ModuleBoundaryPolicyViolationInfo, NodeFilepath},
+    rag_types::{
+        CrateBoundaryPolicyViolationInfo, ModuleBoundaryPolicyViolationInfo, NodeFilepath,
+    },
     tool_descriptions::ToolDescription,
     tool_types::ToolName,
 };
-use ploke_db::{CallPathOptions, ModuleBoundaryPolicyRule};
+use ploke_db::{CallPathOptions, CrateBoundaryPolicyRule, ModuleBoundaryPolicyRule};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -19,9 +21,12 @@ use code_item_endpoint::{
 const ITEM_DESC: &str = "Exact Rust code item coordinate.";
 const RULE_DESC: &str =
     "Forbidden module-boundary rule evaluated over resolved call graph boundary edges.";
+const CRATE_RULE_DESC: &str =
+    "Forbidden crate-boundary rule evaluated over resolved call graph boundary edges.";
 const RULE_ID_DESC: &str = "Stable rule identifier returned with each matching violation.";
 const PREFIX_DESC: &str =
     "Module path prefix as segments, for example [\"crate\", \"ext_traits\"].";
+const CRATE_DESC: &str = "Exact source crate name.";
 const MAX_DEPTH_DESC: &str = "Maximum resolved call-path depth. Defaults to 3.";
 const MAX_PATHS_DESC: &str = "Maximum number of paths to inspect. Defaults to 64.";
 
@@ -36,10 +41,16 @@ lazy_static::lazy_static! {
                 "items": { "$ref": "#/$defs/boundary_policy_rule" },
                 "description": RULE_DESC
             },
+            "crate_rules": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "$ref": "#/$defs/crate_boundary_policy_rule" },
+                "description": CRATE_RULE_DESC
+            },
             "max_depth": { "type": "integer", "minimum": 1, "description": MAX_DEPTH_DESC },
             "max_paths": { "type": "integer", "minimum": 1, "description": MAX_PATHS_DESC }
         },
-        "required": ["owner", "rules"],
+        "required": ["owner"],
         "additionalProperties": false,
         "$defs": {
             "code_item_endpoint": code_item_endpoint::schema_property(),
@@ -62,6 +73,16 @@ lazy_static::lazy_static! {
                 },
                 "required": ["rule_id", "caller_module_prefix", "callee_module_prefix"],
                 "additionalProperties": false
+            },
+            "crate_boundary_policy_rule": {
+                "type": "object",
+                "properties": {
+                    "rule_id": { "type": "string", "description": RULE_ID_DESC },
+                    "caller_crate": { "type": "string", "description": CRATE_DESC },
+                    "callee_crate": { "type": "string", "description": CRATE_DESC }
+                },
+                "required": ["rule_id", "caller_crate", "callee_crate"],
+                "additionalProperties": false
             }
         }
     });
@@ -74,11 +95,21 @@ pub struct BoundaryRuleParam {
     pub callee_module_prefix: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrateBoundaryRuleParam {
+    pub rule_id: String,
+    pub caller_crate: String,
+    pub callee_crate: String,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct CodeItemBoundaryPolicyParams<'a> {
     #[serde(borrow)]
     pub owner: CodeItemEndpoint<'a>,
+    #[serde(default)]
     pub rules: Vec<BoundaryRuleParam>,
+    #[serde(default)]
+    pub crate_rules: Vec<CrateBoundaryRuleParam>,
     #[serde(default)]
     pub max_depth: Option<u32>,
     #[serde(default)]
@@ -90,6 +121,7 @@ pub struct CodeItemBoundaryPolicyParams<'a> {
 pub struct CodeItemBoundaryPolicyParamsOwned {
     pub owner: CodeItemEndpointOwned,
     pub rules: Vec<BoundaryRuleParam>,
+    pub crate_rules: Vec<CrateBoundaryRuleParam>,
     pub max_depth: Option<u32>,
     pub max_paths: Option<usize>,
 }
@@ -99,9 +131,13 @@ pub struct CodeItemBoundaryPolicyResult {
     pub owner_id: Uuid,
     pub owner_file_path: NodeFilepath,
     pub rules: Vec<ModuleBoundaryPolicyRule>,
+    #[serde(default)]
+    pub crate_rules: Vec<CrateBoundaryPolicyRule>,
     pub max_depth: u32,
     pub max_paths: usize,
     pub violations: Vec<ModuleBoundaryPolicyViolationInfo>,
+    #[serde(default)]
+    pub crate_violations: Vec<CrateBoundaryPolicyViolationInfo>,
     pub source_files: Vec<NodeFilepath>,
 }
 
@@ -158,6 +194,7 @@ impl Tool for CodeItemBoundaryPolicy {
         CodeItemBoundaryPolicyParamsOwned {
             owner: endpoint_to_owned(&params.owner),
             rules: params.rules.clone(),
+            crate_rules: params.crate_rules.clone(),
             max_depth: params.max_depth,
             max_paths: params.max_paths,
         }
@@ -182,6 +219,13 @@ impl Tool for CodeItemBoundaryPolicy {
         ctx.state.is_stale_err().await?;
         validate_endpoint("owner", &params.owner)?;
         let rules = rules_to_db(&params.rules)?;
+        let crate_rules = crate_rules_to_db(&params.crate_rules)?;
+        if rules.is_empty() && crate_rules.is_empty() {
+            return Err(ploke_error::Error::Domain(DomainError::Ui {
+                message: "rules or crate_rules must include at least one boundary policy rule."
+                    .to_string(),
+            }));
+        }
 
         let max_depth = params.max_depth.unwrap_or(3);
         let max_paths = params.max_paths.unwrap_or(64);
@@ -223,24 +267,44 @@ impl Tool for CodeItemBoundaryPolicy {
                 .unwrap_or_default(),
             _ => Vec::new(),
         };
-        let source_files = source_files_for(&owner, &violations);
+        let crate_violations = match ctx.state.rag.as_ref() {
+            Some(rag) if !rag.call_context_degraded() => rag
+                .exact_crate_boundary_policy_violations_from_owner(owner.id, options, &crate_rules)
+                .map_err(|err| {
+                    ploke_error::Error::Internal(InternalError::CompilerError(format!(
+                        "failed to collect crate-boundary policy violations for {}: {err}",
+                        owner.id
+                    )))
+                })?
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        };
+        let source_files = source_files_for(&owner, &violations, &crate_violations);
         let result = CodeItemBoundaryPolicyResult {
             owner_id: owner.id,
             owner_file_path: NodeFilepath::new(owner.rel_path.display().to_string()),
             rules,
+            crate_rules,
             max_depth,
             max_paths,
             violations,
+            crate_violations,
             source_files,
         };
         let summary = format!(
-            "Found {} module-boundary policy violation(s)",
-            result.violations.len()
+            "Found {} module-boundary and {} crate-boundary policy violation(s)",
+            result.violations.len(),
+            result.crate_violations.len()
         );
         let ui_payload = super::ToolUiPayload::new(Self::name(), ctx.call_id.clone(), summary)
             .with_field("owner_id", result.owner_id.to_string())
             .with_field("rules", result.rules.len().to_string())
+            .with_field("crate_rules", result.crate_rules.len().to_string())
             .with_field("violations", result.violations.len().to_string())
+            .with_field(
+                "crate_violations",
+                result.crate_violations.len().to_string(),
+            )
             .with_field("source_files", result.source_files.len().to_string())
             .with_field("max_depth", result.max_depth.to_string())
             .with_field("max_paths", result.max_paths.to_string());
@@ -260,12 +324,6 @@ impl Tool for CodeItemBoundaryPolicy {
 fn rules_to_db(
     rules: &[BoundaryRuleParam],
 ) -> Result<Vec<ModuleBoundaryPolicyRule>, ploke_error::Error> {
-    if rules.is_empty() {
-        return Err(ploke_error::Error::Domain(ploke_error::DomainError::Ui {
-            message: "rules must include at least one module-boundary policy rule.".to_string(),
-        }));
-    }
-
     rules
         .iter()
         .enumerate()
@@ -291,6 +349,38 @@ fn rules_to_db(
             })
         })
         .collect()
+}
+
+fn crate_rules_to_db(
+    rules: &[CrateBoundaryRuleParam],
+) -> Result<Vec<CrateBoundaryPolicyRule>, ploke_error::Error> {
+    rules
+        .iter()
+        .enumerate()
+        .map(|(index, rule)| {
+            let rule_id = rule.rule_id.trim();
+            if rule_id.is_empty() {
+                return Err(ploke_error::Error::Domain(ploke_error::DomainError::Ui {
+                    message: format!("crate_rules[{index}].rule_id must not be empty."),
+                }));
+            }
+            Ok(CrateBoundaryPolicyRule {
+                rule_id: rule_id.to_string(),
+                caller_crate: clean_crate(index, "caller_crate", &rule.caller_crate)?,
+                callee_crate: clean_crate(index, "callee_crate", &rule.callee_crate)?,
+            })
+        })
+        .collect()
+}
+
+fn clean_crate(index: usize, field: &str, value: &str) -> Result<String, ploke_error::Error> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(ploke_error::Error::Domain(ploke_error::DomainError::Ui {
+            message: format!("crate_rules[{index}].{field} must not be empty."),
+        }));
+    }
+    Ok(value.to_string())
 }
 
 fn clean_prefix(
@@ -322,10 +412,15 @@ fn clean_prefix(
 fn source_files_for(
     owner: &lookup_support::ResolvedToolItem,
     violations: &[ModuleBoundaryPolicyViolationInfo],
+    crate_violations: &[CrateBoundaryPolicyViolationInfo],
 ) -> Vec<NodeFilepath> {
     let mut files = BTreeSet::new();
     files.insert(owner.rel_path.display().to_string());
     for violation in violations {
+        files.insert(violation.edge.caller.file_path.as_ref().to_string());
+        files.insert(violation.edge.callee.file_path.as_ref().to_string());
+    }
+    for violation in crate_violations {
         files.insert(violation.edge.caller.file_path.as_ref().to_string());
         files.insert(violation.edge.callee.file_path.as_ref().to_string());
     }

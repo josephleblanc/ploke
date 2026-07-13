@@ -542,6 +542,12 @@ pub struct ModuleBoundaryPolicyViolationInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct CrateBoundaryPolicyViolationInfo {
+    pub rule_id: String,
+    pub edge: CrateBoundaryEdgeInfo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct CallReachEffectInfo {
     pub effect_seed_id: String,
     pub effect_class: String,

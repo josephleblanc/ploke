@@ -50,6 +50,21 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
+Latest completed slice: crate-boundary dependency-policy checks over existing
+resolved edges. DB `crate_boundary_policy_violations_from_owner` now mirrors
+the existing module-boundary policy helper: caller-supplied rules use exact
+source crate names, the helper evaluates only resolved edges from
+`crate_boundary_edges_from_owner`, invalid empty rule fields fail closed, and
+targetless dependency frontiers are not promoted into policy evidence. The
+real-corpus axum source oracle is `axum/src/middleware/from_fn.rs:411`
+`Body::empty()` in crate `axum` resolving to `axum-core/src/body.rs:52`
+`Body::empty` in crate `axum-core`. DB, RAG
+`exact_crate_boundary_policy_violations_from_owner`, and exact
+`code_item_boundary_policy` tests prove the forbidden `axum -> axum-core` rule
+returns that one edge, while the reverse rule returns no violations. The
+existing tool remains backward-compatible for module rules and now adds
+`crate_rules` / `crate_violations` for crate dependency checks.
+
 Latest completed slice: runtime-dispatch summary proof queue discharge. The
 proof graph now admits a strict `runtime_dispatch_summary` fact kind with
 `dispatch_summary_id`, build domain, call-site identity, summary metadata,

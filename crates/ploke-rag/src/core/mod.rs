@@ -18,8 +18,8 @@ use ploke_core::rag_types::{
     CallResolutionKind as RagCallResolutionKind, CallSiteBucketInfo,
     CallSiteKind as RagCallSiteKind, CallStatusKind as RagCallStatusKind, CallTargetInfo,
     CallTargetKind, CallTestEntrypointInfo, CanonPath, CrateBoundaryEdgeInfo,
-    ExternalSummaryNeedInfo, ModuleBoundaryEdgeInfo, ModuleBoundaryPolicyViolationInfo,
-    NodeFilepath, ProofContextInfo, RuntimeDispatchNeedInfo,
+    CrateBoundaryPolicyViolationInfo, ExternalSummaryNeedInfo, ModuleBoundaryEdgeInfo,
+    ModuleBoundaryPolicyViolationInfo, NodeFilepath, ProofContextInfo, RuntimeDispatchNeedInfo,
 };
 use ploke_db::{
     CallBuildDomain as DbCallBuildDomain, CallContextCandidate, CallContextOptions,
@@ -32,8 +32,9 @@ use ploke_db::{
     CallReachReport as DbCallReachReport, CallReceiver, CallRelationKind, CallResolutionKind,
     CallSiteKind, CallSiteRow, CallStatusKind as DbCallStatusKind,
     CallTargetKind as DbCallTargetKind, CallTestEntrypoint as DbCallTestEntrypoint,
-    CrateBoundaryEdge as DbCrateBoundaryEdge, ExternalSummaryNeed as DbExternalSummaryNeed,
-    ModuleBoundaryEdge as DbModuleBoundaryEdge,
+    CrateBoundaryEdge as DbCrateBoundaryEdge, CrateBoundaryPolicyRule as DbCrateBoundaryPolicyRule,
+    CrateBoundaryPolicyViolation as DbCrateBoundaryPolicyViolation,
+    ExternalSummaryNeed as DbExternalSummaryNeed, ModuleBoundaryEdge as DbModuleBoundaryEdge,
     ModuleBoundaryPolicyRule as DbModuleBoundaryPolicyRule,
     ModuleBoundaryPolicyViolation as DbModuleBoundaryPolicyViolation, ProofGraphContextRow,
     ProofGraphStore, RuntimeDispatchNeed as DbRuntimeDispatchNeed,
@@ -650,6 +651,15 @@ fn module_boundary_policy_violation_info(
     Ok(ModuleBoundaryPolicyViolationInfo {
         rule_id: row.rule_id,
         edge: module_boundary_edge_info(row.edge)?,
+    })
+}
+
+fn crate_boundary_policy_violation_info(
+    row: DbCrateBoundaryPolicyViolation,
+) -> Result<CrateBoundaryPolicyViolationInfo, RagError> {
+    Ok(CrateBoundaryPolicyViolationInfo {
+        rule_id: row.rule_id,
+        edge: crate_boundary_edge_info(row.edge)?,
     })
 }
 
@@ -1332,6 +1342,25 @@ impl RagService {
                 .module_boundary_policy_violations_from_owner(owner_id, options, rules)?
                 .into_iter()
                 .map(module_boundary_policy_violation_info)
+                .collect::<Result<Vec<_>, RagError>>()?,
+        ))
+    }
+
+    pub fn exact_crate_boundary_policy_violations_from_owner(
+        &self,
+        owner_id: Uuid,
+        options: CallPathOptions,
+        rules: &[DbCrateBoundaryPolicyRule],
+    ) -> Result<Option<Vec<CrateBoundaryPolicyViolationInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .crate_boundary_policy_violations_from_owner(owner_id, options, rules)?
+                .into_iter()
+                .map(crate_boundary_policy_violation_info)
                 .collect::<Result<Vec<_>, RagError>>()?,
         ))
     }
