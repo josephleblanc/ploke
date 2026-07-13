@@ -116,6 +116,19 @@ impl CallRelationResolver<'_> {
                 self.resolve_ambiguous_init_call(call, init_paths, relations, statuses)?;
                 return Ok(());
             }
+            PathCallCallee::SelfFieldBinding { field_path, .. } => {
+                if self.resolve_self_field_binding_path_call(
+                    call,
+                    field_path,
+                    type_relations,
+                    relations,
+                    statuses,
+                )? {
+                    return Ok(());
+                }
+                statuses.push(CallResolutionStatus::Unsupported { source });
+                return Ok(());
+            }
         }
 
         let external_path = self.is_external_path(&call.path);
@@ -396,25 +409,58 @@ impl CallRelationResolver<'_> {
             return Ok(false);
         };
 
-        let source = AnyCallSiteId::Path(call.id);
-        match resolution {
-            ParameterCallResolution::Exact(target) => {
-                push_path_parameter_target(call, target, relations);
-                statuses.push(CallResolutionStatus::Resolved {
-                    source,
-                    kind: CallResolutionKind::LocalExact,
-                });
-            }
-            ParameterCallResolution::Ambiguous(targets) => {
-                for target in targets {
-                    push_path_parameter_target(call, target, relations);
-                }
-                statuses.push(CallResolutionStatus::Ambiguous { source });
-            }
-        }
+        push_path_parameter_resolution(call, resolution, relations, statuses);
         Ok(true)
     }
 
+    fn resolve_self_field_binding_path_call(
+        &self,
+        call: &PathCallNode,
+        field_path: &[String],
+        type_relations: &[TypeRelation],
+        relations: &mut Vec<CallRelation>,
+        statuses: &mut Vec<CallResolutionStatus>,
+    ) -> Result<bool, SynParserError> {
+        let mut self_path = Vec::with_capacity(field_path.len() + 1);
+        self_path.push("self".to_string());
+        self_path.extend(field_path.iter().cloned());
+
+        let Some(resolution) =
+            self.resolve_self_field_callable_call(call.owner, &self_path, type_relations)?
+        else {
+            return Ok(false);
+        };
+
+        push_path_parameter_resolution(call, resolution, relations, statuses);
+        Ok(true)
+    }
+}
+
+fn push_path_parameter_resolution(
+    call: &PathCallNode,
+    resolution: ParameterCallResolution,
+    relations: &mut Vec<CallRelation>,
+    statuses: &mut Vec<CallResolutionStatus>,
+) {
+    let source = AnyCallSiteId::Path(call.id);
+    match resolution {
+        ParameterCallResolution::Exact(target) => {
+            push_path_parameter_target(call, target, relations);
+            statuses.push(CallResolutionStatus::Resolved {
+                source,
+                kind: CallResolutionKind::LocalExact,
+            });
+        }
+        ParameterCallResolution::Ambiguous(targets) => {
+            for target in targets {
+                push_path_parameter_target(call, target, relations);
+            }
+            statuses.push(CallResolutionStatus::Ambiguous { source });
+        }
+    }
+}
+
+impl CallRelationResolver<'_> {
     pub(super) fn resolve_parameter_value_call(
         &self,
         owner: CallBodyOwnerId,
@@ -703,6 +749,9 @@ impl CallRelationResolver<'_> {
             }
             (ParameterProof::Value, TypeNode::Named(node)) => {
                 self.owner_type_parameter_has_callable_bound(owner, &node.path)
+            }
+            (ParameterProof::Value, TypeNode::ImplTrait(node)) => {
+                self.bounds_include_callable_trait(&node.bounds)
             }
             (ParameterProof::Value, TypeNode::Reference(node)) => {
                 self.referenced_callable_type(node.referenced)

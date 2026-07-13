@@ -1517,6 +1517,30 @@ impl CallRelationResolver<'_> {
             return Ok(AssocPathResolution::Unsupported);
         }
 
+        if let Some(path_call) = self.direct_receiver_path_call(call, path)
+            && let Some(resolution) = self.resolve_associated_function_path(
+                call.owner,
+                path,
+                path_call.arg_count,
+                type_relations,
+            )?
+        {
+            return match resolution {
+                AssocPathResolution::Resolved(method_id) if self.local_method_exists(method_id) => {
+                    self.resolve_method_return_type_method(
+                        call.owner,
+                        method_id,
+                        &call.method_name,
+                        type_relations,
+                    )
+                }
+                AssocPathResolution::Resolved(_) => Ok(AssocPathResolution::Unsupported),
+                AssocPathResolution::Unresolved => Ok(AssocPathResolution::Unresolved),
+                AssocPathResolution::Ambiguous => Ok(AssocPathResolution::Ambiguous),
+                AssocPathResolution::Unsupported => Ok(AssocPathResolution::Unsupported),
+            };
+        }
+
         let resolution = if self.is_unqualified_path(path) {
             self.resolve_unqualified_local_function_path(call.owner, path)?
         } else if self.is_explicit_local_path(path) {
@@ -1537,6 +1561,20 @@ impl CallRelationResolver<'_> {
             LocalFunctionPathResolution::Ambiguous => Ok(AssocPathResolution::Ambiguous),
             LocalFunctionPathResolution::Unsupported => Ok(AssocPathResolution::Unsupported),
         }
+    }
+
+    fn local_method_exists(&self, method_id: MethodNodeId) -> bool {
+        self.graph
+            .impls()
+            .iter()
+            .flat_map(|node| node.methods.iter())
+            .chain(
+                self.graph
+                    .traits()
+                    .iter()
+                    .flat_map(|node| node.methods.iter()),
+            )
+            .any(|method| method.id == method_id)
     }
 
     fn resolve_try_path_result_method_call(

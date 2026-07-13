@@ -1,7 +1,7 @@
 # Backup DB Fixtures
 
 Last reviewed: 2026-07-10
-Last updated: 2026-07-12
+Last updated: 2026-07-13
 
 This document is the current inventory for backup database fixtures under
 the shared DB snapshot fixture directory. It records which source targets
@@ -204,7 +204,7 @@ impl Drop for FixtureRestoreGuard {
 | `corpus_semver_type_graph_2026-05-17.sqlite` | `github:dtolnay/semver@8591f2344b52b31d85b538de58b76a676fe9ff90` | typed graphRAG type traversal corpus backup | 2026-05-17 |
 | `corpus_semver_openrouter_embeddings_2026-05-17.sqlite` | `github:dtolnay/semver@8591f2344b52b31d85b538de58b76a676fe9ff90` | OpenRouter-searchable corpus backup for type-context matrix tests | 2026-05-17 |
 | `corpus_memchr_type_graph_2026-05-17.sqlite` | `github:BurntSushi/memchr@24f5daa5257e00e87007c936761600e034827905` | typed graphRAG type traversal corpus backup | 2026-05-17 |
-| `corpus_memchr_call_graph_2026-07-12.sqlite` | `github:BurntSushi/memchr@24f5daa5257e00e87007c936761600e034827905` | plain corpus backup for real-target call graph query contracts | 2026-07-12 |
+| `corpus_memchr_call_graph_2026-07-13.sqlite` | `github:BurntSushi/memchr@24f5daa5257e00e87007c936761600e034827905` | plain corpus backup for real-target call graph query contracts | 2026-07-13 |
 | `corpus_memchr_openrouter_embeddings_2026-05-17.sqlite` | `github:BurntSushi/memchr@24f5daa5257e00e87007c936761600e034827905` | OpenRouter-searchable corpus backup for type-context matrix tests | 2026-05-17 |
 | `corpus_generic_array_type_graph_2026-05-17.sqlite` | `github:fizyk20/generic-array@80bab87431c2e29823dc551a3311324812838a23` | typed graphRAG type traversal corpus backup | 2026-05-17 |
 | `corpus_generic_array_call_graph_2026-07-11.sqlite` | `github:fizyk20/generic-array@80bab87431c2e29823dc551a3311324812838a23` | plain corpus backup for real-target call graph query contracts | 2026-07-11 |
@@ -213,30 +213,31 @@ impl Drop for FixtureRestoreGuard {
 | `corpus_chrono_call_graph_2026-07-11.sqlite` | `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be` | plain corpus backup for real-target call graph query contracts | 2026-07-11 |
 | `corpus_chrono_openrouter_embeddings_2026-05-17.sqlite` | `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be` | OpenRouter-searchable corpus backup for type-context matrix tests | 2026-05-17 |
 | `corpus_axum_type_graph_2026-05-17.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | typed graphRAG workspace-member corpus backup for type-context matrix tests | 2026-05-17 |
-| `corpus_axum_call_graph_2026-07-12.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | plain workspace-member corpus backup for real-target call graph query contracts | 2026-07-12 |
+| `corpus_axum_call_graph_2026-07-13.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | plain workspace-member corpus backup for real-target call graph query contracts | 2026-07-13 |
 | `corpus_axum_openrouter_embeddings_2026-05-17.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | OpenRouter-searchable workspace-member corpus backup for type-context matrix tests | 2026-05-17 |
 | `ploke-db_af8e3a20-728d-5967-8523-da8a5ccdae45` | `crates/ploke-db` | currently orphaned snapshot | 2026-03-20 |
 
-## 2026-07-12 Active Call-Graph Fixture Regeneration Pass
+## 2026-07-13 Active Call-Graph Fixture Refresh
 
-The active fixture set was regenerated with
-`cargo run -p xtask --features call_graph -- fixtures regenerate --active`.
-The regenerated shared call-graph corpus snapshots were copied into
-`tests/backup_dbs/` as committed seed artifacts.
+The active call-graph fixture set was refreshed with
+`cargo run -p xtask --features call_graph -- fixtures regenerate --active` and
+targeted follow-up recreation for `corpus_axum_call_graph`. The regenerated
+shared call-graph corpus snapshots were copied into `tests/backup_dbs/` as
+committed seed artifacts.
 
 Post-regeneration verification:
 
 - `cargo run -p xtask --features call_graph -- verify-backup-dbs` passed for
   all registered active fixtures.
 - Current committed seed checksums:
-  - `corpus_memchr_call_graph_2026-07-12.sqlite`:
-    `ad8127dd511d5ce6698d9fa2eb0f743c637319a9289cff9c359ce5a58599b93e`
+  - `corpus_memchr_call_graph_2026-07-13.sqlite`:
+    `58d0bb1b99e3689c3c7d8c6f575a5cf79f3e3d63141b8f6f71ff449252c46e8d`
   - `corpus_generic_array_call_graph_2026-07-11.sqlite`:
-    `e20d08e9230e595843ca515004f6feb02a902986664ab376521545dd931012a0`
+    `a6a3d2b2b3f1bd7e69ba6bde36287ff00653adb2acc70a3bf178e0f8051f85a7`
   - `corpus_chrono_call_graph_2026-07-11.sqlite`:
-    `94238a1b7f953a42a5a21c1bee3ee3c1bf9a79e712f2df05572d0133a739d5f8`
-  - `corpus_axum_call_graph_2026-07-12.sqlite`:
-    `e2e0d8fbd76cf4924560e80723fff6812de29309c5d796bdc2c27ea29b1f37d0`
+    `5a3c208584032f4c2c9cfb99ef51b9db3c07263f215d593e11357a4c1fea84e4`
+  - `corpus_axum_call_graph_2026-07-13.sqlite`:
+    `8af6f521c418a789c1495bc72207a1df0d7e8b7cf06f436d8cabc6367a5dc7bd`
 
 ## 2026-07-12 Axum Middleware Service Generated Frontier Refresh
 
@@ -283,6 +284,43 @@ Post-regeneration verification:
 - The memchr real-target matrix can also assert finite ambiguous
   `DynamicFunction` candidate sets for `Searcher.call` and `Prefilter.call`
   instead of preserving those function-pointer field rows as targetless.
+
+## 2026-07-13 Memchr Associated Constructor Receiver Refresh
+
+The `corpus_memchr_call_graph` fixture was recreated with
+`cargo run -p xtask --features call_graph -- recreate-backup-db --fixture corpus_memchr_call_graph`
+after method receiver resolution began handling associated-function path-call
+results such as `crate::tests::substring::Runner::new().fwd(...)`.
+
+Post-regeneration verification:
+
+- The recreated `corpus_memchr_call_graph_2026-07-13.sqlite` shared snapshot was
+  copied into `tests/backup_dbs/` as the committed seed artifact.
+- Current seed checksum:
+  `58d0bb1b99e3689c3c7d8c6f575a5cf79f3e3d63141b8f6f71ff449252c46e8d`.
+- The memchr `Runner::new().fwd(...)` and `Runner::new().rev(...)` setter
+  method-call rows now resolve to local methods when the receiver path is
+  crate-qualified or module-qualified from the caller scope.
+- The `Runner::run` `fwd(...)` and `rev(...)` callable trait-object field rows
+  remain targetless. The field proof is still conservative when not every
+  setter caller argument can be resolved into a finite callable candidate set.
+
+## 2026-07-13 Axum Cross-Crate Receiver Guard Refresh
+
+The `corpus_axum_call_graph` fixture was recreated with
+`cargo run -p xtask --features call_graph -- recreate-backup-db --fixture corpus_axum_call_graph`
+after associated-constructor receiver chaining was limited to methods present in
+the current parsed graph. Cross-crate associated constructor receiver chains now
+remain unsupported until call resolution carries the target method's graph
+context instead of attempting to read the foreign method's return type from the
+current graph.
+
+Post-regeneration verification:
+
+- The recreated `corpus_axum_call_graph_2026-07-13.sqlite` shared snapshot was
+  copied into `tests/backup_dbs/` as the committed seed artifact.
+- Current seed checksum:
+  `8af6f521c418a789c1495bc72207a1df0d7e8b7cf06f436d8cabc6367a5dc7bd`.
 
 ## 2026-07-12 Axum Opaque Future Generated Constructor Refresh
 
@@ -1088,10 +1126,10 @@ Expected searchable corpus embedding config:
   - later traversal from iterator self types to `Iterator` and
     `DoubleEndedIterator` impl surfaces
 
-### `corpus_memchr_call_graph_2026-07-12.sqlite`
+### `corpus_memchr_call_graph_2026-07-13.sqlite`
 
 - Status: active
-- File: `tests/backup_dbs/corpus_memchr_call_graph_2026-07-12.sqlite`
+- File: `tests/backup_dbs/corpus_memchr_call_graph_2026-07-13.sqlite`
 - Parsed target: `github:BurntSushi/memchr@24f5daa5257e00e87007c936761600e034827905`
 - Checkout slug: `tests/fixture_github_clones/corpus/BurntSushi__memchr`
 - Expected DB config:
@@ -1106,6 +1144,10 @@ Expected searchable corpus embedding config:
     rows in [fallback.rs](../../crates/ploke-db/tests/unit/call_graph_fixture_queries/real_target_matrix/fallback.rs)
   - memchr `Searcher.call` and `Prefilter.call` rows preserve finite ambiguous
     `DynamicFunction` candidates from cfg-visible shorthand field initializers
+  - memchr `Runner::new().fwd(...)` and `Runner::new().rev(...)` method-call
+    rows resolve through associated-constructor path-call receiver handling
+  - memchr `Runner::run` callable trait-object field path rows are still
+    preserved as targetless unsupported rows
 
 ### `corpus_memchr_openrouter_embeddings_2026-05-17.sqlite`
 
@@ -1272,10 +1314,10 @@ Expected searchable corpus embedding config:
   - `Token![,]` under `Punctuated<syn::Variant, Token![,]>` retains a nested
     macro type without fabricating a terminal target
 
-### `corpus_axum_call_graph_2026-07-12.sqlite`
+### `corpus_axum_call_graph_2026-07-13.sqlite`
 
 - Status: active
-- File: `tests/backup_dbs/corpus_axum_call_graph_2026-07-12.sqlite`
+- File: `tests/backup_dbs/corpus_axum_call_graph_2026-07-13.sqlite`
 - Parsed target: `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1`
 - Checkout slug: `tests/fixture_github_clones/corpus/tokio-rs__axum`
 - Selected workspace members:

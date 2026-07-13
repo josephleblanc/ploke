@@ -239,7 +239,7 @@ impl<'a> CallRelationResolver<'a> {
 
         relations.sort_unstable();
         relations.dedup();
-        assert_unique_status_sources(&statuses)?;
+        assert_unique_status_sources(&statuses, Some(self.graph))?;
         statuses.sort_unstable();
         statuses.dedup();
         let summary = CallResolutionSummary::from_statuses(&statuses);
@@ -1791,19 +1791,38 @@ fn executable_predicate_matches_type(predicate: &ExecutableWherePredicate, segme
         .is_some_and(|subject| subject == segment)
 }
 
-fn assert_unique_status_sources(statuses: &[CallResolutionStatus]) -> Result<(), SynParserError> {
+fn assert_unique_status_sources(
+    statuses: &[CallResolutionStatus],
+    graph: Option<&ParsedCodeGraph>,
+) -> Result<(), SynParserError> {
     let mut by_source = BTreeMap::new();
     for status in statuses {
         if let Some(existing) = by_source.insert(status.source(), status) {
+            let source = status.source();
+            let call_site = graph
+                .and_then(|graph| describe_call_site(graph, source))
+                .unwrap_or_else(|| "<call site unavailable>".to_string());
             return Err(SynParserError::InternalState(format!(
-                "duplicate call_resolution_status for {}: first={:?}, second={:?}",
-                status.source(),
-                existing,
-                status
+                "duplicate call_resolution_status for {source}: first={existing:?}, second={status:?}, call_site={call_site}"
             )));
         }
     }
     Ok(())
+}
+
+fn describe_call_site(graph: &ParsedCodeGraph, source: AnyCallSiteId) -> Option<String> {
+    graph
+        .call_sites()
+        .iter()
+        .filter(|call| match (source, *call) {
+            (AnyCallSiteId::Path(source), CallNode::PathCall(call)) => source == call.id,
+            (AnyCallSiteId::Method(source), CallNode::MethodCall(call)) => source == call.id,
+            (AnyCallSiteId::Dynamic(source), CallNode::DynamicCall(call)) => source == call.id,
+            (AnyCallSiteId::Macro(source), CallNode::MacroCall(call)) => source == call.id,
+            _ => false,
+        })
+        .map(|call| format!("{call:?}"))
+        .next()
 }
 
 fn trait_declares_instance_method(trait_node: &TraitNode, method_name: &str) -> bool {
@@ -1864,7 +1883,7 @@ mod tests {
             CallResolutionStatus::Unresolved { source },
         ];
 
-        let err = assert_unique_status_sources(&statuses)
+        let err = assert_unique_status_sources(&statuses, None)
             .expect_err("duplicate call-site status should be rejected before dedup");
         assert!(
             matches!(

@@ -434,6 +434,31 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
         }
     }
 
+    fn visit_expr_if(&mut self, expr_if: &'ast syn::ExprIf) {
+        let syn::Expr::Let(expr_let) = unparen_expr(expr_if.cond.as_ref()) else {
+            visit::visit_expr_if(self, expr_if);
+            return;
+        };
+
+        let bindings =
+            option_self_field_binding_proofs(expr_let.pat.as_ref(), expr_let.expr.as_ref());
+        if bindings.is_empty()
+            || !block_contains_direct_path_call_to_binding(&expr_if.then_branch, &bindings)
+        {
+            visit::visit_expr_if(self, expr_if);
+            return;
+        }
+
+        self.visit_expr(expr_let.expr.as_ref());
+        self.local_scopes.push(bindings);
+        self.visit_block(&expr_if.then_branch);
+        self.local_scopes.pop();
+
+        if let Some((_else_token, else_branch)) = &expr_if.else_branch {
+            self.visit_expr(else_branch.as_ref());
+        }
+    }
+
     fn visit_expr_unsafe(&mut self, unsafe_expr: &'ast syn::ExprUnsafe) {
         self.unsafe_depth += 1;
         visit::visit_expr_unsafe(self, unsafe_expr);
@@ -942,6 +967,10 @@ fn classify_path_callee(
                     init_paths: init_paths.clone(),
                 }
             }
+            LocalBindingProof::SelfField { field_path, .. } => PathCallCallee::SelfFieldBinding {
+                path: path.to_vec(),
+                field_path: field_path.clone(),
+            },
             LocalBindingProof::TraitObject {
                 trait_path,
                 init_path: Some(init_path),
@@ -1351,6 +1380,89 @@ fn match_arm_binding_proofs(
     local_scopes: &[Vec<LocalBindingProof>],
 ) -> Vec<LocalBindingProof> {
     local_binding_proofs(pat, Some(scrutinee), owner, cfgs, param_names, local_scopes)
+}
+
+fn option_self_field_binding_proofs(
+    pat: &syn::Pat,
+    scrutinee: &syn::Expr,
+) -> Vec<LocalBindingProof> {
+    let syn::Pat::TupleStruct(pattern) = pat else {
+        return Vec::new();
+    };
+    if pattern.qself.is_some() || pattern.elems.len() != 1 {
+        return Vec::new();
+    }
+    let path = path_segments(&pattern.path);
+    if !is_option_some_variant(&path) {
+        return Vec::new();
+    }
+    let Some(name) = pattern.elems.iter().next().and_then(pat_ident_name) else {
+        return Vec::new();
+    };
+    let Some(field_path) = self_field_path(unparen_expr(scrutinee)) else {
+        return Vec::new();
+    };
+    if field_path.is_empty() {
+        return Vec::new();
+    }
+
+    vec![LocalBindingProof::SelfField { name, field_path }]
+}
+
+fn is_option_some_variant(path: &[String]) -> bool {
+    matches!(path, [variant] if variant == "Some")
+        || matches!(path, [option, variant] if option == "Option" && variant == "Some")
+        || matches!(
+            path,
+            [root, option_mod, option, variant]
+                if (root == "std" || root == "core")
+                    && option_mod == "option"
+                    && option == "Option"
+                    && variant == "Some"
+        )
+}
+
+fn block_contains_direct_path_call_to_binding(
+    block: &syn::Block,
+    bindings: &[LocalBindingProof],
+) -> bool {
+    let mut visitor = BindingPathCallVisitor {
+        bindings,
+        found: false,
+    };
+    visitor.visit_block(block);
+    visitor.found
+}
+
+struct BindingPathCallVisitor<'a> {
+    bindings: &'a [LocalBindingProof],
+    found: bool,
+}
+
+impl<'ast> Visit<'ast> for BindingPathCallVisitor<'_> {
+    fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+        if self.found {
+            return;
+        }
+        let syn::Expr::Path(path) = call.func.as_ref() else {
+            visit::visit_expr_call(self, call);
+            return;
+        };
+        if path.qself.is_some() || path.path.segments.len() != 1 {
+            visit::visit_expr_call(self, call);
+            return;
+        }
+        let Some(segment) = path.path.segments.first() else {
+            visit::visit_expr_call(self, call);
+            return;
+        };
+        let name = segment.ident.to_string();
+        if self.bindings.iter().any(|binding| binding.name() == name) {
+            self.found = true;
+            return;
+        }
+        visit::visit_expr_call(self, call);
+    }
 }
 
 fn tuple_binding_proofs(
@@ -2243,6 +2355,7 @@ fn init_target_path(
                 init_path: None, ..
             }
             | LocalBindingProof::AmbiguousInitialized { .. }
+            | LocalBindingProof::SelfField { .. }
             | LocalBindingProof::TupleReturn { .. }
             | LocalBindingProof::TupleMethodReturn { .. }
             | LocalBindingProof::MethodResult { .. }

@@ -212,17 +212,17 @@ impl CallRelationResolver<'_> {
         let Some((method_name, type_path)) = path.split_last() else {
             return Ok(None);
         };
-        let [type_segment] = type_path else {
-            if self.is_explicit_local_path(type_path) {
-                return self.resolve_local_type_assoc_function(
-                    owner,
-                    type_path,
-                    method_name,
-                    arg_count,
-                    type_relations,
-                );
-            }
+        if type_path.is_empty() {
             return Ok(None);
+        }
+        let [type_segment] = type_path else {
+            return self.resolve_local_type_assoc_function(
+                owner,
+                type_path,
+                method_name,
+                arg_count,
+                type_relations,
+            );
         };
 
         if type_segment == "Self" {

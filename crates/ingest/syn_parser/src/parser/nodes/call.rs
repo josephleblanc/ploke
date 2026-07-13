@@ -196,6 +196,12 @@ pub enum PathCallCallee {
         path: Vec<String>,
         init_paths: Vec<Vec<String>>,
     },
+    /// The callee path names a local binding destructured from a self field,
+    /// such as `if let Some(f) = self.callback { f() }`.
+    SelfFieldBinding {
+        path: Vec<String>,
+        field_path: Vec<String>,
+    },
     /// The callee path names a visible local binding that aliases another
     /// visible local value binding or parameter.
     AliasedValueBinding {

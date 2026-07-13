@@ -20,7 +20,7 @@ use super::super::{
 use super::unparen_expr;
 
 impl CallRelationResolver<'_> {
-    pub(super) fn resolve_self_field_callable_call(
+    pub(in crate::resolve::call_resolution) fn resolve_self_field_callable_call(
         &self,
         owner: CallBodyOwnerId,
         path: &[String],
@@ -599,6 +599,18 @@ impl<'ast> Visit<'ast> for StructFieldParameterVisitor<'_> {
         visit::visit_expr_struct(self, expr);
     }
 
+    fn visit_expr_assign(&mut self, expr: &'ast syn::ExprAssign) {
+        if self_field_path_matches(expr.left.as_ref(), self.field_name)
+            && let Some(parameter_path) = callable_parameter_path(expr.right.as_ref())
+        {
+            self.initializers.push(FieldParameterInitializer {
+                struct_path: vec!["Self".to_string()],
+                parameter_path,
+            });
+        }
+        visit::visit_expr_assign(self, expr);
+    }
+
     fn visit_expr_closure(&mut self, _expr: &'ast syn::ExprClosure) {}
 }
 
@@ -768,12 +780,27 @@ fn member_matches(member: &syn::Member, field_name: &str) -> bool {
     }
 }
 
+fn self_field_path_matches(expr: &syn::Expr, field_name: &str) -> bool {
+    let syn::Expr::Field(field) = unparen_expr(expr) else {
+        return false;
+    };
+    if !member_matches(&field.member, field_name) {
+        return false;
+    }
+    matches!(
+        unparen_expr(field.base.as_ref()),
+        syn::Expr::Path(path) if path.qself.is_none() && path.path.is_ident("self")
+    )
+}
+
 fn callable_parameter_path(expr: &syn::Expr) -> Option<Vec<String>> {
     match unparen_expr(expr) {
         syn::Expr::Path(path) if path.qself.is_none() => {
             single_segment_path(path_segments(&path.path))
         }
-        syn::Expr::Call(call) => boxed_call_parameter_path(call),
+        syn::Expr::Call(call) => {
+            boxed_call_parameter_path(call).or_else(|| option_some_parameter_path(call))
+        }
         _ => None,
     }
 }
@@ -821,6 +848,21 @@ fn boxed_call_parameter_path(call: &syn::ExprCall) -> Option<Vec<String>> {
     single_segment_path(path_segments(&path.path))
 }
 
+fn option_some_parameter_path(call: &syn::ExprCall) -> Option<Vec<String>> {
+    let syn::Expr::Path(func) = unparen_expr(call.func.as_ref()) else {
+        return None;
+    };
+    if func.qself.is_some() || !is_option_some(&path_segments(&func.path)) {
+        return None;
+    }
+    let mut args = call.args.iter();
+    let arg = args.next()?;
+    if args.next().is_some() {
+        return None;
+    }
+    callable_parameter_path(arg)
+}
+
 fn single_segment_path(path: Vec<String>) -> Option<Vec<String>> {
     matches!(path.as_slice(), [_]).then_some(path)
 }
@@ -831,6 +873,19 @@ fn is_box_new(path: &[String]) -> bool {
             path,
             [root, boxed, box_, new]
                 if (root == "std" || root == "alloc") && boxed == "boxed" && box_ == "Box" && new == "new"
+        )
+}
+
+fn is_option_some(path: &[String]) -> bool {
+    matches!(path, [variant] if variant == "Some")
+        || matches!(path, [option, variant] if option == "Option" && variant == "Some")
+        || matches!(
+            path,
+            [root, option_mod, option, variant]
+                if (root == "std" || root == "core")
+                    && option_mod == "option"
+                    && option == "Option"
+                    && variant == "Some"
         )
 }
 
