@@ -64,6 +64,9 @@ fn axum_usage_questions_have_multi_hop_navigation_and_impact_answers() -> Result
     //   axum/src/handler/mod.rs:250 also contributes generated
     //     `Tn::from_request(req, &state)` direct callsites through
     //     `all_the_tuples!(impl_handler)`.
+    //   axum-core/src/extract/tuple.rs:68 also contributes generated
+    //     `Tn::from_request(req, state)` direct callsites through
+    //     `all_the_tuples!(impl_from_request)`.
     //   axum-core/src/extract/mod.rs:85
     //     defines the `FromRequest::from_request` trait method binding.
     let start = method_id_by_name_body_and_file_suffix(
@@ -107,8 +110,8 @@ fn axum_usage_questions_have_multi_hop_navigation_and_impact_answers() -> Result
     let direct_sites = db.call_sites_for_target(target)?;
     assert_eq!(
         direct_sites.len(),
-        18,
-        "target-centered direct callsite query should still answer exact callsite fanout: {direct_sites:#?}"
+        34,
+        "target-centered direct callsite query should still answer exact callsite fanout, including generated handler and tuple extractor rows: {direct_sites:#?}"
     );
     assert!(
         direct_sites
