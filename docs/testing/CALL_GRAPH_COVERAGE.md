@@ -112,15 +112,18 @@ These are intentionally not claimed as solved:
 
 ## Recent Verification Reference
 
-On 2026-07-13 active call-graph fixtures were refreshed after associated
-constructor receiver handling began resolving path-call receiver chains such as
+On 2026-07-13 active call-graph fixtures were refreshed with
+`cargo run -p xtask --features call_graph -- fixtures regenerate --active`, then
+copied into the committed seed artifacts and verified with the registry-backed
+backup fixture checker. This refresh followed associated constructor receiver
+handling for path-call receiver chains such as
 `crate::tests::substring::Runner::new().fwd(...)`. The resolver now chains
 through associated constructor return types only when the constructor method is
 local to the current parsed graph; cross-crate associated constructor receiver
 chains remain unsupported until the resolver carries graph context for the
 foreign target method. Verification passed:
 
-- `cargo run -p xtask --features call_graph -- recreate-backup-db --fixture corpus_axum_call_graph`
+- `cargo run -p xtask --features call_graph -- fixtures regenerate --active`
 - `cargo run -p xtask --features call_graph -- verify-backup-dbs`
 - `cargo check -p syn_parser --features call_graph`
 - `cargo test -p ploke-db shared_call_shape_matrix_cases_match_registered_backups -- --nocapture`
