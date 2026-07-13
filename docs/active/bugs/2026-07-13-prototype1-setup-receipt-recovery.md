@@ -1,6 +1,6 @@
 # Prototype 1 setup could not resume its own durable admission receipt
 
-Status: fixed in source; original live recovery verified, hardened regression pending
+Status: fixed; hardened regression and fresh live retry verified
 
 Discovered: 2026-07-13
 
@@ -110,9 +110,16 @@ Final source verification passes the focused durability and setup-recovery
 checks plus the complete `ploke-eval` library suite: 1007 passed, 0 failed, 27
 ignored. An independent pre-commit review reports no remaining blocker.
 
-A fresh live setup/no-write retry will be recorded after the hardened slice is
-committed; the earlier live plan digest cannot be reused because checkout
-identity is now part of the reviewed plan.
+The hardened slice is committed as `60c183df0`. Fresh campaign
+`p1-stage1-hardened-g35f-pplxembed-3g1x3-p3-20260713-1` admitted plan v2 SHA
+`233a3732be99bb7150560d4d678bf85c0ec1e40c4e0b86d89fd9cf789133f57d`
+and completed Parent(0) at Git head
+`8c4fbae0e6b3b2b6ac07dd063f80f22a082f9903`. An immediate exact CLI retry
+preserved every campaign file's bytes, size, and mtime, plus Git HEAD and clean
+checkout status. Ordinary doctor, `--repo-root .` normalization, headless TUI
+setup, and a live Direct Google protocol canary passed. The explicit OpenRouter
+embedding preflight remains externally blocked by the key-specific monthly
+limit, so no loop transition was attempted.
 
 The original live campaign remains at `baseline_eval`; it was not advanced
 because the separate live embedding readiness probe is blocked by the

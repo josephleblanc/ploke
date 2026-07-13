@@ -2,7 +2,7 @@
 
 - Date: 2026-07-13
 - Baseline: `de76eaee34e6f4c4c3a19543c4cf91b217aa3bb9`
-- Status: active implementation; Stage 0 complete, Stage 1 in pre-commit verification
+- Status: active implementation; Stages 0-1 complete, Stage 2 in progress
 
 ## Implementation progress
 
@@ -18,9 +18,18 @@
   exact completed-state verification, atomic authority-file replacement, and
   an exclusive Git-worktree setup lock. Its focused regressions pass, the full
   `ploke-eval` library suite passes 1007/1007 with 27 ignored tests, and the
-  independent review reports no blocker. It remains uncommitted until final
-  staged change detection; a fresh live no-write retry follows the checkpoint
-  commit.
+  independent review reports no blocker. It is committed as `60c183df0` (`Add
+  recoverable Prototype 1 setup admission`).
+- Fresh live validation used campaign
+  `p1-stage1-hardened-g35f-pplxembed-3g1x3-p3-20260713-1` in a clean worktree at
+  that commit. Plan v2 SHA `233a3732be99bb7150560d4d678bf85c0ec1e40c4e0b86d89fd9cf789133f57d`
+  admitted Parent(0) at `8c4fbae0e6b3b2b6ac07dd063f80f22a082f9903`; an immediate exact retry
+  preserved all campaign file bytes, sizes, mtimes, Git HEAD, and clean status.
+  Ordinary doctor, relative-root normalization, headless sparse/BM25 setup, and
+  a live Direct Google protocol canary passed. The explicit OpenRouter
+  Perplexity embedding preflight still returns the key-specific monthly-limit
+  403 (`provider_account`) despite account credits, so the campaign remains
+  unadvanced at `baseline_eval`.
 
 The later stages remain planned, not implemented. In particular, no UI or CLI
 mutation path should yet be described as sharing an exclusive durable loop
