@@ -3120,6 +3120,16 @@ async-closure owner edge. Parser, DB traversal, RAG call-context, and exact
 shape. Returned futures, non-literal indexes, arbitrary aggregate aliases, and
 general poll/resume semantics remain out of scope.
 
+Update 2026-07-13: the downstream TUI/context-plan presentation row now
+preserves multi-hop call-path carriers in `ContextPlanRagPart`. The model-facing
+RAG system message already rendered `call_paths`; this slice makes the
+interactive context-plan overlay preserve and display the same outgoing/incoming
+path counts and expanded path evidence instead of only call-site/proof rows.
+The focused overlay test uses a two-hop path shaped after the axum
+`RequestExt::extract -> RequestExt::extract_with_state ->
+FromRequest::from_request` oracle. Broader interaction design and proof-policy
+copy remain open.
+
 ## Parking Lot
 
 - Add binding tracking plan that ties syntax body ownership, local bindings, and type graph edges before attempting receiver/dynamic traversal.

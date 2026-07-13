@@ -366,7 +366,10 @@ fn reformat_context_to_system(ctx_part: ContextPart) -> String {
     )
 }
 
-fn format_call_paths_block(from_owner: &[CallPathInfo], to_target: &[CallPathInfo]) -> String {
+pub(crate) fn format_call_paths_block(
+    from_owner: &[CallPathInfo],
+    to_target: &[CallPathInfo],
+) -> String {
     if from_owner.is_empty() && to_target.is_empty() {
         return String::new();
     }
@@ -825,6 +828,8 @@ fn build_context_plan(
                 type_context: part.type_context,
                 call_expansion: part.call_expansion,
                 call_context: part.call_context.clone(),
+                call_paths_from_owner: part.call_paths_from_owner.clone(),
+                call_paths_to_target: part.call_paths_to_target.clone(),
                 proof_context: part.proof_context.clone(),
             });
         }

@@ -21,7 +21,8 @@ use crate::chat_history::{ContextTokens, Message, MessageKind, TokenKind};
 use crate::context_plan::{ContextPlanHistory, ContextPlanSnapshot};
 use crate::llm::manager::events::{ContextExclusionReason, ContextPlanMessage, ContextPlanRagPart};
 use crate::rag::context::{
-    format_call_context_block_for_part, format_call_expansion, format_proof_context_block,
+    format_call_context_block_for_part, format_call_expansion, format_call_paths_block,
+    format_proof_context_block,
 };
 use crate::ui_theme::UiTheme;
 use unicode_width::UnicodeWidthChar;
@@ -946,6 +947,12 @@ fn build_display_items(
                 } else {
                     format!(", calls {}", part.call_context.len())
                 };
+                let call_paths = part.call_paths_from_owner.len() + part.call_paths_to_target.len();
+                let call_path_suffix = if call_paths == 0 {
+                    String::new()
+                } else {
+                    format!(", paths {call_paths}")
+                };
                 let call_blockers = part
                     .call_context
                     .iter()
@@ -976,7 +983,7 @@ fn build_display_items(
                     part.kind.to_static_str(),
                     part.score,
                     format_args!(
-                        "{type_suffix}{expansion_suffix}{call_suffix}{call_blocker_suffix}{proof_suffix}{proof_blocker_suffix}"
+                        "{type_suffix}{expansion_suffix}{call_suffix}{call_path_suffix}{call_blocker_suffix}{proof_suffix}{proof_blocker_suffix}"
                     ),
                     part.estimated_tokens
                 );
@@ -1018,6 +1025,19 @@ fn build_display_items(
                         );
                         details.extend(
                             call_context
+                                .lines()
+                                .map(|line| Line::from(format!("    {line}"))),
+                        );
+                    }
+                    if !part.call_paths_from_owner.is_empty()
+                        || !part.call_paths_to_target.is_empty()
+                    {
+                        let call_paths = format_call_paths_block(
+                            &part.call_paths_from_owner,
+                            &part.call_paths_to_target,
+                        );
+                        details.extend(
+                            call_paths
                                 .lines()
                                 .map(|line| Line::from(format!("    {line}"))),
                         );

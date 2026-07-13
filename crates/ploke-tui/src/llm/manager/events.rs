@@ -2,8 +2,8 @@ use ploke_core::tool_types::ToolName;
 use ploke_core::{
     ArcStr,
     rag_types::{
-        CallContextInfo, CallExpansionInfo, ContextPartKind, ContextStats, ProofContextInfo,
-        TypeContextInfo,
+        CallContextInfo, CallExpansionInfo, CallPathInfo, ContextPartKind, ContextStats,
+        ProofContextInfo, TypeContextInfo,
     },
 };
 use ploke_llm::{
@@ -57,6 +57,8 @@ pub struct ContextPlanRagPart {
     pub type_context: Option<TypeContextInfo>,
     pub call_expansion: Option<CallExpansionInfo>,
     pub call_context: Vec<CallContextInfo>,
+    pub call_paths_from_owner: Vec<CallPathInfo>,
+    pub call_paths_to_target: Vec<CallPathInfo>,
     pub proof_context: Vec<ProofContextInfo>,
 }
 

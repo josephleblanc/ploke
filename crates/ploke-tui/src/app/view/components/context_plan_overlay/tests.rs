@@ -1,9 +1,10 @@
 use super::*;
 use crate::llm::manager::events::ContextPlan;
 use ploke_core::rag_types::{
-    CallCalleeInfo, CallContextInfo, CallExpansionInfo, CallExpansionKind, CallReceiverInfo,
-    CallResolutionKind, CallSiteKind, CallStatusKind, CallTargetInfo, CallTargetKind,
-    ContextPartKind, ProofContextInfo,
+    CallCalleeInfo, CallContextInfo, CallEndpointKind, CallExpansionInfo, CallExpansionKind,
+    CallPathEdgeInfo, CallPathInfo, CallPathNodeInfo, CallReceiverInfo, CallResolutionKind,
+    CallSiteKind, CallStatusKind, CallTargetInfo, CallTargetKind, CanonPath, ContextPartKind,
+    NodeFilepath, ProofContextInfo,
 };
 
 fn line_text(line: &Line<'_>) -> String {
@@ -201,6 +202,8 @@ fn expanded_rag_part_displays_call_context_details() {
                     }],
                 },
             ],
+            call_paths_from_owner: Vec::new(),
+            call_paths_to_target: Vec::new(),
             proof_context: vec![ProofContextInfo {
                 fact_id: "call-edge:1".to_string(),
                 kind: "call_edge".to_string(),
@@ -352,6 +355,114 @@ fn expanded_rag_part_displays_call_context_details() {
 }
 
 #[test]
+fn expanded_rag_part_displays_call_path_details() {
+    let start = Uuid::from_u128(0x710);
+    let intermediate = Uuid::from_u128(0x711);
+    let target = Uuid::from_u128(0x712);
+    let first_site = Uuid::from_u128(0x713);
+    let second_site = Uuid::from_u128(0x714);
+    let path = CallPathInfo {
+        start_id: start,
+        end_id: target,
+        depth: 2,
+        edges: vec![
+            CallPathEdgeInfo {
+                caller_id: start,
+                callee_id: intermediate,
+                call_site_id: first_site,
+                span: (13, 41),
+                relation: CallTargetKind::Method,
+                source_kind: CallSiteKind::Method,
+                target_kind: CallEndpointKind::Method,
+            },
+            CallPathEdgeInfo {
+                caller_id: intermediate,
+                callee_id: target,
+                call_site_id: second_site,
+                span: (42, 63),
+                relation: CallTargetKind::AssociatedFunction,
+                source_kind: CallSiteKind::Path,
+                target_kind: CallEndpointKind::Method,
+            },
+        ],
+        nodes: vec![
+            CallPathNodeInfo {
+                id: start,
+                file_path: NodeFilepath::new("src/request.rs".to_string()),
+                canon_path: CanonPath::new("crate::RequestExt::extract".to_string()),
+            },
+            CallPathNodeInfo {
+                id: intermediate,
+                file_path: NodeFilepath::new("src/request.rs".to_string()),
+                canon_path: CanonPath::new("crate::RequestExt::extract_with_state".to_string()),
+            },
+            CallPathNodeInfo {
+                id: target,
+                file_path: NodeFilepath::new("src/extract.rs".to_string()),
+                canon_path: CanonPath::new("crate::FromRequest::from_request".to_string()),
+            },
+        ],
+    };
+    let plan = ContextPlan {
+        plan_id: Uuid::from_u128(0x1010),
+        parent_id: Uuid::from_u128(0x1020),
+        estimated_total_tokens: 10,
+        included_messages: Vec::new(),
+        excluded_messages: Vec::new(),
+        included_rag_parts: vec![ContextPlanRagPart {
+            part_id: start,
+            file_path: "src/request.rs".to_string(),
+            kind: ContextPartKind::Code,
+            estimated_tokens: 10,
+            score: 0.75,
+            type_context: None,
+            call_expansion: None,
+            call_context: Vec::new(),
+            call_paths_from_owner: vec![path],
+            call_paths_to_target: Vec::new(),
+            proof_context: Vec::new(),
+        }],
+        rag_stats: None,
+    };
+    let snapshot = ContextPlanSnapshot::new(plan, None);
+    let (rows, _) = build_rows(&snapshot, ContextPlanFilter::All);
+    let expanded = HashSet::from([ContextPlanItemKey::RagPart { part_id: start }]);
+    let items = build_display_items(
+        &snapshot,
+        &rows,
+        &expanded,
+        &HashSet::new(),
+        None,
+        120,
+        120,
+        &HashMap::new(),
+        &UiTheme::default(),
+    );
+    let item = items
+        .iter()
+        .find(|item| line_text(&item.title).contains("[rag]"))
+        .expect("expanded RAG part should render");
+
+    assert!(item.expanded);
+    assert!(line_text(&item.title).contains("paths 1"));
+    let details = item
+        .details
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(details.contains("call_paths: 1 outgoing, 0 incoming"));
+    assert!(details.contains(&format!("outgoing depth 2: {start} -> {target}")));
+    assert!(details.contains(&first_site.to_string()));
+    assert!(details.contains(&second_site.to_string()));
+    assert!(details.contains("@13..41"));
+    assert!(details.contains("@42..63"));
+    assert!(details.contains("crate::RequestExt::extract @ src/request.rs"));
+    assert!(details.contains("crate::RequestExt::extract_with_state @ src/request.rs"));
+    assert!(details.contains("crate::FromRequest::from_request @ src/extract.rs"));
+}
+
+#[test]
 fn expanded_rag_part_displays_external_call_context_details() {
     let part_id = Uuid::from_u128(0x801);
     let plan = ContextPlan {
@@ -420,6 +531,8 @@ fn expanded_rag_part_displays_external_call_context_details() {
                     targets: Vec::new(),
                 },
             ],
+            call_paths_from_owner: Vec::new(),
+            call_paths_to_target: Vec::new(),
             proof_context: Vec::new(),
         }],
         rag_stats: None,
@@ -514,6 +627,8 @@ fn expanded_rag_part_displays_trait_dispatch_call_context_details() {
                     relation: CallTargetKind::Method,
                 }],
             }],
+            call_paths_from_owner: Vec::new(),
+            call_paths_to_target: Vec::new(),
             proof_context: Vec::new(),
         }],
         rag_stats: None,
@@ -682,6 +797,8 @@ fn expanded_rag_part_displays_callable_path_call_context_details() {
                     targets: Vec::new(),
                 },
             ],
+            call_paths_from_owner: Vec::new(),
+            call_paths_to_target: Vec::new(),
             proof_context: Vec::new(),
         }],
         rag_stats: None,
