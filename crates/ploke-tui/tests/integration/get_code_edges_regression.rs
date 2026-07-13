@@ -2414,6 +2414,15 @@ async fn code_item_edges_returns_real_corpus_await_receiver_targetless_row() {
         .and_then(|node| node.get("proof_context"))
         .and_then(serde_json::Value::as_array)
         .expect("node_info.proof_context array");
+    let reach = payload
+        .get("node_info")
+        .and_then(|node| node.get("call_reach"))
+        .and_then(serde_json::Value::as_object)
+        .expect("node_info.call_reach object");
+    let external_frontier = reach
+        .get("external_frontier_calls")
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.call_reach external_frontier_calls array");
 
     // Matrix:
     //   docs/active/agents/call-graph/
@@ -2429,6 +2438,25 @@ async fn code_item_edges_returns_real_corpus_await_receiver_targetless_row() {
     let site_id =
         assert_await_result_unwrap_context(call_context, fixture.owner, "code_item_edges");
     assert_await_result_unwrap_proof(proof_context, fixture.owner, site_id, "code_item_edges");
+    let external_calls = external_frontier
+        .iter()
+        .map(|call| serde_json::from_value::<CallContextInfo>(call.clone()))
+        .collect::<Result<Vec<_>, _>>()
+        .expect("typed external frontier rows");
+    let external = external_calls
+        .iter()
+        .find(|call| call.site_id == site_id)
+        .unwrap_or_else(|| {
+            panic!(
+                "code_item_edges should expose AwaitMethodCallResult unwrap in external frontier rows: {external_calls:#?}"
+            )
+        });
+    assert_eq!(external.owner_id, fixture.owner);
+    assert_eq!(external.status, CallStatusKind::External);
+    assert!(
+        external.targets.is_empty(),
+        "edge-tool external frontier call should remain targetless: {external:#?}"
+    );
     assert!(
         summary_usize(&payload, "blocked") >= 1,
         "code_item_edges summary should report the targetless await receiver frontier row: {payload:#?}"
@@ -2448,6 +2476,10 @@ async fn code_item_edges_returns_real_corpus_await_receiver_targetless_row() {
             .expect("blocked call count")
             >= 1,
         "code_item_edges should surface blocked frontier count in the UI payload"
+    );
+    assert_eq!(
+        ui_field(ui, "reach_external_frontier_calls"),
+        external_calls.len().to_string()
     );
     let proof_count = proof_context.len().to_string();
     assert_eq!(ui_field(ui, "proof_context"), proof_count.as_str());
