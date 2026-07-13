@@ -3130,6 +3130,15 @@ The focused overlay test uses a two-hop path shaped after the axum
 FromRequest::from_request` oracle. Broader interaction design and proof-policy
 copy remain open.
 
+Update 2026-07-13: the final prompt payload policy now has an explicit
+model-facing header. The RAG prompt tells the model that resolved call-graph
+rows are persisted local edges, while external, unsupported, unresolved, and
+ambiguous rows are blockers or candidates and must not be treated as traversal
+edges. It also directs proof-sensitive claims about generated code, external
+summaries, effects, build domains, and unresolved blockers to the structured
+`proof_context`/evidence fields. The context-plan golden snapshot was updated
+for the expected token-accounting increase.
+
 ## Parking Lot
 
 - Add binding tracking plan that ties syntax body ownership, local bindings, and type graph edges before attempting receiver/dynamic traversal.

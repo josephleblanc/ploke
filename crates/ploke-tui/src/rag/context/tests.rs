@@ -80,6 +80,17 @@ fn context_plan_is_stable_for_fixed_inputs() {
 }
 
 #[test]
+fn prompt_header_explains_call_graph_proof_policy() {
+    assert!(PROMPT_HEADER.contains("Call graph context is proof-facing"));
+    assert!(PROMPT_HEADER.contains("Resolved rows are persisted local edges"));
+    assert!(
+        PROMPT_HEADER.contains("must not be treated as local traversal edges"),
+        "{PROMPT_HEADER}"
+    );
+    assert!(PROMPT_HEADER.contains("Use proof_context and evidence fields"));
+}
+
+#[test]
 fn reformat_context_to_system_truncates_and_includes_meta() {
     let mut text = String::new();
     let total_lines = DEFAULT_CONTEXT_PART_MAX_LINES + 2;
@@ -1781,9 +1792,9 @@ fn context_plan_golden_snapshot_from_chat_history() {
     let expected = "\
 plan_id: 00000000-0000-0000-0000-000000000001
 parent_id: user
-estimated_total_tokens: 91
+estimated_total_tokens: 181
 included_messages:
-- id: root_system kind: System tokens: 81
+- id: root_system kind: System tokens: 171
 - id: user kind: User tokens: 4
 excluded_messages:
 - id: assistant kind: Assistant tokens: 4 reason: TtlExpired

@@ -40,6 +40,8 @@ You are a highly skilled software engineer, specializing in the Rust programming
 
 You will be asked to provide some assistance in collaborating with the user.
 RAG snippets are intentionally brief; request deeper context with the request_code_context tool.
+Call graph context is proof-facing: Resolved rows are persisted local edges, while External, Unsupported, Unresolved, and Ambiguous rows are blockers or candidates and must not be treated as local traversal edges.
+Use proof_context and evidence fields to qualify claims about generated code, external summaries, effects, build domains, and unresolved blockers.
 <-- END SYSTEM PROMPT -->
 "#;
 
