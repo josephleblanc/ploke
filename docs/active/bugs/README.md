@@ -150,6 +150,8 @@ file and current code before treating a report as still open.
 - [`2026-06-12-prototype1-direct-google-gemini-15-flash-404.md`](./2026-06-12-prototype1-direct-google-gemini-15-flash-404.md)
   External provider/config blocker: fresh Prototype 1 setup admitted `google/gemini-1.5-flash` as the direct-Google protocol model, but doctor live preflight blocked with Vertex HTTP 404 before loop advance.
 - [`2026-07-13-prototype1-doctor-headless-preflight-rebuild-hang.md`](./2026-07-13-prototype1-doctor-headless-preflight-rebuild-hang.md)
-  Open blocker: the no-model-call headless-TUI doctor preflight can wait forever on a full BM25 rebuild mailbox before its advertised 60-second readiness deadline begins.
+  Resolved shared-library contract: BM25 rebuild admission now rejects full/closed mailboxes explicitly, status deadlines cover enqueue plus response, and the apparent live hang was corrected to a roughly two-minute workspace-ingestion run that passed.
 - [`2026-07-13-prototype1-embedding-preflight-after-admission.md`](./2026-07-13-prototype1-embedding-preflight-after-admission.md)
   Repaired readiness gap plus external blocker: doctor now exercises the production embedding path without run-evidence writes; a key-specific OpenRouter monthly limit still prevents a fresh live loop.
+- [`2026-07-13-walk-summary-pre-child-plan.md`](./2026-07-13-walk-summary-pre-child-plan.md)
+  Open read-model bug: `walk summary` treats a legitimately absent pre-child-plan directory as a malformed run instead of rendering the baseline/pre-plan phase, while later missing authority must still fail closed.
