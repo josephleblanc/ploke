@@ -3203,7 +3203,7 @@ pub(crate) fn assert_await_result_unwrap_context(
         "{label} should return exactly one targetless AwaitMethodCallResult unwrap row: {calls:#?}"
     );
     let call = &matching[0];
-    assert_eq!(call.status, CallStatusKind::Unsupported);
+    assert_eq!(call.status, CallStatusKind::External);
     assert_eq!(call.resolution, None);
     assert!(
         call.targets.is_empty(),
@@ -3288,9 +3288,9 @@ pub(crate) fn assert_await_result_unwrap_proof(
             proof.kind == "call_resolution"
                 && proof.call_site_id.as_deref() == Some(site_id.as_str())
                 && proof.resolution_state.as_deref() == Some("blocked")
-                && proof.blocker_reason.as_deref() == Some("type_resolution_missing")
+                && proof.blocker_reason.as_deref() == Some("external_dependency_summary_missing")
         }),
-        "{label} should return the AwaitMethodCallResult unwrap blocked resolution proof row: {proofs:#?}"
+        "{label} should return the AwaitMethodCallResult unwrap external frontier proof row: {proofs:#?}"
     );
 }
 

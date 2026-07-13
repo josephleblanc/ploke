@@ -65,16 +65,16 @@ async fn proof_context_collection_preserves_axum_await_result_receiver_blocker()
     //   axum/src/serve/listener.rs:143 calls
     //   `self.sem.clone().acquire_owned().await.unwrap()`.
     // Expected proof traversal: owner-seeded proof context must include the
-    // call_site plus blocked call_resolution facts for the exact unsupported,
-    // targetless AwaitMethodCallResult(acquire_owned) `unwrap` site. There are
-    // zero callee edges for this row until awaited-result receiver resolution
-    // is implemented.
-    assert_blocked_resolution(rows, owner, "type_resolution_missing");
+    // call_site plus blocked call_resolution facts for the exact external,
+    // targetless AwaitMethodCallResult(acquire_owned) `unwrap` frontier. There
+    // are zero local callee edges for this row unless an admitted external
+    // summary is supplied.
+    assert_blocked_resolution(rows, owner, "external_dependency_summary_missing");
     assert_site_blocker(
         rows,
         owner,
         site_id,
-        "type_resolution_missing",
+        "external_dependency_summary_missing",
         "ConnLimiter::accept AwaitMethodCallResult unwrap",
     );
 

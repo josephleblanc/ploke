@@ -635,15 +635,17 @@ positive row. Non-async methods that return future-like values, external awaited
 method results, unresolved/ambiguous inner calls, and broader poll/resume
 semantics remain targetless or unsupported.
 
-Previous completed slice: awaited method-call receiver proof for unsupported
+Previous completed slice: awaited method-call receiver proof for targetless
 `future_method().await.unwrap()` rows. Parser extraction preserves an outer
 method call whose receiver is the awaited result of an inner method call as
 `AwaitMethodCallResult { method_name }`; transform, DB receiver decoding, RAG
-call context, and TUI formatting preserve that payload while unsupported
-external/opaque rows remain targetless. The axum real-corpus seed proves the
-split: arbitrary awaited-expression `unwrap` rows stay in the coarse
-`AwaitResult` bucket, while awaited method-call receivers are counted by their
-inner method payload, including
+call context, and TUI formatting preserve that payload while opaque rows remain
+targetless. The axum real-corpus seed proves the split: arbitrary
+awaited-expression `unwrap` rows stay in the coarse `AwaitResult` bucket,
+awaited method-call rows with non-exact inner method proof stay targetless
+`Unresolved`, rows without enough receiver proof stay targetless
+`Unsupported`, and externally proven receiver chains are targetless
+`External`. The externally proven receiver chain includes
 `self.sem.clone().acquire_owned().await.unwrap()` at
 `axum/src/serve/listener.rs:143`.
 

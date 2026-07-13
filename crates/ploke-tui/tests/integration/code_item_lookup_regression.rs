@@ -1532,10 +1532,10 @@ async fn code_item_lookup_returns_real_corpus_await_receiver_targetless_row() {
         .get("call_reach")
         .and_then(serde_json::Value::as_object)
         .expect("call_reach object");
-    let unsupported_frontier = reach
-        .get("unsupported_frontier_calls")
+    let external_frontier = reach
+        .get("external_frontier_calls")
         .and_then(serde_json::Value::as_array)
-        .expect("call_reach unsupported_frontier_calls array");
+        .expect("call_reach external_frontier_calls array");
 
     // Matrix:
     //   docs/active/agents/call-graph/
@@ -1551,24 +1551,24 @@ async fn code_item_lookup_returns_real_corpus_await_receiver_targetless_row() {
     let site_id =
         assert_await_result_unwrap_context(call_context, fixture.owner, "code_item_lookup");
     assert_await_result_unwrap_proof(proof_context, fixture.owner, site_id, "code_item_lookup");
-    let unsupported_calls = unsupported_frontier
+    let external_calls = external_frontier
         .iter()
         .map(|call| serde_json::from_value::<CallContextInfo>(call.clone()))
         .collect::<Result<Vec<_>, _>>()
-        .expect("typed unsupported frontier rows");
-    let unsupported = unsupported_calls
+        .expect("typed external frontier rows");
+    let external = external_calls
         .iter()
         .find(|call| call.site_id == site_id)
         .unwrap_or_else(|| {
             panic!(
-                "code_item_lookup should expose AwaitMethodCallResult unwrap in unsupported frontier rows: {unsupported_calls:#?}"
+                "code_item_lookup should expose AwaitMethodCallResult unwrap in external frontier rows: {external_calls:#?}"
             )
         });
-    assert_eq!(unsupported.owner_id, fixture.owner);
-    assert_eq!(unsupported.status, CallStatusKind::Unsupported);
+    assert_eq!(external.owner_id, fixture.owner);
+    assert_eq!(external.status, CallStatusKind::External);
     assert!(
-        unsupported.targets.is_empty(),
-        "unsupported frontier call should remain targetless: {unsupported:#?}"
+        external.targets.is_empty(),
+        "external frontier call should remain targetless: {external:#?}"
     );
 
     let ui = result.ui_payload.as_ref().expect("ui payload");
@@ -1580,8 +1580,8 @@ async fn code_item_lookup_returns_real_corpus_await_receiver_targetless_row() {
         "code_item_lookup should surface outgoing targetless call-context count"
     );
     assert_eq!(
-        ui_field(ui, "reach_unsupported_frontier_calls"),
-        unsupported_calls.len().to_string()
+        ui_field(ui, "reach_external_frontier_calls"),
+        external_calls.len().to_string()
     );
     assert!(
         ui_field(ui, "proof_context")

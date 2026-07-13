@@ -4620,9 +4620,9 @@ async fn call_context_collection_reads_axum_await_result_receiver_gap() -> Resul
     //   axum/src/serve/listener.rs:143 calls
     //   `self.sem.clone().acquire_owned().await.unwrap()`.
     // Current contract: RAG owner-seeded call context preserves the DB-pinned
-    // `AwaitMethodCallResult(acquire_owned).unwrap` row as unsupported and
-    // targetless. It must expose zero traversal targets rather than guessing
-    // the concrete awaited result type or a local `unwrap` callee.
+    // `AwaitMethodCallResult(acquire_owned).unwrap` row as an external
+    // targetless frontier. It must expose zero traversal targets rather than
+    // guessing the concrete awaited result type or a local `unwrap` callee.
     assert_eq!(
         await_unwrap.len(),
         1,
@@ -4631,7 +4631,7 @@ async fn call_context_collection_reads_axum_await_result_receiver_gap() -> Resul
 
     let call = await_unwrap[0];
     assert_eq!(call.owner_id, owner);
-    assert_eq!(call.status, CallStatusKind::Unsupported);
+    assert_eq!(call.status, CallStatusKind::External);
     assert_eq!(call.resolution, None);
     assert!(
         call.targets.is_empty(),
@@ -4646,20 +4646,20 @@ async fn call_context_collection_reads_axum_await_result_receiver_gap() -> Resul
             },
         )?
         .expect("call context enabled");
-    let unsupported = reach
-        .unsupported_frontier_calls
+    let external = reach
+        .external_frontier_calls
         .iter()
         .find(|frontier| frontier.site_id == call.site_id)
         .unwrap_or_else(|| {
             panic!(
-                "RAG reach should expose AwaitMethodCallResult unwrap in unsupported frontier rows: {reach:#?}"
+                "RAG reach should expose AwaitMethodCallResult unwrap in external frontier rows: {reach:#?}"
             )
         });
-    assert_eq!(unsupported.owner_id, owner);
-    assert_eq!(unsupported.status, CallStatusKind::Unsupported);
+    assert_eq!(external.owner_id, owner);
+    assert_eq!(external.status, CallStatusKind::External);
     assert!(
-        unsupported.targets.is_empty(),
-        "RAG unsupported frontier call should remain targetless: {unsupported:#?}"
+        external.targets.is_empty(),
+        "RAG external frontier call should remain targetless: {external:#?}"
     );
 
     Ok(())

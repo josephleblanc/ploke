@@ -2784,8 +2784,9 @@ fn axum_usage_questions_surface_fail_closed_debugging_context() -> Result<(), Db
     //   axum/src/serve/listener.rs:143 calls
     //     `self.sem.clone().acquire_owned().await.unwrap()`.
     // Current contract: the awaited-result `unwrap()` callsite is visible as
-    // unsupported call context, but it has no fabricated callee and cannot
-    // become a traversal edge.
+    // an external frontier because the direct inner call chain is externally
+    // proven, but it has no fabricated callee and cannot become a local
+    // traversal edge.
     let owner = method_id_by_name_body_and_file_suffix(
         &db,
         "accept",
@@ -2799,7 +2800,7 @@ fn axum_usage_questions_surface_fail_closed_debugging_context() -> Result<(), Db
         &CallReceiver::AwaitMethodCallResult {
             method_name: "acquire_owned".to_string(),
         },
-        CallStatusKind::Unsupported,
+        CallStatusKind::External,
         "axum/src/serve/listener.rs:143 awaited-result unwrap",
     )?;
     assert_no_traversal_candidates_for_site(
@@ -2820,7 +2821,7 @@ fn axum_usage_questions_surface_fail_closed_debugging_context() -> Result<(), Db
         paths
             .iter()
             .all(|path| path.edges.iter().all(|edge| edge.call_site_id != site_id)),
-        "targetless unsupported receiver rows must not appear in call paths: {paths:#?}"
+        "targetless awaited receiver rows must not appear in call paths: {paths:#?}"
     );
     let report = db.call_reach_for_owner(
         owner,
@@ -2829,20 +2830,20 @@ fn axum_usage_questions_surface_fail_closed_debugging_context() -> Result<(), Db
             max_paths: 128,
         },
     )?;
-    let unsupported = report
-        .unsupported_frontier_calls
+    let external = report
+        .external_frontier_calls
         .iter()
         .find(|row| row.site.id == site_id)
         .unwrap_or_else(|| {
             panic!(
-                "reach report should expose awaited-result unwrap in unsupported frontier rows: {report:#?}"
+                "reach report should expose awaited-result unwrap in external frontier rows: {report:#?}"
             )
         });
-    assert_eq!(unsupported.site.owner_id, owner);
-    assert_eq!(unsupported.status.status, CallStatusKind::Unsupported);
+    assert_eq!(external.site.owner_id, owner);
+    assert_eq!(external.status.status, CallStatusKind::External);
     assert!(
-        unsupported.targets.is_empty(),
-        "unsupported frontier call should remain targetless: {unsupported:#?}"
+        external.targets.is_empty(),
+        "external frontier call should remain targetless: {external:#?}"
     );
 
     Ok(())

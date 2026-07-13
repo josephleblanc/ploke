@@ -36,63 +36,7 @@ impl CallRelationResolver<'_> {
     ) -> Result<(), SynParserError> {
         let source = AnyCallSiteId::Method(call.id);
 
-        if matches!(call.receiver, MethodCallReceiver::Literal)
-            && Self::is_external_literal_method(&call.method_name)
-        {
-            statuses.push(CallResolutionStatus::External { source });
-            return Ok(());
-        }
-        if let MethodCallReceiver::PathCallResult { path } = &call.receiver
-            && self.is_external_path_result_method(call.owner, path, &call.method_name)?
-        {
-            statuses.push(CallResolutionStatus::External { source });
-            return Ok(());
-        }
-        if let MethodCallReceiver::SelfField { field_path } = &call.receiver
-            && self.is_external_self_field_method(call, field_path, type_relations)?
-        {
-            statuses.push(CallResolutionStatus::External { source });
-            return Ok(());
-        }
-        if let MethodCallReceiver::MethodCallResult { method_name } = &call.receiver
-            && self.is_external_method_result_method(call.owner, method_name, &call.method_name)?
-        {
-            statuses.push(CallResolutionStatus::External { source });
-            return Ok(());
-        }
-        if let MethodCallReceiver::MethodResultLocalBinding {
-            method_name,
-            method_span,
-            ..
-        } = &call.receiver
-            && self.is_external_local_result_method(
-                call,
-                method_name,
-                *method_span,
-                type_relations,
-            )?
-        {
-            statuses.push(CallResolutionStatus::External { source });
-            return Ok(());
-        }
-        if let MethodCallReceiver::TypedLocalBinding { type_path, .. }
-        | MethodCallReceiver::BorrowedTypedLocalBinding { type_path, .. } = &call.receiver
-            && self.is_external_type_path_method(call.owner, type_path, &call.method_name)?
-        {
-            statuses.push(CallResolutionStatus::External { source });
-            return Ok(());
-        }
-        if let MethodCallReceiver::InitializedLocalBinding { init_path, .. }
-        | MethodCallReceiver::BorrowedInitializedLocalBinding { init_path, .. } = &call.receiver
-            && self.is_external_type_path_method(call.owner, init_path, &call.method_name)?
-        {
-            statuses.push(CallResolutionStatus::External { source });
-            return Ok(());
-        }
-        if let MethodCallReceiver::LocalBinding { name }
-        | MethodCallReceiver::BorrowedLocalBinding { name } = &call.receiver
-            && self.is_external_param_method_call(call, name, type_relations)?
-        {
+        if self.is_external_method_call_frontier(call, type_relations)? {
             statuses.push(CallResolutionStatus::External { source });
             return Ok(());
         }
@@ -257,6 +201,67 @@ impl CallRelationResolver<'_> {
 
     fn is_external_literal_method(method_name: &str) -> bool {
         matches!(method_name, "to_string")
+    }
+
+    fn is_external_method_call_frontier(
+        &self,
+        call: &MethodCallNode,
+        type_relations: &[TypeRelation],
+    ) -> Result<bool, SynParserError> {
+        match &call.receiver {
+            MethodCallReceiver::Literal => Ok(Self::is_external_literal_method(&call.method_name)),
+            MethodCallReceiver::PathCallResult { path } => {
+                self.is_external_path_result_method(call.owner, path, &call.method_name)
+            }
+            MethodCallReceiver::SelfField { field_path } => {
+                self.is_external_self_field_method(call, field_path, type_relations)
+            }
+            MethodCallReceiver::MethodCallResult { method_name } => {
+                self.is_external_method_result_method(call, method_name, type_relations)
+            }
+            MethodCallReceiver::AwaitMethodCallResult { method_name } => {
+                self.is_external_await_method_result_method(call, method_name, type_relations)
+            }
+            MethodCallReceiver::MethodResultLocalBinding {
+                method_name,
+                method_span,
+                ..
+            } => self.is_external_local_result_method(
+                call,
+                method_name,
+                *method_span,
+                type_relations,
+            ),
+            MethodCallReceiver::TypedLocalBinding { type_path, .. }
+            | MethodCallReceiver::BorrowedTypedLocalBinding { type_path, .. } => {
+                self.is_external_type_path_method(call.owner, type_path, &call.method_name)
+            }
+            MethodCallReceiver::InitializedLocalBinding { init_path, .. }
+            | MethodCallReceiver::BorrowedInitializedLocalBinding { init_path, .. } => {
+                self.is_external_type_path_method(call.owner, init_path, &call.method_name)
+            }
+            MethodCallReceiver::LocalBinding { name }
+            | MethodCallReceiver::BorrowedLocalBinding { name } => {
+                self.is_external_param_method_call(call, name, type_relations)
+            }
+            MethodCallReceiver::SelfValue
+            | MethodCallReceiver::DereferencedInitializedLocalBinding { .. }
+            | MethodCallReceiver::AliasedLocalBinding { .. }
+            | MethodCallReceiver::TupleReturnBinding { .. }
+            | MethodCallReceiver::TupleMethodReturn { .. }
+            | MethodCallReceiver::TryPathCallResult { .. }
+            | MethodCallReceiver::TryMethodCallResult { .. }
+            | MethodCallReceiver::IfBranchPaths { .. }
+            | MethodCallReceiver::EnumVariantBinding { .. }
+            | MethodCallReceiver::FieldTypedLocalBinding { .. }
+            | MethodCallReceiver::FieldInitializedLocalBinding { .. }
+            | MethodCallReceiver::DereferencedLocalBinding { .. }
+            | MethodCallReceiver::FieldLocalBinding { .. }
+            | MethodCallReceiver::AwaitPathCallResult { .. }
+            | MethodCallReceiver::AwaitResult
+            | MethodCallReceiver::TryResult
+            | MethodCallReceiver::Unsupported => Ok(false),
+        }
     }
 
     fn is_external_self_field_method(
@@ -510,7 +515,7 @@ impl CallRelationResolver<'_> {
 
         if !matches!(
             method_name,
-            "extensions_mut" | "len" | "poll_ready" | "size_hint" | "oneshot"
+            "clone" | "extensions_mut" | "len" | "poll_ready" | "size_hint" | "oneshot"
         ) {
             return Ok(false);
         }
@@ -523,7 +528,7 @@ impl CallRelationResolver<'_> {
             return Ok(true);
         }
 
-        if method_name == "size_hint" {
+        if matches!(method_name, "clone" | "size_hint") {
             return Ok(false);
         }
 
@@ -904,15 +909,38 @@ impl CallRelationResolver<'_> {
 
     fn is_external_method_result_method(
         &self,
-        owner: CallBodyOwnerId,
+        call: &MethodCallNode,
         result_method: &str,
-        method_name: &str,
+        type_relations: &[TypeRelation],
     ) -> Result<bool, SynParserError> {
-        if result_method != "clone" || method_name != "oneshot" {
+        if result_method == "clone" && call.method_name == "oneshot" {
+            return self.has_external_service_ext_import(call.owner);
+        }
+
+        if result_method == "clone" && call.method_name == "acquire_owned" {
+            let Some(inner_call) = self.direct_inner_method_call(call, result_method) else {
+                return Ok(false);
+            };
+            return self.is_external_method_call_frontier(inner_call, type_relations);
+        }
+
+        Ok(false)
+    }
+
+    fn is_external_await_method_result_method(
+        &self,
+        call: &MethodCallNode,
+        result_method: &str,
+        type_relations: &[TypeRelation],
+    ) -> Result<bool, SynParserError> {
+        if result_method != "acquire_owned" || call.method_name != "unwrap" {
             return Ok(false);
         }
 
-        self.has_external_service_ext_import(owner)
+        let Some(inner_call) = self.direct_inner_method_call(call, result_method) else {
+            return Ok(false);
+        };
+        self.is_external_method_call_frontier(inner_call, type_relations)
     }
 
     fn is_external_local_result_method(

@@ -237,17 +237,17 @@ future work can choose the next batch without rereading the diary-style notes.
   `cargo test -p ploke-rag --features call_graph real_corpus -- --nocapture`,
   and
   `cargo test -p ploke-tui --features call_graph code_item -- --nocapture`.
-- 2026-07-01: Owner reach summaries now split unsupported resolver blockers
-  into an explicit `unsupported_frontier_calls` subset while preserving the
-  full fail-closed `frontier_calls` list. DB, RAG, and exact
-  `code_item_lookup` now answer the debugging/RAG usage question "what
-  fail-closed blocker should be shown when a callsite is visible but
-  targetless?" without clients needing to re-filter external, unresolved, or
-  ambiguous frontier rows. The real-corpus proof case is
-  `ConnLimiter<T>::accept` in `axum/src/serve/listener.rs`, where
-  `self.sem.clone().acquire_owned().await.unwrap()` produces an unsupported
-  awaited-result receiver callsite that remains targetless, excluded from local
-  traversal, and visible in the unsupported frontier summary. Focused
+- 2026-07-01: Owner reach summaries split unsupported resolver blockers into
+  an explicit `unsupported_frontier_calls` subset while preserving the full
+  fail-closed `frontier_calls` list. DB, RAG, and exact `code_item_lookup`
+  answer the debugging/RAG usage question "what fail-closed blocker should be
+  shown when a callsite is visible but targetless?" without clients needing to
+  re-filter external, unresolved, or ambiguous frontier rows. The original
+  real-corpus proof case was `ConnLimiter<T>::accept` in
+  `axum/src/serve/listener.rs`; as of 2026-07-13, its
+  `self.sem.clone().acquire_owned().await.unwrap()` row is externally proven,
+  remains targetless, is excluded from local traversal, and is visible in the
+  external frontier summary. Focused
   verification:
   `cargo test -p ploke-db --features call_graph real_target_matrix::usage_questions -- --nocapture`,
   `cargo test -p ploke-rag --features call_graph real_corpus -- --nocapture`,
@@ -387,8 +387,8 @@ future work can choose the next batch without rereading the diary-style notes.
   path edges now also carry persisted callsite byte spans, and model-facing
   path formatting includes `call_site_id@start..end` provenance for debugging
   questions that need to map a path edge back to source.
-  It also proves that an unsupported awaited receiver is still query-visible as
-  a targetless fail-closed callsite and is excluded from traversal. Broad
+  It also proves that an awaited external receiver is still query-visible as a
+  targetless fail-closed callsite and is excluded from traversal. Broad
   strict real-corpus `request_code_context` path assertions are quarantined
   because BM25 seed choice is not a stable strict proof for one exact source or
   target owner and the broad Axum search path is too expensive for default

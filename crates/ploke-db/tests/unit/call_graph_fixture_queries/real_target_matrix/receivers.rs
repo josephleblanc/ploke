@@ -1712,11 +1712,14 @@ fn axum_real_target_await_result_receivers_are_documented_gaps() -> Result<(), D
     //   `self.builder.send().await.unwrap()` inside an async block.
     //   axum/src/serve/listener.rs:143 calls
     //   `self.sem.clone().acquire_owned().await.unwrap()`.
-    // Current model gap: awaited-result receiver shapes are visible in the
-    // corpus, but they stay targetless. Receivers produced by awaited method
-    // calls preserve the inner method name as proof context, while the
-    // test-client async-block `unwrap()` row is now owned by the nested async
-    // executable instead of being flattened into the enclosing method owner.
+    // Current contract: awaited-result receiver shapes are visible in the
+    // corpus and stay targetless unless a direct inner call gives enough proof
+    // to classify the row as an external frontier. The listener row proves
+    // `self.sem` is an external `Arc<Semaphore>`, so the
+    // `clone().acquire_owned().await.unwrap()` chain is external but still has
+    // no local traversal edge. The test-client async-block `unwrap()` row is
+    // owned by the nested async executable instead of being flattened into the
+    // enclosing method owner.
     let listener_owner = method_id_by_name_body_and_file_suffix(
         &db,
         "accept",
@@ -1730,7 +1733,7 @@ fn axum_real_target_await_result_receivers_are_documented_gaps() -> Result<(), D
         &CallReceiver::AwaitMethodCallResult {
             method_name: "acquire_owned".to_string(),
         },
-        CallStatusKind::Unsupported,
+        CallStatusKind::External,
         "axum/src/serve/listener.rs:143",
     )?;
 
@@ -1764,11 +1767,13 @@ fn axum_real_target_await_result_receivers_are_documented_gaps() -> Result<(), D
     //   axum/src/test_helpers/test_client.rs:134
     //     `self.builder.send().await.unwrap()` is represented by a nested
     //     async-block owner, not by the enclosing method owner.
-    // All currently projected awaited-result `unwrap()` rows are targetless:
-    // the receiver value is the result of an awaited expression, so the call
-    // graph must not fabricate a concrete callee edge. Awaited method-call
-    // receivers preserve the inner method name as proof payload instead of
-    // collapsing into this coarse bucket.
+    // Coarse `AwaitResult` rows are targetless: the receiver value is the
+    // result of an awaited expression, so the call graph must not fabricate a
+    // concrete callee edge. Awaited method-call receivers preserve the inner
+    // method name as proof payload instead of collapsing into this coarse
+    // bucket. Rows whose inner method target is visible but not exact stay
+    // targetless `Unresolved`; rows without enough receiver proof stay
+    // targetless `Unsupported`.
     assert_targetless_method_line_fanout(
         &db,
         &CORPUS_AXUM_CALL_GRAPH,
@@ -1782,19 +1787,36 @@ fn axum_real_target_await_result_receivers_are_documented_gaps() -> Result<(), D
         }],
     )?;
 
+    assert_targetless_method_rows(
+        &db,
+        "unwrap",
+        "AwaitMethodCallResult",
+        Some(&["acquire_owned"]),
+        CallStatusKind::External,
+        1,
+    )?;
+
+    for (method_name, expected_count) in [("collect", 3), ("oneshot", 5)] {
+        assert_targetless_method_rows(
+            &db,
+            "unwrap",
+            "AwaitMethodCallResult",
+            Some(&[method_name]),
+            CallStatusKind::Unresolved,
+            expected_count,
+        )?;
+    }
+
     for (method_name, expected_count) in [
-        ("acquire_owned", 1),
         ("bytes", 1),
         ("call", 1),
         ("chunk", 1),
         ("chunk_text", 8),
-        ("collect", 2),
         ("extract", 3),
         ("extract_parts", 2),
         ("extract_parts_with_state", 2),
         ("extract_with_state", 2),
         ("json", 1),
-        ("oneshot", 4),
         ("ready", 1),
         ("send", 4),
         ("send_request", 1),

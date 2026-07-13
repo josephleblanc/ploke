@@ -2422,15 +2422,15 @@ async fn code_item_edges_returns_real_corpus_await_receiver_targetless_row() {
     //   axum/src/serve/listener.rs:142 owns `ConnLimiter<T>::accept`.
     //   axum/src/serve/listener.rs:143 calls
     //   `self.sem.clone().acquire_owned().await.unwrap()`.
-    // The edge-oriented exact tool should expose the same unsupported,
-    // targetless AwaitMethodCallResult(acquire_owned) receiver row as lookup,
-    // without a fabricated edge.
+    // The edge-oriented exact tool should expose the same external targetless
+    // AwaitMethodCallResult(acquire_owned) receiver row as lookup, without a
+    // fabricated local edge.
     let site_id =
         assert_await_result_unwrap_context(call_context, fixture.owner, "code_item_edges");
     assert_await_result_unwrap_proof(proof_context, fixture.owner, site_id, "code_item_edges");
     assert!(
         summary_usize(&payload, "blocked") >= 1,
-        "code_item_edges summary should report the unsupported targetless await receiver row: {payload:#?}"
+        "code_item_edges summary should report the targetless await receiver frontier row: {payload:#?}"
     );
 
     let ui = result.ui_payload.as_ref().expect("ui payload");
@@ -2446,7 +2446,7 @@ async fn code_item_edges_returns_real_corpus_await_receiver_targetless_row() {
             .parse::<usize>()
             .expect("blocked call count")
             >= 1,
-        "code_item_edges should surface blocked callsite count in the UI payload"
+        "code_item_edges should surface blocked frontier count in the UI payload"
     );
     let proof_count = proof_context.len().to_string();
     assert_eq!(ui_field(ui, "proof_context"), proof_count.as_str());

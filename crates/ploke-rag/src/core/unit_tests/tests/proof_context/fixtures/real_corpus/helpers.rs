@@ -307,7 +307,13 @@ pub(super) fn await_result_unwrap_site(calls: &[CallContextInfo], owner: Uuid) -
             method_name: "acquire_owned".to_string(),
         }),
     };
-    targetless_method_site(calls, owner, &callee, "AwaitMethodCallResult unwrap")
+    targetless_method_site_with_status(
+        calls,
+        owner,
+        &callee,
+        CallStatusKind::External,
+        "AwaitMethodCallResult unwrap",
+    )
 }
 
 pub(super) fn targetless_method_site(
