@@ -657,6 +657,19 @@ pub struct CallTestEntrypointInfo {
     pub blocker_reasons: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct CallTestSelectionInfo {
+    pub target: CallNodeInfo,
+    #[serde(default)]
+    pub source_test_callers: Vec<CallNodeInfo>,
+    #[serde(default)]
+    pub source_test_paths: Vec<CallPathInfo>,
+    #[serde(default)]
+    pub generated_entrypoints: Vec<CallTestEntrypointInfo>,
+    #[serde(default)]
+    pub build_domains: Vec<CallBuildDomainInfo>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialOrd, Ord, Hash, PartialEq)]
 pub struct ProofContextInfo {
     pub fact_id: String,

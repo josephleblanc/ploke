@@ -17,9 +17,10 @@ use ploke_core::rag_types::{
     CallProofInvariantFindingInfo, CallReachEffectInfo, CallReachInfo, CallReceiverInfo,
     CallResolutionKind as RagCallResolutionKind, CallSiteBucketInfo,
     CallSiteKind as RagCallSiteKind, CallStatusKind as RagCallStatusKind, CallTargetInfo,
-    CallTargetKind, CallTestEntrypointInfo, CanonPath, CrateBoundaryEdgeInfo,
-    CrateBoundaryPolicyViolationInfo, ExternalSummaryNeedInfo, ModuleBoundaryEdgeInfo,
-    ModuleBoundaryPolicyViolationInfo, NodeFilepath, ProofContextInfo, RuntimeDispatchNeedInfo,
+    CallTargetKind, CallTestEntrypointInfo, CallTestSelectionInfo, CanonPath,
+    CrateBoundaryEdgeInfo, CrateBoundaryPolicyViolationInfo, ExternalSummaryNeedInfo,
+    ModuleBoundaryEdgeInfo, ModuleBoundaryPolicyViolationInfo, NodeFilepath, ProofContextInfo,
+    RuntimeDispatchNeedInfo,
 };
 use ploke_db::{
     CallBuildDomain as DbCallBuildDomain, CallContextCandidate, CallContextOptions,
@@ -32,7 +33,8 @@ use ploke_db::{
     CallReachReport as DbCallReachReport, CallReceiver, CallRelationKind, CallResolutionKind,
     CallSiteKind, CallSiteRow, CallStatusKind as DbCallStatusKind,
     CallTargetKind as DbCallTargetKind, CallTestEntrypoint as DbCallTestEntrypoint,
-    CrateBoundaryEdge as DbCrateBoundaryEdge, CrateBoundaryPolicyRule as DbCrateBoundaryPolicyRule,
+    CallTestSelectionReport as DbCallTestSelectionReport, CrateBoundaryEdge as DbCrateBoundaryEdge,
+    CrateBoundaryPolicyRule as DbCrateBoundaryPolicyRule,
     CrateBoundaryPolicyViolation as DbCrateBoundaryPolicyViolation,
     ExternalSummaryNeed as DbExternalSummaryNeed, ModuleBoundaryEdge as DbModuleBoundaryEdge,
     ModuleBoundaryPolicyRule as DbModuleBoundaryPolicyRule,
@@ -726,6 +728,35 @@ fn test_entrypoint_info(row: DbCallTestEntrypoint) -> CallTestEntrypointInfo {
     }
 }
 
+fn test_selection_info(
+    db: &Database,
+    report: DbCallTestSelectionReport,
+) -> Result<CallTestSelectionInfo, RagError> {
+    Ok(CallTestSelectionInfo {
+        target: call_node_info(report.target),
+        source_test_callers: report
+            .source_test_callers
+            .into_iter()
+            .map(call_node_info)
+            .collect(),
+        source_test_paths: report
+            .source_test_paths
+            .into_iter()
+            .map(|path| path_info(db, path))
+            .collect::<Result<Vec<_>, RagError>>()?,
+        generated_entrypoints: report
+            .generated_entrypoints
+            .into_iter()
+            .map(test_entrypoint_info)
+            .collect(),
+        build_domains: report
+            .build_domains
+            .into_iter()
+            .map(build_domain_info)
+            .collect(),
+    })
+}
+
 fn call_node_info(row: DbCallNodeInfo) -> CallNodeInfo {
     CallNodeInfo {
         id: row.id,
@@ -1397,6 +1428,21 @@ impl RagService {
                 .map(test_entrypoint_info)
                 .collect(),
         ))
+    }
+
+    pub fn exact_call_test_selection_for_target(
+        &self,
+        target_id: Uuid,
+        options: CallPathOptions,
+    ) -> Result<Option<CallTestSelectionInfo>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(test_selection_info(
+            &self.db,
+            self.db.call_test_selection_for_target(target_id, options)?,
+        )?))
     }
 
     pub fn exact_private_uncalled_nodes(&self) -> Result<Option<Vec<CallNodeInfo>>, RagError> {

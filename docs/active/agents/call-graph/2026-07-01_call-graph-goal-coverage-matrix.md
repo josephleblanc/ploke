@@ -64,6 +64,16 @@ and does not model CI policy selection. Active fixtures were regenerated with
 `--features call_graph`; all active registered backup DB fixtures verified with
 `roundtrip=ok`.
 
+Follow-up completed slice: RAG exact call-test selection summary.
+`RagService::exact_call_test_selection_for_target` now projects the same DB
+selection report through existing RAG carriers: `CallNodeInfo`, `CallPathInfo`,
+`CallTestEntrypointInfo`, and `CallBuildDomainInfo`. The focused axum RAG test
+asserts the `Router::new` source-test path and the proof-only
+`error_handling::traits` generated harness entrypoint/build-domain metadata,
+again preserving empty source-test callers and paths for the generated harness.
+The focused check passed, but it is expensive because it materializes the axum
+backup fixture and RAG path metadata.
+
 Latest completed slice: bounded axum tuple extractor generated impl rows. The
 real-corpus source oracle is `axum-core/src/extract/tuple.rs:18-77`, where
 `all_the_tuples!(impl_from_request)` generates tuple `FromRequestParts` and
