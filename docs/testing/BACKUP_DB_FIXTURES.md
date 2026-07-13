@@ -230,13 +230,13 @@ Post-regeneration verification:
   all registered active fixtures.
 - Current committed seed checksums:
   - `corpus_memchr_call_graph_2026-07-13.sqlite`:
-    `644a8d158b201ee8d6f3874aa26e34328b579a8c67af19884f246510dfceffee`
+    `50be4a07ec89800a84c4ade833d2db222acac35a972708ed3a4d6deba484e020`
   - `corpus_generic_array_call_graph_2026-07-11.sqlite`:
-    `9ef79d23ab1e25743ec06ede708a365eb5a424201c264630ac612f8e23275d79`
+    `ca138fa607b54155f967c0f0e1f69db8d48c3c7c34c781a69304aa95606e8162`
   - `corpus_chrono_call_graph_2026-07-11.sqlite`:
-    `8bdb2e4772f64e105b27f27e07cb2653059007dde3460e84cbe23e031a0f0e98`
+    `89902c879b878d63bf6e1098d2781173092a20139870c6204754fed1e53fa918`
   - `corpus_axum_call_graph_2026-07-13.sqlite`:
-    `41a2292b822b37ac6276d337d601974da90f385279f79ec28faf4a0c77b4b470`
+    `9f6be1735e56b27bbf595167d7f672c82e591bd0a7d5c6da985d3f9ea06b2a93`
 
 ## 2026-07-13 Axum Tuple Extractor Generated Impl Refresh
 
