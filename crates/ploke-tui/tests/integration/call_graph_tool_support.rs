@@ -2195,6 +2195,56 @@ fn axum_generated_rejection_self_calls(db: &Database, owner: Uuid) -> Vec<Expect
         .collect()
 }
 
+fn axum_composite_rejection_delegate_call(db: &Database, owner: Uuid) -> ExpectedMethodEdge {
+    let context = db
+        .call_context_for_owner(owner)
+        .expect("generated QueryRejection::into_response call context");
+    let db_receiver = CallReceiver::EnumVariantBinding {
+        name: "inner".to_string(),
+        enum_path: vec!["Self".to_string()],
+        variant_name: "FailedToDeserializeQueryString".to_string(),
+        field_index: 0,
+    };
+    let row = context
+        .iter()
+        .find(|row| {
+            row.site.kind == DbCallSiteKind::Method
+                && row.site.method.as_deref() == Some("into_response")
+                && row.site.receiver.as_ref() == Some(&db_receiver)
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "generated QueryRejection::into_response should delegate inner.into_response(): {context:#?}"
+            )
+        });
+    assert_eq!(row.status.status, DbCallStatusKind::Resolved);
+    assert_eq!(
+        row.status.resolution,
+        Some(DbCallResolutionKind::LocalExact)
+    );
+    assert_eq!(
+        row.targets.len(),
+        1,
+        "generated QueryRejection delegate call should resolve to one target: {row:#?}"
+    );
+    assert_eq!(row.targets[0].relation, DbCallRelationKind::Method);
+    assert_eq!(row.targets[0].target_kind, DbCallTargetKind::Method);
+    ExpectedMethodEdge {
+        owner,
+        site: row.site.id,
+        target: row.targets[0].target_id,
+        callee: CallCalleeInfo::Method {
+            name: "into_response".to_string(),
+            receiver: Some(CallReceiverInfo::EnumVariantBinding {
+                name: "inner".to_string(),
+                enum_path: vec!["Self".to_string()],
+                variant_name: "FailedToDeserializeQueryString".to_string(),
+                field_index: 0,
+            }),
+        },
+    }
+}
+
 fn axum_method_ids_by_name_and_body_substring(
     db: &Database,
     name: &str,

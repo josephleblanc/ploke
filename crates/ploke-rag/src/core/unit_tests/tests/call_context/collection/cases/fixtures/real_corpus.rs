@@ -329,6 +329,69 @@ async fn call_context_collection_reads_axum_generated_rejection_self_methods() -
 }
 
 #[tokio::test]
+async fn call_context_collection_reads_axum_composite_rejection_delegate() -> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    let owner = method_id_by_name_and_body_substring(
+        &db,
+        "into_response",
+        "Self::FailedToDeserializeQueryString(inner)=>inner.into_response()",
+    )?;
+    let expected = query_rejection_delegate_method(&db, owner)?;
+
+    let context_map = rag.collect_call_context(&[(owner, 1.0)])?;
+    let context = context_map.get(&owner).unwrap_or_else(|| {
+        panic!("RAG should collect outgoing context for generated QueryRejection::into_response")
+    });
+
+    // Matrix: bounded generated `composite_rejection!` enum delegation.
+    // Source chain:
+    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //   crates/ploke-db/tests/unit/call_graph_fixture_queries/real_target_matrix.rs
+    //   axum-core/src/macros.rs:154-180 defines `__composite_rejection!`.
+    //   axum/src/extract/rejection.rs:92-100 invokes it for
+    //   `QueryRejection { FailedToDeserializeQueryString }`.
+    //   axum/src/extract/rejection.rs:84-90 invokes `define_rejection!`
+    //   for `FailedToDeserializeQueryString`.
+    // Expected traversal: RAG outgoing call context for generated
+    // `IntoResponse::into_response` preserves the one-hop method edge from
+    // `inner.into_response()` to the generated `FailedToDeserializeQueryString`
+    // `IntoResponse` method, with the enum-variant receiver proof intact.
+    let call = context
+        .iter()
+        .find(|call| call.site_id == expected.site)
+        .unwrap_or_else(|| {
+            panic!("RAG should include generated composite delegate {expected:#?}: {context:#?}")
+        });
+    assert_eq!(call.owner_id, owner);
+    assert_eq!(call.kind, CallSiteKind::Method);
+    assert_eq!(call.status, CallStatusKind::Resolved);
+    assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+    assert_eq!(
+        call.targets.len(),
+        1,
+        "generated composite delegate should expose one target: {call:#?}"
+    );
+    assert_eq!(call.targets[0].target_id, expected.target);
+    assert_eq!(call.targets[0].relation, CallTargetKind::Method);
+    assert_eq!(
+        call.callee,
+        CallCalleeInfo::Method {
+            name: expected.method.to_string(),
+            receiver: Some(CallReceiverInfo::EnumVariantBinding {
+                name: "inner".to_string(),
+                enum_path: path(&["Self"]),
+                variant_name: "FailedToDeserializeQueryString".to_string(),
+                field_index: 0,
+            }),
+        }
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn call_context_exact_reads_axum_parse_attrs_incoming_callers() -> Result<(), Error> {
     init_tracing_once();
     let (db, rag) = setup_axum_call_graph_rag()?;
@@ -4398,6 +4461,48 @@ fn missing_extension_self_methods(
             })
         })
         .collect()
+}
+
+fn query_rejection_delegate_method(
+    db: &Database,
+    owner: Uuid,
+) -> Result<ExpectedSelfMethod, Error> {
+    let context = db.call_context_for_owner(owner)?;
+    let receiver = CallReceiver::EnumVariantBinding {
+        name: "inner".to_string(),
+        enum_path: path(&["Self"]),
+        variant_name: "FailedToDeserializeQueryString".to_string(),
+        field_index: 0,
+    };
+    let row = context
+        .iter()
+        .find(|row| {
+            row.site.kind == DbCallSiteKind::Method
+                && row.site.method.as_deref() == Some("into_response")
+                && row.site.receiver.as_ref() == Some(&receiver)
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "generated QueryRejection::into_response should delegate inner.into_response(): {context:#?}"
+            )
+        });
+    assert_eq!(row.status.status, DbCallStatusKind::Resolved);
+    assert_eq!(
+        row.status.resolution,
+        Some(DbCallResolutionKind::LocalExact)
+    );
+    assert_eq!(
+        row.targets.len(),
+        1,
+        "generated inner.into_response() should resolve to one target: {row:#?}"
+    );
+    assert_eq!(row.targets[0].relation, DbCallRelationKind::Method);
+    assert_eq!(row.targets[0].target_kind, DbCallTargetKind::Method);
+    Ok(ExpectedSelfMethod {
+        method: "into_response",
+        site: row.site.id,
+        target: row.targets[0].target_id,
+    })
 }
 
 fn method_ids_by_name_and_body_substring(

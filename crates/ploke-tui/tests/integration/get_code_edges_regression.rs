@@ -31,13 +31,13 @@ use uuid::Uuid;
 
 use crate::call_graph_tool_support::{
     AsyncFutureToolFixture, AxumAwaitReceiverToolFixture, AxumBodyEmptyToolFixture,
-    AxumBodyNewToolFixture, AxumBoxedIntoRouteToolFixture, AxumErrorHandlingTraitsToolFixture,
-    AxumExpandWithToolFixture, AxumFromFnBasicToolFixture, AxumGeneratedRejectionToolFixture,
-    AxumHandlerCallToolFixture, AxumJsonFromBytesToolFixture, AxumParseAttrsToolFixture,
-    AxumRequestExtractPathToolFixture, AxumRunUiTestsToolFixture, AxumTaskSpawnEffectToolFixture,
-    CallGraphToolFixture, CallableBlockerFixture, CallableBlockerShape,
-    CallableParamResolvedFixture, ChronoAliasConstructorToolFixture, ChronoNaiveUtcToolFixture,
-    DirectSelfFieldDispatchFixture, FixtureBranchReceiverToolFixture,
+    AxumBodyNewToolFixture, AxumBoxedIntoRouteToolFixture, AxumCompositeRejectionToolFixture,
+    AxumErrorHandlingTraitsToolFixture, AxumExpandWithToolFixture, AxumFromFnBasicToolFixture,
+    AxumGeneratedRejectionToolFixture, AxumHandlerCallToolFixture, AxumJsonFromBytesToolFixture,
+    AxumParseAttrsToolFixture, AxumRequestExtractPathToolFixture, AxumRunUiTestsToolFixture,
+    AxumTaskSpawnEffectToolFixture, CallGraphToolFixture, CallableBlockerFixture,
+    CallableBlockerShape, CallableParamResolvedFixture, ChronoAliasConstructorToolFixture,
+    ChronoNaiveUtcToolFixture, DirectSelfFieldDispatchFixture, FixtureBranchReceiverToolFixture,
     FixtureDynamicCallableToolFixture, FixtureSelfFieldReceiverToolFixture, ResultCallbackFixture,
     assert_ambiguous_candidate_proof, assert_ambiguous_dynamic_candidates,
     assert_ambiguous_dynamic_candidates_with_relation, assert_ambiguous_path_candidates,
@@ -3247,6 +3247,83 @@ async fn code_item_edges_returns_real_corpus_generated_rejection_self_methods() 
             .expect("proof count")
             >= fixture.calls.len(),
         "code_item_edges should surface generated rejection proof rows"
+    );
+}
+
+#[tokio::test]
+async fn code_item_edges_returns_real_corpus_composite_rejection_delegate() {
+    let fixture = AxumCompositeRejectionToolFixture::new().await;
+    let ctx = fixture.ctx("axum-composite-rejection-edges");
+    let params = EdgesParams {
+        item_name: Cow::Borrowed("into_response"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("method"),
+        module_path: Cow::Owned(fixture.module_path_arg()),
+        owner_trait: Some(Cow::Borrowed("IntoResponse")),
+        owner_type: Some(Cow::Borrowed("QueryRejection")),
+        parent_name: None,
+        allowed_effects: Vec::new(),
+    };
+
+    let result = CodeItemEdges::execute(params, ctx)
+        .await
+        .expect("tool execution");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
+    let node_info = payload.get("node_info").expect("node_info object");
+    let call_context = node_info
+        .get("call_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.call_context array");
+    let proof_context = node_info
+        .get("proof_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.proof_context array");
+    let owner = fixture.owner.to_string();
+    assert_eq!(
+        node_info.get("id").and_then(serde_json::Value::as_str),
+        Some(owner.as_str()),
+        "code_item_edges should resolve the generated QueryRejection::into_response owner"
+    );
+
+    // Real-corpus oracle matrix:
+    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //   crates/ploke-db/tests/unit/call_graph_fixture_queries/real_target_matrix.rs
+    //   axum-core/src/macros.rs:154-180 defines `__composite_rejection!`.
+    //   axum/src/extract/rejection.rs:92-100 invokes it for
+    //   `QueryRejection { FailedToDeserializeQueryString }`.
+    //   axum/src/extract/rejection.rs:84-90 invokes `define_rejection!`
+    //   for `FailedToDeserializeQueryString`.
+    // Expected tool traversal: exact edge lookup of the generated
+    // `IntoResponse for QueryRejection` method exposes the outgoing one-hop
+    // enum-variant receiver edge from `inner.into_response()` to generated
+    // `FailedToDeserializeQueryString::into_response`.
+    assert_generated_rejection_outgoing_context(
+        call_context,
+        std::slice::from_ref(&fixture.call),
+        "code_item_edges",
+    );
+    assert_target_proof(
+        proof_context,
+        fixture.call.owner,
+        fixture.call.target,
+        "code_item_edges",
+    );
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert!(
+        ui_field(ui, "call_context_outgoing")
+            .parse::<usize>()
+            .expect("outgoing count")
+            >= 1,
+        "code_item_edges should surface composite rejection outgoing call rows"
+    );
+    assert!(
+        ui_field(ui, "proof_context")
+            .parse::<usize>()
+            .expect("proof count")
+            >= 1,
+        "code_item_edges should surface composite rejection proof rows"
     );
 }
 
