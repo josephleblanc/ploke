@@ -3089,7 +3089,10 @@ composite enum fanout. The real-corpus oracle
 `axum/src/extract/rejection.rs:42-48` (`MissingExtension(Error)`) now proves
 that generated `IntoResponse::into_response` owners project `self.status()`
 and `self.body_text()` callsites and resolve them to generated inherent methods
-on the same named self type.
+on the same named self type. Follow-up downstream proof now verifies the same
+generated self-call edges through RAG `collect_call_context` and exact
+`code_item_lookup` / `code_item_edges` tool payloads with
+`owner_trait=IntoResponse` and `owner_type=MissingExtension`.
 
 ## Parking Lot
 
