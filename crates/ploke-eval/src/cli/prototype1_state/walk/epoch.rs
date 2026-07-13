@@ -123,7 +123,9 @@ impl ServerEpoch {
     /// Re-capture the current epoch and reject mutation if the server went stale.
     pub(crate) fn ensure_not_stale_now(&self) -> Result<(), PrepareError> {
         let current = Self::capture(&self.repo_root)?;
-        if current.exe_path != self.exe_path
+        if current.protocol_version != self.protocol_version
+            || current.transition_graph_version != self.transition_graph_version
+            || current.exe_path != self.exe_path
             || current.exe_modified_unix_ms != self.exe_modified_unix_ms
             || current.git_head != self.git_head
             || current.source_status_hash != self.source_status_hash

@@ -803,6 +803,7 @@ pub(crate) mod record;
 pub(crate) mod run;
 pub(crate) mod score;
 pub(crate) mod selection;
+pub(crate) mod session;
 pub(crate) mod setup_admission;
 pub(crate) mod successor;
 pub(crate) mod telemetry;
