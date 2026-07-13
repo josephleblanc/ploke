@@ -1653,6 +1653,115 @@ fn axum_real_target_generated_service_functions_resolve() -> Result<(), DbError>
 }
 
 #[test]
+fn axum_real_target_generated_chained_method_functions_resolve() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Matrix: generated chained `MethodRouter` methods.
+    // Source chain:
+    //   axum/src/routing/method_routing.rs:176-259 templates
+    //   `chained_service_fn!`; invocations at :992-1000 generate inherent
+    //   methods whose bodies call `self.on_service(MethodFilter::<METHOD>, svc)`.
+    //   axum/src/routing/method_routing.rs:263-326 templates
+    //   `chained_handler_fn!`; invocations at :642-650 generate inherent
+    //   methods whose bodies call `self.on(MethodFilter::<METHOD>, handler)`.
+    // Expected traversal: generated impl-item macro methods are stored under
+    // the surrounding `MethodRouter` impls and resolve to the local inherent
+    // `on` / `on_service` methods without claiming arbitrary macro expansion.
+    let on = method_id_by_name_body_and_file_suffix(
+        &db,
+        "on",
+        "self.on_endpoint(filter, &MethodEndpoint::BoxedHandler",
+        "axum/src/routing/method_routing.rs",
+    )?;
+    let on_service = method_id_by_name_body_and_file_suffix(
+        &db,
+        "on_service",
+        "self.on_endpoint(filter, &MethodEndpoint::Route",
+        "axum/src/routing/method_routing.rs",
+    )?;
+
+    for name in [
+        "connect", "delete", "get", "head", "options", "patch", "post", "put", "trace",
+    ] {
+        let owner = method_id_by_name_body_and_file_suffix(
+            &db,
+            name,
+            "self.on(MethodFilter::",
+            "axum/src/routing/method_routing.rs",
+        )?;
+        let context = db.call_context_for_owner(owner)?;
+        let row = row_by_method_receiver(&context, "on", &CallReceiver::SelfValue);
+        assert_resolved_target(
+            row,
+            on,
+            CallRelationKind::Method,
+            CallSiteKind::Method,
+            CallTargetKind::Method,
+        );
+        assert_eq!(
+            relations_for_site(&db, row.site.id)?.rows.len(),
+            1,
+            "generated chained handler method {name} should persist one self.on edge"
+        );
+        assert_one_edge_traversal(
+            &db,
+            TraversalExpectation {
+                label: "generated chained handler method self.on(...)",
+                owner,
+                target: on,
+                site_id: row.site.id,
+                expected_edge_count: 1,
+            },
+        )?;
+    }
+
+    for name in [
+        "connect_service",
+        "delete_service",
+        "get_service",
+        "head_service",
+        "options_service",
+        "patch_service",
+        "post_service",
+        "put_service",
+        "trace_service",
+    ] {
+        let owner = method_id_by_name_body_and_file_suffix(
+            &db,
+            name,
+            "self.on_service(MethodFilter::",
+            "axum/src/routing/method_routing.rs",
+        )?;
+        let context = db.call_context_for_owner(owner)?;
+        let row = row_by_method_receiver(&context, "on_service", &CallReceiver::SelfValue);
+        assert_resolved_target(
+            row,
+            on_service,
+            CallRelationKind::Method,
+            CallSiteKind::Method,
+            CallTargetKind::Method,
+        );
+        assert_eq!(
+            relations_for_site(&db, row.site.id)?.rows.len(),
+            1,
+            "generated chained service method {name} should persist one self.on_service edge"
+        );
+        assert_one_edge_traversal(
+            &db,
+            TraversalExpectation {
+                label: "generated chained service method self.on_service(...)",
+                owner,
+                target: on_service,
+                site_id: row.site.id,
+                expected_edge_count: 1,
+            },
+        )?;
+    }
+
+    Ok(())
+}
+
+#[test]
 fn axum_real_target_try_downcast_helpers_reach_current_resolved_subset() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 

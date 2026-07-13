@@ -2220,6 +2220,11 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                         .push(TypeDefNode::TypeAlias(type_node.clone()));
                     associated_types.push(type_node);
                 }
+                syn::ImplItem::Macro(item_macro) => {
+                    methods.extend(
+                        self.generated_impl_macro_methods(item_macro, &provisional_effective_cfgs),
+                    );
+                }
                 _ => {}
             }
         }

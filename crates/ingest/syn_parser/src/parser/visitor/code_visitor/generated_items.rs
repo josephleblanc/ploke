@@ -447,6 +447,32 @@ impl<'a> CodeVisitor<'a> {
         self.record_generated_impls(item, (1..=16).flat_map(tuple_impl_from_request_items));
     }
 
+    pub(super) fn generated_impl_macro_methods(
+        &mut self,
+        item: &syn::ImplItemMacro,
+        effective_cfgs: &[String],
+    ) -> Vec<MethodNode> {
+        if !self.current_module_is(&["crate", "routing", "method_routing"]) {
+            return Vec::new();
+        }
+
+        let Ok(input) = syn::parse2::<TopLevelRouteFn>(item.mac.tokens.clone()) else {
+            return Vec::new();
+        };
+        let item_impl = if item.mac.path.is_ident("chained_handler_fn") {
+            chained_handler_fn_impl_item(&input)
+        } else if item.mac.path.is_ident("chained_service_fn") {
+            chained_service_fn_impl_item(&input)
+        } else {
+            None
+        };
+
+        let Some(item_impl) = item_impl else {
+            return Vec::new();
+        };
+        self.generated_impl_methods(&item_impl, effective_cfgs)
+    }
+
     fn record_generated_impls(
         &mut self,
         item: &ItemMacro,
@@ -727,6 +753,42 @@ fn top_level_service_fn_item(input: &TopLevelRouteFn) -> Option<ItemFn> {
             S: Clone,
         {
             on_service(MethodFilter::#method, svc)
+        }
+    })
+}
+
+fn chained_handler_fn_impl_item(input: &TopLevelRouteFn) -> Option<ItemImpl> {
+    let name = &input.name;
+    let method = &input.method;
+    parse_item(quote! {
+        impl Generated {
+            #[track_caller]
+            pub fn #name<H, T>(self, handler: H) -> Self
+            where
+                H: Handler<T, S>,
+                T: 'static,
+                S: Send + Sync + 'static,
+            {
+                self.on(MethodFilter::#method, handler)
+            }
+        }
+    })
+}
+
+fn chained_service_fn_impl_item(input: &TopLevelRouteFn) -> Option<ItemImpl> {
+    let name = &input.name;
+    let method = &input.method;
+    parse_item(quote! {
+        impl Generated {
+            #[track_caller]
+            pub fn #name<T>(self, svc: T) -> Self
+            where
+                T: Service<Request, Error = E> + Clone + Send + Sync + 'static,
+                T::Response: IntoResponse + 'static,
+                T::Future: Send + 'static,
+            {
+                self.on_service(MethodFilter::#method, svc)
+            }
         }
     })
 }

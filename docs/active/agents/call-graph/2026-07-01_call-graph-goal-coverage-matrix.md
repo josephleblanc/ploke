@@ -3222,6 +3222,20 @@ summaries, effects, build domains, and unresolved blockers to the structured
 `proof_context`/evidence fields. The context-plan golden snapshot was updated
 for the expected token-accounting increase.
 
+Update 2026-07-13: bounded axum `method_routing` impl-item macro methods are
+now modeled DB-first. The reviewed real-corpus source oracles are
+`axum/src/routing/method_routing.rs:176-259` for `chained_service_fn!` and
+`:263-326` for `chained_handler_fn!`, with invocations in the surrounding
+`MethodRouter` impls at `:992-1000` and `:642-650`. Parser generated-item
+support remains intentionally narrow: it recognizes only those two impl-item
+macros in `crate::routing::method_routing`, appends generated methods to the
+existing impl owner, and routes their bodies through normal call-site
+extraction/resolution. The regenerated axum fixture and DB real-target test
+now prove nine generated handler methods resolve `self.on(...)` and nine
+generated service methods resolve `self.on_service(...)`, each with one
+persisted traversal edge. This does not claim arbitrary impl-item macro
+expansion.
+
 ## Parking Lot
 
 - Add binding tracking plan that ties syntax body ownership, local bindings, and type graph edges before attempting receiver/dynamic traversal.

@@ -206,3 +206,15 @@ carriers. They need one of the larger models listed above:
 Do not spend another slice adding fixture breadth around the already-covered
 private callable or awaited-future cases. The next implementation should pick
 one larger proof model explicitly and keep the first test DB-first.
+
+### 2026-07-13 impl-item generated-method update
+
+The bounded generated-item bucket now also covers axum
+`method_routing` impl-item macro methods. The source oracle is
+`axum/src/routing/method_routing.rs:176-326` with invocations at
+`:642-650` and `:992-1000`; the parser recognizes only
+`chained_handler_fn!` and `chained_service_fn!` in
+`crate::routing::method_routing`. The regenerated axum fixture and focused DB
+real-target test prove the generated chained handler methods traverse to local
+`self.on(...)`, and the generated chained service methods traverse to local
+`self.on_service(...)`, without promoting arbitrary impl-item macro expansion.
