@@ -230,13 +230,13 @@ Post-regeneration verification:
   all registered active fixtures.
 - Current committed seed checksums:
   - `corpus_memchr_call_graph_2026-07-13.sqlite`:
-    `54f67c9dbacac63fc2a209934a8db1a9f08e09f64c48731191fccc4e2ee5922b`
+    `75bd8608c4d9f98ebab74d630a3c5262100fab5a07d8437a6e3eef4c420dd431`
   - `corpus_generic_array_call_graph_2026-07-11.sqlite`:
-    `03c2372d8aa6d2a8a788922c5638eaeb8147161a59a2f83100c97d7507a6175f`
+    `0c00cf1126555b40b1625cab87c5d6df7d7afa600655f5ec0ea5ae0005f10c3d`
   - `corpus_chrono_call_graph_2026-07-11.sqlite`:
-    `e7dda916ddf48f1968f04d0231937d8cdbd03feb885e104146cbdafe63c7a863`
+    `e93bbda6b3ebe85b04d55366c90ede4408e43c607f4315cebec4918e014feb9c`
   - `corpus_axum_call_graph_2026-07-13.sqlite`:
-    `681f37c7cc07ace575860ecb2d73552a792290916bde8132292fc86036d495cd`
+    `550b6695199b98eb8e02b9cd73de1268f287205a5f565795814ace2ec450088c`
 
 ## 2026-07-13 Axum Tuple Extractor Generated Impl Refresh
 
@@ -253,7 +253,7 @@ Post-regeneration verification:
 - `cargo run -p xtask --features call_graph -- fixtures regenerate --active`
   completed with all registered active fixtures roundtripping successfully.
 - Current seed checksum:
-  `681f37c7cc07ace575860ecb2d73552a792290916bde8132292fc86036d495cd`.
+  `550b6695199b98eb8e02b9cd73de1268f287205a5f565795814ace2ec450088c`.
 - `axum-core/src/extract/tuple.rs:18-77` now projects generated
   `FromRequestParts` and `FromRequest` tuple impl owners for arities 1 through
   16. Their generated extractor rows resolve through generated where-clause
@@ -278,7 +278,7 @@ Post-regeneration verification:
 - The recreated `corpus_axum_call_graph_2026-07-13.sqlite` shared snapshot was
   copied into `tests/backup_dbs/` as the committed seed artifact.
 - Current seed checksum:
-  `681f37c7cc07ace575860ecb2d73552a792290916bde8132292fc86036d495cd`.
+  `550b6695199b98eb8e02b9cd73de1268f287205a5f565795814ace2ec450088c`.
 
 ## 2026-07-12 Axum Middleware Service Generated Frontier Refresh
 
@@ -338,7 +338,7 @@ Post-regeneration verification:
 - The recreated `corpus_memchr_call_graph_2026-07-13.sqlite` shared snapshot was
   copied into `tests/backup_dbs/` as the committed seed artifact.
 - Current seed checksum:
-  `54f67c9dbacac63fc2a209934a8db1a9f08e09f64c48731191fccc4e2ee5922b`.
+  `75bd8608c4d9f98ebab74d630a3c5262100fab5a07d8437a6e3eef4c420dd431`.
 - The memchr `Runner::new().fwd(...)` and `Runner::new().rev(...)` setter
   method-call rows now resolve to local methods when the receiver path is
   crate-qualified or module-qualified from the caller scope.
@@ -361,7 +361,7 @@ Post-regeneration verification:
 - The recreated `corpus_axum_call_graph_2026-07-13.sqlite` shared snapshot was
   copied into `tests/backup_dbs/` as the committed seed artifact.
 - Current seed checksum:
-  `681f37c7cc07ace575860ecb2d73552a792290916bde8132292fc86036d495cd`.
+  `550b6695199b98eb8e02b9cd73de1268f287205a5f565795814ace2ec450088c`.
 
 ## 2026-07-12 Axum Opaque Future Generated Constructor Refresh
 
