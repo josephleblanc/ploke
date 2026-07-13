@@ -311,6 +311,39 @@ impl<'a> CallRelationResolver<'a> {
         method_name: &str,
         type_relations: &[TypeRelation],
     ) -> Result<Option<AssocPathResolution>, SynParserError> {
+        let inherent =
+            self.resolve_inherent_instance_method(target, method_name, type_relations)?;
+        if let Some(resolution) = inherent
+            && !matches!(resolution, AssocPathResolution::Unresolved)
+        {
+            return Ok(Some(resolution));
+        }
+
+        if let Some(bound_resolution) =
+            self.resolve_generic_bound_method(owner, target, method_name, type_relations)?
+        {
+            return Ok(Some(bound_resolution));
+        }
+
+        if let Some(trait_resolution) =
+            self.resolve_trait_impl_instance_method(owner, target, method_name, type_relations)?
+        {
+            return Ok(Some(trait_resolution));
+        }
+
+        if inherent.is_some() {
+            Ok(Some(AssocPathResolution::Unresolved))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn resolve_inherent_instance_method(
+        &self,
+        target: OrdinaryTypeTargetId,
+        method_name: &str,
+        type_relations: &[TypeRelation],
+    ) -> Result<Option<AssocPathResolution>, SynParserError> {
         let receiver_targets = self.ordinary_receiver_targets(target, type_relations)?;
         let mut candidates = Vec::new();
         let mut matched_inherent_impl = false;
@@ -340,23 +373,52 @@ impl<'a> CallRelationResolver<'a> {
         }
 
         if !candidates.is_empty() {
-            return Ok(Some(Self::method_resolution(candidates)));
+            Ok(Some(Self::method_resolution(candidates)))
+        } else if matched_inherent_impl {
+            Ok(Some(AssocPathResolution::Unresolved))
+        } else {
+            Ok(None)
         }
+    }
 
-        if let Some(bound_resolution) =
-            self.resolve_generic_bound_method(owner, target, method_name, type_relations)?
-        {
-            return Ok(Some(bound_resolution));
-        }
+    fn resolve_named_self_inherent_method(
+        &self,
+        owner_impl: &ImplNode,
+        method_name: &str,
+    ) -> Result<Option<AssocPathResolution>, SynParserError> {
+        let TypeNode::Named(owner_self) = self.type_node(owner_impl.self_type)? else {
+            return Ok(None);
+        };
 
-        if let Some(trait_resolution) =
-            self.resolve_trait_impl_instance_method(owner, target, method_name, type_relations)?
+        let mut candidates = Vec::new();
+        let mut matched_inherent_impl = false;
+        for impl_node in self
+            .graph
+            .impls()
+            .iter()
+            .filter(|impl_node| impl_node.trait_type.is_none())
         {
-            return Ok(Some(trait_resolution));
+            let TypeNode::Named(self_type) = self.type_node(impl_node.self_type)? else {
+                continue;
+            };
+            if self_type.path != owner_self.path {
+                continue;
+            }
+            matched_inherent_impl = true;
+            candidates.extend(
+                impl_node
+                    .methods
+                    .iter()
+                    .filter(|method| {
+                        method.name == method_name
+                            && method.parameters.iter().any(|param| param.is_self)
+                    })
+                    .map(|method| method.id),
+            );
         }
 
         if matched_inherent_impl {
-            Ok(Some(AssocPathResolution::Unresolved))
+            Ok(Some(Self::method_resolution(candidates)))
         } else {
             Ok(None)
         }

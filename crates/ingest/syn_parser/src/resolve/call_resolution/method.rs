@@ -98,7 +98,7 @@ impl CallRelationResolver<'_> {
         }
 
         let resolution = match &call.receiver {
-            MethodCallReceiver::SelfValue => self.resolve_self_method_call(call)?,
+            MethodCallReceiver::SelfValue => self.resolve_self_method_call(call, type_relations)?,
             MethodCallReceiver::SelfField { field_path } => {
                 self.resolve_self_field_method_call(call, field_path, type_relations)?
             }
@@ -1029,6 +1029,7 @@ impl CallRelationResolver<'_> {
     pub(super) fn resolve_self_method_call(
         &self,
         call: &MethodCallNode,
+        type_relations: &[TypeRelation],
     ) -> Result<AssocPathResolution, SynParserError> {
         let CallBodyOwnerId::Method(owner_method_id) = call.owner else {
             return Ok(AssocPathResolution::Unsupported);
@@ -1038,7 +1039,25 @@ impl CallRelationResolver<'_> {
             let Some(impl_node) = self.maybe_impl_node(impl_id) else {
                 return Ok(AssocPathResolution::Unsupported);
             };
-            return Ok(self.resolve_method_in_impl(impl_node, &call.method_name));
+            let same_impl = self.resolve_method_in_impl(impl_node, &call.method_name);
+            if !matches!(same_impl, AssocPathResolution::Unresolved) {
+                return Ok(same_impl);
+            }
+            if let Some(self_target) = self.impl_self_target(impl_node, type_relations)?
+                && let Some(resolution) = self.resolve_inherent_instance_method(
+                    self_target,
+                    &call.method_name,
+                    type_relations,
+                )?
+            {
+                return Ok(resolution);
+            }
+            if let Some(resolution) =
+                self.resolve_named_self_inherent_method(impl_node, &call.method_name)?
+            {
+                return Ok(resolution);
+            }
+            return Ok(same_impl);
         }
 
         if let Some(trait_id) = self.trait_for_owner_method(owner_method_id)? {
@@ -1868,7 +1887,7 @@ impl CallRelationResolver<'_> {
         type_relations: &[TypeRelation],
     ) -> Result<AssocPathResolution, SynParserError> {
         match &call.receiver {
-            MethodCallReceiver::SelfValue => self.resolve_self_method_call(call),
+            MethodCallReceiver::SelfValue => self.resolve_self_method_call(call, type_relations),
             MethodCallReceiver::SelfField { field_path } => {
                 self.resolve_self_field_method_call(call, field_path, type_relations)
             }

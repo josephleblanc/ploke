@@ -3081,6 +3081,16 @@ to `RequestPartsExt for Parts::extract_with_state`, and DB/RAG/TUI assertions
 preserve the tuple-method-return receiver payload, turbofish arity, resolved
 local edge, and resolved proof rows.
 
+Update 2026-07-13: the generated-source bucket now has a bounded axum
+`define_rejection!` positive. The reviewed macro template in
+`axum-core/src/macros.rs:30-115` is modeled only for selected axum rejection
+modules and only for generated impl methods, not arbitrary macro expansion or
+composite enum fanout. The real-corpus oracle
+`axum/src/extract/rejection.rs:42-48` (`MissingExtension(Error)`) now proves
+that generated `IntoResponse::into_response` owners project `self.status()`
+and `self.body_text()` callsites and resolve them to generated inherent methods
+on the same named self type.
+
 ## Parking Lot
 
 - Add binding tracking plan that ties syntax body ownership, local bindings, and type graph edges before attempting receiver/dynamic traversal.

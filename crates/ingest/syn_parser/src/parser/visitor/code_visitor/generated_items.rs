@@ -2,8 +2,8 @@ use proc_macro2::TokenStream;
 use quote::{ToTokens, format_ident, quote};
 use syn::parse::{Parse, ParseStream};
 use syn::{
-    Attribute, Generics, Ident, ItemFn, ItemImpl, ItemMacro, ItemStruct, ReturnType, Token, Type,
-    Visibility,
+    Attribute, Generics, Ident, ItemFn, ItemImpl, ItemMacro, ItemStruct, LitStr, ReturnType, Token,
+    Type, Visibility, bracketed, parenthesized,
 };
 
 use super::*;
@@ -111,6 +111,46 @@ impl Parse for ImplService {
     }
 }
 
+struct DefineRejection {
+    status: Ident,
+    body: LitStr,
+    name: Ident,
+    has_error: bool,
+}
+
+impl Parse for DefineRejection {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let status = parse_ident_attr(input, "status")?;
+        let body = parse_lit_attr(input, "body")?;
+        let _attrs = Attribute::parse_outer(input)?;
+        let _vis: Visibility = input.parse()?;
+        input.parse::<Token![struct]>()?;
+        let name: Ident = input.parse()?;
+        let has_error = if input.peek(syn::token::Paren) {
+            let content;
+            parenthesized!(content in input);
+            let marker: Ident = content.parse()?;
+            if marker != "Error" || !content.is_empty() {
+                return Err(content.error("unsupported define_rejection! tuple payload"));
+            }
+            true
+        } else {
+            false
+        };
+        input.parse::<Token![;]>()?;
+        if !input.is_empty() {
+            return Err(input.error("unsupported define_rejection! trailing tokens"));
+        }
+
+        Ok(Self {
+            status,
+            body,
+            name,
+            has_error,
+        })
+    }
+}
+
 #[derive(Clone, Copy)]
 enum MiddlewareService {
     FromFn,
@@ -148,6 +188,20 @@ impl<'a> CodeVisitor<'a> {
                 return;
             };
             self.record_body_from_impl(item, input);
+            return;
+        }
+
+        if item.mac.path.is_ident("define_rejection")
+            && self.current_module_is_one_of(&[
+                &["crate", "extract", "rejection"],
+                &["crate", "extract", "multipart"],
+                &["crate", "extract", "ws", "rejection"],
+            ])
+        {
+            let Ok(input) = syn::parse2::<DefineRejection>(item.mac.tokens.clone()) else {
+                return;
+            };
+            self.record_define_rejection(item, input);
             return;
         }
 
@@ -286,6 +340,13 @@ impl<'a> CodeVisitor<'a> {
         self.record_generated_impls(item, [item_impl]);
     }
 
+    fn record_define_rejection(&mut self, item: &ItemMacro, input: DefineRejection) {
+        let Some(items) = define_rejection_items(&input) else {
+            return;
+        };
+        self.record_generated_impls(item, items);
+    }
+
     fn record_impl_handler_tuples(&mut self, item: &ItemMacro) {
         self.record_generated_impls(item, (1..=16).filter_map(handler_impl_item));
     }
@@ -330,6 +391,10 @@ impl<'a> CodeVisitor<'a> {
             .iter()
             .map(String::as_str)
             .eq(path.iter().copied())
+    }
+
+    fn current_module_is_one_of(&self, paths: &[&[&str]]) -> bool {
+        paths.iter().any(|path| self.current_module_is(path))
     }
 
     fn opaque_future_fields(&mut self, item: &ItemStruct) -> Vec<FieldNode> {
@@ -595,6 +660,78 @@ fn body_from_impl_item(input: &BodyFromImpl) -> Option<ItemImpl> {
     })
 }
 
+fn define_rejection_items(input: &DefineRejection) -> Option<Vec<ItemImpl>> {
+    let inherent = define_rejection_inherent_item(input)?;
+    let response = define_rejection_response_item(input)?;
+    Some(vec![inherent, response])
+}
+
+fn define_rejection_inherent_item(input: &DefineRejection) -> Option<ItemImpl> {
+    let name = &input.name;
+    let status = &input.status;
+    let mut methods = quote! {
+        pub fn body_text(&self) -> String {
+            self.to_string()
+        }
+
+        pub fn status(&self) -> http::StatusCode {
+            http::StatusCode::#status
+        }
+    };
+    if input.has_error {
+        methods = quote! {
+            pub(crate) fn from_err<E>(err: E) -> Self
+            where
+                E: Into<BoxError>,
+            {
+                Self(Error::new(err))
+            }
+
+            #methods
+        };
+    }
+
+    parse_item(quote! {
+        impl #name {
+            #methods
+        }
+    })
+}
+
+fn define_rejection_response_item(input: &DefineRejection) -> Option<ItemImpl> {
+    let name = &input.name;
+    let body = &input.body;
+    let response_body = if input.has_error {
+        quote! {
+            let body_text = self.body_text();
+            axum_core::__log_rejection!(
+                rejection_type = #name,
+                body_text = body_text,
+                status = status,
+            );
+            (status, body_text).into_response()
+        }
+    } else {
+        quote! {
+            axum_core::__log_rejection!(
+                rejection_type = #name,
+                body_text = #body,
+                status = status,
+            );
+            (status, #body).into_response()
+        }
+    };
+
+    parse_item(quote! {
+        impl IntoResponse for #name {
+            fn into_response(self) -> Response {
+                let status = self.status();
+                #response_body
+            }
+        }
+    })
+}
+
 fn handler_impl_item(arity: usize) -> Option<ItemImpl> {
     if !(1..=16).contains(&arity) {
         return None;
@@ -702,4 +839,36 @@ fn middleware_impl_service_item(kind: MiddlewareService, arity: usize) -> Option
 
 fn parse_item<T: syn::parse::Parse>(tokens: TokenStream) -> Option<T> {
     syn::parse2(tokens).ok()
+}
+
+fn parse_ident_attr(input: ParseStream<'_>, expected: &str) -> syn::Result<Ident> {
+    input.parse::<Token![#]>()?;
+    let content;
+    bracketed!(content in input);
+    let key: Ident = content.parse()?;
+    if key != expected {
+        return Err(content.error(format!("expected {expected:?} attribute")));
+    }
+    content.parse::<Token![=]>()?;
+    let value: Ident = content.parse()?;
+    if !content.is_empty() {
+        return Err(content.error(format!("unsupported {expected:?} attribute")));
+    }
+    Ok(value)
+}
+
+fn parse_lit_attr(input: ParseStream<'_>, expected: &str) -> syn::Result<LitStr> {
+    input.parse::<Token![#]>()?;
+    let content;
+    bracketed!(content in input);
+    let key: Ident = content.parse()?;
+    if key != expected {
+        return Err(content.error(format!("expected {expected:?} attribute")));
+    }
+    content.parse::<Token![=]>()?;
+    let value: LitStr = content.parse()?;
+    if !content.is_empty() {
+        return Err(content.error(format!("unsupported {expected:?} attribute")));
+    }
+    Ok(value)
 }

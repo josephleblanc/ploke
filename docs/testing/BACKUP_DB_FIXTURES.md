@@ -230,13 +230,13 @@ Post-regeneration verification:
   all registered active fixtures.
 - Current committed seed checksums:
   - `corpus_memchr_call_graph_2026-07-13.sqlite`:
-    `7d06bc844eb7df3d59cc64e26cda294f25159b9899f59b1271cb4915bf3b3f89`
+    `88ffcaa58a47f4cfd561430a08d1a7dcaf63222af70279b8e53efe60ad51954d`
   - `corpus_generic_array_call_graph_2026-07-11.sqlite`:
-    `cbaa1baaf89740fe02646f33846a7d3768c13021a78765ecb4305252099afb30`
+    `87113a8eeabefc83adfdca1650cfb97479cafd7cffca4edb0b52a6e22e6a061f`
   - `corpus_chrono_call_graph_2026-07-11.sqlite`:
-    `ea4e022654a6134d21e65f065a5b17949a08b93d6d5d67028f72cab496dcbe40`
+    `fa1b5b2337980cb7e953452b289c9241ee455d337b9a27a62f62dfd0bb852ba6`
   - `corpus_axum_call_graph_2026-07-13.sqlite`:
-    `588120e0e3ebb2c79b6268397cc1398f634f3aaf11a70cac967b37bc953c7cf8`
+    `7cf1100c52fabf182a2e1e48a4bb8ffa8052e9f552c71e80462acf4c8ba9d236`
 
 ## 2026-07-12 Axum Middleware Service Generated Frontier Refresh
 
