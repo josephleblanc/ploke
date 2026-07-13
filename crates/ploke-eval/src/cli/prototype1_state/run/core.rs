@@ -121,6 +121,8 @@ pub(crate) struct ActiveParentStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) protocol_preflight: Option<ProtocolLivePreflight>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) embedding_preflight: Option<EvalEmbeddingPreflight>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) headless_tui_setup_preflight: Option<HeadlessTuiSetupPreflight>,
     pub(crate) phase: DiagnosedPhase,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -181,6 +183,45 @@ pub(crate) struct ProtocolLivePreflight {
 pub(crate) enum ProtocolLivePreflightOutcome {
     Passed,
     Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub(crate) enum EvalEmbeddingPreflight {
+    Passed {
+        model_id: ploke_llm::ModelId,
+        model_request: Option<String>,
+        provider_preference: Option<String>,
+        backend: EmbeddingBackend,
+        dimensions: u32,
+        registry_path: Option<PathBuf>,
+    },
+    Failed {
+        model_request: Option<String>,
+        provider_preference: Option<String>,
+        backend: EmbeddingBackend,
+        registry_path: Option<PathBuf>,
+        phase: String,
+        class: EmbeddingFailureClass,
+        detail: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum EmbeddingBackend {
+    #[serde(rename = "openrouter")]
+    OpenRouter,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum EmbeddingFailureClass {
+    Configuration,
+    Registry,
+    ProviderEnvironment,
+    ProviderAccount,
+    ProviderRequest,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -260,13 +301,19 @@ pub(crate) async fn doctor(command: Prototype1DoctorCommand) -> Result<(), Prepa
     let mut status = diagnose_command(&command.control)?;
     let repo_root = status.repo_root.clone();
     attach_typed_graph_starting_db_check(&repo_root, &mut status).await;
-    if command.live_protocol_preflight || command.headless_tui_setup_preflight {
+    if command.live_protocol_preflight
+        || command.live_embedding_preflight
+        || command.headless_tui_setup_preflight
+    {
         let context = resolve_context(command.control.repo_root.as_deref())?;
-        if command.headless_tui_setup_preflight {
-            attach_headless_tui_setup_preflight(&context, &mut status).await;
+        if command.live_embedding_preflight {
+            attach_embedding_live_preflight(&context, &mut status).await;
         }
         if command.live_protocol_preflight {
             attach_protocol_live_preflight(&context, &mut status).await;
+        }
+        if command.headless_tui_setup_preflight {
+            attach_headless_tui_setup_preflight(&context, &mut status).await;
         }
     }
     render_status(command.control.format, &status)
@@ -406,6 +453,52 @@ fn render_status(
                 }
                 if let Some(max_tokens) = preflight.budget_canary_max_tokens {
                     println!("  budget_canary_max_tokens: {max_tokens}");
+                }
+            }
+            if let Some(preflight) = status.embedding_preflight.as_ref() {
+                match preflight {
+                    EvalEmbeddingPreflight::Passed {
+                        model_id,
+                        model_request,
+                        provider_preference,
+                        backend,
+                        dimensions,
+                        registry_path,
+                    } => {
+                        println!(
+                            "embedding_live_preflight: passed model={} model_request={} provider_preference={} backend={} dimensions={}",
+                            model_id,
+                            model_request.as_deref().unwrap_or("<auto>"),
+                            provider_preference.as_deref().unwrap_or("<auto>"),
+                            embedding_backend_label(*backend),
+                            dimensions
+                        );
+                        if let Some(path) = registry_path {
+                            println!("  registry_path: {}", path.display());
+                        }
+                    }
+                    EvalEmbeddingPreflight::Failed {
+                        model_request,
+                        provider_preference,
+                        backend,
+                        registry_path,
+                        phase,
+                        class,
+                        detail,
+                    } => {
+                        println!(
+                            "embedding_live_preflight: failed model_request={} provider_preference={} backend={} phase={} class={}",
+                            model_request.as_deref().unwrap_or("<auto>"),
+                            provider_preference.as_deref().unwrap_or("<auto>"),
+                            embedding_backend_label(*backend),
+                            phase,
+                            embedding_failure_label(*class)
+                        );
+                        if let Some(path) = registry_path {
+                            println!("  registry_path: {}", path.display());
+                        }
+                        println!("  detail: {detail}");
+                    }
                 }
             }
             if let Some(preflight) = status.headless_tui_setup_preflight.as_ref() {
@@ -636,6 +729,7 @@ fn into_status(diagnosis: Diagnosis) -> ActiveParentStatus {
         effective_control: diagnosis.context.effective_control,
         prompt_preflight: diagnosis.prompt_preflight,
         protocol_preflight: None,
+        embedding_preflight: None,
         headless_tui_setup_preflight: None,
         phase: diagnosis.phase,
         current_child: diagnosis.current_child,
@@ -661,6 +755,156 @@ async fn attach_protocol_live_preflight(context: &RuntimeContext, status: &mut A
         status.suggested_commands = suggested_commands(status.phase, &status.repo_root);
     }
     status.protocol_preflight = Some(preflight);
+}
+
+async fn attach_embedding_live_preflight(
+    context: &RuntimeContext,
+    status: &mut ActiveParentStatus,
+) {
+    let preflight = run_embedding_live_preflight(context).await;
+    attach_embedding_preflight_report(status, preflight);
+}
+
+fn attach_embedding_preflight_report(
+    status: &mut ActiveParentStatus,
+    preflight: EvalEmbeddingPreflight,
+) {
+    if let EvalEmbeddingPreflight::Failed {
+        phase,
+        class,
+        detail,
+        ..
+    } = &preflight
+    {
+        status.blockers.push(format!(
+            "embedding live preflight failed during '{phase}' ({}): {detail}",
+            embedding_failure_label(*class)
+        ));
+        status.phase = DiagnosedPhase::Blocked;
+        status.allowed_actions = allowed_actions_for_phase(status.phase);
+        status.suggested_commands = suggested_commands(status.phase, &status.repo_root);
+    }
+    status.embedding_preflight = Some(preflight);
+}
+
+async fn run_embedding_live_preflight(context: &RuntimeContext) -> EvalEmbeddingPreflight {
+    run_embedding_live_preflight_with(context, |model, provider| async move {
+        crate::runner::resolve_eval_embedding_selection(model.as_deref(), provider.as_ref()).await
+    })
+    .await
+}
+
+async fn run_embedding_live_preflight_with<F, Fut>(
+    context: &RuntimeContext,
+    resolve: F,
+) -> EvalEmbeddingPreflight
+where
+    F: FnOnce(Option<String>, Option<ploke_llm::ProviderKey>) -> Fut,
+    Fut: std::future::Future<Output = Result<crate::runner::EvalEmbeddingSelection, PrepareError>>,
+{
+    let policy = &context.resolved_campaign.eval;
+    let model_request = policy.embedding_model_id.clone();
+    let provider_preference = policy.embedding_provider_slug.clone();
+    let backend = EmbeddingBackend::OpenRouter;
+    let registry_path = crate::runner::eval_embedding_registry_path().ok();
+    let provider = match crate::cli::provider::parse_provider_key(provider_preference.clone()) {
+        Ok(provider) => provider,
+        Err(error) => {
+            return failed_embedding_preflight(
+                model_request,
+                provider_preference,
+                backend,
+                registry_path,
+                &error,
+            );
+        }
+    };
+
+    match resolve(model_request.clone(), provider).await {
+        Ok(selection) => EvalEmbeddingPreflight::Passed {
+            model_id: selection.model.id,
+            model_request,
+            provider_preference,
+            backend,
+            dimensions: selection.dimensions,
+            registry_path,
+        },
+        Err(error) => failed_embedding_preflight(
+            model_request,
+            provider_preference,
+            backend,
+            registry_path,
+            &error,
+        ),
+    }
+}
+
+fn failed_embedding_preflight(
+    model_request: Option<String>,
+    provider_preference: Option<String>,
+    backend: EmbeddingBackend,
+    registry_path: Option<PathBuf>,
+    error: &PrepareError,
+) -> EvalEmbeddingPreflight {
+    let (phase, class) = classify_embedding_preflight_error(error);
+    EvalEmbeddingPreflight::Failed {
+        model_request,
+        provider_preference,
+        backend,
+        registry_path,
+        phase,
+        class,
+        detail: sanitize_protocol_preflight_detail(&error.to_string()),
+    }
+}
+
+fn classify_embedding_preflight_error(error: &PrepareError) -> (String, EmbeddingFailureClass) {
+    let phase = match error {
+        PrepareError::DatabaseSetup { phase, .. }
+        | PrepareError::ProviderUnavailable { phase, .. }
+        | PrepareError::Timeout { phase, .. }
+        | PrepareError::EventStreamClosed { phase } => (*phase).to_string(),
+        PrepareError::UnknownModelInRegistry { .. }
+        | PrepareError::MissingModelRegistry(_)
+        | PrepareError::ReadModelRegistry { .. }
+        | PrepareError::ParseModelRegistry { .. } => "embedding_model_registry".to_string(),
+        _ => "embedding_preflight".to_string(),
+    };
+    let class = match error {
+        PrepareError::UnknownModelInRegistry { .. } => EmbeddingFailureClass::Configuration,
+        PrepareError::MissingModelRegistry(_)
+        | PrepareError::ReadModelRegistry { .. }
+        | PrepareError::ParseModelRegistry { .. }
+        | PrepareError::DatabaseSetup {
+            phase: "load_embedding_model_registry",
+            ..
+        } => EmbeddingFailureClass::Registry,
+        PrepareError::ProviderUnavailable { .. } => EmbeddingFailureClass::ProviderEnvironment,
+        PrepareError::DatabaseSetup {
+            phase: "embedding_model_preflight",
+            detail,
+        } if provider_account_error(detail) => EmbeddingFailureClass::ProviderAccount,
+        PrepareError::DatabaseSetup {
+            phase: "embedding_model_preflight",
+            ..
+        }
+        | PrepareError::Timeout { .. }
+        | PrepareError::EventStreamClosed { .. } => EmbeddingFailureClass::ProviderRequest,
+        _ => EmbeddingFailureClass::Configuration,
+    };
+    (phase, class)
+}
+
+fn provider_account_error(detail: &str) -> bool {
+    let detail = detail.to_ascii_lowercase();
+    [
+        "key limit",
+        "monthly limit",
+        "credit limit",
+        "insufficient credit",
+    ]
+    .iter()
+    .any(|marker| detail.contains(marker))
 }
 
 async fn attach_headless_tui_setup_preflight(
@@ -991,6 +1235,22 @@ fn protocol_live_preflight_label(outcome: ProtocolLivePreflightOutcome) -> &'sta
     }
 }
 
+fn embedding_failure_label(class: EmbeddingFailureClass) -> &'static str {
+    match class {
+        EmbeddingFailureClass::Configuration => "configuration",
+        EmbeddingFailureClass::Registry => "registry",
+        EmbeddingFailureClass::ProviderEnvironment => "provider_environment",
+        EmbeddingFailureClass::ProviderAccount => "provider_account",
+        EmbeddingFailureClass::ProviderRequest => "provider_request",
+    }
+}
+
+fn embedding_backend_label(backend: EmbeddingBackend) -> &'static str {
+    match backend {
+        EmbeddingBackend::OpenRouter => "openrouter",
+    }
+}
+
 fn headless_tui_setup_preflight_label(outcome: HeadlessTuiSetupPreflightOutcome) -> &'static str {
     match outcome {
         HeadlessTuiSetupPreflightOutcome::Skipped => "skipped",
@@ -1086,6 +1346,10 @@ fn suggested_commands(phase: DiagnosedPhase, repo_root: &Path) -> Vec<String> {
     match phase {
         DiagnosedPhase::Blocked | DiagnosedPhase::Complete => Vec::new(),
         _ => vec![
+            format!(
+                "cd {} && ./target/debug/ploke-eval loop prototype1-doctor --repo-root . --live-embedding-preflight",
+                repo_root.display()
+            ),
             format!(
                 "cd {} && ./target/debug/ploke-eval loop prototype1-doctor --repo-root . --headless-tui-setup-preflight",
                 repo_root.display()
@@ -2916,6 +3180,47 @@ mod tests {
         )
     }
 
+    #[derive(Debug, PartialEq, Eq)]
+    struct TreeSnapshot {
+        exists: bool,
+        entries: BTreeMap<PathBuf, Option<Vec<u8>>>,
+    }
+
+    fn snapshot_tree(root: &Path) -> std::io::Result<TreeSnapshot> {
+        fn visit(
+            root: &Path,
+            path: &Path,
+            entries: &mut BTreeMap<PathBuf, Option<Vec<u8>>>,
+        ) -> std::io::Result<()> {
+            for entry in fs::read_dir(path)? {
+                let entry = entry?;
+                let path = entry.path();
+                if path.is_dir() {
+                    let relative = path
+                        .strip_prefix(root)
+                        .expect("snapshot path under root")
+                        .to_path_buf();
+                    entries.insert(relative, None);
+                    visit(root, &path, entries)?;
+                } else if path.is_file() {
+                    let relative = path
+                        .strip_prefix(root)
+                        .expect("snapshot path under root")
+                        .to_path_buf();
+                    entries.insert(relative, Some(fs::read(&path)?));
+                }
+            }
+            Ok(())
+        }
+
+        let exists = root.try_exists()?;
+        let mut entries = BTreeMap::new();
+        if exists {
+            visit(root, root, &mut entries)?;
+        }
+        Ok(TreeSnapshot { exists, entries })
+    }
+
     fn phase_test_snapshot(
         status: Prototype1NodeStatus,
         evaluation_report: Option<Prototype1BranchEvaluationReport>,
@@ -3091,8 +3396,195 @@ mod tests {
         assert!(
             commands
                 .iter()
+                .any(|command| command.contains("--live-embedding-preflight")),
+            "doctor should advertise embedding readiness before baseline work: {commands:?}"
+        );
+        assert!(
+            commands
+                .iter()
                 .any(|command| command.contains("--headless-tui-setup-preflight")),
             "doctor should advertise the extra setup preflight before broad headless fanout: {commands:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn embedding_preflight_preserves_failed_campaign_and_auto_selection() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let eval_home = temp.path().join("eval-home");
+        let _env = crate::test_support::env_guard_os(vec![(
+            "PLOKE_EVAL_HOME",
+            eval_home.clone().into_os_string(),
+        )]);
+        let world = ChildPlanWorld::mint_at_child_plan_phase(&eval_home);
+        let campaign_id = CampaignId::from("campaign");
+        let closure_path = campaign_closure_state_path(&campaign_id).expect("closure path");
+        let closure = closure_state_for_test(
+            eval_home.join("instances/prototype1/campaign"),
+            "BurntSushi__ripgrep-2209",
+            ClosureClass::Failed,
+        );
+        fs::write(
+            &closure_path,
+            serde_json::to_vec_pretty(&closure).expect("serialize failed closure"),
+        )
+        .expect("write failed closure");
+
+        let campaign_dir = eval_home.join("campaigns/campaign");
+        let instances_dir = eval_home.join("instances");
+        let batches_dir = eval_home.join("batches");
+        let campaign_before = snapshot_tree(&campaign_dir).expect("snapshot campaign");
+        let instances_before = snapshot_tree(&instances_dir).expect("snapshot instances");
+        let batches_before = snapshot_tree(&batches_dir).expect("snapshot batches");
+        let repo_before = snapshot_tree(&world.repo_root).expect("snapshot parent checkout");
+
+        let context = resolve_context(Some(&world.repo_root)).expect("context");
+        let mut status = into_status(diagnose(&context).expect("diagnosis"));
+        assert_eq!(status.phase, DiagnosedPhase::Blocked);
+        let report = run_embedding_live_preflight_with(&context, |model, provider| {
+            assert_eq!(model, None, "default model must remain auto-selected");
+            assert_eq!(provider, None, "default provider must remain auto-selected");
+            async {
+                Err(PrepareError::DatabaseSetup {
+                    phase: "embedding_model_preflight",
+                    detail: "HTTP 403: Key limit exceeded (monthly limit)".to_string(),
+                })
+            }
+        })
+        .await;
+        attach_embedding_preflight_report(&mut status, report);
+
+        assert_eq!(
+            snapshot_tree(&campaign_dir).expect("resnapshot campaign"),
+            campaign_before
+        );
+        assert_eq!(
+            snapshot_tree(&instances_dir).expect("resnapshot instances"),
+            instances_before
+        );
+        assert_eq!(
+            snapshot_tree(&batches_dir).expect("resnapshot batches"),
+            batches_before
+        );
+        assert_eq!(
+            snapshot_tree(&world.repo_root).expect("resnapshot parent checkout"),
+            repo_before
+        );
+        assert_eq!(status.phase, DiagnosedPhase::Blocked);
+        let report = status
+            .embedding_preflight
+            .as_ref()
+            .expect("embedding report attached");
+        match report {
+            EvalEmbeddingPreflight::Failed {
+                model_request,
+                provider_preference,
+                backend,
+                phase,
+                class,
+                detail,
+                ..
+            } => {
+                assert_eq!(model_request, &None);
+                assert_eq!(provider_preference, &None);
+                assert_eq!(*backend, EmbeddingBackend::OpenRouter);
+                assert_eq!(phase, "embedding_model_preflight");
+                assert_eq!(*class, EmbeddingFailureClass::ProviderAccount);
+                assert!(detail.contains("Key limit exceeded"));
+            }
+            other => panic!("expected failed embedding preflight: {other:?}"),
+        }
+        let value = serde_json::to_value(&status).expect("serialize doctor status");
+        assert_eq!(
+            value["embedding_preflight"]["outcome"],
+            serde_json::json!("failed")
+        );
+        assert_eq!(
+            value["embedding_preflight"]["class"],
+            serde_json::json!("provider_account")
+        );
+    }
+
+    #[tokio::test]
+    async fn embedding_preflight_reports_typed_passed_selection() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let eval_home = temp.path().join("eval-home");
+        let _env = crate::test_support::env_guard_os(vec![(
+            "PLOKE_EVAL_HOME",
+            eval_home.clone().into_os_string(),
+        )]);
+        let world = ChildPlanWorld::mint_at_child_plan_phase(&eval_home);
+        let campaign_id = CampaignId::from("campaign");
+        let mut manifest =
+            crate::campaign::load_campaign_manifest(&campaign_id).expect("load campaign");
+        manifest.eval.embedding_model_id = Some("perplexity/pplx-embed-v1-4b".to_string());
+        manifest.eval.embedding_provider_slug = Some("perplexity".to_string());
+        save_campaign_manifest(&manifest).expect("save embedding policy");
+        let context = resolve_context(Some(&world.repo_root)).expect("context");
+
+        let report = run_embedding_live_preflight_with(&context, |model, provider| {
+            assert_eq!(model.as_deref(), Some("perplexity/pplx-embed-v1-4b"));
+            assert_eq!(
+                provider.as_ref().map(|provider| provider.slug.as_str()),
+                Some("perplexity")
+            );
+            async move {
+                let model = serde_json::from_value(serde_json::json!({
+                    "id": "perplexity/pplx-embed-v1-4b",
+                    "name": "Perplexity PPLX Embed",
+                    "created": 0,
+                    "description": "test embedding model",
+                    "architecture": {
+                        "input_modalities": ["text"],
+                        "modality": "text->text",
+                        "output_modalities": ["text"],
+                        "tokenizer": "Gemini"
+                    },
+                    "top_provider": {"is_moderated": false},
+                    "pricing": {"prompt": 0.0, "completion": 0.0}
+                }))
+                .expect("embedding registry item");
+                Ok(crate::runner::EvalEmbeddingSelection {
+                    model,
+                    provider,
+                    dimensions: 2560,
+                })
+            }
+        })
+        .await;
+
+        let value = serde_json::to_value(&report).expect("serialize passed preflight");
+        assert_eq!(value["outcome"], serde_json::json!("passed"));
+        assert_eq!(
+            value["model_id"],
+            serde_json::json!("perplexity/pplx-embed-v1-4b")
+        );
+        assert_eq!(value["backend"], serde_json::json!("openrouter"));
+        assert_eq!(value["dimensions"], serde_json::json!(2560));
+    }
+
+    #[test]
+    fn embedding_preflight_classifies_only_typed_or_specific_failures() {
+        let unknown = PrepareError::UnknownModelInRegistry {
+            model: "missing/model".to_string(),
+            path: PathBuf::from("registry.json"),
+        };
+        let missing = PrepareError::MissingModelRegistry(PathBuf::from("registry.json"));
+        let generic_forbidden = PrepareError::DatabaseSetup {
+            phase: "embedding_model_preflight",
+            detail: "HTTP 403 Forbidden".to_string(),
+        };
+
+        assert_eq!(
+            classify_embedding_preflight_error(&unknown).1,
+            EmbeddingFailureClass::Configuration
+        );
+        assert_eq!(
+            classify_embedding_preflight_error(&missing).1,
+            EmbeddingFailureClass::Registry
+        );
+        assert_eq!(
+            classify_embedding_preflight_error(&generic_forbidden).1,
+            EmbeddingFailureClass::ProviderRequest
         );
     }
 
@@ -4619,10 +5111,11 @@ Suggested validation after editing: run `cargo test`.
             allowed_actions_for_phase(DiagnosedPhase::Observe),
             vec!["doctor", "continue", "step"]
         );
-        assert_eq!(commands.len(), 3);
-        assert!(commands[0].contains("prototype1-doctor"));
-        assert!(commands[1].contains("prototype1-continue"));
-        assert!(commands[2].contains("prototype1-step"));
+        assert_eq!(commands.len(), 4);
+        assert!(commands[0].contains("--live-embedding-preflight"));
+        assert!(commands[1].contains("--headless-tui-setup-preflight"));
+        assert!(commands[2].contains("prototype1-continue"));
+        assert!(commands[3].contains("prototype1-step"));
     }
 
     #[test]

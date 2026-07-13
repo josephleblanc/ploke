@@ -107,7 +107,7 @@ pub fn init_tracing(debug_tools: bool) -> Option<LoggingGuards> {
     let console_layer = tracing_fmt::layer()
         .event_format(CompactConsoleFormat)
         .with_ansi(true)
-        .with_writer(std::io::stdout);
+        .with_writer(std::io::stderr);
     let console_filter = if cfg!(feature = "demo") {
         filter::Targets::new().with_default(filter::LevelFilter::OFF)
     } else if debug_tools {

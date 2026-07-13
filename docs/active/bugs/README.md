@@ -151,3 +151,5 @@ file and current code before treating a report as still open.
   External provider/config blocker: fresh Prototype 1 setup admitted `google/gemini-1.5-flash` as the direct-Google protocol model, but doctor live preflight blocked with Vertex HTTP 404 before loop advance.
 - [`2026-07-13-prototype1-doctor-headless-preflight-rebuild-hang.md`](./2026-07-13-prototype1-doctor-headless-preflight-rebuild-hang.md)
   Open blocker: the no-model-call headless-TUI doctor preflight can wait forever on a full BM25 rebuild mailbox before its advertised 60-second readiness deadline begins.
+- [`2026-07-13-prototype1-embedding-preflight-after-admission.md`](./2026-07-13-prototype1-embedding-preflight-after-admission.md)
+  Repaired readiness gap plus external blocker: doctor now exercises the production embedding path without run-evidence writes; a key-specific OpenRouter monthly limit still prevents a fresh live loop.

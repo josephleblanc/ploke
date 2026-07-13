@@ -846,6 +846,13 @@ pub struct Prototype1DoctorCommand {
     #[arg(long)]
     pub live_protocol_preflight: bool,
 
+    /// Run the production embedding selection and a tiny live embedding request using the admitted model/provider preference.
+    ///
+    /// This may refresh the shared embedding-model registry cache, but it does
+    /// not write campaign closure, run, batch, or typestate evidence.
+    #[arg(long)]
+    pub live_embedding_preflight: bool,
+
     /// Extra setup check: initialize the headless TUI sparse/BM25 runtime for this parent checkout without making model calls.
     #[arg(long)]
     pub headless_tui_setup_preflight: bool,
