@@ -5,7 +5,8 @@ use ploke_db::multi_embedding::db_ext::{ANCESTOR_RULES_NOW, METHOD_NODE_ANCESTOR
 use ploke_db::{
     CallReceiver, CallRelationKind as DbCallRelationKind,
     CallResolutionKind as DbCallResolutionKind, CallSiteKind as DbCallSiteKind,
-    CallStatusKind as DbCallStatusKind, ModuleBoundaryPolicyRule, ProofGraphStore,
+    CallStatusKind as DbCallStatusKind, CallTargetKind as DbCallTargetKind,
+    ModuleBoundaryPolicyRule, ProofGraphStore,
 };
 use serde_json::json;
 
@@ -263,6 +264,65 @@ async fn call_context_exact_reads_axum_body_new_generated_from_callers() -> Resu
             panic!("generated Body::from caller should be a path call: {call:#?}");
         };
         assert_eq!(callee_path, &path(&["Self", "new"]));
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn call_context_collection_reads_axum_generated_rejection_self_methods() -> Result<(), Error>
+{
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    let owner = method_id_by_name_and_body_substring(
+        &db,
+        "into_response",
+        "rejection_type=MissingExtension",
+    )?;
+    let expected = missing_extension_self_methods(&db, owner)?;
+
+    let context_map = rag.collect_call_context(&[(owner, 1.0)])?;
+    let context = context_map.get(&owner).unwrap_or_else(|| {
+        panic!("RAG should collect outgoing context for generated MissingExtension::into_response")
+    });
+
+    // Matrix: bounded generated `define_rejection!` impl methods.
+    // Source chain:
+    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //   crates/ploke-db/tests/unit/call_graph_fixture_queries/real_target_matrix.rs
+    //   axum-core/src/macros.rs:30-115 defines `__define_rejection!`.
+    //   axum/src/extract/rejection.rs:42-48 invokes it for
+    //   `MissingExtension(Error)`.
+    // Expected traversal: RAG outgoing call context for generated
+    // `IntoResponse::into_response` preserves the two DB-proven one-hop
+    // method edges from `self.status()` and `self.body_text()` to generated
+    // inherent methods on the same rejection type.
+    for expected in expected {
+        let call = context
+            .iter()
+            .find(|call| call.site_id == expected.site)
+            .unwrap_or_else(|| {
+                panic!("RAG should include generated self-call {expected:#?}: {context:#?}")
+            });
+        assert_eq!(call.owner_id, owner);
+        assert_eq!(call.kind, CallSiteKind::Method);
+        assert_eq!(call.status, CallStatusKind::Resolved);
+        assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(
+            call.targets.len(),
+            1,
+            "generated rejection self-call should expose one target: {call:#?}"
+        );
+        assert_eq!(call.targets[0].target_id, expected.target);
+        assert_eq!(call.targets[0].relation, CallTargetKind::Method);
+        assert_eq!(
+            call.callee,
+            CallCalleeInfo::Method {
+                name: expected.method.to_string(),
+                receiver: Some(CallReceiverInfo::SelfValue),
+            }
+        );
     }
 
     Ok(())
@@ -4248,6 +4308,13 @@ struct ExpectedGeneratedCallSite {
     site: Uuid,
 }
 
+#[derive(Debug)]
+struct ExpectedSelfMethod {
+    method: &'static str,
+    site: Uuid,
+    target: Uuid,
+}
+
 fn axum_body_from_impl_generated_callers(
     db: &Database,
     target: Uuid,
@@ -4292,6 +4359,45 @@ fn axum_body_from_impl_generated_callers(
     }
 
     Ok(expected)
+}
+
+fn missing_extension_self_methods(
+    db: &Database,
+    owner: Uuid,
+) -> Result<Vec<ExpectedSelfMethod>, Error> {
+    let context = db.call_context_for_owner(owner)?;
+    ["status", "body_text"]
+        .into_iter()
+        .map(|method| {
+            let row = context
+                .iter()
+                .find(|row| {
+                    row.site.kind == DbCallSiteKind::Method
+                        && row.site.method.as_deref() == Some(method)
+                        && row.site.receiver.as_ref() == Some(&CallReceiver::SelfValue)
+                })
+                .unwrap_or_else(|| {
+                    panic!("generated MissingExtension::into_response should call self.{method}(): {context:#?}")
+                });
+            assert_eq!(row.status.status, DbCallStatusKind::Resolved);
+            assert_eq!(
+                row.status.resolution,
+                Some(DbCallResolutionKind::LocalExact)
+            );
+            assert_eq!(
+                row.targets.len(),
+                1,
+                "generated self.{method}() should resolve to one target: {row:#?}"
+            );
+            assert_eq!(row.targets[0].relation, DbCallRelationKind::Method);
+            assert_eq!(row.targets[0].target_kind, DbCallTargetKind::Method);
+            Ok(ExpectedSelfMethod {
+                method,
+                site: row.site.id,
+                target: row.targets[0].target_id,
+            })
+        })
+        .collect()
 }
 
 fn method_ids_by_name_and_body_substring(

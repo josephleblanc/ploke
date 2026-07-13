@@ -18,6 +18,14 @@ pub(crate) struct AxumBodyNewToolFixture {
     pub(crate) generated_callers: Vec<ExpectedCallSite>,
 }
 
+pub(crate) struct AxumGeneratedRejectionToolFixture {
+    pub(crate) state: Arc<AppState>,
+    pub(crate) file_path: PathBuf,
+    pub(crate) module_path: Vec<String>,
+    pub(crate) owner: Uuid,
+    pub(crate) calls: Vec<ExpectedMethodEdge>,
+}
+
 pub(crate) struct AxumParseAttrsToolFixture {
     pub(crate) state: Arc<AppState>,
     pub(crate) file_path: PathBuf,
@@ -199,6 +207,48 @@ impl AxumBodyNewToolFixture {
             target: target.id,
             callers,
             generated_callers,
+        }
+    }
+
+    pub(crate) fn module_path_arg(&self) -> String {
+        self.module_path.join("::")
+    }
+
+    pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
+        ctx_for_state(&self.state, call_id)
+    }
+}
+
+impl AxumGeneratedRejectionToolFixture {
+    pub(crate) async fn new() -> Self {
+        let db = axum_call_graph_db();
+        let owner = axum_method_target_by_body_and_file(
+            &db,
+            "into_response",
+            "rejection_type=MissingExtension",
+            "axum/src/extract/rejection.rs",
+        );
+        let calls = axum_generated_rejection_self_calls(&db, owner.id);
+        assert_eq!(
+            calls.len(),
+            2,
+            "MissingExtension::into_response should expose self.status() and self.body_text()"
+        );
+        assert!(
+            db.project_call_proof_facts_for_node(owner.id, "bd:corpus-axum-call-graph")
+                .expect("project axum MissingExtension::into_response proof facts")
+                >= calls.len(),
+            "MissingExtension::into_response should project generated self-call proof rows"
+        );
+        let state =
+            axum_state_for_target(Arc::clone(&db), &owner, "MissingExtension::into_response").await;
+
+        Self {
+            state,
+            file_path: owner.file_path,
+            module_path: owner.module_path,
+            owner: owner.id,
+            calls,
         }
     }
 

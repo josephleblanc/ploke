@@ -32,23 +32,24 @@ use uuid::Uuid;
 use crate::call_graph_tool_support::{
     AsyncFutureToolFixture, AxumAwaitReceiverToolFixture, AxumBodyEmptyToolFixture,
     AxumBodyNewToolFixture, AxumBoxedIntoRouteToolFixture, AxumErrorHandlingTraitsToolFixture,
-    AxumExpandWithToolFixture, AxumFromFnBasicToolFixture, AxumHandlerCallToolFixture,
-    AxumJsonFromBytesToolFixture, AxumParseAttrsToolFixture, AxumRequestExtractPathToolFixture,
-    AxumRunUiTestsToolFixture, AxumTaskSpawnEffectToolFixture, CallGraphToolFixture,
-    CallableBlockerFixture, CallableBlockerShape, CallableParamResolvedFixture,
-    ChronoAliasConstructorToolFixture, ChronoNaiveUtcToolFixture, DirectSelfFieldDispatchFixture,
-    FixtureBranchReceiverToolFixture, FixtureDynamicCallableToolFixture,
-    FixtureSelfFieldReceiverToolFixture, ResultCallbackFixture, assert_ambiguous_candidate_proof,
-    assert_ambiguous_dynamic_candidates, assert_ambiguous_dynamic_candidates_with_relation,
-    assert_ambiguous_path_candidates, assert_await_result_unwrap_context,
-    assert_await_result_unwrap_proof, assert_body_empty_dependency_root_proof,
-    assert_body_empty_impact_summary, assert_body_empty_incoming_context,
-    assert_body_new_generated_incoming_context, assert_body_new_impact_summary,
-    assert_body_new_incoming_context, assert_boxed_into_route_incoming_context,
-    assert_branch_receiver_context, assert_branch_receiver_proof, assert_call_path_node,
-    assert_chrono_naive_utc_incoming_context, assert_dynamic_context, assert_dynamic_proof,
-    assert_expected_path_incoming_context, assert_fixture_extern_c_abs_effects,
-    assert_from_fn_basic_body_empty_crate_boundary, assert_handler_call_incoming_context,
+    AxumExpandWithToolFixture, AxumFromFnBasicToolFixture, AxumGeneratedRejectionToolFixture,
+    AxumHandlerCallToolFixture, AxumJsonFromBytesToolFixture, AxumParseAttrsToolFixture,
+    AxumRequestExtractPathToolFixture, AxumRunUiTestsToolFixture, AxumTaskSpawnEffectToolFixture,
+    CallGraphToolFixture, CallableBlockerFixture, CallableBlockerShape,
+    CallableParamResolvedFixture, ChronoAliasConstructorToolFixture, ChronoNaiveUtcToolFixture,
+    DirectSelfFieldDispatchFixture, FixtureBranchReceiverToolFixture,
+    FixtureDynamicCallableToolFixture, FixtureSelfFieldReceiverToolFixture, ResultCallbackFixture,
+    assert_ambiguous_candidate_proof, assert_ambiguous_dynamic_candidates,
+    assert_ambiguous_dynamic_candidates_with_relation, assert_ambiguous_path_candidates,
+    assert_await_result_unwrap_context, assert_await_result_unwrap_proof,
+    assert_body_empty_dependency_root_proof, assert_body_empty_impact_summary,
+    assert_body_empty_incoming_context, assert_body_new_generated_incoming_context,
+    assert_body_new_impact_summary, assert_body_new_incoming_context,
+    assert_boxed_into_route_incoming_context, assert_branch_receiver_context,
+    assert_branch_receiver_proof, assert_call_path_node, assert_chrono_naive_utc_incoming_context,
+    assert_dynamic_context, assert_dynamic_proof, assert_expected_path_incoming_context,
+    assert_fixture_extern_c_abs_effects, assert_from_fn_basic_body_empty_crate_boundary,
+    assert_generated_rejection_outgoing_context, assert_handler_call_incoming_context,
     assert_incoming_context, assert_initialized_local_receiver_context,
     assert_initialized_local_receiver_proof, assert_json_from_bytes_incoming_context,
     assert_no_external_summary_need_for_site, assert_parse_attrs_incoming_context,
@@ -3179,6 +3180,73 @@ async fn code_item_edges_returns_real_corpus_body_new_generated_callers() {
             .expect("proof count")
             >= fixture.generated_callers.len(),
         "code_item_edges should surface real-corpus Body::new generated proof rows"
+    );
+}
+
+#[tokio::test]
+async fn code_item_edges_returns_real_corpus_generated_rejection_self_methods() {
+    let fixture = AxumGeneratedRejectionToolFixture::new().await;
+    let ctx = fixture.ctx("axum-rejection-edges");
+    let params = EdgesParams {
+        item_name: Cow::Borrowed("into_response"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("method"),
+        module_path: Cow::Owned(fixture.module_path_arg()),
+        owner_trait: Some(Cow::Borrowed("IntoResponse")),
+        owner_type: Some(Cow::Borrowed("MissingExtension")),
+        parent_name: None,
+        allowed_effects: Vec::new(),
+    };
+
+    let result = CodeItemEdges::execute(params, ctx)
+        .await
+        .expect("tool execution");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
+    let node_info = payload.get("node_info").expect("node_info object");
+    let call_context = node_info
+        .get("call_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.call_context array");
+    let proof_context = node_info
+        .get("proof_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.proof_context array");
+    let owner = fixture.owner.to_string();
+    assert_eq!(
+        node_info.get("id").and_then(serde_json::Value::as_str),
+        Some(owner.as_str()),
+        "code_item_edges should resolve the generated MissingExtension::into_response owner"
+    );
+
+    // Real-corpus oracle matrix:
+    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //   crates/ploke-db/tests/unit/call_graph_fixture_queries/real_target_matrix.rs
+    //   axum-core/src/macros.rs:30-115 defines `__define_rejection!`.
+    //   axum/src/extract/rejection.rs:42-48 invokes it for
+    //   `MissingExtension(Error)`.
+    // Expected tool traversal: exact edge lookup of the generated
+    // `IntoResponse for MissingExtension` method exposes outgoing one-hop
+    // method edges for `self.status()` and `self.body_text()`.
+    assert_generated_rejection_outgoing_context(call_context, &fixture.calls, "code_item_edges");
+    for call in &fixture.calls {
+        assert_target_proof(proof_context, call.owner, call.target, "code_item_edges");
+    }
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert!(
+        ui_field(ui, "call_context_outgoing")
+            .parse::<usize>()
+            .expect("outgoing count")
+            >= fixture.calls.len(),
+        "code_item_edges should surface generated rejection outgoing call rows"
+    );
+    assert!(
+        ui_field(ui, "proof_context")
+            .parse::<usize>()
+            .expect("proof count")
+            >= fixture.calls.len(),
+        "code_item_edges should surface generated rejection proof rows"
     );
 }
 

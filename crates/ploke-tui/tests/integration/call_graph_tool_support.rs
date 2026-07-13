@@ -14,8 +14,10 @@ use ploke_core::{
     },
 };
 use ploke_db::{
-    CallRelationKind as DbCallRelationKind, CallResolutionKind as DbCallResolutionKind,
-    CallSiteKind as DbCallSiteKind, CallStatusKind as DbCallStatusKind, Database, ProofGraphStore,
+    CallReceiver, CallRelationKind as DbCallRelationKind,
+    CallResolutionKind as DbCallResolutionKind, CallSiteKind as DbCallSiteKind,
+    CallStatusKind as DbCallStatusKind, CallTargetKind as DbCallTargetKind, Database,
+    ProofGraphStore,
     helpers::{
         graph_resolve_exact, graph_resolve_exact_call_body_owner,
         graph_resolve_exact_call_body_owner_for_parent,
@@ -172,6 +174,14 @@ pub(crate) struct ExpectedCallSite {
 pub(crate) struct ExpectedMethodCallSite {
     pub(crate) owner: Uuid,
     pub(crate) site: Uuid,
+    pub(crate) callee: CallCalleeInfo,
+}
+
+#[derive(Clone)]
+pub(crate) struct ExpectedMethodEdge {
+    pub(crate) owner: Uuid,
+    pub(crate) site: Uuid,
+    pub(crate) target: Uuid,
     pub(crate) callee: CallCalleeInfo,
 }
 
@@ -1977,6 +1987,41 @@ pub(crate) fn assert_body_new_impact_summary(
     );
 }
 
+pub(crate) fn assert_generated_rejection_outgoing_context(
+    calls: &[serde_json::Value],
+    expected: &[ExpectedMethodEdge],
+    label: &str,
+) {
+    let rows = calls
+        .iter()
+        .map(|call| serde_json::from_value::<CallContextInfo>(call.clone()))
+        .collect::<Result<Vec<_>, _>>()
+        .expect("typed generated rejection call context");
+
+    for expected in expected {
+        let call = rows
+            .iter()
+            .find(|call| call.owner_id == expected.owner && call.site_id == expected.site)
+            .unwrap_or_else(|| {
+                panic!(
+                    "{label} should include generated rejection self-call {}: {rows:#?}",
+                    expected.site
+                )
+            });
+        assert_eq!(call.kind, CallSiteKind::Method);
+        assert_eq!(call.callee, expected.callee);
+        assert_eq!(call.status, CallStatusKind::Resolved);
+        assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(
+            call.targets.len(),
+            1,
+            "{label} generated rejection self-call should expose one target: {call:#?}"
+        );
+        assert_eq!(call.targets[0].target_id, expected.target);
+        assert_eq!(call.targets[0].relation, CallTargetKind::Method);
+    }
+}
+
 pub(crate) fn assert_body_empty_impact_summary(
     impact: &serde_json::Map<String, serde_json::Value>,
     label: &str,
@@ -2104,6 +2149,50 @@ fn axum_body_from_impl_generated_callers(db: &Database, target: Uuid) -> Vec<Exp
     }
 
     expected
+}
+
+fn axum_generated_rejection_self_calls(db: &Database, owner: Uuid) -> Vec<ExpectedMethodEdge> {
+    let context = db
+        .call_context_for_owner(owner)
+        .expect("generated MissingExtension::into_response call context");
+    ["status", "body_text"]
+        .into_iter()
+        .map(|method| {
+            let row = context
+                .iter()
+                .find(|row| {
+                    row.site.kind == DbCallSiteKind::Method
+                        && row.site.method.as_deref() == Some(method)
+                        && row.site.receiver.as_ref() == Some(&CallReceiver::SelfValue)
+                })
+                .unwrap_or_else(|| {
+                    panic!(
+                        "generated MissingExtension::into_response should call self.{method}(): {context:#?}"
+                    )
+                });
+            assert_eq!(row.status.status, DbCallStatusKind::Resolved);
+            assert_eq!(
+                row.status.resolution,
+                Some(DbCallResolutionKind::LocalExact)
+            );
+            assert_eq!(
+                row.targets.len(),
+                1,
+                "generated self.{method}() should resolve to one target: {row:#?}"
+            );
+            assert_eq!(row.targets[0].relation, DbCallRelationKind::Method);
+            assert_eq!(row.targets[0].target_kind, DbCallTargetKind::Method);
+            ExpectedMethodEdge {
+                owner,
+                site: row.site.id,
+                target: row.targets[0].target_id,
+                callee: CallCalleeInfo::Method {
+                    name: method.to_string(),
+                    receiver: Some(CallReceiverInfo::SelfValue),
+                },
+            }
+        })
+        .collect()
 }
 
 fn axum_method_ids_by_name_and_body_substring(
