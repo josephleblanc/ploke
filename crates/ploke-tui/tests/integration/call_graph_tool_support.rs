@@ -120,6 +120,23 @@ pub(crate) struct AsyncFutureToolFixture {
     pub(crate) closure: Uuid,
 }
 
+pub(crate) struct ReturnedClosureToolFixture {
+    pub(crate) state: Arc<AppState>,
+    pub(crate) file_path: PathBuf,
+    pub(crate) module_path: Vec<String>,
+    pub(crate) owner_name: &'static str,
+    pub(crate) owner: Uuid,
+    pub(crate) closure: Uuid,
+}
+
+struct ClosureFixtureParts {
+    state: Arc<AppState>,
+    file_path: PathBuf,
+    module_path: Vec<String>,
+    owner: Uuid,
+    closure: Uuid,
+}
+
 pub(crate) struct AxumCallbackClosureToolFixture {
     pub(crate) state: Arc<AppState>,
     pub(crate) file_path: PathBuf,
@@ -795,59 +812,21 @@ impl AsyncFutureToolFixture {
         owner_name: &'static str,
         closure_parent_name: &'static str,
     ) -> Self {
-        let db = Arc::new(Database::new(
-            setup_db_full_multi_embedding("fixture_call_graph").expect("fixture_call_graph db"),
-        ));
-        let crate_root = workspace_root().join("tests/fixture_crates/fixture_call_graph");
-        let module_path = vec!["crate".to_string()];
-        let file_path = crate_root.join("src/lib.rs");
-        let owner = graph_resolve_exact(
-            db.as_ref(),
-            "function",
-            file_path.as_path(),
-            &module_path,
+        let parts = closure_fixture_parts(
             owner_name,
-        )
-        .expect("resolve awaited async closure future owner")
-        .pop()
-        .expect("awaited async closure future owner")
-        .id;
-        let exact = graph_resolve_exact_call_body_owner_for_parent(
-            db.as_ref(),
-            file_path.as_path(),
-            &module_path,
-            "async_closure",
-            "Closure",
             closure_parent_name,
+            "async_closure",
+            "async closure",
         )
-        .expect("resolve async closure owner");
-        assert_eq!(
-            exact.len(),
-            1,
-            "parent_name should disambiguate the async closure owner"
-        );
-        assert!(
-            db.project_call_proof_facts_for_node(owner, "bd:fixture-call-graph")
-                .expect("project async future owner proof facts")
-                >= 3,
-            "async future owner should project call/proof rows"
-        );
-        assert!(
-            db.project_call_proof_facts_for_node(exact[0].id, "bd:fixture-call-graph")
-                .expect("project async closure proof facts")
-                >= 3,
-            "async closure should project body call/proof rows"
-        );
-
-        let state = app_state_with_rag(db, crate_root).await;
+        .await;
 
         Self {
-            state,
-            file_path,
-            module_path,
+            state: parts.state,
+            file_path: parts.file_path,
+            module_path: parts.module_path,
             owner_name,
-            owner,
-            closure: exact[0].id,
+            owner: parts.owner,
+            closure: parts.closure,
         }
     }
 
@@ -857,6 +836,96 @@ impl AsyncFutureToolFixture {
 
     pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
         ctx_for_state(&self.state, call_id)
+    }
+}
+
+impl ReturnedClosureToolFixture {
+    pub(crate) async fn forwarded_returned_closure() -> Self {
+        let owner_name = "call_forwarded_returned_closure";
+        let parts = closure_fixture_parts(
+            owner_name,
+            "make_target_closure",
+            "closure",
+            "forwarded returned closure",
+        )
+        .await;
+
+        Self {
+            state: parts.state,
+            file_path: parts.file_path,
+            module_path: parts.module_path,
+            owner_name,
+            owner: parts.owner,
+            closure: parts.closure,
+        }
+    }
+
+    pub(crate) fn module_path_arg(&self) -> String {
+        self.module_path.join("::")
+    }
+
+    pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
+        ctx_for_state(&self.state, call_id)
+    }
+}
+
+async fn closure_fixture_parts(
+    owner_name: &'static str,
+    closure_parent_name: &'static str,
+    closure_label: &'static str,
+    detail: &'static str,
+) -> ClosureFixtureParts {
+    let db = Arc::new(Database::new(
+        setup_db_full_multi_embedding("fixture_call_graph").expect("fixture_call_graph db"),
+    ));
+    let crate_root = workspace_root().join("tests/fixture_crates/fixture_call_graph");
+    let module_path = vec!["crate".to_string()];
+    let file_path = crate_root.join("src/lib.rs");
+    let owner = graph_resolve_exact(
+        db.as_ref(),
+        "function",
+        file_path.as_path(),
+        &module_path,
+        owner_name,
+    )
+    .unwrap_or_else(|err| panic!("resolve {detail} owner {owner_name}: {err}"))
+    .pop()
+    .unwrap_or_else(|| panic!("{detail} owner {owner_name}"));
+    let exact = graph_resolve_exact_call_body_owner_for_parent(
+        db.as_ref(),
+        file_path.as_path(),
+        &module_path,
+        closure_label,
+        "Closure",
+        closure_parent_name,
+    )
+    .unwrap_or_else(|err| panic!("resolve {detail} closure owner: {err}"));
+    assert_eq!(
+        exact.len(),
+        1,
+        "parent_name should disambiguate the {detail} closure owner"
+    );
+    assert!(
+        db.project_call_proof_facts_for_node(owner.id, "bd:fixture-call-graph")
+            .unwrap_or_else(|err| panic!("project {detail} owner proof facts: {err}"))
+            >= 3,
+        "{detail} owner should project call/proof rows"
+    );
+    assert!(
+        db.project_call_proof_facts_for_node(exact[0].id, "bd:fixture-call-graph")
+            .unwrap_or_else(|err| panic!("project {detail} closure proof facts: {err}"))
+            >= 3,
+        "{detail} closure should project body call/proof rows"
+    );
+
+    let state = app_state_with_rag(db, crate_root).await;
+
+    ClosureFixtureParts {
+        state,
+        file_path,
+        module_path,
+        owner: owner.id,
+        closure: exact[0].id,
     }
 }
 

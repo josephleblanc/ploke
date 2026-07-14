@@ -20,28 +20,29 @@ use crate::call_graph_tool_support::{
     CallableBlockerShape, CallableParamResolvedFixture, ChronoAliasConstructorToolFixture,
     ChronoNaiveUtcToolFixture, DirectSelfFieldDispatchFixture, FixtureBranchReceiverToolFixture,
     FixtureDynamicCallableToolFixture, FixtureSelfFieldReceiverToolFixture, ResultCallbackFixture,
-    assert_ambiguous_candidate_proof, assert_ambiguous_dynamic_candidates,
-    assert_ambiguous_dynamic_candidates_with_relation, assert_ambiguous_path_candidates,
-    assert_await_result_unwrap_context, assert_await_result_unwrap_proof,
-    assert_body_empty_dependency_root_proof, assert_body_empty_impact_summary,
-    assert_body_empty_incoming_context, assert_body_new_generated_incoming_context,
-    assert_body_new_impact_summary, assert_body_new_incoming_context,
-    assert_boxed_into_route_incoming_context, assert_branch_receiver_context,
-    assert_branch_receiver_proof, assert_call_path_node, assert_chrono_naive_utc_incoming_context,
-    assert_dynamic_context, assert_dynamic_proof, assert_expected_path_incoming_context,
-    assert_fixture_extern_c_abs_effects, assert_from_fn_basic_body_empty_crate_boundary,
-    assert_generated_rejection_outgoing_context, assert_handler_call_incoming_context,
-    assert_incoming_context, assert_initialized_local_receiver_context,
-    assert_initialized_local_receiver_proof, assert_json_from_bytes_incoming_context,
-    assert_no_external_summary_need_for_site, assert_parse_attrs_incoming_context,
-    assert_path_blocker_proof, assert_path_context, assert_path_resolution_proof,
-    assert_process_invariant_findings, assert_resolved_callable_param_proof,
-    assert_resolved_dynamic_context, assert_resolved_method_target_context,
-    assert_resolved_path_context, assert_run_ui_tests_incoming_context,
-    assert_runtime_dispatch_blocker, assert_self_field_receiver_context,
-    assert_self_field_receiver_proof, assert_serde_json_summary_proof,
-    assert_serde_json_surface_measure_effect, assert_target_proof, assert_task_spawn_effects,
-    assert_task_spawn_policy_violation, assert_two_hop_call_path, ui_field,
+    ReturnedClosureToolFixture, assert_ambiguous_candidate_proof,
+    assert_ambiguous_dynamic_candidates, assert_ambiguous_dynamic_candidates_with_relation,
+    assert_ambiguous_path_candidates, assert_await_result_unwrap_context,
+    assert_await_result_unwrap_proof, assert_body_empty_dependency_root_proof,
+    assert_body_empty_impact_summary, assert_body_empty_incoming_context,
+    assert_body_new_generated_incoming_context, assert_body_new_impact_summary,
+    assert_body_new_incoming_context, assert_boxed_into_route_incoming_context,
+    assert_branch_receiver_context, assert_branch_receiver_proof, assert_call_path_node,
+    assert_chrono_naive_utc_incoming_context, assert_dynamic_context, assert_dynamic_proof,
+    assert_expected_path_incoming_context, assert_fixture_extern_c_abs_effects,
+    assert_from_fn_basic_body_empty_crate_boundary, assert_generated_rejection_outgoing_context,
+    assert_handler_call_incoming_context, assert_incoming_context,
+    assert_initialized_local_receiver_context, assert_initialized_local_receiver_proof,
+    assert_json_from_bytes_incoming_context, assert_no_external_summary_need_for_site,
+    assert_parse_attrs_incoming_context, assert_path_blocker_proof, assert_path_context,
+    assert_path_resolution_proof, assert_process_invariant_findings,
+    assert_resolved_callable_param_proof, assert_resolved_dynamic_context,
+    assert_resolved_method_target_context, assert_resolved_path_context,
+    assert_run_ui_tests_incoming_context, assert_runtime_dispatch_blocker,
+    assert_self_field_receiver_context, assert_self_field_receiver_proof,
+    assert_serde_json_summary_proof, assert_serde_json_surface_measure_effect, assert_target_proof,
+    assert_task_spawn_effects, assert_task_spawn_policy_violation, assert_two_hop_call_path,
+    ui_field,
 };
 
 #[tokio::test]
@@ -1017,6 +1018,16 @@ async fn code_item_lookup_returns_stored_returned_async_closure_context() {
     .await;
 }
 
+#[tokio::test]
+async fn code_item_lookup_returns_forwarded_returned_closure_context() {
+    assert_forwarded_returned_closure_lookup(
+        ReturnedClosureToolFixture::forwarded_returned_closure().await,
+        "forwarded returned closure",
+        "forwarded-returned-closure-lookup",
+    )
+    .await;
+}
+
 async fn assert_awaited_async_closure_future_lookup(
     fixture: AsyncFutureToolFixture,
     label: &'static str,
@@ -1115,6 +1126,61 @@ async fn assert_awaited_returned_async_closure_lookup(
     //     direct `.await` and same-block `let future = ...; future.await`
     //     both poll the returned async closure future, so lookup should expose
     //     the DynamicClosure edge.
+    assert_resolved_dynamic_context(
+        call_context,
+        fixture.owner,
+        fixture.closure,
+        CallTargetKind::DynamicClosure,
+        label,
+        "code_item_lookup",
+    );
+    assert_target_proof(proof_context, fixture.owner, fixture.closure, label);
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert!(
+        ui_field(ui, "call_context_outgoing")
+            .parse::<usize>()
+            .expect("outgoing count")
+            >= 1,
+        "code_item_lookup should surface the {label} dynamic closure call"
+    );
+}
+
+async fn assert_forwarded_returned_closure_lookup(
+    fixture: ReturnedClosureToolFixture,
+    label: &'static str,
+    ctx_name: &'static str,
+) {
+    let params = LookupParams {
+        item_name: Cow::Borrowed(fixture.owner_name),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("function"),
+        module_path: Cow::Owned(fixture.module_path_arg()),
+        owner_trait: None,
+        owner_type: None,
+        parent_name: None,
+        allowed_effects: Vec::new(),
+    };
+
+    let result = CodeItemLookup::execute(params, fixture.ctx(ctx_name))
+        .await
+        .unwrap_or_else(|err| panic!("{label} lookup should succeed: {err}"));
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize ConciseContext");
+    let call_context = payload
+        .get("call_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_context array");
+    let proof_context = payload
+        .get("proof_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("proof_context array");
+
+    // Source oracle:
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:1511-1520
+    //   `call_forwarded_returned_closure()` invokes a sync closure returned
+    //   through `make_forwarded_returned_closure()` and produced by
+    //   `make_target_closure()`.
     assert_resolved_dynamic_context(
         call_context,
         fixture.owner,
