@@ -44,7 +44,7 @@ use ploke_db::{
 use ploke_embed::indexer::EmbeddingProcessor;
 use ploke_embed::runtime::EmbeddingRuntime;
 use ploke_io::IoManagerHandle;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -330,13 +330,17 @@ fn call_site_callee_info(site: &CallSiteRow) -> Result<CallCalleeInfo, RagError>
 }
 fn path_info(db: &Database, path: DbCallPath) -> Result<CallPathInfo, RagError> {
     let nodes = path_nodes(db, &path)?;
-    Ok(CallPathInfo {
+    Ok(path_info_with_nodes(path, nodes))
+}
+
+fn path_info_with_nodes(path: DbCallPath, nodes: Vec<CallPathNodeInfo>) -> CallPathInfo {
+    CallPathInfo {
         start_id: path.start_id,
         end_id: path.end_id,
         depth: path.depth,
         edges: path.edges.into_iter().map(edge_info).collect(),
         nodes,
-    })
+    }
 }
 
 fn impact_info(db: &Database, report: DbCallImpactReport) -> Result<CallImpactInfo, RagError> {
@@ -460,11 +464,15 @@ fn effect_guard_info(
 
 fn reach_info(db: &Database, report: DbCallReachReport) -> Result<CallReachInfo, RagError> {
     let owner = call_node_info(report.owner);
+    let node_cache = path_node_cache(db, &report.paths)?;
     let paths = report
         .paths
         .into_iter()
-        .map(|path| path_info(db, path))
-        .collect::<Result<Vec<_>, RagError>>()?;
+        .map(|path| {
+            let nodes = cached_path_nodes(&path, &node_cache);
+            path_info_with_nodes(path, nodes)
+        })
+        .collect::<Vec<_>>();
     let callees = report
         .callees
         .into_iter()
@@ -773,11 +781,7 @@ fn call_node_info(row: DbCallNodeInfo) -> CallNodeInfo {
 }
 
 fn path_nodes(db: &Database, path: &DbCallPath) -> Result<Vec<CallPathNodeInfo>, RagError> {
-    let mut ids = BTreeSet::from([path.start_id, path.end_id]);
-    for edge in &path.edges {
-        ids.insert(edge.caller_id);
-        ids.insert(edge.callee_id);
-    }
+    let ids = path_node_ids(path);
 
     db.get_snippet_context_nodes_ordered(ids.into_iter().collect())
         .map_err(|err| RagError::Db(ploke_db::DbError::Cozo(err.to_string())))?
@@ -789,6 +793,51 @@ fn path_nodes(db: &Database, path: &DbCallPath) -> Result<Vec<CallPathNodeInfo>,
                 canon_path: CanonPath::new(paths.canon),
             })
         })
+        .collect()
+}
+
+fn path_node_ids(path: &DbCallPath) -> BTreeSet<Uuid> {
+    let mut ids = BTreeSet::from([path.start_id, path.end_id]);
+    for edge in &path.edges {
+        ids.insert(edge.caller_id);
+        ids.insert(edge.callee_id);
+    }
+    ids
+}
+
+fn path_node_cache(
+    db: &Database,
+    paths: &[DbCallPath],
+) -> Result<BTreeMap<Uuid, CallPathNodeInfo>, RagError> {
+    let ids = paths
+        .iter()
+        .flat_map(path_node_ids)
+        .collect::<BTreeSet<_>>();
+    let cache = db
+        .get_snippet_context_nodes_ordered(ids.into_iter().collect())
+        .map_err(|err| RagError::Db(ploke_db::DbError::Cozo(err.to_string())))?
+        .into_iter()
+        .map(|(node, paths)| {
+            (
+                node.id,
+                CallPathNodeInfo {
+                    id: node.id,
+                    file_path: NodeFilepath::new(paths.file),
+                    canon_path: CanonPath::new(paths.canon),
+                },
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    Ok(cache)
+}
+
+fn cached_path_nodes(
+    path: &DbCallPath,
+    node_cache: &BTreeMap<Uuid, CallPathNodeInfo>,
+) -> Vec<CallPathNodeInfo> {
+    path_node_ids(path)
+        .into_iter()
+        .filter_map(|id| node_cache.get(&id).cloned())
         .collect()
 }
 fn edge_info(edge: DbCallPathEdge) -> CallPathEdgeInfo {

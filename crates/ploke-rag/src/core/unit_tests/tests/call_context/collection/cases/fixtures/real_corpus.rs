@@ -822,12 +822,42 @@ async fn call_context_collection_reads_chrono_strftime_queue_slice_frontier() ->
         1,
         "StrftimeItems::parse_next_item should expose one queue.is_empty frontier row: {context:#?}"
     );
-    assert_eq!(matching[0].owner_id, owner);
-    assert_eq!(matching[0].status, CallStatusKind::External);
-    assert_eq!(matching[0].resolution, None);
+    let call = matching[0];
+    assert_eq!(call.owner_id, owner);
+    assert_eq!(call.status, CallStatusKind::External);
+    assert_eq!(call.resolution, None);
     assert!(
-        matching[0].targets.is_empty(),
+        call.targets.is_empty(),
         "chrono queue.is_empty slice frontier should remain targetless: {matching:#?}"
+    );
+    let reach = rag
+        .exact_call_reach_for_owner(
+            owner,
+            CallPathOptions {
+                max_depth: 2,
+                max_paths: 64,
+            },
+        )?
+        .expect("call context enabled");
+    let external = reach
+        .external_frontier_calls
+        .iter()
+        .find(|frontier| frontier.site_id == call.site_id)
+        .unwrap_or_else(|| {
+            panic!("RAG reach should preserve the guarded slice `is_empty` frontier: {reach:#?}")
+        });
+    assert_eq!(external.owner_id, owner);
+    assert_eq!(external.status, CallStatusKind::External);
+    assert!(
+        external.targets.is_empty(),
+        "RAG reach should keep chrono queue.is_empty targetless: {external:#?}"
+    );
+    assert!(
+        reach.paths.iter().all(|path| path
+            .edges
+            .iter()
+            .all(|edge| edge.call_site_id != call.site_id)),
+        "RAG reach must not fabricate a traversal edge for the external slice method: {reach:#?}"
     );
 
     Ok(())
