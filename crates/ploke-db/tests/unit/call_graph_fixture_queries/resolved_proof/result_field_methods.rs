@@ -75,7 +75,7 @@ fn fixture_projection_stores_real_result_and_field_receiver_method_call_proof_fa
                     CallReceiver::MethodResultLocalBinding {
                         name: "cloned".to_string(),
                         method_name: "clone_assoc".to_string(),
-                        method_span: (49201, 49220),
+                        method_span: (49462, 49481),
                     },
                     method_target,
                 ),

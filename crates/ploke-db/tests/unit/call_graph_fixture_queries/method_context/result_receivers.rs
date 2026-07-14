@@ -105,7 +105,7 @@ fn fixture_context_reads_projected_result_receiver_method_chains() -> Result<(),
     let result_receiver = CallReceiver::MethodResultLocalBinding {
         name: "cloned".to_string(),
         method_name: "clone_assoc".to_string(),
-        method_span: (49201, 49220),
+        method_span: (49462, 49481),
     };
     let row = row_by_method_receiver(&context, "instance_value", &result_receiver);
     assert_resolved_target(

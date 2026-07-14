@@ -42,7 +42,7 @@ fn fixture_projection_stores_real_target_centered_method_call_proof_facts() -> R
     let local_result_receiver = CallReceiver::MethodResultLocalBinding {
         name: "cloned".to_string(),
         method_name: "clone_assoc".to_string(),
-        method_span: (49201, 49220),
+        method_span: (49462, 49481),
     };
     let await_method_receiver = CallReceiver::AwaitMethodCallResult {
         method_name: "ready_assoc".to_string(),

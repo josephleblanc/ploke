@@ -146,7 +146,7 @@ async fn request_code_context_returns_result_field_receiver_call_context() -> co
                         CallReceiverInfo::MethodResultLocalBinding {
                             name: "cloned".to_string(),
                             method_name: "clone_assoc".to_string(),
-                            method_span: (49201, 49220),
+                            method_span: (49462, 49481),
                         },
                     ),
                     target: method_target,

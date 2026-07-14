@@ -242,7 +242,7 @@ fn fixture_callers_for_target_reads_method_and_associated_callers() -> Result<()
         &CallReceiver::MethodResultLocalBinding {
             name: "cloned".to_string(),
             method_name: "clone_assoc".to_string(),
-            method_span: (49201, 49220),
+            method_span: (49462, 49481),
         },
     );
     assert_eq!(caller.target.relation, CallRelationKind::Method);
