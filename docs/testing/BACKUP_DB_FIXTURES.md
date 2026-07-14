@@ -1,7 +1,7 @@
 # Backup DB Fixtures
 
 Last reviewed: 2026-07-10
-Last updated: 2026-07-13
+Last updated: 2026-07-14
 
 This document is the current inventory for backup database fixtures under
 the shared DB snapshot fixture directory. It records which source targets
@@ -217,7 +217,7 @@ impl Drop for FixtureRestoreGuard {
 | `corpus_axum_openrouter_embeddings_2026-05-17.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | OpenRouter-searchable workspace-member corpus backup for type-context matrix tests | 2026-05-17 |
 | `ploke-db_af8e3a20-728d-5967-8523-da8a5ccdae45` | `crates/ploke-db` | currently orphaned snapshot | 2026-03-20 |
 
-## 2026-07-13 Active Call-Graph Fixture Refresh
+## 2026-07-14 Active Call-Graph Fixture Refresh
 
 The active call-graph fixture set was refreshed with
 `cargo run -p xtask --features call_graph -- fixtures regenerate --active`.
@@ -229,6 +229,27 @@ Post-regeneration verification:
 - `cargo run -p xtask --features call_graph -- verify-backup-dbs` passed for
   all registered active fixtures.
 - Current committed seed checksums:
+  - `corpus_memchr_call_graph_2026-07-13.sqlite`:
+    `8ab76f32ac9bf7094ba107304e6fc443ee0be0c9e45f44a120f4c3ad30dc1a10`
+  - `corpus_generic_array_call_graph_2026-07-11.sqlite`:
+    `0c365daf394854866795ba2820602e063a1f3eb3c730307486653f6a7dc9d956`
+  - `corpus_chrono_call_graph_2026-07-11.sqlite`:
+    `f418707b7dacd1cc175b6f3d7463b12281dc7a831771d7d4a9b89827ffdfaee1`
+  - `corpus_axum_call_graph_2026-07-13.sqlite`:
+    `2cf15061433124208d2ab80974bdfa018343fdfb8dcc56fa17d30c9275156d35`
+
+## 2026-07-13 Active Call-Graph Fixture Refresh
+
+The active call-graph fixture set was refreshed with
+`cargo run -p xtask --features call_graph -- fixtures regenerate --active`.
+The regenerated shared call-graph corpus snapshots were copied into
+`tests/backup_dbs/` as committed seed artifacts.
+
+Post-regeneration verification:
+
+- `cargo run -p xtask --features call_graph -- verify-backup-dbs` passed for
+  all registered active fixtures.
+- Committed seed checksums at this refresh:
   - `corpus_memchr_call_graph_2026-07-13.sqlite`:
     `50be4a07ec89800a84c4ade833d2db222acac35a972708ed3a4d6deba484e020`
   - `corpus_generic_array_call_graph_2026-07-11.sqlite`:
