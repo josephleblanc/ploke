@@ -121,6 +121,17 @@ fixtures were regenerated and verified. This is still local proof evidence; it
 does not add non-local future value flow, general async poll/resume traversal,
 or a new call edge.
 
+Recent completed slice: forwarded returned async future proof query and
+downstream exact payload. `returned_future_flows_for_owner` now exposes the
+reviewed oracle
+`call_forwarded_returned_async_future() -> make_forwarded_returned_async_future()`
+as a proof row linking the awaited producer path call, the producer's persisted
+return binding, and the producer's dynamic `ReturnedPathCall` source. Exact
+RAG, `code_item_lookup`, and `code_item_edges` surface the same row as
+`returned_future_flows`. The traversal remains fail-closed:
+`returned_call_binding_flows` is still empty and no path to `local_target` is
+admitted.
+
 Recent completed slice: durable returned-callable `local_binding_edge`
 projection. The parser now records typed `LocalBindingRelation` facts for
 owner-to-binding containment and binding-to-source endpoints. Transform

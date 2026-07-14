@@ -311,6 +311,31 @@ What remains:
   returned async future remains fail-closed until a carrier proves both the
   producer future and the poll point across the function boundary.
 
+## 2026-07-14 Returned Future Flow Query Checkpoint
+
+Committed slices: `c2dcb19f8 Add returned future flow query` and
+`f4f40efc6 Expose returned future flows in tools`.
+
+What is complete:
+
+- `ploke-db` exposes `returned_future_flows_for_owner` as a proof query for the
+  forwarded returned async future oracle. It joins the awaiting caller's
+  `CallResultAwaited` producer path call to the producer's `ReturnExpression`
+  `local_binding` and the producer's dynamic `ReturnedPathCall` source.
+- Exact RAG and exact `code_item_lookup` / `code_item_edges` payloads expose
+  the row as typed `returned_future_flows`.
+- The existing fail-closed boundary is preserved: `returned_call_binding_flows`
+  remains empty for the forwarded async future caller, the producer still has
+  no awaited callsite, and no path is admitted from the caller to
+  `local_target`.
+
+What remains:
+
+- This is a proof/explanation row over one reviewed producer/poll boundary, not
+  a resolver edge. General non-local future value flow, async poll/resume
+  traversal, async callable trait-object dispatch, and arbitrary stored/forwarded
+  future aggregates still need separate proof carriers.
+
 ## Exit Criteria
 
 For the first carrier slice:

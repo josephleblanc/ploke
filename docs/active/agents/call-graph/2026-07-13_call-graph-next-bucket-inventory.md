@@ -59,6 +59,12 @@ Current completed checkpoint:
   earlier dynamic call result is polled. This adds owner/source
   `local_binding_edge` evidence only; it does not model non-local future flow
   or add a new traversal edge.
+- The latest returned-future query slice exposes the forwarded returned async
+  future source oracle as `returned_future_flows` through DB, exact RAG, and
+  exact TUI tool payloads. It identifies the awaiting caller's producer path
+  call, the producer return binding, and the producer dynamic
+  `ReturnedPathCall` source while keeping `returned_call_binding_flows` empty
+  and admitting no traversal path to `local_target`.
 - The latest proof-authority slice keeps memchr
   `memchr/src/tests/substring/mod.rs:94,110` boxed `dyn FnMut` path rows
   targetless, but admits runtime-dispatch summaries that discharge their
@@ -140,6 +146,11 @@ Local-binding projection checkpoint, 2026-07-14:
   a `LetBinding` named `future` whose source is the awaited returned-callable
   `DynamicCallResult` for `make_returned_async_closure()()`, with
   `OwnerContainsBinding` and `BindingSourceCallResult` edges.
+- Query behavior: `returned_future_flows_for_owner` exposes the non-local
+  forwarded returned async future proof row for the awaiting caller only. The
+  row joins the caller's awaited `make_forwarded_returned_async_future()` path
+  call to the producer's return binding and dynamic `ReturnedPathCall` source,
+  but it deliberately does not create a local call edge.
 - Query behavior: `returned_call_binding_flows_for_owner` now joins the
   caller's resolved returned-callable dynamic row to the producer path call and
   the producer's persisted return binding/source edge. The sync forwarded
