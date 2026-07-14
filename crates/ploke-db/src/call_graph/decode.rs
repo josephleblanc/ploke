@@ -10,7 +10,8 @@ use super::{
     CallContextRow, CallReceiver, CallRelationKind, CallResolutionKind, CallResolutionRow,
     CallSiteKind, CallSiteRow, CallStatusKind, CallTargetKind, CallTargetRow, LocalBindingEdgeRow,
     LocalBindingRelationKind, LocalBindingRow, ReturnedCallBinding, ReturnedCallBindingFlow,
-    ReturnedCallProducer, ReturnedCallSite, ReturnedCallSource,
+    ReturnedCallProducer, ReturnedCallSite, ReturnedCallSource, ReturnedFutureFlow,
+    ReturnedFutureSite,
 };
 
 pub(super) fn decode_site(row: &[DataValue]) -> Result<CallSiteRow, DbError> {
@@ -207,6 +208,55 @@ fn validate_returned_call_binding_flow(flow: &ReturnedCallBindingFlow) -> Result
         Err(DbError::Cozo(format!(
             "malformed returned call binding flow for dynamic call {}",
             flow.dynamic.id
+        )))
+    }
+}
+
+pub(super) fn decode_returned_future_flow(
+    row: &[DataValue],
+) -> Result<ReturnedFutureFlow, DbError> {
+    let future = ReturnedFutureSite {
+        id: to_uuid(&row[6])?,
+        span: span_pair(&row[7])?,
+        path: to_string_list(&row[8])?,
+        callee_kind: to_string(&row[9])?,
+    };
+    let flow = ReturnedFutureFlow {
+        caller_id: to_uuid(&row[0])?,
+        producer: ReturnedCallProducer {
+            site_id: to_uuid(&row[1])?,
+            span: span_pair(&row[2])?,
+            path: to_string_list(&row[3])?,
+            id: to_uuid(&row[4])?,
+        },
+        binding: ReturnedCallBinding {
+            id: to_uuid(&row[5])?,
+            source: ReturnedCallSource {
+                id: future.id,
+                relation: LocalBindingRelationKind::from_str(&to_string(&row[10])?)?,
+                kind: to_string(&row[11])?,
+            },
+        },
+        future,
+    };
+    validate_returned_future_flow(&flow)?;
+    Ok(flow)
+}
+
+fn validate_returned_future_flow(flow: &ReturnedFutureFlow) -> Result<(), DbError> {
+    let valid = flow.binding.source.relation == LocalBindingRelationKind::BindingSourceCallResult
+        && flow.binding.source.kind == "Dynamic"
+        && flow.binding.source.id == flow.future.id
+        && flow.future.callee_kind == "ReturnedPathCall"
+        && !flow.future.path.is_empty()
+        && !flow.producer.path.is_empty();
+
+    if valid {
+        Ok(())
+    } else {
+        Err(DbError::Cozo(format!(
+            "malformed returned future flow for producer call {}",
+            flow.producer.site_id
         )))
     }
 }

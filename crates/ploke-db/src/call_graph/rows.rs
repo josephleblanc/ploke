@@ -112,6 +112,22 @@ pub struct ReturnedCallBindingFlow {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ReturnedFutureSite {
+    pub id: Uuid,
+    pub span: (u32, u32),
+    pub path: Vec<String>,
+    pub callee_kind: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ReturnedFutureFlow {
+    pub caller_id: Uuid,
+    pub producer: ReturnedCallProducer,
+    pub binding: ReturnedCallBinding,
+    pub future: ReturnedFutureSite,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CallSiteBucket {
     pub kind: CallSiteKind,
     pub relation: CallRelationKind,

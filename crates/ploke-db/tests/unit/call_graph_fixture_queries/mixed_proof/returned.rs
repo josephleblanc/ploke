@@ -542,6 +542,29 @@ fn fixture_projection_keeps_forwarded_returned_async_future_fail_closed() -> Res
         &["make_returned_async_closure"],
         "make_forwarded_returned_async_future",
     )?;
+    let future_flows = db.returned_future_flows_for_owner(owner)?;
+    assert_eq!(
+        future_flows.len(),
+        1,
+        "awaited producer should expose one returned future proof flow without admitting a traversal edge: {future_flows:#?}"
+    );
+    let flow = &future_flows[0];
+    assert_eq!(flow.caller_id, owner);
+    assert_eq!(flow.producer.id, producer);
+    assert_eq!(flow.producer.site_id, producer_row.site.id);
+    assert_eq!(
+        flow.producer.path,
+        path(&["make_forwarded_returned_async_future"])
+    );
+    assert_eq!(flow.future.id, dynamic.site.id);
+    assert_eq!(flow.future.path, path(&["make_returned_async_closure"]));
+    assert_eq!(flow.future.callee_kind, "ReturnedPathCall");
+    assert_eq!(flow.binding.source.id, dynamic.site.id);
+    assert_eq!(
+        flow.binding.source.relation,
+        LocalBindingRelationKind::BindingSourceCallResult
+    );
+    assert_eq!(flow.binding.source.kind, "Dynamic");
     let awaited_producer_sites = db.awaited_call_sites_for_owner(producer)?;
     assert!(
         awaited_producer_sites.is_empty(),
@@ -551,6 +574,11 @@ fn fixture_projection_keeps_forwarded_returned_async_future_fail_closed() -> Res
     assert!(
         producer_flows.is_empty(),
         "targetless returned async future dynamic call must not expose a returned-call binding flow: {producer_flows:#?}"
+    );
+    let producer_future_flows = db.returned_future_flows_for_owner(producer)?;
+    assert!(
+        producer_future_flows.is_empty(),
+        "returned future proof flow belongs to the awaiting caller, not to the producer that only returns the future: {producer_future_flows:#?}"
     );
     let count = db.project_call_proof_facts_for_owner(producer, "bd:fixture-call-graph")?;
     assert_eq!(count, 7, "forwarded returned async future proof facts");

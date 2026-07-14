@@ -32,8 +32,9 @@ pub use call_graph::{
     CrateBoundaryPolicyViolation, ExternalSummaryNeed, LocalBindingEdgeRow,
     LocalBindingRelationKind, LocalBindingRow, ModuleBoundaryEdge, ModuleBoundaryPolicyRule,
     ModuleBoundaryPolicyViolation, ReturnedCallBinding, ReturnedCallBindingFlow,
-    ReturnedCallProducer, ReturnedCallSite, ReturnedCallSource, RuntimeDispatchNeed,
-    call_target_endpoint_relation, valid_call_target_family,
+    ReturnedCallProducer, ReturnedCallSite, ReturnedCallSource, ReturnedFutureFlow,
+    ReturnedFutureSite, RuntimeDispatchNeed, call_target_endpoint_relation,
+    valid_call_target_family,
 };
 pub use database::RestoredEmbeddingSet;
 pub use database::{
