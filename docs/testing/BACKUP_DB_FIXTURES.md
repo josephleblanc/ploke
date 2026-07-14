@@ -232,13 +232,13 @@ Post-regeneration verification:
   all registered active fixtures.
 - Current committed seed checksums:
   - `corpus_memchr_call_graph_2026-07-13.sqlite`:
-    `24bfa801b55efdba81943e6b8d78041dd92efba65ecf8c4a1fa3015e1b23b73b`
+    `84dd441beadf64253c5099785c1641dbb82d9a137c91b9282bd5ecbff123cdcd`
   - `corpus_generic_array_call_graph_2026-07-11.sqlite`:
-    `1ce10178e4b35d92a92448254370c0d8bcd77f54a754d4ff667e64d6ca05e46c`
+    `43b2f903e397e1a3858ffc06321144c4e64663bbf7b06829be67292b6c66e47c`
   - `corpus_chrono_call_graph_2026-07-11.sqlite`:
-    `9353667edfbb9e6d6a2aa652ea2087529db32099755a23936ca992397aa0adfa`
+    `146a5280d63be9f57aabcf053771e2d2db039a892b09caacef082937af2fbfcd`
   - `corpus_axum_call_graph_2026-07-13.sqlite`:
-    `d5d5028c2207ea37673c1643fcfa344022bf2a856fdfa1efed48587a72a3e3a3`
+    `10147050f307b0339d1616d20e39352b9d8548725da7d2e5a4ef6142dd8b8ee9`
 
 ## 2026-07-13 Active Call-Graph Fixture Refresh
 
