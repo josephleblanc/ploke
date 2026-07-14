@@ -133,6 +133,7 @@ pub enum CallExpected {
 pub enum CallPipelineCoverage {
     Db,
     RagApi,
+    RagExactApi,
     TuiTool,
 }
 
@@ -474,7 +475,7 @@ static CALL_SHAPE_CASES: &[CallShapeCase] = &[
         expected: CallExpected::Targetless {
             status: CallStatusKind::External,
         },
-        coverage: &[CallPipelineCoverage::Db],
+        coverage: &[CallPipelineCoverage::Db, CallPipelineCoverage::RagExactApi],
     },
     CallShapeCase {
         name: "generic_array_try_from_iter_size_hint_local_receiver",

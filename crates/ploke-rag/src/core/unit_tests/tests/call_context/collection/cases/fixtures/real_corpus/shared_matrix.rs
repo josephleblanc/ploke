@@ -24,6 +24,22 @@ async fn shared_call_shape_matrix_rows_reach_rag_call_context() -> Result<(), Er
     Ok(())
 }
 
+#[tokio::test]
+async fn shared_call_shape_matrix_rows_reach_exact_rag_call_context() -> Result<(), Error> {
+    init_tracing_once();
+
+    for case in call_shape_cases()
+        .iter()
+        .filter(|case| covers(case, CallPipelineCoverage::RagExactApi))
+    {
+        eprintln!("shared exact RAG call-shape case: {}", case.name);
+        let (db, rag) = setup_matrix_rag(case)?;
+        assert_exact_case(&db, &rag, case)?;
+    }
+
+    Ok(())
+}
+
 fn assert_case(db: &Database, rag: &RagService, case: &CallShapeCase) -> Result<(), Error> {
     let owner = resolve_owner(db, case.owner)?;
     let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
@@ -33,6 +49,28 @@ fn assert_case(db: &Database, rag: &RagService, case: &CallShapeCase) -> Result<
             case.name, case.source
         )
     });
+    assert_context(db, rag, case, owner, context)
+}
+
+fn assert_exact_case(db: &Database, rag: &RagService, case: &CallShapeCase) -> Result<(), Error> {
+    let owner = resolve_owner(db, case.owner)?;
+    let context = rag.exact_call_context(owner)?;
+    assert!(
+        !context.is_empty(),
+        "{} should receive exact outgoing RAG call context; source: {}",
+        case.name,
+        case.source
+    );
+    assert_context(db, rag, case, owner, &context)
+}
+
+fn assert_context(
+    db: &Database,
+    rag: &RagService,
+    case: &CallShapeCase,
+    owner: Uuid,
+    context: &[CallContextInfo],
+) -> Result<(), Error> {
     let call = select_site(context, case);
     assert_eq!(call.owner_id, owner, "{}", case.name);
 
