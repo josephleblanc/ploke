@@ -819,6 +819,11 @@ fn path_node_cache(
     path_node_cache_for_paths(db, paths)
 }
 
+fn path_infos(db: &Database, paths: Vec<DbCallPath>) -> Result<Vec<CallPathInfo>, RagError> {
+    let node_cache = path_node_cache(db, &paths)?;
+    Ok(cached_path_infos(paths, &node_cache))
+}
+
 fn path_node_cache_for_paths<'a>(
     db: &Database,
     paths: impl IntoIterator<Item = &'a DbCallPath>,
@@ -1159,12 +1164,10 @@ impl RagService {
             return Ok(Vec::new());
         }
 
-        Ok(self
-            .db
-            .call_paths_from_owner(owner_id, options)?
-            .into_iter()
-            .map(|path| path_info(self.db.as_ref(), path))
-            .collect::<Result<Vec<_>, RagError>>()?)
+        path_infos(
+            self.db.as_ref(),
+            self.db.call_paths_from_owner(owner_id, options)?,
+        )
     }
 
     pub fn exact_call_paths_to_target(
@@ -1176,12 +1179,10 @@ impl RagService {
             return Ok(Vec::new());
         }
 
-        Ok(self
-            .db
-            .call_paths_to_target(target_id, options)?
-            .into_iter()
-            .map(|path| path_info(self.db.as_ref(), path))
-            .collect::<Result<Vec<_>, RagError>>()?)
+        path_infos(
+            self.db.as_ref(),
+            self.db.call_paths_to_target(target_id, options)?,
+        )
     }
 
     pub fn exact_call_paths_between(
@@ -1194,12 +1195,10 @@ impl RagService {
             return Ok(Vec::new());
         }
 
-        Ok(self
-            .db
-            .call_paths_between(owner_id, target_id, options)?
-            .into_iter()
-            .map(|path| path_info(self.db.as_ref(), path))
-            .collect::<Result<Vec<_>, RagError>>()?)
+        path_infos(
+            self.db.as_ref(),
+            self.db.call_paths_between(owner_id, target_id, options)?,
+        )
     }
 
     pub fn exact_call_guard_report_between(
@@ -1229,12 +1228,10 @@ impl RagService {
             return Ok(Vec::new());
         }
 
-        Ok(self
-            .db
-            .call_cycles_from_owner(owner_id, options)?
-            .into_iter()
-            .map(|path| path_info(self.db.as_ref(), path))
-            .collect::<Result<Vec<_>, RagError>>()?)
+        path_infos(
+            self.db.as_ref(),
+            self.db.call_cycles_from_owner(owner_id, options)?,
+        )
     }
 
     pub fn exact_call_impact_for_target(

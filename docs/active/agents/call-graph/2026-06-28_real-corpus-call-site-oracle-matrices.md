@@ -437,21 +437,20 @@ function-pointer candidate rows by owner and expected candidate set. The
 shared real-corpus call-shape matrix in `ploke_test_utils::call_shape_matrix`
 now also covers the memchr function-pointer rows, memchr callable trait-object
 rows, the chrono `SelfField(["queue"]).is_empty()` row, and both generic-array
-`iter.size_hint()` rows. The chrono guarded receiver remains shared DB coverage
-with a dedicated exact RAG assertion and a focused DB reach assertion for the
-same frontier; it is intentionally not part of the shared full TUI lookup/edges
-matrix because those tools also compute owner-wide usage summaries for the long
-`parse_next_item` body. RAG collection and exact TUI
-`code_item_lookup` plus `code_item_edges` preserve the memchr generated
-transmute frontier, the two memchr function-pointer candidate rows, the two
-memchr callable trait-object path blockers, and the two generic-array
-`size_hint` external method-result receiver rows without fabricating traversal
-edges. RAG
-exact call-context and TUI lookup/edges also
-preserve both the 12 chrono alias constructor caller-site identities, the
-two `DateTime::from_timestamp*(...).ok_or(...)?.naive_utc()` try-receiver
-method edges, and the two cfg(test) `Local::now().naive_utc()` initialized-local
-method edges.
+`iter.size_hint()` rows. The chrono guarded receiver now has shared DB coverage,
+focused DB reach and external-summary assertions, dedicated exact RAG assertions,
+and focused exact TUI `code_item_lookup` plus `code_item_edges` coverage. The
+TUI run remains owner-wide and heavy for the long `parse_next_item` body, but it
+now completes under the focused shared-matrix timeout after batched path-node
+materialization. RAG collection and exact TUI `code_item_lookup` plus
+`code_item_edges` preserve the memchr generated transmute frontier, the two
+memchr function-pointer candidate rows, the two memchr callable trait-object path
+blockers, and the two generic-array `size_hint` external method-result receiver
+rows without fabricating traversal edges. RAG exact call-context and TUI
+lookup/edges also preserve both the 12 chrono alias constructor caller-site
+identities, the two `DateTime::from_timestamp*(...).ok_or(...)?.naive_utc()`
+try-receiver method edges, and the two cfg(test) `Local::now().naive_utc()`
+initialized-local method edges.
 
 ## Boundary Items
 
