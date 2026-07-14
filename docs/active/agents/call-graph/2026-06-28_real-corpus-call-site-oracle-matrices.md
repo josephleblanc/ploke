@@ -438,10 +438,10 @@ shared real-corpus call-shape matrix in `ploke_test_utils::call_shape_matrix`
 now also covers the memchr function-pointer rows, memchr callable trait-object
 rows, the chrono `SelfField(["queue"]).is_empty()` row, and both generic-array
 `iter.size_hint()` rows. The chrono guarded receiver remains shared DB coverage
-with a dedicated exact RAG assertion for the same frontier; it is intentionally
-not part of the shared full TUI lookup/edges matrix because those tools also
-compute owner-wide usage summaries for the long `parse_next_item` body. RAG
-collection and exact TUI
+with a dedicated exact RAG assertion and a focused DB reach assertion for the
+same frontier; it is intentionally not part of the shared full TUI lookup/edges
+matrix because those tools also compute owner-wide usage summaries for the long
+`parse_next_item` body. RAG collection and exact TUI
 `code_item_lookup` plus `code_item_edges` preserve the memchr generated
 transmute frontier, the two memchr function-pointer candidate rows, the two
 memchr callable trait-object path blockers, and the two generic-array

@@ -2333,11 +2333,11 @@ Completed evidence:
   `cargo test -p ploke-rag shared_call_shape_matrix_rows_reach_exact_rag_call_context -- --nocapture`
   (`1 passed; 0 failed`), and `cargo fmt --all`.
 - Follow-up coverage keeps the chrono guarded `self.queue.is_empty()`
-  external self-field frontier row in the shared DB matrix and in dedicated
-  exact RAG coverage. It is not part of the shared full TUI lookup/edges
-  adapter because those tools compute owner-wide usage summaries for the long
-  `parse_next_item` body; a filtered promotion run reached lookup and did not
-  terminate before interruption. The generic shared RAG adapter also
+  external self-field frontier row in the shared DB matrix, in focused DB reach
+  coverage, and in dedicated exact RAG coverage. It is not part of the shared
+  full TUI lookup/edges adapter because those tools compute owner-wide usage
+  summaries for the long `parse_next_item` body; filtered promotion runs still
+  time out at lookup after setup. The generic shared RAG adapter also
   intentionally exercises bounded owner collection, which truncates this late
   callsite.
 
