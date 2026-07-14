@@ -40,6 +40,40 @@ pub(super) fn assert_resolved_call(rows: &[ProofContextInfo], owner: Uuid, targe
     assert_resolved_call_for_domain(rows, owner, target, "bd:fixture-call-graph");
 }
 
+pub(super) fn assert_binding_evidence(rows: &[ProofContextInfo], owner: Uuid, target: Uuid) {
+    let owner = owner.to_string();
+    let target = target.to_string();
+    let edge = rows
+        .iter()
+        .find(|row| {
+            row.kind == "call_edge"
+                && row.caller_def_id.as_deref() == Some(owner.as_str())
+                && row.callee_def_id.as_deref() == Some(target.as_str())
+                && row.resolution_state.as_deref() == Some("resolved")
+        })
+        .unwrap_or_else(|| {
+            panic!("binding evidence should attach to a resolved call_edge: {rows:#?}")
+        });
+    let site_id = edge
+        .call_site_id
+        .as_deref()
+        .expect("resolved call_edge should carry call_site_id");
+    assert!(
+        rows.iter().any(|row| {
+            row.kind == "binding_evidence"
+                && row.call_site_id.as_deref() == Some(site_id)
+                && row.caller_def_id.as_deref() == Some(owner.as_str())
+                && row.resolution_state.as_deref() == Some("resolved")
+                && row.evidence_use.as_deref() == Some("proof_only")
+                && row
+                    .detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.contains("returned-callable binding evidence"))
+        }),
+        "proof context should include returned-callable binding evidence for site {site_id}: {rows:#?}"
+    );
+}
+
 pub(super) fn assert_resolved_call_for_domain(
     rows: &[ProofContextInfo],
     owner: Uuid,

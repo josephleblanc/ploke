@@ -1,5 +1,5 @@
 use super::super::*;
-use super::helpers::{assert_blocked_resolution, assert_resolved_call};
+use super::helpers::{assert_binding_evidence, assert_blocked_resolution, assert_resolved_call};
 
 #[tokio::test]
 async fn request_code_context_returns_targetless_special_form_proof_context()
@@ -41,13 +41,13 @@ async fn request_code_context_returns_targetless_special_form_proof_context()
     );
     assert_eq!(
         db.project_call_proof_facts_for_owner(chained_owner, "bd:fixture-call-graph")?,
-        6,
-        "chained returned-function call should project inner and outer resolved proof facts"
+        7,
+        "chained returned-function call should project inner, outer, and binding-evidence proof facts"
     );
     assert_eq!(
         db.project_call_proof_facts_for_owner(returned_param_owner, "bd:fixture-call-graph")?,
-        6,
-        "returned parameter function call should project inner and outer resolved proof facts"
+        7,
+        "returned parameter function call should project inner, outer, and binding-evidence proof facts"
     );
     assert_eq!(
         db.project_call_proof_facts_for_owner(qself_owner, "bd:fixture-call-graph")?,
@@ -128,11 +128,12 @@ async fn request_code_context_returns_targetless_special_form_proof_context()
             "request_code_context should materialize the chained returned-function proof owner",
         );
     assert!(
-        chained_part.proof_context.len() >= 6,
+        chained_part.proof_context.len() >= 7,
         "chained returned-function proof context: {chained_part:#?}"
     );
     assert_resolved_call(&chained_part.proof_context, chained_owner, chained_target);
     assert_resolved_call(&chained_part.proof_context, chained_owner, returned_target);
+    assert_binding_evidence(&chained_part.proof_context, chained_owner, returned_target);
 
     let returned_param_result = execute_fixture_tool_request(
         &db,
@@ -162,7 +163,7 @@ async fn request_code_context_returns_targetless_special_form_proof_context()
         .find(|part| part.id == returned_param_owner)
         .expect("request_code_context should materialize the returned parameter proof owner");
     assert!(
-        returned_param_part.proof_context.len() >= 6,
+        returned_param_part.proof_context.len() >= 7,
         "returned parameter proof context: {returned_param_part:#?}"
     );
     assert_resolved_call(
@@ -171,6 +172,11 @@ async fn request_code_context_returns_targetless_special_form_proof_context()
         returned_param_helper,
     );
     assert_resolved_call(
+        &returned_param_part.proof_context,
+        returned_param_owner,
+        local_target,
+    );
+    assert_binding_evidence(
         &returned_param_part.proof_context,
         returned_param_owner,
         local_target,

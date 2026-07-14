@@ -1,5 +1,7 @@
 use super::super::super::*;
-use super::super::helpers::{assert_blocked_resolution, assert_resolved_call};
+use super::super::helpers::{
+    assert_binding_evidence, assert_blocked_resolution, assert_resolved_call,
+};
 
 #[tokio::test]
 async fn proof_context_collection_preserves_targetless_special_form_rows() -> Result<(), Error> {
@@ -41,13 +43,13 @@ async fn proof_context_collection_preserves_targetless_special_form_rows() -> Re
     );
     assert_eq!(
         db.project_call_proof_facts_for_owner(chained_owner, "bd:fixture-call-graph")?,
-        6,
-        "chained returned-function call should project inner and outer resolved proof facts"
+        7,
+        "chained returned-function call should project inner, outer, and binding-evidence proof facts"
     );
     assert_eq!(
         db.project_call_proof_facts_for_owner(returned_param_owner, "bd:fixture-call-graph")?,
-        6,
-        "returned parameter function call should project inner and outer resolved proof facts"
+        7,
+        "returned parameter function call should project inner, outer, and binding-evidence proof facts"
     );
     assert_eq!(
         db.project_call_proof_facts_for_owner(qself_owner, "bd:fixture-call-graph")?,
@@ -82,11 +84,12 @@ async fn proof_context_collection_preserves_targetless_special_form_rows() -> Re
         .expect("chained returned-function owner seed should receive proof rows");
     assert_eq!(
         chained_rows.len(),
-        6,
+        7,
         "chained returned-function proof rows: {chained_rows:#?}"
     );
     assert_resolved_call(chained_rows, chained_owner, chained_target);
     assert_resolved_call(chained_rows, chained_owner, returned_target);
+    assert_binding_evidence(chained_rows, chained_owner, returned_target);
 
     let returned_param_context = rag.collect_proof_context(&[(returned_param_owner, 1.0)])?;
     let returned_param_rows = returned_param_context
@@ -94,7 +97,7 @@ async fn proof_context_collection_preserves_targetless_special_form_rows() -> Re
         .expect("returned parameter function owner seed should receive proof rows");
     assert_eq!(
         returned_param_rows.len(),
-        6,
+        7,
         "returned parameter function proof rows: {returned_param_rows:#?}"
     );
     assert_resolved_call(
@@ -103,6 +106,7 @@ async fn proof_context_collection_preserves_targetless_special_form_rows() -> Re
         returned_param_helper,
     );
     assert_resolved_call(returned_param_rows, returned_param_owner, local_target);
+    assert_binding_evidence(returned_param_rows, returned_param_owner, local_target);
 
     let qself_context = rag.collect_proof_context(&[(qself_owner, 1.0)])?;
     let qself_rows = qself_context
