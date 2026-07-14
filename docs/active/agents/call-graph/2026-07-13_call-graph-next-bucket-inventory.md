@@ -125,10 +125,12 @@ Forwarded returned-closure checkpoint, updated 2026-07-14:
   `make_forwarded_returned_closure()` returns the closure produced by
   `make_target_closure()`, and `call_forwarded_returned_closure()` immediately
   invokes the producer function result.
-- DB/RAG status: the caller has a resolved `Function` edge to the producer and
-  a resolved `DynamicClosure` edge for the outer returned-callable invocation.
-  The producer has a resolved path call to `make_target_closure`; RAG node
-  context also includes the incoming caller row when the producer is a seed.
+- DB/RAG/TUI status: the caller has a resolved `Function` edge to the producer
+  and a resolved `DynamicClosure` edge for the outer returned-callable
+  invocation. The producer has a resolved path call to `make_target_closure`;
+  RAG node context also includes the incoming caller row when the producer is a
+  seed, and exact `code_item_lookup` / `code_item_edges` surface the dynamic
+  closure row plus target-centered proof context.
 - Traversal status: `call_forwarded_returned_closure ->
   make_forwarded_returned_closure` is traversable as one edge, and the bounded
   sync returned-callable carrier admits `call_forwarded_returned_closure ->

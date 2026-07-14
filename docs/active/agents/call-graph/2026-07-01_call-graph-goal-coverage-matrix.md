@@ -3338,9 +3338,11 @@ invokes only the producer function result. The caller traverses a resolved
 `Function` edge to the producer, and the outer returned-callable dynamic row now
 resolves to the closure owner returned by `make_target_closure`. DB traversal
 admits the two-hop path from the caller to `local_target` through that closure
-owner. This remains intentionally narrow: it covers one zero-argument sync
-producer forwarding a local function that directly returns a closure, not
-general recursive returned-callable value flow.
+owner. RAG collection and exact `code_item_lookup` / `code_item_edges` expose
+the resolved dynamic-closure row and target-centered proof context. This
+remains intentionally narrow: it covers one zero-argument sync producer
+forwarding a local function that directly returns a closure, not general
+recursive returned-callable value flow.
 
 ## Parking Lot
 
