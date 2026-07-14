@@ -10,6 +10,7 @@ Related planning files:
 - [`2026-07-01_call-graph-goal-coverage-matrix.md`](2026-07-01_call-graph-goal-coverage-matrix.md)
 - [`2026-07-05_binding-type-aware-resolver-plan.md`](2026-07-05_binding-type-aware-resolver-plan.md)
 - [`2026-07-07_call-graph-usage-question-gap-audit.md`](2026-07-07_call-graph-usage-question-gap-audit.md)
+- [`2026-07-14_binding-tracking-proof-carrier-plan.md`](2026-07-14_binding-tracking-proof-carrier-plan.md)
 - [`../../../../.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md`](../../../../.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md)
 
 ## Current Selection Frame
@@ -69,6 +70,20 @@ Current completed checkpoint:
 Next bucket rule: pick one row below only when there is a fresh proof input and
 a DB-first assertion. Do not add another fixture-only breadth slice for shapes
 already listed as covered in the goal coverage matrix.
+
+Selection update, 2026-07-14:
+
+- Generated/macro-expanded and object/field candidates were rechecked after
+  fixture regeneration. The obvious generated rows are already bounded by
+  existing generated-item models or explicit macro blockers, and the obvious
+  axum callable-field rows either resolve only with exact local evidence or
+  correctly remain targetless/ambiguous with runtime-dispatch summaries.
+- The next implementation should therefore start the persistent binding
+  tracking carrier in
+  [`2026-07-14_binding-tracking-proof-carrier-plan.md`](2026-07-14_binding-tracking-proof-carrier-plan.md)
+  instead of adding more parser breadth. The first slice is projection-first:
+  persist exact returned-callable binding evidence and its async fail-closed
+  counterpart before promoting any new resolver edge.
 
 Post-regeneration checkpoint, 2026-07-13:
 
