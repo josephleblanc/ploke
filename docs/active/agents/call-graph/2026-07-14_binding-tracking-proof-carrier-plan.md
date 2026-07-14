@@ -280,6 +280,33 @@ What remains:
   poll/resume traversal still require separate source-oracle-driven carrier
   slices.
 
+## 2026-07-14 Returned-Future Execution Proof Checkpoint
+
+Committed slices: DB contextual returned-future execution proof query plus
+exact RAG/TUI payload propagation.
+
+What is complete:
+
+- `ploke-db` exposes `returned_future_execution_flows_for_owner` for the
+  reviewed forwarded returned async future oracle. The row links the awaiting
+  caller's producer path call, the producer return binding, the producer
+  dynamic `ReturnedPathCall` future site, the returned async-closure maker
+  call, the maker return binding, and the closure body edge.
+- `ploke-rag` exposes the same row through
+  `exact_returned_future_execution_flows_for_owner`.
+- `ConciseContext`, `code_item_lookup`, and `code_item_edges` expose the row as
+  `returned_future_execution_flows` with a UI count.
+- Focused DB/RAG/TUI tests prove the contextual row and preserve the strict
+  boundary: `returned_call_binding_flows` stays empty, the producer itself has
+  no caller-context execution flow, and ordinary `call_paths_between` from the
+  awaiting caller to `local_target` remains empty.
+
+What remains:
+
+- This is not a resolver edge and not general async poll/resume traversal.
+  Broader non-local future value flow still needs typed producer/poll-point
+  carriers before any traversal relation can be admitted.
+
 ## 2026-07-14 Awaited Future Let-Binding Carrier Checkpoint
 
 Committed slices: `a62bf6d59 Project awaited future let binding evidence` and

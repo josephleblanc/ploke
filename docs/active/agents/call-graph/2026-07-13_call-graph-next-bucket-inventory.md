@@ -65,6 +65,12 @@ Current completed checkpoint:
   call, the producer return binding, and the producer dynamic
   `ReturnedPathCall` source while keeping `returned_call_binding_flows` empty
   and admitting no traversal path to `local_target`.
+- The latest returned-future execution proof slice exposes
+  `returned_future_execution_flows` through DB, exact RAG, and exact TUI tool
+  payloads. It composes the awaiting caller, producer return binding, returned
+  future dynamic row, returned async-closure maker, maker return binding, and
+  closure body edge for the reviewed forwarded async future oracle, while still
+  admitting no ordinary traversal path to `local_target`.
 - The latest proof-authority slice keeps memchr
   `memchr/src/tests/substring/mod.rs:94,110` boxed `dyn FnMut` path rows
   targetless, but admits runtime-dispatch summaries that discharge their
@@ -151,6 +157,12 @@ Local-binding projection checkpoint, 2026-07-14:
   row joins the caller's awaited `make_forwarded_returned_async_future()` path
   call to the producer's return binding and dynamic `ReturnedPathCall` source,
   but it deliberately does not create a local call edge.
+- Query behavior: `returned_future_execution_flows_for_owner` exposes the
+  contextual proof path for the same awaiting caller only. The row joins the
+  producer-side returned future evidence to the
+  `make_returned_async_closure()` maker, the maker's returned async-closure
+  binding, and the closure body's `local_target()` edge. This remains an
+  explanatory proof row over persisted facts, not a resolver/traversal edge.
 - Query behavior: `returned_call_binding_flows_for_owner` now joins the
   caller's resolved returned-callable dynamic row to the producer path call and
   the producer's persisted return binding/source edge. The sync forwarded

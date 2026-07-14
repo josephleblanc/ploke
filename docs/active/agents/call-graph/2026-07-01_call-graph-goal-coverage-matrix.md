@@ -132,6 +132,16 @@ RAG, `code_item_lookup`, and `code_item_edges` surface the same row as
 `returned_call_binding_flows` is still empty and no path to `local_target` is
 admitted.
 
+Recent completed slice: contextual returned-future execution proof payload.
+`returned_future_execution_flows_for_owner` now composes only persisted facts
+for the same forwarded async future oracle: the awaiting caller's producer
+path call, the producer return binding and returned-future dynamic site, the
+returned async-closure maker call, the maker's async-closure return binding,
+and the closure body's `local_target` edge. Exact RAG, `code_item_lookup`, and
+`code_item_edges` surface this as `returned_future_execution_flows`. This is an
+explanatory proof path, not a call traversal edge: ordinary
+`call_paths_between(caller, local_target)` remains empty.
+
 Recent completed slice: durable returned-callable `local_binding_edge`
 projection. The parser now records typed `LocalBindingRelation` facts for
 owner-to-binding containment and binding-to-source endpoints. Transform
@@ -3457,6 +3467,19 @@ the resolved dynamic-closure row and target-centered proof context. This
 remains intentionally narrow: it covers one zero-argument sync producer
 forwarding a local function that directly returns a closure, not general
 recursive returned-callable value flow.
+
+Update 2026-07-14: non-local returned async future flow now has a contextual
+execution proof payload without admitting a traversal edge. The source oracle
+is still `tests/fixture_crates/fixture_call_graph/src/lib.rs:2368-2373`.
+`returned_future_execution_flows_for_owner` links the awaiting caller to the
+producer, the producer's returned future dynamic row, the
+`make_returned_async_closure` maker, the maker's returned async-closure owner,
+and the closure body's `local_target()` edge. DB, exact RAG, exact
+`code_item_lookup`, and exact `code_item_edges` tests preserve the same row,
+while `returned_call_binding_flows` remains empty and ordinary paths from the
+caller to `local_target` remain empty. This proves available evidence for
+explanation/RAG without modeling general async poll/resume or cross-function
+future value flow as source-call traversal.
 
 ## Parking Lot
 
