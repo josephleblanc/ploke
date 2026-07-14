@@ -11,6 +11,8 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
     let make_closure = unique_id_by_name(&db, "function", "make_closure")?;
     let make_bound = unique_id_by_name(&db, "function", "make_bound_closure")?;
     let make_alias = unique_id_by_name(&db, "function", "make_alias_bound_closure")?;
+    let target_maker = unique_id_by_name(&db, "function", "make_target_closure")?;
+    let closure_producer = unique_id_by_name(&db, "function", "make_forwarded_returned_closure")?;
     let make_returned_async = unique_id_by_name(&db, "function", "make_returned_async_closure")?;
     let future_producer =
         unique_id_by_name(&db, "function", "make_forwarded_returned_async_future")?;
@@ -59,6 +61,10 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
     let alias_owner = one_uuid(
         &db,
         &function_in_module_query(&["crate"], "call_returned_alias_bound_closure"),
+    )?;
+    let closure_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_forwarded_returned_closure"),
     )?;
     let returned_async_no_await_owner = one_uuid(
         &db,
@@ -179,6 +185,8 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
         (returned_closure_owner, 1.0),
         (bound_owner, 1.0),
         (alias_owner, 1.0),
+        (closure_owner, 1.0),
+        (closure_producer, 1.0),
         (returned_async_no_await_owner, 1.0),
         (returned_async_awaited_owner, 1.0),
         (returned_async_stored_owner, 1.0),
@@ -409,6 +417,99 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
         );
         assert_eq!(dynamic.targets[0].relation, CallTargetKind::DynamicClosure);
     }
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:1511-1520:
+    // `call_forwarded_returned_closure()` invokes a closure value returned by a
+    // producer function. RAG should expose the producer call and targetless
+    // outer dynamic row, while the producer context exposes the maker path plus
+    // the incoming caller row.
+    let closure_context = call_context
+        .get(&closure_owner)
+        .expect("forwarded returned closure caller should receive outgoing call context");
+    assert_eq!(
+        closure_context.len(),
+        2,
+        "forwarded returned closure caller context: {closure_context:#?}"
+    );
+    let producer_path = closure_context
+        .iter()
+        .find(|call| {
+            call.owner_id == closure_owner
+                && call.kind == CallSiteKind::Path
+                && call.callee
+                    == CallCalleeInfo::Path {
+                        path: vec!["make_forwarded_returned_closure".to_string()],
+                    }
+        })
+        .expect("forwarded returned closure caller should include the producer path");
+    assert_eq!(producer_path.status, CallStatusKind::Resolved);
+    assert_eq!(
+        producer_path.resolution,
+        Some(CallResolutionKind::LocalExact)
+    );
+    assert_eq!(producer_path.targets.len(), 1);
+    assert_eq!(producer_path.targets[0].target_id, closure_producer);
+    assert_eq!(producer_path.targets[0].relation, CallTargetKind::Function);
+
+    let closure_dynamic = closure_context
+        .iter()
+        .find(|call| call.owner_id == closure_owner && call.kind == CallSiteKind::Dynamic)
+        .expect("forwarded returned closure caller should include a targetless dynamic row");
+    assert_eq!(closure_dynamic.callee, CallCalleeInfo::Dynamic);
+    assert_eq!(closure_dynamic.status, CallStatusKind::Unsupported);
+    assert_eq!(closure_dynamic.resolution, None);
+    assert!(
+        closure_dynamic.targets.is_empty(),
+        "non-local returned closure flow must not fabricate a dynamic target: {closure_dynamic:#?}"
+    );
+
+    let closure_producer_context = call_context
+        .get(&closure_producer)
+        .expect("forwarded returned closure producer should receive call context");
+    assert_eq!(
+        closure_producer_context.len(),
+        2,
+        "forwarded returned closure producer context: {closure_producer_context:#?}"
+    );
+    let incoming_closure = closure_producer_context
+        .iter()
+        .find(|call| {
+            call.owner_id == closure_owner
+                && call.kind == CallSiteKind::Path
+                && call.callee
+                    == CallCalleeInfo::Path {
+                        path: vec!["make_forwarded_returned_closure".to_string()],
+                    }
+        })
+        .expect("producer context should include the incoming returned closure caller");
+    assert_eq!(incoming_closure.status, CallStatusKind::Resolved);
+    assert_eq!(
+        incoming_closure.resolution,
+        Some(CallResolutionKind::LocalExact)
+    );
+    assert_eq!(incoming_closure.targets.len(), 1);
+    assert_eq!(incoming_closure.targets[0].target_id, closure_producer);
+    assert_eq!(
+        incoming_closure.targets[0].relation,
+        CallTargetKind::Function
+    );
+
+    let maker_path = closure_producer_context
+        .iter()
+        .find(|call| {
+            call.owner_id == closure_producer
+                && call.kind == CallSiteKind::Path
+                && call.callee
+                    == CallCalleeInfo::Path {
+                        path: vec!["make_target_closure".to_string()],
+                    }
+        })
+        .expect("producer should include the closure maker path call");
+    assert_eq!(maker_path.status, CallStatusKind::Resolved);
+    assert_eq!(maker_path.resolution, Some(CallResolutionKind::LocalExact));
+    assert_eq!(maker_path.targets.len(), 1);
+    assert_eq!(maker_path.targets[0].target_id, target_maker);
+    assert_eq!(maker_path.targets[0].relation, CallTargetKind::Function);
 
     for (owner, label) in [
         (

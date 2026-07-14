@@ -117,6 +117,27 @@ Forwarded returned-future checkpoint, 2026-07-13:
   step a concrete blocker: non-local future value flow, not another same-block
   awaited async closure variant.
 
+Forwarded returned-closure checkpoint, 2026-07-13:
+
+- Selected bucket: interprocedural callable value flow.
+- Source oracle:
+  `tests/fixture_crates/fixture_call_graph/src/lib.rs:1511-1520`.
+  `make_forwarded_returned_closure()` returns the closure produced by
+  `make_target_closure()`, and `call_forwarded_returned_closure()` immediately
+  invokes the producer function result.
+- DB/RAG status: the caller has a resolved `Function` edge to the producer and
+  a targetless `Unsupported` dynamic row for the outer returned-callable
+  invocation. The producer has a resolved path call to `make_target_closure`;
+  RAG node context also includes the incoming caller row when the producer is a
+  seed.
+- Traversal status: `call_forwarded_returned_closure ->
+  make_forwarded_returned_closure` is traversable as one edge, but there is no
+  path from the caller to `local_target`. This is intentional until a typed
+  returned-callable value-flow carrier proves the closure value across the
+  function boundary.
+- This is a sync callable-value-flow blocker, not another async poll/resume
+  case and not broad returned-closure modeling.
+
 ## Remaining Candidate Buckets
 
 | Bucket | Current state | Entry criterion for implementation | First proof target |

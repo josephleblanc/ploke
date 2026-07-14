@@ -186,6 +186,100 @@ fn fixture_projection_stores_returned_closure_dynamic_edge() -> Result<(), DbErr
 }
 
 #[test]
+fn fixture_projection_keeps_forwarded_returned_closure_fail_closed() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:1511-1520:
+    // `make_forwarded_returned_closure()` returns the closure produced by
+    // `make_target_closure()`, while `call_forwarded_returned_closure()`
+    // immediately invokes the producer result. Current call-graph proof does
+    // not carry returned callable value flow across that function boundary, so
+    // only the producer call traverses.
+    let owner = function_id_by_name(&db, "call_forwarded_returned_closure")?;
+    let producer = function_id_by_name(&db, "make_forwarded_returned_closure")?;
+    let maker = function_id_by_name(&db, "make_target_closure")?;
+    let local_target = function_id_by_name(&db, "local_target")?;
+
+    let owner_context = db.call_context_for_owner(owner)?;
+    assert_eq!(
+        owner_context.len(),
+        2,
+        "forwarded returned closure caller should expose the producer path and targetless outer dynamic call: {owner_context:#?}"
+    );
+    let producer_row = row_by_path(&owner_context, &["make_forwarded_returned_closure"]);
+    assert_resolved_target(
+        producer_row,
+        producer,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
+
+    let dynamic = row_by_kind_path(
+        &owner_context,
+        CallSiteKind::Dynamic,
+        &["make_forwarded_returned_closure"],
+    );
+    assert_eq!(dynamic.status.status, CallStatusKind::Unsupported);
+    assert_eq!(dynamic.status.resolution, None);
+    assert!(
+        dynamic.targets.is_empty(),
+        "non-local returned closure flow must not fabricate a closure edge: {dynamic:#?}"
+    );
+    assert!(
+        relations_for_site(&db, dynamic.site.id)?.rows.is_empty(),
+        "non-local returned closure flow must not persist a call edge"
+    );
+
+    let producer_context = db.call_context_for_owner(producer)?;
+    assert_eq!(
+        producer_context.len(),
+        1,
+        "forwarded returned closure producer should only expose the maker path: {producer_context:#?}"
+    );
+    let maker_row = row_by_path(&producer_context, &["make_target_closure"]);
+    assert_resolved_target(
+        maker_row,
+        maker,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
+
+    let producer_paths = db.call_paths_between(
+        owner,
+        producer,
+        ploke_db::CallPathOptions {
+            max_depth: 1,
+            max_paths: 8,
+        },
+    )?;
+    assert_eq!(
+        producer_paths.len(),
+        1,
+        "caller should traverse exactly one resolved edge to the closure producer: {producer_paths:#?}"
+    );
+    assert_eq!(producer_paths[0].depth, 1);
+    assert_eq!(producer_paths[0].edges[0].caller_id, owner);
+    assert_eq!(producer_paths[0].edges[0].callee_id, producer);
+
+    let local_target_paths = db.call_paths_between(
+        owner,
+        local_target,
+        ploke_db::CallPathOptions {
+            max_depth: 4,
+            max_paths: 16,
+        },
+    )?;
+    assert!(
+        local_target_paths.is_empty(),
+        "non-local returned closure flow should remain fail-closed until a typed callable value-flow carrier exists: {local_target_paths:#?}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn fixture_projection_stores_awaited_returned_async_closure_edge_only_when_polled()
 -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;

@@ -1508,6 +1508,18 @@ pub fn call_returned_alias_bound_closure() -> i32 {
     make_alias_bound_closure()()
 }
 
+pub fn make_target_closure() -> impl Fn() -> i32 {
+    || local_target()
+}
+
+pub fn make_forwarded_returned_closure() -> impl Fn() -> i32 {
+    make_target_closure()
+}
+
+pub fn call_forwarded_returned_closure() -> i32 {
+    make_forwarded_returned_closure()()
+}
+
 fn call_single_function_pointer_param(f: fn() -> i32) -> i32 {
     f()
 }
