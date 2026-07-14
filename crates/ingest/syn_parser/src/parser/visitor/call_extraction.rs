@@ -21,9 +21,9 @@ use model::{ConstructedFields, FieldInitProof, LocalBindingProof};
 use receiver::classify_method_receiver;
 
 use crate::parser::nodes::{
-    ArgumentFieldInit, CallArgument, CallBodyOwnerId, CallNode, DynamicCallCallee, DynamicCallNode,
-    ExecutableBodyId, ExecutableBodyNode, MacroCallNode, MethodCallNode, PathCallCallee,
-    PathCallNode, generate_async_block_body_id, generate_closure_body_id,
+    AnyCallSiteId, ArgumentFieldInit, CallArgument, CallBodyOwnerId, CallNode, DynamicCallCallee,
+    DynamicCallNode, ExecutableBodyId, ExecutableBodyNode, MacroCallNode, MethodCallNode,
+    PathCallCallee, PathCallNode, generate_async_block_body_id, generate_closure_body_id,
     generate_dynamic_call_site_id, generate_local_binding_id, generate_local_item_body_id,
     generate_macro_call_site_id, generate_method_call_site_id, generate_path_call_site_id,
 };
@@ -158,6 +158,15 @@ impl BodyCallVisitor<'_> {
         });
     }
 
+    fn record_awaited_call_result(&mut self, target: AnyCallSiteId, span: (usize, usize)) {
+        if self.awaited_call_spans.contains(&span) {
+            self.relations.push(CallSiteRelation::CallResultAwaited {
+                source: self.owner,
+                target,
+            });
+        }
+    }
+
     fn record_macro_path_expr_call(&mut self, expr: &syn::Expr, span: (usize, usize)) {
         let syn::Expr::Call(call) = expr else {
             return;
@@ -290,6 +299,7 @@ impl BodyCallVisitor<'_> {
             source: self.owner,
             target,
         });
+        self.record_awaited_call_result(target, span);
     }
 
     fn record_dynamic_call(&mut self, call: &syn::ExprCall) {
@@ -319,6 +329,7 @@ impl BodyCallVisitor<'_> {
             source: self.owner,
             target,
         });
+        self.record_awaited_call_result(target, span);
     }
 
     fn record_tail_binding(&mut self, block: &syn::Block) {
@@ -394,6 +405,7 @@ impl BodyCallVisitor<'_> {
             source: self.owner,
             target,
         });
+        self.record_awaited_call_result(target, span);
     }
 
     fn method_call_key(&mut self, method_name: &str, span: (usize, usize)) -> String {
@@ -493,15 +505,19 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
     }
 
     fn visit_expr_await(&mut self, await_expr: &'ast syn::ExprAwait) {
-        if let syn::Expr::Call(call) = unparen_expr(await_expr.base.as_ref()) {
-            let byte_range = call.span().byte_range();
+        let span = match unparen_expr(await_expr.base.as_ref()) {
+            syn::Expr::Call(call) => Some(call.span().byte_range()),
+            syn::Expr::MethodCall(call) => Some(call.span().byte_range()),
+            _ => None,
+        };
+        if let Some(byte_range) = span {
             self.awaited_call_spans
                 .push((byte_range.start, byte_range.end));
             visit::visit_expr_await(self, await_expr);
             self.awaited_call_spans.pop();
-        } else {
-            visit::visit_expr_await(self, await_expr);
+            return;
         }
+        visit::visit_expr_await(self, await_expr);
     }
 
     fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {

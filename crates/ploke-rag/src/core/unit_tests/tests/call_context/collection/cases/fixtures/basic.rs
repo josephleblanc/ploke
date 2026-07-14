@@ -629,7 +629,7 @@ async fn call_context_collection_reads_method_tuple_return_pattern_receiver_rows
                         receiver: Some(CallReceiverInfo::TupleMethodReturn {
                             name: "next".to_string(),
                             method_name: "tuple_pair".to_string(),
-                            method_span: (40981, 40999),
+                            method_span: (41242, 41260),
                             index: 0,
                         }),
                     }

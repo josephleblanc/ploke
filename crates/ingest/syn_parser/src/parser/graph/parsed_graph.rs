@@ -157,7 +157,8 @@ impl ParsedCodeGraph {
             self.call_sites().iter().map(CallNode::id).collect();
         self.call_site_relations_mut()
             .retain(|relation| match relation {
-                CallSiteRelation::BodyContainsCall { source, target } => {
+                CallSiteRelation::BodyContainsCall { source, target }
+                | CallSiteRelation::CallResultAwaited { source, target } => {
                     live_owners.contains(source) && live_calls.contains(target)
                 }
             });

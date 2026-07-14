@@ -50,7 +50,7 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Latest completed slice: exact TUI returned-callable binding-flow payload.
+Recent completed slice: exact TUI returned-callable binding-flow payload.
 `ConciseContext` now carries the exact RAG
 `ReturnedCallBindingFlowInfo` payload, and `code_item_lookup` /
 `code_item_edges` populate it through the RAG exact helper without adding
@@ -61,6 +61,17 @@ surface: caller dynamic callsite -> producer path call -> producer return
 binding source. This completes the DB, RAG, and exact TUI surface for the sync
 forwarded-closure binding-flow proof. The forwarded returned async future
 remains fail-closed in DB/RAG and does not gain a traversal edge.
+
+Latest completed slice: source-visible awaited call-result proof. The parser
+now records `CallResultAwaited` as a proof-only `call_site_edge` relation for
+direct path/dynamic/method call expressions whose returned future is awaited at
+that source boundary. Transform projection keeps `relation_kind` in the
+`call_site_edge` key so `BodyContainsCall` and `CallResultAwaited` can coexist
+for the same owner/callsite endpoint pair. `ploke-db` exposes
+`awaited_call_sites_for_owner`, and the forwarded returned async future fixture
+test proves the caller awaits exactly the producer path call while the producer
+still exposes no awaited inner dynamic row and no returned-callable flow. This
+is not cross-function future value-flow or a new traversal edge.
 
 Recent completed slice: exact RAG returned-callable binding-flow surface.
 `ploke-rag` now exposes `exact_returned_call_binding_flows_for_owner` over the

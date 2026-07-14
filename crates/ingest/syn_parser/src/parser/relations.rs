@@ -143,6 +143,20 @@ pub enum CallSiteRelation {
         source: CallBodyOwnerId,
         target: AnyCallSiteId,
     },
+    /// A function-like body awaits the result of a call-site expression.
+    ///
+    /// This is a source-visible proof fact, not a traversal edge. It records
+    /// that the future returned by the callsite is polled at this source
+    /// boundary, while semantic target proof still belongs to call-resolution
+    /// relations.
+    ///
+    /// ```text
+    /// CallResultAwaited ⊆ CallBodyOwnerId × AnyCallSiteId
+    /// ```
+    CallResultAwaited {
+        source: CallBodyOwnerId,
+        target: AnyCallSiteId,
+    },
 }
 
 impl CallSiteRelation {
@@ -151,6 +165,7 @@ impl CallSiteRelation {
     pub fn kind_str(&self) -> &'static str {
         match self {
             Self::BodyContainsCall { .. } => "BodyContainsCall",
+            Self::CallResultAwaited { .. } => "CallResultAwaited",
         }
     }
 }

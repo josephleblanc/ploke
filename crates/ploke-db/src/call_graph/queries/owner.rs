@@ -80,6 +80,71 @@ impl Database {
         Ok(sites)
     }
 
+    pub fn awaited_call_sites_for_owner(
+        &self,
+        owner_id: Uuid,
+    ) -> Result<Vec<CallSiteRow>, DbError> {
+        let mut params = BTreeMap::new();
+        params.insert(
+            "owner_id".to_string(),
+            DataValue::Uuid(UuidWrapper(owner_id)),
+        );
+
+        let mut script = valid_call_owner_rules();
+        script.push_str(
+            r#"
+            ?[
+                id,
+                owner_id,
+                call_kind,
+                span,
+                cfgs,
+                unsafe_block,
+                path,
+                method_name,
+                macro_name,
+                receiver_kind,
+                receiver_path,
+                arg_count,
+                generic_arg_count
+            ] :=
+                owner_id = $owner_id,
+                valid_owner[owner_id, owner_kind],
+                *call_site_edge {
+                    source_id: owner_id,
+                    target_id: id,
+                    relation_kind: "CallResultAwaited",
+                    source_kind: owner_kind,
+                    target_kind: call_kind @ 'NOW'
+                },
+                *call_site {
+                    id,
+                    owner_id,
+                    call_kind,
+                    span,
+                    cfgs,
+                    unsafe_block,
+                    path,
+                    method_name,
+                    macro_name,
+                    receiver_kind,
+                    receiver_path,
+                    arg_count,
+                    generic_arg_count @ 'NOW'
+                }
+            :sort span"#,
+        );
+        let rows = self.run_script(&script, params, ScriptMutability::Immutable)?;
+
+        let mut sites = rows
+            .rows
+            .iter()
+            .map(|row| decode_site(row))
+            .collect::<Result<Vec<_>, DbError>>()?;
+        enrich_call_site_cfgs(self, &mut sites)?;
+        Ok(sites)
+    }
+
     pub fn local_bindings_for_owner(
         &self,
         owner_id: Uuid,

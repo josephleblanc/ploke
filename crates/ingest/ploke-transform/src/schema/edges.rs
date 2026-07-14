@@ -40,14 +40,102 @@ define_schema!(TypeRelationSchema {
     target_kind: "String"
 });
 
-define_schema!(CallSiteRelationSchema {
-    "call_site_edge",
-    source_id: "Uuid",
-    target_id: "Uuid",
-    relation_kind: "String",
-    source_kind: "String",
-    target_kind: "String"
-});
+pub struct CallSiteRelationSchema {
+    pub relation: &'static str,
+    source_id: CozoField,
+    target_id: CozoField,
+    relation_kind: CozoField,
+    source_kind: CozoField,
+    target_kind: CozoField,
+}
+
+impl CallSiteRelationSchema {
+    pub const SCHEMA: Self = Self {
+        relation: "call_site_edge",
+        source_id: CozoField {
+            st: "source_id",
+            dv: "Uuid",
+        },
+        target_id: CozoField {
+            st: "target_id",
+            dv: "Uuid",
+        },
+        relation_kind: CozoField {
+            st: "relation_kind",
+            dv: "String",
+        },
+        source_kind: CozoField {
+            st: "source_kind",
+            dv: "String",
+        },
+        target_kind: CozoField {
+            st: "target_kind",
+            dv: "String",
+        },
+    };
+
+    pub fn source_id(&self) -> &str {
+        self.source_id.st()
+    }
+
+    pub fn target_id(&self) -> &str {
+        self.target_id.st()
+    }
+
+    pub fn relation_kind(&self) -> &str {
+        self.relation_kind.st()
+    }
+
+    pub fn source_kind(&self) -> &str {
+        self.source_kind.st()
+    }
+
+    pub fn target_kind(&self) -> &str {
+        self.target_kind.st()
+    }
+
+    fn script_create(&self) -> String {
+        format!(
+            ":create {} {{ source_id: Uuid, target_id: Uuid, relation_kind: String, at: Validity => source_kind: String, target_kind: String }}",
+            self.relation
+        )
+    }
+
+    fn script_identity(&self) -> String {
+        format!(
+            "{} {{ source_id, target_id, relation_kind, at => source_kind, target_kind }}",
+            self.relation
+        )
+    }
+
+    fn script_put(&self, _params: &BTreeMap<String, cozo::DataValue>) -> String {
+        format!(
+            "?[source_id, target_id, relation_kind, at, source_kind, target_kind] <- [[$source_id, $target_id, $relation_kind, 'ASSERT', $source_kind, $target_kind]] :put {}",
+            self.script_identity()
+        )
+    }
+
+    fn log_create_script(&self) {
+        tracing::trace!(target: "db",
+            "{} {}: {:?}",
+            "Printing schema".log_header(),
+            self.relation.log_name(),
+            self.script_create()
+        );
+    }
+
+    pub(crate) fn create_and_insert_schema(db: &Db<MemStorage>) -> Result<(), TransformError> {
+        let schema = &Self::SCHEMA;
+        schema.log_create_script();
+        let db_result = db.run_script(
+            &schema.script_create(),
+            BTreeMap::new(),
+            cozo::ScriptMutability::Mutable,
+        )?;
+        log_db_result(db_result);
+        Ok(())
+    }
+}
 
 define_schema!(LocalBindingRelationSchema {
     "local_binding_edge",
@@ -1298,7 +1386,8 @@ impl CallSiteRelationSchema {
     ) -> Result<(), TransformError> {
         let schema = &CallSiteRelationSchema::SCHEMA;
         let params = match relation {
-            CallSiteRelation::BodyContainsCall { source, target } => BTreeMap::from([
+            CallSiteRelation::BodyContainsCall { source, target }
+            | CallSiteRelation::CallResultAwaited { source, target } => BTreeMap::from([
                 (
                     schema.source_id().to_string(),
                     call_body_owner_to_cozo(*source),

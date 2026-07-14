@@ -486,6 +486,19 @@ fn fixture_projection_keeps_forwarded_returned_async_future_fail_closed() -> Res
         CallSiteKind::Path,
         CallTargetKind::Function,
     );
+    let awaited_owner_sites = db.awaited_call_sites_for_owner(owner)?;
+    assert_eq!(
+        awaited_owner_sites.len(),
+        1,
+        "forwarded returned async future caller should record exactly one awaited producer callsite: {awaited_owner_sites:#?}"
+    );
+    assert_eq!(awaited_owner_sites[0].id, producer_row.site.id);
+    assert_eq!(awaited_owner_sites[0].kind, CallSiteKind::Path);
+    let producer_path = path(&["make_forwarded_returned_async_future"]);
+    assert_eq!(
+        awaited_owner_sites[0].path.as_deref(),
+        Some(producer_path.as_slice())
+    );
     let owner_flows = db.returned_call_binding_flows_for_owner(owner)?;
     assert!(
         owner_flows.is_empty(),
@@ -529,6 +542,11 @@ fn fixture_projection_keeps_forwarded_returned_async_future_fail_closed() -> Res
         &["make_returned_async_closure"],
         "make_forwarded_returned_async_future",
     )?;
+    let awaited_producer_sites = db.awaited_call_sites_for_owner(producer)?;
+    assert!(
+        awaited_producer_sites.is_empty(),
+        "the producer returns its async future without polling the inner returned callable: {awaited_producer_sites:#?}"
+    );
     let producer_flows = db.returned_call_binding_flows_for_owner(producer)?;
     assert!(
         producer_flows.is_empty(),

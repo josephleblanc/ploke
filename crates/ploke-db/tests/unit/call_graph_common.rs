@@ -47,14 +47,14 @@ pub(super) fn insert_edge_with_source_kind(
     params.insert("target_kind".to_string(), DataValue::from(target_kind));
 
     db.raw_query_mut_params(
-        r#"?[source_id, target_id, at, relation_kind, source_kind, target_kind] :=
+        r#"?[source_id, target_id, relation_kind, at, source_kind, target_kind] :=
             source_id = $owner_id,
             target_id = $site_id,
             relation_kind = "BodyContainsCall",
             source_kind = $source_kind,
             target_kind = $target_kind,
             at = 'ASSERT'
-        :put call_site_edge { source_id, target_id, at => relation_kind, source_kind, target_kind }"#,
+        :put call_site_edge { source_id, target_id, relation_kind, at => source_kind, target_kind }"#,
         params,
     )?;
     Ok(())
