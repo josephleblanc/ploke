@@ -5,8 +5,9 @@ use crate::error::SynParserError;
 use crate::parser::{
     // Updated node types
     nodes::{
-        CallNode, ConstNode, ExecutableBodyNode, FunctionNode, ImplNode, ImportNode, MacroNode,
-        ModuleNode, StaticNode, TraitNode, TypeDefNode, UnresolvedNode,
+        CallNode, ConstNode, ExecutableBodyNode, FunctionNode, ImplNode, ImportNode,
+        LocalBindingNode, MacroNode, ModuleNode, StaticNode, TraitNode, TypeDefNode,
+        UnresolvedNode,
     },
     relations::{CallSiteRelation, SyntacticRelation}, // Use new relation enum
     types::TypeNode,
@@ -39,6 +40,9 @@ pub struct CodeGraph {
     // Parser-owned executable-local body records.
     #[serde(default)]
     pub executable_bodies: Vec<ExecutableBodyNode>,
+    // Parser-owned local binding/value-flow evidence records.
+    #[serde(default)]
+    pub local_bindings: Vec<LocalBindingNode>,
     // Modules defined in the code
     pub modules: Vec<ModuleNode>,
     // Constants defined in the code
@@ -206,6 +210,7 @@ impl CodeGraph {
         self.call_site_relations
             .append(&mut other.call_site_relations);
         self.executable_bodies.append(&mut other.executable_bodies);
+        self.local_bindings.append(&mut other.local_bindings);
         self.modules.append(&mut other.modules);
         self.consts.append(&mut other.consts); // Added
         self.statics.append(&mut other.statics); // Added

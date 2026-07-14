@@ -220,7 +220,8 @@ impl Drop for FixtureRestoreGuard {
 ## 2026-07-14 Active Call-Graph Fixture Refresh
 
 The active call-graph fixture set was refreshed with
-`cargo run -p xtask --features call_graph -- fixtures regenerate --active`.
+`cargo run -p xtask --features call_graph -- fixtures regenerate --active`
+after adding the strict `local_binding` relation to the call-graph projection.
 The regenerated shared call-graph corpus snapshots were copied into
 `tests/backup_dbs/` as committed seed artifacts.
 
@@ -230,13 +231,13 @@ Post-regeneration verification:
   all registered active fixtures.
 - Current committed seed checksums:
   - `corpus_memchr_call_graph_2026-07-13.sqlite`:
-    `8ab76f32ac9bf7094ba107304e6fc443ee0be0c9e45f44a120f4c3ad30dc1a10`
+    `3b1a08adc161650a602fd67ff83e7967c798b130853ab30a73c56dcc37ec5c72`
   - `corpus_generic_array_call_graph_2026-07-11.sqlite`:
-    `0c365daf394854866795ba2820602e063a1f3eb3c730307486653f6a7dc9d956`
+    `4fdd259e3df8646de31ae82163c1cf61e7fcb9b8b9939a262f2993f95e59b6c2`
   - `corpus_chrono_call_graph_2026-07-11.sqlite`:
-    `f418707b7dacd1cc175b6f3d7463b12281dc7a831771d7d4a9b89827ffdfaee1`
+    `52150fcbb3a18355967a4bfbb7f092a43a7e229e3cebed4752c63e30f3289b6a`
   - `corpus_axum_call_graph_2026-07-13.sqlite`:
-    `2cf15061433124208d2ab80974bdfa018343fdfb8dcc56fa17d30c9275156d35`
+    `239fb6f872987499460dedd85876f30a0fcf29dac04ec4e3e9bd0c1e814f5ad8`
 
 ## 2026-07-13 Active Call-Graph Fixture Refresh
 

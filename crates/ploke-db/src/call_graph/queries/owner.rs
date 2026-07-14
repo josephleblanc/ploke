@@ -7,7 +7,11 @@ use crate::{Database, DbError, database::to_string};
 
 use super::super::{
     CallContextRow, CallResolutionRow, CallSiteKind, CallSiteRow, CallStatusKind, CallTargetRow,
-    decode::{decode_resolution, decode_site, decode_target, validate_owner_context_targets},
+    LocalBindingRow,
+    decode::{
+        decode_local_binding, decode_resolution, decode_site, decode_target,
+        validate_owner_context_targets,
+    },
     families::{valid_call_owner_rules, valid_call_target, valid_call_target_rules},
 };
 use super::effective_cfgs::enrich_call_site_cfgs;
@@ -73,6 +77,61 @@ impl Database {
             .collect::<Result<Vec<_>, DbError>>()?;
         enrich_call_site_cfgs(self, &mut sites)?;
         Ok(sites)
+    }
+
+    pub fn local_bindings_for_owner(
+        &self,
+        owner_id: Uuid,
+    ) -> Result<Vec<LocalBindingRow>, DbError> {
+        let mut params = BTreeMap::new();
+        params.insert(
+            "owner_id".to_string(),
+            DataValue::Uuid(UuidWrapper(owner_id)),
+        );
+
+        let mut script = valid_call_owner_rules();
+        script.push_str(
+            r#"
+            ?[
+                id,
+                owner_id,
+                owner_kind,
+                binding_kind,
+                name,
+                span,
+                cfgs,
+                source_kind,
+                source_id,
+                source_call_kind,
+                source_path,
+                callee_kind,
+                callee_path
+            ] :=
+                owner_id = $owner_id,
+                valid_owner[owner_id, owner_kind],
+                *local_binding {
+                    id,
+                    owner_id,
+                    owner_kind,
+                    binding_kind,
+                    name,
+                    span,
+                    cfgs,
+                    source_kind,
+                    source_id,
+                    source_call_kind,
+                    source_path,
+                    callee_kind,
+                    callee_path @ 'NOW'
+                }
+            :sort span"#,
+        );
+        let rows = self.run_script(&script, params, ScriptMutability::Immutable)?;
+
+        rows.rows
+            .iter()
+            .map(|row| decode_local_binding(row))
+            .collect::<Result<Vec<_>, DbError>>()
     }
 
     pub fn call_resolution_for_site(

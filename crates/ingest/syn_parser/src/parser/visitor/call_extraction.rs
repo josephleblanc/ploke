@@ -24,9 +24,10 @@ use crate::parser::nodes::{
     ArgumentFieldInit, CallArgument, CallBodyOwnerId, CallNode, DynamicCallCallee, DynamicCallNode,
     ExecutableBodyId, ExecutableBodyNode, MacroCallNode, MethodCallNode, PathCallCallee,
     PathCallNode, generate_async_block_body_id, generate_closure_body_id,
-    generate_dynamic_call_site_id, generate_local_item_body_id, generate_macro_call_site_id,
-    generate_method_call_site_id, generate_path_call_site_id,
+    generate_dynamic_call_site_id, generate_local_binding_id, generate_local_item_body_id,
+    generate_macro_call_site_id, generate_method_call_site_id, generate_path_call_site_id,
 };
+use crate::parser::nodes::{LocalBindingKind, LocalBindingNode, LocalBindingSource};
 use crate::parser::{nodes::CallSiteKind, relations::CallSiteRelation};
 
 /// Extracts structural call-site facts from one function-like body.
@@ -44,6 +45,7 @@ pub(super) fn extract_body_call_sites(
     Vec<CallNode>,
     Vec<CallSiteRelation>,
     Vec<ExecutableBodyNode>,
+    Vec<LocalBindingNode>,
 ) {
     let mut visitor = BodyCallVisitor {
         owner,
@@ -54,12 +56,18 @@ pub(super) fn extract_body_call_sites(
         calls: Vec::new(),
         relations: Vec::new(),
         executable_bodies: Vec::new(),
+        local_bindings: Vec::new(),
         awaited_call_spans: Vec::new(),
         zero_span_keys: BTreeMap::new(),
         unsafe_depth: 0,
     };
     visitor.visit_block(block);
-    (visitor.calls, visitor.relations, visitor.executable_bodies)
+    (
+        visitor.calls,
+        visitor.relations,
+        visitor.executable_bodies,
+        visitor.local_bindings,
+    )
 }
 
 /// Extracts structural call-site facts from one item initializer expression.
@@ -71,6 +79,7 @@ pub(super) fn extract_expr_call_sites(
     Vec<CallNode>,
     Vec<CallSiteRelation>,
     Vec<ExecutableBodyNode>,
+    Vec<LocalBindingNode>,
 ) {
     let macro_expansions = MacroExpansionContext::default();
     let mut visitor = BodyCallVisitor {
@@ -82,12 +91,18 @@ pub(super) fn extract_expr_call_sites(
         calls: Vec::new(),
         relations: Vec::new(),
         executable_bodies: Vec::new(),
+        local_bindings: Vec::new(),
         awaited_call_spans: Vec::new(),
         zero_span_keys: BTreeMap::new(),
         unsafe_depth: 0,
     };
     visitor.visit_expr(expr);
-    (visitor.calls, visitor.relations, visitor.executable_bodies)
+    (
+        visitor.calls,
+        visitor.relations,
+        visitor.executable_bodies,
+        visitor.local_bindings,
+    )
 }
 
 struct BodyCallVisitor<'a> {
@@ -99,6 +114,7 @@ struct BodyCallVisitor<'a> {
     calls: Vec<CallNode>,
     relations: Vec<CallSiteRelation>,
     executable_bodies: Vec<ExecutableBodyNode>,
+    local_bindings: Vec<LocalBindingNode>,
     awaited_call_spans: Vec<(usize, usize)>,
     zero_span_keys: BTreeMap<(CallSiteKind, String), usize>,
     unsafe_depth: usize,
@@ -293,6 +309,35 @@ impl BodyCallVisitor<'_> {
         });
     }
 
+    fn record_tail_binding(&mut self, block: &syn::Block) {
+        let Some(syn::Stmt::Expr(expr, None)) = block.stmts.last() else {
+            return;
+        };
+        let Some(source) = return_binding_source(
+            expr,
+            self.owner,
+            self.cfgs,
+            self.param_names,
+            &self.local_scopes,
+            false,
+        ) else {
+            return;
+        };
+
+        let byte_range = expr.span().byte_range();
+        let span = (byte_range.start, byte_range.end);
+        let kind = LocalBindingKind::ReturnExpression;
+        self.local_bindings.push(LocalBindingNode {
+            id: generate_local_binding_id(self.owner, "return", span, kind, self.cfgs),
+            owner: self.owner,
+            span,
+            cfgs: self.cfgs.to_vec(),
+            kind,
+            name: "return".to_string(),
+            source,
+        });
+    }
+
     fn record_method_call(&mut self, call: &syn::ExprMethodCall) {
         let receiver =
             classify_method_receiver(&call.receiver, self.param_names, &self.local_scopes);
@@ -358,6 +403,7 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
         self.local_scopes.push(local_function_bindings_in_block(
             block, self.owner, self.cfgs,
         ));
+        self.record_tail_binding(block);
         let original_awaits = self.awaited_call_spans.len();
         self.awaited_call_spans.extend(awaited_future_spans(block));
         for stmt in &block.stmts {
@@ -525,6 +571,7 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
                 calls: Vec::new(),
                 relations: Vec::new(),
                 executable_bodies: Vec::new(),
+                local_bindings: Vec::new(),
                 awaited_call_spans: Vec::new(),
                 zero_span_keys: BTreeMap::new(),
                 unsafe_depth: 0,
@@ -564,6 +611,7 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
             calls: Vec::new(),
             relations: Vec::new(),
             executable_bodies: Vec::new(),
+            local_bindings: Vec::new(),
             awaited_call_spans: Vec::new(),
             zero_span_keys: BTreeMap::new(),
             unsafe_depth: self.unsafe_depth,
@@ -573,6 +621,7 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
         self.relations.append(&mut visitor.relations);
         self.executable_bodies
             .append(&mut visitor.executable_bodies);
+        self.local_bindings.append(&mut visitor.local_bindings);
     }
 
     fn visit_expr_async(&mut self, async_block: &'ast syn::ExprAsync) {
@@ -597,6 +646,7 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
             calls: Vec::new(),
             relations: Vec::new(),
             executable_bodies: Vec::new(),
+            local_bindings: Vec::new(),
             awaited_call_spans: Vec::new(),
             zero_span_keys: BTreeMap::new(),
             unsafe_depth: self.unsafe_depth,
@@ -606,6 +656,7 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
         self.relations.append(&mut visitor.relations);
         self.executable_bodies
             .append(&mut visitor.executable_bodies);
+        self.local_bindings.append(&mut visitor.local_bindings);
     }
 
     fn visit_item_static(&mut self, item_static: &'ast syn::ItemStatic) {
@@ -637,6 +688,7 @@ impl BodyCallVisitor<'_> {
             calls: Vec::new(),
             relations: Vec::new(),
             executable_bodies: Vec::new(),
+            local_bindings: Vec::new(),
             awaited_call_spans: Vec::new(),
             zero_span_keys: BTreeMap::new(),
             unsafe_depth: 0,
@@ -657,6 +709,7 @@ impl BodyCallVisitor<'_> {
             calls: Vec::new(),
             relations: Vec::new(),
             executable_bodies: Vec::new(),
+            local_bindings: Vec::new(),
             awaited_call_spans: Vec::new(),
             zero_span_keys: BTreeMap::new(),
             unsafe_depth: 0,
@@ -690,6 +743,7 @@ impl BodyCallVisitor<'_> {
             calls: Vec::new(),
             relations: Vec::new(),
             executable_bodies: Vec::new(),
+            local_bindings: Vec::new(),
             awaited_call_spans: Vec::new(),
             zero_span_keys: BTreeMap::new(),
             unsafe_depth: 0,
@@ -715,6 +769,7 @@ impl BodyCallVisitor<'_> {
         self.relations.append(&mut visitor.relations);
         self.executable_bodies
             .append(&mut visitor.executable_bodies);
+        self.local_bindings.append(&mut visitor.local_bindings);
     }
 }
 
@@ -807,6 +862,74 @@ fn call_arguments(
     args.iter()
         .map(|arg| call_argument(arg, owner, cfgs, param_names, local_scopes))
         .collect()
+}
+
+fn return_binding_source(
+    expr: &syn::Expr,
+    owner: CallBodyOwnerId,
+    cfgs: &[String],
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+    is_awaited: bool,
+) -> Option<LocalBindingSource> {
+    match unparen_expr(expr) {
+        syn::Expr::Closure(closure) => {
+            let byte_range = closure.span().byte_range();
+            let span = (byte_range.start, byte_range.end);
+            let body_id = ExecutableBodyId::Closure(generate_closure_body_id(owner, span, cfgs));
+            if closure.asyncness.is_some() {
+                Some(LocalBindingSource::AsyncClosure { body_id })
+            } else {
+                Some(LocalBindingSource::Closure { body_id })
+            }
+        }
+        syn::Expr::Await(await_expr) => return_binding_source(
+            await_expr.base.as_ref(),
+            owner,
+            cfgs,
+            param_names,
+            local_scopes,
+            true,
+        ),
+        syn::Expr::Call(call) => {
+            let byte_range = call.span().byte_range();
+            let span = (byte_range.start, byte_range.end);
+            if let syn::Expr::Path(path) = unparen_expr(call.func.as_ref()) {
+                let path = path_call_segments(path);
+                if path.is_empty() {
+                    return None;
+                }
+                return Some(LocalBindingSource::PathCallResult {
+                    call_site_id: generate_path_call_site_id(owner, &path, span, cfgs).into(),
+                    path,
+                });
+            }
+
+            let callee = classify_dynamic_callee(
+                call.func.as_ref(),
+                owner,
+                cfgs,
+                param_names,
+                local_scopes,
+                is_awaited,
+            );
+            let DynamicCallCallee::ReturnedPathCall { path, is_awaited } = callee else {
+                return None;
+            };
+            let callee_kind = if is_awaited {
+                "AwaitedReturnedPathCall"
+            } else {
+                "ReturnedPathCall"
+            }
+            .to_string();
+            Some(LocalBindingSource::DynamicCallResult {
+                call_site_id: generate_dynamic_call_site_id(owner, span, cfgs).into(),
+                callee_kind,
+                callee_path: Some(path),
+            })
+        }
+        _ => None,
+    }
 }
 
 fn call_argument(

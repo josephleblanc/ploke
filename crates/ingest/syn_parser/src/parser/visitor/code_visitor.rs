@@ -256,7 +256,7 @@ impl<'a> CodeVisitor<'a> {
     ) {
         let macro_expansions =
             MacroExpansionContext::from_macro_nodes(&self.state.code_graph.macros);
-        let (mut calls, mut relations, mut executable_bodies) =
+        let (mut calls, mut relations, mut executable_bodies, mut local_bindings) =
             extract_body_call_sites(owner, block, cfgs, receiver_names, &macro_expansions);
         self.annotate_local_impl_method_scopes(owner, block, cfgs, &mut executable_bodies);
         self.state.code_graph.call_sites.append(&mut calls);
@@ -268,6 +268,10 @@ impl<'a> CodeVisitor<'a> {
             .code_graph
             .executable_bodies
             .append(&mut executable_bodies);
+        self.state
+            .code_graph
+            .local_bindings
+            .append(&mut local_bindings);
     }
 
     fn annotate_local_impl_method_scopes(
@@ -307,7 +311,7 @@ impl<'a> CodeVisitor<'a> {
         expr: &syn::Expr,
         cfgs: &[String],
     ) {
-        let (mut calls, mut relations, mut executable_bodies) =
+        let (mut calls, mut relations, mut executable_bodies, mut local_bindings) =
             extract_expr_call_sites(owner, expr, cfgs);
         self.state.code_graph.call_sites.append(&mut calls);
         self.state
@@ -318,6 +322,10 @@ impl<'a> CodeVisitor<'a> {
             .code_graph
             .executable_bodies
             .append(&mut executable_bodies);
+        self.state
+            .code_graph
+            .local_bindings
+            .append(&mut local_bindings);
     }
 
     fn trait_associated_const_node(

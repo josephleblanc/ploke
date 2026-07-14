@@ -141,6 +141,9 @@ impl ParsedCodeGraph {
             live_owners.contains(&body.parent)
                 && live_owners.contains(&CallBodyOwnerId::Executable(body.id))
         });
+        self.graph
+            .local_bindings
+            .retain(|binding| live_owners.contains(&binding.owner));
 
         self.call_sites_mut()
             .retain(|call| live_owners.contains(&call.owner()));
@@ -384,6 +387,9 @@ impl ParsedCodeGraph {
         self.graph
             .executable_bodies
             .append(&mut other.graph.executable_bodies);
+        self.graph
+            .local_bindings
+            .append(&mut other.graph.local_bindings);
         self.graph.modules.append(&mut other.graph.modules);
         self.graph.consts.append(&mut other.graph.consts); // Use consts
         self.graph.statics.append(&mut other.graph.statics); // Use statics
@@ -1265,6 +1271,7 @@ mod tests {
             call_sites: Vec::new(),
             call_site_relations: Vec::new(),
             executable_bodies: Vec::new(),
+            local_bindings: Vec::new(),
             modules: Vec::new(),
             consts: Vec::new(),
             statics: Vec::new(),

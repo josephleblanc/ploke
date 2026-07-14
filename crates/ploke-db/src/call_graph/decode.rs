@@ -1,4 +1,5 @@
 use cozo::{DataValue, Num};
+use uuid::Uuid;
 
 use crate::{
     DbError,
@@ -7,7 +8,7 @@ use crate::{
 
 use super::{
     CallContextRow, CallReceiver, CallRelationKind, CallResolutionKind, CallResolutionRow,
-    CallSiteKind, CallSiteRow, CallStatusKind, CallTargetKind, CallTargetRow,
+    CallSiteKind, CallSiteRow, CallStatusKind, CallTargetKind, CallTargetRow, LocalBindingRow,
 };
 
 pub(super) fn decode_site(row: &[DataValue]) -> Result<CallSiteRow, DbError> {
@@ -117,6 +118,62 @@ pub(super) fn decode_resolution(row: &[DataValue]) -> Result<CallResolutionRow, 
     Ok(status)
 }
 
+pub(super) fn decode_local_binding(row: &[DataValue]) -> Result<LocalBindingRow, DbError> {
+    let binding = LocalBindingRow {
+        id: to_uuid(&row[0])?,
+        owner_id: to_uuid(&row[1])?,
+        owner_kind: to_string(&row[2])?,
+        kind: to_string(&row[3])?,
+        name: to_string(&row[4])?,
+        span: span_pair(&row[5])?,
+        cfgs: to_string_list(&row[6])?,
+        source_kind: to_string(&row[7])?,
+        source_id: optional_uuid(&row[8])?,
+        source_call_kind: optional_string(&row[9])?,
+        source_path: optional_string_list(&row[10])?,
+        callee_kind: optional_string(&row[11])?,
+        callee_path: optional_string_list(&row[12])?,
+    };
+    validate_local_binding_shape(&binding)?;
+    Ok(binding)
+}
+
+fn validate_local_binding_shape(binding: &LocalBindingRow) -> Result<(), DbError> {
+    let valid = match binding.source_kind.as_str() {
+        "Closure" | "AsyncClosure" => {
+            binding.source_id.is_some()
+                && binding.source_call_kind.is_none()
+                && binding.source_path.is_none()
+                && binding.callee_kind.is_none()
+                && binding.callee_path.is_none()
+        }
+        "PathCallResult" => {
+            binding.source_id.is_some()
+                && binding.source_call_kind.as_deref() == Some("Path")
+                && non_empty_path(binding.source_path.as_deref())
+                && binding.callee_kind.is_none()
+                && binding.callee_path.is_none()
+        }
+        "DynamicCallResult" => {
+            binding.source_id.is_some()
+                && binding.source_call_kind.as_deref() == Some("Dynamic")
+                && binding.source_path.is_none()
+                && non_empty_string(binding.callee_kind.as_deref())
+                && optional_non_empty_path(binding.callee_path.as_deref())
+        }
+        _ => false,
+    };
+
+    if valid && binding.kind == "ReturnExpression" && binding.name == "return" {
+        Ok(())
+    } else {
+        Err(DbError::Cozo(format!(
+            "malformed local_binding {} source kind {:?}",
+            binding.id, binding.source_kind
+        )))
+    }
+}
+
 fn validate_resolution_shape(status: &CallResolutionRow) -> Result<(), DbError> {
     let valid = match status.status {
         CallStatusKind::Resolved => status.resolution == Some(CallResolutionKind::LocalExact),
@@ -158,6 +215,13 @@ fn optional_string_list(value: &DataValue) -> Result<Option<Vec<String>>, DbErro
     match value {
         DataValue::Null => Ok(None),
         other => Ok(Some(to_string_list(other)?)),
+    }
+}
+
+fn optional_uuid(value: &DataValue) -> Result<Option<Uuid>, DbError> {
+    match value {
+        DataValue::Null => Ok(None),
+        other => Ok(Some(to_uuid(other)?)),
     }
 }
 

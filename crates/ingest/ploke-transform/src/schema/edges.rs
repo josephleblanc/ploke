@@ -12,7 +12,8 @@ use itertools::Itertools;
 use std::collections::BTreeMap;
 use syn_parser::parser::nodes::{
     AnyCallSiteId, CallBodyOwnerId, CallNode, DynamicCallCallee, ExecutableBodyKind,
-    ExecutableBodyNode, MethodCallReceiver, PathCallCallee, ToCozoUuid,
+    ExecutableBodyNode, LocalBindingNode, LocalBindingSource, MethodCallReceiver, PathCallCallee,
+    ToCozoUuid,
 };
 use syn_parser::parser::relations::{
     CallRelation, CallResolutionKind, CallResolutionStatus, CallSiteRelation, SyntacticRelation,
@@ -73,6 +74,64 @@ define_schema!(CallCalleeEvidenceSchema {
     callee_path: "[String]?",
     closure_id: "Uuid?"
 });
+
+pub struct LocalBindingSchema;
+
+impl LocalBindingSchema {
+    pub const RELATION: &'static str = "local_binding";
+
+    pub fn create_and_insert_schema(db: &Db<MemStorage>) -> Result<(), TransformError> {
+        db.run_script(
+            r#":create local_binding {
+                id: Uuid,
+                at: Validity =>
+                owner_id: Uuid,
+                owner_kind: String,
+                binding_kind: String,
+                name: String,
+                span: [Int; 2],
+                cfgs: [String],
+                source_kind: String,
+                source_id: Uuid?,
+                source_call_kind: String?,
+                source_path: [String]?,
+                callee_kind: String?,
+                callee_path: [String]?
+            }"#,
+            BTreeMap::new(),
+            cozo::ScriptMutability::Mutable,
+        )?;
+        Ok(())
+    }
+
+    pub fn insert_binding(
+        db: &Db<MemStorage>,
+        binding: &LocalBindingNode,
+    ) -> Result<(), TransformError> {
+        let params = local_binding_to_params(binding);
+        db.run_script(
+            r#"?[id, at, owner_id, owner_kind, binding_kind, name, span, cfgs, source_kind, source_id, source_call_kind, source_path, callee_kind, callee_path] :=
+                id = $id,
+                owner_id = $owner_id,
+                owner_kind = $owner_kind,
+                binding_kind = $binding_kind,
+                name = $name,
+                span = $span,
+                cfgs = $cfgs,
+                source_kind = $source_kind,
+                source_id = $source_id,
+                source_call_kind = $source_call_kind,
+                source_path = $source_path,
+                callee_kind = $callee_kind,
+                callee_path = $callee_path,
+                at = 'ASSERT'
+            :put local_binding { id, at => owner_id, owner_kind, binding_kind, name, span, cfgs, source_kind, source_id, source_call_kind, source_path, callee_kind, callee_path }"#,
+            params,
+            cozo::ScriptMutability::Mutable,
+        )?;
+        Ok(())
+    }
+}
 
 pub struct CallBodyOwnerSchema;
 
@@ -537,6 +596,10 @@ fn string_list(values: &[String]) -> cozo::DataValue {
     )
 }
 
+fn optional_string_list(values: Option<&[String]>) -> cozo::DataValue {
+    values.map_or(cozo::DataValue::Null, string_list)
+}
+
 fn field_receiver_path(name: &str, root_path: &[String], field_path: &[String]) -> Vec<String> {
     let mut path = Vec::with_capacity(root_path.len() + field_path.len() + 2);
     path.push(name.to_string());
@@ -925,6 +988,68 @@ fn call_site_to_params(call_site: &CallNode) -> BTreeMap<String, cozo::DataValue
     }
 
     params
+}
+
+fn local_binding_to_params(binding: &LocalBindingNode) -> BTreeMap<String, cozo::DataValue> {
+    let (source_id, source_call_kind, source_path, callee_kind, callee_path) = match &binding.source
+    {
+        LocalBindingSource::Closure { body_id } | LocalBindingSource::AsyncClosure { body_id } => (
+            body_id.to_cozo_uuid(),
+            cozo::DataValue::Null,
+            cozo::DataValue::Null,
+            cozo::DataValue::Null,
+            cozo::DataValue::Null,
+        ),
+        LocalBindingSource::PathCallResult { call_site_id, path } => (
+            call_site_id_to_cozo(*call_site_id),
+            cozo::DataValue::from(call_site_kind(*call_site_id)),
+            string_list(path),
+            cozo::DataValue::Null,
+            cozo::DataValue::Null,
+        ),
+        LocalBindingSource::DynamicCallResult {
+            call_site_id,
+            callee_kind,
+            callee_path,
+        } => (
+            call_site_id_to_cozo(*call_site_id),
+            cozo::DataValue::from(call_site_kind(*call_site_id)),
+            cozo::DataValue::Null,
+            cozo::DataValue::from(callee_kind.as_str()),
+            optional_string_list(callee_path.as_deref()),
+        ),
+    };
+
+    BTreeMap::from([
+        ("id".to_string(), binding.id.to_cozo_uuid()),
+        (
+            "owner_id".to_string(),
+            call_body_owner_to_cozo(binding.owner),
+        ),
+        (
+            "owner_kind".to_string(),
+            cozo::DataValue::from(call_body_owner_kind(binding.owner)),
+        ),
+        (
+            "binding_kind".to_string(),
+            cozo::DataValue::from(binding.kind.as_str()),
+        ),
+        (
+            "name".to_string(),
+            cozo::DataValue::from(binding.name.as_str()),
+        ),
+        ("span".to_string(), span_to_cozo(binding.span)),
+        ("cfgs".to_string(), string_list(&binding.cfgs)),
+        (
+            "source_kind".to_string(),
+            cozo::DataValue::from(binding.source.source_kind()),
+        ),
+        ("source_id".to_string(), source_id),
+        ("source_call_kind".to_string(), source_call_kind),
+        ("source_path".to_string(), source_path),
+        ("callee_kind".to_string(), callee_kind),
+        ("callee_path".to_string(), callee_path),
+    ])
 }
 
 fn call_callee_evidence_params(call_site: &CallNode) -> Option<BTreeMap<String, cozo::DataValue>> {

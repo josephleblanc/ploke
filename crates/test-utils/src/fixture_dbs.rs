@@ -1367,6 +1367,10 @@ mod tests {
             call_rels.contains(&"call_callee_evidence".to_string()),
             "call graph fixtures should import call_callee_evidence"
         );
+        assert!(
+            call_rels.contains(&"local_binding".to_string()),
+            "call graph fixtures should import local_binding"
+        );
 
         let plain_rels =
             plain_backup_import_relations(&FIXTURE_NODES_CANONICAL, &db).expect("plain rels");
@@ -1378,6 +1382,10 @@ mod tests {
             !plain_rels.contains(&"call_callee_evidence".to_string()),
             "plain fixtures should keep call graph evidence excluded"
         );
+        assert!(
+            !plain_rels.contains(&"local_binding".to_string()),
+            "plain fixtures should keep local binding call graph relations excluded"
+        );
 
         let typed_rels =
             plain_backup_import_relations(&CORPUS_AXUM_TYPE_GRAPH, &db).expect("typed rels");
@@ -1388,6 +1396,10 @@ mod tests {
         assert!(
             !typed_rels.contains(&"call_callee_evidence".to_string()),
             "typed graph fixtures should keep call graph evidence excluded"
+        );
+        assert!(
+            !typed_rels.contains(&"local_binding".to_string()),
+            "typed graph fixtures should keep local binding call graph relations excluded"
         );
         assert!(
             typed_rels.contains(&"type_relation".to_string()),

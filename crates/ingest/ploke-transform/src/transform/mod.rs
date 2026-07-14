@@ -31,6 +31,7 @@ use edges::transform_call_body_owners;
 use edges::transform_call_resolution_report;
 use edges::transform_call_site_relations;
 use edges::transform_call_sites;
+use edges::transform_local_bindings;
 use edges::transform_relations;
 use edges::transform_type_relations;
 use enums::transform_enums;
@@ -193,6 +194,8 @@ pub(super) fn transform_parsed_graph_with_call_report(
     transform_call_body_owners(db, &code_graph.executable_bodies)?;
     tracing::trace!("{}: Starting", "call_sites".log_step());
     transform_call_sites(db, &code_graph.call_sites)?;
+    tracing::trace!("{}: Starting", "local_bindings".log_step());
+    transform_local_bindings(db, &code_graph.local_bindings)?;
     tracing::trace!("{}: Starting", "call_site_relations".log_step());
     transform_call_site_relations(db, &code_graph.call_site_relations)?;
     tracing::trace!("{}: Starting", "call_resolution".log_step());

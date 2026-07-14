@@ -253,6 +253,7 @@ fn fixture_projection_resolves_forwarded_returned_closure_value_flow() -> Result
         !relations_for_site(&db, dynamic.site.id)?.rows.is_empty(),
         "forwarded returned closure flow should persist a dynamic closure edge"
     );
+    assert_return_closure_binding(&db, maker, closure, "make_target_closure")?;
 
     let producer_context = db.call_context_for_owner(producer)?;
     assert_eq!(
@@ -268,6 +269,13 @@ fn fixture_projection_resolves_forwarded_returned_closure_value_flow() -> Result
         CallSiteKind::Path,
         CallTargetKind::Function,
     );
+    assert_return_path_call_binding(
+        &db,
+        producer,
+        maker_row.site.id,
+        &["make_target_closure"],
+        "make_forwarded_returned_closure",
+    )?;
 
     let producer_paths = db.call_paths_between(
         owner,
@@ -474,6 +482,14 @@ fn fixture_projection_keeps_forwarded_returned_async_future_fail_closed() -> Res
         relations_for_site(&db, dynamic.site.id)?.rows.is_empty(),
         "non-local returned async future flow must not persist a call edge"
     );
+    assert_return_dynamic_binding(
+        &db,
+        producer,
+        dynamic.site.id,
+        "ReturnedPathCall",
+        &["make_returned_async_closure"],
+        "make_forwarded_returned_async_future",
+    )?;
     let count = db.project_call_proof_facts_for_owner(producer, "bd:fixture-call-graph")?;
     assert_eq!(count, 7, "forwarded returned async future proof facts");
     assert_returned_callable_binding_evidence(
@@ -714,4 +730,94 @@ fn project_returned_closure_proof(
             target: closure,
         },
     ])
+}
+
+fn assert_return_closure_binding(
+    db: &ploke_db::Database,
+    owner: Uuid,
+    closure: Uuid,
+    label: &str,
+) -> Result<(), DbError> {
+    let binding = only_return_binding(db, owner, label)?;
+    assert_eq!(binding.source_kind, "Closure", "{label} binding source");
+    assert_eq!(
+        binding.source_id,
+        Some(closure),
+        "{label} return binding should point at the returned closure owner"
+    );
+    assert_eq!(binding.source_call_kind, None);
+    assert_eq!(binding.source_path, None);
+    assert_eq!(binding.callee_kind, None);
+    assert_eq!(binding.callee_path, None);
+    Ok(())
+}
+
+fn assert_return_path_call_binding(
+    db: &ploke_db::Database,
+    owner: Uuid,
+    call_site: Uuid,
+    expected_path: &[&str],
+    label: &str,
+) -> Result<(), DbError> {
+    let binding = only_return_binding(db, owner, label)?;
+    assert_eq!(
+        binding.source_kind, "PathCallResult",
+        "{label} binding source"
+    );
+    assert_eq!(
+        binding.source_id,
+        Some(call_site),
+        "{label} return binding should point at the forwarded path-call site"
+    );
+    assert_eq!(binding.source_call_kind.as_deref(), Some("Path"));
+    assert_eq!(binding.source_path.as_ref(), Some(&path(expected_path)));
+    assert_eq!(binding.callee_kind, None);
+    assert_eq!(binding.callee_path, None);
+    Ok(())
+}
+
+fn assert_return_dynamic_binding(
+    db: &ploke_db::Database,
+    owner: Uuid,
+    call_site: Uuid,
+    callee_kind: &str,
+    expected_path: &[&str],
+    label: &str,
+) -> Result<(), DbError> {
+    let binding = only_return_binding(db, owner, label)?;
+    assert_eq!(
+        binding.source_kind, "DynamicCallResult",
+        "{label} binding source"
+    );
+    assert_eq!(
+        binding.source_id,
+        Some(call_site),
+        "{label} return binding should point at the dynamic call site"
+    );
+    assert_eq!(binding.source_call_kind.as_deref(), Some("Dynamic"));
+    assert_eq!(binding.source_path, None);
+    assert_eq!(binding.callee_kind.as_deref(), Some(callee_kind));
+    assert_eq!(binding.callee_path.as_ref(), Some(&path(expected_path)));
+    Ok(())
+}
+
+fn only_return_binding(
+    db: &ploke_db::Database,
+    owner: Uuid,
+    label: &str,
+) -> Result<ploke_db::LocalBindingRow, DbError> {
+    let bindings = db.local_bindings_for_owner(owner)?;
+    assert_eq!(
+        bindings.len(),
+        1,
+        "{label} should expose exactly one local return binding: {bindings:#?}"
+    );
+    let binding = bindings.into_iter().next().expect("binding length checked");
+    assert_eq!(binding.kind, "ReturnExpression", "{label} binding kind");
+    assert_eq!(binding.name, "return", "{label} binding name");
+    assert!(
+        binding.span.0 < binding.span.1,
+        "{label} return binding should retain a non-empty source span: {binding:#?}"
+    );
+    Ok(binding)
 }

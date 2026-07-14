@@ -29,6 +29,12 @@ Current completed checkpoint:
   representative matrix.
 - Active corpus fixtures have been regenerated with baseline call-graph
   relations and verified.
+- The latest binding-carrier projection slice adds the durable `local_binding`
+  relation for exact returned-callable return-expression evidence. Parser-owned
+  `LocalBindingNode` rows now persist closure literal returns, path-call return
+  forwarding, and targetless dynamic returned-path call results. DB tests prove
+  the sync returned-closure producer path and the fail-closed forwarded
+  returned async future blocker without admitting a new traversal edge.
 - The latest binding-carrier projection slice adds a strict proof-only
   `binding_evidence` fact for returned-callable callee evidence. Resolved
   returned functions, returned closure values, awaited returned async closures,
@@ -91,12 +97,32 @@ Selection update, 2026-07-14:
   instead of adding more parser breadth. The first slice is projection-first:
   persist exact returned-callable binding evidence and its async fail-closed
   counterpart before promoting any new resolver edge.
-- Status update: the projection-first proof slice is complete as
-  `binding_evidence` facts over existing `call_callee_evidence`. This is not
-  yet a general `local_binding` relation family. The next implementation must
-  either promote one exact parser-owned binding relationship into a durable
-  typed relation, or choose a reviewed async/value-flow blocker that needs that
-  carrier before any new traversal edge can be admitted.
+- Status update: the proof-only slice is complete as `binding_evidence` facts
+  over existing `call_callee_evidence`, and the first durable parser-owned
+  binding relationship is now projected through `local_binding`. The next
+  implementation should either add the next exact binding edge/status relation
+  needed by a reviewed source oracle, or choose a reviewed async/value-flow
+  blocker that uses the carrier before any new traversal edge is admitted.
+
+Local-binding projection checkpoint, 2026-07-14:
+
+- Source oracles:
+  `tests/fixture_crates/fixture_call_graph/src/lib.rs:1511-1520` for sync
+  returned-closure forwarding, and
+  `tests/fixture_crates/fixture_call_graph/src/lib.rs:2380-2385` for
+  fail-closed forwarded returned async futures.
+- Persisted relation: `local_binding` with strict owner, binding kind, span,
+  source kind, source endpoint, and optional returned-path callee fields.
+- Verified behavior: `make_target_closure()` has a `Closure` return binding,
+  `make_forwarded_returned_closure()` has a `PathCallResult` return binding
+  pointing at the `make_target_closure` callsite, and
+  `make_forwarded_returned_async_future()` has a `DynamicCallResult` return
+  binding pointing at its targetless `ReturnedPathCall` dynamic row.
+- Fixtures: active call-graph fixtures regenerated and verified; shared corpus
+  snapshots now report 65 relations.
+- Boundary: this is not `local_binding_edge`, general let-binding flow,
+  callable-field value flow, trait-object dispatch, or async poll/resume
+  traversal.
 
 Post-regeneration checkpoint, 2026-07-13:
 

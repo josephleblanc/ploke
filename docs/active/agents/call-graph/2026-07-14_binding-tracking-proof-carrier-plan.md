@@ -166,6 +166,42 @@ What remains:
 - Do not use this checkpoint to justify broad callable-field, public callable
   parameter, trait-object, or async poll/resume traversal.
 
+## 2026-07-14 Durable Local Binding Checkpoint
+
+Committed slice: durable returned-callable `local_binding` projection.
+
+What is complete:
+
+- Parser extraction now records `LocalBindingNode` rows under call body owners
+  for exact return-expression evidence.
+- The first supported source shapes are:
+  - closure literal returns, including
+    `make_target_closure() -> || local_target()`;
+  - path-call return forwarding, including
+    `make_forwarded_returned_closure() -> make_target_closure()`;
+  - targetless dynamic returned-path call results, including
+    `make_forwarded_returned_async_future() -> make_returned_async_closure()()`.
+- Transform projection persists those rows in `local_binding` with a typed
+  local binding ID, owner, span, binding kind, source kind, source endpoint,
+  and optional returned-path callee fields.
+- `ploke-db` exposes `local_bindings_for_owner` with strict row-shape
+  validation.
+- Fixture-backed DB tests prove the sync returned-closure carrier and the
+  forwarded returned async future fail-closed carrier. The async case remains
+  targetless and still has no path to `local_target`.
+- Active call-graph fixtures were regenerated and `verify-backup-dbs` passed;
+  the shared corpus snapshots now include 65 relations.
+
+What remains:
+
+- No `local_binding_edge` relation exists yet.
+- No general `let` binding, parameter binding, field projection, tuple
+  projection, argument-to-parameter flow, callable-field value flow,
+  trait-object dispatch, or async poll/resume traversal is admitted by this
+  slice.
+- The next durable carrier step should be driven by a DB-first source oracle
+  that needs one exact relationship beyond return-expression source facts.
+
 ## Exit Criteria
 
 For the first carrier slice:
