@@ -216,7 +216,7 @@ struct SuccessorEvidence<'a> {
 /// Full preimage of one committed controller cursor.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct CursorEvidence {
+pub struct CursorEvidence {
     schema_version: String,
     session_id: SessionId,
     parent: ParentIdentity,
@@ -230,6 +230,26 @@ pub(crate) struct CursorEvidence {
 }
 
 impl CursorEvidence {
+    pub fn schema_version(&self) -> &str {
+        &self.schema_version
+    }
+
+    pub const fn session_id(&self) -> SessionId {
+        self.session_id
+    }
+
+    pub fn graph_version(&self) -> &str {
+        &self.graph_version
+    }
+
+    pub fn intent(&self) -> &AttemptIntent {
+        &self.intent
+    }
+
+    pub fn epoch(&self) -> &EpochReceipt {
+        &self.epoch
+    }
+
     pub(crate) fn new(
         session_id: SessionId,
         parent: &ParentIdentity,
@@ -268,15 +288,15 @@ impl CursorEvidence {
         Ok(evidence)
     }
 
-    pub(crate) fn edge(&self) -> ControlEdge {
+    pub fn edge(&self) -> ControlEdge {
         self.edge
     }
 
-    pub(crate) fn prior(&self) -> &Cursor {
+    pub fn prior(&self) -> &Cursor {
         &self.prior
     }
 
-    pub(crate) fn witness(&self) -> &ContentHash {
+    pub fn witness(&self) -> &ContentHash {
         &self.witness
     }
 
@@ -552,7 +572,7 @@ mod tests {
 
         assert_eq!(
             certificate.cursor().expect("golden cursor").evidence.0,
-            "db8b388f349b8a637f051659d0ee938f6bedf86b4d48af009401c68e3e5c3f49"
+            "45b40cd73bee30e055861f8ec654f308ee6c4c472e68142b5beae3ac90d219a7"
         );
     }
 }

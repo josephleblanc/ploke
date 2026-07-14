@@ -77,6 +77,8 @@ pub struct RunMsbAgentSingleRequest {
     pub model_id: Option<String>,
     #[serde(default)]
     pub provider: Option<ProviderKey>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
     #[serde(default)]
     pub embedding_model_id: Option<String>,
     #[serde(default)]
@@ -125,6 +127,8 @@ pub struct RunMsbAgentBatchRequest {
     pub model_id: Option<String>,
     #[serde(default)]
     pub provider: Option<ProviderKey>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
     #[serde(default)]
     pub embedding_model_id: Option<String>,
     #[serde(default)]

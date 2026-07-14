@@ -30,6 +30,10 @@ pub(crate) use ploke_records::identity::{
 pub(crate) struct ParentIdentity(ParentIdentityRecord);
 
 impl ParentIdentity {
+    pub(crate) fn record(&self) -> &ParentIdentityRecord {
+        &self.0
+    }
+
     pub(crate) fn schema_version(&self) -> &str {
         &self.0.schema_version
     }

@@ -550,6 +550,10 @@ pub struct RunMsbAgentSingleCommand {
     #[arg(long, value_name = "PROVIDER")]
     pub provider: Option<String>,
 
+    /// Explicit completion-token cap. Must match an admitted campaign cap when present.
+    #[arg(long, value_name = "TOKENS")]
+    pub max_tokens: Option<u32>,
+
     /// Explicit embedding model id to use for eval indexing/retrieval on this run.
     #[arg(long)]
     pub embedding_model_id: Option<String>,
@@ -611,6 +615,10 @@ pub struct RunMsbAgentBatchCommand {
     /// Explicit provider slug to pin for the selected model.
     #[arg(long, value_name = "PROVIDER")]
     pub provider: Option<String>,
+
+    /// Explicit completion-token cap. Must match an admitted campaign cap when present.
+    #[arg(long, value_name = "TOKENS")]
+    pub max_tokens: Option<u32>,
 
     /// Stop the batch after the first per-instance runner failure.
     #[arg(long)]

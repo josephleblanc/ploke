@@ -4,7 +4,6 @@ use std::path::PathBuf;
 use ploke_llm::ProviderKey;
 
 use crate::campaign::EmbeddingRoute;
-use crate::model_registry::resolve_model_for_run;
 use crate::spec::PrepareError;
 
 use super::artifacts::*;
@@ -18,6 +17,7 @@ impl RunMsbBatchRequest {
             self.use_default_model,
             self.model_id,
             self.provider,
+            None,
             None,
             None,
             EmbeddingRoute::OpenRouter,
@@ -43,6 +43,7 @@ impl RunMsbAgentBatchRequest {
             self.use_default_model,
             self.model_id,
             self.provider,
+            self.max_tokens,
             self.embedding_model_id,
             self.embedding_provider,
             embedding_route,
@@ -59,30 +60,44 @@ pub(crate) async fn run_batch(
     use_default_model: bool,
     model_id: Option<String>,
     provider: Option<ProviderKey>,
+    max_tokens: Option<u32>,
     embedding_model_id: Option<String>,
     embedding_provider: Option<ProviderKey>,
     embedding_route: EmbeddingRoute,
     stop_on_error: bool,
     agent_mode: bool,
 ) -> Result<BatchRunArtifactPaths, PrepareError> {
+    validate_token_cap(max_tokens)?;
     let run_arm = RunArm::for_agent_mode(agent_mode);
     let (manifest_path, prepared) = load_prepared_batch(batch_manifest)?;
+    let max_tokens = if agent_mode {
+        resolve_token_cap(max_tokens, prepared.campaign.as_ref())?
+    } else {
+        max_tokens
+    };
     fs::create_dir_all(&prepared.output_dir).map_err(|source| PrepareError::CreateOutputDir {
         path: prepared.output_dir.clone(),
         source,
     })?;
 
-    let requested_model = parse_requested_model_id(model_id.as_deref())?;
-    let selected_model = resolve_model_for_run(requested_model.as_ref(), use_default_model)?;
+    let selected_model = select_run_model(
+        model_id.as_deref(),
+        use_default_model,
+        prepared.campaign.as_ref(),
+    )?;
     let selected_model_id = selected_model.id.clone();
-    let preferred_provider =
-        load_provider_preference_for_selected_model(&selected_model, provider.as_ref())?;
+    let preferred_provider = load_provider_preference_for_selected_model(
+        &selected_model,
+        provider.as_ref(),
+        prepared.campaign.as_ref(),
+    )?;
     let requested_provider = provider_request_for_selected_model(
         &selected_model,
         provider.as_ref(),
         preferred_provider.as_ref(),
     );
     let route = resolve_route_for_model(&selected_model, requested_provider).await?;
+    validate_route_cap(max_tokens, &route)?;
     let selected_provider = route.selected_provider_slug();
 
     let summary_path = prepared.output_dir.join("batch-run-summary.json");
@@ -104,6 +119,7 @@ pub(crate) async fn run_batch(
                 use_default_model,
                 model_id.clone(),
                 provider.clone(),
+                max_tokens,
                 embedding_model_id.clone(),
                 embedding_provider.clone(),
                 &prepared.batch_id,
@@ -263,6 +279,7 @@ fn agent_single_request_for_batch(
     use_default_model: bool,
     model_id: Option<String>,
     provider: Option<ProviderKey>,
+    max_tokens: Option<u32>,
     embedding_model_id: Option<String>,
     embedding_provider: Option<ProviderKey>,
     batch_id: &str,
@@ -274,6 +291,7 @@ fn agent_single_request_for_batch(
         use_default_model,
         model_id,
         provider,
+        max_tokens,
         embedding_model_id,
         embedding_provider,
     }
@@ -294,6 +312,7 @@ mod tests {
             false,
             Some("google/gemini-3.5-flash".to_string()),
             Some(provider.clone()),
+            Some(32_768),
             Some("perplexity/pplx-embed-v1-4b".to_string()),
             Some(embedding_provider.clone()),
             "batch-1",
@@ -306,5 +325,6 @@ mod tests {
         );
         assert_eq!(request.embedding_provider, Some(embedding_provider));
         assert_eq!(request.provider, Some(provider));
+        assert_eq!(request.max_tokens, Some(32_768));
     }
 }

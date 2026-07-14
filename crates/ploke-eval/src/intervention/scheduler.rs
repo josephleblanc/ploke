@@ -158,6 +158,7 @@ fn default_explore_from_rejected() -> bool {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct Prototype1ChildBudget {
     pub min: u32,
     pub max: u32,

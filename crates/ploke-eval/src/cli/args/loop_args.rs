@@ -179,8 +179,12 @@ pub enum Prototype1StateWalkSubcommand {
     Recover(Prototype1StateWalkRecoverCommand),
     /// Print tracked output files for the current walk.
     Files(Prototype1StateWalkControlCommand),
+    /// Show the admitted campaign, run profile, and effective controller configuration.
+    Config(Prototype1StateWalkControlCommand),
     /// Show current in-memory walk state or the last step delta.
     Show(Prototype1StateWalkShowCommand),
+    /// Show the ordered durable controller-session journal projection.
+    SessionHistory(Prototype1StateWalkControlCommand),
     /// Audit file/database persistence surfaces for a walk transition.
     Audit(Prototype1StateWalkAuditCommand),
     /// Run an immutable CozoScript query against the active loop run eval DB.
@@ -1163,6 +1167,10 @@ pub struct Prototype1LoopCommand {
 
     #[arg(long, default_value_t = 1800)]
     pub wall_clock_secs: u32,
+
+    /// Maximum completion tokens for each baseline/treatment agent turn.
+    #[arg(long, default_value_t = crate::campaign::DEFAULT_EVAL_MAX_TOKENS)]
+    pub eval_max_tokens: u32,
 
     /// Disable eval-only DB checkpoint/failure snapshots during indexing.
     #[arg(long = "no-index-debug-snapshots", action = ArgAction::SetFalse, default_value_t = true)]

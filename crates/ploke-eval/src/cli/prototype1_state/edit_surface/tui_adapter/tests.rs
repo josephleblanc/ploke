@@ -2363,7 +2363,6 @@ fn response_tap_drain_rebases_session_local_indices_to_run_tape() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn historical_r10_near_tail_turn_live_tape_applies_ns_patch_through_tool_loop() {
     const FINAL_EVENT_INDEX: usize = 95;
-    const HISTORICAL_STOP_RESPONSE_INDEX: usize = 34;
 
     let _env = crate::test_support::env_guard_os(vec![]);
     assert!(
@@ -2383,7 +2382,7 @@ async fn historical_r10_near_tail_turn_live_tape_applies_ns_patch_through_tool_l
         artifact_path: "agent-turn-trace.json".to_string(),
         event_index: FINAL_EVENT_INDEX,
     };
-    let (prefix, selected) = crate::replay::turn::resolve_replay_prefix_at(
+    let replay_error = crate::replay::turn::resolve_replay_prefix_at(
         &turn_live_dir,
         &cursor,
         crate::replay::turn::ReplayPrefixSelector::ThroughEvent {
@@ -2391,42 +2390,15 @@ async fn historical_r10_near_tail_turn_live_tape_applies_ns_patch_through_tool_l
         },
         crate::replay::turn::ReplayTail::Stop,
     )
-    .expect("historical r10 completed turn cursor should resolve through turn-live tape");
-    let selected_record_count = selected.records().len();
-    let mut selected_response_indices = selected
-        .records()
-        .iter()
-        .map(|record| record.response_index().get())
-        .collect::<Vec<_>>();
-    selected_response_indices.sort_unstable();
-    selected_response_indices.dedup();
-    let selected_duplicate_count =
-        selected_record_count.saturating_sub(selected_response_indices.len());
-    println!(
-        "\n=== historical r10 replay: resolved prefix ===\n  turn_live_dir: {}\n  trace_event_index: {}\n  through_response_index: {:#?}\n  unique_selected_response_indices: {:#?}\n  selected_record_count: {}\n  duplicate_sidecar_records: {}",
-        turn_live_dir.display(),
-        FINAL_EVENT_INDEX,
-        prefix.through_response_index,
-        selected_response_indices,
-        selected_record_count,
-        selected_duplicate_count
-    );
-    assert_eq!(prefix.anchor.call_id, None);
-    assert_eq!(
-        prefix.through_response_index,
-        Some(HISTORICAL_STOP_RESPONSE_INDEX),
-        "turn-live completed cursor should map to the final historical stop response"
+    .expect_err("multiplexed historical response indexes must fail strict replay admission");
+    let replay_message = replay_error.to_string();
+    assert!(
+        replay_message.contains("duplicate response_index 0"),
+        "strict replay admission should identify the ambiguous coordinate, got {replay_message}"
     );
     assert!(
-        selected
-            .records()
-            .iter()
-            .any(|record| response_record_contains_tool_call(
-                record,
-                "function-call-34662591-b7b8-4c3e-b589-f70d5b7fb2c1",
-                "non_semantic_patch"
-            )),
-        "selected prefix should include the historical repair ns_patch response"
+        replay_message.contains("load_for_inspection"),
+        "strict replay admission should preserve the forensic inspection path, got {replay_message}"
     );
 
     let fixture = prepare_live_canary(

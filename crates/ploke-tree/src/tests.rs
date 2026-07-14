@@ -226,6 +226,7 @@ fn successor_records_attach_evidence_without_history_authority() {
             node_id: "node-1".to_owned(),
             runtime_id: RuntimeId("runtime-1".to_owned()),
             pid: 42,
+            incarnation: None,
             recorded_at: "2026-05-08T12:02:00Z".to_owned(),
         }],
         successor_completion: vec![SuccessorCompletionRecord {
@@ -1483,6 +1484,14 @@ debug_tools = true
 
     assert_eq!(profile.name, "synthetic-run-profile");
     assert_eq!(profile.search.max_generations, 3);
+    assert_eq!(
+        profile.generation.source,
+        ploke_records::run_profile::GenerationSource::EditSurface
+    );
+    assert_eq!(
+        profile.generation.surface,
+        Some(ploke_records::run_profile::GenerationSurface::WorkspaceExceptPlokeEval)
+    );
     assert_eq!(profile.selection.seed, 42);
     assert_eq!(commitment.sha256, "0123456789abcdef");
     assert_eq!(commitment.profile_path, root.join("run-profile.toml"));

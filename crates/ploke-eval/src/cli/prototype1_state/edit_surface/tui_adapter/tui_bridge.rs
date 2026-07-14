@@ -18,7 +18,9 @@ use serde::Deserialize;
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
-use crate::cli::prototype1_state::edit_surface::tui_adapter::harness;
+use crate::{
+    cli::prototype1_state::edit_surface::tui_adapter::harness, replay::tool_loop::OuterAttemptLink,
+};
 
 use super::super::harness_request::{
     EvidenceRoot, EvidenceRootKind, EvidenceRootLocation, contract,
@@ -131,8 +133,12 @@ pub(crate) async fn run_llm_debug_step(
         &timeouts,
     )
     .await?;
-    let _debug_guard =
-        super::tool_loop_debug::install_for_attempt(workspace_path, model.as_ref(), evidence_roots);
+    let _debug_guard = super::tool_loop_debug::install_for_attempt(
+        workspace_path,
+        model.as_ref(),
+        evidence_roots,
+        OuterAttemptLink::Unlinked,
+    );
     match source {
         LlmDebugStepSource::Recorded(record) => {
             ploke_tui::llm::install_recorded_response_tape(RecordedResponseTape::new(vec![

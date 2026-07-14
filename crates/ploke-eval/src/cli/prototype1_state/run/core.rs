@@ -13,7 +13,9 @@ use tokio::task::JoinSet;
 
 use crate::{
     ClosureClass, ResolvedCampaignConfig,
-    campaign::{EmbeddingRoute, PROTOTYPE1_PROTOCOL_MIN_SAFE_MAX_TOKENS, resolve_campaign_config},
+    campaign::{
+        EmbeddingRoute, PROTOTYPE1_PROTOCOL_MIN_SAFE_MAX_TOKENS, resolve_explicit_campaign,
+    },
     campaign_manifest_path,
     cli::{
         InspectOutputFormat, Prototype1AdvanceCommand, Prototype1CandidateGenerator,
@@ -551,7 +553,7 @@ fn resolve_context(repo_root: Option<&Path>) -> Result<RuntimeContext, PrepareEr
     // Resolve the campaign from the parent identity; step and continue do not
     // accept an independent run root.
     let manifest_path = campaign_manifest_path(&campaign_id)?;
-    let resolved_campaign = resolve_campaign_config(&campaign_id, &Default::default())?;
+    let resolved_campaign = resolve_explicit_campaign(&campaign_id)?;
     // The admitted profile supplies search bounds, control caps, generation
     // source, protocol policy, and successor-selection policy.
     let admitted_profile =

@@ -17,7 +17,8 @@ use std::{
 use ploke_llm::manager::{RecordedResponse, RecordedResponseTape};
 use ploke_llm::manager::{ResponseIndex, parse_chat_outcome};
 use ploke_records::{
-    agent_turn::ToolRequestRecord, llm_response::RawFullResponseRecord,
+    agent_turn::ToolRequestRecord,
+    llm_response::{RawFullResponseRecord, decode_full_response_records},
     tool_contracts::ToolArgumentsJson,
 };
 use serde::Serialize;
@@ -270,24 +271,12 @@ fn load_raw_full_response_records(path: &Path) -> Result<Vec<RawFullResponseReco
         path: path.to_path_buf(),
         source,
     })?;
-    let mut records = Vec::new();
-    for (line_index, line) in text.lines().enumerate() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let record: RawFullResponseRecord = serde_json::from_str(trimmed).map_err(|source| {
-            run_prepare_error(
-                "self_edit_replay_raw_response",
-                format!(
-                    "parse raw provider sidecar {} line {}: {source}",
-                    path.display(),
-                    line_index + 1
-                ),
-            )
-        })?;
-        records.push(record);
-    }
+    let mut records = decode_full_response_records(&text).map_err(|source| {
+        run_prepare_error(
+            "self_edit_replay_raw_response",
+            format!("parse raw provider sidecar {}: {source}", path.display()),
+        )
+    })?;
 
     if records.is_empty() {
         return Err(run_prepare_error(

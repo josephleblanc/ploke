@@ -1289,6 +1289,56 @@ fn run_single_agent_path_parses_under_run_tree() {
 }
 
 #[test]
+fn run_single_agent_parses_token_cap() {
+    let parsed = Cli::try_parse_from([
+        "ploke-eval",
+        "run",
+        "single",
+        "agent",
+        "--instance",
+        "BurntSushi__ripgrep-2209",
+        "--max-tokens",
+        "32768",
+    ])
+    .expect("run single agent token cap should parse");
+
+    match parsed.command {
+        Command::Run(RunCommand {
+            command:
+                RunSubcommand::Single(RunSingleWorkflowCommand {
+                    command: RunSingleWorkflowSubcommand::Agent(cmd),
+                }),
+        }) => assert_eq!(cmd.max_tokens, Some(32_768)),
+        other => panic!("unexpected command shape: {:?}", other),
+    }
+}
+
+#[test]
+fn run_batch_agent_parses_token_cap() {
+    let parsed = Cli::try_parse_from([
+        "ploke-eval",
+        "run",
+        "batch",
+        "agent",
+        "--batch-id",
+        "ripgrep-all",
+        "--max-tokens",
+        "16384",
+    ])
+    .expect("run batch agent token cap should parse");
+
+    match parsed.command {
+        Command::Run(RunCommand {
+            command:
+                RunSubcommand::Batch(RunBatchWorkflowCommand {
+                    command: RunBatchWorkflowSubcommand::Agent(cmd),
+                }),
+        }) => assert_eq!(cmd.max_tokens, Some(16_384)),
+        other => panic!("unexpected command shape: {:?}", other),
+    }
+}
+
+#[test]
 fn just_single_shortcut_parses() {
     let parsed = Cli::try_parse_from([
         "ploke-eval",
@@ -2018,6 +2068,39 @@ fn loop_walk_db_query_command_parses() {
                 );
                 assert_eq!(cmd.format, InspectOutputFormat::Json);
                 assert_eq!(cmd.script, "::relations");
+            }
+            other => panic!("unexpected walk subcommand: {:?}", other),
+        },
+        other => panic!("unexpected command shape: {:?}", other),
+    }
+}
+
+#[test]
+fn loop_walk_config_command_parses() {
+    let parsed = Cli::try_parse_from([
+        "ploke-eval",
+        "loop",
+        "walk",
+        "config",
+        "--repo-root",
+        "/tmp/parent",
+        "--socket",
+        "/tmp/walk.sock",
+        "--format",
+        "json",
+        "--with-version",
+    ])
+    .expect("loop walk config should parse");
+
+    match parsed.command {
+        Command::Loop(LoopCommand {
+            command: LoopSubcommand::Prototype1StateWalk(cmd),
+        }) => match cmd.command {
+            Prototype1StateWalkSubcommand::Config(cmd) => {
+                assert_eq!(cmd.repo_root, Some(PathBuf::from("/tmp/parent")));
+                assert_eq!(cmd.socket, Some(PathBuf::from("/tmp/walk.sock")));
+                assert_eq!(cmd.format, InspectOutputFormat::Json);
+                assert!(cmd.with_version);
             }
             other => panic!("unexpected walk subcommand: {:?}", other),
         },

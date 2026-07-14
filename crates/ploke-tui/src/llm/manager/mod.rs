@@ -635,10 +635,6 @@ async fn prepare_and_run_llm_call(args: LlmCallArgs) -> ChatSessionReport {
         ListDir::tool_def(),
     ];
 
-    // 4) Parameters (placeholder: use defaults until llm registry/prefs are wired)
-    //    When registry is available, merge model/user defaults into LLMParameters.
-    let mut llm_params = crate::llm::LLMParameters::default();
-
     // Gate tools by crate_focus: disable when no workspace is loaded
     let crate_loaded = state.with_system_read(|sys| sys.has_loaded_crates()).await;
     let (tools, tool_choice) = if crate_loaded {
@@ -647,7 +643,7 @@ async fn prepare_and_run_llm_call(args: LlmCallArgs) -> ChatSessionReport {
         (None, None)
     };
 
-    let (model_id, active_router, chat_policy, llm_timeout_secs, openrouter_fields) = {
+    let (model_id, active_router, chat_policy, llm_timeout_secs, mut llm_params, openrouter_fields) = {
         let cfg = state.config.read().await;
         let mut router_fields = <OpenRouter as ploke_llm::Router>::CompletionFields::default();
         if let Some(provider) = cfg
@@ -664,6 +660,7 @@ async fn prepare_and_run_llm_call(args: LlmCallArgs) -> ChatSessionReport {
             cfg.active_router,
             cfg.chat_policy.clone(),
             cfg.llm_timeout_secs,
+            cfg.llm_params.clone(),
             router_fields,
         )
     };

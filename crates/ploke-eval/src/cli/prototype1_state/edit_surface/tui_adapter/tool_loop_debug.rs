@@ -18,8 +18,8 @@ use crate::{
     },
     prelude::CampaignId,
     replay::tool_loop::{
-        FsToolLoopStore, ToolLoopResult, ToolLoopResume, ToolLoopSession, ToolLoopStatus,
-        ToolLoopStep, ToolLoopStore, WorkspaceState,
+        FsToolLoopStore, OuterAttemptLink, ToolLoopResult, ToolLoopResume, ToolLoopSession,
+        ToolLoopStatus, ToolLoopStep, ToolLoopStore, WorkspaceState,
     },
     spec::PrepareError,
 };
@@ -28,13 +28,15 @@ pub(super) fn install_for_attempt(
     workspace: &Path,
     model: Option<&ModelSelection>,
     evidence: &[EvidenceRoot],
+    outer_attempt: OuterAttemptLink,
 ) -> Option<ploke_tui::llm::ChatDebugSinkGuard> {
     let prototype_root = prototype_root_from_evidence(evidence)?;
-    let sink = ToolLoopDebugSink::new(
+    let sink = ToolLoopDebugSink::new_with_outer_attempt(
         prototype_root.join("debug/tool-loop"),
         workspace.to_path_buf(),
         model.map(|model| model.model_id().to_string()),
         campaign_id_from_prototype_root(&prototype_root),
+        outer_attempt,
     );
     Some(ploke_tui::llm::install_chat_debug_sink(
         std::sync::Arc::new(sink),
@@ -46,21 +48,40 @@ struct ToolLoopDebugSink {
     workspace: PathBuf,
     model: Option<String>,
     campaign_id: Option<CampaignId>,
+    outer_attempt: OuterAttemptLink,
     last_error: Mutex<Option<String>>,
 }
 
 impl ToolLoopDebugSink {
+    #[cfg(test)]
     fn new(
         root: PathBuf,
         workspace: PathBuf,
         model: Option<String>,
         campaign_id: Option<CampaignId>,
     ) -> Self {
+        Self::new_with_outer_attempt(
+            root,
+            workspace,
+            model,
+            campaign_id,
+            OuterAttemptLink::Unlinked,
+        )
+    }
+
+    fn new_with_outer_attempt(
+        root: PathBuf,
+        workspace: PathBuf,
+        model: Option<String>,
+        campaign_id: Option<CampaignId>,
+        outer_attempt: OuterAttemptLink,
+    ) -> Self {
         Self {
             store: FsToolLoopStore::new(root),
             workspace,
             model,
             campaign_id,
+            outer_attempt,
             last_error: Mutex::new(None),
         }
     }
@@ -68,6 +89,7 @@ impl ToolLoopDebugSink {
     fn persist(&self, step: ChatDebugStep) -> Result<(), PrepareError> {
         let session_id = step.session_id.to_string();
         let mut session = ToolLoopSession::new(&session_id, "headless-tui", self.workspace.clone());
+        session.outer_attempt = self.outer_attempt;
         session.campaign_id = self.campaign_id.as_ref().map(ToString::to_string);
         session.fanout_id = fanout_id_from_workspace(&self.workspace);
         session.lane_id = lane_id_from_workspace(&self.workspace);
@@ -221,7 +243,11 @@ mod tests {
     use ploke_llm::manager::RequestMessage;
     use uuid::Uuid;
 
-    use crate::cli::prototype1_state::edit_surface::harness_request::{EvidenceRole, EvidenceRoot};
+    use crate::cli::prototype1_state::{
+        edit_surface::harness_request::{EvidenceRole, EvidenceRoot},
+        event::TransitionId,
+        session::SessionId,
+    };
 
     fn response_with_tool_call() -> ploke_llm::response::OpenAiResponse {
         serde_json::from_value(serde_json::json!({
@@ -329,5 +355,49 @@ mod tests {
             .expect("read resume");
         assert_eq!(resume.next_step, 1);
         assert!(!resume.terminal);
+    }
+
+    #[test]
+    fn persists_linked_outer_attempt_at_sink_boundary() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path().join("debug/tool-loop");
+        let workspace = tmp.path().join("workspace");
+        fs::create_dir_all(&workspace).expect("workspace dir");
+        let outer_attempt = OuterAttemptLink::Linked {
+            session_id: SessionId::for_test(0x1111),
+            transition_id: TransitionId(Uuid::from_u128(0x2222)),
+        };
+        let sink = ToolLoopDebugSink::new_with_outer_attempt(
+            root.clone(),
+            workspace,
+            Some("test/model".to_string()),
+            Some(CampaignId::from("campaign-linked-test")),
+            outer_attempt,
+        );
+        let session_id = Uuid::from_u128(0xaaaaaaaa_aaaa_aaaa_aaaa_aaaaaaaaaaaa);
+
+        sink.record_step(ChatDebugStep {
+            session_id,
+            parent_id: Uuid::from_u128(0xbbbbbbbb_bbbb_bbbb_bbbb_bbbbbbbbbbbb),
+            assistant_message_id: Uuid::from_u128(0xcccccccc_cccc_cccc_cccc_cccccccccccc),
+            step_index: 0,
+            request_messages: vec![RequestMessage::new_user("hello".to_string())],
+            response: response_with_tool_call(),
+            tool_calls: vec![list_dir_call()],
+            tool_results: vec![ChatDebugToolResult::Completed {
+                call_id: ArcStr::from("call-1"),
+                tool: Some("list_dir".to_string()),
+                content: "{\"ok\":true}".to_string(),
+                ui_payload: None,
+            }],
+            final_messages: Vec::new(),
+            terminal: false,
+        })
+        .expect("record linked step");
+
+        let session = FsToolLoopStore::new(root)
+            .read_session(&session_id.to_string())
+            .expect("read linked session");
+        assert_eq!(session.outer_attempt, outer_attempt);
     }
 }

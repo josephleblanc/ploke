@@ -46,7 +46,7 @@ use super::{
         parent_started_db_receipt,
     },
     schema::{EvalRelationSchema, put_eval_params},
-    setup::CAMPAIGN_EMBEDDING_ROUTE_REL,
+    setup::{CAMPAIGN_EMBEDDING_ROUTE_REL, CAMPAIGN_EVAL_TOKEN_REL},
 };
 use crate::cli::prototype1_state::{
     event::RecordedAt,
@@ -130,6 +130,14 @@ fn non_agent_schema_scripts() -> Vec<(&'static str, String, String)> {
         },
         {
             let schema = &super::setup::CampaignEmbeddingRouteSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::setup::CampaignEvalTokenSchema::SCHEMA;
             (
                 schema.relation(),
                 schema.script_create(),
@@ -621,6 +629,11 @@ fn eval_store_non_agent_schema_scripts_are_stable() {
             "eval_campaign_embedding_route",
             r#":create eval_campaign_embedding_route { campaign_id: String => embedding_route: String, ingested_at: String }"#,
             r#"?[campaign_id, embedding_route, ingested_at] <- [[$campaign_id, $embedding_route, $ingested_at]] :put eval_campaign_embedding_route { campaign_id => embedding_route, ingested_at }"#,
+        ),
+        (
+            "eval_campaign_eval_token",
+            r#":create eval_campaign_eval_token { campaign_id: String => max_tokens: Int?, ingested_at: String }"#,
+            r#"?[campaign_id, max_tokens, ingested_at] <- [[$campaign_id, $max_tokens, $ingested_at]] :put eval_campaign_eval_token { campaign_id => max_tokens, ingested_at }"#,
         ),
         (
             "eval_campaign_eval_budget",
@@ -1822,6 +1835,9 @@ fn prototype1_eval_store_setup_relations_round_trip_actual_loop_types() {
             .expect("embedding route"),
         "direct_openai"
     );
+    let tokens = query_campaign_tokens(&db, &campaign_id);
+    let token_row = tokens.row_refs().next().expect("campaign eval token row");
+    assert_eq!(token_row.get::<i64>("max_tokens").expect("tokens"), 32_768);
 
     let budget = query_campaign_budget(&db, &campaign_id);
     assert_eq!(budget.rows.len(), 1);
@@ -2058,6 +2074,85 @@ fn prototype1_eval_store_campaign_manifest_fixture_round_trips_through_schema() 
             .expect("procedure list"),
         manifest.required_procedures
     );
+}
+
+#[test]
+fn prototype1_eval_store_missing_token_relation_reads_as_historical_none() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = temp.path().join("campaign.json");
+    let campaign_id = CampaignId::from("historical-token-policy");
+    let manifest = sample_campaign_manifest(campaign_id.clone());
+    let db = Database::new_init().expect("db");
+    let store = DbEvalStore::new(&db);
+    store.install_schema().expect("schema install");
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).expect("manifest serializes"),
+    )
+    .expect("write manifest");
+    manifest
+        .put_into_eval_db(
+            &db,
+            &manifest_path,
+            profile::EvalStorageBackend::DualStrict,
+            None,
+        )
+        .expect("campaign manifest writes");
+
+    db.raw_query_mut_params("::remove eval_campaign_eval_token", BTreeMap::new())
+        .expect("remove token relation to model a pre-cap owner DB");
+    assert!(
+        !eval_relation_exists(&db, CAMPAIGN_EVAL_TOKEN_REL)
+            .expect("token relation absence is queryable")
+    );
+
+    let loaded =
+        CampaignManifest::read_from_eval_db(&db, &campaign_id).expect("historical campaign reads");
+    assert_eq!(loaded.eval.max_tokens, None);
+    assert_eq!(loaded.campaign_id, manifest.campaign_id);
+    assert_eq!(loaded.eval.budget, manifest.eval.budget);
+}
+
+#[test]
+fn prototype1_eval_store_malformed_token_relation_still_errors() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = temp.path().join("campaign.json");
+    let campaign_id = CampaignId::from("malformed-token-policy");
+    let manifest = sample_campaign_manifest(campaign_id.clone());
+    let db = Database::new_init().expect("db");
+    let store = DbEvalStore::new(&db);
+    store.install_schema().expect("schema install");
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).expect("manifest serializes"),
+    )
+    .expect("write manifest");
+    manifest
+        .put_into_eval_db(
+            &db,
+            &manifest_path,
+            profile::EvalStorageBackend::DualStrict,
+            None,
+        )
+        .expect("campaign manifest writes");
+
+    db.raw_query_mut_params("::remove eval_campaign_eval_token", BTreeMap::new())
+        .expect("remove current token relation");
+    db.raw_query_mut_params(
+        ":create eval_campaign_eval_token { campaign_id: String => legacy_value: String }",
+        BTreeMap::new(),
+    )
+    .expect("create malformed token relation");
+
+    let error = CampaignManifest::read_from_eval_db(&db, &campaign_id)
+        .expect_err("present but malformed token relation must fail closed");
+    assert!(matches!(
+        error,
+        EvalStoreError::Db {
+            phase: "read.eval_campaign_eval_token",
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -2705,6 +2800,7 @@ fn sample_campaign_manifest(campaign_id: CampaignId) -> CampaignManifest {
             embedding_route: EmbeddingRoute::DirectOpenAi,
             embedding_model_id: Some("text-embedding-3-small".to_string()),
             embedding_provider_slug: None,
+            max_tokens: Some(32_768),
         },
         protocol: ProtocolCampaignPolicy {
             model_id: Some("google/gemini-2.5-flash".to_string()),
@@ -2984,6 +3080,20 @@ fn query_campaign_embedding_route(db: &Database, campaign_id: &CampaignId) -> Qu
         params,
     )
     .expect("query campaign embedding route")
+}
+
+fn query_campaign_tokens(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    db.raw_query_params(
+        r#"
+?[max_tokens] :=
+    *eval_campaign_eval_token { campaign_id, max_tokens },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query campaign eval tokens")
 }
 
 fn query_campaign_budget(db: &Database, campaign_id: &CampaignId) -> QueryResult {

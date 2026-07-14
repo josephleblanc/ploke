@@ -10,8 +10,8 @@ use ploke_core::EXECUTION_DEBUG_TARGET;
 use tracing::{debug, info};
 
 use crate::{
-    CampaignOverrides, ResolvedCampaignConfig,
-    campaign::campaign_closure_state_path,
+    ResolvedCampaignConfig,
+    campaign::{campaign_closure_state_path, resolve_explicit_campaign},
     campaign_manifest_path,
     cli::{
         InspectOutputFormat, Prototype1StateStopAfter,
@@ -29,7 +29,7 @@ use crate::{
                 live_successor_continuation_decision, outcome_for_report,
                 prototype1_state_report_path, prototype1_state_successor_handoff_mode,
                 prototype1_state_transition_error, record_active_prototype1_monitor_target,
-                resolve_child_plan_for_id, resolve_parent_policy_budget,
+                resolve_linked_plan, resolve_parent_policy_budget,
                 resolve_prototype1_parent_identity, resolve_prototype1_state_campaign,
                 run_adaptive_child_fanout, run_child_fanout, same_existing_path,
                 select_artifact_for_handoff, traversal_metric_inputs,
@@ -51,7 +51,8 @@ use crate::{
         },
     },
     intervention::{Prototype1ChildBudget, Prototype1ChildScheduleMode, RecordStore},
-    load_campaign_manifest, load_closure_state, resolve_campaign_config,
+    load_campaign_manifest, load_closure_state,
+    replay::tool_loop::{OuterAttempt, OuterAttemptLink},
     spec::PrepareError,
 };
 
@@ -74,7 +75,7 @@ pub(crate) fn r0_to_r1(
     record_active_prototype1_monitor_target(&campaign_id, &repo_root);
     let manifest_path = campaign_manifest_path(&campaign_id)?;
     let run_shape = Prototype1StateRunShape::resolve(&command, &manifest_path)?;
-    let resolved_campaign = resolve_campaign_config(&campaign_id, &CampaignOverrides::default())?;
+    let resolved_campaign = resolve_explicit_campaign(&campaign_id)?;
     let closure_state_path = ensure_prototype1_baseline_closure_state(&resolved_campaign)?;
     if run_shape.eval_storage_backend.mirrors_owner_db() {
         let manifest = load_campaign_manifest(&campaign_id)?;
@@ -578,8 +579,9 @@ pub(crate) fn r6_to_r7(
 
 /// Resolve and publish/load the child plan, carrying planned children forward.
 // ANCHOR: prototype1_live_edge_r7_to_r8
-pub(crate) async fn r7_to_r8(
+pub(crate) async fn r7_to_r8_linked(
     r7: typestate::R7<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    outer_attempt: OuterAttempt,
 ) -> Result<typestate::R8<Prototype1StateRunShape, ResolvedCampaignConfig>, PrepareError> {
     let typestate::ReadyParts { collected, parent } = r7.into_parts();
     let mut parts = collected.into_parts();
@@ -590,7 +592,7 @@ pub(crate) async fn r7_to_r8(
             .ok_or_else(|| PrepareError::InvalidBatchSelection {
                 detail: "R7 child-plan transition missing plan child budget".to_string(),
             })?;
-    let planned_children = resolve_child_plan_for_id(
+    let planned_children = resolve_linked_plan(
         &parts.campaign_id,
         &parts.manifest_path,
         &parts.repo_root,
@@ -601,6 +603,7 @@ pub(crate) async fn r7_to_r8(
         parts.run_shape.broad_tui,
         parts.run_shape.eval_storage_backend,
         parts.campaign_config.route_source.clone(),
+        OuterAttemptLink::from(outer_attempt),
     )
     .await?;
     let PlannedChildren {

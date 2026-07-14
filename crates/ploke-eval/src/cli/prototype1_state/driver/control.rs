@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use crate::{
     ResolvedCampaignConfig, campaign_manifest_path,
     cli::{Prototype1StateCommand, prototype1_state::cli_facing::Prototype1StateRunShape},
+    replay::tool_loop::OuterAttempt,
     spec::PrepareError,
 };
 
@@ -22,8 +23,8 @@ use super::{
         journal::{JournalEntry, PrototypeJournal, prototype1_transition_journal_path},
         live_edges::{
             r0_to_r1, r1_to_r2a_or_r3, r2a_to_r3, r3_to_r4a, r4a_to_r4b_or_r4c, r4b_to_r4c_genesis,
-            r4c_to_r5, r5_to_r6, r6_to_r7, r7_to_r8, r8_to_r9, r9_to_r10, r10_to_r11, r11_to_r12,
-            r12_to_r13, r13_to_r14,
+            r4c_to_r5, r5_to_r6, r6_to_r7, r7_to_r8_linked, r8_to_r9, r9_to_r10, r10_to_r11,
+            r11_to_r12, r12_to_r13, r13_to_r14,
         },
         profile::{self, RunMode},
         session::{
@@ -1895,7 +1896,10 @@ async fn advance(
         ControlState::R6(r6) => r6.advance(r6_to_r7).map(ControlState::R7),
         ControlState::R7(r7) => {
             if admission.live {
-                r7.advance_async(r7_to_r8).await.map(ControlState::R8)
+                let outer_attempt = OuterAttempt::new(permit.session_id(), permit.transition_id());
+                r7.advance_async(|r7| r7_to_r8_linked(r7, outer_attempt))
+                    .await
+                    .map(ControlState::R8)
             } else {
                 return retained(
                     ControlState::R7(r7),

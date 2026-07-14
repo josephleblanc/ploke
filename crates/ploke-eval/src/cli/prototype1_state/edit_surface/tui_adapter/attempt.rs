@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use super::super::harness_request::{EvidenceRoot, contract};
 use super::super::surface_policy::SurfacePolicy;
 use super::{AttemptDriver, AttemptOutcome, Budget, Error, HeadlessRun, ModelSelection};
+use crate::replay::tool_loop::OuterAttemptLink;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Capture {
@@ -23,6 +24,14 @@ pub(crate) struct Attempt {
 
 impl Attempt {
     pub(crate) async fn run(self) -> Result<AttemptOutcome, Error> {
+        self.run_with_outer_attempt(OuterAttemptLink::Unlinked)
+            .await
+    }
+
+    pub(crate) async fn run_with_outer_attempt(
+        self,
+        outer_attempt: OuterAttemptLink,
+    ) -> Result<AttemptOutcome, Error> {
         // The response tap is process-global; its RAII guard must outlive the
         // whole attempt run. Binding it in this function scope (not inside the
         // match arm) keeps it installed across the `.await` below.
@@ -36,6 +45,7 @@ impl Attempt {
                     &self.workspace,
                     self.model.as_ref(),
                     &self.evidence,
+                    outer_attempt,
                 );
                 (Some(response_rx), Some(guard), debug_guard)
             }

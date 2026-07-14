@@ -82,10 +82,10 @@ pub(crate) fn acquire_setup_lock(path: &Path) -> Result<SetupLock, PrepareError>
 /// Immutable artifact witnesses committed by the reviewed setup plan.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct SetupArtifactHashes {
-    pub(crate) manifest: ContentHash,
-    pub(crate) slice: ContentHash,
-    pub(crate) profile: ContentHash,
+pub struct SetupArtifactHashes {
+    pub manifest: ContentHash,
+    pub slice: ContentHash,
+    pub profile: ContentHash,
 }
 
 /// Checkout state captured before setup creates the generation-0 branch.

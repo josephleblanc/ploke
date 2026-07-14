@@ -68,8 +68,8 @@ use crate::{
         StoredProtocolArtifactFile, load_protocol_artifact, protocol_artifact_summary,
     },
     replay::tool_loop::{
-        FsToolLoopStore, ToolLoopOutcome, ToolLoopResult, ToolLoopResume, ToolLoopSession,
-        ToolLoopStatus, ToolLoopStore, WorkspaceState,
+        FsToolLoopStore, OuterAttemptLink, ToolLoopOutcome, ToolLoopResult, ToolLoopResume,
+        ToolLoopSession, ToolLoopStatus, ToolLoopStore, WorkspaceState,
     },
     spec::PrepareError,
 };
@@ -78,7 +78,7 @@ use super::{
     audit::{self, WalkAuditReport},
     paths,
     phase::WalkPhase,
-    protocol::{SessionVersion, WalkStartConfig},
+    protocol::{SessionVersion, WalkDeltaSnapshot, WalkDeltaState, WalkEdgeDelta, WalkStartConfig},
 };
 
 const MAX_HISTORY: usize = 80;
@@ -178,6 +178,33 @@ impl WalkAdvanceReport {
             .ok_or_else(|| PrepareError::InvalidBatchSelection {
                 detail: "walk transition report has no exact durable session version".to_string(),
             })
+    }
+
+    fn delta_snapshot(&self) -> Result<WalkDeltaSnapshot, PrepareError> {
+        let edges =
+            self.transitions
+                .iter()
+                .map(|transition| {
+                    let edge = ControlEdge::from_phases(transition.from, transition.to)
+                        .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                            detail: format!(
+                                "walk transition delta has no admitted edge for {} -> {}",
+                                transition.from, transition.to
+                            ),
+                        })?;
+                    Ok(WalkEdgeDelta {
+                        edge,
+                        axes: transition.to.axis_deltas_from(transition.from),
+                    })
+                })
+                .collect::<Result<Vec<_>, PrepareError>>()?;
+        Ok(WalkDeltaSnapshot {
+            version: self.exact_version()?,
+            state: WalkDeltaState::Recorded {
+                from: self.from,
+                edges,
+            },
+        })
     }
 
     /// Render from/to, applied edges, typestate deltas, and next admitted steps.
@@ -1076,6 +1103,17 @@ impl WalkController {
         lines.push(format!("status: {}", status_label(lane.session.status)));
         lines.push(format!("harness: {}", lane.session.harness));
         lines.push(format!("workspace: {}", lane.session.workspace.display()));
+        match lane.session.outer_attempt {
+            OuterAttemptLink::Linked {
+                session_id,
+                transition_id,
+            } => {
+                lines.push(format!("outer_session: {session_id}"));
+                lines.push(format!("outer_transition: {transition_id}"));
+            }
+            OuterAttemptLink::Unlinked => lines.push("outer_attempt: unlinked".to_string()),
+            OuterAttemptLink::Missing => lines.push("outer_attempt: missing".to_string()),
+        }
         lines.extend(render_provenance_lines(
             &self.repo_root,
             &lane.session.workspace,
@@ -1342,6 +1380,23 @@ impl WalkController {
             .as_ref()
             .map(|delta| delta.render_delta(style))
             .unwrap_or_else(|| "no previous step delta; run `walk step` first".to_string())
+    }
+
+    /// Return the typed form of the last successful step request.
+    pub(crate) fn delta_snapshot(
+        &self,
+        observed: SessionVersion,
+    ) -> Result<WalkDeltaSnapshot, PrepareError> {
+        self.last_delta
+            .as_ref()
+            .map(WalkAdvanceReport::delta_snapshot)
+            .transpose()
+            .map(|snapshot| {
+                snapshot.unwrap_or(WalkDeltaSnapshot {
+                    version: observed,
+                    state: WalkDeltaState::NotRecorded,
+                })
+            })
     }
 
     /// Render or position the read-only historical replay cursor.
@@ -2292,13 +2347,13 @@ fn push_verbose_changes(
     for delta in to.axis_deltas_from(from) {
         lines.push(format!(
             "  - {}:",
-            highlight_changed(delta.label, style.color)
+            highlight_changed(delta.axis.as_str(), style.color)
         ));
         lines.push("    removed:".to_string());
         push_type_lines(lines, &delta.from, 6, style.color, highlight_removed);
         lines.push("    added:".to_string());
         push_type_lines(lines, &delta.to, 6, style.color, highlight_added);
-        if delta.label != "phase" {
+        if delta.axis != typestate::RuntimeAxis::Phase {
             let removed = delta.removed_structures();
             if !removed.is_empty() {
                 lines.push("    structures removed:".to_string());
@@ -2335,12 +2390,12 @@ fn push_axis_delta(
     style: DeltaRenderStyle,
     indent: usize,
 ) {
-    let compact = format!("{}: {} -> {}", delta.label, delta.from, delta.to);
+    let compact = format!("{}: {} -> {}", delta.axis.as_str(), delta.from, delta.to);
     if compact.len() <= 96 {
         lines.push(format!(
             "{}- {}: {} -> {}",
             " ".repeat(indent),
-            highlight_changed(delta.label, style.color),
+            highlight_changed(delta.axis.as_str(), style.color),
             highlight_removed(&delta.from, style.color),
             highlight_added(&delta.to, style.color)
         ));
@@ -2349,7 +2404,7 @@ fn push_axis_delta(
     lines.push(format!(
         "{}- {}:",
         " ".repeat(indent),
-        highlight_changed(delta.label, style.color)
+        highlight_changed(delta.axis.as_str(), style.color)
     ));
     push_type_lines(
         lines,
@@ -4560,13 +4615,25 @@ mod tests {
     use uuid::Uuid;
 
     use crate::{
-        cli::prototype1_state::identity::{ParentIdentity, write_parent_identity},
+        cli::prototype1_state::{
+            event::{ContentHash, TransitionId},
+            identity::{ParentIdentity, write_parent_identity},
+            session::{Cursor, SessionId},
+        },
         replay::tool_loop::{
             FsToolLoopStore, ToolLoopResult, ToolLoopResume, ToolLoopSession, ToolLoopStep,
             ToolLoopStore, WorkspaceState,
         },
         test_support::env_guard_os,
     };
+
+    fn version_at(phase: WalkPhase) -> SessionVersion {
+        SessionVersion {
+            session_id: None,
+            cursor: Some(Cursor::new(phase, ContentHash::of(phase.as_str())).expect("cursor")),
+            journal_revision: 1,
+        }
+    }
 
     #[tokio::test]
     async fn step_refreshes_before_trusting_in_memory_state() {
@@ -5386,6 +5453,72 @@ mod tests {
     }
 
     #[test]
+    fn typed_delta_preserves_every_edge_and_distinguishes_no_history() {
+        let version = version_at(WalkPhase::R4b);
+        let report = WalkAdvanceReport {
+            from: WalkPhase::R3,
+            to: WalkPhase::R4b,
+            transitions: vec![
+                WalkTransition {
+                    from: WalkPhase::R3,
+                    to: WalkPhase::R4a,
+                },
+                WalkTransition {
+                    from: WalkPhase::R4a,
+                    to: WalkPhase::R4b,
+                },
+            ],
+            version: Some(version.clone()),
+        };
+
+        let snapshot = report.delta_snapshot().expect("typed delta");
+        let WalkDeltaState::Recorded { from, edges } = snapshot.state else {
+            panic!("expected a recorded transition delta");
+        };
+        assert_eq!(from, WalkPhase::R3);
+        assert_eq!(snapshot.version, version);
+        assert_eq!(edges.len(), 2);
+        assert_eq!(edges[0].edge, ControlEdge::R3ToR4a);
+        assert_eq!(edges[1].edge, ControlEdge::R4aToR4b);
+        assert!(!edges[0].axes.is_empty());
+        assert!(!edges[1].axes.is_empty());
+
+        let controller = WalkController::new(PathBuf::from("/tmp/no-delta"));
+        let observed = version_at(WalkPhase::R4b);
+        assert_eq!(
+            controller
+                .delta_snapshot(observed.clone())
+                .expect("empty delta projection"),
+            WalkDeltaSnapshot {
+                version: observed,
+                state: WalkDeltaState::NotRecorded,
+            }
+        );
+    }
+
+    #[test]
+    fn typed_delta_preserves_a_recorded_noop() {
+        let version = version_at(WalkPhase::R4b);
+        let report = WalkAdvanceReport {
+            from: WalkPhase::R4b,
+            to: WalkPhase::R4b,
+            transitions: Vec::new(),
+            version: Some(version.clone()),
+        };
+
+        assert_eq!(
+            report.delta_snapshot().expect("no-op delta"),
+            WalkDeltaSnapshot {
+                version,
+                state: WalkDeltaState::Recorded {
+                    from: WalkPhase::R4b,
+                    edges: Vec::new(),
+                },
+            }
+        );
+    }
+
+    #[test]
     fn llm_report_reads_latest_tool_loop_checkpoint() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let eval_home = tmp.path().join("eval-home");
@@ -5401,6 +5534,12 @@ mod tests {
                 .join("prototype1/debug/tool-loop"),
         );
         let mut session = ToolLoopSession::new("session-1", "headless-tui", repo.clone());
+        let outer_session = SessionId::for_test(0x1111);
+        let outer_transition = TransitionId(Uuid::from_u128(0x2222));
+        session.outer_attempt = OuterAttemptLink::Linked {
+            session_id: outer_session,
+            transition_id: outer_transition,
+        };
         session.outer_phase = Some("r10".to_string());
         session.outer_edge = Some("r10->r11".to_string());
         session.status = ToolLoopStatus::Paused;
@@ -5432,6 +5571,8 @@ mod tests {
         assert!(report.contains("llm tool-loop checkpoint"));
         assert!(report.contains("session: session-1"));
         assert!(report.contains("status: paused"));
+        assert!(report.contains(&format!("outer_session: {outer_session}")));
+        assert!(report.contains(&format!("outer_transition: {outer_transition}")));
         assert!(report.contains("outer_edge: r10->r11"));
         assert!(report.contains("step: 0"));
         assert!(report.contains("response_index: 0"));

@@ -51,6 +51,7 @@ async fn execute_batch_eval_for_manifest(
     use_default_model: bool,
     model_id: Option<String>,
     provider: Option<ProviderKey>,
+    max_tokens: Option<u32>,
     embedding_model_id: Option<String>,
     embedding_provider: Option<ProviderKey>,
     embedding_route: EmbeddingRoute,
@@ -62,6 +63,7 @@ async fn execute_batch_eval_for_manifest(
         use_default_model,
         model_id,
         provider,
+        max_tokens,
         embedding_model_id,
         embedding_provider,
         stop_on_error,
@@ -403,7 +405,9 @@ fn campaign_context_from_config(config: &ResolvedCampaignConfig) -> PreparedCamp
     PreparedCampaignContext {
         campaign_id: config.campaign_id.clone(),
         model_id: Some(config.model_id.clone()),
+        route_source: Some(config.route_source),
         provider_slug: config.provider_slug.clone(),
+        max_tokens: config.eval.max_tokens,
         framework: config.framework.clone(),
     }
 }
@@ -744,6 +748,7 @@ pub(crate) async fn advance_eval_closure(
                 false,
                 Some(config.model_id.clone()),
                 provider.clone(),
+                policy.max_tokens,
                 policy.embedding_model_id.clone(),
                 parse_provider_key(policy.embedding_provider_slug.clone())?,
                 policy.embedding_route,
@@ -1951,4 +1956,36 @@ fn render_advance_all_report(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod token_tests {
+    use super::*;
+    use crate::spec::FrameworkConfig;
+    use crate::target_registry::BenchmarkFamily;
+
+    #[test]
+    fn prepared_campaign_context_preserves_eval_cap() {
+        let config = ResolvedCampaignConfig {
+            campaign_id: CampaignId::from("prepared-token-context"),
+            benchmark_family: BenchmarkFamily::MultiSweBenchRust,
+            dataset_sources: Vec::new(),
+            model_id: "google/gemini-2.5-flash".to_string(),
+            provider_slug: None,
+            route_source: ModelRouteSource::DirectGoogle,
+            required_procedures: Vec::new(),
+            instances_root: PathBuf::from("/tmp/prepared-token-context/instances"),
+            batches_root: PathBuf::from("/tmp/prepared-token-context/batches"),
+            eval: EvalCampaignPolicy {
+                max_tokens: Some(32_768),
+                ..EvalCampaignPolicy::default()
+            },
+            protocol: ProtocolCampaignPolicy::default(),
+            framework: FrameworkConfig::default(),
+        };
+
+        let context = campaign_context_from_config(&config);
+
+        assert_eq!(context.max_tokens, Some(32_768));
+    }
 }

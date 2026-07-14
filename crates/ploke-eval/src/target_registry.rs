@@ -45,6 +45,7 @@ pub struct TargetRegistry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(deny_unknown_fields)]
 pub struct RegistryDatasetSource {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,

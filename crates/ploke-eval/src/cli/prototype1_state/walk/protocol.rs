@@ -4,9 +4,19 @@
 //! CLI and native UI clients consume these exact carriers; transition authority
 //! remains behind the server-side controller and durable session boundary.
 
-use std::{fmt, path::PathBuf, str::FromStr};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+    path::PathBuf,
+    str::FromStr,
+};
 
-use ploke_records::ids::CampaignId;
+use ploke_records::{
+    identity::ParentIdentityRecord,
+    ids::{CampaignId, RuntimeId},
+    invocation::ProcessIncarnation,
+    run_profile::RunProfileCommitmentRecord,
+};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -16,11 +26,16 @@ use crate::cli::{
     prototype1_state::{
         driver::control::RecoveryDirective,
         edge::ControlEdge,
+        event::{ContentHash, TransitionId},
         session::{Cursor, SessionId},
+        typestate::RuntimeAxisDelta,
     },
 };
 
-use super::{audit::WalkAuditReport, epoch::ServerEpoch, phase::WalkPhase, query::DbQueryResult};
+use super::{
+    audit::WalkAuditReport, config::WalkConfigSnapshot, epoch::ServerEpoch, phase::WalkPhase,
+    query::DbQueryResult,
+};
 
 /// Serializable identity needed to attach to a setup-derived session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,6 +83,7 @@ impl FromStr for OperationId {
 /// `Cursor` already owns the phase/evidence relationship, so the socket
 /// protocol does not flatten or duplicate those fields.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SessionVersion {
     pub(crate) session_id: Option<SessionId>,
     pub(crate) cursor: Option<Cursor>,
@@ -176,6 +192,8 @@ pub enum WalkRequestBody {
     },
     /// Print tracked output files produced or touched by the current walk.
     Files,
+    /// Inspect the admitted campaign, run profile, and effective controller configuration.
+    Config,
     /// Run an immutable expert query against one exact owner-DB snapshot.
     DbQuery {
         /// Campaign id. Defaults to the selected parent identity.
@@ -185,6 +203,8 @@ pub enum WalkRequestBody {
     },
     /// Inspect current phase and summary without mutating state.
     Show,
+    /// Inspect the durable controller journal as an ordered typed history.
+    SessionHistory,
     /// Inspect one exact supervised operation, including terminal history.
     OperationStatus { operation: OperationId },
     /// Inspect only the last successful step delta.
@@ -606,6 +626,1049 @@ pub struct WalkSessionSnapshot {
     pub actions: Vec<WalkAction>,
 }
 
+/// Explicit terminal state recorded for an abandoned controller session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WalkSessionAbandonment {
+    pub detail: String,
+}
+
+/// Public projection of a controller cursor.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WalkCursor {
+    pub phase: WalkPhase,
+    pub evidence: ContentHash,
+}
+
+/// Run mode recorded when a controller session was created.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WalkRunMode {
+    Continuous,
+    Step,
+}
+
+/// Semantic origin of the controller session without its authority preimage.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "snake_case", tag = "kind")]
+pub enum WalkSessionOrigin {
+    Admitted { plan_hash: ContentHash },
+    Successor { invocation_path: PathBuf },
+    Historical { source: ContentHash },
+}
+
+/// Read-only classification of a damaged controller journal observation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "snake_case", tag = "kind")]
+pub enum WalkSessionDamage {
+    Truncated { line: usize, tail: ContentHash },
+    Malformed { line: usize, detail: String },
+    Sequence { line: usize, detail: String },
+}
+
+/// Public, authority-free projection of one durable attempt intent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WalkAttemptIntent {
+    pub transition_id: TransitionId,
+    pub expected: WalkPhase,
+    pub targets: Vec<WalkPhase>,
+    pub allow_live_api: bool,
+    pub allow_git_changes: bool,
+    pub epoch: ServerEpoch,
+    pub evidence: ContentHash,
+    pub retry: u32,
+}
+
+/// Controller epoch observed around one attempted effect boundary.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WalkEpochReceipt {
+    pub before: ServerEpoch,
+    pub after: Option<ServerEpoch>,
+}
+
+/// Public classification of one durable attempt outcome.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "snake_case", tag = "status")]
+pub enum WalkAttemptResult {
+    Committed {
+        phase: WalkPhase,
+        evidence: ContentHash,
+    },
+    Rejected {
+        phase: WalkPhase,
+        evidence: ContentHash,
+        detail: String,
+    },
+    Cancelled {
+        phase: WalkPhase,
+        evidence: ContentHash,
+        detail: String,
+    },
+    Indeterminate {
+        phase: Option<WalkPhase>,
+        evidence: Option<ContentHash>,
+        detail: String,
+    },
+}
+
+/// Semantic evidence carried by one committed cursor receipt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WalkCursorEvidence {
+    pub graph_version: String,
+    pub edge: ControlEdge,
+    pub witness: ContentHash,
+}
+
+/// Public projection of one `finished` journal record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WalkAttemptReceipt {
+    pub transition_id: TransitionId,
+    pub fence: u64,
+    pub result: WalkAttemptResult,
+    pub evidence: Option<WalkCursorEvidence>,
+    pub epoch: Option<WalkEpochReceipt>,
+}
+
+/// Inspectable socket coordinate retained in successor-ready evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WalkEndpoint {
+    pub repo_root: PathBuf,
+    pub socket: PathBuf,
+    pub pid: u32,
+}
+
+/// Exact committed R4c edge named by a successor-ready receipt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WalkReadyCommit {
+    pub session_id: SessionId,
+    pub transition_id: TransitionId,
+    pub fence: u64,
+    pub cursor: WalkCursor,
+    pub mode: WalkRunMode,
+}
+
+/// Authority-free successor-ready evidence retained by a session event.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WalkReadyReceipt {
+    pub campaign_id: CampaignId,
+    pub node_id: String,
+    pub runtime_id: RuntimeId,
+    pub pid: u32,
+    pub incarnation: Option<ProcessIncarnation>,
+    pub recorded_at: String,
+    pub commit: WalkReadyCommit,
+    pub endpoint: Option<WalkEndpoint>,
+    pub predecessor: Option<WalkEndpoint>,
+}
+
+/// Predecessor attempt bound to one accepted successor handoff.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WalkPredecessorAttempt {
+    pub session_id: SessionId,
+    pub transition_id: TransitionId,
+    pub fence: u64,
+    pub allow_live_api: bool,
+    pub allow_git_changes: bool,
+}
+
+/// Public projection of an accepted successor handoff.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WalkHandoffAcceptance {
+    pub ready: WalkReadyReceipt,
+    pub attempt: WalkPredecessorAttempt,
+}
+
+/// Explicit recovery action recorded against an older controller fence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "snake_case", tag = "kind")]
+pub enum WalkRecoveryResolution {
+    AbandonOwner,
+    AbandonSession {
+        detail: String,
+    },
+    ResolveAttempt {
+        transition_id: TransitionId,
+        result: WalkAttemptResult,
+        evidence: Option<WalkCursorEvidence>,
+        epoch: Option<WalkEpochReceipt>,
+    },
+    AcceptHandoff {
+        acceptance: WalkHandoffAcceptance,
+        result: WalkAttemptResult,
+        evidence: Option<WalkCursorEvidence>,
+        epoch: WalkEpochReceipt,
+    },
+    AdmitEpoch {
+        prior: ServerEpoch,
+        next: ServerEpoch,
+    },
+}
+
+/// One journal entry in canonical append order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WalkSessionEvent {
+    /// One-based durable journal revision.
+    pub revision: usize,
+    /// Original millisecond timestamp stored with the entry.
+    pub recorded_at_ms: i64,
+    pub session_id: SessionId,
+    pub kind: WalkSessionEventKind,
+}
+
+/// Semantic public projection of every durable controller-session entry kind.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "snake_case", tag = "kind")]
+pub enum WalkSessionEventKind {
+    Created {
+        schema_version: String,
+        origin: WalkSessionOrigin,
+        parent: ParentIdentityRecord,
+        profile: RunProfileCommitmentRecord,
+        mode: WalkRunMode,
+        cursor: Option<WalkCursor>,
+    },
+    Acquired {
+        fence: u64,
+        epoch: ServerEpoch,
+        runtime_id: Option<RuntimeId>,
+        pid: u32,
+        incarnation: Option<ProcessIncarnation>,
+    },
+    AttemptBegan {
+        fence: u64,
+        intent: WalkAttemptIntent,
+    },
+    AttemptFinished {
+        receipt: WalkAttemptReceipt,
+    },
+    Recovered {
+        fence: u64,
+        resolution: WalkRecoveryResolution,
+    },
+    EpochAdmitted {
+        prior: ServerEpoch,
+        next: ServerEpoch,
+    },
+    TailRepaired {
+        discarded: ContentHash,
+        evidence_path: PathBuf,
+    },
+    Released {
+        fence: u64,
+        ready: Option<WalkReadyReceipt>,
+    },
+}
+
+/// One immutable observation of the durable controller-session journal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "SessionHistoryWire")]
+pub struct WalkSessionHistory {
+    pub journal_path: Option<PathBuf>,
+    pub version: SessionVersion,
+    pub origin: Option<WalkSessionOrigin>,
+    pub profile: Option<RunProfileCommitmentRecord>,
+    /// Canonical ordered view. Each event corresponds to one validated journal line.
+    pub events: Vec<WalkSessionEvent>,
+    pub damage: Option<WalkSessionDamage>,
+    pub abandonment: Option<WalkSessionAbandonment>,
+    pub epoch: ServerEpoch,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SessionHistoryWire {
+    journal_path: Option<PathBuf>,
+    version: SessionVersion,
+    origin: Option<WalkSessionOrigin>,
+    profile: Option<RunProfileCommitmentRecord>,
+    events: Vec<WalkSessionEvent>,
+    damage: Option<WalkSessionDamage>,
+    abandonment: Option<WalkSessionAbandonment>,
+    epoch: ServerEpoch,
+}
+
+impl TryFrom<SessionHistoryWire> for WalkSessionHistory {
+    type Error = String;
+
+    fn try_from(wire: SessionHistoryWire) -> Result<Self, Self::Error> {
+        let history = Self {
+            journal_path: wire.journal_path,
+            version: wire.version,
+            origin: wire.origin,
+            profile: wire.profile,
+            events: wire.events,
+            damage: wire.damage,
+            abandonment: wire.abandonment,
+            epoch: wire.epoch,
+        };
+        history.validate()?;
+        Ok(history)
+    }
+}
+
+impl WalkSessionHistory {
+    pub(crate) fn empty(journal_path: Option<PathBuf>, epoch: ServerEpoch) -> Self {
+        Self {
+            journal_path,
+            version: SessionVersion::empty(),
+            origin: None,
+            profile: None,
+            events: Vec::new(),
+            damage: None,
+            abandonment: None,
+            epoch,
+        }
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        for (index, event) in self.events.iter().enumerate() {
+            let expected = index + 1;
+            if event.revision != expected {
+                return Err(format!(
+                    "session history event revision {} is not expected revision {expected}",
+                    event.revision
+                ));
+            }
+        }
+
+        let (cursor, abandonment);
+        if let Some(created) = self.events.first() {
+            let WalkSessionEventKind::Created {
+                origin, profile, ..
+            } = &created.kind
+            else {
+                return Err("nonempty session history does not begin with Created".to_string());
+            };
+            if self.version.session_id != Some(created.session_id) {
+                return Err(
+                    "session history version does not mirror Created session id".to_string()
+                );
+            }
+            if self.origin.as_ref() != Some(origin) {
+                return Err("session history origin does not mirror Created origin".to_string());
+            }
+            if self.profile.as_ref() != Some(profile) {
+                return Err("session history profile does not mirror Created profile".to_string());
+            }
+            (cursor, abandonment) = replay_history(self)?;
+        } else if self.version.session_id.is_some()
+            || self.version.cursor.is_some()
+            || self.origin.is_some()
+            || self.profile.is_some()
+            || self.abandonment.is_some()
+        {
+            return Err(
+                "empty session history contains creation-derived summary fields".to_string(),
+            );
+        } else {
+            cursor = None;
+            abandonment = None;
+        }
+
+        if !cursor_matches(self.version.cursor.as_ref(), cursor.as_ref()) {
+            return Err("session history cursor does not match its event prefix".to_string());
+        }
+        if self.abandonment != abandonment {
+            return Err("session history abandonment does not match its event prefix".to_string());
+        }
+
+        let count = self.events.len();
+        let revision = self.version.journal_revision;
+        match &self.damage {
+            None if revision != count => Err(format!(
+                "undamaged session history has revision {revision}, expected {count}"
+            )),
+            Some(WalkSessionDamage::Malformed { line, .. })
+            | Some(WalkSessionDamage::Truncated { line, .. })
+                if revision != count || *line != count + 1 =>
+            {
+                Err(format!(
+                    "tail-damaged session history has revision {revision} and line {line}, expected revision {count} and line {}",
+                    count + 1
+                ))
+            }
+            Some(WalkSessionDamage::Sequence { line, .. })
+                if *line != count + 1 || revision < *line =>
+            {
+                Err(format!(
+                    "sequence-damaged session history has revision {revision} and line {line}, expected line {} within the observed revision",
+                    count + 1
+                ))
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
+fn replay_history(
+    history: &WalkSessionHistory,
+) -> Result<(Option<WalkCursor>, Option<WalkSessionAbandonment>), String> {
+    let created = history
+        .events
+        .first()
+        .expect("nonempty history was checked before replay");
+    let WalkSessionEventKind::Created {
+        schema_version,
+        origin,
+        parent,
+        mode,
+        cursor: created_cursor,
+        ..
+    } = &created.kind
+    else {
+        return Err("nonempty session history does not begin with Created".to_string());
+    };
+    crate::cli::prototype1_state::session::validate_walk_creation(
+        schema_version,
+        created_cursor.as_ref(),
+    )?;
+
+    let mut cursor = created_cursor.clone();
+    let mut abandonment = None;
+    let mut active: Option<(
+        u64,
+        ServerEpoch,
+        Option<RuntimeId>,
+        u32,
+        Option<ProcessIncarnation>,
+    )> = None;
+    let mut last_epoch = None;
+    let mut max_fence = 0_u64;
+    let mut attempts = BTreeMap::<TransitionId, (u64, WalkAttemptIntent)>::new();
+    let mut results = BTreeMap::<TransitionId, WalkAttemptResult>::new();
+    let mut finished = BTreeMap::<TransitionId, WalkAttemptReceipt>::new();
+    let mut recovered = BTreeSet::<TransitionId>::new();
+    let mut recoveries = BTreeSet::<u64>::new();
+    let mut ready_seen = false;
+
+    for event in &history.events {
+        if event.session_id != created.session_id {
+            return Err(format!(
+                "session history event revision {} changed session id",
+                event.revision
+            ));
+        }
+        match &event.kind {
+            WalkSessionEventKind::Created { .. } if event.revision == 1 => {}
+            WalkSessionEventKind::Created { .. } => {
+                return Err("session history contains more than one Created event".to_string());
+            }
+            WalkSessionEventKind::Acquired {
+                fence,
+                epoch,
+                runtime_id,
+                pid,
+                incarnation,
+            } => {
+                crate::cli::prototype1_state::session::validate_walk_acquisition(
+                    schema_version,
+                    incarnation.as_ref(),
+                )?;
+                if active.is_some() {
+                    return Err(format!(
+                        "session history revision {} acquired a lease while another owner was active",
+                        event.revision
+                    ));
+                }
+                let expected = max_fence
+                    .checked_add(1)
+                    .ok_or_else(|| "session history fence counter overflow".to_string())?;
+                if *fence != expected {
+                    return Err(format!(
+                        "session history revision {} used fence {fence}, expected {expected}",
+                        event.revision
+                    ));
+                }
+                if last_epoch.as_ref().is_some_and(|prior| prior != epoch) {
+                    return Err(format!(
+                        "session history revision {} changed epoch without admission",
+                        event.revision
+                    ));
+                }
+                max_fence = *fence;
+                last_epoch.get_or_insert_with(|| epoch.clone());
+                active = Some((
+                    *fence,
+                    epoch.clone(),
+                    runtime_id.clone(),
+                    *pid,
+                    incarnation.clone(),
+                ));
+            }
+            WalkSessionEventKind::AttemptBegan { fence, intent } => {
+                let Some((owner_fence, owner_epoch, ..)) = active.as_ref() else {
+                    return Err(format!(
+                        "session history revision {} began an attempt without an active owner",
+                        event.revision
+                    ));
+                };
+                if owner_fence != fence {
+                    return Err(format!(
+                        "session history revision {} used fence {fence}, active fence is {owner_fence}",
+                        event.revision
+                    ));
+                }
+                if owner_epoch != &intent.epoch {
+                    return Err(format!(
+                        "session history revision {} began transition {} under a different epoch",
+                        event.revision, intent.transition_id
+                    ));
+                }
+                crate::cli::prototype1_state::session::validate_walk_intent(
+                    schema_version,
+                    event.session_id,
+                    intent,
+                )?;
+                let unresolved = attempts.iter().any(|(transition_id, (attempt_fence, _))| {
+                    *attempt_fence == *fence
+                        && !recovered.contains(transition_id)
+                        && match results.get(transition_id) {
+                            None => true,
+                            Some(WalkAttemptResult::Indeterminate { .. }) => true,
+                            Some(_) => false,
+                        }
+                });
+                if unresolved {
+                    return Err(format!(
+                        "session history revision {} began a second unresolved transition attempt",
+                        event.revision
+                    ));
+                }
+                match cursor.as_ref() {
+                    Some(active)
+                        if active.phase != intent.expected
+                            || active.evidence != intent.evidence =>
+                    {
+                        return Err(format!(
+                            "session history transition {} does not start at the active cursor",
+                            intent.transition_id
+                        ));
+                    }
+                    None => {
+                        cursor = Some(WalkCursor {
+                            phase: intent.expected,
+                            evidence: intent.evidence.clone(),
+                        });
+                    }
+                    Some(_) => {}
+                }
+                if attempts
+                    .insert(intent.transition_id, (*fence, intent.clone()))
+                    .is_some()
+                {
+                    return Err(format!(
+                        "session history transition {} began more than once",
+                        intent.transition_id
+                    ));
+                }
+            }
+            WalkSessionEventKind::AttemptFinished { receipt } => {
+                let Some((owner_fence, ..)) = active.as_ref() else {
+                    return Err(format!(
+                        "session history revision {} finished an attempt without an active owner",
+                        event.revision
+                    ));
+                };
+                if *owner_fence != receipt.fence {
+                    return Err(format!(
+                        "session history revision {} used fence {}, active fence is {owner_fence}",
+                        event.revision, receipt.fence
+                    ));
+                }
+                let Some((began_fence, intent)) = attempts.get(&receipt.transition_id) else {
+                    return Err(format!(
+                        "session history transition {} finished without a pending attempt",
+                        receipt.transition_id
+                    ));
+                };
+                if *began_fence != receipt.fence {
+                    return Err(format!(
+                        "session history transition {} changed fence from {began_fence} to {}",
+                        receipt.transition_id, receipt.fence
+                    ));
+                }
+                if results.contains_key(&receipt.transition_id) {
+                    return Err(format!(
+                        "session history transition {} finished more than once",
+                        receipt.transition_id
+                    ));
+                }
+                crate::cli::prototype1_state::session::validate_walk_receipt(
+                    schema_version,
+                    intent,
+                    receipt,
+                )?;
+                update_cursor(&mut cursor, &receipt.result);
+                finished.insert(receipt.transition_id, receipt.clone());
+                results.insert(receipt.transition_id, receipt.result.clone());
+                if let Some(epoch) = receipt.epoch.as_ref()
+                    && let Some(after) = epoch.after.as_ref()
+                    && after != &epoch.before
+                    && crate::cli::prototype1_state::session::walk_admits_epoch(
+                        intent,
+                        &receipt.result,
+                        &epoch.before,
+                        after,
+                    )
+                {
+                    last_epoch = Some(after.clone());
+                    active.as_mut().expect("owner was checked").1 = after.clone();
+                }
+            }
+            WalkSessionEventKind::Recovered { fence, resolution } => {
+                crate::cli::prototype1_state::session::validate_walk_resolution(
+                    schema_version,
+                    resolution,
+                )?;
+                let Some((owner_fence, ..)) = active.as_ref() else {
+                    return Err(format!(
+                        "session history revision {} recovered without an active owner",
+                        event.revision
+                    ));
+                };
+                if owner_fence != fence {
+                    return Err(format!(
+                        "session history revision {} used recovery fence {fence}, active fence is {owner_fence}",
+                        event.revision
+                    ));
+                }
+                if recoveries.contains(fence) {
+                    return Err(format!(
+                        "session history fence {fence} recovered more than once"
+                    ));
+                }
+                let unresolved = attempts
+                    .iter()
+                    .find_map(|(transition_id, (attempt_fence, _))| {
+                        (*attempt_fence == *fence
+                            && !recovered.contains(transition_id)
+                            && match results.get(transition_id) {
+                                None => true,
+                                Some(WalkAttemptResult::Indeterminate { .. }) => true,
+                                Some(_) => false,
+                            })
+                        .then_some(*transition_id)
+                    });
+                let mut admitted_epoch = None;
+                match resolution {
+                    WalkRecoveryResolution::AbandonOwner => {
+                        if unresolved.is_some() {
+                            return Err(
+                                "session history abandoned an owner with an unresolved attempt"
+                                    .to_string(),
+                            );
+                        }
+                    }
+                    WalkRecoveryResolution::AbandonSession { detail } => {
+                        if unresolved.is_none() {
+                            return Err(
+                                "session history abandoned a session without an unresolved attempt"
+                                    .to_string(),
+                            );
+                        }
+                        if detail.trim().is_empty() {
+                            return Err("session abandonment requires a detail".to_string());
+                        }
+                        if abandonment
+                            .replace(WalkSessionAbandonment {
+                                detail: detail.clone(),
+                            })
+                            .is_some()
+                        {
+                            return Err(
+                                "session history contains duplicate abandonment events".to_string()
+                            );
+                        }
+                    }
+                    WalkRecoveryResolution::ResolveAttempt {
+                        transition_id,
+                        result,
+                        evidence,
+                        epoch,
+                    } => {
+                        let Some((_, intent)) = attempts.get(transition_id) else {
+                            return Err(format!(
+                                "session history recovery names unknown transition {transition_id}"
+                            ));
+                        };
+                        if unresolved != Some(*transition_id) {
+                            return Err(format!(
+                                "session history recovery does not name the unresolved transition {transition_id}"
+                            ));
+                        }
+                        crate::cli::prototype1_state::session::validate_walk_recovery(
+                            schema_version,
+                            intent,
+                            result,
+                            evidence.as_ref(),
+                            epoch.as_ref(),
+                        )?;
+                        validate_recorded_epoch(finished.get(transition_id), epoch.as_ref())?;
+                        update_cursor(&mut cursor, result);
+                        results.insert(*transition_id, result.clone());
+                        recovered.insert(*transition_id);
+                        admitted_epoch = epoch.as_ref().and_then(|epoch| {
+                            epoch.after.as_ref().and_then(|after| {
+                                crate::cli::prototype1_state::session::walk_admits_epoch(
+                                    intent,
+                                    result,
+                                    &epoch.before,
+                                    after,
+                                )
+                                .then(|| after.clone())
+                            })
+                        });
+                    }
+                    WalkRecoveryResolution::AcceptHandoff {
+                        acceptance,
+                        result,
+                        evidence,
+                        epoch,
+                    } => {
+                        let transition_id = acceptance.attempt.transition_id;
+                        let Some((began_fence, intent)) = attempts.get(&transition_id) else {
+                            return Err(format!(
+                                "session history handoff names unknown transition {transition_id}"
+                            ));
+                        };
+                        let resolves = unresolved == Some(transition_id);
+                        let recertifies = unresolved.is_none()
+                            && finished.get(&transition_id).is_some_and(|receipt| {
+                                receipt.fence == *fence
+                                    && &receipt.result == result
+                                    && receipt.evidence.as_ref() == evidence.as_ref()
+                                    && receipt.epoch.as_ref() == Some(epoch)
+                            });
+                        if (!resolves && !recertifies)
+                            || *began_fence != *fence
+                            || acceptance.attempt.session_id != event.session_id
+                            || acceptance.attempt.fence != *began_fence
+                            || acceptance.attempt.allow_live_api != intent.allow_live_api
+                            || acceptance.attempt.allow_git_changes != intent.allow_git_changes
+                            || intent.expected != WalkPhase::R12
+                            || !intent.targets.contains(&WalkPhase::R13b)
+                            || !intent.allow_git_changes
+                            || !matches!(
+                                result,
+                                WalkAttemptResult::Committed {
+                                    phase: WalkPhase::R13b,
+                                    ..
+                                }
+                            )
+                        {
+                            return Err(format!(
+                                "session history handoff does not match transition {transition_id}"
+                            ));
+                        }
+                        validate_ready(&acceptance.ready)?;
+                        crate::cli::prototype1_state::session::validate_walk_recovery(
+                            schema_version,
+                            intent,
+                            result,
+                            evidence.as_ref(),
+                            Some(epoch),
+                        )?;
+                        validate_recorded_epoch(finished.get(&transition_id), Some(epoch))?;
+                        if !recertifies {
+                            update_cursor(&mut cursor, result);
+                        }
+                        results.insert(transition_id, result.clone());
+                        recovered.insert(transition_id);
+                        admitted_epoch = epoch.after.as_ref().and_then(|after| {
+                            crate::cli::prototype1_state::session::walk_admits_epoch(
+                                intent,
+                                result,
+                                &epoch.before,
+                                after,
+                            )
+                            .then(|| after.clone())
+                        });
+                    }
+                    WalkRecoveryResolution::AdmitEpoch { .. } => {
+                        return Err(
+                            "session epoch admission used an owner-recovery event".to_string()
+                        );
+                    }
+                }
+                if let Some(epoch) = admitted_epoch {
+                    last_epoch = Some(epoch);
+                }
+                recoveries.insert(*fence);
+                active = None;
+            }
+            WalkSessionEventKind::EpochAdmitted { prior, next } => {
+                if active.is_some() {
+                    return Err(
+                        "session history admitted an epoch while an owner was active".to_string(),
+                    );
+                }
+                if last_epoch.as_ref() != Some(prior) || prior == next {
+                    return Err(
+                        "session history epoch admission does not match the established epoch"
+                            .to_string(),
+                    );
+                }
+                last_epoch = Some(next.clone());
+            }
+            WalkSessionEventKind::TailRepaired { .. } => {}
+            WalkSessionEventKind::Released { fence, ready } => {
+                let Some((owner_fence, owner_epoch, runtime_id, pid, incarnation)) =
+                    active.as_ref()
+                else {
+                    return Err(format!(
+                        "session history revision {} released without an active owner",
+                        event.revision
+                    ));
+                };
+                if owner_fence != fence {
+                    return Err(format!(
+                        "session history revision {} released fence {fence}, active fence is {owner_fence}",
+                        event.revision
+                    ));
+                }
+                let unresolved = attempts.iter().any(|(transition_id, (attempt_fence, _))| {
+                    *attempt_fence == *fence
+                        && !recovered.contains(transition_id)
+                        && match results.get(transition_id) {
+                            None => true,
+                            Some(WalkAttemptResult::Indeterminate { .. }) => true,
+                            Some(_) => false,
+                        }
+                });
+                if unresolved {
+                    return Err(format!(
+                        "session history revision {} released with an unresolved attempt",
+                        event.revision
+                    ));
+                }
+                if let Some(ready) = ready {
+                    if ready_seen || !matches!(origin, WalkSessionOrigin::Successor { .. }) {
+                        return Err("session history contains an invalid Ready release".to_string());
+                    }
+                    validate_ready(ready)?;
+                    let commit = &ready.commit;
+                    let attempt_matches = attempts
+                        .get(&commit.transition_id)
+                        .is_some_and(|(attempt_fence, _)| *attempt_fence == commit.fence);
+                    let committed = results.get(&commit.transition_id).is_some_and(|result| {
+                        matches!(
+                            result,
+                            WalkAttemptResult::Committed { phase, evidence }
+                                if *phase == WalkPhase::R4c
+                                    && commit.cursor.phase == WalkPhase::R4c
+                                    && evidence == &commit.cursor.evidence
+                        )
+                    });
+                    let endpoint_matches = ready
+                        .endpoint
+                        .as_ref()
+                        .is_none_or(|endpoint| endpoint.repo_root == owner_epoch.repo_root);
+                    if !committed
+                        || !attempt_matches
+                        || commit.session_id != event.session_id
+                        || commit.fence != *fence
+                        || cursor.as_ref() != Some(&commit.cursor)
+                        || commit.mode != *mode
+                        || ready.campaign_id != parent.campaign_id
+                        || ready.node_id != parent.node_id
+                        || runtime_id.as_ref() != Some(&ready.runtime_id)
+                        || ready.pid != *pid
+                        || ready.incarnation.as_ref() != incarnation.as_ref()
+                        || !endpoint_matches
+                    {
+                        return Err(
+                            "session Ready release does not match its owner and R4c transition"
+                                .to_string(),
+                        );
+                    }
+                    ready_seen = true;
+                }
+                active = None;
+            }
+        }
+    }
+
+    Ok((cursor, abandonment))
+}
+
+fn validate_recorded_epoch(
+    receipt: Option<&WalkAttemptReceipt>,
+    observed: Option<&WalkEpochReceipt>,
+) -> Result<(), String> {
+    let Some(recorded) = receipt
+        .and_then(|receipt| receipt.epoch.as_ref())
+        .and_then(|epoch| epoch.after.as_ref())
+    else {
+        return Ok(());
+    };
+    if observed.and_then(|epoch| epoch.after.as_ref()) != Some(recorded) {
+        return Err(
+            "attempt recovery contradicted the previously observed after epoch".to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn validate_ready(ready: &WalkReadyReceipt) -> Result<(), String> {
+    if ready.campaign_id.0.trim().is_empty()
+        || ready.node_id.trim().is_empty()
+        || ready.runtime_id.0.trim().is_empty()
+        || ready.pid == 0
+        || ready.recorded_at.trim().is_empty()
+    {
+        return Err("session Ready receipt has incomplete identity".to_string());
+    }
+    if let Some(incarnation) = ready.incarnation.as_ref()
+        && (incarnation.boot_id.is_nil() || incarnation.start_ticks == 0)
+    {
+        return Err("session Ready receipt has incomplete process incarnation".to_string());
+    }
+    if ready.commit.cursor.phase != WalkPhase::R4c {
+        return Err("session Ready receipt cursor is not R4c".to_string());
+    }
+    crate::cli::prototype1_state::session::validate_walk_cursor(&ready.commit.cursor)?;
+    match (
+        ready.commit.mode,
+        ready.endpoint.as_ref(),
+        ready.predecessor.as_ref(),
+    ) {
+        (WalkRunMode::Step, Some(endpoint), Some(predecessor))
+            if endpoint.pid == ready.pid
+                && predecessor.repo_root == endpoint.repo_root
+                && predecessor.socket != endpoint.socket
+                && endpoint.pid != 0
+                && predecessor.pid != 0 =>
+        {
+            Ok(())
+        }
+        (WalkRunMode::Step, _, _) => {
+            Err("Step-mode session Ready requires successor and predecessor endpoints".to_string())
+        }
+        (WalkRunMode::Continuous, None, None) => Ok(()),
+        (WalkRunMode::Continuous, _, _) => {
+            Err("Continuous-mode session Ready cannot contain endpoints".to_string())
+        }
+    }
+}
+
+fn update_cursor(cursor: &mut Option<WalkCursor>, result: &WalkAttemptResult) {
+    if let WalkAttemptResult::Committed { phase, evidence } = result {
+        *cursor = Some(WalkCursor {
+            phase: *phase,
+            evidence: evidence.clone(),
+        });
+    }
+}
+
+fn cursor_matches(cursor: Option<&Cursor>, projected: Option<&WalkCursor>) -> bool {
+    match (cursor, projected) {
+        (None, None) => true,
+        (Some(cursor), Some(projected)) => {
+            cursor.phase() == projected.phase && cursor.evidence() == projected.evidence.as_str()
+        }
+        _ => false,
+    }
+}
+
+/// Exact typestate-axis changes produced by one admitted control edge.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WalkEdgeDelta {
+    pub edge: ControlEdge,
+    pub axes: Vec<RuntimeAxisDelta>,
+}
+
+impl WalkEdgeDelta {
+    pub const fn from(&self) -> WalkPhase {
+        self.edge.from()
+    }
+
+    pub const fn to(&self) -> WalkPhase {
+        self.edge.to()
+    }
+}
+
+/// Availability and content of the most recent in-process walk advance.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "snake_case", tag = "status")]
+pub enum WalkDeltaState {
+    NotRecorded,
+    Recorded {
+        from: WalkPhase,
+        edges: Vec<WalkEdgeDelta>,
+    },
+}
+
+/// Revision-tagged typed result of inspecting the most recent walk advance.
+///
+/// A custom decode check rejects disconnected edge chains, mismatched axis
+/// deltas, and results whose final phase disagrees with the observed durable
+/// session version.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "WalkDeltaWire")]
+pub struct WalkDeltaSnapshot {
+    pub version: SessionVersion,
+    pub state: WalkDeltaState,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WalkDeltaWire {
+    version: SessionVersion,
+    state: WalkDeltaState,
+}
+
+impl TryFrom<WalkDeltaWire> for WalkDeltaSnapshot {
+    type Error = String;
+
+    fn try_from(wire: WalkDeltaWire) -> Result<Self, Self::Error> {
+        if let WalkDeltaState::Recorded { from, edges } = &wire.state {
+            let mut phase = *from;
+            for delta in edges {
+                if delta.from() != phase {
+                    return Err(format!(
+                        "walk delta edge {} starts at {}, expected {}",
+                        delta.edge,
+                        delta.from(),
+                        phase
+                    ));
+                }
+                let axes = delta.to().axis_deltas_from(delta.from());
+                if delta.axes != axes {
+                    return Err(format!(
+                        "walk delta edge {} carries typestate axes that do not match {} -> {}",
+                        delta.edge,
+                        delta.from(),
+                        delta.to()
+                    ));
+                }
+                phase = delta.to();
+            }
+            if phase != wire.version.phase() {
+                return Err(format!(
+                    "walk delta ends at {phase}, but durable session version is at {}",
+                    wire.version.phase()
+                ));
+            }
+        }
+        Ok(Self {
+            version: wire.version,
+            state: wire.state,
+        })
+    }
+}
+
 /// Complete immutable-query observation returned to every sibling client.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WalkQuerySnapshot {
@@ -809,6 +1872,15 @@ pub enum WalkResponse {
         /// Rows plus the controller and server revisions observed with them.
         query: WalkQuerySnapshot,
     },
+    /// Read-only projection of the configuration admitted for this checkout.
+    Config {
+        /// Current durable phase observed with the configuration projection.
+        phase: WalkPhase,
+        /// Passive identity, campaign, profile, and effective-control records.
+        config: WalkConfigSnapshot,
+        /// Server freshness identity.
+        epoch: ServerEpoch,
+    },
     /// Structured audit result.
     Audit {
         /// Current phase after the request.
@@ -836,6 +1908,15 @@ pub enum WalkResponse {
         /// Exact structured session state observed without waiting on the controller.
         snapshot: WalkSessionSnapshot,
         /// Server freshness identity.
+        epoch: ServerEpoch,
+    },
+    /// Ordered typed projection of one durable session-journal observation.
+    History { history: WalkSessionHistory },
+    /// Typed most-recent transition delta plus its human rendering.
+    Delta {
+        phase: WalkPhase,
+        report: String,
+        snapshot: WalkDeltaSnapshot,
         epoch: ServerEpoch,
     },
     /// Failed request result.
@@ -869,6 +1950,21 @@ impl WalkResponse {
         }
     }
 
+    /// Build the structured most-recent-transition response.
+    pub(crate) fn delta(
+        phase: WalkPhase,
+        report: String,
+        snapshot: WalkDeltaSnapshot,
+        epoch: ServerEpoch,
+    ) -> Self {
+        Self::Delta {
+            phase,
+            report,
+            snapshot,
+            epoch,
+        }
+    }
+
     /// Build a structured audit response at `phase`.
     pub(crate) fn audit(phase: WalkPhase, report: WalkAuditReport, epoch: ServerEpoch) -> Self {
         Self::Audit {
@@ -892,6 +1988,15 @@ impl WalkResponse {
                 version,
                 epoch,
             },
+        }
+    }
+
+    /// Build a typed read-only configuration response.
+    pub(crate) fn config(phase: WalkPhase, config: WalkConfigSnapshot, epoch: ServerEpoch) -> Self {
+        Self::Config {
+            phase,
+            config,
+            epoch,
         }
     }
 
@@ -921,6 +2026,11 @@ impl WalkResponse {
             snapshot,
             epoch,
         }
+    }
+
+    /// Build a typed durable session-history response.
+    pub(crate) fn history(history: WalkSessionHistory) -> Self {
+        Self::History { history }
     }
 
     /// Build an error response with optional current phase.
@@ -960,9 +2070,12 @@ impl WalkResponse {
         match self {
             WalkResponse::Ok { phase, .. }
             | WalkResponse::Audit { phase, .. }
-            | WalkResponse::Job { phase, .. } => Some(*phase),
+            | WalkResponse::Config { phase, .. }
+            | WalkResponse::Job { phase, .. }
+            | WalkResponse::Delta { phase, .. } => Some(*phase),
             WalkResponse::Query { query } => Some(query.phase),
             WalkResponse::Status { snapshot, .. } => Some(snapshot.phase),
+            WalkResponse::History { history } => Some(history.version.phase()),
             WalkResponse::Error { phase, .. } => *phase,
         }
     }
@@ -972,10 +2085,13 @@ impl WalkResponse {
         match self {
             WalkResponse::Ok { epoch, .. }
             | WalkResponse::Audit { epoch, .. }
+            | WalkResponse::Config { epoch, .. }
             | WalkResponse::Job { epoch, .. }
             | WalkResponse::Status { epoch, .. }
+            | WalkResponse::Delta { epoch, .. }
             | WalkResponse::Error { epoch, .. } => epoch,
             WalkResponse::Query { query } => &query.epoch,
+            WalkResponse::History { history } => &history.epoch,
         }
     }
 
@@ -985,9 +2101,12 @@ impl WalkResponse {
             self,
             WalkResponse::Ok { .. }
                 | WalkResponse::Audit { .. }
+                | WalkResponse::Config { .. }
                 | WalkResponse::Query { .. }
                 | WalkResponse::Job { .. }
                 | WalkResponse::Status { .. }
+                | WalkResponse::History { .. }
+                | WalkResponse::Delta { .. }
         )
     }
 }

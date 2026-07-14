@@ -64,7 +64,7 @@ pub(crate) const PROTOCOL_HTTP_MAX_ATTEMPTS: u32 = 3;
 pub(crate) const PROTOCOL_JSON_REVIEW_MAX_ATTEMPTS: usize = 3;
 pub(crate) const TOOL_CALL_REVIEW_TIMEOUT_SECS: u64 = ploke_llm::LLM_TIMEOUT_SECS;
 
-use crate::campaign::{CampaignOverrides, campaign_manifest_path, resolve_campaign_config};
+use crate::campaign::campaign_manifest_path;
 use crate::closure::load_closure_state;
 use crate::registry::builtin_dataset_registry_entries;
 

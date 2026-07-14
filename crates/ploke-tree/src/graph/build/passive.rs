@@ -337,10 +337,10 @@ mod tests {
 
     use ploke_records::ids::{ArtifactId, Coordinate, EntryId, OperationTarget, RuntimeId};
     use ploke_records::run_profile::{
-        EvalStorage, Execution, ExecutionStopAfter, Generation, GenerationSource,
-        GenerationSurface, Protocol, RUN_PROFILE_COMMITMENT_SCHEMA_VERSION,
-        RUN_PROFILE_SCHEMA_VERSION, RunProfileCommitmentRecord, RunProfileRecord, Search,
-        Selection, SelectionEvidence, SelectionStrategy, Storage, Target, TraceJsonl,
+        EvalStorage, Execution, ExecutionStopAfter, Generation, GenerationSource, ModelDefaults,
+        Protocol, RUN_PROFILE_COMMITMENT_SCHEMA_VERSION, RUN_PROFILE_SCHEMA_VERSION,
+        RunProfileCommitmentRecord, RunProfileRecord, Search, Selection, SelectionEvidence,
+        SelectionStrategy, Storage, Target, TraceJsonl,
     };
     use ploke_records::scheduler::{ChildBudgetRecord, ChildScheduleModeRecord};
 
@@ -612,18 +612,23 @@ mod tests {
                 instance: Some("BurntSushi__ripgrep-2209".to_owned()),
                 instances: vec!["BurntSushi__ripgrep-2209".to_owned()],
             },
+            model: ModelDefaults::default(),
             search: Search {
                 max_generations: 15,
                 max_total_nodes: 96,
-                children: ChildBudgetRecord { min: 6, max: 6 },
+                children: ChildBudgetRecord {
+                    min: 6,
+                    max: 6,
+                    parallel_targets: Some(3),
+                },
                 schedule: ChildScheduleModeRecord::FullBatch,
                 stop_on_first_keep: false,
                 require_keep_for_continuation: false,
                 explore_from_rejected: true,
             },
             generation: Generation {
-                source: GenerationSource::EditSurface,
-                surface: Some(GenerationSurface::WorkspaceExceptPlokeEval),
+                source: GenerationSource::BroadHarnessRequest,
+                surface: None,
             },
             selection: Selection {
                 strategy: SelectionStrategy::HistoryScoreChildProp,
@@ -634,6 +639,7 @@ mod tests {
             },
             execution: Execution {
                 stop_after: ExecutionStopAfter::Complete,
+                child_stale_secs: 1200,
                 broad_tui: ploke_records::run_profile::BroadTui::default(),
                 trace_jsonl: TraceJsonl::Auto,
                 debug_tools: true,

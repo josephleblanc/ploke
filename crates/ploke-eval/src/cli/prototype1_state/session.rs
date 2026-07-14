@@ -16,7 +16,7 @@ use std::{
 #[cfg(unix)]
 use std::os::fd::AsRawFd;
 
-use ploke_records::ids::CampaignId;
+use ploke_records::{ids::CampaignId, run_profile::RunProfileCommitmentRecord};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -25,7 +25,7 @@ use uuid::Uuid;
 use crate::cli::prototype1_state::{
     control_evidence::{CursorEvidence, SuccessorOrigin, initial_cursor, successor_cursor},
     driver::control::{ControlEffect, ControlPermit, HandoffPermit},
-    edge::{GRAPH_VERSION_V1, GRAPH_VERSION_V2},
+    edge::{ControlEdge, GRAPH_VERSION_V1, GRAPH_VERSION_V2},
     event::{ContentHash, RecordedAt, RuntimeId, TransitionId},
     identity::ParentIdentity,
     invocation::{ProcessIncarnation, process_incarnation, record_runtime_id},
@@ -36,7 +36,13 @@ use crate::cli::prototype1_state::{
     walk::{
         epoch::{ServerEpoch, TRANSITION_GRAPH_VERSION},
         phase::WalkPhase,
-        protocol::SessionVersion,
+        protocol::{
+            SessionVersion, WalkAttemptIntent, WalkAttemptReceipt, WalkAttemptResult, WalkCursor,
+            WalkCursorEvidence, WalkEndpoint, WalkEpochReceipt, WalkHandoffAcceptance,
+            WalkPredecessorAttempt, WalkReadyCommit, WalkReadyReceipt, WalkRecoveryResolution,
+            WalkRunMode, WalkSessionAbandonment, WalkSessionDamage, WalkSessionEvent,
+            WalkSessionEventKind, WalkSessionHistory, WalkSessionOrigin,
+        },
     },
 };
 
@@ -108,10 +114,10 @@ impl Cursor {
 /// Monotonic token issued whenever a controller takes mutation authority.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
-pub(crate) struct Fence(u64);
+pub struct Fence(u64);
 
 impl Fence {
-    pub(crate) fn get(self) -> u64 {
+    pub const fn get(self) -> u64 {
         self.0
     }
 
@@ -162,6 +168,15 @@ enum Origin {
     Historical { source: ContentHash },
 }
 
+/// Read-only classification and source coordinate for a controller session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "snake_case", tag = "kind")]
+pub enum SessionOrigin {
+    Admitted { plan_hash: ContentHash },
+    Successor { invocation_path: PathBuf },
+    Historical { source: ContentHash },
+}
+
 impl Origin {
     fn label(&self) -> String {
         match self {
@@ -177,6 +192,20 @@ impl Origin {
         match self {
             Self::Successor { transfer } => Some(transfer.invocation_path().to_path_buf()),
             Self::Admitted { .. } | Self::Historical { .. } => None,
+        }
+    }
+
+    fn projection(&self) -> SessionOrigin {
+        match self {
+            Self::Admitted { setup } => SessionOrigin::Admitted {
+                plan_hash: setup.intent.plan_hash.clone(),
+            },
+            Self::Successor { transfer } => SessionOrigin::Successor {
+                invocation_path: transfer.invocation_path().to_path_buf(),
+            },
+            Self::Historical { source } => SessionOrigin::Historical {
+                source: source.clone(),
+            },
         }
     }
 }
@@ -1002,8 +1031,9 @@ pub(crate) enum RecoveryResolution {
 }
 
 /// Journal damage is evidence, never permission to skip arbitrary records.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Damage {
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum Damage {
     Truncated { line: usize, tail: ContentHash },
     Malformed { line: usize, detail: String },
     Sequence { line: usize, detail: String },
@@ -1288,6 +1318,16 @@ impl SessionSnapshot {
     }
 }
 
+fn profile_record(commitment: &RunProfileCommitment) -> RunProfileCommitmentRecord {
+    RunProfileCommitmentRecord {
+        schema_version: commitment.schema_version.clone(),
+        profile_path: commitment.profile_path.clone(),
+        sha256: commitment.sha256.clone(),
+        source_path: commitment.source_path.clone(),
+        admitted_at: commitment.admitted_at.clone(),
+    }
+}
+
 impl Store {
     pub(crate) fn new(root: impl Into<PathBuf>) -> Self {
         Self { root: root.into() }
@@ -1352,6 +1392,71 @@ impl Store {
             attempts,
             damage,
             abandoned: replay.abandoned,
+        }))
+    }
+
+    /// Inspect the canonical ordered journal without exposing replay-kernel
+    /// carriers through the public walk protocol.
+    pub(crate) fn inspect_history(
+        &self,
+        parent: &ParentIdentity,
+        epoch: ServerEpoch,
+    ) -> Result<Option<WalkSessionHistory>, Error> {
+        let paths = self.paths(parent);
+        match fs::metadata(&paths.journal) {
+            Ok(_) => {}
+            Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(source) => {
+                return Err(Error::Read {
+                    path: paths.journal.clone(),
+                    source,
+                });
+            }
+        }
+        let (lines, mut damage) = match load_entries(&paths.journal)? {
+            Load::Ready { lines, .. } => (lines, None),
+            Load::Damaged { lines, cause, .. } => (lines, Some(cause)),
+        };
+        if lines.is_empty() && damage.is_none() {
+            return Ok(None);
+        }
+
+        let revision = lines.len();
+        let mut replay = Replay::default();
+        let mut valid = 0;
+        for line in &lines {
+            let mut candidate = replay.clone();
+            match candidate.apply(line) {
+                Ok(()) => {
+                    replay = candidate;
+                    valid += 1;
+                }
+                Err(cause) => {
+                    damage = Some(cause);
+                    break;
+                }
+            }
+        }
+        // Only sequence-validated lines become public semantic events. The
+        // exact observed journal revision and first invalid line remain visible
+        // through the version and typed damage projection.
+        let events = lines[..valid].iter().map(Line::walk_event).collect();
+        let created = replay.created.as_ref();
+        Ok(Some(WalkSessionHistory {
+            journal_path: Some(paths.journal),
+            version: SessionVersion {
+                session_id: created.map(Created::session_id),
+                cursor: replay.cursor,
+                journal_revision: revision,
+            },
+            origin: created.map(|created| walk_origin(&created.origin)),
+            profile: created.map(|created| profile_record(created.profile())),
+            events,
+            damage: damage.as_ref().map(walk_damage),
+            abandonment: replay
+                .abandoned
+                .map(|detail| WalkSessionAbandonment { detail }),
+            epoch,
         }))
     }
 
@@ -2169,7 +2274,7 @@ impl Lease<Pending> {
 /// Exact intent for one idempotent typed edge attempt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct AttemptIntent {
+pub struct AttemptIntent {
     pub(crate) transition_id: TransitionId,
     pub(crate) expected: WalkPhase,
     pub(crate) targets: Vec<WalkPhase>,
@@ -2183,6 +2288,38 @@ pub(crate) struct AttemptIntent {
 }
 
 impl AttemptIntent {
+    pub fn transition_id(&self) -> TransitionId {
+        self.transition_id
+    }
+
+    pub const fn expected(&self) -> WalkPhase {
+        self.expected
+    }
+
+    pub fn targets(&self) -> &[WalkPhase] {
+        &self.targets
+    }
+
+    pub const fn allows_live_api(&self) -> bool {
+        self.allow_live_api
+    }
+
+    pub const fn allows_git_changes(&self) -> bool {
+        self.allow_git_changes
+    }
+
+    pub fn epoch(&self) -> &ServerEpoch {
+        &self.epoch
+    }
+
+    pub fn evidence(&self) -> &ContentHash {
+        &self.evidence
+    }
+
+    pub const fn retry(&self) -> u32 {
+        self.retry
+    }
+
     pub(crate) fn new(
         session_id: SessionId,
         cursor: Cursor,
@@ -2502,8 +2639,8 @@ pub(crate) enum Begin {
 }
 
 /// Durable attempt receipt.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct AttemptReceipt {
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttemptReceipt {
     pub(crate) intent: AttemptIntent,
     pub(crate) fence: Fence,
     pub(crate) result: AttemptResult,
@@ -2511,18 +2648,50 @@ pub(crate) struct AttemptReceipt {
     pub(crate) epoch: Option<EpochReceipt>,
 }
 
+impl AttemptReceipt {
+    pub fn intent(&self) -> &AttemptIntent {
+        &self.intent
+    }
+
+    pub const fn fence(&self) -> Fence {
+        self.fence
+    }
+
+    pub fn result(&self) -> &AttemptResult {
+        &self.result
+    }
+
+    pub fn evidence(&self) -> Option<&CursorEvidence> {
+        self.evidence.as_ref()
+    }
+
+    pub fn epoch(&self) -> Option<&EpochReceipt> {
+        self.epoch.as_ref()
+    }
+}
+
 /// Controller epoch observed immediately before and after an attempted edge.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct EpochReceipt {
+pub struct EpochReceipt {
     pub(crate) before: ServerEpoch,
     pub(crate) after: Option<ServerEpoch>,
+}
+
+impl EpochReceipt {
+    pub fn before(&self) -> &ServerEpoch {
+        &self.before
+    }
+
+    pub fn after(&self) -> Option<&ServerEpoch> {
+        self.after.as_ref()
+    }
 }
 
 /// Durable classification of the effect boundary reached by one attempt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "snake_case", tag = "status")]
-pub(crate) enum AttemptResult {
+pub enum AttemptResult {
     Committed {
         phase: WalkPhase,
         evidence: ContentHash,
@@ -2666,6 +2835,661 @@ enum Entry {
 struct Line {
     number: usize,
     entry: Entry,
+}
+
+impl Line {
+    fn walk_event(&self) -> WalkSessionEvent {
+        let (session_id, recorded_at, kind) = match &self.entry {
+            Entry::Created {
+                schema_version,
+                session_id,
+                origin,
+                parent,
+                profile,
+                mode,
+                cursor,
+                recorded_at,
+            } => (
+                *session_id,
+                *recorded_at,
+                WalkSessionEventKind::Created {
+                    schema_version: schema_version.clone(),
+                    origin: walk_origin(origin),
+                    parent: parent.record().clone(),
+                    profile: profile_record(profile),
+                    mode: walk_mode(*mode),
+                    cursor: cursor.as_ref().map(walk_cursor),
+                },
+            ),
+            Entry::Acquired {
+                session_id,
+                fence,
+                epoch,
+                runtime_id,
+                pid,
+                incarnation,
+                recorded_at,
+            } => (
+                *session_id,
+                *recorded_at,
+                WalkSessionEventKind::Acquired {
+                    fence: fence.get(),
+                    epoch: epoch.clone(),
+                    runtime_id: runtime_id.map(|id| ploke_records::ids::RuntimeId(id.to_string())),
+                    pid: *pid,
+                    incarnation: incarnation.clone(),
+                },
+            ),
+            Entry::Began {
+                session_id,
+                fence,
+                intent,
+                recorded_at,
+            } => (
+                *session_id,
+                *recorded_at,
+                WalkSessionEventKind::AttemptBegan {
+                    fence: fence.get(),
+                    intent: walk_intent(intent),
+                },
+            ),
+            Entry::Finished {
+                session_id,
+                transition_id,
+                fence,
+                result,
+                evidence,
+                epoch,
+                recorded_at,
+            } => (
+                *session_id,
+                *recorded_at,
+                WalkSessionEventKind::AttemptFinished {
+                    receipt: WalkAttemptReceipt {
+                        transition_id: *transition_id,
+                        fence: fence.get(),
+                        result: walk_result(result),
+                        evidence: evidence.as_ref().map(walk_evidence),
+                        epoch: epoch.as_ref().map(walk_epoch),
+                    },
+                },
+            ),
+            Entry::Recovered {
+                session_id,
+                fence,
+                resolution,
+                recorded_at,
+            } => (
+                *session_id,
+                *recorded_at,
+                WalkSessionEventKind::Recovered {
+                    fence: fence.get(),
+                    resolution: walk_recovery(resolution),
+                },
+            ),
+            Entry::EpochAdmitted {
+                session_id,
+                prior,
+                next,
+                recorded_at,
+            } => (
+                *session_id,
+                *recorded_at,
+                WalkSessionEventKind::EpochAdmitted {
+                    prior: prior.clone(),
+                    next: next.clone(),
+                },
+            ),
+            Entry::TailRepaired {
+                session_id,
+                discarded,
+                evidence_path,
+                recorded_at,
+            } => (
+                *session_id,
+                *recorded_at,
+                WalkSessionEventKind::TailRepaired {
+                    discarded: discarded.clone(),
+                    evidence_path: evidence_path.clone(),
+                },
+            ),
+            Entry::Released {
+                session_id,
+                fence,
+                ready,
+                recorded_at,
+            } => (
+                *session_id,
+                *recorded_at,
+                WalkSessionEventKind::Released {
+                    fence: fence.get(),
+                    ready: ready.as_ref().map(walk_ready),
+                },
+            ),
+        };
+        WalkSessionEvent {
+            revision: self.number,
+            recorded_at_ms: recorded_at.0,
+            session_id,
+            kind,
+        }
+    }
+}
+
+fn walk_cursor(cursor: &Cursor) -> WalkCursor {
+    WalkCursor {
+        phase: cursor.phase,
+        evidence: cursor.evidence.clone(),
+    }
+}
+
+fn walk_mode(mode: RunMode) -> WalkRunMode {
+    match mode {
+        RunMode::Continuous => WalkRunMode::Continuous,
+        RunMode::Step => WalkRunMode::Step,
+    }
+}
+
+fn walk_origin(origin: &Origin) -> WalkSessionOrigin {
+    match origin.projection() {
+        SessionOrigin::Admitted { plan_hash } => WalkSessionOrigin::Admitted { plan_hash },
+        SessionOrigin::Successor { invocation_path } => {
+            WalkSessionOrigin::Successor { invocation_path }
+        }
+        SessionOrigin::Historical { source } => WalkSessionOrigin::Historical { source },
+    }
+}
+
+fn walk_damage(damage: &Damage) -> WalkSessionDamage {
+    match damage {
+        Damage::Truncated { line, tail } => WalkSessionDamage::Truncated {
+            line: *line,
+            tail: tail.clone(),
+        },
+        Damage::Malformed { line, detail } => WalkSessionDamage::Malformed {
+            line: *line,
+            detail: detail.clone(),
+        },
+        Damage::Sequence { line, detail } => WalkSessionDamage::Sequence {
+            line: *line,
+            detail: detail.clone(),
+        },
+    }
+}
+
+fn walk_intent(intent: &AttemptIntent) -> WalkAttemptIntent {
+    WalkAttemptIntent {
+        transition_id: intent.transition_id,
+        expected: intent.expected,
+        targets: intent.targets.clone(),
+        allow_live_api: intent.allow_live_api,
+        allow_git_changes: intent.allow_git_changes,
+        epoch: intent.epoch.clone(),
+        evidence: intent.evidence.clone(),
+        retry: intent.retry,
+    }
+}
+
+fn walk_epoch(epoch: &EpochReceipt) -> WalkEpochReceipt {
+    WalkEpochReceipt {
+        before: epoch.before.clone(),
+        after: epoch.after.clone(),
+    }
+}
+
+fn walk_result(result: &AttemptResult) -> WalkAttemptResult {
+    match result {
+        AttemptResult::Committed { phase, evidence } => WalkAttemptResult::Committed {
+            phase: *phase,
+            evidence: evidence.clone(),
+        },
+        AttemptResult::Rejected {
+            phase,
+            evidence,
+            detail,
+        } => WalkAttemptResult::Rejected {
+            phase: *phase,
+            evidence: evidence.clone(),
+            detail: detail.clone(),
+        },
+        AttemptResult::Cancelled {
+            phase,
+            evidence,
+            detail,
+        } => WalkAttemptResult::Cancelled {
+            phase: *phase,
+            evidence: evidence.clone(),
+            detail: detail.clone(),
+        },
+        AttemptResult::Indeterminate {
+            phase,
+            evidence,
+            detail,
+        } => WalkAttemptResult::Indeterminate {
+            phase: *phase,
+            evidence: evidence.clone(),
+            detail: detail.clone(),
+        },
+    }
+}
+
+pub(crate) fn validate_walk_intent(
+    schema: &str,
+    session_id: SessionId,
+    intent: &WalkAttemptIntent,
+) -> Result<(), String> {
+    let intent = replay_intent(intent);
+    intent
+        .validate_record()
+        .map_err(|error| error.to_string())?;
+    match schema {
+        SCHEMA_VERSION | SCHEMA_VERSION_V4 | SCHEMA_VERSION_V3 => {
+            intent
+                .cursor()
+                .validate()
+                .map_err(|error| error.to_string())?;
+            intent
+                .validate_for(session_id)
+                .map_err(|error| error.to_string())
+        }
+        SCHEMA_VERSION_V2 => {
+            if intent.allow_live_api {
+                return Err(
+                    "v2 transition intent cannot contain v3 live-provider authority".to_string(),
+                );
+            }
+            intent
+                .cursor()
+                .validate()
+                .map_err(|error| error.to_string())?;
+            intent
+                .validate_for(session_id)
+                .map_err(|error| error.to_string())
+        }
+        SCHEMA_VERSION_V1 => Ok(()),
+        _ => Err(format!("unsupported session schema '{schema}'")),
+    }
+}
+
+pub(crate) fn validate_walk_schema(schema: &str) -> Result<(), String> {
+    match schema {
+        SCHEMA_VERSION | SCHEMA_VERSION_V4 | SCHEMA_VERSION_V3 | SCHEMA_VERSION_V2
+        | SCHEMA_VERSION_V1 => Ok(()),
+        _ => Err(format!("unsupported session schema '{schema}'")),
+    }
+}
+
+pub(crate) fn validate_walk_creation(
+    schema: &str,
+    cursor: Option<&WalkCursor>,
+) -> Result<(), String> {
+    validate_walk_schema(schema)?;
+    match (schema, cursor) {
+        (SCHEMA_VERSION_V1, None) => Ok(()),
+        (SCHEMA_VERSION_V1, Some(_)) => {
+            Err("v1 session creation cannot contain a committed cursor".to_string())
+        }
+        (_, Some(cursor)) => validate_walk_cursor(cursor),
+        (_, None) => Err(format!(
+            "{schema} session creation is missing its committed cursor"
+        )),
+    }
+}
+
+pub(crate) fn validate_walk_acquisition(
+    schema: &str,
+    incarnation: Option<&ProcessIncarnation>,
+) -> Result<(), String> {
+    validate_walk_schema(schema)?;
+    if schema != SCHEMA_VERSION {
+        return Ok(());
+    }
+    let incarnation = incarnation
+        .ok_or_else(|| "v5 controller acquisition has no process incarnation".to_string())?;
+    if incarnation.boot_id.is_nil() || incarnation.start_ticks == 0 {
+        return Err("v5 controller acquisition has an incomplete process incarnation".to_string());
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_walk_cursor(cursor: &WalkCursor) -> Result<(), String> {
+    validate_hash(&cursor.evidence)
+        .map_err(|detail| format!("walk cursor evidence is invalid: {detail}"))
+}
+
+pub(crate) fn validate_walk_receipt(
+    schema: &str,
+    intent: &WalkAttemptIntent,
+    receipt: &WalkAttemptReceipt,
+) -> Result<(), String> {
+    if receipt.transition_id != intent.transition_id {
+        return Err(format!(
+            "transition {} finished with receipt for {}",
+            intent.transition_id, receipt.transition_id
+        ));
+    }
+    let intent = replay_intent(intent);
+    let result = replay_result(&receipt.result);
+    match schema {
+        SCHEMA_VERSION | SCHEMA_VERSION_V4 => {
+            validate_result_current(&intent, &result).map_err(|error| error.to_string())?;
+            validate_walk_evidence(&intent, &receipt.result, receipt.evidence.as_ref())?;
+            let epoch = receipt.epoch.as_ref().ok_or_else(|| {
+                format!("{schema} transition result is missing its epoch receipt")
+            })?;
+            validate_epoch(&intent, &result, &replay_epoch(epoch))
+                .map_err(|error| error.to_string())
+        }
+        SCHEMA_VERSION_V3 => {
+            reject_walk_evidence(schema, receipt.evidence.as_ref())?;
+            validate_result_current(&intent, &result).map_err(|error| error.to_string())?;
+            let epoch = receipt.epoch.as_ref().ok_or_else(|| {
+                format!("{schema} transition result is missing its epoch receipt")
+            })?;
+            validate_epoch(&intent, &result, &replay_epoch(epoch))
+                .map_err(|error| error.to_string())
+        }
+        SCHEMA_VERSION_V2 => {
+            reject_walk_evidence(schema, receipt.evidence.as_ref())?;
+            validate_result(&intent, &result).map_err(|error| error.to_string())?;
+            let epoch = receipt.epoch.as_ref().ok_or_else(|| {
+                format!("{schema} transition result is missing its epoch receipt")
+            })?;
+            validate_epoch(&intent, &result, &replay_epoch(epoch))
+                .map_err(|error| error.to_string())
+        }
+        SCHEMA_VERSION_V1 => {
+            reject_walk_evidence(schema, receipt.evidence.as_ref())?;
+            if receipt.epoch.is_some() {
+                return Err("v1 transition result cannot contain an epoch receipt".to_string());
+            }
+            validate_result(&intent, &result).map_err(|error| error.to_string())
+        }
+        _ => Err(format!("unsupported session schema '{schema}'")),
+    }
+}
+
+pub(crate) fn validate_walk_recovery(
+    schema: &str,
+    intent: &WalkAttemptIntent,
+    result: &WalkAttemptResult,
+    evidence: Option<&WalkCursorEvidence>,
+    epoch: Option<&WalkEpochReceipt>,
+) -> Result<(), String> {
+    if matches!(result, WalkAttemptResult::Indeterminate { .. }) {
+        return Err("attempt recovery must terminalize an indeterminate result".to_string());
+    }
+    let intent = replay_intent(intent);
+    let result_record = replay_result(result);
+    match schema {
+        SCHEMA_VERSION | SCHEMA_VERSION_V4 => {
+            validate_result_current(&intent, &result_record).map_err(|error| error.to_string())?;
+            validate_walk_evidence(&intent, result, evidence)?;
+        }
+        SCHEMA_VERSION_V3 => {
+            reject_walk_evidence(schema, evidence)?;
+            validate_result_current(&intent, &result_record).map_err(|error| error.to_string())?;
+        }
+        SCHEMA_VERSION_V2 => {
+            reject_walk_evidence(schema, evidence)?;
+            validate_result(&intent, &result_record).map_err(|error| error.to_string())?;
+        }
+        SCHEMA_VERSION_V1 => {
+            reject_walk_evidence(schema, evidence)?;
+            if epoch.is_some() {
+                return Err("v1 attempt recovery cannot contain an epoch receipt".to_string());
+            }
+            return validate_result(&intent, &result_record).map_err(|error| error.to_string());
+        }
+        _ => return Err(format!("unsupported session schema '{schema}'")),
+    }
+    let epoch = epoch
+        .ok_or_else(|| "epoch-aware attempt recovery requires an epoch receipt".to_string())?;
+    validate_recovery_epoch(&intent, &result_record, &replay_epoch(epoch))
+        .map_err(|error| error.to_string())
+}
+
+pub(crate) fn validate_walk_resolution(
+    schema: &str,
+    resolution: &WalkRecoveryResolution,
+) -> Result<(), String> {
+    validate_walk_schema(schema)?;
+    if matches!(
+        schema,
+        SCHEMA_VERSION_V3 | SCHEMA_VERSION_V2 | SCHEMA_VERSION_V1
+    ) && matches!(
+        resolution,
+        WalkRecoveryResolution::AcceptHandoff { .. }
+            | WalkRecoveryResolution::AbandonSession { .. }
+    ) {
+        return Err("recovered handoff authority requires the current session schema".to_string());
+    }
+    if matches!(schema, SCHEMA_VERSION_V2 | SCHEMA_VERSION_V1)
+        && matches!(
+            resolution,
+            WalkRecoveryResolution::ResolveAttempt {
+                evidence: Some(_),
+                ..
+            }
+        )
+    {
+        return Err(format!(
+            "{schema} attempt recovery cannot contain v4 cursor evidence"
+        ));
+    }
+    if schema == SCHEMA_VERSION_V1
+        && matches!(
+            resolution,
+            WalkRecoveryResolution::ResolveAttempt { epoch: Some(_), .. }
+        )
+    {
+        return Err("v1 attempt recovery cannot contain a v2 epoch receipt".to_string());
+    }
+    Ok(())
+}
+
+pub(crate) fn walk_admits_epoch(
+    intent: &WalkAttemptIntent,
+    result: &WalkAttemptResult,
+    before: &ServerEpoch,
+    after: &ServerEpoch,
+) -> bool {
+    admits_epoch_change(
+        &replay_intent(intent),
+        &replay_result(result),
+        before,
+        after,
+    )
+}
+
+fn replay_intent(intent: &WalkAttemptIntent) -> AttemptIntent {
+    AttemptIntent {
+        transition_id: intent.transition_id,
+        expected: intent.expected,
+        targets: intent.targets.clone(),
+        allow_live_api: intent.allow_live_api,
+        allow_git_changes: intent.allow_git_changes,
+        epoch: intent.epoch.clone(),
+        evidence: intent.evidence.clone(),
+        retry: intent.retry,
+    }
+}
+
+fn replay_result(result: &WalkAttemptResult) -> AttemptResult {
+    match result {
+        WalkAttemptResult::Committed { phase, evidence } => AttemptResult::Committed {
+            phase: *phase,
+            evidence: evidence.clone(),
+        },
+        WalkAttemptResult::Rejected {
+            phase,
+            evidence,
+            detail,
+        } => AttemptResult::Rejected {
+            phase: *phase,
+            evidence: evidence.clone(),
+            detail: detail.clone(),
+        },
+        WalkAttemptResult::Cancelled {
+            phase,
+            evidence,
+            detail,
+        } => AttemptResult::Cancelled {
+            phase: *phase,
+            evidence: evidence.clone(),
+            detail: detail.clone(),
+        },
+        WalkAttemptResult::Indeterminate {
+            phase,
+            evidence,
+            detail,
+        } => AttemptResult::Indeterminate {
+            phase: *phase,
+            evidence: evidence.clone(),
+            detail: detail.clone(),
+        },
+    }
+}
+
+fn replay_epoch(epoch: &WalkEpochReceipt) -> EpochReceipt {
+    EpochReceipt {
+        before: epoch.before.clone(),
+        after: epoch.after.clone(),
+    }
+}
+
+fn reject_walk_evidence(schema: &str, evidence: Option<&WalkCursorEvidence>) -> Result<(), String> {
+    if evidence.is_some() {
+        return Err(format!(
+            "{schema} transition result cannot contain cursor evidence"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_walk_evidence(
+    intent: &AttemptIntent,
+    result: &WalkAttemptResult,
+    evidence: Option<&WalkCursorEvidence>,
+) -> Result<(), String> {
+    match (result, evidence) {
+        (WalkAttemptResult::Committed { phase, .. }, Some(evidence)) => {
+            let edge = ControlEdge::for_graph(
+                &intent.epoch.transition_graph_version,
+                intent.expected,
+                *phase,
+            )
+            .ok_or_else(|| {
+                format!(
+                    "graph '{}' has no committed edge from {} to {phase}",
+                    intent.epoch.transition_graph_version, intent.expected
+                )
+            })?;
+            if evidence.graph_version != intent.epoch.transition_graph_version
+                || evidence.edge != edge
+            {
+                return Err(
+                    "committed cursor evidence does not match its admitted edge".to_string()
+                );
+            }
+            validate_hash(&evidence.witness)
+                .map_err(|detail| format!("cursor evidence witness is invalid: {detail}"))
+        }
+        (WalkAttemptResult::Committed { .. }, None) => {
+            Err("committed result is missing cursor evidence".to_string())
+        }
+        (_, Some(_)) => Err("non-committed result cannot contain cursor evidence".to_string()),
+        (_, None) => Ok(()),
+    }
+}
+
+fn walk_evidence(evidence: &CursorEvidence) -> WalkCursorEvidence {
+    WalkCursorEvidence {
+        graph_version: evidence.graph_version().to_string(),
+        edge: evidence.edge(),
+        witness: evidence.witness().clone(),
+    }
+}
+
+fn walk_endpoint(
+    endpoint: &crate::cli::prototype1_state::walk::endpoint::ServerEndpoint,
+) -> WalkEndpoint {
+    WalkEndpoint {
+        repo_root: endpoint.repo_root().to_path_buf(),
+        socket: endpoint.socket().to_path_buf(),
+        pid: endpoint.pid(),
+    }
+}
+
+fn walk_ready(ready: &ReadyReceipt) -> WalkReadyReceipt {
+    let record = ready.record();
+    let commit = ready.commit();
+    WalkReadyReceipt {
+        campaign_id: record.campaign_id.clone(),
+        node_id: record.node_id.clone(),
+        runtime_id: record.runtime_id.clone(),
+        pid: record.pid,
+        incarnation: record.incarnation.clone(),
+        recorded_at: record.recorded_at.clone(),
+        commit: WalkReadyCommit {
+            session_id: commit.session_id(),
+            transition_id: commit.transition_id(),
+            fence: commit.fence().get(),
+            cursor: walk_cursor(commit.cursor()),
+            mode: walk_mode(commit.mode()),
+        },
+        endpoint: ready.endpoint().map(walk_endpoint),
+        predecessor: ready.predecessor().map(walk_endpoint),
+    }
+}
+
+fn walk_handoff(acceptance: &HandoffAcceptance) -> WalkHandoffAcceptance {
+    let attempt = acceptance.attempt();
+    WalkHandoffAcceptance {
+        ready: walk_ready(acceptance.ready()),
+        attempt: WalkPredecessorAttempt {
+            session_id: attempt.session(),
+            transition_id: attempt.transition(),
+            fence: attempt.fence().get(),
+            allow_live_api: attempt.allow_live_api(),
+            allow_git_changes: attempt.allow_git_changes(),
+        },
+    }
+}
+
+fn walk_recovery(resolution: &RecoveryResolution) -> WalkRecoveryResolution {
+    match resolution {
+        RecoveryResolution::AbandonOwner => WalkRecoveryResolution::AbandonOwner,
+        RecoveryResolution::AbandonSession { detail } => WalkRecoveryResolution::AbandonSession {
+            detail: detail.clone(),
+        },
+        RecoveryResolution::ResolveAttempt {
+            transition_id,
+            result,
+            evidence,
+            epoch,
+        } => WalkRecoveryResolution::ResolveAttempt {
+            transition_id: *transition_id,
+            result: walk_result(result),
+            evidence: evidence.as_ref().map(walk_evidence),
+            epoch: epoch.as_ref().map(walk_epoch),
+        },
+        RecoveryResolution::AcceptHandoff {
+            acceptance,
+            result,
+            evidence,
+            epoch,
+        } => WalkRecoveryResolution::AcceptHandoff {
+            acceptance: walk_handoff(acceptance),
+            result: walk_result(result),
+            evidence: evidence.as_ref().map(walk_evidence),
+            epoch: walk_epoch(epoch),
+        },
+        RecoveryResolution::AdmitEpoch { prior, next } => WalkRecoveryResolution::AdmitEpoch {
+            prior: prior.clone(),
+            next: next.clone(),
+        },
+    }
 }
 
 enum Load {
@@ -3122,6 +3946,11 @@ impl Replay {
                 ..
             } => {
                 self.require_owner(*session_id, *fence, line.number)?;
+                if self.unresolved_for(*fence).is_some() {
+                    return Err(sequence(
+                        "controller fence began a second unresolved transition attempt".to_string(),
+                    ));
+                }
                 intent
                     .validate_record()
                     .map_err(|error| sequence(error.to_string()))?;
@@ -3332,7 +4161,7 @@ impl Replay {
                     validate_resolution_v2(self, &cause, resolution)
                         .map_err(|error| sequence(error.to_string()))?;
                 } else {
-                    validate_resolution(self, &cause, resolution)
+                    validate_resolution_v1(self, &cause, resolution)
                         .map_err(|error| sequence(error.to_string()))?;
                 }
                 match resolution {
@@ -4516,7 +5345,45 @@ fn validate_resolution_v2(
             detail: "recovered handoff authority requires the current session schema".to_string(),
         });
     }
+    if let RecoveryResolution::ResolveAttempt { evidence, .. } = resolution
+        && evidence.is_some()
+    {
+        return Err(Error::InvalidResolution {
+            detail: "v2 attempt recovery cannot contain v4 cursor evidence".to_string(),
+        });
+    }
     validate_resolution_epoch(replay, cause, resolution, false)
+}
+
+fn validate_resolution_v1(
+    replay: &Replay,
+    cause: &RecoveryCause,
+    resolution: &RecoveryResolution,
+) -> Result<(), Error> {
+    if matches!(
+        resolution,
+        RecoveryResolution::AcceptHandoff { .. } | RecoveryResolution::AbandonSession { .. }
+    ) {
+        return Err(Error::InvalidResolution {
+            detail: "recovered handoff authority requires the current session schema".to_string(),
+        });
+    }
+    if let RecoveryResolution::ResolveAttempt {
+        evidence, epoch, ..
+    } = resolution
+    {
+        if evidence.is_some() {
+            return Err(Error::InvalidResolution {
+                detail: "v1 attempt recovery cannot contain v4 cursor evidence".to_string(),
+            });
+        }
+        if epoch.is_some() {
+            return Err(Error::InvalidResolution {
+                detail: "v1 attempt recovery cannot contain a v2 epoch receipt".to_string(),
+            });
+        }
+    }
+    validate_resolution(replay, cause, resolution)
 }
 
 fn validate_resolution_epoch(
@@ -5734,6 +6601,55 @@ mode = "continuous"
         }
     }
 
+    fn numbered(entries: Vec<Entry>) -> Vec<Line> {
+        entries
+            .into_iter()
+            .enumerate()
+            .map(|(index, entry)| Line {
+                number: index + 1,
+                entry,
+            })
+            .collect()
+    }
+
+    fn history_from_lines(
+        lines: &[Line],
+        cursor: Option<Cursor>,
+        epoch: ServerEpoch,
+    ) -> WalkSessionHistory {
+        let Entry::Created {
+            session_id,
+            origin,
+            profile,
+            ..
+        } = &lines.first().expect("history creation line").entry
+        else {
+            panic!("history fixture must begin with Created");
+        };
+        WalkSessionHistory {
+            journal_path: None,
+            version: SessionVersion {
+                session_id: Some(*session_id),
+                cursor,
+                journal_revision: lines.len(),
+            },
+            origin: Some(walk_origin(origin)),
+            profile: Some(profile_record(profile)),
+            events: lines.iter().map(Line::walk_event).collect(),
+            damage: None,
+            abandonment: None,
+            epoch,
+        }
+    }
+
+    fn history_error(history: &WalkSessionHistory) -> String {
+        serde_json::from_value::<WalkSessionHistory>(
+            serde_json::to_value(history).expect("serialize history fixture"),
+        )
+        .expect_err("invalid public history must fail closed")
+        .to_string()
+    }
+
     fn remove_branch(value: &mut serde_json::Value) {
         match value {
             serde_json::Value::Object(fields) => {
@@ -6802,6 +7718,20 @@ mode = "continuous"
                 evidence: ContentHash("legacy-r13b-evidence".to_string()),
             })
         );
+        let history = store
+            .inspect_history(&requested.parent, requested.epoch.clone())
+            .expect("inspect v1 history")
+            .expect("v1 history");
+        let history: WalkSessionHistory =
+            serde_json::from_value(serde_json::to_value(&history).expect("serialize v1 history"))
+                .expect("public history must retain v1 transition-id semantics");
+        assert_eq!(
+            history.version.cursor,
+            Some(Cursor {
+                phase: WalkPhase::R13b,
+                evidence: ContentHash("legacy-r13b-evidence".to_string()),
+            })
+        );
         assert!(matches!(
             store.claim(requested).expect("legacy claim"),
             Outcome::Conflict(Conflict::Schema {
@@ -6922,6 +7852,175 @@ mode = "continuous"
                 ..
             }) if active == SCHEMA_VERSION_V2 && supported == SCHEMA_VERSION
         ));
+    }
+
+    #[test]
+    fn legacy_recovery_fields_fail_closed_in_both_replays() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let request = claim(temp.path(), RunMode::Step);
+        let session_id = SessionId::new();
+        let fence = Fence(1);
+        let source = cursor(WalkPhase::R7, "legacy-recovery-r7");
+        let live_intent =
+            AttemptIntent::with_live_api(session_id, source.clone(), false, request.epoch.clone())
+                .expect("legacy recovery intent");
+        let epoch = EpochReceipt {
+            before: live_intent.epoch.clone(),
+            after: Some(live_intent.epoch.clone()),
+        };
+        let evidence = CursorEvidence::new(
+            session_id,
+            &request.parent,
+            &request.profile,
+            &live_intent,
+            WalkPhase::R8,
+            &ContentHash::of("legacy recovery witness"),
+            &epoch,
+        )
+        .expect("construct cursor evidence");
+        let result = AttemptResult::Cancelled {
+            phase: WalkPhase::R7,
+            evidence: source.evidence.clone(),
+            detail: "legacy recovery cancelled before commit".to_string(),
+        };
+        for (schema, cursor) in [
+            (SCHEMA_VERSION_V1, None),
+            (SCHEMA_VERSION_V2, Some(source.clone())),
+        ] {
+            let intent = if schema == SCHEMA_VERSION_V1 {
+                live_intent.clone()
+            } else {
+                let targets = current_targets(source.phase, false);
+                AttemptIntent {
+                    transition_id: transition_id(
+                        session_id,
+                        &source,
+                        &targets,
+                        false,
+                        false,
+                        &request.epoch.transition_graph_version,
+                        0,
+                    )
+                    .expect("v2 transition id"),
+                    expected: source.phase,
+                    targets,
+                    allow_live_api: false,
+                    allow_git_changes: false,
+                    epoch: request.epoch.clone(),
+                    evidence: source.evidence.clone(),
+                    retry: 0,
+                }
+            };
+            let transition_id = intent.transition_id;
+            let acceptance = handoff_acceptance(PredecessorAttempt::new(
+                session_id,
+                transition_id,
+                fence,
+                intent.allow_live_api,
+                intent.allow_git_changes,
+            ));
+            let prefix = vec![
+                Entry::Created {
+                    schema_version: schema.to_string(),
+                    session_id,
+                    origin: request.origin.clone(),
+                    parent: request.parent.clone(),
+                    profile: request.profile.clone(),
+                    mode: request.mode,
+                    cursor,
+                    recorded_at: RecordedAt::now(),
+                },
+                Entry::Acquired {
+                    session_id,
+                    fence,
+                    epoch: request.epoch.clone(),
+                    runtime_id: None,
+                    pid: 4242,
+                    incarnation: None,
+                    recorded_at: RecordedAt::now(),
+                },
+                Entry::Began {
+                    session_id,
+                    fence,
+                    intent: intent.clone(),
+                    recorded_at: RecordedAt::now(),
+                },
+            ];
+            let mut cases = vec![
+                (
+                    RecoveryResolution::ResolveAttempt {
+                        transition_id,
+                        result: result.clone(),
+                        evidence: Some(evidence.clone()),
+                        epoch: (schema == SCHEMA_VERSION_V2).then(|| epoch.clone()),
+                    },
+                    "cursor evidence",
+                ),
+                (
+                    RecoveryResolution::AbandonSession {
+                        detail: "operator abandoned legacy session".to_string(),
+                    },
+                    "current session schema",
+                ),
+                (
+                    RecoveryResolution::AcceptHandoff {
+                        acceptance: acceptance.clone(),
+                        result: AttemptResult::Committed {
+                            phase: WalkPhase::R13b,
+                            evidence: ContentHash::of("legacy handoff result"),
+                        },
+                        evidence: None,
+                        epoch: epoch.clone(),
+                    },
+                    "current session schema",
+                ),
+            ];
+            if schema == SCHEMA_VERSION_V1 {
+                cases.push((
+                    RecoveryResolution::ResolveAttempt {
+                        transition_id,
+                        result: result.clone(),
+                        evidence: None,
+                        epoch: Some(epoch.clone()),
+                    },
+                    "epoch receipt",
+                ));
+            } else {
+                cases.push((
+                    RecoveryResolution::ResolveAttempt {
+                        transition_id,
+                        result: result.clone(),
+                        evidence: None,
+                        epoch: None,
+                    },
+                    "epoch",
+                ));
+            }
+
+            for (resolution, expected) in cases {
+                let mut entries = prefix.clone();
+                entries.push(Entry::Recovered {
+                    session_id,
+                    fence,
+                    resolution,
+                    recorded_at: RecordedAt::now(),
+                });
+                let lines = numbered(entries);
+                assert!(
+                    matches!(
+                        Replay::from_lines(&lines),
+                        Err(Damage::Sequence { detail, .. }) if detail.contains(expected)
+                    ),
+                    "{schema} authoritative replay must reject {expected}"
+                );
+                let history =
+                    history_from_lines(&lines, Some(source.clone()), request.epoch.clone());
+                assert!(
+                    history_error(&history).contains(expected),
+                    "{schema} public replay must reject {expected}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -7176,6 +8275,69 @@ mode = "continuous"
             snapshot.attempts.as_slice(),
             [Attempt::Pending { intent, .. }] if intent.transition_id == transition_id
         ));
+        let history = store
+            .inspect_history(&parent(), epoch(temp.path()))
+            .expect("inspect abandoned history")
+            .expect("abandoned history");
+        assert_eq!(
+            history.version.journal_revision(),
+            snapshot.journal_revision
+        );
+        assert_eq!(
+            history.journal_path.as_deref(),
+            Some(store.paths(&parent()).journal())
+        );
+        assert!(matches!(
+            &history.origin,
+            Some(WalkSessionOrigin::Historical { .. })
+        ));
+        assert_eq!(
+            history
+                .profile
+                .as_ref()
+                .map(|commitment| commitment.sha256.as_str()),
+            Some(profile().sha256.as_str())
+        );
+        assert_eq!(
+            history
+                .abandonment
+                .as_ref()
+                .map(|state| state.detail.as_str()),
+            Some("provider effect cannot be proven absent")
+        );
+        assert_eq!(
+            history
+                .events
+                .iter()
+                .map(|event| event.revision)
+                .collect::<Vec<_>>(),
+            (1..=history.events.len()).collect::<Vec<_>>()
+        );
+        assert!(history.events.iter().all(|event| event.recorded_at_ms > 0));
+        assert!(history.events.iter().any(|event| matches!(
+            &event.kind,
+            WalkSessionEventKind::AttemptBegan { intent, .. }
+                if intent.transition_id == transition_id
+        )));
+        assert!(matches!(
+            history.events.last().map(|event| &event.kind),
+            Some(WalkSessionEventKind::Recovered {
+                resolution: WalkRecoveryResolution::AbandonSession { detail },
+                ..
+            }) if detail == "provider effect cannot be proven absent"
+        ));
+        let mut legacy = history.clone();
+        let WalkSessionEventKind::Created { schema_version, .. } = &mut legacy.events[0].kind
+        else {
+            panic!("first event must be session creation");
+        };
+        *schema_version = SCHEMA_VERSION_V3.to_string();
+        let error = serde_json::from_value::<WalkSessionHistory>(
+            serde_json::to_value(legacy).expect("serialize forged v3 history"),
+        )
+        .expect_err("v3 history must reject current-schema abandonment authority")
+        .to_string();
+        assert!(error.contains("requires the current session schema"));
         assert!(matches!(
             store.claim(request).expect("probe abandoned session"),
             Outcome::Conflict(Conflict::Abandoned { .. })
@@ -7441,7 +8603,7 @@ mode = "continuous"
             .intent_with_live_api(true, false)
             .expect("valid live transition intent");
         let transition_id = intent.transition_id;
-        let epoch = same_epoch(&intent.epoch);
+        let transition_epoch = same_epoch(&intent.epoch);
         let pending = match owner.begin(intent).expect("begin") {
             Begin::Started { lease, .. } => lease,
             Begin::Existing { .. } => panic!("new transition should start"),
@@ -7463,7 +8625,7 @@ mode = "continuous"
                     evidence: ContentHash::of("recovered-r8"),
                 },
                 evidence: None,
-                epoch,
+                epoch: transition_epoch,
             })
             .expect("resolve committed attempt");
         let owner = recovery.take_over().expect("take over recovered session");
@@ -7485,7 +8647,435 @@ mode = "continuous"
             .cursor()
             .expect("hash recovered certificate");
         assert_eq!(receipt_cursor, committed_cursor);
+        let history = store
+            .inspect_history(&parent(), epoch(temp.path()))
+            .expect("inspect recovered history")
+            .expect("recovered history");
+        let began = history.events.iter().position(|event| {
+            matches!(
+                &event.kind,
+                WalkSessionEventKind::AttemptBegan { intent, .. }
+                    if intent.transition_id == transition_id
+            )
+        });
+        let recovered = history.events.iter().position(|event| {
+            matches!(
+                &event.kind,
+                WalkSessionEventKind::Recovered {
+                    resolution: WalkRecoveryResolution::ResolveAttempt {
+                        transition_id: recorded,
+                        evidence: Some(_),
+                        ..
+                    },
+                    ..
+                } if *recorded == transition_id
+            )
+        });
+        assert!(
+            began
+                .zip(recovered)
+                .is_some_and(|(began, recovered)| began < recovered)
+        );
+        let encoded = serde_json::to_vec(&history).expect("serialize recovered history");
+        let decoded: WalkSessionHistory =
+            serde_json::from_slice(&encoded).expect("deserialize recovered history");
+        assert_eq!(decoded, history);
         owner.release().expect("release recovered owner");
+    }
+
+    #[test]
+    fn session_history_projects_creation_acquisition_and_release() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = Store::new(temp.path().join("control"));
+        let request = claim(temp.path(), RunMode::Step);
+        let origin = walk_origin(&request.origin);
+        let selected = request.parent.record().clone();
+        let commitment = profile_record(&request.profile);
+        let initial = walk_cursor(&request.cursor);
+        let acquired_epoch = request.epoch.clone();
+        let pid = request.pid;
+        let incarnation = request.incarnation.clone();
+        let owner = acquired(store.claim(request).expect("owner claim"));
+        let session_id = owner.session_id();
+        let fence = owner.fence().get();
+        owner.release().expect("release owner");
+
+        let history = store
+            .inspect_history(&parent(), epoch(temp.path()))
+            .expect("inspect history")
+            .expect("session history");
+
+        assert_eq!(history.events.len(), 3);
+        assert_eq!(
+            history
+                .events
+                .iter()
+                .map(|event| (event.revision, event.session_id))
+                .collect::<Vec<_>>(),
+            vec![(1, session_id), (2, session_id), (3, session_id)]
+        );
+        assert!(matches!(
+            &history.events[0].kind,
+            WalkSessionEventKind::Created {
+                schema_version,
+                origin: recorded_origin,
+                parent: recorded_parent,
+                profile: recorded_profile,
+                mode: WalkRunMode::Step,
+                cursor: Some(recorded_cursor),
+            } if schema_version == SCHEMA_VERSION
+                && recorded_origin == &origin
+                && recorded_parent == &selected
+                && recorded_profile == &commitment
+                && recorded_cursor == &initial
+        ));
+        assert!(matches!(
+            &history.events[1].kind,
+            WalkSessionEventKind::Acquired {
+                fence: recorded_fence,
+                epoch: recorded_epoch,
+                runtime_id: None,
+                pid: recorded_pid,
+                incarnation: recorded_incarnation,
+            } if *recorded_fence == fence
+                && recorded_epoch == &acquired_epoch
+                && *recorded_pid == pid
+                && recorded_incarnation == &incarnation
+        ));
+        assert!(matches!(
+            &history.events[2].kind,
+            WalkSessionEventKind::Released {
+                fence: recorded_fence,
+                ready: None,
+            } if *recorded_fence == fence
+        ));
+    }
+
+    #[test]
+    fn session_history_rejects_projection_drift() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = Store::new(temp.path().join("control"));
+        acquired(
+            store
+                .claim(claim(temp.path(), RunMode::Step))
+                .expect("owner claim"),
+        )
+        .release()
+        .expect("release owner");
+        let history = store
+            .inspect_history(&parent(), epoch(temp.path()))
+            .expect("inspect history")
+            .expect("session history");
+        let decode_error = |history: &WalkSessionHistory| {
+            serde_json::from_value::<WalkSessionHistory>(
+                serde_json::to_value(history).expect("serialize tampered history"),
+            )
+            .expect_err("tampered history must be rejected")
+            .to_string()
+        };
+
+        let mut changed = history.clone();
+        changed.events[1].revision += 1;
+        assert!(decode_error(&changed).contains("event revision"));
+
+        let mut changed = history.clone();
+        changed.events[1].session_id = SessionId::new();
+        assert!(decode_error(&changed).contains("changed session id"));
+
+        let mut changed = history.clone();
+        let WalkSessionEventKind::Acquired { incarnation, .. } = &mut changed.events[1].kind else {
+            panic!("second event must be an acquisition");
+        };
+        *incarnation = None;
+        assert!(decode_error(&changed).contains("has no process incarnation"));
+
+        let mut changed = history.clone();
+        changed.origin = Some(WalkSessionOrigin::Historical {
+            source: ContentHash::of("different history origin"),
+        });
+        assert!(decode_error(&changed).contains("origin"));
+
+        let mut changed = history.clone();
+        changed
+            .profile
+            .as_mut()
+            .expect("profile summary")
+            .sha256
+            .push('0');
+        assert!(decode_error(&changed).contains("profile"));
+
+        let mut changed = history.clone();
+        changed.version.cursor = None;
+        assert!(decode_error(&changed).contains("cursor"));
+
+        let mut changed = history.clone();
+        changed.abandonment = Some(WalkSessionAbandonment {
+            detail: "invented abandonment".to_string(),
+        });
+        assert!(decode_error(&changed).contains("abandonment"));
+
+        let mut changed = history.clone();
+        changed.damage = Some(WalkSessionDamage::Malformed {
+            line: changed.events.len() + 2,
+            detail: "invented damage".to_string(),
+        });
+        assert!(decode_error(&changed).contains("tail-damaged"));
+
+        let mut changed = history.clone();
+        changed.version.journal_revision += 1;
+        assert!(decode_error(&changed).contains("undamaged"));
+
+        let mut value = serde_json::to_value(&history).expect("serialize history");
+        value
+            .as_object_mut()
+            .expect("history object")
+            .insert("unexpected".to_string(), serde_json::json!(true));
+        let error = serde_json::from_value::<WalkSessionHistory>(value)
+            .expect_err("unknown history field must be rejected")
+            .to_string();
+        assert!(error.contains("unknown field"));
+        assert!(error.contains("unexpected"));
+    }
+
+    #[test]
+    fn session_history_rejects_impossible_attempt_sequence() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = Store::new(temp.path().join("control"));
+        let owner = acquired(
+            store
+                .claim(claim(temp.path(), RunMode::Step))
+                .expect("owner claim"),
+        );
+        let intent = owner
+            .intent_with_live_api(true, false)
+            .expect("valid live intent");
+        let transition_id = intent.transition_id;
+        let pending = match owner.begin(intent).expect("begin attempt") {
+            Begin::Started { lease, .. } => lease,
+            Begin::Existing { .. } => panic!("fresh attempt must start"),
+        };
+        let finished = pending
+            .finish(AttemptResult::Committed {
+                phase: WalkPhase::R8,
+                evidence: ContentHash::of("history-r8-witness"),
+            })
+            .expect("finish attempt");
+        let Finished::Terminal { lease, .. } = finished else {
+            panic!("committed attempt must restore idle authority");
+        };
+        lease.release().expect("release owner");
+        let history = store
+            .inspect_history(&parent(), epoch(temp.path()))
+            .expect("inspect history")
+            .expect("session history");
+        let decode_error = |history: &WalkSessionHistory| {
+            serde_json::from_value::<WalkSessionHistory>(
+                serde_json::to_value(history).expect("serialize tampered history"),
+            )
+            .expect_err("tampered history must be rejected")
+            .to_string()
+        };
+
+        let mut missing_began = history.clone();
+        missing_began.events.retain(|event| {
+            !matches!(
+                &event.kind,
+                WalkSessionEventKind::AttemptBegan { intent, .. }
+                    if intent.transition_id == transition_id
+            )
+        });
+        for (index, event) in missing_began.events.iter_mut().enumerate() {
+            event.revision = index + 1;
+        }
+        missing_began.version.journal_revision = missing_began.events.len();
+        assert!(decode_error(&missing_began).contains("finished without a pending attempt"));
+
+        let mut changed_fence = history;
+        let receipt = changed_fence
+            .events
+            .iter_mut()
+            .find_map(|event| match &mut event.kind {
+                WalkSessionEventKind::AttemptFinished { receipt }
+                    if receipt.transition_id == transition_id =>
+                {
+                    Some(receipt)
+                }
+                _ => None,
+            })
+            .expect("finished receipt");
+        receipt.fence += 1;
+        assert!(decode_error(&changed_fence).contains("active fence"));
+    }
+
+    #[test]
+    fn both_replays_reject_a_second_unresolved_attempt() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let request = claim(temp.path(), RunMode::Step);
+        let session_id = SessionId::new();
+        let fence = Fence(1);
+        let source = request.cursor.clone();
+        let first = AttemptIntent::with_retry(
+            session_id,
+            source.clone(),
+            true,
+            false,
+            request.epoch.clone(),
+            0,
+        )
+        .expect("first attempt intent");
+        let second = AttemptIntent::with_retry(
+            session_id,
+            source.clone(),
+            true,
+            false,
+            request.epoch.clone(),
+            1,
+        )
+        .expect("second attempt intent");
+
+        for result in [
+            None,
+            Some(AttemptResult::Indeterminate {
+                phase: None,
+                evidence: None,
+                detail: "first attempt remains indeterminate".to_string(),
+            }),
+        ] {
+            let mut entries = vec![
+                Entry::Created {
+                    schema_version: SCHEMA_VERSION.to_string(),
+                    session_id,
+                    origin: request.origin.clone(),
+                    parent: request.parent.clone(),
+                    profile: request.profile.clone(),
+                    mode: request.mode,
+                    cursor: Some(source.clone()),
+                    recorded_at: RecordedAt::now(),
+                },
+                Entry::Acquired {
+                    session_id,
+                    fence,
+                    epoch: request.epoch.clone(),
+                    runtime_id: None,
+                    pid: request.pid,
+                    incarnation: request.incarnation.clone(),
+                    recorded_at: RecordedAt::now(),
+                },
+                Entry::Began {
+                    session_id,
+                    fence,
+                    intent: first.clone(),
+                    recorded_at: RecordedAt::now(),
+                },
+            ];
+            if let Some(result) = result {
+                entries.push(Entry::Finished {
+                    session_id,
+                    transition_id: first.transition_id,
+                    fence,
+                    result,
+                    evidence: None,
+                    epoch: same_epoch(&first.epoch),
+                    recorded_at: RecordedAt::now(),
+                });
+            }
+            entries.push(Entry::Began {
+                session_id,
+                fence,
+                intent: second.clone(),
+                recorded_at: RecordedAt::now(),
+            });
+            let lines = numbered(entries);
+            assert!(matches!(
+                Replay::from_lines(&lines),
+                Err(Damage::Sequence { detail, .. }) if detail.contains("second unresolved")
+            ));
+            let history = history_from_lines(&lines, Some(source.clone()), request.epoch.clone());
+            assert!(history_error(&history).contains("second unresolved"));
+        }
+    }
+
+    #[test]
+    fn session_history_projects_epoch_admission() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        init_repo(temp.path());
+        let store = Store::new(temp.path().join("control"));
+        let request = claim(temp.path(), RunMode::Step);
+        let prior = request.epoch.clone();
+        acquired(store.claim(request).expect("owner claim"))
+            .release()
+            .expect("release owner");
+
+        fs::write(temp.path().join("Cargo.toml"), "[workspace]\n")
+            .expect("change guarded source epoch");
+        let next_request = claim(temp.path(), RunMode::Step);
+        let next = next_request.epoch.clone();
+        assert_ne!(next, prior);
+        let recovery = match store.claim(next_request).expect("claim changed epoch") {
+            Outcome::Recoverable(recovery) => recovery,
+            other => panic!("expected epoch recovery, got {other:?}"),
+        };
+        assert!(matches!(
+            recovery.cause(),
+            Some(RecoveryCause::EpochChanged {
+                prior: recorded_prior,
+                requested,
+                ..
+            }) if recorded_prior == &prior && requested == &next
+        ));
+        recovery.admit_epoch().expect("admit exact current epoch");
+
+        let history = store
+            .inspect_history(&parent(), next.clone())
+            .expect("inspect epoch history")
+            .expect("session history");
+        assert!(matches!(
+            history.events.last().map(|event| &event.kind),
+            Some(WalkSessionEventKind::EpochAdmitted {
+                prior: recorded_prior,
+                next: recorded_next,
+            }) if recorded_prior == &prior && recorded_next == &next
+        ));
+    }
+
+    #[test]
+    fn walk_session_event_rejects_unknown_fields() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = Store::new(temp.path().join("control"));
+        acquired(
+            store
+                .claim(claim(temp.path(), RunMode::Step))
+                .expect("owner claim"),
+        )
+        .release()
+        .expect("release owner");
+        let history = store
+            .inspect_history(&parent(), epoch(temp.path()))
+            .expect("inspect history")
+            .expect("session history");
+        let event = history.events.first().expect("created event");
+
+        let mut outer = serde_json::to_value(event).expect("serialize event");
+        outer
+            .as_object_mut()
+            .expect("event object")
+            .insert("unexpected".to_string(), serde_json::json!(true));
+        let outer_error = serde_json::from_value::<WalkSessionEvent>(outer)
+            .expect_err("outer unknown field must be rejected")
+            .to_string();
+        assert!(outer_error.contains("unknown field"));
+        assert!(outer_error.contains("unexpected"));
+
+        let mut inner = serde_json::to_value(event).expect("serialize event");
+        inner["kind"]
+            .as_object_mut()
+            .expect("event-kind object")
+            .insert("unexpected".to_string(), serde_json::json!(true));
+        let inner_error = serde_json::from_value::<WalkSessionEvent>(inner)
+            .expect_err("inner unknown field must be rejected")
+            .to_string();
+        assert!(inner_error.contains("unknown field"));
+        assert!(inner_error.contains("unexpected"));
     }
 
     #[test]
@@ -7950,6 +9540,222 @@ mode = "continuous"
     }
 
     #[test]
+    fn public_replay_retains_finished_epoch_receipts() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let request = claim(temp.path(), RunMode::Step);
+        let session_id = SessionId::new();
+        let fence = Fence(1);
+        let source = request.cursor.clone();
+        let intent =
+            AttemptIntent::with_live_api(session_id, source.clone(), false, request.epoch.clone())
+                .expect("recovery intent");
+        let recorded = EpochReceipt {
+            before: intent.epoch.clone(),
+            after: Some(intent.epoch.clone()),
+        };
+        let resolution = RecoveryResolution::ResolveAttempt {
+            transition_id: intent.transition_id,
+            result: AttemptResult::Cancelled {
+                phase: source.phase,
+                evidence: source.evidence.clone(),
+                detail: "reconstruction found no committed target".to_string(),
+            },
+            evidence: None,
+            epoch: Some(recorded.clone()),
+        };
+        let lines = numbered(vec![
+            Entry::Created {
+                schema_version: SCHEMA_VERSION.to_string(),
+                session_id,
+                origin: request.origin.clone(),
+                parent: request.parent.clone(),
+                profile: request.profile.clone(),
+                mode: request.mode,
+                cursor: Some(source.clone()),
+                recorded_at: RecordedAt::now(),
+            },
+            Entry::Acquired {
+                session_id,
+                fence,
+                epoch: request.epoch.clone(),
+                runtime_id: None,
+                pid: request.pid,
+                incarnation: request.incarnation.clone(),
+                recorded_at: RecordedAt::now(),
+            },
+            Entry::Began {
+                session_id,
+                fence,
+                intent: intent.clone(),
+                recorded_at: RecordedAt::now(),
+            },
+            Entry::Finished {
+                session_id,
+                transition_id: intent.transition_id,
+                fence,
+                result: AttemptResult::Indeterminate {
+                    phase: None,
+                    evidence: None,
+                    detail: "effect boundary remained uncertain".to_string(),
+                },
+                evidence: None,
+                epoch: Some(recorded),
+                recorded_at: RecordedAt::now(),
+            },
+            Entry::Recovered {
+                session_id,
+                fence,
+                resolution,
+                recorded_at: RecordedAt::now(),
+            },
+        ]);
+        Replay::from_lines(&lines).expect("matching recovery must replay");
+        let history = history_from_lines(&lines, Some(source.clone()), request.epoch.clone());
+        serde_json::from_value::<WalkSessionHistory>(
+            serde_json::to_value(&history).expect("serialize valid history"),
+        )
+        .expect("matching public recovery must replay");
+
+        let mut changed = history;
+        let observed = changed
+            .events
+            .iter_mut()
+            .find_map(|event| match &mut event.kind {
+                WalkSessionEventKind::Recovered {
+                    resolution: WalkRecoveryResolution::ResolveAttempt { epoch, .. },
+                    ..
+                } => epoch.as_mut(),
+                _ => None,
+            })
+            .expect("projected recovery epoch");
+        let mut after = observed.after.clone().expect("recorded after epoch");
+        after.git_head = Some("contradicting-observation".to_string());
+        observed.after = Some(after);
+        assert!(history_error(&changed).contains("contradicted"));
+    }
+
+    #[test]
+    fn public_handoff_recovery_binds_the_actual_recovery_cause() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let request = claim_at(
+            temp.path(),
+            RunMode::Continuous,
+            cursor(WalkPhase::R12, "handoff-r12"),
+        );
+        let session_id = SessionId::new();
+        let fence = Fence(1);
+        let source = request.cursor.clone();
+        let intent =
+            AttemptIntent::with_live_api(session_id, source.clone(), true, request.epoch.clone())
+                .expect("handoff intent");
+        let epoch = EpochReceipt {
+            before: intent.epoch.clone(),
+            after: Some(intent.epoch.clone()),
+        };
+        let evidence = CursorEvidence::new(
+            session_id,
+            &request.parent,
+            &request.profile,
+            &intent,
+            WalkPhase::R13b,
+            &ContentHash::of("handoff witness"),
+            &epoch,
+        )
+        .expect("handoff cursor evidence");
+        let target = evidence.cursor().expect("handoff target cursor");
+        let result = AttemptResult::Committed {
+            phase: WalkPhase::R13b,
+            evidence: target.evidence.clone(),
+        };
+        let acceptance = handoff_acceptance(PredecessorAttempt::new(
+            session_id,
+            intent.transition_id,
+            fence,
+            intent.allow_live_api,
+            intent.allow_git_changes,
+        ));
+        let resolution = RecoveryResolution::AcceptHandoff {
+            acceptance,
+            result: result.clone(),
+            evidence: Some(evidence.clone()),
+            epoch: epoch.clone(),
+        };
+        let mut entries = vec![
+            Entry::Created {
+                schema_version: SCHEMA_VERSION.to_string(),
+                session_id,
+                origin: request.origin.clone(),
+                parent: request.parent.clone(),
+                profile: request.profile.clone(),
+                mode: request.mode,
+                cursor: Some(source),
+                recorded_at: RecordedAt::now(),
+            },
+            Entry::Acquired {
+                session_id,
+                fence,
+                epoch: request.epoch.clone(),
+                runtime_id: None,
+                pid: request.pid,
+                incarnation: request.incarnation.clone(),
+                recorded_at: RecordedAt::now(),
+            },
+            Entry::Began {
+                session_id,
+                fence,
+                intent: intent.clone(),
+                recorded_at: RecordedAt::now(),
+            },
+            Entry::Finished {
+                session_id,
+                transition_id: intent.transition_id,
+                fence,
+                result,
+                evidence: Some(evidence),
+                epoch: Some(epoch),
+                recorded_at: RecordedAt::now(),
+            },
+        ];
+        let mut exact = entries.clone();
+        exact.push(Entry::Recovered {
+            session_id,
+            fence,
+            resolution: resolution.clone(),
+            recorded_at: RecordedAt::now(),
+        });
+        let exact = numbered(exact);
+        Replay::from_lines(&exact).expect("exact finished handoff must recertify owner loss");
+        let history = history_from_lines(&exact, Some(target.clone()), request.epoch.clone());
+        serde_json::from_value::<WalkSessionHistory>(
+            serde_json::to_value(&history).expect("serialize exact handoff history"),
+        )
+        .expect("public replay must accept exact finished handoff recertification");
+
+        let unresolved =
+            AttemptIntent::new(session_id, target.clone(), false, request.epoch.clone())
+                .expect("later unresolved intent");
+        entries.push(Entry::Began {
+            session_id,
+            fence,
+            intent: unresolved,
+            recorded_at: RecordedAt::now(),
+        });
+        entries.push(Entry::Recovered {
+            session_id,
+            fence,
+            resolution,
+            recorded_at: RecordedAt::now(),
+        });
+        let mismatched = numbered(entries);
+        assert!(matches!(
+            Replay::from_lines(&mismatched),
+            Err(Damage::Sequence { .. })
+        ));
+        let history = history_from_lines(&mismatched, Some(target), request.epoch.clone());
+        assert!(history_error(&history).contains("handoff does not match transition"));
+    }
+
+    #[test]
     fn current_graph_replay_rejects_self_declared_target() {
         let temp = tempfile::tempdir().expect("tempdir");
         let store = Store::new(temp.path().join("control"));
@@ -8030,6 +9836,115 @@ mode = "continuous"
                 cause: Some(RecoveryCause::Journal(Damage::Sequence { .. })),
                 ..
             })
+        ));
+    }
+
+    #[test]
+    fn session_history_returns_valid_prefix_on_sequence_damage() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = Store::new(temp.path().join("control"));
+        let owner = acquired(
+            store
+                .claim(claim(temp.path(), RunMode::Step))
+                .expect("owner claim"),
+        );
+        let mismatch = AttemptIntent::new(
+            owner.session_id(),
+            cursor(WalkPhase::R6, "mismatched-r6"),
+            false,
+            owner.epoch().clone(),
+        )
+        .expect("valid mismatched intent");
+        append_entry(
+            owner.paths().journal(),
+            &Entry::Began {
+                session_id: owner.session_id(),
+                fence: owner.fence(),
+                intent: mismatch,
+                recorded_at: RecordedAt::now(),
+            },
+            &owner.head,
+        )
+        .expect("stage mismatched durable cursor");
+        drop(owner);
+
+        let history = store
+            .inspect_history(&parent(), epoch(temp.path()))
+            .expect("sequence damage remains inspectable")
+            .expect("session history");
+
+        assert_eq!(history.version.journal_revision(), 3);
+        assert_eq!(history.events.len(), 2);
+        assert!(matches!(
+            history.damage,
+            Some(WalkSessionDamage::Sequence { line: 3, .. })
+        ));
+        assert!(
+            history
+                .events
+                .iter()
+                .all(|event| !matches!(&event.kind, WalkSessionEventKind::AttemptBegan { .. }))
+        );
+    }
+
+    #[test]
+    fn session_history_does_not_commit_rejected_v1_cursor() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = Store::new(temp.path().join("control"));
+        let request = claim(temp.path(), RunMode::Step);
+        let session_id = SessionId::new();
+        let fence = Fence(1);
+        let acquired_epoch = request.epoch.clone();
+        let mut wrong_epoch = acquired_epoch.clone();
+        wrong_epoch.protocol_version += 1;
+        let intent = AttemptIntent::new(
+            session_id,
+            cursor(WalkPhase::R0, "rejected-v1-cursor"),
+            false,
+            wrong_epoch,
+        )
+        .expect("valid wrong-epoch intent");
+        let entries = [
+            Entry::Created {
+                schema_version: SCHEMA_VERSION_V1.to_string(),
+                session_id,
+                origin: request.origin.clone(),
+                parent: request.parent.clone(),
+                profile: request.profile.clone(),
+                mode: request.mode,
+                cursor: None,
+                recorded_at: RecordedAt::now(),
+            },
+            Entry::Acquired {
+                session_id,
+                fence,
+                epoch: acquired_epoch,
+                runtime_id: None,
+                pid: 4242,
+                incarnation: None,
+                recorded_at: RecordedAt::now(),
+            },
+            Entry::Began {
+                session_id,
+                fence,
+                intent,
+                recorded_at: RecordedAt::now(),
+            },
+        ];
+        write_entries(store.paths(&request.parent).journal(), &entries);
+
+        let history = store
+            .inspect_history(&request.parent, request.epoch)
+            .expect("damaged v1 history remains inspectable")
+            .expect("v1 session history");
+
+        assert_eq!(history.version.journal_revision(), 3);
+        assert_eq!(history.events.len(), 2);
+        assert_eq!(history.version.cursor(), None);
+        assert!(matches!(
+            history.damage,
+            Some(WalkSessionDamage::Sequence { line: 3, ref detail })
+                if detail.contains("different controller epoch")
         ));
     }
 
@@ -8285,6 +10200,35 @@ mode = "continuous"
             })
             .collect::<Vec<_>>();
         assert_eq!(ids, vec![first_id, second_id]);
+        let history = store
+            .inspect_history(&parent(), epoch(temp.path()))
+            .expect("inspect ordered history")
+            .expect("ordered history");
+        let public_ids = history
+            .events
+            .iter()
+            .filter_map(|event| match &event.kind {
+                WalkSessionEventKind::AttemptBegan { intent, .. } => Some(intent.transition_id),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(public_ids, vec![first_id, second_id]);
+        let receipts = history
+            .events
+            .iter()
+            .filter_map(|event| match &event.kind {
+                WalkSessionEventKind::AttemptFinished { receipt, .. } => {
+                    Some(receipt.transition_id)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(receipts, vec![first_id, second_id]);
+        assert_eq!(history.version.cursor(), snapshot.cursor.as_ref());
+        assert_eq!(
+            history.version.journal_revision(),
+            snapshot.journal_revision
+        );
         let receipt = snapshot
             .attempts
             .last()
@@ -8334,11 +10278,24 @@ mode = "continuous"
         ));
         let repaired = recovery.repair_tail(&hash).expect("repair exact tail");
         assert_eq!(fs::read(&repaired.evidence).expect("tail evidence"), tail);
+        let evidence_path = repaired.evidence.clone();
         let recovery = repaired.lease;
         assert!(recovery.cause().is_none());
         let next = recovery.take_over().expect("take over repaired journal");
         assert_eq!(next.fence().get(), 2);
         next.release().expect("release repaired owner");
+
+        let history = store
+            .inspect_history(&parent(), epoch(temp.path()))
+            .expect("inspect repaired history")
+            .expect("session history");
+        assert!(history.events.iter().any(|event| matches!(
+            &event.kind,
+            WalkSessionEventKind::TailRepaired {
+                discarded,
+                evidence_path: recorded_path,
+            } if discarded == &hash && recorded_path == &evidence_path
+        )));
     }
 
     #[test]
@@ -8406,6 +10363,7 @@ mode = "continuous"
         let fence = owner.fence();
         let committed = owner.cursor().clone();
         let ready = ready_receipt(&owner, runtime);
+        let expected_ready = walk_ready(&ready);
         owner
             .release_ready(ready.clone())
             .expect("atomically release Ready");
@@ -8437,6 +10395,17 @@ mode = "continuous"
                 .expect("Ready is persisted"),
             &ready
         );
+        let history = store
+            .inspect_history(&parent(), epoch(temp.path()))
+            .expect("inspect Ready history")
+            .expect("session history");
+        assert!(matches!(
+            history.events.last().map(|event| &event.kind),
+            Some(WalkSessionEventKind::Released {
+                fence: recorded_fence,
+                ready: Some(recorded_ready),
+            }) if *recorded_fence == fence.get() && recorded_ready == &expected_ready
+        ));
     }
 
     #[test]
@@ -8807,6 +10776,19 @@ mode = "continuous"
                     .accepted_handoff(&parent(), &acceptance)
                     .expect("validate recovered committed transfer")
             );
+            let history = store
+                .inspect_history(&parent(), epoch(temp.path()))
+                .expect("inspect recovered handoff history")
+                .expect("recovered handoff history");
+            let decoded: WalkSessionHistory = serde_json::from_value(
+                serde_json::to_value(&history).expect("serialize recovered handoff history"),
+            )
+            .expect("decode recovered handoff history");
+            assert_eq!(
+                decoded.version.cursor().map(Cursor::phase),
+                Some(final_phase),
+                "public history must preserve a later committed cursor"
+            );
         }
     }
 
@@ -8888,6 +10870,40 @@ mode = "continuous"
             snapshot
                 .accepted_handoff(&parent(), &acceptance)
                 .expect("exact committed and released handoff is accepted")
+        );
+        let history = store
+            .inspect_history(&parent(), epoch(temp.path()))
+            .expect("inspect released handoff history")
+            .expect("session history");
+        let finished = history.events.iter().position(|event| {
+            matches!(
+                &event.kind,
+                WalkSessionEventKind::AttemptFinished { receipt }
+                    if receipt.transition_id == attempt.transition()
+                        && receipt.fence == fence.get()
+                        && matches!(
+                            &receipt.result,
+                            WalkAttemptResult::Committed {
+                                phase: WalkPhase::R13b,
+                                ..
+                            }
+                        )
+            )
+        });
+        let released = history.events.iter().position(|event| {
+            matches!(
+                &event.kind,
+                WalkSessionEventKind::Released {
+                    fence: recorded_fence,
+                    ready: None,
+                } if *recorded_fence == fence.get()
+            )
+        });
+        assert!(
+            finished
+                .zip(released)
+                .is_some_and(|(finished, released)| finished < released),
+            "handoff release must follow its exact committed predecessor attempt"
         );
 
         let mut next = request.with_pid(4_343);

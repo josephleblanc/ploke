@@ -6,7 +6,9 @@ use std::time::Instant;
 use ploke_protocol::tool_calls::trace;
 use ploke_protocol::tool_calls::trace::NeighborhoodSource;
 use ploke_protocol::tool_calls::{review, segment};
-use ploke_records::llm_response::{FULL_RESPONSE_TRACE_FILE, RawFullResponseRecord};
+use ploke_records::llm_response::{
+    FULL_RESPONSE_TRACE_FILE, RawFullResponseRecord, decode_full_response_records,
+};
 use ploke_records::tool_contracts::{
     PersistedToolCallArguments, ToolArgumentDecodeError, ToolArgumentParseFailure,
     ToolArgumentsJson, ToolCallArguments,
@@ -3560,21 +3562,17 @@ fn load_full_response_records_for_turn(
         path: path.to_path_buf(),
         source,
     })?;
-    let mut responses = Vec::new();
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let record: RawFullResponseRecord =
-            serde_json::from_str(trimmed).map_err(|source| PrepareError::ParseManifest {
-                path: path.to_path_buf(),
-                source,
-            })?;
-        if record.matches_assistant_message(assistant_message_id) {
-            responses.push(record);
-        }
-    }
+    let mut responses = decode_full_response_records(&text)
+        .map_err(|error| PrepareError::DatabaseSetup {
+            phase: "inspect_turn",
+            detail: format!(
+                "parse provider response sidecar '{}': {error}",
+                path.display()
+            ),
+        })?
+        .into_iter()
+        .filter(|record| record.matches_assistant_message(assistant_message_id))
+        .collect::<Vec<_>>();
     responses.sort_by_key(|record| record.response_index());
     Ok(responses)
 }
@@ -3586,19 +3584,14 @@ fn load_all_full_response_records(
         path: path.to_path_buf(),
         source,
     })?;
-    let mut responses = Vec::new();
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let record: RawFullResponseRecord =
-            serde_json::from_str(trimmed).map_err(|source| PrepareError::ParseManifest {
-                path: path.to_path_buf(),
-                source,
-            })?;
-        responses.push(record);
-    }
+    let mut responses =
+        decode_full_response_records(&text).map_err(|error| PrepareError::DatabaseSetup {
+            phase: "inspect_turn",
+            detail: format!(
+                "parse provider response sidecar '{}': {error}",
+                path.display()
+            ),
+        })?;
     responses.sort_by_key(|record| record.response_index());
     Ok(responses)
 }

@@ -40,12 +40,12 @@ use crate::cli::{
 };
 use crate::{
     BenchmarkFamily, BranchDisposition, BranchEvaluationInput, BranchEvaluationResult,
-    CampaignManifest, CampaignOverrides, ClosureClass, EvalBudget, EvalCampaignPolicy,
-    OperationalRunMetrics, OutputMode, PrepareMsbBatchRequest, PrepareWrite, PreparedMsbBatch,
-    ProtocolCampaignPolicy, RegistryDatasetSource, ResolvedCampaignConfig, batches_dir,
+    CampaignManifest, ClosureClass, EvalBudget, EvalCampaignPolicy, OperationalRunMetrics,
+    OutputMode, PrepareMsbBatchRequest, PrepareWrite, PreparedMsbBatch, ProtocolCampaignPolicy,
+    RegistryDatasetSource, ResolvedCampaignConfig, batches_dir,
     campaign::{
         CampaignManifestPlan, EmbeddingRoute, admit_campaign_manifest, campaign_closure_state_path,
-        plan_campaign_manifest, resolve_manifest_config,
+        plan_campaign_manifest, resolve_explicit_campaign, resolve_explicit_manifest,
     },
     campaign_manifest_path,
     cli::{
@@ -147,7 +147,8 @@ use crate::{
     provider_prefs::load_provider_for_model,
     recompute_closure_state,
     record::read_compressed_record,
-    repos_dir, resolve_campaign_config, resolve_registry_dataset_sources, save_campaign_manifest,
+    replay::tool_loop::OuterAttemptLink,
+    repos_dir, resolve_registry_dataset_sources, save_campaign_manifest,
     selection::{
         ActivePrototype1MonitorTarget, load_active_selection, save_active_prototype1_monitor_target,
     },
@@ -181,6 +182,7 @@ pub(crate) struct Prototype1SetupReport {
     generation: u32,
     branch_id: String,
     embedding_route: EmbeddingRoute,
+    eval_max_tokens: Option<u32>,
     search_policy: Prototype1SearchPolicy,
     run_profile: profile::RunProfileCommitment,
 }
@@ -213,6 +215,7 @@ struct Prototype1SetupContent {
 struct Prototype1SetupAuthority {
     batch: &'static str,
     budget: &'static str,
+    eval_tokens: &'static str,
     primary_instance: &'static str,
     profile: &'static str,
     search: &'static str,
@@ -243,7 +246,7 @@ struct Prototype1PreviewScope {
     deferred_checks: Vec<&'static str>,
 }
 
-const PROTOTYPE1_SETUP_PLAN_SCHEMA_VERSION: &str = "prototype1-setup-plan.v2";
+const PROTOTYPE1_SETUP_PLAN_SCHEMA_VERSION: &str = "prototype1-setup-plan.v3";
 
 pub(crate) fn preview_prototype1_parent_setup(
     command: &Prototype1LoopCommand,
@@ -541,6 +544,7 @@ fn setup_authority(
     Prototype1SetupAuthority {
         batch: "prepared_batch_manifest",
         budget: "prepared_batch_manifest",
+        eval_tokens: "command.eval_max_tokens",
         primary_instance: if !command.instance.is_empty() {
             "command.instance"
         } else if run_profile.target.primary_instance().is_some() {
@@ -1196,6 +1200,7 @@ fn setup_report_from_admission(
         generation: identity.generation(),
         branch_id: identity.branch_id().to_string(),
         embedding_route: content.campaign.resolved.eval.embedding_route,
+        eval_max_tokens: content.campaign.resolved.eval.max_tokens,
         search_policy: content.search_policy.clone(),
         run_profile: commitment,
     })
@@ -1246,6 +1251,13 @@ pub(crate) fn print_prototype1_setup_report(report: &Prototype1SetupReport) {
     println!("generation: {}", report.generation);
     println!("branch_id: {}", report.branch_id);
     println!("embedding_route: {}", report.embedding_route.as_str());
+    println!(
+        "eval_max_tokens: {}",
+        report
+            .eval_max_tokens
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "<provider-default>".to_string())
+    );
     println!(
         "search_policy: generations<={} nodes<={} children={}..={} mode={} stop_on_first_keep={} require_keep_for_continuation={} explore_from_rejected={}",
         report.search_policy.max_generations,
@@ -1313,6 +1325,14 @@ pub(crate) fn print_prototype1_setup_plan(plan: &Prototype1SetupPlan) {
             .unwrap_or("<route-default>")
     );
     println!("eval_route: {}", serde_name(&resolved.route_source));
+    println!(
+        "eval_max_tokens: {}",
+        resolved
+            .eval
+            .max_tokens
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "<provider-default>".to_string())
+    );
     println!(
         "embedding_route: {}",
         resolved.eval.embedding_route.as_str()
@@ -1382,9 +1402,10 @@ pub(crate) fn print_prototype1_setup_plan(plan: &Prototype1SetupPlan) {
         }
     );
     println!(
-        "authority: batch={} budget={} primary={} search={} storage={} control={}",
+        "authority: batch={} budget={} eval_tokens={} primary={} search={} storage={} control={}",
         content.authority.batch,
         content.authority.budget,
+        content.authority.eval_tokens,
         content.authority.primary_instance,
         content.authority.search,
         content.authority.storage,
@@ -1453,7 +1474,7 @@ fn load_existing_prototype1_campaign(
 ) -> Result<Prototype1LoopCampaign, PrepareError> {
     let manifest_path = campaign_manifest_path(campaign_id)?;
     let manifest = load_campaign_manifest(campaign_id)?;
-    let resolved = resolve_campaign_config(campaign_id, &CampaignOverrides::default())?;
+    let resolved = resolve_explicit_campaign(campaign_id)?;
     let closure_state_path = campaign_closure_state_path(campaign_id)?;
     let slice_dataset_path = manifest
         .dataset_sources
@@ -3026,6 +3047,7 @@ async fn run_broad_headless_tui_attempt(
     broad_tui: profile::BroadTui,
     campaign_id: &CampaignId,
     eval_storage_backend: profile::EvalStorageBackend,
+    outer_attempt: OuterAttemptLink,
 ) -> Result<Option<transaction::Executor>, tui_adapter::BroadAttemptError> {
     #[cfg(test)]
     if let Some(result) = broad_headless_tui_database_setup_fixture() {
@@ -3039,11 +3061,12 @@ async fn run_broad_headless_tui_attempt(
             max_attempts: Some(1),
             timeout_secs: Some(60),
         };
-        return run_broad_headless_tui_attempt_with_options(
+        return run_broad_attempt(
             slot,
             &options,
             Some(campaign_id),
             eval_storage_backend,
+            outer_attempt,
         )
         .await;
     }
@@ -3055,11 +3078,12 @@ async fn run_broad_headless_tui_attempt(
         "PLOKE_EVAL_BROAD_TUI_TIMEOUT_SECS",
     )?);
     let options = BroadTuiAttemptOptions::for_parent_patcher_defaults(max_attempts, timeout_secs)?;
-    run_broad_headless_tui_attempt_with_options(
+    run_broad_attempt(
         slot,
         &options,
         Some(campaign_id),
         eval_storage_backend,
+        outer_attempt,
     )
     .await
 }
@@ -3168,6 +3192,23 @@ async fn run_broad_headless_tui_attempt_with_options(
     campaign_id: Option<&CampaignId>,
     eval_storage_backend: profile::EvalStorageBackend,
 ) -> Result<Option<transaction::Executor>, tui_adapter::BroadAttemptError> {
+    run_broad_attempt(
+        slot,
+        options,
+        campaign_id,
+        eval_storage_backend,
+        OuterAttemptLink::Unlinked,
+    )
+    .await
+}
+
+async fn run_broad_attempt(
+    slot: &HarnessRequestSlot,
+    options: &BroadTuiAttemptOptions,
+    campaign_id: Option<&CampaignId>,
+    eval_storage_backend: profile::EvalStorageBackend,
+    outer_attempt: OuterAttemptLink,
+) -> Result<Option<transaction::Executor>, tui_adapter::BroadAttemptError> {
     #[cfg(test)]
     if let Some(result) = tui_adapter::harness::fixture::broad_attempt_from_summary_fixture(slot) {
         return result
@@ -3241,7 +3282,7 @@ async fn run_broad_headless_tui_attempt_with_options(
             model: options.model().cloned(),
             capture: tui_adapter::Capture::Responses,
         }
-        .run()
+        .run_with_outer_attempt(outer_attempt)
         .await
     } {
         Ok(outcome) => outcome,
@@ -6291,6 +6332,7 @@ async fn resolve_child_plan(
     broad_tui: profile::BroadTui,
     eval_storage_backend: profile::EvalStorageBackend,
     route_source: ModelRouteSource,
+    outer_attempt: OuterAttemptLink,
 ) -> Result<PlannedChildren, PrepareError> {
     let parent_identity = parent.identity().clone();
     let env = ChildPlanEnv {
@@ -6321,7 +6363,14 @@ async fn resolve_child_plan(
     let receipt = if plan_at.path().exists() {
         receive_existing_child_plan(env, parent)?
     } else {
-        create_child_plan(env, parent, candidate_generation, child_budget).await?
+        create_child_plan(
+            env,
+            parent,
+            candidate_generation,
+            child_budget,
+            outer_attempt,
+        )
+        .await?
     };
     let children = receipt
         .plan
@@ -6393,6 +6442,7 @@ async fn resolve_child_plan(
     })
 }
 
+#[allow(dead_code)]
 pub(crate) async fn resolve_child_plan_for_id(
     campaign_id: &CampaignId,
     manifest_path: &Path,
@@ -6416,6 +6466,36 @@ pub(crate) async fn resolve_child_plan_for_id(
         broad_tui,
         eval_storage_backend,
         route_source,
+        OuterAttemptLink::Unlinked,
+    )
+    .await
+}
+
+pub(crate) async fn resolve_linked_plan(
+    campaign_id: &CampaignId,
+    manifest_path: &Path,
+    repo_root: &Path,
+    parent: Parent<Ready>,
+    candidate_generation: CandidateGenerationConfig,
+    selected_node_id: Option<&str>,
+    child_budget: Prototype1ChildBudget,
+    broad_tui: profile::BroadTui,
+    eval_storage_backend: profile::EvalStorageBackend,
+    route_source: ModelRouteSource,
+    outer_attempt: OuterAttemptLink,
+) -> Result<PlannedChildren, PrepareError> {
+    resolve_child_plan(
+        campaign_id,
+        manifest_path,
+        repo_root,
+        parent,
+        candidate_generation,
+        selected_node_id,
+        child_budget,
+        broad_tui,
+        eval_storage_backend,
+        route_source,
+        outer_attempt,
     )
     .await
 }
@@ -6425,11 +6505,12 @@ async fn create_child_plan(
     parent: Parent<Ready>,
     candidate_generation: CandidateGenerationConfig,
     child_budget: Prototype1ChildBudget,
+    outer_attempt: OuterAttemptLink,
 ) -> Result<ChildPlanReceipt, PrepareError> {
     match run_parent_target_selection(env, parent, candidate_generation, child_budget).await? {
         ParentTargetSelection::ChildPlan(receipt) => Ok(receipt),
         ParentTargetSelection::AwaitingHarnessBatch(batch) => {
-            admit_broad_harness_batch(env, batch).await
+            admit_broad_batch(env, batch, outer_attempt).await
         }
     }
 }
@@ -6437,6 +6518,14 @@ async fn create_child_plan(
 async fn admit_broad_harness_batch(
     env: ChildPlanEnv<'_>,
     batch: HarnessRequestBatch,
+) -> Result<ChildPlanReceipt, PrepareError> {
+    admit_broad_batch(env, batch, OuterAttemptLink::Unlinked).await
+}
+
+async fn admit_broad_batch(
+    env: ChildPlanEnv<'_>,
+    batch: HarnessRequestBatch,
+    outer_attempt: OuterAttemptLink,
 ) -> Result<ChildPlanReceipt, PrepareError> {
     let max_children = batch.child_budget.max as usize;
     let cap = (batch.patch_generation_parallel_cap as usize).max(1);
@@ -6456,6 +6545,7 @@ async fn admit_broad_harness_batch(
                 batch.broad_tui,
                 env.campaign_id.clone(),
                 env.eval_storage_backend,
+                outer_attempt,
             ));
         }
 
@@ -6638,6 +6728,7 @@ async fn run_broad_slot_for_admission(
     broad_tui: profile::BroadTui,
     campaign_id: CampaignId,
     eval_storage_backend: profile::EvalStorageBackend,
+    outer_attempt: OuterAttemptLink,
 ) -> BroadSlotAttempt {
     let submitted_exists = slot.published.submitted_result_path().exists();
     info!(
@@ -6674,10 +6765,15 @@ async fn run_broad_slot_for_admission(
             request_hash = %slot.published.request_hash(),
             "broad_slot_run_headless_tui_start"
         );
-        let result =
-            run_broad_headless_tui_attempt(&slot, broad_tui, &campaign_id, eval_storage_backend)
-                .await
-                .map_err(PrepareError::from);
+        let result = run_broad_headless_tui_attempt(
+            &slot,
+            broad_tui,
+            &campaign_id,
+            eval_storage_backend,
+            outer_attempt,
+        )
+        .await
+        .map_err(PrepareError::from);
         info!(
             target: EXECUTION_DEBUG_TARGET,
             slot_index,
@@ -6913,6 +7009,7 @@ pub(crate) async fn resolve_profile_child_plan(
         run_profile.execution.broad_tui,
         run_profile.storage.eval.backend,
         route_source,
+        OuterAttemptLink::Unlinked,
     )
     .await
 }
@@ -9832,8 +9929,8 @@ pub(crate) fn prepare_prototype1_treatment_campaign(
     );
     manifest.eval = baseline_manifest.eval.clone();
     manifest.protocol = baseline_manifest.protocol.clone();
+    let resolved = resolve_explicit_manifest(manifest.clone())?;
     save_campaign_manifest(&manifest)?;
-    let resolved = resolve_campaign_config(&campaign_id, &CampaignOverrides::default())?;
     let closure_state_path = campaign_closure_state_path(&campaign_id)?;
 
     Ok(Prototype1LoopCampaign {
@@ -10167,6 +10264,10 @@ fn prototype1_eval_set_id(
         hasher.update(embedding_provider_slug.as_bytes());
     }
     hasher.update(b"\0");
+    if let Some(max_tokens) = eval_policy.max_tokens {
+        hasher.update(max_tokens.to_string().as_bytes());
+    }
+    hasher.update(b"\0");
     for instance_id in instance_ids {
         hasher.update(instance_id.as_bytes());
         hasher.update(b"\0");
@@ -10391,12 +10492,13 @@ fn plan_prototype1_loop_campaign(
         embedding_route: command.embedding_route.unwrap_or_default(),
         embedding_model_id: command.embedding_model_id.clone(),
         embedding_provider_slug: command.embedding_provider.clone(),
+        max_tokens: Some(command.eval_max_tokens),
     };
     manifest.protocol = ProtocolCampaignPolicy {
         stop_on_error: command.stop_on_error,
         ..protocol_policy
     };
-    let resolved = resolve_manifest_config(manifest.clone(), &CampaignOverrides::default())?;
+    let resolved = resolve_explicit_manifest(manifest.clone())?;
     let closure_state_path = campaign_closure_state_path(&campaign_id)?;
 
     let manifest_plan = plan_campaign_manifest(&manifest)?;

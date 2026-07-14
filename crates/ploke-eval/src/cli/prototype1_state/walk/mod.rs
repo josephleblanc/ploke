@@ -7,6 +7,7 @@
 pub(crate) mod args;
 pub(crate) mod audit;
 pub(crate) mod client;
+pub(crate) mod config;
 pub(crate) mod controller;
 pub(crate) mod endpoint;
 pub(crate) mod epoch;

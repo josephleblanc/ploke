@@ -18,6 +18,19 @@ pub use manager::{
     ChatEvt, LlmEvent, Prototype1TraceContext, RequestMessage, set_prototype1_trace_context,
 };
 
+/// Minimum output-token budget required by the selected model/router quirk,
+/// when one is registered.
+///
+/// Callers that own an explicit maximum must validate it against this floor
+/// instead of silently raising that maximum. Request paths without an explicit
+/// cap may continue to apply the floor at the request-build chokepoint.
+pub fn model_token_floor(
+    router: ploke_llm::router_only::RouterVariants,
+    model: &ploke_llm::ModelId,
+) -> Option<u32> {
+    model_overrides::resolve(router, model).and_then(|item| item.params.max_tokens_floor)
+}
+
 pub(crate) use ploke_llm::error;
 pub(crate) use ploke_llm::registry;
 pub(crate) use ploke_llm::request;

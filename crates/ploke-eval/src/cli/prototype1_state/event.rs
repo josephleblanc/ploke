@@ -16,11 +16,16 @@ pub(crate) use crate::loop_graph::RuntimeId;
 /// Durable identity for one committed transition attempt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
-pub(crate) struct TransitionId(pub Uuid);
+pub struct TransitionId(pub(crate) Uuid);
 
 impl TransitionId {
     pub(crate) fn new() -> Self {
         Self(Uuid::new_v4())
+    }
+
+    /// UUID value carried by this semantic transition identity.
+    pub const fn as_uuid(&self) -> &Uuid {
+        &self.0
     }
 }
 
@@ -70,7 +75,7 @@ pub(crate) enum ObservedChildTerminal {
 /// Stable content hash witness for artifact state.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
-pub(crate) struct ContentHash(pub String);
+pub struct ContentHash(pub(crate) String);
 
 impl ContentHash {
     // TODO(2026-04-26): Replace the string-backed hex carrier with a fixed-size
@@ -81,6 +86,11 @@ impl ContentHash {
     // avoidable clone churn in `c1.rs` / `c2.rs`.
     pub(crate) fn of(payload: &str) -> Self {
         Self(format!("{:x}", Sha256::digest(payload.as_bytes())))
+    }
+
+    /// Canonical hash text carried by this witness.
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 }
 

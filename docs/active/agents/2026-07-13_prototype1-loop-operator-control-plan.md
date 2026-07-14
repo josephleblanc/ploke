@@ -2,8 +2,8 @@
 
 - Date: 2026-07-13
 - Baseline: `de76eaee34e6f4c4c3a19543c4cf91b217aa3bb9`
-- Status: active implementation; Stages 0-3 implemented and verified, Stage 3
-  awaiting checkpoint/live canary
+- Status: active implementation; Stages 0-3 implemented, verified, and
+  checkpointed; Stage 4 observability read model in progress
 
 ## Implementation progress
 
@@ -60,11 +60,93 @@
   the full `ploke-eval` gate passes 1,195 tests with 46 ignored/live tests. The
   protocol-v6 epoch intentionally updates the golden controller-certificate
   digest because protocol version is part of its signed preimage.
+- Stage 3 is committed as `ce465c06a` (`Publish durable Prototype 1 walk
+  service`). A clean-worktree canary admitted campaign
+  `p1-stage3-walk-g35f-pplxembed-3g1x3-p3-20260713-202206` at
+  `baseline_eval` without advancing a typestate edge. Its profile commitment is
+  `b156cde303ac74949805943cccc478a52d89f177589085cf6ebe3cd9169a12ac`.
+  The campaign remains valid and intentionally unadvanced.
+- Stage 4 is now active. The first implementation slice reconciles the passive
+  run-profile carrier with admitted runtime defaults, adds strict typo
+  rejection, projects configuration with explicit/derived provenance, exposes
+  a revision-tagged typed transition delta, builds a canonical ordered session
+  event view, and consolidates raw provider-response JSONL decoding. These are
+  read-only sibling-client surfaces; the detailed parent/child/protocol trace
+  envelope and inspection UI remain the next Stage 4/5 work. The new typed
+  protocol surfaces advance the walk protocol to v7; because that version is
+  part of the controller-certificate preimage, its golden evidence digest is
+  intentionally updated rather than detached from protocol identity.
+- The run-profile v1 reader now distinguishes archival vocabulary from current
+  execution authority. Exact historical `generation.surface`, `edit-surface`,
+  and `broad-harness` values remain readable in passive evidence without
+  accepting unknown fields. Current runtime execution retains only supported
+  generators, and both operator parsing and the admission-plan boundary reject
+  retired surface declarations for new runs. Immutable profile bytes and their
+  commitments are never rewritten to obtain compatibility.
+- The same archival/current split applies to earlier token and protocol routing
+  spellings. Passive evidence preserves historical `[model].max_tokens` and
+  flat `[protocol]` routing keys, but runtime admission rejects them. Eval
+  completion authority remains `campaign.json` at `eval.max_tokens`; the
+  recommended setup writes `32768` explicitly, hashes it into eval-set identity,
+  and does not revive a competing run-profile field.
+- Owner-DB projection stores that campaign token cap in the additive
+  `eval_campaign_eval_token` relation. This leaves the earlier campaign-policy
+  relation shape intact; an absent relation or row means the campaign predates
+  this field, while a newly admitted campaign writes a row even when the value
+  is null. A present but malformed relation remains a hard error. Executable
+  prepared campaign context carries the same admitted value so standalone
+  agent reruns cannot silently fall back to provider defaults. After model-route
+  resolution, an explicit or admitted cap below a registered model floor is
+  rejected rather than silently raised.
+- Prepared campaign execution now selects models in the order explicit CLI,
+  admitted campaign model, then mutable active/default fallback. The admitted
+  route and provider selection override mutable registry preferences, while an
+  explicit mismatch fails closed. Historical prepared `run.json` artifacts
+  that predate `route_source` remain readable for inspection, but they cannot
+  be re-executed live by inferring mutable routing state; replay-to-live must
+  create a newly admitted branch configuration.
+- Session history decoding now validates event order, session identity,
+  creation mirrors, cursor and abandonment summaries, and damage/revision
+  relationships. Damaged journal inspection applies each candidate entry to a
+  cloned replay state and commits it only on success, so rejected lines cannot
+  contaminate the returned valid prefix. The live R7-to-R8 controller edge also
+  requires a typed outer-attempt coordinate; unlinked tool-loop provenance is
+  reserved for standalone debugging and historical records.
+- Both authoritative and public session replay now enforce the same recovery
+  schema gates, one-unresolved-attempt-per-fence invariant, finished-epoch
+  contradiction check, and exact handoff target. Older v1/v2 evidence remains
+  readable only within the fields those schemas actually authorized.
+- Transition-delta inspection is published outside the controller mutex. It
+  returns the last durably completed typed delta while a later provider-backed
+  job owns the controller, and cache publication occurs only after the terminal
+  operation receipt is visible as `Succeeded` with the same session version.
+  Publication is monotonic by server job id, so a slower earlier job cannot
+  overwrite a later completed result.
+- Strict replay admission now rejects duplicate or missing response indexes.
+  The historical R10 incident bundle exposed why: its response sidecar
+  multiplexes several distinct session-local chains under one assistant ID, so
+  a raw index is not a unique replay coordinate. Forensic inspection remains
+  available, and the historical regression still selects uniquely identified
+  real tool-call responses, rebases them into one contiguous derived tape, and
+  exercises that tape through the production loader and broad harness.
+- Forensic provider-response inspection is now distinct from executable replay
+  ordering: inspection preserves physical JSONL chronology and one-based source
+  lines, while replay admission alone sorts the validated session-local tape by
+  response index.
+- The public phase inventory now includes every walk phase exactly once,
+  including recovery-critical `R13c` incomplete successor handoff. This is a
+  prerequisite for an evidence-driven UI rail that does not hide a valid
+  durable state.
+- Current live readiness is asymmetric: Google application-default credentials
+  now pass, while the exact OpenRouter Perplexity embedding request still
+  returns the key-specific monthly-limit 403. The supported configuration-only
+  workaround, direct OpenAI `text-embedding-3-small`, passed a live preflight
+  with a 1536-dimensional vector. A fresh post-checkpoint campaign will use
+  that route; the Stage 3 campaign will not be rewritten.
 
-Stage 4 and later remain planned, not implemented. The UI remains an inspection
-client until the observability read model and later control-parity stages are
-complete. No live loop was advanced from the uncommitted Stage 3 tree; the
-checkpoint commit and bounded live canary are the next gates.
+The UI remains inspection-only until the observability read model and later
+control-parity stages are complete. Every live edge still requires a committed
+checkpoint and a fresh campaign when configuration or source identity changes.
 
 ## Purpose
 
@@ -337,9 +419,11 @@ mixes LLM experimentation, worktree derivation, and outer-loop mutation.
 | Effective setup | Fully resolved values admitted for one campaign | Includes provenance: default, template, campaign, CLI, environment, or registry resolution |
 
 The effective setup is composed from more than `run-profile.toml`. Today,
-embedding model/provider and eval budgets are setup inputs persisted in
-`campaign.json`; they are not run-profile fields. The UI must not imply that the
-profile alone is the complete configuration.
+embedding model/provider, eval budgets, and the per-turn eval completion cap are
+setup inputs persisted in `campaign.json`; they are not run-profile fields. The
+recommended explicit eval cap is `32768`. The UI must not imply that the profile
+alone is the complete configuration, and it must label retired profile-local
+token fields as archival evidence rather than executable authority.
 
 There is also a type-conformance problem to resolve before a profile editor is
 safe: runtime `Prototype1RunProfile` owns validation, while

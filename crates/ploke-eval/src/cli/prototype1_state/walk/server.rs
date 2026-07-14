@@ -36,7 +36,7 @@ use ploke_records::ids::CampaignId;
 
 use tokio::{
     net::{UnixListener, UnixStream},
-    sync::{Mutex, mpsc},
+    sync::{Mutex, RwLock, mpsc},
     task::{JoinHandle, JoinSet},
     time,
 };
@@ -66,6 +66,7 @@ use crate::{
 };
 
 use super::{
+    config,
     controller::{DeltaRenderStyle, WalkController},
     endpoint::{self, ServerEndpoint},
     epoch::ServerEpoch,
@@ -73,10 +74,10 @@ use super::{
     phase::WalkPhase,
     protocol::{
         MutationGuard, OperationId, SessionVersion, WalkAction, WalkActionKind, WalkAuthority,
-        WalkBlocker, WalkBlockerCode, WalkErrorCode, WalkEventProjection, WalkJobKind,
-        WalkJobResolutionKind, WalkJobResolutionReceipt, WalkJobSnapshot, WalkJobStatus,
-        WalkOkKind, WalkRequest, WalkRequestBody, WalkResponse, WalkSessionSnapshot,
-        WalkStartConfig, WalkTransitionReceipt,
+        WalkBlocker, WalkBlockerCode, WalkDeltaSnapshot, WalkDeltaState, WalkErrorCode,
+        WalkEventProjection, WalkJobKind, WalkJobResolutionKind, WalkJobResolutionReceipt,
+        WalkJobSnapshot, WalkJobStatus, WalkOkKind, WalkRequest, WalkRequestBody, WalkResponse,
+        WalkSessionHistory, WalkSessionSnapshot, WalkStartConfig, WalkTransitionReceipt,
     },
     query::run_snapshot_query,
 };
@@ -86,10 +87,81 @@ use super::{
 struct WalkServer {
     epoch: ServerEpoch,
     controller: Arc<Mutex<WalkController>>,
+    delta: Arc<RwLock<PublishedDelta>>,
     jobs: Arc<Mutex<JobRegistry>>,
     gate: MutationGate,
     operation_root: PathBuf,
     controller_attached: Arc<AtomicBool>,
+}
+
+/// Immutable response material captured after a controller advance completes.
+///
+/// Keeping both the typed snapshot and its style variants here lets delta
+/// inspection remain read-only while a later live job owns the controller.
+#[derive(Clone)]
+struct PublishedDelta {
+    source_job: Option<u64>,
+    phase: WalkPhase,
+    snapshot: WalkDeltaSnapshot,
+    plain: String,
+    verbose: String,
+    color: String,
+    verbose_color: String,
+}
+
+impl PublishedDelta {
+    fn capture(
+        controller: &WalkController,
+        observed: SessionVersion,
+        source_job: Option<u64>,
+    ) -> Result<Self, PrepareError> {
+        Ok(Self {
+            source_job,
+            phase: controller.phase(),
+            snapshot: controller.delta_snapshot(observed)?,
+            plain: controller.delta_report(DeltaRenderStyle {
+                verbose: false,
+                color: false,
+            }),
+            verbose: controller.delta_report(DeltaRenderStyle {
+                verbose: true,
+                color: false,
+            }),
+            color: controller.delta_report(DeltaRenderStyle {
+                verbose: false,
+                color: true,
+            }),
+            verbose_color: controller.delta_report(DeltaRenderStyle {
+                verbose: true,
+                color: true,
+            }),
+        })
+    }
+
+    fn not_recorded(phase: WalkPhase, version: SessionVersion, source_job: Option<u64>) -> Self {
+        let message = "no previous step delta; run `walk step` first".to_string();
+        Self {
+            source_job,
+            phase,
+            snapshot: WalkDeltaSnapshot {
+                version,
+                state: WalkDeltaState::NotRecorded,
+            },
+            plain: message.clone(),
+            verbose: message.clone(),
+            color: message.clone(),
+            verbose_color: message,
+        }
+    }
+
+    fn report(&self, style: DeltaRenderStyle) -> &str {
+        match (style.verbose, style.color) {
+            (false, false) => &self.plain,
+            (true, false) => &self.verbose,
+            (false, true) => &self.color,
+            (true, true) => &self.verbose_color,
+        }
+    }
 }
 
 /// Shared barrier that keeps a successor endpoint inspectable before the
@@ -433,6 +505,11 @@ pub(crate) async fn serve_prepared(
     let repo_root = endpoint.repo_root().to_path_buf();
     let mut controller = WalkController::new(repo_root);
     controller.refresh_from_disk()?;
+    let delta = PublishedDelta::capture(
+        &controller,
+        durable_version_for(endpoint.repo_root())?,
+        None,
+    )?;
     let operation_root = paths::operation_dir(endpoint.repo_root())?;
     paths::ensure_operation_dir(&operation_root)?;
     let controller_attached = controller.phase() != WalkPhase::Empty;
@@ -440,6 +517,7 @@ pub(crate) async fn serve_prepared(
     let server = WalkServer {
         epoch,
         controller: Arc::new(Mutex::new(controller)),
+        delta: Arc::new(RwLock::new(delta)),
         jobs: Arc::new(Mutex::new(jobs)),
         gate,
         operation_root,
@@ -684,6 +762,15 @@ impl WalkServer {
         let result = match request.body {
             WalkRequestBody::Health => self.status_response("walk server online").await,
             WalkRequestBody::Show => self.show_response().await,
+            WalkRequestBody::Config => {
+                let phase = self.phase_for_response().await;
+                config::load(&self.epoch.repo_root)
+                    .map(|config| WalkResponse::config(phase, config, self.epoch.clone()))
+            }
+            WalkRequestBody::SessionHistory => {
+                durable_history_for(&self.epoch.repo_root, self.epoch.clone())
+                    .map(WalkResponse::history)
+            }
             WalkRequestBody::OperationStatus { operation } => {
                 match self.lookup_operation(operation).await {
                     Ok(Some(job)) if job.status.blocks_mutation() => {
@@ -709,12 +796,13 @@ impl WalkServer {
                 }
             }
             WalkRequestBody::ShowDelta { verbose, color } => {
-                let controller = self.controller.lock().await;
-                let phase = controller.phase();
-                Ok(WalkResponse::ok(
-                    WalkOkKind::ShowDelta,
-                    phase,
-                    controller.delta_report(DeltaRenderStyle { verbose, color }),
+                let delta = self.delta.read().await;
+                Ok(WalkResponse::delta(
+                    delta.phase,
+                    delta
+                        .report(DeltaRenderStyle { verbose, color })
+                        .to_string(),
+                    delta.snapshot.clone(),
                     self.epoch.clone(),
                 ))
             }
@@ -1115,6 +1203,7 @@ impl WalkServer {
             JobAdmission::Rejected(response) => return Ok(response),
         };
         let controller = Arc::clone(&self.controller);
+        let delta = Arc::clone(&self.delta);
         let jobs = Arc::clone(&self.jobs);
         let epoch = self.epoch.clone();
         let operation_root = self.operation_root.clone();
@@ -1123,6 +1212,7 @@ impl WalkServer {
         let expected = job.expected.clone();
         let handle = tokio::spawn(run_start_job(
             controller,
+            delta,
             jobs,
             epoch,
             operation_root,
@@ -1182,6 +1272,7 @@ impl WalkServer {
             JobAdmission::Rejected(response) => return Ok(response),
         };
         let controller = Arc::clone(&self.controller);
+        let delta = Arc::clone(&self.delta);
         let jobs = Arc::clone(&self.jobs);
         let epoch = self.epoch.clone();
         let operation_root = self.operation_root.clone();
@@ -1190,6 +1281,7 @@ impl WalkServer {
         let expected = job.expected.clone();
         let handle = tokio::spawn(run_step_job(
             controller,
+            delta,
             jobs,
             epoch,
             operation_root,
@@ -1505,6 +1597,7 @@ impl WalkServer {
             self.controller_attached.store(false, Ordering::Release);
             (phase, format!("reset walk to {phase} - {}", phase.detail()))
         };
+        let published = PublishedDelta::not_recorded(phase, job.expected.clone(), Some(job.job_id));
         finish_job(
             &self.jobs,
             &self.operation_root,
@@ -1517,6 +1610,9 @@ impl WalkServer {
         )
         .await;
         let completed = self.operation_job(operation).await.unwrap_or(job);
+        if completed.status == WalkJobStatus::Succeeded {
+            replace_delta(&self.delta, published).await;
+        }
         Ok(WalkResponse::job(
             job_phase(&completed),
             completed,
@@ -2561,6 +2657,28 @@ fn durable_version_for(repo_root: &Path) -> Result<SessionVersion, PrepareError>
     durable_state_for(repo_root).map(|state| state.version)
 }
 
+fn durable_history_for(
+    repo_root: &Path,
+    epoch: ServerEpoch,
+) -> Result<WalkSessionHistory, PrepareError> {
+    let Some(parent) = identity::load_parent_identity_optional(repo_root)? else {
+        return Ok(WalkSessionHistory::empty(None, epoch));
+    };
+    let manifest = campaign_manifest_path(parent.campaign_id())?;
+    let store = Store::for_manifest(&manifest);
+    let journal_path = store.paths(&parent).journal().to_path_buf();
+    let history = store
+        .inspect_history(&parent, epoch.clone())
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "prototype1_state_walk_session_history",
+            detail: source.to_string(),
+        })?;
+    Ok(match history {
+        Some(history) => history,
+        None => WalkSessionHistory::empty(Some(journal_path), epoch),
+    })
+}
+
 fn durable_state_for(repo_root: &Path) -> Result<DurableSessionState, PrepareError> {
     let Some(parent) = identity::load_parent_identity_optional(repo_root)? else {
         return Ok(DurableSessionState {
@@ -2649,6 +2767,7 @@ fn damage_detail(damage: &Damage) -> String {
 
 async fn run_start_job(
     controller: Arc<Mutex<WalkController>>,
+    delta: Arc<RwLock<PublishedDelta>>,
     jobs: Arc<Mutex<JobRegistry>>,
     epoch: ServerEpoch,
     operation_root: PathBuf,
@@ -2684,15 +2803,20 @@ async fn run_start_job(
                         };
                         let message =
                             format!("started walk at {} - {}", report.to(), report.to().detail());
-                        Ok((
-                            phase,
-                            event,
-                            message,
-                            report.from(),
-                            report.to(),
-                            edges,
-                            version,
-                        ))
+                        PublishedDelta::capture(&controller, version.clone(), Some(job_id))
+                            .map(|published| {
+                                (
+                                    phase,
+                                    event,
+                                    message,
+                                    report.from(),
+                                    report.to(),
+                                    edges,
+                                    version,
+                                    published,
+                                )
+                            })
+                            .map_err(|error| (phase, TransitionFailure::Receipt(error)))
                     }
                     Err(error) => Err((phase, TransitionFailure::Receipt(error))),
                 }
@@ -2705,7 +2829,7 @@ async fn run_start_job(
     };
     controller_attached.store(attached, Ordering::Release);
     match result {
-        Ok((phase, event, message, phase_before, phase_after, edges, version)) => {
+        Ok((phase, event, message, phase_before, phase_after, edges, version, published)) => {
             let event_projection = match record_walk_event(&epoch, event) {
                 Ok(projection) => projection,
                 Err(error) => WalkEventProjection::Failed {
@@ -2735,7 +2859,8 @@ async fn run_start_job(
                 message,
                 Some(receipt),
             )
-            .await
+            .await;
+            publish_delta(&delta, &jobs, job_id, published).await;
         }
         Err((phase, TransitionFailure::Attempt(error))) => {
             let (status, message) = classify_job_error(&epoch.repo_root, &expected, &error);
@@ -2771,6 +2896,7 @@ async fn run_start_job(
 
 async fn run_step_job(
     controller: Arc<Mutex<WalkController>>,
+    delta: Arc<RwLock<PublishedDelta>>,
     jobs: Arc<Mutex<JobRegistry>>,
     epoch: ServerEpoch,
     operation_root: PathBuf,
@@ -2806,15 +2932,20 @@ async fn run_step_job(
                             allow_git_changes: Some(allow_git_changes),
                             transitions: report.transition_labels(),
                         };
-                        Ok((
-                            phase,
-                            event,
-                            message,
-                            report.from(),
-                            report.to(),
-                            edges,
-                            version,
-                        ))
+                        PublishedDelta::capture(&controller, version.clone(), Some(job_id))
+                            .map(|published| {
+                                (
+                                    phase,
+                                    event,
+                                    message,
+                                    report.from(),
+                                    report.to(),
+                                    edges,
+                                    version,
+                                    published,
+                                )
+                            })
+                            .map_err(|error| (phase, TransitionFailure::Receipt(error)))
                     }
                     Err(error) => Err((phase, TransitionFailure::Receipt(error))),
                 }
@@ -2827,7 +2958,7 @@ async fn run_step_job(
     };
     controller_attached.store(attached, Ordering::Release);
     match result {
-        Ok((phase, event, message, phase_before, phase_after, edges, version)) => {
+        Ok((phase, event, message, phase_before, phase_after, edges, version, published)) => {
             let event_projection = match record_walk_event(&epoch, event) {
                 Ok(projection) => projection,
                 Err(error) => WalkEventProjection::Failed {
@@ -2857,7 +2988,8 @@ async fn run_step_job(
                 message,
                 Some(receipt),
             )
-            .await
+            .await;
+            publish_delta(&delta, &jobs, job_id, published).await;
         }
         Err((phase, TransitionFailure::Attempt(error))) => {
             let (status, message) = classify_job_error(&epoch.repo_root, &expected, &error);
@@ -3101,6 +3233,45 @@ async fn finish_job(
     }
     active.snapshot = terminal;
     active.handle = None;
+}
+
+async fn publish_delta(
+    delta: &RwLock<PublishedDelta>,
+    jobs: &Mutex<JobRegistry>,
+    job_id: u64,
+    published: PublishedDelta,
+) {
+    let completed = {
+        let jobs = jobs.lock().await;
+        jobs.active
+            .as_ref()
+            .filter(|active| active.snapshot.job_id == job_id)
+            .map(|active| &active.snapshot)
+            .or_else(|| {
+                jobs.completed
+                    .values()
+                    .map(|stored| &stored.snapshot)
+                    .find(|snapshot| snapshot.job_id == job_id)
+            })
+            .is_some_and(|snapshot| {
+                published.source_job == Some(job_id)
+                    && snapshot.status == WalkJobStatus::Succeeded
+                    && snapshot
+                        .receipt
+                        .as_ref()
+                        .is_some_and(|receipt| receipt.version == published.snapshot.version)
+            })
+    };
+    if completed {
+        replace_delta(delta, published).await;
+    }
+}
+
+async fn replace_delta(delta: &RwLock<PublishedDelta>, published: PublishedDelta) {
+    let mut current = delta.write().await;
+    if published.source_job >= current.source_job {
+        *current = published;
+    }
 }
 
 async fn finish_unsettled_job(
@@ -3703,9 +3874,13 @@ mod tests {
         let operation_root = repo_root.join("walk-operations");
         fs::create_dir_all(&operation_root).expect("create operation directory");
         let jobs = restore_job_registry(&operation_root, &epoch).expect("restore job registry");
+        let controller = WalkController::new(repo_root.to_path_buf());
+        let delta = PublishedDelta::capture(&controller, SessionVersion::empty(), None)
+            .expect("capture initial delta");
         WalkServer {
             epoch,
-            controller: Arc::new(Mutex::new(WalkController::new(repo_root.to_path_buf()))),
+            controller: Arc::new(Mutex::new(controller)),
+            delta: Arc::new(RwLock::new(delta)),
             jobs: Arc::new(Mutex::new(jobs)),
             gate,
             operation_root,
@@ -3939,7 +4114,11 @@ mod tests {
         let gate = MutationGate::closed();
         let server = test_server(repo.path(), gate.clone());
 
-        for body in [WalkRequestBody::Health, WalkRequestBody::Show] {
+        for body in [
+            WalkRequestBody::Health,
+            WalkRequestBody::Show,
+            WalkRequestBody::SessionHistory,
+        ] {
             let (response, stop) = server.handle(walk_request(body)).await;
             assert!(!stop, "read-only request must not stop the server");
             assert_eq!(
@@ -4017,6 +4196,34 @@ mod tests {
             }
             other => panic!("closed endpoint did not return local shutdown status: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn session_history_does_not_wait_for_the_controller() {
+        let repo = tempdir().expect("repo tempdir");
+        let server = test_server(repo.path(), MutationGate::open());
+        let expected_epoch = server.epoch.clone();
+        let _controller = server.controller.lock().await;
+
+        let (response, stop) = tokio::time::timeout(
+            Duration::from_millis(100),
+            server.handle(walk_request(WalkRequestBody::SessionHistory)),
+        )
+        .await
+        .expect("session history must not wait for the controller lock");
+
+        assert!(!stop);
+        let WalkResponse::History { history } = response else {
+            panic!("expected session-history response");
+        };
+        assert_eq!(history.version, SessionVersion::empty());
+        assert!(history.journal_path.is_none());
+        assert!(history.origin.is_none());
+        assert!(history.profile.is_none());
+        assert!(history.events.is_empty());
+        assert!(history.damage.is_none());
+        assert!(history.abandonment.is_none());
+        assert_eq!(history.epoch, expected_epoch);
     }
 
     #[tokio::test]
@@ -4179,6 +4386,217 @@ mod tests {
             }
             other => panic!("show did not report the active job: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn delta_reports_prior_result_without_waiting_for_controller() {
+        let repo = tempdir().expect("repo tempdir");
+        let server = test_server(repo.path(), MutationGate::open());
+        let snapshot = WalkDeltaSnapshot {
+            version: SessionVersion::empty(),
+            state: WalkDeltaState::Recorded {
+                from: WalkPhase::Empty,
+                edges: Vec::new(),
+            },
+        };
+        *server.delta.write().await = PublishedDelta {
+            source_job: None,
+            phase: WalkPhase::Empty,
+            snapshot: snapshot.clone(),
+            plain: "prior plain delta".to_string(),
+            verbose: "prior verbose delta".to_string(),
+            color: "prior color delta".to_string(),
+            verbose_color: "prior verbose color delta".to_string(),
+        };
+        server
+            .register_job(
+                test_guard(10_002),
+                b"step".to_vec(),
+                test_step_intent(WalkPhase::R6),
+            )
+            .await
+            .map(accepted)
+            .expect("register test job");
+        let _controller = server.controller.lock().await;
+
+        let handled = tokio::time::timeout(
+            Duration::from_millis(100),
+            server.handle(walk_request(WalkRequestBody::ShowDelta {
+                verbose: true,
+                color: false,
+            })),
+        )
+        .await
+        .expect("delta must not wait for the live job's controller lock");
+
+        let (
+            WalkResponse::Delta {
+                phase,
+                report,
+                snapshot: observed,
+                ..
+            },
+            false,
+        ) = handled
+        else {
+            panic!("show delta did not return the prior completed result: {handled:?}");
+        };
+        assert_eq!(phase, WalkPhase::Empty);
+        assert_eq!(report, "prior verbose delta");
+        assert_eq!(observed, snapshot);
+    }
+
+    #[tokio::test]
+    async fn delta_publication_requires_terminal_receipt() {
+        let repo = tempdir().expect("repo tempdir");
+        let server = test_server(repo.path(), MutationGate::open());
+        let job = server
+            .register_job(
+                test_guard(10_003),
+                b"step".to_vec(),
+                test_step_intent(WalkPhase::R6),
+            )
+            .await
+            .map(accepted)
+            .expect("register test job");
+        let published = PublishedDelta {
+            source_job: Some(job.job_id),
+            phase: WalkPhase::Empty,
+            snapshot: WalkDeltaSnapshot {
+                version: SessionVersion::empty(),
+                state: WalkDeltaState::Recorded {
+                    from: WalkPhase::Empty,
+                    edges: Vec::new(),
+                },
+            },
+            plain: "completed delta".to_string(),
+            verbose: "completed delta".to_string(),
+            color: "completed delta".to_string(),
+            verbose_color: "completed delta".to_string(),
+        };
+
+        publish_delta(&server.delta, &server.jobs, job.job_id, published.clone()).await;
+        assert!(matches!(
+            &server.delta.read().await.snapshot.state,
+            WalkDeltaState::NotRecorded
+        ));
+
+        {
+            let mut jobs = server.jobs.lock().await;
+            let active = jobs.active.as_mut().expect("active test job");
+            active.snapshot.status = WalkJobStatus::Succeeded;
+            active.snapshot.receipt = Some(WalkTransitionReceipt {
+                phase_before: WalkPhase::Empty,
+                phase_after: WalkPhase::Empty,
+                edges: Vec::new(),
+                version: SessionVersion::empty(),
+                event_projection: WalkEventProjection::Unknown,
+            });
+        }
+        publish_delta(&server.delta, &server.jobs, job.job_id, published).await;
+        let delta = server.delta.read().await;
+        assert_eq!(delta.plain, "completed delta");
+        assert!(matches!(
+            &delta.snapshot.state,
+            WalkDeltaState::Recorded { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn older_job_cannot_replace_newer_delta() {
+        let repo = tempdir().expect("repo tempdir");
+        let server = test_server(repo.path(), MutationGate::open());
+        let first = server
+            .register_job(
+                test_guard(10_004),
+                b"first-step".to_vec(),
+                test_step_intent(WalkPhase::R6),
+            )
+            .await
+            .map(accepted)
+            .expect("register first test job");
+        {
+            let mut jobs = server.jobs.lock().await;
+            let active = jobs.active.as_mut().expect("active first job");
+            active.snapshot.status = WalkJobStatus::Succeeded;
+            active.snapshot.receipt = Some(WalkTransitionReceipt {
+                phase_before: WalkPhase::Empty,
+                phase_after: WalkPhase::Empty,
+                edges: Vec::new(),
+                version: SessionVersion::empty(),
+                event_projection: WalkEventProjection::Unknown,
+            });
+        }
+        let second = server
+            .register_job(
+                test_guard(10_005),
+                b"second-step".to_vec(),
+                test_step_intent(WalkPhase::R6),
+            )
+            .await
+            .map(accepted)
+            .expect("register second test job");
+        {
+            let mut jobs = server.jobs.lock().await;
+            let active = jobs.active.as_mut().expect("active second job");
+            active.snapshot.status = WalkJobStatus::Succeeded;
+            active.snapshot.receipt = Some(WalkTransitionReceipt {
+                phase_before: WalkPhase::Empty,
+                phase_after: WalkPhase::Empty,
+                edges: Vec::new(),
+                version: SessionVersion::empty(),
+                event_projection: WalkEventProjection::Unknown,
+            });
+        }
+        let published = |job_id, report: &str| PublishedDelta {
+            source_job: Some(job_id),
+            phase: WalkPhase::Empty,
+            snapshot: WalkDeltaSnapshot {
+                version: SessionVersion::empty(),
+                state: WalkDeltaState::Recorded {
+                    from: WalkPhase::Empty,
+                    edges: Vec::new(),
+                },
+            },
+            plain: report.to_string(),
+            verbose: report.to_string(),
+            color: report.to_string(),
+            verbose_color: report.to_string(),
+        };
+
+        publish_delta(
+            &server.delta,
+            &server.jobs,
+            second.job_id,
+            published(second.job_id, "newer delta"),
+        )
+        .await;
+        publish_delta(
+            &server.delta,
+            &server.jobs,
+            first.job_id,
+            published(first.job_id, "older delta"),
+        )
+        .await;
+
+        let delta = server.delta.read().await;
+        assert_eq!(delta.source_job, Some(second.job_id));
+        assert_eq!(delta.plain, "newer delta");
+    }
+
+    #[test]
+    fn cleared_delta_retains_observed_durable_version() {
+        let version = SessionVersion {
+            session_id: None,
+            cursor: None,
+            journal_revision: 7,
+        };
+        let delta = PublishedDelta::not_recorded(WalkPhase::Empty, version.clone(), Some(7));
+
+        assert_eq!(delta.source_job, Some(7));
+        assert_eq!(delta.phase, WalkPhase::Empty);
+        assert_eq!(delta.snapshot.version, version);
+        assert!(matches!(delta.snapshot.state, WalkDeltaState::NotRecorded));
     }
 
     #[tokio::test]

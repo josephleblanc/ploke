@@ -846,6 +846,7 @@ fn setup_preview_command(batch: PathBuf, profile: PathBuf) -> Prototype1LoopComm
         max_turns: 40,
         max_tool_calls: 200,
         wall_clock_secs: 1800,
+        eval_max_tokens: crate::campaign::DEFAULT_EVAL_MAX_TOKENS,
         index_debug_snapshots: true,
         use_default_model: false,
         model_id: Some("google/gemini-3.5-flash".to_string()),
@@ -1922,6 +1923,7 @@ fn prototype1_setup_campaign_manifest_preserves_embedding_overrides() {
         max_turns: 40,
         max_tool_calls: 200,
         wall_clock_secs: 1800,
+        eval_max_tokens: crate::campaign::DEFAULT_EVAL_MAX_TOKENS,
         index_debug_snapshots: true,
         use_default_model: false,
         model_id: Some("google/gemini-3.5-flash".to_string()),
@@ -1971,6 +1973,11 @@ fn prototype1_setup_campaign_manifest_preserves_embedding_overrides() {
         campaign.resolved.eval.embedding_provider_slug.as_deref(),
         Some("perplexity")
     );
+    assert_eq!(
+        manifest.eval.max_tokens,
+        Some(crate::campaign::DEFAULT_EVAL_MAX_TOKENS)
+    );
+    assert_eq!(campaign.resolved.eval.max_tokens, manifest.eval.max_tokens);
 }
 
 #[test]
@@ -2021,6 +2028,19 @@ fn prototype1_eval_set_id_includes_embedding_overrides() {
     );
 
     assert_ne!(embedding_id, direct_id);
+
+    let mut token_policy = direct_policy;
+    token_policy.max_tokens = Some(crate::campaign::DEFAULT_EVAL_MAX_TOKENS);
+    let token_id = prototype1_eval_set_id(
+        &baseline_campaign,
+        &treatment_campaign,
+        crate::target_registry::BenchmarkFamily::MultiSweBenchRust,
+        &sources,
+        &token_policy,
+        &instance_ids,
+    );
+
+    assert_ne!(direct_id, token_id);
 }
 
 #[test]
@@ -8267,6 +8287,7 @@ fn test_evaluation_report(node: &Prototype1NodeRecord) -> Prototype1BranchEvalua
                 embedding_route: EmbeddingRoute::OpenRouter,
                 embedding_model_id: None,
                 embedding_provider_slug: None,
+                max_tokens: None,
             },
             instance_ids: vec![node.instance_id.clone()],
             missing_treatment_instance_ids: Vec::new(),
@@ -8326,6 +8347,7 @@ fn test_eval_policy() -> EvalCampaignPolicy {
         embedding_route: EmbeddingRoute::OpenRouter,
         embedding_model_id: None,
         embedding_provider_slug: None,
+        max_tokens: None,
     }
 }
 

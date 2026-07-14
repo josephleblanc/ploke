@@ -33,9 +33,10 @@ use uuid::Uuid;
 
 use crate::inner::core::{RegisteredRunRole, RunIntent};
 use crate::inner::registry::RunRegistration;
+use crate::model_registry::resolve_model_for_run;
 use crate::provider_prefs::load_provider_for_model;
 use crate::run_registry::{persist_registration, register_live_run, storage_roots_for_instance};
-use crate::spec::{PrepareError, PreparedSingleRun, RunSource};
+use crate::spec::{PrepareError, PreparedCampaignContext, PreparedSingleRun, RunSource};
 
 mod artifacts;
 mod msb_batch;
@@ -82,6 +83,61 @@ pub(crate) fn configure_headless_benchmark_chat(cfg: &mut RuntimeConfig, route: 
     cfg.editing.auto_confirm_edits = true;
     cfg.chat_policy = benchmark_chat_policy();
     configure_eval_model_runtime(cfg, route);
+}
+
+pub(crate) fn validate_token_cap(max_tokens: Option<u32>) -> Result<(), PrepareError> {
+    if max_tokens == Some(0) {
+        return Err(PrepareError::DatabaseSetup {
+            phase: "eval_max_tokens",
+            detail: "eval max_tokens must be greater than zero when set".to_string(),
+        });
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_route_cap(
+    max_tokens: Option<u32>,
+    route: &LlmRoute,
+) -> Result<(), PrepareError> {
+    let Some(max_tokens) = max_tokens else {
+        return Ok(());
+    };
+    let Some(floor) = ploke_tui::llm::model_token_floor(route.router(), route.model()) else {
+        return Ok(());
+    };
+    if max_tokens < floor {
+        return Err(PrepareError::DatabaseSetup {
+            phase: "eval_max_tokens_model_floor",
+            detail: format!(
+                "admitted eval max_tokens {max_tokens} is below the required {floor} token floor for selected model '{}' on route '{}'; the admitted maximum cannot be raised silently",
+                route.model(),
+                route.selected_provider_slug()
+            ),
+        });
+    }
+    Ok(())
+}
+
+pub(crate) fn resolve_token_cap(
+    explicit: Option<u32>,
+    campaign: Option<&PreparedCampaignContext>,
+) -> Result<Option<u32>, PrepareError> {
+    validate_token_cap(explicit)?;
+    let admitted = campaign.and_then(|context| context.max_tokens);
+    validate_token_cap(admitted)?;
+
+    if let (Some(explicit), Some(admitted)) = (explicit, admitted)
+        && explicit != admitted
+    {
+        return Err(PrepareError::DatabaseSetup {
+            phase: "campaign_eval_max_tokens",
+            detail: format!(
+                "requested eval max_tokens {explicit} does not match admitted campaign max_tokens {admitted}"
+            ),
+        });
+    }
+
+    Ok(explicit.or(admitted))
 }
 
 pub(crate) fn artifact_runs_dir(instance_dir: &Path) -> PathBuf {
@@ -289,6 +345,49 @@ pub(crate) fn parse_requested_model_id(
         .transpose()
 }
 
+pub(crate) fn select_run_model(
+    model_id: Option<&str>,
+    use_default: bool,
+    campaign: Option<&PreparedCampaignContext>,
+) -> Result<ResponseItem, PrepareError> {
+    let selected_id = model_id.or_else(|| campaign.and_then(|context| context.model_id.as_deref()));
+    let requested = parse_requested_model_id(selected_id)?;
+    let mut selected = resolve_model_for_run(requested.as_ref(), use_default)?;
+    apply_campaign_route(&mut selected, campaign)?;
+    Ok(selected)
+}
+
+pub(crate) fn apply_campaign_route(
+    selected_model: &mut ResponseItem,
+    campaign: Option<&PreparedCampaignContext>,
+) -> Result<(), PrepareError> {
+    let Some(campaign) = campaign else {
+        return Ok(());
+    };
+    if let Some(model_id) = campaign.model_id.as_deref()
+        && model_id != selected_model.id.to_string()
+    {
+        return Err(PrepareError::DatabaseSetup {
+            phase: "campaign_model_route",
+            detail: format!(
+                "prepared campaign model '{model_id}' does not match selected model '{}'",
+                selected_model.id
+            ),
+        });
+    }
+    let route_source = campaign
+        .route_source
+        .ok_or_else(|| PrepareError::DatabaseSetup {
+            phase: "campaign_model_route",
+            detail: format!(
+                "prepared campaign '{}' does not carry its admitted model route",
+                campaign.campaign_id
+            ),
+        })?;
+    selected_model.route_source = route_source;
+    Ok(())
+}
+
 pub(crate) fn provider_request_for_selected_model<'a>(
     selected_model: &ResponseItem,
     explicit_provider: Option<&'a ProviderKey>,
@@ -306,12 +405,51 @@ pub(crate) fn provider_request_for_selected_model<'a>(
 pub(crate) fn load_provider_preference_for_selected_model(
     selected_model: &ResponseItem,
     explicit_provider: Option<&ProviderKey>,
+    campaign: Option<&PreparedCampaignContext>,
 ) -> Result<Option<ProviderKey>, PrepareError> {
-    if explicit_provider.is_some() || selected_model.route_source.is_direct_google() {
-        Ok(None)
-    } else {
-        load_provider_for_model(&selected_model.id)
+    if let Some(campaign) = campaign {
+        if let Some(model_id) = campaign.model_id.as_deref()
+            && model_id != selected_model.id.to_string()
+        {
+            return Err(PrepareError::DatabaseSetup {
+                phase: "campaign_model_route",
+                detail: format!(
+                    "prepared campaign model '{model_id}' does not match selected model '{}'",
+                    selected_model.id
+                ),
+            });
+        }
+        if let Some(explicit) = explicit_provider {
+            let selected = explicit.slug.as_str();
+            if campaign.provider_slug.as_deref() != Some(selected) {
+                return Err(PrepareError::DatabaseSetup {
+                    phase: "campaign_provider_route",
+                    detail: format!(
+                        "requested provider '{selected}' does not match admitted campaign provider '{}'",
+                        campaign
+                            .provider_slug
+                            .as_deref()
+                            .unwrap_or("<route-default>")
+                    ),
+                });
+            }
+            return Ok(None);
+        }
+        return campaign
+            .provider_slug
+            .as_deref()
+            .map(|slug| {
+                ProviderKey::new(slug).map_err(|error| PrepareError::DatabaseSetup {
+                    phase: "campaign_provider_route",
+                    detail: error.to_string(),
+                })
+            })
+            .transpose();
     }
+    if explicit_provider.is_some() || selected_model.route_source.is_direct_google() {
+        return Ok(None);
+    }
+    load_provider_for_model(&selected_model.id)
 }
 pub(crate) fn init_runtime_db() -> Result<Arc<Database>, PrepareError> {
     info!("initializing eval runtime database");

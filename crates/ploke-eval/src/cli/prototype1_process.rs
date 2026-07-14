@@ -5036,7 +5036,7 @@ pub(super) async fn run_prototype1_resolved_branch_treatment(
         let baseline_resolved = step!(
             "prototype1.child.evaluate.resolve_baseline_campaign",
             "ResolveBaselineCampaign",
-            || resolve_campaign_config(baseline_campaign_id, &CampaignOverrides::default()),
+            || crate::campaign::resolve_explicit_campaign(baseline_campaign_id),
         )?;
         let treatment_campaign = step!(
             "prototype1.child.evaluate.prepare_treatment_campaign",

@@ -17,7 +17,9 @@ use std::path::{Path, PathBuf};
 use ploke_records::ids::CampaignId;
 
 use crate::{
-    CampaignOverrides, ResolvedCampaignConfig, campaign_manifest_path,
+    ResolvedCampaignConfig,
+    campaign::resolve_explicit_campaign,
+    campaign_manifest_path,
     cli::{
         InspectOutputFormat, Prototype1StateCommand, Prototype1StateStopAfter,
         prototype1_process::validate_prototype1_successor_continuation,
@@ -44,7 +46,6 @@ use crate::{
             walk::phase::WalkPhase,
         },
     },
-    resolve_campaign_config,
     spec::PrepareError,
 };
 
@@ -1110,7 +1111,7 @@ fn reconstruct_r1(
     let command = default_command(repo_root.clone(), campaign_id.clone(), handoff_invocation);
     let manifest_path = campaign_manifest_path(campaign_id)?;
     let run_shape = Prototype1StateRunShape::resolve(&command, &manifest_path)?;
-    let config = resolve_campaign_config(campaign_id, &CampaignOverrides::default())?;
+    let config = resolve_explicit_campaign(campaign_id)?;
     let journal_path = prototype1_transition_journal_path(&manifest_path);
     let journal = PrototypeJournal::new(journal_path.clone());
 

@@ -28,7 +28,7 @@ use tracing::info;
 use crate::campaign::EmbeddingRoute;
 use crate::inner::registry::{RunLifecyclePhase, RunPhaseStatus, RunRegistration};
 use crate::record::{RunRecord, SubmissionArtifactState, write_compressed_record};
-use crate::spec::{PrepareError, PreparedSingleRun, RunSource};
+use crate::spec::{PrepareError, PreparedCampaignContext, PreparedSingleRun, RunSource};
 
 use super::*;
 
@@ -456,6 +456,317 @@ mod tests {
             provider_request_for_selected_model(&selected_model, None, Some(&preferred_provider));
 
         assert_eq!(requested_provider, Some(&preferred_provider));
+    }
+
+    #[test]
+    fn campaign_route_default_ignores_later_provider_preference() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _env = crate::test_support::env_guard_os(vec![(
+            "PLOKE_EVAL_HOME",
+            temp.path().as_os_str().to_os_string(),
+        )]);
+        let selected_model = test_model_response_item(
+            "x-ai/grok-4-fast",
+            ploke_llm::request::models::ModelRouteSource::OpenRouter,
+        );
+        crate::provider_prefs::set_provider_for_model(
+            &selected_model.id,
+            ProviderKey::new("mutable-preference").expect("provider key"),
+        )
+        .expect("persist provider preference");
+        let campaign = PreparedCampaignContext {
+            campaign_id: ploke_records::ids::CampaignId::from("frozen-route-default"),
+            model_id: Some(selected_model.id.to_string()),
+            route_source: Some(ploke_llm::request::models::ModelRouteSource::OpenRouter),
+            provider_slug: None,
+            max_tokens: None,
+            framework: crate::FrameworkConfig::default(),
+        };
+
+        let preferred =
+            load_provider_preference_for_selected_model(&selected_model, None, Some(&campaign))
+                .expect("load campaign provider selection");
+
+        assert_eq!(preferred, None);
+    }
+
+    #[test]
+    fn campaign_route_overrides_registry() {
+        let mut selected_model = test_model_response_item(
+            "google/gemini-3.5-flash",
+            ploke_llm::request::models::ModelRouteSource::OpenRouter,
+        );
+        let campaign = PreparedCampaignContext {
+            campaign_id: ploke_records::ids::CampaignId::from("frozen-route"),
+            model_id: Some(selected_model.id.to_string()),
+            route_source: Some(ploke_llm::request::models::ModelRouteSource::DirectGoogle),
+            provider_slug: None,
+            max_tokens: None,
+            framework: crate::FrameworkConfig::default(),
+        };
+
+        apply_campaign_route(&mut selected_model, Some(&campaign))
+            .expect("apply admitted campaign route");
+
+        assert!(selected_model.route_source.is_direct_google());
+    }
+
+    #[test]
+    fn campaign_model_precedes_mutable_defaults() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _env = crate::test_support::env_guard_os(vec![(
+            "PLOKE_EVAL_HOME",
+            temp.path().as_os_str().to_os_string(),
+        )]);
+        let active = test_model_response_item(
+            "x-ai/grok-4-fast",
+            ploke_llm::request::models::ModelRouteSource::OpenRouter,
+        );
+        let campaign_model = test_model_response_item(
+            "google/gemini-3.5-flash",
+            ploke_llm::request::models::ModelRouteSource::OpenRouter,
+        );
+        let default = test_model_response_item(
+            &ploke_llm::ModelId::from(ploke_llm::ModelKey::default()).to_string(),
+            ploke_llm::request::models::ModelRouteSource::OpenRouter,
+        );
+        crate::model_registry::save_model_registry(&crate::model_registry::ModelRegistry {
+            data: vec![active.clone(), campaign_model.clone(), default],
+        })
+        .expect("save model registry");
+        crate::model_registry::save_active_model(&active.id).expect("save active model");
+        let campaign = PreparedCampaignContext {
+            campaign_id: ploke_records::ids::CampaignId::from("campaign-model"),
+            model_id: Some(campaign_model.id.to_string()),
+            route_source: Some(ploke_llm::request::models::ModelRouteSource::DirectGoogle),
+            provider_slug: None,
+            max_tokens: None,
+            framework: crate::FrameworkConfig::default(),
+        };
+
+        let selected = select_run_model(None, false, Some(&campaign))
+            .expect("campaign model beats active model");
+        assert_eq!(selected.id, campaign_model.id);
+        assert!(selected.route_source.is_direct_google());
+
+        let selected = select_run_model(None, true, Some(&campaign))
+            .expect("campaign model beats default flag");
+        assert_eq!(selected.id, campaign_model.id);
+
+        let selected = select_run_model(None, false, None).expect("active fallback remains valid");
+        assert_eq!(selected.id, active.id);
+
+        let active_id = active.id.to_string();
+        let campaign_id = campaign_model.id.to_string();
+        let error = select_run_model(Some(&active_id), false, Some(&campaign))
+            .expect_err("explicit campaign mismatch must remain fail-closed")
+            .to_string();
+        assert!(error.contains(&active_id));
+        assert!(error.contains(&campaign_id));
+    }
+
+    #[test]
+    fn campaign_requires_admitted_route() {
+        let mut selected_model = test_model_response_item(
+            "x-ai/grok-4-fast",
+            ploke_llm::request::models::ModelRouteSource::OpenRouter,
+        );
+        let campaign: PreparedCampaignContext = serde_json::from_value(serde_json::json!({
+            "campaign_id": "historical-missing-route",
+            "model_id": selected_model.id.to_string()
+        }))
+        .expect("historical prepared context remains readable");
+        assert_eq!(campaign.route_source, None);
+
+        let error = apply_campaign_route(&mut selected_model, Some(&campaign))
+            .expect_err("historical route omission cannot authorize live rerun");
+
+        assert!(error.to_string().contains("does not carry"));
+    }
+
+    #[test]
+    fn campaign_pin_ignores_later_preference() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _env = crate::test_support::env_guard_os(vec![(
+            "PLOKE_EVAL_HOME",
+            temp.path().as_os_str().to_os_string(),
+        )]);
+        let selected_model = test_model_response_item(
+            "x-ai/grok-4-fast",
+            ploke_llm::request::models::ModelRouteSource::OpenRouter,
+        );
+        crate::provider_prefs::set_provider_for_model(
+            &selected_model.id,
+            ProviderKey::new("mutable-preference").expect("provider key"),
+        )
+        .expect("persist provider preference");
+        let campaign = PreparedCampaignContext {
+            campaign_id: ploke_records::ids::CampaignId::from("frozen-provider"),
+            model_id: Some(selected_model.id.to_string()),
+            route_source: Some(ploke_llm::request::models::ModelRouteSource::OpenRouter),
+            provider_slug: Some("admitted-provider".to_string()),
+            max_tokens: None,
+            framework: crate::FrameworkConfig::default(),
+        };
+
+        let preferred =
+            load_provider_preference_for_selected_model(&selected_model, None, Some(&campaign))
+                .expect("load campaign provider selection");
+
+        assert_eq!(
+            preferred,
+            Some(ProviderKey::new("admitted-provider").expect("provider key"))
+        );
+    }
+
+    #[test]
+    fn campaign_rejects_provider_drift() {
+        let selected_model = test_model_response_item(
+            "x-ai/grok-4-fast",
+            ploke_llm::request::models::ModelRouteSource::OpenRouter,
+        );
+        let campaign = PreparedCampaignContext {
+            campaign_id: ploke_records::ids::CampaignId::from("frozen-provider"),
+            model_id: Some(selected_model.id.to_string()),
+            route_source: Some(ploke_llm::request::models::ModelRouteSource::OpenRouter),
+            provider_slug: None,
+            max_tokens: None,
+            framework: crate::FrameworkConfig::default(),
+        };
+        let changed = ProviderKey::new("later-provider").expect("provider key");
+
+        let error = load_provider_preference_for_selected_model(
+            &selected_model,
+            Some(&changed),
+            Some(&campaign),
+        )
+        .expect_err("campaign provider drift must fail");
+
+        assert!(error.to_string().contains("does not match admitted"));
+    }
+
+    #[test]
+    fn campaign_rejects_model_drift() {
+        let selected_model = test_model_response_item(
+            "x-ai/grok-4-fast",
+            ploke_llm::request::models::ModelRouteSource::OpenRouter,
+        );
+        let campaign = PreparedCampaignContext {
+            campaign_id: ploke_records::ids::CampaignId::from("frozen-model"),
+            model_id: Some("google/gemini-3.5-flash".to_string()),
+            route_source: Some(ploke_llm::request::models::ModelRouteSource::OpenRouter),
+            provider_slug: None,
+            max_tokens: None,
+            framework: crate::FrameworkConfig::default(),
+        };
+
+        let error =
+            load_provider_preference_for_selected_model(&selected_model, None, Some(&campaign))
+                .expect_err("campaign model drift must fail");
+
+        assert!(error.to_string().contains("does not match selected model"));
+    }
+
+    #[test]
+    fn ad_hoc_run_still_uses_provider_preference() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _env = crate::test_support::env_guard_os(vec![(
+            "PLOKE_EVAL_HOME",
+            temp.path().as_os_str().to_os_string(),
+        )]);
+        let selected_model = test_model_response_item(
+            "x-ai/grok-4-fast",
+            ploke_llm::request::models::ModelRouteSource::OpenRouter,
+        );
+        let provider = ProviderKey::new("mutable-preference").expect("provider key");
+        crate::provider_prefs::set_provider_for_model(&selected_model.id, provider.clone())
+            .expect("persist provider preference");
+
+        let preferred = load_provider_preference_for_selected_model(&selected_model, None, None)
+            .expect("load ad hoc provider preference");
+
+        assert_eq!(preferred, Some(provider));
+    }
+
+    fn token_campaign(max_tokens: Option<u32>) -> PreparedCampaignContext {
+        PreparedCampaignContext {
+            campaign_id: ploke_records::ids::CampaignId::from("token-campaign"),
+            model_id: None,
+            route_source: None,
+            provider_slug: None,
+            max_tokens,
+            framework: crate::FrameworkConfig::default(),
+        }
+    }
+
+    #[test]
+    fn prepared_campaign_context_round_trips_token_cap() {
+        let campaign = token_campaign(Some(32_768));
+
+        let value = serde_json::to_value(&campaign).expect("serialize prepared campaign context");
+        assert_eq!(
+            value.get("max_tokens").and_then(|value| value.as_u64()),
+            Some(32_768)
+        );
+
+        let decoded: PreparedCampaignContext =
+            serde_json::from_value(value).expect("deserialize prepared campaign context");
+        assert_eq!(decoded.max_tokens, Some(32_768));
+    }
+
+    #[test]
+    fn historical_campaign_context_has_no_token_cap() {
+        let campaign: PreparedCampaignContext = serde_json::from_value(serde_json::json!({
+            "campaign_id": "historical-token-campaign"
+        }))
+        .expect("historical prepared campaign context remains readable");
+
+        assert_eq!(campaign.max_tokens, None);
+        assert_eq!(
+            resolve_token_cap(None, Some(&campaign)).expect("historical context has no cap"),
+            None
+        );
+    }
+
+    #[test]
+    fn campaign_token_cap_resolution_fails_closed() {
+        let campaign = token_campaign(Some(32_768));
+
+        assert_eq!(
+            resolve_token_cap(None, Some(&campaign)).expect("inherit admitted cap"),
+            Some(32_768)
+        );
+        assert_eq!(
+            resolve_token_cap(Some(32_768), Some(&campaign)).expect("equal explicit cap"),
+            Some(32_768)
+        );
+
+        let drift = resolve_token_cap(Some(16_384), Some(&campaign))
+            .expect_err("different explicit cap must not override campaign authority");
+        assert!(drift.to_string().contains("does not match admitted"));
+
+        let zero = resolve_token_cap(Some(0), None).expect_err("zero token cap must fail");
+        assert!(zero.to_string().contains("greater than zero"));
+    }
+
+    #[test]
+    fn direct_google_token_cap_respects_model_floor() {
+        let model = "google/gemini-2.5-flash"
+            .parse::<ploke_llm::ModelId>()
+            .expect("model id");
+        let route = LlmRoute::google(model, true);
+
+        validate_route_cap(None, &route).expect("an unset cap may use the model floor");
+        validate_route_cap(Some(32_768), &route)
+            .expect("an explicit cap above the model floor remains valid");
+
+        let error = validate_route_cap(Some(8_192), &route)
+            .expect_err("an explicit cap below the model floor must fail closed");
+        let detail = error.to_string();
+        assert!(detail.contains("admitted eval max_tokens 8192"));
+        assert!(detail.contains("required 16384 token floor"));
+        assert!(detail.contains("cannot be raised silently"));
+        assert!(detail.contains("google/gemini-2.5-flash"));
     }
 
     #[cfg(feature = "live_api_tests")]

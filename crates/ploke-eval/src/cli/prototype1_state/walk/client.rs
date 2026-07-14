@@ -27,8 +27,8 @@ use super::{
     epoch::ServerEpoch,
     ipc, paths,
     protocol::{
-        MutationGuard, OperationId, SessionVersion, WalkJobResolutionKind, WalkJobSnapshot,
-        WalkJobStatus, WalkRequest, WalkRequestBody, WalkResponse,
+        MutationGuard, OperationId, SessionVersion, WalkDeltaState, WalkJobResolutionKind,
+        WalkJobSnapshot, WalkJobStatus, WalkRequest, WalkRequestBody, WalkResponse,
     },
     summary,
 };
@@ -170,6 +170,18 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
             print_response(&response, format, with_version)?;
             response_result(response)
         }
+        Prototype1StateWalkSubcommand::Config(command) => {
+            let format = command.format;
+            let with_version = command.with_version;
+            let socket_override = command.socket.clone();
+            let (repo_root, _) =
+                args::resolve_socket(command.repo_root_ref(), socket_override.as_deref())?;
+            let client = WalkClient::resolve(Some(&repo_root), socket_override.as_deref())?;
+            ensure_server(&client, default_idle_ttl()).await?;
+            let response = client.send_read_only(WalkRequestBody::Config).await?;
+            print_response(&response, format, with_version)?;
+            response_result(response)
+        }
         Prototype1StateWalkSubcommand::Show(command) => {
             let format = command.control.format;
             let with_version = command.control.with_version;
@@ -188,6 +200,20 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
                 None => WalkRequestBody::Show,
             };
             let response = client.send_read_only(body).await?;
+            print_response(&response, format, with_version)?;
+            response_result(response)
+        }
+        Prototype1StateWalkSubcommand::SessionHistory(command) => {
+            let format = command.format;
+            let with_version = command.with_version;
+            let socket_override = command.socket.clone();
+            let (repo_root, _) =
+                args::resolve_socket(command.repo_root_ref(), socket_override.as_deref())?;
+            let client = WalkClient::resolve(Some(&repo_root), socket_override.as_deref())?;
+            ensure_server(&client, default_idle_ttl()).await?;
+            let response = client
+                .send_read_only(WalkRequestBody::SessionHistory)
+                .await?;
             print_response(&response, format, with_version)?;
             response_result(response)
         }
@@ -743,7 +769,9 @@ fn retry_safe_read(body: &WalkRequestBody) -> bool {
         body,
         WalkRequestBody::Health
             | WalkRequestBody::Files
+            | WalkRequestBody::Config
             | WalkRequestBody::Show
+            | WalkRequestBody::SessionHistory
             | WalkRequestBody::OperationStatus { .. }
             | WalkRequestBody::ShowDelta { .. }
             | WalkRequestBody::Audit { .. }
@@ -991,6 +1019,70 @@ fn print_response(
                     );
                 }
             }
+            WalkResponse::Config {
+                phase,
+                config,
+                epoch,
+            } => {
+                println!("walk configuration");
+                println!("{}", "-".repeat(40));
+                println!("status: ok");
+                println!("phase: {phase} - {}", phase.detail());
+                println!("identity_path: {}", config.identity.path.display());
+                println!("campaign_id: {}", config.identity.record.campaign_id);
+                println!("parent_id: {}", config.identity.record.parent_id);
+                println!("node_id: {}", config.identity.record.node_id);
+                println!("campaign_path: {}", config.campaign.path.display());
+                println!("campaign_sha256: {}", config.campaign.content_hash.as_str());
+                println!(
+                    "setup_receipt: {}",
+                    config.campaign.admission.path.display()
+                );
+                println!("setup_plan_sha256: {}", config.campaign.admission.plan_hash);
+                println!(
+                    "setup_root: {}",
+                    config.campaign.admission.setup_root.display()
+                );
+                println!("setup_started_at: {}", config.campaign.admission.started_at);
+                println!(
+                    "setup_completed_head: {}",
+                    config.campaign.admission.completed_head
+                );
+                println!("model_id: {}", config.campaign.resolved.model_id);
+                println!("route_source: {:?}", config.campaign.resolved.route_source);
+                println!("provider_selection: {}", config.campaign.provider);
+                println!("provider_source: admitted_campaign_manifest");
+                println!("profile_name: {}", config.profile.record.name);
+                println!(
+                    "profile_path: {}",
+                    config.profile.commitment.profile_path.display()
+                );
+                println!("profile_sha256: {}", config.profile.commitment.sha256);
+                println!(
+                    "profile_source_reported: {}",
+                    config
+                        .profile
+                        .reported_source
+                        .as_deref()
+                        .map(|path| path.display().to_string())
+                        .unwrap_or_else(|| "-".to_string())
+                );
+                println!("run_mode: {:?}", config.control.mode);
+                println!("parallel_cap: {}", config.control.parallel_cap.value);
+                println!(
+                    "parallel_cap_source: {:?}",
+                    config.control.parallel_cap.source
+                );
+                println!("patch_cap: {}", config.control.patch_cap.value);
+                println!("patch_cap_source: {:?}", config.control.patch_cap.source);
+                if with_version {
+                    println!("protocol_version: {}", epoch.protocol_version);
+                    println!(
+                        "transition_graph_version: {}",
+                        epoch.transition_graph_version
+                    );
+                }
+            }
             WalkResponse::Job {
                 phase,
                 job,
@@ -1105,6 +1197,93 @@ fn print_response(
                 print_multiline("message", message);
                 if with_version {
                     print_session_version(&snapshot.version);
+                    println!("protocol_version: {}", epoch.protocol_version);
+                    println!(
+                        "transition_graph_version: {}",
+                        epoch.transition_graph_version
+                    );
+                }
+            }
+            WalkResponse::History { history } => {
+                println!("walk session history");
+                println!("{}", "-".repeat(40));
+                println!("status: ok");
+                println!(
+                    "journal_path: {}",
+                    history
+                        .journal_path
+                        .as_ref()
+                        .map_or_else(|| "-".to_string(), |path| path.display().to_string())
+                );
+                print_session_version(&history.version);
+                println!("origin: {:?}", history.origin);
+                if let Some(profile) = &history.profile {
+                    println!("profile_path: {}", profile.profile_path.display());
+                    println!("profile_sha256: {}", profile.sha256);
+                    println!("profile_admitted_at: {}", profile.admitted_at);
+                } else {
+                    println!("profile_path: -");
+                }
+                println!("damage: {:?}", history.damage);
+                if let Some(abandonment) = &history.abandonment {
+                    print_multiline("abandonment", &abandonment.detail);
+                } else {
+                    println!("abandonment: -");
+                }
+                println!("events: {}", history.events.len());
+                for event in &history.events {
+                    println!(
+                        "event[{}]: recorded_at_ms={} kind={:?}",
+                        event.revision, event.recorded_at_ms, event.kind
+                    );
+                }
+                if with_version {
+                    println!("protocol_version: {}", history.epoch.protocol_version);
+                    println!(
+                        "transition_graph_version: {}",
+                        history.epoch.transition_graph_version
+                    );
+                }
+            }
+            WalkResponse::Delta {
+                phase,
+                report,
+                snapshot,
+                epoch,
+            } => {
+                println!("walk transition delta");
+                println!("{}", "-".repeat(40));
+                println!("status: ok");
+                println!("phase: {phase} - {}", phase.detail());
+                match &snapshot.state {
+                    WalkDeltaState::NotRecorded => println!("delta: not_recorded"),
+                    WalkDeltaState::Recorded { from, edges } => {
+                        println!("from: {from}");
+                        println!("to: {}", snapshot.version.phase());
+                        println!("edges: {}", edges.len());
+                        for (index, edge) in edges.iter().enumerate() {
+                            println!(
+                                "edge[{index}]: {} {} -> {}",
+                                edge.edge,
+                                edge.from(),
+                                edge.to()
+                            );
+                            for axis in &edge.axes {
+                                println!(
+                                    "edge[{index}].{}: {} -> {}",
+                                    axis.axis.as_str(),
+                                    axis.from,
+                                    axis.to
+                                );
+                            }
+                        }
+                        if with_version {
+                            print_session_version(&snapshot.version);
+                        }
+                    }
+                }
+                print_multiline("report", report);
+                if with_version {
                     println!("protocol_version: {}", epoch.protocol_version);
                     println!(
                         "transition_graph_version: {}",

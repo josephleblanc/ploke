@@ -24,6 +24,7 @@ use crate::{
 };
 
 use super::{
+    cozo_schema::eval_relation_exists,
     cozo_store::EvalDb,
     error::EvalStoreError,
     schema::{EvalRelationSchema, define_eval_schema, put_eval_params},
@@ -71,6 +72,16 @@ define_eval_schema!(CampaignEmbeddingRouteSchema {
     "eval_campaign_embedding_route",
     campaign_id: "String" =>
     embedding_route: "String",
+    ingested_at: "String",
+});
+
+// Additive relation so pre-token-cap owner databases retain their original
+// campaign-policy row shape. A missing row means the admitted campaign predates
+// this explicit field; fresh setup writes one row even when the value is null.
+define_eval_schema!(CampaignEvalTokenSchema {
+    "eval_campaign_eval_token",
+    campaign_id: "String" =>
+    max_tokens: "Int?",
     ingested_at: "String",
 });
 
@@ -282,6 +293,7 @@ define_eval_schema!(BaselineInstanceMetricsSchema {
 pub(crate) const CAMPAIGN_REL: &str = CampaignSchema::RELATION;
 pub(crate) const CAMPAIGN_EVAL_POLICY_REL: &str = CampaignEvalPolicySchema::RELATION;
 pub(crate) const CAMPAIGN_EMBEDDING_ROUTE_REL: &str = CampaignEmbeddingRouteSchema::RELATION;
+pub(crate) const CAMPAIGN_EVAL_TOKEN_REL: &str = CampaignEvalTokenSchema::RELATION;
 pub(crate) const CAMPAIGN_EVAL_BUDGET_REL: &str = CampaignEvalBudgetSchema::RELATION;
 pub(crate) const CAMPAIGN_PROTOCOL_POLICY_REL: &str = CampaignProtocolPolicySchema::RELATION;
 pub(crate) const PROFILE_COMMITMENT_REL: &str = ProfileCommitmentSchema::RELATION;
@@ -300,6 +312,7 @@ pub(super) fn ensure_setup_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(), Eval
     CampaignEvalPolicySchema::SCHEMA.ensure_installed(db, "schema.eval_campaign_eval_policy")?;
     CampaignEmbeddingRouteSchema::SCHEMA
         .ensure_installed(db, "schema.eval_campaign_embedding_route")?;
+    CampaignEvalTokenSchema::SCHEMA.ensure_installed(db, "schema.eval_campaign_eval_token")?;
     CampaignEvalBudgetSchema::SCHEMA.ensure_installed(db, "schema.eval_campaign_eval_budget")?;
     CampaignProtocolPolicySchema::SCHEMA
         .ensure_installed(db, "schema.eval_campaign_protocol_policy")?;
@@ -748,6 +761,20 @@ fn put_campaign_eval_rows<D: EvalDb + ?Sized>(
         "put.eval_campaign_embedding_route",
     )?;
 
+    let mut params = BTreeMap::new();
+    params.insert(
+        "campaign_id".to_string(),
+        manifest.campaign_id.to_string().into(),
+    );
+    params.insert("max_tokens".to_string(), option_u32_param(eval.max_tokens));
+    params.insert("ingested_at".to_string(), ingested_at.to_string().into());
+    put_eval_params(
+        db,
+        &CampaignEvalTokenSchema::SCHEMA,
+        params,
+        "put.eval_campaign_eval_token",
+    )?;
+
     let budget = &eval.budget;
     let mut params = BTreeMap::new();
     params.insert(
@@ -964,7 +991,36 @@ fn read_campaign_eval<D: EvalDb + ?Sized>(
         embedding_route: read_campaign_embedding_route(db, campaign_id)?,
         embedding_model_id: read_optional_string(&rows, row, "embedding_model_id")?,
         embedding_provider_slug: read_optional_string(&rows, row, "embedding_provider_slug")?,
+        max_tokens: read_campaign_tokens(db, campaign_id)?,
     })
+}
+
+fn read_campaign_tokens<D: EvalDb + ?Sized>(
+    db: &D,
+    campaign_id: &ploke_records::ids::CampaignId,
+) -> Result<Option<u32>, EvalStoreError> {
+    if !eval_relation_exists(db, CAMPAIGN_EVAL_TOKEN_REL)? {
+        return Ok(None);
+    }
+
+    let rows = query_campaign_rows(
+        db,
+        r#"
+?[max_tokens] :=
+    *eval_campaign_eval_token { campaign_id, max_tokens },
+    campaign_id = $campaign_id
+"#,
+        campaign_id,
+        "read.eval_campaign_eval_token",
+    )?;
+    match rows.rows.as_slice() {
+        [] => Ok(None),
+        [row] => read_optional_u32(&rows, row, "max_tokens"),
+        rows => Err(EvalStoreError::Validation {
+            field: "eval_campaign_eval_token",
+            detail: format!("expected at most one campaign row, found {}", rows.len()),
+        }),
+    }
 }
 
 fn read_campaign_embedding_route<D: EvalDb + ?Sized>(
@@ -1251,6 +1307,25 @@ fn read_optional_usize(
     match field_value(rows, row, field)? {
         DataValue::Null => Ok(None),
         DataValue::Num(cozo::Num::Int(value)) => i64_to_usize(*value, field).map(Some),
+        other => Err(type_error(field, "Int?", other)),
+    }
+}
+
+fn read_optional_u32(
+    rows: &QueryResult,
+    row: &[DataValue],
+    field: &'static str,
+) -> Result<Option<u32>, EvalStoreError> {
+    match field_value(rows, row, field)? {
+        DataValue::Null => Ok(None),
+        DataValue::Num(cozo::Num::Int(value)) => {
+            u32::try_from(*value)
+                .map(Some)
+                .map_err(|_| EvalStoreError::Validation {
+                    field,
+                    detail: "value does not fit in u32".to_string(),
+                })
+        }
         other => Err(type_error(field, "Int?", other)),
     }
 }

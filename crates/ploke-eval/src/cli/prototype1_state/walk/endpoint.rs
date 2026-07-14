@@ -437,6 +437,10 @@ mod tests {
         );
 
         drop(active_listener);
+        // A parallel test may fork while the listener is open and briefly
+        // inherit its descriptor until exec. Unlink the pathname so stale
+        // reachability is deterministic even during that window.
+        fs::remove_file(active.socket()).expect("unlink stale active endpoint");
         next.activate()
             .expect("unreachable active pointer may be replaced under lock");
         assert_eq!(

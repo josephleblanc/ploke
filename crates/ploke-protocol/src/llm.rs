@@ -64,6 +64,7 @@ impl JsonLlmConfig {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProtocolReasoningPolicy {
     #[serde(default)]
     pub mode: ProtocolReasoningMode,

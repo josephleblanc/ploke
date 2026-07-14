@@ -51,14 +51,21 @@ fn default_explore_from_rejected() -> bool {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ChildBudgetRecord {
     pub min: u32,
     pub max: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parallel_targets: Option<u32>,
 }
 
 impl Default for ChildBudgetRecord {
     fn default() -> Self {
-        Self { min: 2, max: 6 }
+        Self {
+            min: 2,
+            max: 6,
+            parallel_targets: None,
+        }
     }
 }
 

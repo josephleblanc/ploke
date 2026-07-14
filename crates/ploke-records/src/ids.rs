@@ -20,6 +20,11 @@ string_id! {
     RuntimeId
 }
 
+string_id! {
+    /// Git commit id for a checked-out workspace `HEAD`.
+    GitCommit
+}
+
 impl std::fmt::Display for RuntimeId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
@@ -85,6 +90,7 @@ macro_rules! passive_string_accessors {
 }
 
 passive_string_accessors!(
+    GitCommit,
     ArtifactId,
     CampaignId,
     SchedulerNodeId,

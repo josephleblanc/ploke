@@ -233,10 +233,29 @@ fn response_message(response: &WalkResponse) -> String {
             query.result.revision.as_str(),
             query.result.row_count
         ),
+        WalkResponse::Config { config, .. } => format!(
+            "campaign {}\nsetup plan {}\nsetup receipt {}\nprovider {} (admitted manifest)\nprofile {}\nrun mode {:?}\nparallel cap {} ({:?})\npatch cap {} ({:?})",
+            config.identity.record.campaign_id,
+            short_hash(config.campaign.admission.plan_hash.as_str()),
+            config.campaign.admission.path.display(),
+            config.campaign.provider,
+            config.profile.record.name,
+            config.control.mode,
+            config.control.parallel_cap.value,
+            config.control.parallel_cap.source,
+            config.control.patch_cap.value,
+            config.control.patch_cap.source,
+        ),
         WalkResponse::Job { job, message, .. } => job
             .message
             .as_ref()
             .map_or_else(|| message.clone(), |detail| format!("{message}\n{detail}")),
+        WalkResponse::History { history } => format!(
+            "{} durable session event(s) at journal revision {}",
+            history.events.len(),
+            history.version.journal_revision()
+        ),
+        WalkResponse::Delta { report, .. } => report.clone(),
         WalkResponse::Error { detail, .. } => detail.clone(),
     }
 }
