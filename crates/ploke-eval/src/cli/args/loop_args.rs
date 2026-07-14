@@ -181,6 +181,8 @@ pub enum Prototype1StateWalkSubcommand {
     Files(Prototype1StateWalkControlCommand),
     /// Show the admitted campaign, run profile, and effective controller configuration.
     Config(Prototype1StateWalkControlCommand),
+    /// List or inspect canonical completed evaluation traces.
+    Trace(Prototype1StateWalkTraceCommand),
     /// Show current in-memory walk state or the last step delta.
     Show(Prototype1StateWalkShowCommand),
     /// Show the ordered durable controller-session journal projection.
@@ -261,6 +263,42 @@ pub struct Prototype1StateWalkControlCommand {
     /// Include protocol and transition-graph versions in table output.
     #[arg(long)]
     pub with_version: bool,
+}
+
+#[derive(Debug, Clone, Parser)]
+#[command(
+    about = "Inspect canonical evaluation records and protocol reviews",
+    after_help = "Examples:\n  ploke-eval loop walk trace list\n  ploke-eval loop walk trace show --instance BurntSushi__ripgrep-2209 --run-id run-...\n\nCompleted traces are loaded through the global run registry and preserve record, model-response, and protocol-artifact source hashes. Non-completed runs return lifecycle data only; mutable turn traces are not read."
+)]
+pub struct Prototype1StateWalkTraceCommand {
+    #[command(flatten)]
+    pub control: Prototype1StateWalkControlCommand,
+
+    #[command(subcommand)]
+    pub command: Prototype1StateWalkTraceSubcommand,
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum Prototype1StateWalkTraceSubcommand {
+    /// List completed registered runs within the admitted campaign root.
+    List,
+    /// Load one exact registered run by stable campaign-local coordinate.
+    Show(Prototype1StateWalkTraceShowCommand),
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1StateWalkTraceShowCommand {
+    /// Owning campaign from `trace list`; defaults to the admitted root campaign.
+    #[arg(long)]
+    pub campaign: Option<String>,
+
+    /// Benchmark/task instance recorded by the run registration.
+    #[arg(long)]
+    pub instance: String,
+
+    /// Globally registered concrete run identifier.
+    #[arg(long)]
+    pub run_id: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]

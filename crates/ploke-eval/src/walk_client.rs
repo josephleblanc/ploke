@@ -33,7 +33,7 @@ pub use crate::cli::{
     Prototype1StateWalkAuditScope, Prototype1StateWalkAuditTransition,
     Prototype1StateWalkLlmStepSource,
 };
-pub use ploke_records::ids::GitCommit;
+pub use ploke_records::ids::{GitCommit, InstanceId};
 
 pub use crate::cli::prototype1_state::{
     driver::control::RecoveryDirective,
@@ -69,8 +69,15 @@ pub use crate::cli::prototype1_state::{
             WalkSessionOrigin, WalkSessionSnapshot, WalkStartConfig, WalkTransitionReceipt,
         },
         query::{DbQueryResult, DbQueryRow, ReadRevision},
+        trace::{
+            CompletedEvaluationTrace, EvaluationRunCoordinate, EvaluationRunEntry,
+            EvaluationTraceIndex, EvaluationTraceSnapshot, EvaluationTraceState, ModelExchange,
+            TraceAuthority, TraceEvidence, TraceSource, TraceSourceKind,
+        },
     },
 };
+
+pub use crate::inner::RunRegistration;
 
 /// Resolved local walk service endpoint for one parent checkout.
 #[derive(Debug, Clone)]
@@ -299,6 +306,51 @@ impl WalkClient {
         }
     }
 
+    /// List completed registered evaluation runs within the admitted campaign root.
+    pub async fn evaluation_trace_index(&self) -> Result<EvaluationTraceIndex, PrepareError> {
+        match self
+            .send_read_only(WalkRequestBody::EvaluationTraceIndex)
+            .await?
+        {
+            WalkResponse::EvaluationTraceIndex { index } => Ok(index),
+            WalkResponse::Error { code, detail, .. } => Err(PrepareError::DatabaseSetup {
+                phase: "prototype1_state_walk_evaluation_trace_index",
+                detail: format!("{code}: {detail}"),
+            }),
+            response => Err(PrepareError::DatabaseSetup {
+                phase: "prototype1_state_walk_evaluation_trace_index",
+                detail: format!(
+                    "walk server returned {:?} instead of an evaluation-trace index",
+                    response.phase()
+                ),
+            }),
+        }
+    }
+
+    /// Load one exact registered evaluation run through the canonical trace reader.
+    pub async fn evaluation_trace(
+        &self,
+        coordinate: EvaluationRunCoordinate,
+    ) -> Result<EvaluationTraceSnapshot, PrepareError> {
+        match self
+            .send_read_only(WalkRequestBody::EvaluationTrace { coordinate })
+            .await?
+        {
+            WalkResponse::EvaluationTrace { snapshot } => Ok(snapshot),
+            WalkResponse::Error { code, detail, .. } => Err(PrepareError::DatabaseSetup {
+                phase: "prototype1_state_walk_evaluation_trace",
+                detail: format!("{code}: {detail}"),
+            }),
+            response => Err(PrepareError::DatabaseSetup {
+                phase: "prototype1_state_walk_evaluation_trace",
+                detail: format!(
+                    "walk server returned {:?} instead of an evaluation trace",
+                    response.phase()
+                ),
+            }),
+        }
+    }
+
     /// Run an immutable query through the walk service against one exact owner snapshot.
     pub async fn query_db(
         &self,
@@ -452,6 +504,8 @@ fn requires_current_protocol(body: &WalkRequestBody) -> bool {
         WalkRequestBody::Config
             | WalkRequestBody::SessionHistory
             | WalkRequestBody::ShowDelta { .. }
+            | WalkRequestBody::EvaluationTraceIndex
+            | WalkRequestBody::EvaluationTrace { .. }
     )
 }
 
@@ -836,6 +890,127 @@ name = "walk-config-fixture"
 
     #[cfg(unix)]
     #[tokio::test]
+    async fn completed_evaluation_trace_round_trips_over_the_public_socket() {
+        let tmp = tempfile::tempdir().expect("temp eval home");
+        let _env = crate::test_support::env_guard_os(vec![(
+            "PLOKE_EVAL_HOME",
+            OsString::from(tmp.path()),
+        )]);
+        let repo_root = tmp.path().join("parent");
+        fs::create_dir_all(&repo_root).expect("create repo root");
+        let repo_root = paths::resolve_repo_root(Some(&repo_root)).expect("resolve repo root");
+        let socket = tmp.path().join("trace.sock");
+        let listener = tokio::net::UnixListener::bind(&socket).expect("bind walk endpoint");
+        let epoch = ServerEpoch::capture(&repo_root).expect("capture response epoch");
+        let coordinate = EvaluationRunCoordinate {
+            campaign: CampaignId::from("walk-trace-fixture"),
+            instance: InstanceId("org__repo-1".to_string()),
+            run_id: "run-trace-socket".to_string(),
+        };
+        let mut registration = RunRegistration::register_with_run_id(
+            crate::inner::RunIntent {
+                task_id: coordinate.instance.as_str().to_string(),
+                repo_root: repo_root.clone(),
+                storage_roots: crate::inner::RunStorageRoots::new(
+                    tmp.path().join("registries"),
+                    tmp.path().join("instances/org__repo-1/runs"),
+                ),
+                base_sha: None,
+                budget: crate::spec::EvalBudget::default(),
+                model_id: None,
+                provider_slug: None,
+                campaign_id: Some(coordinate.campaign.clone()),
+                batch_id: None,
+                run_arm_id: "shell-only".to_string(),
+                run_role: crate::inner::core::RegisteredRunRole::Control,
+            },
+            coordinate.run_id.clone(),
+        )
+        .expect("build trace registration");
+        registration.mark_completed();
+        let run = serde_json::from_value(serde_json::json!({
+            "schema_version": ploke_records::run_record::RUN_RECORD_SCHEMA_VERSION,
+            "manifest_id": "manifest-fixture",
+            "metadata": {
+                "benchmark": {
+                    "instance_id": coordinate.instance.as_str(),
+                    "repo_root": repo_root,
+                    "base_sha": null
+                },
+                "agent": {},
+                "runtime": {},
+                "budget": {
+                    "max_turns": 1,
+                    "max_tool_calls": 1,
+                    "wall_clock_secs": 1
+                }
+            },
+            "phases": {},
+            "db_time_travel_index": []
+        }))
+        .expect("build trace run record");
+        let snapshot = EvaluationTraceSnapshot {
+            coordinate: coordinate.clone(),
+            version: SessionVersion::empty(),
+            epoch: epoch.clone(),
+            authority: TraceAuthority::RunRegistry,
+            trace: EvaluationTraceState::Completed {
+                trace: CompletedEvaluationTrace {
+                    registration: TraceEvidence {
+                        value: registration,
+                        source: TraceSource {
+                            kind: TraceSourceKind::Registration,
+                            path: tmp.path().join("registries/runs/run-trace-socket.json"),
+                            content_sha256: "registration-hash".to_string(),
+                        },
+                    },
+                    turn: None,
+                    run: TraceEvidence {
+                        value: run,
+                        source: TraceSource {
+                            kind: TraceSourceKind::RunRecord,
+                            path: tmp.path().join("record.json.gz"),
+                            content_sha256: "record-hash".to_string(),
+                        },
+                    },
+                    exchanges: None,
+                    protocol: Vec::new(),
+                },
+            },
+        };
+        let expected = serde_json::to_value(&snapshot).expect("serialize expected trace");
+        let server = tokio::spawn(async move {
+            answer_protocol_probe(&listener, epoch.clone()).await;
+            let (mut stream, _) = listener.accept().await.expect("accept trace request");
+            let request: WalkRequest = ipc::recv(&mut stream).await.expect("read trace request");
+            assert_eq!(
+                request.body,
+                WalkRequestBody::EvaluationTrace { coordinate }
+            );
+            ipc::send(&mut stream, &WalkResponse::evaluation_trace(snapshot))
+                .await
+                .expect("write trace response");
+        });
+        let client = WalkClient::resolve(Some(&repo_root), Some(&socket)).expect("resolve client");
+
+        let actual = client
+            .evaluation_trace(EvaluationRunCoordinate {
+                campaign: CampaignId::from("walk-trace-fixture"),
+                instance: InstanceId("org__repo-1".to_string()),
+                run_id: "run-trace-socket".to_string(),
+            })
+            .await
+            .expect("read typed trace");
+
+        assert_eq!(
+            serde_json::to_value(actual).expect("serialize actual trace"),
+            expected
+        );
+        server.await.expect("trace server task");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
     async fn config_rejects_an_older_protocol_before_sending_the_typed_request() {
         let tmp = tempfile::tempdir().expect("temp eval home");
         let _env = crate::test_support::env_guard_os(vec![(
@@ -874,13 +1049,25 @@ name = "walk-config-fixture"
     #[test]
     fn config_requires_the_current_protocol() {
         assert!(requires_current_protocol(&WalkRequestBody::Config));
+        assert!(requires_current_protocol(
+            &WalkRequestBody::EvaluationTraceIndex
+        ));
+        assert!(requires_current_protocol(
+            &WalkRequestBody::EvaluationTrace {
+                coordinate: EvaluationRunCoordinate {
+                    campaign: ploke_records::ids::CampaignId::from("campaign"),
+                    instance: InstanceId("instance".to_string()),
+                    run_id: "run-1".to_string(),
+                },
+            }
+        ));
     }
 
     #[test]
     fn public_reply_round_trip_preserves_all_protocol_fields() {
         let repo = tempfile::tempdir().expect("audit repo");
         let epoch = ServerEpoch {
-            protocol_version: 7,
+            protocol_version: crate::cli::prototype1_state::walk::epoch::WALK_PROTOCOL_VERSION,
             transition_graph_version: "walk-r0-r14a-v2".to_string(),
             repo_root: repo.path().to_path_buf(),
             exe_path: repo.path().join("ploke-eval"),
@@ -1031,7 +1218,7 @@ name = "walk-config-fixture"
     fn public_request_round_trip_preserves_guard_and_capabilities() {
         let repo = tempfile::tempdir().expect("request repo");
         let epoch = ServerEpoch {
-            protocol_version: 7,
+            protocol_version: crate::cli::prototype1_state::walk::epoch::WALK_PROTOCOL_VERSION,
             transition_graph_version: "walk-r0-r14a-v2".to_string(),
             repo_root: repo.path().to_path_buf(),
             exe_path: repo.path().join("ploke-eval"),
@@ -1236,7 +1423,7 @@ name = "walk-config-fixture"
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn typed_read_rejects_v6_before_sending_v7_request() {
+    async fn typed_read_rejects_v6_before_sending_v8_request() {
         let tmp = tempfile::tempdir().expect("temp eval home");
         let _env = crate::test_support::env_guard_os(vec![(
             "PLOKE_EVAL_HOME",
@@ -1255,7 +1442,7 @@ name = "walk-config-fixture"
                 tokio::time::timeout(Duration::from_millis(100), listener.accept())
                     .await
                     .is_err(),
-                "client sent a v7-only request after observing a v6 server"
+                "client sent a v8-only request after observing a v6 server"
             );
         });
         let client = WalkClient::resolve(Some(&repo_root), Some(&socket)).expect("resolve client");
@@ -1265,13 +1452,13 @@ name = "walk-config-fixture"
             .await
             .expect_err("v6 server must be rejected before session-history request");
 
-        assert!(error.to_string().contains("client=7 server=6"));
+        assert!(error.to_string().contains("client=8 server=6"));
         server.await.expect("v6 server task");
     }
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn typed_read_rejects_v6_successor_after_v7_probe() {
+    async fn typed_read_rejects_v6_successor_after_v8_probe() {
         let tmp = tempfile::tempdir().expect("temp eval home");
         let _env = crate::test_support::env_guard_os(vec![(
             "PLOKE_EVAL_HOME",
@@ -1280,7 +1467,7 @@ name = "walk-config-fixture"
         let repo_root = tmp.path().join("parent");
         fs::create_dir_all(&repo_root).expect("create repo root");
         let repo_root = paths::resolve_repo_root(Some(&repo_root)).expect("resolve repo root");
-        let old_socket = tmp.path().join("v7-predecessor.sock");
+        let old_socket = tmp.path().join("v8-predecessor.sock");
         let old_listener = tokio::net::UnixListener::bind(&old_socket).expect("bind predecessor");
         let old = endpoint::ServerEndpoint::from_bound(repo_root.clone(), old_socket)
             .expect("predecessor endpoint");
@@ -1291,7 +1478,7 @@ name = "walk-config-fixture"
             .expect("successor endpoint");
         let client = WalkClient::resolve(Some(&repo_root), None).expect("following client");
 
-        let v7_epoch = ServerEpoch::capture(&repo_root).expect("capture v7 epoch");
+        let v8_epoch = ServerEpoch::capture(&repo_root).expect("capture v8 epoch");
         let old_for_task = old.clone();
         let next_for_task = next.clone();
         let predecessor = tokio::spawn(async move {
@@ -1303,10 +1490,10 @@ name = "walk-config-fixture"
                 .expect("publish successor before probe response");
             ipc::send(
                 &mut stream,
-                &WalkResponse::ok(WalkOkKind::Show, WalkPhase::Empty, "healthy", v7_epoch),
+                &WalkResponse::ok(WalkOkKind::Show, WalkPhase::Empty, "healthy", v8_epoch),
             )
             .await
-            .expect("write v7 protocol response");
+            .expect("write v8 protocol response");
         });
 
         let mut v6_epoch = ServerEpoch::capture(&repo_root).expect("capture v6 epoch");
@@ -1319,7 +1506,7 @@ name = "walk-config-fixture"
                 &mut stream,
                 &WalkResponse::error(
                     WalkErrorCode::BadRequest,
-                    "v6 successor received v7 request",
+                    "v6 successor received v8 request",
                     None,
                     v6_epoch,
                 ),
@@ -1333,7 +1520,7 @@ name = "walk-config-fixture"
             .await
             .expect_err("v6 successor response must be rejected");
 
-        assert!(error.to_string().contains("client=7 server=6"));
+        assert!(error.to_string().contains("client=8 server=6"));
         predecessor.await.expect("predecessor task");
         successor.await.expect("successor task");
         next.cleanup().expect("cleanup successor endpoint");

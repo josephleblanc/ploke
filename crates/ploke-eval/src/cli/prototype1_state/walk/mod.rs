@@ -18,6 +18,7 @@ pub(crate) mod protocol;
 pub(crate) mod query;
 pub(crate) mod server;
 pub(crate) mod summary;
+pub(crate) mod trace;
 
 use crate::cli::Prototype1StateWalkCommand;
 use crate::spec::PrepareError;

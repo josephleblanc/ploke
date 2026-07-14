@@ -25,7 +25,7 @@ use sha2::{Digest, Sha256};
 use crate::spec::PrepareError;
 
 /// Wire-protocol version for framed JSON walk requests.
-pub(crate) const WALK_PROTOCOL_VERSION: u32 = 7;
+pub(crate) const WALK_PROTOCOL_VERSION: u32 = 8;
 
 /// Semantic version for the currently admitted transition graph slice.
 pub(crate) const TRANSITION_GRAPH_VERSION: &str = "walk-r0-r14a-v2";

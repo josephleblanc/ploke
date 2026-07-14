@@ -3,7 +3,7 @@
 - Date: 2026-07-13
 - Baseline: `de76eaee34e6f4c4c3a19543c4cf91b217aa3bb9`
 - Status: active implementation; Stages 0-3 implemented, verified, and
-  checkpointed; Stage 4 observability read model in progress
+  checkpointed; Stage 4 completed-trace observability in final validation
 
 ## Implementation progress
 
@@ -143,6 +143,18 @@
   workaround, direct OpenAI `text-embedding-3-small`, passed a live preflight
   with a 1536-dimensional vector. A fresh post-checkpoint campaign will use
   that route; the Stage 3 campaign will not be rewritten.
+- The next Stage 4 slice publishes walk protocol v8 with a typed completed-run
+  inventory and exact-run trace. Each registration, sealed turn summary,
+  compressed run record, provider-response tape, and protocol artifact stays
+  paired with the digest and path of its exact stored bytes. The reader follows
+  the global run registry, preserves nested treatment campaign identity and
+  physical JSONL order, validates typed protocol input/output identity and the
+  lifecycle anchor, and fails closed on source drift or malformed evidence.
+  Non-completed runs expose lifecycle authority only. Even completed reads do
+  not open the rewritten `agent-turn-trace.json`; live observation remains
+  deferred until the writer provides an atomic or append-only identity-bearing
+  source. This slice remains filesystem-authoritative and makes no database or
+  executable-replay claim.
 
 The UI remains inspection-only until the observability read model and later
 control-parity stages are complete. Every live edge still requires a committed

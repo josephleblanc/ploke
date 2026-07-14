@@ -16,7 +16,8 @@ use crate::{
     cli::{
         InspectOutputFormat, Prototype1StateWalkDbQueryCommand, Prototype1StateWalkLlmSubcommand,
         Prototype1StateWalkShowSubcommand, Prototype1StateWalkStartCommand,
-        Prototype1StateWalkSubcommand, Prototype1StateWalkUseCommand,
+        Prototype1StateWalkSubcommand, Prototype1StateWalkTraceSubcommand,
+        Prototype1StateWalkUseCommand,
     },
     spec::PrepareError,
     walk_client::WalkClient,
@@ -31,6 +32,7 @@ use super::{
         WalkJobSnapshot, WalkJobStatus, WalkRequest, WalkRequestBody, WalkResponse,
     },
     summary,
+    trace::{EvaluationRunCoordinate, EvaluationTraceState},
 };
 
 /// Execute a non-`serve` walk subcommand as a one-shot client request.
@@ -179,6 +181,34 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
             let client = WalkClient::resolve(Some(&repo_root), socket_override.as_deref())?;
             ensure_server(&client, default_idle_ttl()).await?;
             let response = client.send_read_only(WalkRequestBody::Config).await?;
+            print_response(&response, format, with_version)?;
+            response_result(response)
+        }
+        Prototype1StateWalkSubcommand::Trace(command) => {
+            let format = command.control.format;
+            let with_version = command.control.with_version;
+            let socket_override = command.control.socket.clone();
+            let (repo_root, _) =
+                args::resolve_socket(command.control.repo_root_ref(), socket_override.as_deref())?;
+            let client = WalkClient::resolve(Some(&repo_root), socket_override.as_deref())?;
+            ensure_server(&client, default_idle_ttl()).await?;
+            let body = match command.command {
+                Prototype1StateWalkTraceSubcommand::List => WalkRequestBody::EvaluationTraceIndex,
+                Prototype1StateWalkTraceSubcommand::Show(show) => {
+                    let campaign = match show.campaign {
+                        Some(campaign) => ploke_records::ids::CampaignId::from(campaign),
+                        None => client.config().await?.identity.record.campaign_id,
+                    };
+                    WalkRequestBody::EvaluationTrace {
+                        coordinate: EvaluationRunCoordinate {
+                            campaign,
+                            instance: ploke_records::ids::InstanceId(show.instance),
+                            run_id: show.run_id,
+                        },
+                    }
+                }
+            };
+            let response = client.send_read_only(body).await?;
             print_response(&response, format, with_version)?;
             response_result(response)
         }
@@ -770,6 +800,8 @@ fn retry_safe_read(body: &WalkRequestBody) -> bool {
         WalkRequestBody::Health
             | WalkRequestBody::Files
             | WalkRequestBody::Config
+            | WalkRequestBody::EvaluationTraceIndex
+            | WalkRequestBody::EvaluationTrace { .. }
             | WalkRequestBody::Show
             | WalkRequestBody::SessionHistory
             | WalkRequestBody::OperationStatus { .. }
@@ -1080,6 +1112,94 @@ fn print_response(
                     println!(
                         "transition_graph_version: {}",
                         epoch.transition_graph_version
+                    );
+                }
+            }
+            WalkResponse::EvaluationTraceIndex { index } => {
+                println!("walk evaluation traces");
+                println!("{}", "-".repeat(40));
+                println!("status: ok");
+                println!("campaign_id: {}", index.campaign);
+                println!("instances_root: {}", index.instances_root.display());
+                println!("authority: {:?}", index.authority);
+                println!("completed_runs: {}", index.runs.len());
+                for (position, entry) in index.runs.iter().enumerate() {
+                    println!(
+                        "run[{position}]: instance={} run_id={} role={:?} updated_at={} registration_sha256={}",
+                        entry.coordinate.instance,
+                        entry.coordinate.run_id,
+                        entry.registration.value.frozen_spec.run_role,
+                        entry.registration.value.lifecycle.updated_at,
+                        entry.registration.source.content_sha256,
+                    );
+                    println!("run[{position}].campaign_id: {}", entry.coordinate.campaign);
+                }
+                if with_version {
+                    print_session_version(&index.version);
+                    println!("protocol_version: {}", index.epoch.protocol_version);
+                    println!(
+                        "transition_graph_version: {}",
+                        index.epoch.transition_graph_version
+                    );
+                }
+            }
+            WalkResponse::EvaluationTrace { snapshot } => {
+                println!("walk evaluation trace");
+                println!("{}", "-".repeat(40));
+                println!("status: ok");
+                println!("campaign_id: {}", snapshot.coordinate.campaign);
+                println!("instance: {}", snapshot.coordinate.instance);
+                println!("run_id: {}", snapshot.coordinate.run_id);
+                println!("authority: {:?}", snapshot.authority);
+                match &snapshot.trace {
+                    EvaluationTraceState::NotCompleted { registration } => {
+                        println!(
+                            "execution_status: {:?}",
+                            registration.value.lifecycle.execution_status
+                        );
+                        println!("trace_state: lifecycle_only");
+                        println!("sources: 1");
+                        println!(
+                            "source[0]: kind={:?} path={} sha256={}",
+                            registration.source.kind,
+                            registration.source.path.display(),
+                            registration.source.content_sha256
+                        );
+                    }
+                    EvaluationTraceState::Completed { trace } => {
+                        println!("execution_status: completed");
+                        println!("turns: {}", trace.run.value.turn_count());
+                        println!("tool_calls: {}", trace.run.value.tool_call_count());
+                        println!(
+                            "failed_tool_calls: {}",
+                            trace.run.value.failed_tool_call_count()
+                        );
+                        println!("sealed_turn_summary: {}", trace.turn.is_some());
+                        println!(
+                            "model_exchanges: {}",
+                            trace
+                                .exchanges
+                                .as_ref()
+                                .map_or(0, |exchanges| exchanges.value.len())
+                        );
+                        println!("protocol_artifacts: {}", trace.protocol.len());
+                        println!("sources: {}", trace.sources().count());
+                        for (position, source) in trace.sources().enumerate() {
+                            println!(
+                                "source[{position}]: kind={:?} path={} sha256={}",
+                                source.kind,
+                                source.path.display(),
+                                source.content_sha256
+                            );
+                        }
+                    }
+                }
+                if with_version {
+                    print_session_version(&snapshot.version);
+                    println!("protocol_version: {}", snapshot.epoch.protocol_version);
+                    println!(
+                        "transition_graph_version: {}",
+                        snapshot.epoch.transition_graph_version
                     );
                 }
             }

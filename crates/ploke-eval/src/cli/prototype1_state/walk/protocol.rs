@@ -33,8 +33,12 @@ use crate::cli::{
 };
 
 use super::{
-    audit::WalkAuditReport, config::WalkConfigSnapshot, epoch::ServerEpoch, phase::WalkPhase,
+    audit::WalkAuditReport,
+    config::WalkConfigSnapshot,
+    epoch::ServerEpoch,
+    phase::WalkPhase,
     query::DbQueryResult,
+    trace::{EvaluationRunCoordinate, EvaluationTraceIndex, EvaluationTraceSnapshot},
 };
 
 /// Serializable identity needed to attach to a setup-derived session.
@@ -194,6 +198,10 @@ pub enum WalkRequestBody {
     Files,
     /// Inspect the admitted campaign, run profile, and effective controller configuration.
     Config,
+    /// List completed registered evaluation runs scoped to the admitted campaign.
+    EvaluationTraceIndex,
+    /// Inspect one exact registered evaluation run without reading mutable trace files.
+    EvaluationTrace { coordinate: EvaluationRunCoordinate },
     /// Run an immutable expert query against one exact owner-DB snapshot.
     DbQuery {
         /// Campaign id. Defaults to the selected parent identity.
@@ -1881,6 +1889,10 @@ pub enum WalkResponse {
         /// Server freshness identity.
         epoch: ServerEpoch,
     },
+    /// Completed-run inventory from the canonical run registry.
+    EvaluationTraceIndex { index: EvaluationTraceIndex },
+    /// Lifecycle-sensitive exact evaluation trace observation.
+    EvaluationTrace { snapshot: EvaluationTraceSnapshot },
     /// Structured audit result.
     Audit {
         /// Current phase after the request.
@@ -2000,6 +2012,16 @@ impl WalkResponse {
         }
     }
 
+    /// Build a typed completed-run inventory response.
+    pub(crate) fn evaluation_trace_index(index: EvaluationTraceIndex) -> Self {
+        Self::EvaluationTraceIndex { index }
+    }
+
+    /// Build one lifecycle-sensitive exact-run trace response.
+    pub(crate) fn evaluation_trace(snapshot: EvaluationTraceSnapshot) -> Self {
+        Self::EvaluationTrace { snapshot }
+    }
+
     /// Build a job response at the job's best known phase.
     pub(crate) fn job(
         phase: WalkPhase,
@@ -2076,6 +2098,8 @@ impl WalkResponse {
             WalkResponse::Query { query } => Some(query.phase),
             WalkResponse::Status { snapshot, .. } => Some(snapshot.phase),
             WalkResponse::History { history } => Some(history.version.phase()),
+            WalkResponse::EvaluationTraceIndex { index } => Some(index.version.phase()),
+            WalkResponse::EvaluationTrace { snapshot } => Some(snapshot.version.phase()),
             WalkResponse::Error { phase, .. } => *phase,
         }
     }
@@ -2092,6 +2116,8 @@ impl WalkResponse {
             | WalkResponse::Error { epoch, .. } => epoch,
             WalkResponse::Query { query } => &query.epoch,
             WalkResponse::History { history } => &history.epoch,
+            WalkResponse::EvaluationTraceIndex { index } => &index.epoch,
+            WalkResponse::EvaluationTrace { snapshot } => &snapshot.epoch,
         }
     }
 
@@ -2107,6 +2133,8 @@ impl WalkResponse {
                 | WalkResponse::Status { .. }
                 | WalkResponse::History { .. }
                 | WalkResponse::Delta { .. }
+                | WalkResponse::EvaluationTraceIndex { .. }
+                | WalkResponse::EvaluationTrace { .. }
         )
     }
 }

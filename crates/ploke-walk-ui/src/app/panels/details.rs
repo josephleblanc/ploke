@@ -256,6 +256,29 @@ fn response_message(response: &WalkResponse) -> String {
             history.version.journal_revision()
         ),
         WalkResponse::Delta { report, .. } => report.clone(),
+        WalkResponse::EvaluationTraceIndex { index } => format!(
+            "{} completed evaluation run(s) from {:?}",
+            index.runs.len(),
+            index.authority
+        ),
+        WalkResponse::EvaluationTrace { snapshot } => match &snapshot.trace {
+            ploke_eval::walk_client::EvaluationTraceState::NotCompleted {
+                registration, ..
+            } => format!(
+                "run {} is {:?}; mutable trace evidence was not opened",
+                snapshot.coordinate.run_id, registration.value.lifecycle.execution_status
+            ),
+            ploke_eval::walk_client::EvaluationTraceState::Completed { trace } => format!(
+                "run {}: {} turn(s), {} model exchange(s), {} protocol artifact(s)",
+                snapshot.coordinate.run_id,
+                trace.run.value.turn_count(),
+                trace
+                    .exchanges
+                    .as_ref()
+                    .map_or(0, |exchanges| exchanges.value.len()),
+                trace.protocol.len()
+            ),
+        },
         WalkResponse::Error { detail, .. } => detail.clone(),
     }
 }

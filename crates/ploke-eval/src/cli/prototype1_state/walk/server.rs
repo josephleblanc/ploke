@@ -80,6 +80,7 @@ use super::{
         WalkSessionHistory, WalkSessionSnapshot, WalkStartConfig, WalkTransitionReceipt,
     },
     query::run_snapshot_query,
+    trace,
 };
 
 /// Runtime state owned by one server process.
@@ -767,6 +768,57 @@ impl WalkServer {
                 config::load(&self.epoch.repo_root)
                     .map(|config| WalkResponse::config(phase, config, self.epoch.clone()))
             }
+            WalkRequestBody::EvaluationTraceIndex => Ok(match self.durable_version() {
+                Ok(version) => {
+                    let phase = version.phase();
+                    trace::load_index(&self.epoch.repo_root, version, self.epoch.clone())
+                        .map_or_else(
+                            |error| {
+                                WalkResponse::error(
+                                    request_error_code(&error),
+                                    error.to_string(),
+                                    Some(phase),
+                                    self.epoch.clone(),
+                                )
+                            },
+                            WalkResponse::evaluation_trace_index,
+                        )
+                }
+                Err(error) => WalkResponse::error(
+                    request_error_code(&error),
+                    error.to_string(),
+                    None,
+                    self.epoch.clone(),
+                ),
+            }),
+            WalkRequestBody::EvaluationTrace { coordinate } => Ok(match self.durable_version() {
+                Ok(version) => {
+                    let phase = version.phase();
+                    trace::load_run(
+                        &self.epoch.repo_root,
+                        coordinate,
+                        version,
+                        self.epoch.clone(),
+                    )
+                    .map_or_else(
+                        |error| {
+                            WalkResponse::error(
+                                request_error_code(&error),
+                                error.to_string(),
+                                Some(phase),
+                                self.epoch.clone(),
+                            )
+                        },
+                        WalkResponse::evaluation_trace,
+                    )
+                }
+                Err(error) => WalkResponse::error(
+                    request_error_code(&error),
+                    error.to_string(),
+                    None,
+                    self.epoch.clone(),
+                ),
+            }),
             WalkRequestBody::SessionHistory => {
                 durable_history_for(&self.epoch.repo_root, self.epoch.clone())
                     .map(WalkResponse::history)
@@ -4118,6 +4170,7 @@ mod tests {
             WalkRequestBody::Health,
             WalkRequestBody::Show,
             WalkRequestBody::SessionHistory,
+            WalkRequestBody::EvaluationTraceIndex,
         ] {
             let (response, stop) = server.handle(walk_request(body)).await;
             assert!(!stop, "read-only request must not stop the server");
@@ -4224,6 +4277,32 @@ mod tests {
         assert!(history.damage.is_none());
         assert!(history.abandonment.is_none());
         assert_eq!(history.epoch, expected_epoch);
+    }
+
+    #[tokio::test]
+    async fn evaluation_trace_does_not_wait_for_the_controller() {
+        let repo = tempdir().expect("repo tempdir");
+        let server = test_server(repo.path(), MutationGate::open());
+        let _controller = server.controller.lock().await;
+
+        let (response, stop) = tokio::time::timeout(
+            Duration::from_millis(100),
+            server.handle(walk_request(WalkRequestBody::EvaluationTraceIndex)),
+        )
+        .await
+        .expect("evaluation trace must not wait for the controller lock");
+
+        assert!(!stop);
+        let WalkResponse::Error { phase, detail, .. } = response else {
+            panic!("empty checkout should return a typed trace error");
+        };
+        assert_eq!(phase, Some(WalkPhase::Empty));
+        assert!(
+            detail.contains("parent identity")
+                || detail.contains("campaign")
+                || detail.contains("run manifest"),
+            "unexpected trace setup error: {detail}"
+        );
     }
 
     #[tokio::test]
