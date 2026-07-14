@@ -171,22 +171,20 @@ impl Database {
         owner_ids: &BTreeSet<Uuid>,
     ) -> Result<BTreeMap<Uuid, Vec<CallPathEdge>>, DbError> {
         let mut edges = Vec::new();
-        for owner_id in owner_ids {
-            for row in self.call_context_for_owner(*owner_id)? {
-                if row.status.status != CallStatusKind::Resolved {
-                    continue;
-                }
-                for target in row.targets {
-                    edges.push(CallPathEdge {
-                        caller_id: row.site.owner_id,
-                        callee_id: target.target_id,
-                        call_site_id: row.site.id,
-                        span: row.site.span,
-                        relation: target.relation,
-                        source_kind: target.source_kind,
-                        target_kind: target.target_kind,
-                    });
-                }
+        for row in self.call_context_for_owners(owner_ids)? {
+            if row.status.status != CallStatusKind::Resolved {
+                continue;
+            }
+            for target in row.targets {
+                edges.push(CallPathEdge {
+                    caller_id: row.site.owner_id,
+                    callee_id: target.target_id,
+                    call_site_id: row.site.id,
+                    span: row.site.span,
+                    relation: target.relation,
+                    source_kind: target.source_kind,
+                    target_kind: target.target_kind,
+                });
             }
         }
         sort_call_edges(&mut edges);
