@@ -6,9 +6,17 @@
 //! tree.
 
 use std::{
+    ffi::OsString,
+    fs,
     path::{Path, PathBuf},
     process::Command,
     time::UNIX_EPOCH,
+};
+
+#[cfg(unix)]
+use std::os::unix::{
+    ffi::{OsStrExt, OsStringExt},
+    fs::MetadataExt,
 };
 
 use serde::{Deserialize, Serialize};
@@ -17,7 +25,7 @@ use sha2::{Digest, Sha256};
 use crate::spec::PrepareError;
 
 /// Wire-protocol version for framed JSON walk requests.
-pub(crate) const WALK_PROTOCOL_VERSION: u32 = 3;
+pub(crate) const WALK_PROTOCOL_VERSION: u32 = 5;
 
 /// Semantic version for the currently admitted transition graph slice.
 pub(crate) const TRANSITION_GRAPH_VERSION: &str = "walk-r0-r14a-v2";
@@ -49,13 +57,20 @@ pub(crate) struct ServerEpoch {
     pub(crate) exe_path: PathBuf,
     pub(crate) exe_modified_unix_ms: Option<u64>,
     pub(crate) git_head: Option<String>,
+    #[serde(default)]
+    pub(crate) active_branch: Option<String>,
     pub(crate) source_status_hash: Option<String>,
 }
 
 impl ServerEpoch {
     /// Capture the epoch for `repo_root` and the currently running executable.
     pub(crate) fn capture(repo_root: &Path) -> Result<Self, PrepareError> {
-        let repo_root = repo_root.to_path_buf();
+        let repo_root = repo_root
+            .canonicalize()
+            .map_err(|source| PrepareError::ReadManifest {
+                path: repo_root.to_path_buf(),
+                source,
+            })?;
         let exe_path = std::env::current_exe().map_err(|source| PrepareError::DatabaseSetup {
             phase: "prototype1_state_walk_current_exe",
             detail: source.to_string(),
@@ -66,7 +81,8 @@ impl ServerEpoch {
             .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
             .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64);
         let git_head = git_output(&repo_root, &["rev-parse", "HEAD"]);
-        let source_status_hash = source_status_hash(&repo_root);
+        let active_branch = git_output(&repo_root, &["symbolic-ref", "--short", "HEAD"]);
+        let source_status_hash = source_status_hash(&repo_root)?;
         Ok(Self {
             protocol_version: WALK_PROTOCOL_VERSION,
             transition_graph_version: TRANSITION_GRAPH_VERSION.to_string(),
@@ -74,6 +90,7 @@ impl ServerEpoch {
             exe_path,
             exe_modified_unix_ms,
             git_head,
+            active_branch,
             source_status_hash,
         })
     }
@@ -103,6 +120,13 @@ impl ServerEpoch {
                 request_epoch.transition_graph_version, self.transition_graph_version
             )));
         }
+        if request_epoch.repo_root != self.repo_root {
+            return Err(stale_error(format!(
+                "walk repository root mismatch: client='{}' server='{}'",
+                request_epoch.repo_root.display(),
+                self.repo_root.display()
+            )));
+        }
         if request_epoch.exe_path != self.exe_path
             || request_epoch.exe_modified_unix_ms != self.exe_modified_unix_ms
         {
@@ -111,6 +135,7 @@ impl ServerEpoch {
             ));
         }
         if request_epoch.git_head != self.git_head
+            || request_epoch.active_branch != self.active_branch
             || request_epoch.source_status_hash != self.source_status_hash
         {
             return Err(stale_error(
@@ -128,6 +153,7 @@ impl ServerEpoch {
             || current.exe_path != self.exe_path
             || current.exe_modified_unix_ms != self.exe_modified_unix_ms
             || current.git_head != self.git_head
+            || current.active_branch != self.active_branch
             || current.source_status_hash != self.source_status_hash
         {
             return Err(stale_error(
@@ -138,18 +164,169 @@ impl ServerEpoch {
     }
 }
 
-fn source_status_hash(repo_root: &Path) -> Option<String> {
-    let mut args = vec!["status", "--porcelain=v1", "--"];
-    args.extend(SOURCE_GUARD_PATHS.iter().copied());
-    git_output(repo_root, &args).map(|status| {
-        let mut hasher = Sha256::new();
-        hasher.update(status.as_bytes());
-        let digest = hasher.finalize();
+fn source_status_hash(repo_root: &Path) -> Result<Option<String>, PrepareError> {
+    let mut status_args = vec![
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--untracked-files=all",
+        "--",
+    ];
+    status_args.extend(SOURCE_GUARD_PATHS.iter().copied());
+    let Some(status) = git_bytes(repo_root, &status_args)? else {
+        return Ok(None);
+    };
+
+    let mut index_args = vec!["ls-files", "-s", "-z", "--"];
+    index_args.extend(SOURCE_GUARD_PATHS.iter().copied());
+    let index = git_bytes(repo_root, &index_args)?.ok_or_else(|| {
+        epoch_error(
+            "prototype1_state_walk_source_index",
+            "git ls-files failed after repository status succeeded",
+        )
+    })?;
+
+    let mut path_args = vec![
+        "ls-files",
+        "-z",
+        "--cached",
+        "--others",
+        "--exclude-standard",
+        "--",
+    ];
+    path_args.extend(SOURCE_GUARD_PATHS.iter().copied());
+    let raw_paths = git_bytes(repo_root, &path_args)?.ok_or_else(|| {
+        epoch_error(
+            "prototype1_state_walk_source_paths",
+            "git ls-files failed after repository status succeeded",
+        )
+    })?;
+
+    let mut paths = raw_paths
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths.dedup();
+
+    let mut hasher = Sha256::new();
+    hash_part(&mut hasher, b"status", &status);
+    hash_part(&mut hasher, b"index", &index);
+    for raw in paths {
+        hash_part(&mut hasher, b"path", &raw);
+        hash_path(&mut hasher, repo_root, &raw)?;
+    }
+    let digest = hasher.finalize();
+    Ok(Some(
         digest
             .iter()
             .map(|byte| format!("{byte:02x}"))
-            .collect::<String>()
-    })
+            .collect::<String>(),
+    ))
+}
+
+fn hash_part(hasher: &mut Sha256, label: &[u8], value: &[u8]) {
+    hasher.update((label.len() as u64).to_le_bytes());
+    hasher.update(label);
+    hasher.update((value.len() as u64).to_le_bytes());
+    hasher.update(value);
+}
+
+fn hash_path(hasher: &mut Sha256, repo_root: &Path, raw: &[u8]) -> Result<(), PrepareError> {
+    let relative = raw_path(raw);
+    let path = repo_root.join(&relative);
+    let metadata = match fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+            hash_part(hasher, b"kind", b"missing");
+            return Ok(());
+        }
+        Err(source) => {
+            return Err(PrepareError::DatabaseSetup {
+                phase: "prototype1_state_walk_source_stat",
+                detail: format!(
+                    "failed to stat guarded source '{}': {source}",
+                    path.display()
+                ),
+            });
+        }
+    };
+
+    #[cfg(unix)]
+    hash_part(hasher, b"mode", &metadata.mode().to_le_bytes());
+    #[cfg(not(unix))]
+    hash_part(
+        hasher,
+        b"readonly",
+        &[u8::from(metadata.permissions().readonly())],
+    );
+
+    if metadata.file_type().is_symlink() {
+        let target = fs::read_link(&path).map_err(|source| PrepareError::DatabaseSetup {
+            phase: "prototype1_state_walk_source_link",
+            detail: format!(
+                "failed to read guarded source symlink '{}': {source}",
+                path.display()
+            ),
+        })?;
+        hash_part(hasher, b"kind", b"symlink");
+        hash_os(hasher, b"target", target.as_os_str());
+    } else if metadata.is_file() {
+        let contents = fs::read(&path).map_err(|source| PrepareError::DatabaseSetup {
+            phase: "prototype1_state_walk_source_read",
+            detail: format!(
+                "failed to read guarded source '{}': {source}",
+                path.display()
+            ),
+        })?;
+        hash_part(hasher, b"kind", b"file");
+        hash_part(hasher, b"contents", &contents);
+    } else {
+        hash_part(hasher, b"kind", b"other");
+    }
+    Ok(())
+}
+
+fn hash_os(hasher: &mut Sha256, label: &[u8], value: &std::ffi::OsStr) {
+    #[cfg(unix)]
+    hash_part(hasher, label, value.as_bytes());
+    #[cfg(not(unix))]
+    hash_part(hasher, label, value.to_string_lossy().as_bytes());
+}
+
+fn raw_path(raw: &[u8]) -> PathBuf {
+    #[cfg(unix)]
+    {
+        PathBuf::from(OsString::from_vec(raw.to_vec()))
+    }
+    #[cfg(not(unix))]
+    {
+        PathBuf::from(String::from_utf8_lossy(raw).into_owned())
+    }
+}
+
+fn git_bytes(repo_root: &Path, args: &[&str]) -> Result<Option<Vec<u8>>, PrepareError> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(args)
+        .output()
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "prototype1_state_walk_git_probe",
+            detail: source.to_string(),
+        })?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    Ok(Some(output.stdout))
+}
+
+fn epoch_error(phase: &'static str, detail: impl Into<String>) -> PrepareError {
+    PrepareError::DatabaseSetup {
+        phase,
+        detail: detail.into(),
+    }
 }
 
 fn git_output(repo_root: &Path, args: &[&str]) -> Option<String> {
@@ -168,5 +345,88 @@ fn git_output(repo_root: &Path, args: &[&str]) -> Option<String> {
 fn stale_error(detail: impl Into<String>) -> PrepareError {
     PrepareError::InvalidBatchSelection {
         detail: format!("stale walk server: {}", detail.into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn run_git(root: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .output()
+            .expect("run git");
+        assert!(
+            output.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn epoch_hashes_content() {
+        let repo = tempfile::tempdir().expect("temp repo");
+        let root = repo.path();
+        run_git(root, &["init", "-q"]);
+        run_git(root, &["config", "user.name", "Epoch Test"]);
+        run_git(root, &["config", "user.email", "epoch@example.invalid"]);
+        fs::write(root.join("Cargo.toml"), "[workspace]\n").expect("write baseline");
+        run_git(root, &["add", "Cargo.toml"]);
+        run_git(root, &["commit", "-qm", "baseline"]);
+
+        fs::write(root.join("Cargo.toml"), "[workspace]\n# dirty a\n").expect("first edit");
+        let first = source_status_hash(root)
+            .expect("first hash")
+            .expect("git repository hash");
+        fs::write(root.join("Cargo.toml"), "[workspace]\n# dirty b\n").expect("second edit");
+        let second = source_status_hash(root)
+            .expect("second hash")
+            .expect("git repository hash");
+        assert_ne!(
+            first, second,
+            "changing bytes in an already-dirty guarded file must change the epoch"
+        );
+
+        let source = root.join("crates/ploke-eval/src/cli/prototype1_state");
+        fs::create_dir_all(&source).expect("create source path");
+        let untracked = source.join("guard.rs");
+        fs::write(&untracked, "const VALUE: u8 = 1;\n").expect("first untracked edit");
+        let first = source_status_hash(root)
+            .expect("first untracked hash")
+            .expect("git repository hash");
+        fs::write(&untracked, "const VALUE: u8 = 2;\n").expect("second untracked edit");
+        let second = source_status_hash(root)
+            .expect("second untracked hash")
+            .expect("git repository hash");
+        assert_ne!(
+            first, second,
+            "changing bytes in an already-untracked guarded file must change the epoch"
+        );
+    }
+
+    #[test]
+    fn epoch_binds_normalized_repository_root() {
+        let repo = tempfile::tempdir().expect("temp repo");
+        let nested = repo.path().join("nested");
+        fs::create_dir(&nested).expect("create nested path");
+        let epoch = ServerEpoch::capture(&nested.join("..")).expect("capture normalized epoch");
+        assert_eq!(
+            epoch.repo_root,
+            repo.path().canonicalize().expect("canonical repo root")
+        );
+
+        let other = tempfile::tempdir().expect("other repo");
+        let mut request = epoch.clone();
+        request.repo_root = other.path().canonicalize().expect("canonical other root");
+        let error = epoch
+            .ensure_compatible_request(Some(&request))
+            .expect_err("different repository roots must be incompatible");
+        assert!(
+            error.to_string().contains("repository root mismatch"),
+            "unexpected error: {error}"
+        );
     }
 }

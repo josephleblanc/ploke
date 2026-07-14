@@ -9,14 +9,16 @@ use crate::{
     cli::{
         Prototype1StateWalkAuditCommand, Prototype1StateWalkBranchLiveCommand,
         Prototype1StateWalkControlCommand, Prototype1StateWalkLlmFinishCommand,
-        Prototype1StateWalkLlmStepCommand, Prototype1StateWalkReplayCommand,
-        Prototype1StateWalkReplayMoveCommand, Prototype1StateWalkServeCommand,
-        Prototype1StateWalkStartCommand, Prototype1StateWalkStepCommand,
+        Prototype1StateWalkLlmStepCommand, Prototype1StateWalkRecoverCommand,
+        Prototype1StateWalkReplayCommand, Prototype1StateWalkReplayMoveCommand,
+        Prototype1StateWalkServeCommand, Prototype1StateWalkStartCommand,
+        Prototype1StateWalkStepCommand,
     },
     spec::PrepareError,
 };
 
-use super::{paths, protocol::WalkStartConfig};
+use super::{endpoint, paths, protocol::WalkStartConfig};
+use crate::cli::prototype1_state::driver::control::RecoveryDirective;
 
 pub(crate) const DEFAULT_IDLE_TTL_SECS: u64 = 30 * 60;
 
@@ -25,18 +27,7 @@ impl Prototype1StateWalkStartCommand {
     pub(crate) fn start_config(self) -> WalkStartConfig {
         WalkStartConfig {
             campaign: self.campaign,
-            node_id: self.node_id,
             repo_root: self.repo_root,
-            init_parent_identity: self.init_parent_identity,
-            identity_branch: self.identity_branch,
-            identity_instance: self.identity_instance,
-            handoff_invocation: self.handoff_invocation,
-            stop_after: self.stop_after,
-            successor_selection: self.successor_selection,
-            successor_selection_seed: self.successor_selection_seed,
-            successor_selection_metrics: self.successor_selection_metrics,
-            candidate_generator: self.candidate_generator,
-            format: self.format,
         }
     }
 
@@ -76,6 +67,24 @@ impl Prototype1StateWalkControlCommand {
     /// Borrow the optional repo root used for socket discovery.
     pub(crate) fn repo_root_ref(&self) -> Option<&Path> {
         self.repo_root.as_deref()
+    }
+}
+
+impl Prototype1StateWalkRecoverCommand {
+    pub(crate) fn repo_root_ref(&self) -> Option<&Path> {
+        self.control.repo_root_ref()
+    }
+
+    pub(crate) fn directive(&self) -> RecoveryDirective {
+        if self.abandon_owner {
+            RecoveryDirective::AbandonOwner
+        } else if self.abandon_session {
+            RecoveryDirective::AbandonSession
+        } else if self.admit_epoch {
+            RecoveryDirective::AdmitEpoch
+        } else {
+            RecoveryDirective::Inspect
+        }
     }
 }
 
@@ -153,8 +162,15 @@ pub(crate) fn resolve_socket(
             .map(Ok)
             .unwrap_or_else(|| paths::resolve_repo_root(None))?,
     };
+    let active = if socket.is_none() {
+        endpoint::load(&repo_root)?
+            .filter(|endpoint| endpoint.repo_root() == repo_root && endpoint.owns_socket())
+    } else {
+        None
+    };
     let socket_override = match socket {
         Some(path) => Some(path),
+        None if active.is_some() => active.as_ref().map(|endpoint| endpoint.socket()),
         None if repo_root_matches_context(&repo_root, context.as_ref()) => context
             .as_ref()
             .and_then(|context| context.socket.as_deref()),

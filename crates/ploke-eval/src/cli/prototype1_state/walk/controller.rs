@@ -41,10 +41,14 @@ use crate::{
         Prototype1StateWalkLlmStepSource,
         prototype1_state::{
             driver::{
-                control::{ControlState as WalkState, StepAdmission, advance_one},
+                control::{
+                    ControlAdvance, ControlFailure, ControlState as WalkState, advance_controlled,
+                    claim_controller, claim_controller_version,
+                },
                 reconstruct,
                 replay::ReplayCursor,
             },
+            edge::ControlEdge,
             edit_surface::{
                 harness_request::{
                     EvidenceRootKind, EvidenceRootLocation, PublishedBroadHarnessRequest,
@@ -53,6 +57,8 @@ use crate::{
             },
             identity::{load_parent_identity_optional, parent_identity_path},
             journal::prototype1_transition_journal_path,
+            profile::RunMode,
+            session::{Attempt, AttemptResult, Failure, Finished, Idle, Lease, Store},
             typestate,
         },
         provider::{headless_model_selection, load_parent_patcher_model_selection},
@@ -72,7 +78,7 @@ use super::{
     audit::{self, WalkAuditReport},
     paths,
     phase::WalkPhase,
-    protocol::WalkStartConfig,
+    protocol::{SessionVersion, WalkStartConfig},
 };
 
 const MAX_HISTORY: usize = 80;
@@ -88,7 +94,7 @@ pub(crate) enum LlmMove {
 /// Single-session in-memory controller for Prototype 1 typestate phases.
 ///
 /// The server admits setup/startup and parent-start phases through live `R7`,
-/// watch-gated `R8`, schedule-ready `R9`, strategy-ready `R10`, watch-gated
+/// live-capability-gated `R8`, schedule-ready `R9`, strategy-ready `R10`, gated
 /// `R11`, report-ready `R12`, guarded handoff-capable `R13`, and final-report
 /// `R14`. Parent/successor handoff remains gated by explicit operator admission
 /// because it mutates the active checkout and spawns the successor runtime.
@@ -1361,11 +1367,35 @@ impl WalkController {
         self.phase()
     }
 
-    /// Start a new walk from `R0` and optionally advance to an admitted boundary.
+    /// Attach to the completed setup-derived R3 session and optionally advance.
     pub(crate) async fn start(
         &mut self,
         config: WalkStartConfig,
         until: WalkPhase,
+        allow_live_api: bool,
+    ) -> Result<WalkAdvanceReport, PrepareError> {
+        self.start_at(config, until, allow_live_api, None).await
+    }
+
+    /// Start only if the durable controller session is still at the exact
+    /// version admitted by the socket server before this job was queued.
+    pub(crate) async fn start_version(
+        &mut self,
+        config: WalkStartConfig,
+        until: WalkPhase,
+        allow_live_api: bool,
+        expected: &SessionVersion,
+    ) -> Result<WalkAdvanceReport, PrepareError> {
+        self.start_at(config, until, allow_live_api, Some(expected))
+            .await
+    }
+
+    async fn start_at(
+        &mut self,
+        config: WalkStartConfig,
+        until: WalkPhase,
+        allow_live_api: bool,
+        expected: Option<&SessionVersion>,
     ) -> Result<WalkAdvanceReport, PrepareError> {
         if !matches!(self.state, WalkState::Empty | WalkState::Failed { .. }) {
             return Err(PrepareError::InvalidBatchSelection {
@@ -1376,10 +1406,30 @@ impl WalkController {
             });
         }
         ensure_supported_target(until)?;
-        let repo_root = paths::resolve_repo_root(config.repo_root.as_deref())?;
-        let init_parent_identity = config.init_parent_identity;
+        if matches!(
+            until,
+            WalkPhase::Empty | WalkPhase::R0 | WalkPhase::R1 | WalkPhase::R2a
+        ) {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "walk target {until} is setup/bootstrap history; live controller sessions begin at R3"
+                ),
+            });
+        }
+        let repo_root = match config.repo_root.as_deref() {
+            Some(root) => paths::resolve_repo_root(Some(root))?,
+            None => self.repo_root.clone(),
+        };
+        if repo_root != self.repo_root {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "walk start repository root '{}' does not match the server root '{}'",
+                    repo_root.display(),
+                    self.repo_root.display()
+                ),
+            });
+        }
         let requested_campaign = config.campaign.clone();
-        self.repo_root = repo_root.clone();
         self.files.reset(&repo_root);
         self.steps = 0;
         self.last_delta = None;
@@ -1393,35 +1443,52 @@ impl WalkController {
                 .is_some_and(|identity| identity.campaign_id() == campaign_id),
             None => true,
         };
-        if until != WalkPhase::R0 && !init_parent_identity && reconstruct_matches_request {
-            self.refresh_from_disk()?;
-            let reconstructed = self.phase();
-            if reconstructed != WalkPhase::Empty {
-                let transitions = if phase_rank(reconstructed) < phase_rank(until) {
-                    self.advance_until(until, false, false).await?
-                } else {
-                    Vec::new()
-                };
-                let report = WalkAdvanceReport {
-                    from: reconstructed,
-                    to: self.phase(),
-                    transitions,
-                };
-                self.last_delta = Some(report.clone());
-                return Ok(report);
-            }
-            self.state = WalkState::Empty;
-            self.reconstruction = None;
+        if !reconstruct_matches_request {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "requested campaign '{}' does not match the active checkout parent",
+                    requested_campaign.expect("checked requested campaign")
+                ),
+            });
         }
-
-        self.state = WalkState::new(config.into_state_command());
-        self.record(format!(
-            "start: created r0 for repo_root '{}'",
-            repo_root.display()
-        ));
-        let transitions = self.advance_until(until, false, false).await?;
+        let lease = match expected {
+            Some(expected) => claim_controller_version(&repo_root, RunMode::Step, expected)?,
+            None => claim_controller(&repo_root, RunMode::Step)?,
+        };
+        let claimed = lease.cursor().phase;
+        self.files.remember_campaign(lease.campaign_id());
+        if claimed != until
+            && (phase_rank(claimed) > phase_rank(until) || phase_rank(claimed) == phase_rank(until))
+        {
+            let release = release_lease(lease).err();
+            return Err(attach_release(
+                PrepareError::InvalidBatchSelection {
+                    detail: format!(
+                        "durable controller cursor is already at {claimed}, beyond requested start target {until}"
+                    ),
+                },
+                release,
+            ));
+        }
+        let state = match reconstruct_state(&repo_root, claimed, lease.handoff_path()) {
+            Ok(state) => state,
+            Err(source) => {
+                let release = release_lease(lease).err();
+                return Err(attach_release(source, release));
+            }
+        };
+        let version = release_lease_version(lease)?;
+        self.state = state;
+        self.reconstruction = None;
+        let reconstructed = claimed;
+        let transitions = if phase_rank(reconstructed) < phase_rank(until) {
+            self.advance_until(until, allow_live_api, false, Some(version))
+                .await?
+        } else {
+            Vec::new()
+        };
         let report = WalkAdvanceReport {
-            from: WalkPhase::Empty,
+            from: reconstructed,
             to: self.phase(),
             transitions,
         };
@@ -1433,16 +1500,50 @@ impl WalkController {
     pub(crate) async fn step(
         &mut self,
         until: Option<WalkPhase>,
-        watch: bool,
+        allow_live_api: bool,
         allow_git_changes: bool,
     ) -> Result<WalkAdvanceReport, PrepareError> {
+        self.step_at(until, allow_live_api, allow_git_changes, None)
+            .await
+    }
+
+    /// Step only if the durable controller session is still at the exact
+    /// version admitted by the socket server before this job was queued.
+    pub(crate) async fn step_version(
+        &mut self,
+        until: Option<WalkPhase>,
+        allow_live_api: bool,
+        allow_git_changes: bool,
+        expected: &SessionVersion,
+    ) -> Result<WalkAdvanceReport, PrepareError> {
+        self.step_at(until, allow_live_api, allow_git_changes, Some(expected))
+            .await
+    }
+
+    async fn step_at(
+        &mut self,
+        until: Option<WalkPhase>,
+        allow_live_api: bool,
+        allow_git_changes: bool,
+        expected: Option<&SessionVersion>,
+    ) -> Result<WalkAdvanceReport, PrepareError> {
         self.refresh_from_disk()?;
+        if let WalkState::Blocked { phase, detail } = &self.state {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!("walk is blocked at {phase}: {detail}"),
+            });
+        }
+        if let WalkState::Failed { phase, detail } = &self.state {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!("walk failed at {phase}: {detail}"),
+            });
+        }
         let from = self.phase();
-        let branch_step = until.is_none() && watch && self.phase() == WalkPhase::R10;
+        let branch_step = until.is_none() && allow_live_api && self.phase() == WalkPhase::R10;
         let r12_selected =
             matches!(&self.state, WalkState::R12(r12) if r12.has_successor_selection());
         let target = until.unwrap_or_else(|| {
-            if watch && self.phase() == WalkPhase::R7 {
+            if allow_live_api && self.phase() == WalkPhase::R7 {
                 WalkPhase::R8
             } else if r12_selected {
                 WalkPhase::R13b
@@ -1453,13 +1554,20 @@ impl WalkController {
         ensure_supported_target(target)?;
         self.ensure_branch_target(target)?;
         let transitions = if until.is_none() && self.phase() == target && !branch_step {
-            vec![self.step_once(watch, allow_git_changes).await?]
+            vec![
+                self.step_once(allow_live_api, allow_git_changes, expected)
+                    .await?,
+            ]
         } else if self.phase() == target && !branch_step {
             Vec::new()
         } else if until.is_some() {
-            self.advance_until(target, watch, allow_git_changes).await?
+            self.advance_until(target, allow_live_api, allow_git_changes, expected.cloned())
+                .await?
         } else {
-            vec![self.step_once(watch, allow_git_changes).await?]
+            vec![
+                self.step_once(allow_live_api, allow_git_changes, expected)
+                    .await?,
+            ]
         };
         let report = WalkAdvanceReport {
             from,
@@ -1476,7 +1584,7 @@ impl WalkController {
             if selected && matches!(target, WalkPhase::R13a | WalkPhase::R14a) {
                 return Err(PrepareError::InvalidBatchSelection {
                     detail: format!(
-                        "target {target} is the stopped/no-selection branch, but R12 has selected-successor evidence; use --until r13b or --until r14b with --watch --allow git-changes"
+                        "target {target} is the stopped/no-selection branch, but R12 has selected-successor evidence; use --until r13b or --until r14b with --allow git-changes"
                     ),
                 });
             }
@@ -1492,10 +1600,113 @@ impl WalkController {
     }
 
     pub(crate) fn refresh_from_disk(&mut self) -> Result<(), PrepareError> {
-        if !matches!(self.state, WalkState::Empty) {
-            return Ok(());
-        }
-        let snapshot = reconstruct::reconstruct_early(&self.repo_root)?;
+        let previous = self.phase();
+        let session = match load_parent_identity_optional(&self.repo_root)? {
+            Some(parent) => {
+                self.files.remember_campaign(parent.campaign_id());
+                let manifest = campaign_manifest_path(parent.campaign_id())?;
+                Store::for_manifest(&manifest)
+                    .inspect(&parent)
+                    .map_err(session_error)?
+            }
+            None => None,
+        };
+        let snapshot = if let Some(session) = session {
+            if let Some(damage) = session.damage {
+                let phase = session
+                    .cursor
+                    .as_ref()
+                    .map_or(WalkPhase::Empty, |cursor| cursor.phase);
+                let detail = format!("controller session journal is damaged: {damage:?}");
+                self.state = WalkState::Blocked {
+                    phase,
+                    detail: detail.clone(),
+                };
+                self.reconstruction = Some(WalkReconstruction {
+                    notes: Vec::new(),
+                    blockers: vec![detail.clone()],
+                });
+                if previous != phase {
+                    self.record(format!("reconstruction blocked at {phase}: {detail}"));
+                }
+                return Ok(());
+            }
+            if let Some((phase, detail)) = session.attempts.last().and_then(|attempt| match attempt
+            {
+                Attempt::Pending { intent, .. } => Some((
+                    intent.expected,
+                    format!(
+                        "controller transition {} is durably pending and requires owner recovery",
+                        intent.transition_id
+                    ),
+                )),
+                Attempt::Finished(receipt) | Attempt::Recovered { receipt, .. } => {
+                    match &receipt.result {
+                        AttemptResult::Indeterminate { detail, .. } => Some((
+                            receipt.intent.expected,
+                            format!("controller transition is indeterminate: {detail}"),
+                        )),
+                        AttemptResult::Committed { .. }
+                        | AttemptResult::Rejected { .. }
+                        | AttemptResult::Cancelled { .. } => None,
+                    }
+                }
+            }) {
+                self.state = WalkState::Blocked {
+                    phase,
+                    detail: detail.clone(),
+                };
+                self.reconstruction = Some(WalkReconstruction {
+                    notes: Vec::new(),
+                    blockers: vec![detail.clone()],
+                });
+                if previous != phase {
+                    self.record(format!("reconstruction blocked at {phase}: {detail}"));
+                }
+                return Ok(());
+            }
+            if let Some(owner) = session.active.as_ref() {
+                let phase = session
+                    .cursor
+                    .as_ref()
+                    .map_or(WalkPhase::Empty, |cursor| cursor.phase);
+                let detail = format!(
+                    "controller owner is recorded at fence {} (pid {}); lock-free inspection cannot prove whether it is live or requires recovery",
+                    owner.fence(),
+                    owner.pid()
+                );
+                self.state = WalkState::Blocked {
+                    phase,
+                    detail: detail.clone(),
+                };
+                self.reconstruction = Some(WalkReconstruction {
+                    notes: Vec::new(),
+                    blockers: vec![detail.clone()],
+                });
+                if previous != phase {
+                    self.record(format!("reconstruction blocked at {phase}: {detail}"));
+                }
+                return Ok(());
+            }
+            let handoff = session
+                .created
+                .as_ref()
+                .and_then(|created| created.handoff_path())
+                .map(Path::to_path_buf);
+            let cursor = session
+                .cursor
+                .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                    detail: "controller session has no committed cursor".to_string(),
+                })?;
+            match handoff.as_deref() {
+                Some(path) => {
+                    reconstruct::reconstruct_handoff_at(&self.repo_root, cursor.phase, path)?
+                }
+                None => reconstruct::reconstruct_at(&self.repo_root, cursor.phase)?,
+            }
+        } else {
+            reconstruct::reconstruct_early(&self.repo_root)?
+        };
         let reconstruct::EarlySnapshot {
             state,
             blocked,
@@ -1503,6 +1714,7 @@ impl WalkController {
             notes,
             blockers,
         } = snapshot;
+        self.state = WalkState::Empty;
         if let Some(campaign_id) = &campaign_id {
             self.files.remember_campaign(campaign_id);
         }
@@ -1514,12 +1726,16 @@ impl WalkController {
                 phase,
                 detail: detail.clone(),
             };
-            self.record(format!("reconstruction blocked at {phase}: {detail}"));
+            if previous != phase {
+                self.record(format!("reconstruction blocked at {phase}: {detail}"));
+            }
         } else if let Some(state) = state {
             let state = WalkState::from_reconstructed(state);
             let phase = state.phase();
             self.state = state;
-            self.record(format!("reconstructed durable walk state at {phase}"));
+            if previous != phase {
+                self.record(format!("reconstructed durable walk state at {phase}"));
+            }
         }
         Ok(())
     }
@@ -1527,19 +1743,27 @@ impl WalkController {
     async fn advance_until(
         &mut self,
         target: WalkPhase,
-        watch: bool,
+        allow_live_api: bool,
         allow_git_changes: bool,
+        mut expected: Option<SessionVersion>,
     ) -> Result<Vec<WalkTransition>, PrepareError> {
         let mut guard = 0_u8;
         let mut transitions = Vec::new();
-        while self.phase() != target {
+        loop {
             guard += 1;
             if guard > 16 {
                 return Err(PrepareError::InvalidBatchSelection {
                     detail: format!("walk exceeded early-step guard while advancing to {target}"),
                 });
             }
-            transitions.push(self.step_once(watch, allow_git_changes).await?);
+            let (transition, version) = self
+                .step_toward(target, allow_live_api, allow_git_changes, expected.as_ref())
+                .await?;
+            expected = Some(version);
+            let Some(transition) = transition else {
+                break;
+            };
+            transitions.push(transition);
             if phase_rank(self.phase()) > phase_rank(target)
                 || (phase_rank(self.phase()) == phase_rank(target) && self.phase() != target)
             {
@@ -1556,45 +1780,144 @@ impl WalkController {
 
     async fn step_once(
         &mut self,
-        watch: bool,
+        allow_live_api: bool,
         allow_git_changes: bool,
+        expected: Option<&SessionVersion>,
     ) -> Result<WalkTransition, PrepareError> {
-        let state = std::mem::replace(&mut self.state, WalkState::Empty);
-        match advance_one(
-            &self.repo_root,
-            state,
-            StepAdmission::new(watch, allow_git_changes),
-        )
-        .await
-        {
-            Ok(step) => {
-                if let WalkState::R1(r1) = &step.state {
-                    self.files.remember_campaign(r1.campaign_id());
-                }
-                let transition = WalkTransition {
-                    from: step.transition.from,
-                    to: step.transition.to,
+        self.step_claimed(None, allow_live_api, allow_git_changes, expected)
+            .await?
+            .0
+            .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                detail: "unbounded walk step stopped without executing an edge".to_string(),
+            })
+    }
+
+    async fn step_toward(
+        &mut self,
+        target: WalkPhase,
+        allow_live_api: bool,
+        allow_git_changes: bool,
+        expected: Option<&SessionVersion>,
+    ) -> Result<(Option<WalkTransition>, SessionVersion), PrepareError> {
+        self.step_claimed(Some(target), allow_live_api, allow_git_changes, expected)
+            .await
+    }
+
+    async fn step_claimed(
+        &mut self,
+        target: Option<WalkPhase>,
+        allow_live_api: bool,
+        allow_git_changes: bool,
+        expected: Option<&SessionVersion>,
+    ) -> Result<(Option<WalkTransition>, SessionVersion), PrepareError> {
+        let lease = match expected {
+            Some(expected) => claim_controller_version(&self.repo_root, RunMode::Step, expected)?,
+            None => claim_controller(&self.repo_root, RunMode::Step)?,
+        };
+        let claimed = lease.cursor().phase;
+        if let Some(target) = target {
+            if claimed == target {
+                let state = match reconstruct_state(&self.repo_root, claimed, lease.handoff_path())
+                {
+                    Ok(state) => state,
+                    Err(source) => {
+                        let release = release_lease(lease).err();
+                        return Err(attach_release(source, release));
+                    }
                 };
-                self.state = step.state;
-                self.steps += 1;
+                let version = release_lease_version(lease)?;
+                self.state = state;
                 self.reconstruction = None;
+                return Ok((None, version));
+            }
+            if phase_rank(claimed) > phase_rank(target)
+                || (phase_rank(claimed) == phase_rank(target) && claimed != target)
+            {
+                release_lease(lease)?;
+                return Err(PrepareError::InvalidBatchSelection {
+                    detail: format!(
+                        "durable controller cursor is already at {claimed}, beyond requested target {target}"
+                    ),
+                });
+            }
+        }
+        if !allow_live_api && phase_requires_live(claimed) {
+            let release = release_lease(lease).err();
+            return Err(attach_release(
+                PrepareError::InvalidBatchSelection {
+                    detail: format!(
+                        "walk edge from {claimed} requires live-provider authority; rerun with --allow-live-api"
+                    ),
+                },
+                release,
+            ));
+        }
+        let intent = match lease.intent_with_live_api(allow_live_api, allow_git_changes) {
+            Ok(intent) => intent,
+            Err(source) => {
+                let release = release_lease(lease).err();
+                return Err(attach_release(session_error(source), release));
+            }
+        };
+        let (lease, receipt) = match advance_controlled(lease, intent).await {
+            Ok(ControlAdvance::Existing { lease, receipt }) => (lease, receipt),
+            Ok(ControlAdvance::Finished(Finished::Terminal { lease, receipt, .. })) => {
+                (lease, receipt)
+            }
+            Ok(ControlAdvance::Finished(Finished::Uncertain { receipt, .. })) => {
+                let phase = receipt.intent.expected;
+                let detail = result_detail(&receipt.result).to_string();
+                self.state = WalkState::Blocked {
+                    phase,
+                    detail: detail.clone(),
+                };
+                self.record(format!("indeterminate at {phase}: {detail}"));
+                return Err(PrepareError::InvalidBatchSelection { detail });
+            }
+            Err(failure) => return Err(control_error(failure)),
+        };
+
+        let from = receipt.intent.expected;
+        let result = receipt.result.clone();
+        let phase = lease.cursor().phase;
+        let state = match reconstruct_state(&self.repo_root, phase, lease.handoff_path()) {
+            Ok(state) => state,
+            Err(source) => {
+                let detail = source.to_string();
+                self.state = WalkState::Blocked {
+                    phase,
+                    detail: detail.clone(),
+                };
+                self.record(format!("reconstruction blocked at {phase}: {detail}"));
+                let release = release_lease(lease).err();
+                return Err(attach_release(source, release));
+            }
+        };
+        let version = release_lease_version(lease)?;
+        self.state = state;
+        self.reconstruction = None;
+
+        match result {
+            AttemptResult::Committed { phase: to, .. } => {
+                let transition = WalkTransition { from, to };
+                self.steps += 1;
                 self.record(format!(
                     "step {}: {} -> {}",
                     self.steps, transition.from, transition.to
                 ));
-                Ok(transition)
+                Ok((Some(transition), version))
             }
-            Err(failure) => {
-                let phase = failure.state.phase();
-                let detail = failure.error.to_string();
-                let failed = matches!(failure.state, WalkState::Failed { .. });
-                self.state = failure.state;
-                if failed {
-                    self.record(format!("failed at {phase}: {detail}"));
-                } else {
-                    self.record(format!("blocked at {phase}: {detail}"));
-                }
-                Err(failure.error)
+            AttemptResult::Rejected { detail, .. } | AttemptResult::Cancelled { detail, .. } => {
+                self.record(format!("blocked at {phase}: {detail}"));
+                Err(PrepareError::InvalidBatchSelection { detail })
+            }
+            AttemptResult::Indeterminate { detail, .. } => {
+                self.state = WalkState::Blocked {
+                    phase,
+                    detail: detail.clone(),
+                };
+                self.record(format!("indeterminate at {phase}: {detail}"));
+                Err(PrepareError::InvalidBatchSelection { detail })
             }
         }
     }
@@ -1607,6 +1930,113 @@ impl WalkController {
 
     fn record(&mut self, entry: impl Into<String>) {
         self.previous.push(entry.into());
+    }
+}
+
+fn reconstruct_state(
+    repo_root: &Path,
+    phase: WalkPhase,
+    handoff: Option<&Path>,
+) -> Result<WalkState, PrepareError> {
+    let snapshot = match handoff {
+        Some(path) => reconstruct::reconstruct_handoff_at(repo_root, phase, path)?,
+        None => reconstruct::reconstruct_at(repo_root, phase)?,
+    };
+    match snapshot.state {
+        Some(state) => Ok(WalkState::from_reconstructed(state)),
+        None => {
+            let detail = snapshot.blocked.map_or_else(
+                || {
+                    if snapshot.blockers.is_empty() {
+                        format!("durable reconstruction did not produce typed authority at {phase}")
+                    } else {
+                        snapshot.blockers.join("; ")
+                    }
+                },
+                |blocked| blocked.detail,
+            );
+            Err(PrepareError::InvalidBatchSelection { detail })
+        }
+    }
+}
+
+fn release_lease(lease: Lease<Idle>) -> Result<(), PrepareError> {
+    match lease.release() {
+        Ok(_) => Ok(()),
+        Err(Failure::Retained {
+            authority,
+            source: first,
+        }) => authority
+            .release()
+            .map(|_| ())
+            .map_err(|retry| match retry {
+                Failure::Retained { source, .. } | Failure::Uncertain { source } => {
+                    session_error(format!("{source}; first release failed: {first}"))
+                }
+            }),
+        Err(Failure::Uncertain { source }) => Err(session_error(source)),
+    }
+}
+
+fn release_lease_version(lease: Lease<Idle>) -> Result<SessionVersion, PrepareError> {
+    let session_id = lease.session_id();
+    let cursor = lease.cursor().clone();
+    let receipt = match lease.release() {
+        Ok(receipt) => receipt,
+        Err(Failure::Retained {
+            authority,
+            source: first,
+        }) => authority.release().map_err(|retry| match retry {
+            Failure::Retained { source, .. } | Failure::Uncertain { source } => {
+                session_error(format!("{source}; first release failed: {first}"))
+            }
+        })?,
+        Err(Failure::Uncertain { source }) => return Err(session_error(source)),
+    };
+    Ok(SessionVersion {
+        session_id: Some(session_id),
+        cursor: Some(cursor),
+        journal_revision: receipt.source_event_index + 1,
+    })
+}
+
+fn control_error(failure: ControlFailure) -> PrepareError {
+    match failure {
+        ControlFailure::Reconstruct { lease, source } => {
+            let release = release_lease(lease).err();
+            attach_release(source, release)
+        }
+        ControlFailure::Admission(Failure::Retained { authority, source }) => {
+            let release = release_lease(authority).err();
+            attach_release(session_error(source), release)
+        }
+        ControlFailure::Admission(Failure::Uncertain { source }) => session_error(source),
+        ControlFailure::Persist(Failure::Retained { source, .. })
+        | ControlFailure::Persist(Failure::Uncertain { source }) => session_error(source),
+    }
+}
+
+fn attach_release(source: PrepareError, release: Option<PrepareError>) -> PrepareError {
+    match release {
+        Some(release) => PrepareError::InvalidBatchSelection {
+            detail: format!("{source}; controller release also failed: {release}"),
+        },
+        None => source,
+    }
+}
+
+fn result_detail(result: &AttemptResult) -> &str {
+    match result {
+        AttemptResult::Rejected { detail, .. }
+        | AttemptResult::Cancelled { detail, .. }
+        | AttemptResult::Indeterminate { detail, .. } => detail,
+        AttemptResult::Committed { .. } => "committed result lost idle authority",
+    }
+}
+
+fn session_error(source: impl std::fmt::Display) -> PrepareError {
+    PrepareError::InvalidBatchSelection {
+        detail: format!("controller session error: {source}"),
     }
 }
 
@@ -1712,6 +2142,16 @@ fn phase_rank(phase: WalkPhase) -> u8 {
         WalkPhase::R13a | WalkPhase::R13b | WalkPhase::R13c => 14,
         WalkPhase::R14a | WalkPhase::R14b => 15,
     }
+}
+
+fn phase_requires_live(phase: WalkPhase) -> bool {
+    let mut edges = ControlEdge::ALL
+        .into_iter()
+        .filter(|edge| edge.from() == phase);
+    let Some(first) = edges.next() else {
+        return false;
+    };
+    first.requires_live() && edges.all(ControlEdge::requires_live)
 }
 
 trait NextPhase {
@@ -4078,7 +4518,7 @@ mod tests {
     };
 
     #[tokio::test]
-    async fn default_step_surfaces_reconstructed_r13c_blocker() {
+    async fn step_refreshes_before_trusting_in_memory_state() {
         let temp = tempfile::tempdir().expect("tempdir");
         let mut controller = WalkController::new(temp.path().join("repo"));
         controller.state = WalkState::Blocked {
@@ -4092,9 +4532,45 @@ mod tests {
             .err()
             .expect("default step must not report a successful no-op at R13c");
 
-        assert_eq!(controller.phase(), WalkPhase::R13c);
-        assert!(error.to_string().contains("walk is blocked at r13c"));
-        assert!(error.to_string().contains("persisted successor handoff"));
+        assert_eq!(controller.phase(), WalkPhase::Empty);
+        assert!(error.to_string().contains("no Prototype 1 parent identity"));
+    }
+
+    #[tokio::test]
+    async fn start_rejects_cross_root_config_without_mutating_controller() {
+        let root = tempfile::tempdir().expect("server root");
+        let other = tempfile::tempdir().expect("other root");
+        let server_root = root.path().canonicalize().expect("canonical server root");
+        let mut controller = WalkController::new(server_root.clone());
+        controller.steps = 7;
+
+        let error = controller
+            .start(
+                WalkStartConfig {
+                    campaign: None,
+                    repo_root: Some(other.path().to_path_buf()),
+                },
+                WalkPhase::R3,
+                false,
+            )
+            .await
+            .err()
+            .expect("cross-root start must fail before controller mutation");
+
+        assert!(error.to_string().contains("does not match the server root"));
+        assert_eq!(controller.repo_root, server_root);
+        assert_eq!(controller.phase(), WalkPhase::Empty);
+        assert_eq!(controller.steps, 7);
+    }
+
+    #[test]
+    fn start_and_step_preflight_blocks_r5_without_live_capability() {
+        assert!(phase_requires_live(WalkPhase::R5));
+        assert!(phase_requires_live(WalkPhase::R7));
+        assert!(phase_requires_live(WalkPhase::R10));
+        assert!(!phase_requires_live(WalkPhase::R4c));
+        assert!(!phase_requires_live(WalkPhase::R6));
+        assert!(!phase_requires_live(WalkPhase::R12));
     }
 
     fn content_response(index: usize) -> RawFullResponseRecord {

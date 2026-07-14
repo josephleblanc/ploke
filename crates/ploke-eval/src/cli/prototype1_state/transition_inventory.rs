@@ -37,6 +37,7 @@ impl AuthorityClass {
 pub(crate) enum LiveApi {
     No,
     DirectGoogle,
+    ProviderParent,
     ProviderChild,
 }
 
@@ -45,6 +46,7 @@ impl LiveApi {
         match self {
             Self::No => "no",
             Self::DirectGoogle => "direct_google",
+            Self::ProviderParent => "provider_parent",
             Self::ProviderChild => "provider_child",
         }
     }
@@ -296,7 +298,7 @@ fn parent_transition_row(
             downstream: &["r5_to_r6", "parent-start replay consumers"],
             authority_negative_case: "parent-start evidence cannot bypass R4a/R4b startup checks",
         },
-        (WalkPhase::R5, WalkPhase::R6, "r5_to_r6") => TransitionInventoryRow {
+        (WalkPhase::R5, WalkPhase::R6, "r5_to_r6 --allow-live-api") => TransitionInventoryRow {
             edge_id: "r5_to_r6",
             source_anchor: "live_edges.rs:prototype1_live_edge_r5_to_r6",
             from_phase: "r5",
@@ -304,7 +306,7 @@ fn parent_transition_row(
             producer_surfaces: &["parent baseline facts"],
             consumer_surfaces: &["policy budget", "child planning"],
             authority_classes: &[AuthorityClass::EvidenceProjection],
-            live_api: LiveApi::No,
+            live_api: LiveApi::ProviderParent,
             checkpoint_in: "post_r5_parent_started",
             checkpoint_out: "F2_baseline_complete",
             downstream: &["r6_to_r7", "baseline metrics"],
@@ -324,7 +326,7 @@ fn parent_transition_row(
             downstream: &["child-plan producer"],
             authority_negative_case: "scheduler fallback cannot override admitted profile policy",
         },
-        (WalkPhase::R7, WalkPhase::R8, "r7_to_r8 --watch") => TransitionInventoryRow {
+        (WalkPhase::R7, WalkPhase::R8, "r7_to_r8 --allow-live-api") => TransitionInventoryRow {
             edge_id: "r7_to_r8",
             source_anchor: "live_edges.rs:prototype1_live_edge_r7_to_r8",
             from_phase: "r7",
@@ -373,21 +375,23 @@ fn parent_transition_row(
             downstream: &["rejected-only branch", "child fanout branch"],
             authority_negative_case: "strategy projection cannot select without candidate evidence",
         },
-        (WalkPhase::R10, WalkPhase::R11a, "r10_to_r11 --watch") => TransitionInventoryRow {
-            edge_id: "r10_to_r11a",
-            source_anchor: "live_edges.rs:prototype1_live_edge_r10_to_r11",
-            from_phase: "r10",
-            to_phase: "r11a",
-            producer_surfaces: &["rejected-attempt evidence", "selection-ready projection"],
-            consumer_surfaces: &["r11_to_r12"],
-            authority_classes: &[AuthorityClass::EvidenceProjection],
-            live_api: LiveApi::No,
-            checkpoint_in: "F3_child_plan_received",
-            checkpoint_out: "F7_selection_ready",
-            downstream: &["report projection", "stopped continuation"],
-            authority_negative_case: "rejected-only projection cannot prove child terminal success",
-        },
-        (WalkPhase::R10, WalkPhase::R11, "r10_to_r11 --watch") => TransitionInventoryRow {
+        (WalkPhase::R10, WalkPhase::R11a, "r10_to_r11 --allow-live-api") => {
+            TransitionInventoryRow {
+                edge_id: "r10_to_r11a",
+                source_anchor: "live_edges.rs:prototype1_live_edge_r10_to_r11",
+                from_phase: "r10",
+                to_phase: "r11a",
+                producer_surfaces: &["rejected-attempt evidence", "selection-ready projection"],
+                consumer_surfaces: &["r11_to_r12"],
+                authority_classes: &[AuthorityClass::EvidenceProjection],
+                live_api: LiveApi::No,
+                checkpoint_in: "F3_child_plan_received",
+                checkpoint_out: "F7_selection_ready",
+                downstream: &["report projection", "stopped continuation"],
+                authority_negative_case: "rejected-only projection cannot prove child terminal success",
+            }
+        }
+        (WalkPhase::R10, WalkPhase::R11, "r10_to_r11 --allow-live-api") => TransitionInventoryRow {
             edge_id: "r10_to_r11",
             source_anchor: "live_edges.rs:prototype1_live_edge_r10_to_r11",
             from_phase: "r10",
@@ -452,7 +456,7 @@ fn parent_transition_row(
             downstream: &["final stopped report"],
             authority_negative_case: "DB continuation row cannot replace sealed stopped decision evidence",
         },
-        (WalkPhase::R12, WalkPhase::R13b, "r12_to_r13 --watch --allow git-changes") => {
+        (WalkPhase::R12, WalkPhase::R13b, "r12_to_r13 --allow git-changes") => {
             TransitionInventoryRow {
                 edge_id: "r12_to_r13b",
                 source_anchor: "live_edges.rs:prototype1_live_edge_r12_to_r13",
@@ -478,7 +482,7 @@ fn parent_transition_row(
                 authority_negative_case: "DB handoff row cannot replace sealed History or selected artifact install",
             }
         }
-        (WalkPhase::R12, WalkPhase::R13c, "r12_to_r13 --watch --allow git-changes") => {
+        (WalkPhase::R12, WalkPhase::R13c, "r12_to_r13 --allow git-changes") => {
             TransitionInventoryRow {
                 edge_id: "r12_to_r13c",
                 source_anchor: "live_edges.rs:prototype1_live_edge_r12_to_r13",
@@ -676,7 +680,7 @@ mod tests {
             .map(|row| row.edge_id)
             .collect::<Vec<_>>();
 
-        assert_eq!(live, vec!["r7_to_r8", "r10_to_r11", "c4_to_c5"]);
+        assert_eq!(live, vec!["r5_to_r6", "r7_to_r8", "r10_to_r11", "c4_to_c5"]);
     }
 
     #[test]

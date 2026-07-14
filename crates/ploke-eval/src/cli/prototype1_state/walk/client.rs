@@ -20,6 +20,7 @@ use tokio::net::UnixStream;
 use crate::{
     campaign::campaign_manifest_path,
     cli::prototype1_state::{
+        driver::control::RecoveryDirective,
         eval_store::{load_owner_eval_database, prototype1_eval_store_db_path},
         identity,
     },
@@ -35,7 +36,10 @@ use super::{
     args,
     epoch::ServerEpoch,
     ipc, paths,
-    protocol::{WalkJobSnapshot, WalkJobStatus, WalkRequest, WalkRequestBody, WalkResponse},
+    protocol::{
+        MutationGuard, OperationId, SessionVersion, WalkJobSnapshot, WalkJobStatus, WalkRequest,
+        WalkRequestBody, WalkResponse,
+    },
     summary,
 };
 
@@ -52,19 +56,22 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
             let with_version = command.with_version;
             let until = command.until;
             let watch = command.watch;
+            let allow_live_api = command.allow_live_api;
             let allow_git_changes = command.allow_git_changes();
             let socket_override = command.socket.clone();
             let (repo_root, socket) =
                 args::resolve_socket(command.repo_root_ref(), socket_override.as_deref())?;
             ensure_server(&repo_root, &socket, default_idle_ttl()).await?;
-            let epoch = ServerEpoch::capture(&repo_root)?;
+            let (epoch, guard) = mutation_guard(&repo_root, &socket, command.operation_id).await?;
             let response = send_request(
                 &socket,
                 WalkRequest {
                     client_epoch: Some(epoch),
                     body: WalkRequestBody::Step {
+                        guard,
                         until,
                         watch,
+                        allow_live_api,
                         allow_git_changes,
                     },
                 },
@@ -77,22 +84,54 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
             response_result(response)
         }
         Prototype1StateWalkSubcommand::Reset(command) => {
-            let format = command.format;
-            let with_version = command.with_version;
-            let socket_override = command.socket.clone();
+            let format = command.control.format;
+            let with_version = command.control.with_version;
+            let socket_override = command.control.socket.clone();
             let (repo_root, socket) =
-                args::resolve_socket(command.repo_root_ref(), socket_override.as_deref())?;
-            let epoch = ServerEpoch::capture(&repo_root)?;
+                args::resolve_socket(command.control.repo_root_ref(), socket_override.as_deref())?;
+            let (epoch, guard) = mutation_guard(&repo_root, &socket, command.operation_id).await?;
             let response = send_request(
                 &socket,
                 WalkRequest {
                     client_epoch: Some(epoch),
-                    body: WalkRequestBody::Reset,
+                    body: WalkRequestBody::Reset { guard },
                 },
             )
             .await?;
             print_response(&response, format, with_version)?;
             response_result(response)
+        }
+        Prototype1StateWalkSubcommand::Recover(command) => {
+            let format = command.control.format;
+            let with_version = command.control.with_version;
+            let directive = command.directive();
+            if directive == RecoveryDirective::Inspect && command.operation_id.is_some() {
+                return Err(PrepareError::InvalidBatchSelection {
+                    detail: "read-only recovery inspection does not accept --operation-id"
+                        .to_string(),
+                });
+            }
+            let socket_override = command.control.socket.clone();
+            let (repo_root, socket) =
+                args::resolve_socket(command.repo_root_ref(), socket_override.as_deref())?;
+            ensure_server(&repo_root, &socket, default_idle_ttl()).await?;
+            let (client_epoch, guard) = if directive == RecoveryDirective::Inspect {
+                (None, None)
+            } else {
+                let (epoch, guard) =
+                    mutation_guard(&repo_root, &socket, command.operation_id).await?;
+                (Some(epoch), Some(guard))
+            };
+            let response = send_request(
+                &socket,
+                WalkRequest {
+                    client_epoch,
+                    body: WalkRequestBody::Recover { directive, guard },
+                },
+            )
+            .await?;
+            print_response(&response, format, with_version)?;
+            recovery_result(response)
         }
         Prototype1StateWalkSubcommand::Files(command) => {
             let format = command.format;
@@ -392,12 +431,24 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
             let format = command.format;
             let with_version = command.with_version;
             let socket_override = command.socket.clone();
-            let (_repo_root, socket) =
+            let (repo_root, socket) =
                 args::resolve_socket(command.repo_root_ref(), socket_override.as_deref())?;
+            let epoch = match health(&socket).await? {
+                Health::Online(response) => stop_epoch(&repo_root, &response)?,
+                Health::Offline => {
+                    return Err(PrepareError::DatabaseSetup {
+                        phase: "prototype1_state_walk_stop",
+                        detail: format!(
+                            "walk server is offline at '{}'; no endpoint authority was available for stop",
+                            socket.display()
+                        ),
+                    });
+                }
+            };
             let response = send_request(
                 &socket,
                 WalkRequest {
-                    client_epoch: None,
+                    client_epoch: Some(epoch),
                     body: WalkRequestBody::Stop,
                 },
             )
@@ -413,19 +464,25 @@ async fn start(command: Prototype1StateWalkStartCommand) -> Result<(), PrepareEr
     let format = command.format;
     let with_version = command.with_version;
     let until = command.until;
+    let allow_live_api = command.allow_live_api;
     let idle_ttl = command.idle_ttl()?;
     let socket_override = command.socket.clone();
     let (repo_root, socket) =
         args::resolve_socket(command.repo_root_ref(), socket_override.as_deref())?;
     ensure_server(&repo_root, &socket, idle_ttl).await?;
-    let epoch = ServerEpoch::capture(&repo_root)?;
+    let (epoch, guard) = mutation_guard(&repo_root, &socket, command.operation_id).await?;
     let mut config = command.start_config();
     config.repo_root = Some(repo_root.clone());
     let response = send_request(
         &socket,
         WalkRequest {
             client_epoch: Some(epoch),
-            body: WalkRequestBody::Start { config, until },
+            body: WalkRequestBody::Start {
+                guard,
+                config,
+                until,
+                allow_live_api,
+            },
         },
     )
     .await?;
@@ -492,6 +549,16 @@ fn active_job(response: &WalkResponse) -> Option<&WalkJobSnapshot> {
         WalkResponse::Job { job, .. } if job.status.is_active() => Some(job),
         WalkResponse::Status { job: Some(job), .. } if job.status.is_active() => Some(job),
         _ => None,
+    }
+}
+
+fn response_epoch(response: &WalkResponse) -> &ServerEpoch {
+    match response {
+        WalkResponse::Ok { epoch, .. }
+        | WalkResponse::Audit { epoch, .. }
+        | WalkResponse::Job { epoch, .. }
+        | WalkResponse::Status { epoch, .. }
+        | WalkResponse::Error { epoch, .. } => epoch,
     }
 }
 
@@ -699,6 +766,91 @@ async fn health(socket: &Path) -> Result<Health, PrepareError> {
     Ok(Health::Online(response))
 }
 
+/// Capture the endpoint epoch and exact durable controller-session version in
+/// one non-mutating probe before submitting a live operation.
+async fn mutation_guard(
+    repo_root: &Path,
+    socket: &Path,
+    operation: Option<OperationId>,
+) -> Result<(ServerEpoch, MutationGuard), PrepareError> {
+    match health(socket).await? {
+        Health::Online(response @ WalkResponse::Status { .. }) => {
+            let epoch = fresh_epoch(repo_root, &response)?;
+            let WalkResponse::Status { version, .. } = response else {
+                unreachable!("status response matched above")
+            };
+            Ok((
+                epoch,
+                MutationGuard {
+                    operation: operation.unwrap_or_else(OperationId::new),
+                    expected: version,
+                },
+            ))
+        }
+        Health::Online(response) => Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "walk mutation requires a typed health/status version; endpoint returned {response:?}"
+            ),
+        }),
+        Health::Offline => Err(PrepareError::DatabaseSetup {
+            phase: "prototype1_state_walk_mutation_probe",
+            detail: format!(
+                "walk server is offline at '{}'; mutation admission requires an observed server epoch and durable session version",
+                socket.display()
+            ),
+        }),
+    }
+}
+
+/// Capture this client's repository epoch and bind it to the observed endpoint.
+fn fresh_epoch(repo_root: &Path, response: &WalkResponse) -> Result<ServerEpoch, PrepareError> {
+    let epoch = ServerEpoch::capture(repo_root)?;
+    response_epoch(response).ensure_compatible_request(Some(&epoch))?;
+    Ok(epoch)
+}
+
+/// Bind shutdown to the caller-selected repository while allowing stale-source cleanup.
+fn stop_epoch(repo_root: &Path, response: &WalkResponse) -> Result<ServerEpoch, PrepareError> {
+    let epoch = ServerEpoch::capture(repo_root)?;
+    let server = response_epoch(response);
+    if server.repo_root != epoch.repo_root {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "walk repository root mismatch: client='{}' server='{}'",
+                epoch.repo_root.display(),
+                server.repo_root.display()
+            ),
+        });
+    }
+    Ok(epoch)
+}
+
+#[cfg(test)]
+mod epoch_tests {
+    use super::*;
+    use crate::cli::prototype1_state::walk::phase::WalkPhase;
+
+    #[test]
+    fn fresh_epoch_rejects_socket_for_different_repo() {
+        let server = tempfile::tempdir().expect("server repo");
+        let client = tempfile::tempdir().expect("client repo");
+        let response = WalkResponse::Status {
+            phase: WalkPhase::Empty,
+            message: "online".to_string(),
+            job: None,
+            version: SessionVersion::empty(),
+            epoch: ServerEpoch::capture(server.path()).expect("server epoch"),
+        };
+
+        let error = fresh_epoch(client.path(), &response)
+            .expect_err("an explicit socket cannot confer cross-repository authority");
+        assert!(
+            error.to_string().contains("repository root mismatch"),
+            "{error}"
+        );
+    }
+}
+
 fn print_context(
     context: &paths::WalkContext,
     context_path: &Path,
@@ -866,6 +1018,7 @@ fn print_response(
                 println!("status: job");
                 println!("phase: {phase} - {}", phase.detail());
                 println!("job_id: {}", job.job_id);
+                println!("operation_id: {}", job.operation_id);
                 println!("job_command: {}", job.command);
                 println!("job_status: {:?}", job.status);
                 print_multiline("message", message);
@@ -873,6 +1026,7 @@ fn print_response(
                     print_multiline("job_message", job_message);
                 }
                 if with_version {
+                    print_session_version(&job.expected);
                     println!("protocol_version: {}", epoch.protocol_version);
                     println!(
                         "transition_graph_version: {}",
@@ -884,6 +1038,7 @@ fn print_response(
                 phase,
                 message,
                 job,
+                version,
                 epoch,
             } => {
                 println!("walk");
@@ -892,6 +1047,7 @@ fn print_response(
                 println!("phase: {phase} - {}", phase.detail());
                 if let Some(job) = job {
                     println!("job_id: {}", job.job_id);
+                    println!("operation_id: {}", job.operation_id);
                     println!("job_command: {}", job.command);
                     println!("job_status: {:?}", job.status);
                 } else {
@@ -899,6 +1055,7 @@ fn print_response(
                 }
                 print_multiline("message", message);
                 if with_version {
+                    print_session_version(version);
                     println!("protocol_version: {}", epoch.protocol_version);
                     println!(
                         "transition_graph_version: {}",
@@ -910,6 +1067,7 @@ fn print_response(
                 code,
                 detail,
                 phase,
+                version,
                 epoch,
             } => {
                 println!("walk");
@@ -924,6 +1082,9 @@ fn print_response(
                 );
                 print_multiline("detail", detail);
                 if with_version {
+                    if let Some(version) = version {
+                        print_session_version(version);
+                    }
                     println!("protocol_version: {}", epoch.protocol_version);
                     println!(
                         "transition_graph_version: {}",
@@ -934,6 +1095,24 @@ fn print_response(
         },
     }
     Ok(())
+}
+
+fn print_session_version(version: &SessionVersion) {
+    println!(
+        "session_id: {}",
+        version
+            .session_id
+            .map(|session| session.to_string())
+            .unwrap_or_else(|| "-".to_string())
+    );
+    println!("session_journal_revision: {}", version.journal_revision);
+    if let Some(cursor) = &version.cursor {
+        println!("session_cursor: {}", cursor.phase);
+        println!("session_evidence: {}", cursor.evidence);
+    } else {
+        println!("session_cursor: -");
+        println!("session_evidence: -");
+    }
 }
 
 fn print_multiline(label: &str, value: &str) {
@@ -985,4 +1164,25 @@ fn response_result(response: WalkResponse) -> Result<(), PrepareError> {
             detail: format!("walk request failed at {:?}", response.phase()),
         })
     }
+}
+
+fn recovery_result(response: WalkResponse) -> Result<(), PrepareError> {
+    match &response {
+        WalkResponse::Error { code, detail, .. } => {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!("walk recovery failed ({code}): {detail}"),
+            });
+        }
+        WalkResponse::Job { job, .. }
+            if matches!(job.status, WalkJobStatus::Failed | WalkJobStatus::Cancelled) =>
+        {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: job.message.clone().unwrap_or_else(|| {
+                    format!("walk recovery job {} ended as {:?}", job.job_id, job.status)
+                }),
+            });
+        }
+        _ => {}
+    }
+    response_result(response)
 }

@@ -19,8 +19,7 @@ use ploke_records::ids::CampaignId;
 use crate::{
     CampaignOverrides, ResolvedCampaignConfig, campaign_manifest_path,
     cli::{
-        InspectOutputFormat, Prototype1CandidateGenerator, Prototype1StateCommand,
-        Prototype1StateStopAfter, Prototype1SuccessorSelection, Prototype1TraversalMetrics,
+        InspectOutputFormat, Prototype1StateCommand, Prototype1StateStopAfter,
         prototype1_process::validate_prototype1_successor_continuation,
         prototype1_state::{
             backend::GitWorktreeBackend,
@@ -137,7 +136,7 @@ pub(crate) struct ReconstructionBlocker {
 /// parent identity, child terminality, branch evaluations, History, or checkout
 /// state.
 pub(crate) fn reconstruct_early(repo_root: &Path) -> Result<EarlySnapshot, PrepareError> {
-    reconstruct(repo_root, None)
+    reconstruct(repo_root, None, None)
 }
 
 /// Rebuild exactly the phase named by a verified controller-session cursor.
@@ -151,6 +150,26 @@ pub(crate) fn reconstruct_early(repo_root: &Path) -> Result<EarlySnapshot, Prepa
 pub(crate) fn reconstruct_at(
     repo_root: &Path,
     target: WalkPhase,
+) -> Result<EarlySnapshot, PrepareError> {
+    reconstruct_exact(repo_root, target, None)
+}
+
+/// Rebuild one successor bootstrap phase using the invocation already admitted
+/// into its controller-session origin. This explicit authority is required
+/// before the successor can write Ready; ordinary historical reconstruction
+/// continues to require the parent-observed handoff record.
+pub(crate) fn reconstruct_handoff_at(
+    repo_root: &Path,
+    target: WalkPhase,
+    invocation_path: &Path,
+) -> Result<EarlySnapshot, PrepareError> {
+    reconstruct_exact(repo_root, target, Some(invocation_path))
+}
+
+fn reconstruct_exact(
+    repo_root: &Path,
+    target: WalkPhase,
+    handoff: Option<&Path>,
 ) -> Result<EarlySnapshot, PrepareError> {
     if matches!(target, WalkPhase::R1 | WalkPhase::R2a) {
         return Ok(EarlySnapshot {
@@ -166,7 +185,7 @@ pub(crate) fn reconstruct_at(
             blockers: Vec::new(),
         });
     }
-    let mut snapshot = reconstruct(repo_root, Some(target))?;
+    let mut snapshot = reconstruct(repo_root, Some(target), handoff)?;
     if snapshot.blocked.is_none() && snapshot.state.as_ref().map(EarlyState::phase) != Some(target)
     {
         let reached = snapshot
@@ -185,7 +204,11 @@ pub(crate) fn reconstruct_at(
     Ok(snapshot)
 }
 
-fn reconstruct(repo_root: &Path, target: Option<WalkPhase>) -> Result<EarlySnapshot, PrepareError> {
+fn reconstruct(
+    repo_root: &Path,
+    target: Option<WalkPhase>,
+    handoff: Option<&Path>,
+) -> Result<EarlySnapshot, PrepareError> {
     let mut notes = Vec::new();
     let mut blockers = Vec::new();
     let identity_path = parent_identity_path(repo_root);
@@ -211,7 +234,9 @@ fn reconstruct(repo_root: &Path, target: Option<WalkPhase>) -> Result<EarlySnaps
         identity.generation(),
         identity.branch_id()
     ));
-    if let Some(blocked) = post_checkout_blocker(repo_root, &campaign_id, &identity)? {
+    if handoff.is_none()
+        && let Some(blocked) = post_checkout_blocker(repo_root, &campaign_id, &identity)?
+    {
         return Ok(EarlySnapshot {
             state: None,
             blocked: Some(blocked),
@@ -220,11 +245,18 @@ fn reconstruct(repo_root: &Path, target: Option<WalkPhase>) -> Result<EarlySnaps
             blockers,
         });
     }
-    let handoff_invocation =
-        infer_successor_handoff_invocation(repo_root, &campaign_id, &identity)?;
+    let handoff_invocation = match handoff {
+        Some(path) => Some(path.to_path_buf()),
+        None => infer_successor_handoff_invocation(repo_root, &campaign_id, &identity)?,
+    };
     if let Some(path) = handoff_invocation.as_ref() {
+        let source = if handoff.is_some() {
+            "controller-session successor origin"
+        } else {
+            "durable handoff journal"
+        };
         notes.push(format!(
-            "inferred successor handoff invocation from durable journal: {}",
+            "loaded successor handoff invocation from {source}: {}",
             path.display()
         ));
     }
@@ -1624,7 +1656,9 @@ fn incomplete_report(
             Some(*pid),
             Some(ready_path.clone()),
         )),
-        successor::State::Ready { pid, ready_path } => Ok((
+        successor::State::Ready {
+            pid, ready_path, ..
+        } => Ok((
             "ready_without_parent_ack",
             Some(*pid),
             Some(ready_path.clone()),
@@ -1723,11 +1757,11 @@ fn default_command(
         identity_branch: None,
         identity_instance: None,
         handoff_invocation,
-        stop_after: Prototype1StateStopAfter::Complete,
-        successor_selection: Prototype1SuccessorSelection::HistoryScoreChildProp,
-        successor_selection_seed: 0,
-        successor_selection_metrics: Prototype1TraversalMetrics::Operational,
-        candidate_generator: Prototype1CandidateGenerator::BroadHarnessRequest,
+        stop_after: None,
+        successor_selection: None,
+        successor_selection_seed: None,
+        successor_selection_metrics: None,
+        candidate_generator: None,
         format: InspectOutputFormat::Table,
     }
 }
@@ -1803,6 +1837,7 @@ mod tests {
             ready_path: PathBuf::from("/tmp/ready.jsonl"),
             streams: None,
             pid: 42,
+            acceptance: None,
         })
     }
 
@@ -1811,6 +1846,7 @@ mod tests {
             runtime_id,
             successor::State::Spawned {
                 pid: 42,
+                incarnation: None,
                 active_parent_root: PathBuf::from("/tmp/repo"),
                 binary_path: PathBuf::from("/tmp/ploke-eval"),
                 invocation_path: PathBuf::from("/tmp/invocation.json"),
@@ -1957,6 +1993,7 @@ mod tests {
             runtime_id,
             successor::State::Spawned {
                 pid: 42,
+                incarnation: None,
                 active_parent_root: PathBuf::from("/tmp/repo"),
                 binary_path: PathBuf::from("/tmp/ploke-eval"),
                 invocation_path: PathBuf::from("/tmp/invocation.json"),
@@ -1978,6 +2015,7 @@ mod tests {
             successor::State::Ready {
                 pid: 42,
                 ready_path: PathBuf::from("/tmp/ready.jsonl"),
+                controller: None,
             },
         );
         assert!(matches!(
@@ -1998,6 +2036,7 @@ mod tests {
                 successor::State::Ready {
                     pid: 42,
                     ready_path: PathBuf::from("/tmp/ready.jsonl"),
+                    controller: None,
                 },
             ),
         ]);

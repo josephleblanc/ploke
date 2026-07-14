@@ -141,7 +141,7 @@ const R4C_NEXT: &[WalkNextStep] = &[WalkNextStep {
 }];
 
 const R5_NEXT: &[WalkNextStep] = &[WalkNextStep {
-    edge: "r5_to_r6",
+    edge: "r5_to_r6 --allow-live-api",
     phase: WalkPhase::R6,
     detail: "establish or load parent baseline",
 }];
@@ -153,7 +153,7 @@ const R6_NEXT: &[WalkNextStep] = &[WalkNextStep {
 }];
 
 const R7_NEXT: &[WalkNextStep] = &[WalkNextStep {
-    edge: "r7_to_r8 --watch",
+    edge: "r7_to_r8 --allow-live-api",
     phase: WalkPhase::R8,
     detail: "resolve live child-plan authority; may wait on provider/harness work",
 }];
@@ -172,12 +172,12 @@ const R9_NEXT: &[WalkNextStep] = &[WalkNextStep {
 
 const R10_NEXT: &[WalkNextStep] = &[
     WalkNextStep {
-        edge: "r10_to_r11 --watch",
+        edge: "r10_to_r11 --allow-live-api",
         phase: WalkPhase::R11a,
         detail: "project rejected-only selection evidence",
     },
     WalkNextStep {
-        edge: "r10_to_r11 --watch",
+        edge: "r10_to_r11 --allow-live-api",
         phase: WalkPhase::R11,
         detail: "run live child fanout and collect outcomes",
     },
@@ -202,12 +202,12 @@ const R12_NEXT: &[WalkNextStep] = &[
         detail: "record no-selection stopped continuation",
     },
     WalkNextStep {
-        edge: "r12_to_r13 --watch --allow git-changes",
+        edge: "r12_to_r13 --allow git-changes",
         phase: WalkPhase::R13b,
         detail: "seal History, install selected successor, retire parent, and wait for successor ready",
     },
     WalkNextStep {
-        edge: "r12_to_r13 --watch --allow git-changes",
+        edge: "r12_to_r13 --allow git-changes",
         phase: WalkPhase::R13c,
         detail: "preserve retired-parent authority when successor ready acknowledgement does not complete",
     },

@@ -12,6 +12,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::cli::prototype1_state::event::RuntimeId;
 use crate::{layout::ploke_eval_home, spec::PrepareError};
 
 #[cfg(target_os = "macos")]
@@ -161,6 +162,46 @@ pub(crate) fn socket_path(
     let path = dir.join(name);
     check_socket_path(&path)?;
     Ok(path)
+}
+
+/// A successor Step runtime binds a distinct socket until transfer is proven.
+pub(crate) fn successor_socket(
+    repo_root: &Path,
+    runtime_id: RuntimeId,
+) -> Result<PathBuf, PrepareError> {
+    let runtime = runtime_id.to_string();
+    let suffix = runtime.get(..8).unwrap_or(runtime.as_str());
+    let path = socket_dir().join(format!("p1walk-{}-{suffix}.sock", repo_hash(repo_root)));
+    check_socket_path(&path)?;
+    Ok(path)
+}
+
+/// Durable pointer used by sibling clients to follow a server handoff.
+pub(crate) fn endpoint_path(repo_root: &Path) -> Result<PathBuf, PrepareError> {
+    Ok(ploke_eval_home()?
+        .join("walk")
+        .join("endpoints")
+        .join(format!("{}.json", repo_hash(repo_root))))
+}
+
+/// Durable per-checkout operation records used to fence semantic mutation
+/// identities across walk-server restarts.
+pub(crate) fn operation_dir(repo_root: &Path) -> Result<PathBuf, PrepareError> {
+    Ok(ploke_eval_home()?
+        .join("walk")
+        .join("operations")
+        .join(repo_hash(repo_root)))
+}
+
+pub(crate) fn ensure_operation_dir(path: &Path) -> Result<(), PrepareError> {
+    fs::create_dir_all(path).map_err(|source| PrepareError::DatabaseSetup {
+        phase: "prototype1_state_walk_operation_dir",
+        detail: format!(
+            "failed to create durable operation dir '{}': {source}",
+            path.display()
+        ),
+    })?;
+    set_private_dir_permissions(path)
 }
 
 /// Create the socket parent directory and restrict it to the current user.

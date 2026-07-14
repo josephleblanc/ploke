@@ -17,8 +17,7 @@ use crate::{
         InspectOutputFormat, Prototype1StateStopAfter,
         prototype1_process::{
             HandoffOutcome, record_prototype1_successor_completion,
-            record_prototype1_successor_ready, spawn_and_handoff_prototype1_successor,
-            validate_prototype1_successor_continuation,
+            spawn_and_handoff_prototype1_successor, validate_prototype1_successor_continuation,
         },
         prototype1_state::{
             backend::GitWorktreeBackend,
@@ -35,6 +34,7 @@ use crate::{
                 run_adaptive_child_fanout, run_child_fanout, same_existing_path,
                 select_artifact_for_handoff, traversal_metric_inputs,
             },
+            driver::control::ControlPermit,
             eval_store::{
                 ConfiguredEvalStore, EvalStore, ParentStartedEvidence,
                 prototype1_eval_store_db_path, write_baseline_to_owner_db,
@@ -368,16 +368,14 @@ pub(crate) fn r4a_to_r4b_or_r4c(
     let startup =
         Startup::<Predecessor>::from_history(&identity, &parts.manifest_path, &parts.repo_root)?;
     let parent = parent.ready_from_predecessor_startup(startup)?;
-    let ready = record_prototype1_successor_ready(&invocation)?;
     debug!(
         target: EXECUTION_DEBUG_TARGET,
         campaign = %invocation.campaign_id(),
         node_id = %invocation.node_id(),
         runtime_id = %invocation.runtime_id(),
-        pid = ready.pid,
         invocation_path = %invocation_path.display(),
         active_parent_root = %active_parent_root.display(),
-        "prototype1 successor acknowledged handoff before entering typed parent run"
+        "prototype1 successor startup validated; Ready remains unpublished until R4c is durably committed"
     );
     Ok(typestate::R4aStartupBranch::PredecessorReady(
         typestate::R4cReady::from_collected_parent(
@@ -930,6 +928,7 @@ pub(crate) fn r11_to_r12(
 // ANCHOR: prototype1_live_edge_r12_to_r13
 pub(crate) fn r12_to_r13(
     r12: typestate::R12<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    permit: &ControlPermit,
 ) -> Result<
     typestate::R12ContinuationBranch<Prototype1StateRunShape, ResolvedCampaignConfig>,
     PrepareError,
@@ -1018,6 +1017,7 @@ pub(crate) fn r12_to_r13(
                 parent,
                 selection_entry,
                 prototype1_state_successor_handoff_mode(),
+                permit.handoff_attempt()?,
             )? {
                 (retired, HandoffOutcome::Ready(successor)) => {
                     let report = parts.facts.report.as_mut().ok_or_else(|| {

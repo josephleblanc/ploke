@@ -46,6 +46,7 @@ use super::{
     event::{RecordedAt, RuntimeId},
     invocation::{SuccessorCompletionRecord, SuccessorReadyRecord},
     parent::{self, Parent},
+    successor::ReadyReceipt,
 };
 use crate::intervention::Prototype1RunnerResult;
 
@@ -449,7 +450,11 @@ pub(crate) enum ToParent {
     /// plus treatment evidence or verifiable child-store references.
     ResultWritten { runner_result_path: PathBuf },
     /// Successor runtime acknowledged bootstrap.
-    SuccessorReady { record: SuccessorReadyRecord },
+    SuccessorReady {
+        record: SuccessorReadyRecord,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        controller: Option<ReadyReceipt>,
+    },
     /// Successor runtime completed its bounded controller turn.
     SuccessorCompletion { record: SuccessorCompletionRecord },
     /// Child failed before writing a normal terminal result.
@@ -687,9 +692,15 @@ where
     /// Send successor bootstrap acknowledgement through the runtime channel.
     pub(crate) fn send_successor_ready(
         &self,
-        record: SuccessorReadyRecord,
+        receipt: ReadyReceipt,
     ) -> Result<Receipt, ChannelError<T::Error>> {
-        self.write_child_message(ToParent::SuccessorReady { record }, "successor_ready")
+        self.write_child_message(
+            ToParent::SuccessorReady {
+                record: receipt.record().clone(),
+                controller: Some(receipt),
+            },
+            "successor_ready",
+        )
     }
 
     /// Send successor bounded-turn completion through the runtime channel.

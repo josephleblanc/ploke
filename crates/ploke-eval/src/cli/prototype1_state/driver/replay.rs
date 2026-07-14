@@ -175,6 +175,7 @@ impl ReplayProjection {
         };
         let crate::cli::prototype1_state::successor::State::Spawned {
             pid,
+            incarnation: _,
             active_parent_root,
             binary_path,
             invocation_path,
@@ -779,7 +780,9 @@ fn successor_step(
                 active_parent_root.display()
             ),
         ),
-        State::Ready { pid, ready_path } => (
+        State::Ready {
+            pid, ready_path, ..
+        } => (
             Some(record.recorded_at),
             Some(
                 attempt_key(record)
@@ -934,6 +937,7 @@ mod tests {
             runtime_id,
             SuccessorState::Spawned {
                 pid: 42,
+                incarnation: None,
                 active_parent_root: PathBuf::from("/tmp/repo"),
                 binary_path: PathBuf::from("/tmp/ploke-eval"),
                 invocation_path: PathBuf::from("/tmp/invocation.json"),
@@ -958,6 +962,7 @@ mod tests {
             ready_path: PathBuf::from("/tmp/ready.jsonl"),
             streams: None,
             pid: 42,
+            acceptance: None,
         })
     }
 
@@ -1131,6 +1136,7 @@ mod tests {
                 runtime_id,
                 SuccessorState::Spawned {
                     pid: 42,
+                    incarnation: None,
                     active_parent_root: PathBuf::from("/tmp/repo"),
                     binary_path: PathBuf::from("/tmp/ploke-eval"),
                     invocation_path: PathBuf::from("/tmp/invocation.json"),
@@ -1146,6 +1152,7 @@ mod tests {
                 SuccessorState::Ready {
                     pid: 42,
                     ready_path: PathBuf::from("/tmp/ready.jsonl"),
+                    controller: None,
                 },
             ),
             successor(
@@ -1233,6 +1240,7 @@ mod tests {
                 SuccessorState::Ready {
                     pid: 42,
                     ready_path: PathBuf::from("/tmp/ready.jsonl"),
+                    controller: None,
                 },
             ),
             parent_complete(),

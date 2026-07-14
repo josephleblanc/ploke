@@ -81,6 +81,7 @@ pub struct NextStepInfo {
     pub phase_id: String,
     pub detail: String,
     pub requires_watch: bool,
+    pub requires_live_api: bool,
     pub requires_git_changes: bool,
 }
 
@@ -409,7 +410,8 @@ impl PhaseInventory {
                         phase: step.phase,
                         phase_id: step.phase.as_str().to_string(),
                         detail: step.detail.to_string(),
-                        requires_watch: step.edge.contains("--watch"),
+                        requires_watch: false,
+                        requires_live_api: step.edge.contains("--allow-live-api"),
                         requires_git_changes: step.edge.contains("--allow git-changes"),
                     })
                     .collect(),
@@ -467,6 +469,7 @@ impl WalkSnapshot {
                 detail,
                 phase,
                 epoch,
+                ..
             } => Self::from_parts(WalkReplyStatus::Error, phase, detail, Some(code), epoch),
         }
     }
@@ -571,6 +574,33 @@ mod tests {
     use std::ffi::OsString;
 
     use super::*;
+
+    #[test]
+    fn phase_inventory_separates_follow_from_effect_capabilities() {
+        let inventory = PhaseInventory::current();
+        let r5 = inventory
+            .phases
+            .iter()
+            .find(|phase| phase.phase == WalkPhase::R5)
+            .expect("R5 inventory");
+        let baseline = r5.next.first().expect("R5 edge");
+        assert!(baseline.requires_live_api);
+        assert!(!baseline.requires_watch);
+
+        let r12 = inventory
+            .phases
+            .iter()
+            .find(|phase| phase.phase == WalkPhase::R12)
+            .expect("R12 inventory");
+        let handoff = r12
+            .next
+            .iter()
+            .find(|step| step.phase == WalkPhase::R13b)
+            .expect("handoff edge");
+        assert!(handoff.requires_git_changes);
+        assert!(!handoff.requires_live_api);
+        assert!(!handoff.requires_watch);
+    }
 
     #[test]
     fn resolve_for_run_uses_saved_context_socket_for_matching_run() {

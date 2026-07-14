@@ -2,29 +2,17 @@ use crate::cli::{InspectOutputFormat, Prototype1LoopCommand, Prototype1SetupComm
 use crate::spec::PrepareError;
 
 use crate::cli::prototype1_state::cli_facing::{
-    Prototype1LoopControllerInput, prepare_prototype1_parent_setup,
-    preview_prototype1_parent_setup, print_prototype1_loop_report, print_prototype1_setup_plan,
+    prepare_prototype1_parent_setup, preview_prototype1_parent_setup, print_prototype1_setup_plan,
     print_prototype1_setup_report, record_active_prototype1_monitor_target,
-    run_prototype1_loop_controller,
 };
 
 impl Prototype1LoopCommand {
     pub async fn run(self) -> Result<(), PrepareError> {
-        let format = self.format;
-        let input = Prototype1LoopControllerInput::from_command(&self)?;
-        let report = run_prototype1_loop_controller(input).await?;
-
-        match format {
-            InspectOutputFormat::Table => print_prototype1_loop_report(&report),
-            InspectOutputFormat::Json => {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&report).map_err(PrepareError::Serialize)?
-                );
-            }
-        }
-
-        Ok(())
+        let _ = self;
+        Err(PrepareError::InvalidBatchSelection {
+            detail: "the legacy `loop prototype1` executor is disabled because it bypasses the durable controller session; use `prototype1-setup`, then `prototype1-state` for Continuous mode or `prototype1-step`/`walk step` for Step mode"
+                .to_string(),
+        })
     }
 }
 

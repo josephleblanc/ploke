@@ -8,6 +8,7 @@ pub(crate) mod args;
 pub(crate) mod audit;
 pub(crate) mod client;
 pub(crate) mod controller;
+pub(crate) mod endpoint;
 pub(crate) mod epoch;
 pub(crate) mod ipc;
 pub(crate) mod paths;

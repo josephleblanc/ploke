@@ -2,7 +2,8 @@
 
 - Date: 2026-07-13
 - Baseline: `de76eaee34e6f4c4c3a19543c4cf91b217aa3bb9`
-- Status: active implementation; Stages 0-1 complete, Stage 2 in progress
+- Status: active implementation; Stages 0-1 complete, Stage 2 implementation
+  verified and awaiting checkpoint/live canary
 
 ## Implementation progress
 
@@ -30,10 +31,25 @@
   Perplexity embedding preflight still returns the key-specific monthly-limit
   403 (`provider_account`) despite account credits, so the campaign remains
   unadvanced at `baseline_eval`.
+- The Stage 2 implementation establishes the protocol-v5 durable controller
+  session, cross-process file locking and monotonic fencing, exact attempt and
+  cursor certificates, operation idempotency, fail-closed recovery/abandonment,
+  generation-zero setup ownership, and recoverable predecessor/successor
+  transfer. `prototype1-state`, `prototype1-step`, `prototype1-continue`, and
+  walk mutations now pass explicit live-provider/Git capabilities through the
+  same session boundary. Successor launch persists the exact predecessor
+  attempt and cannot broaden those capabilities through argv or restart.
+- Stage 2 includes an artifact-driven June 30 dual-driver regression using the
+  real transition journal, child-plan bytes, and saved DB-query response. The
+  final focused gate passes 13/13; `cargo test -p ploke-eval` passes 1,168 tests
+  with 46 ignored/live tests; and independent authority review reports no
+  actionable blocker. The required checkpoint commit and bounded live canary
+  are the next gates; no live loop was advanced from the uncommitted tree.
 
-The later stages remain planned, not implemented. In particular, no UI or CLI
-mutation path should yet be described as sharing an exclusive durable loop
-session; that is the Stage 2 gate.
+Stage 3 and later remain planned, not implemented. CLI mutation adapters now
+share the exclusive durable loop session, but the UI remains an inspection
+client until the lossless sibling-client contract and later control-parity
+stages are complete.
 
 ## Purpose
 
@@ -471,9 +487,10 @@ Deliverables:
   produce receipt”;
 - adapters so `prototype1-state`, `prototype1-step`, `prototype1-continue`, and
   walk mutation cannot bypass or disagree with the authority boundary;
-- an admitted R2a continuation so identity initialization can proceed into the
-  same session's parent turn instead of leaving a fresh continuous walk without
-  a next step;
+- generation-zero identity bootstrap remains owned by `prototype1-setup`, whose
+  completed checkout/identity authority creates the controller session at R3;
+  walk and batch adapters reject R0/R1/R2a as mutable session targets while
+  exposing setup/bootstrap evidence read-only for operator observability;
 - cancellation/recovery semantics for effectful jobs;
 - an R13b regression and corrected live/reconstruction meaning;
 - atomic or recoverable predecessor-to-successor lease transfer.

@@ -26,6 +26,10 @@
 
 use crate::prelude::*;
 
+use std::io;
+#[cfg(unix)]
+use std::os::fd::AsRawFd;
+
 use crate::{
     cli::prototype1_state::eval_store,
     cli::prototype1_state::profile::{self, RunProfileCommitment},
@@ -37,14 +41,113 @@ use crate::{
 use sha2::{Digest, Sha256};
 
 pub(crate) use ploke_records::invocation::{
-    SUCCESSOR_COMPLETION_SCHEMA_VERSION, SUCCESSOR_READY_SCHEMA_VERSION, SuccessorCompletionRecord,
-    SuccessorCompletionStatus, SuccessorReadyRecord,
+    ProcessIncarnation, SUCCESSOR_COMPLETION_SCHEMA_VERSION, SUCCESSOR_READY_SCHEMA_VERSION,
+    SUCCESSOR_READY_SCHEMA_VERSION_V1, SuccessorCompletionRecord, SuccessorCompletionStatus,
+    SuccessorReadyRecord,
 };
+
+/// Parent-held launch barrier for one successor invocation.
+///
+/// The predecessor holds this lock from before process creation until the
+/// exact `Spawned` record has been synced. The successor only treats an idle
+/// barrier as permission to inspect that durable record; the lock is not
+/// itself controller authority.
+#[derive(Debug)]
+pub(crate) struct SuccessorPublicationGuard {
+    _file: fs::File,
+}
+
+/// Hold one successor's publication barrier before launching its process.
+pub(crate) fn hold_successor_publication(
+    invocation_path: &Path,
+) -> Result<SuccessorPublicationGuard, PrepareError> {
+    let (file, lock_path) = open_publication(invocation_path)?;
+    #[cfg(unix)]
+    {
+        // SAFETY: `file` owns a valid descriptor and remains alive in the
+        // returned guard through the synced Spawned append.
+        let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        if result != 0 {
+            return Err(PrepareError::WriteManifest {
+                path: lock_path,
+                source: io::Error::last_os_error(),
+            });
+        }
+        Ok(SuccessorPublicationGuard { _file: file })
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = file;
+        Err(PrepareError::WriteManifest {
+            path: lock_path,
+            source: io::Error::new(
+                io::ErrorKind::Unsupported,
+                "successor publication barriers require an OS file lock",
+            ),
+        })
+    }
+}
+
+/// Probe whether the predecessor has released one publication barrier.
+pub(crate) fn successor_publication_idle(invocation_path: &Path) -> Result<bool, PrepareError> {
+    let (file, lock_path) = open_publication(invocation_path)?;
+    #[cfg(unix)]
+    {
+        // SAFETY: `file` owns a valid descriptor for this nonblocking probe.
+        let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        if result == 0 {
+            return Ok(true);
+        }
+        let source = io::Error::last_os_error();
+        if source
+            .raw_os_error()
+            .is_some_and(|code| code == libc::EWOULDBLOCK || code == libc::EAGAIN)
+        {
+            return Ok(false);
+        }
+        Err(PrepareError::ReadManifest {
+            path: lock_path,
+            source,
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = file;
+        Err(PrepareError::ReadManifest {
+            path: lock_path,
+            source: io::Error::new(
+                io::ErrorKind::Unsupported,
+                "successor publication barriers require an OS file lock",
+            ),
+        })
+    }
+}
+
+fn open_publication(invocation_path: &Path) -> Result<(fs::File, PathBuf), PrepareError> {
+    let lock_path = invocation_path.with_extension("publication.lock");
+    if let Some(parent) = lock_path.parent() {
+        fs::create_dir_all(parent).map_err(|source| PrepareError::WriteManifest {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .map_err(|source| PrepareError::WriteManifest {
+            path: lock_path.clone(),
+            source,
+        })?;
+    Ok((file, lock_path))
+}
 
 use super::{
     channel::Endpoints,
     event::RuntimeId,
     parent::{Parent, Retired},
+    successor::PredecessorAttempt,
 };
 
 fn leaf_runner_argv(invocation_path: &Path) -> Vec<String> {
@@ -71,7 +174,15 @@ fn successor_parent_argv(
             ),
         }
     })?;
-    Ok(vec![
+    let attempt = invocation.predecessor_attempt.as_ref().ok_or_else(|| {
+        PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "successor invocation '{}' has no exact predecessor attempt authority",
+                invocation_path.display()
+            ),
+        }
+    })?;
+    let mut argv = vec![
         "loop".to_string(),
         "prototype1-state".to_string(),
         "--campaign".to_string(),
@@ -80,11 +191,14 @@ fn successor_parent_argv(
         active_parent_root.display().to_string(),
         "--handoff-invocation".to_string(),
         invocation_path.display().to_string(),
-        "--stop-after".to_string(),
-        "complete".to_string(),
-        "--format".to_string(),
-        "json".to_string(),
-    ])
+    ];
+    if attempt.allow_live_api() {
+        argv.push("--allow-live-api".to_string());
+    }
+    if attempt.allow_git_changes() {
+        argv.extend(["--allow".to_string(), "git-changes".to_string()]);
+    }
+    Ok(argv)
 }
 
 /// Durable schema version for runtime invocations.
@@ -93,6 +207,59 @@ pub(crate) const SCHEMA_VERSION: &str = "prototype1-invocation.v1";
 /// Project eval's authority-bearing runtime id into the passive record schema.
 pub(crate) fn record_runtime_id(runtime_id: RuntimeId) -> ploke_records::ids::RuntimeId {
     ploke_records::ids::RuntimeId(runtime_id.to_string())
+}
+
+/// Capture one exact Linux process incarnation. The boot UUID prevents a
+/// `/proc` start-tick collision after a host restart, while start ticks prevent
+/// a reused numeric PID from impersonating the recorded runtime.
+#[cfg(target_os = "linux")]
+pub(crate) fn process_incarnation(pid: u32) -> io::Result<Option<ProcessIncarnation>> {
+    let stat = match fs::read_to_string(format!("/proc/{pid}/stat")) {
+        Ok(stat) => stat,
+        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => return Err(source),
+    };
+    let boot = fs::read_to_string("/proc/sys/kernel/random/boot_id")?;
+    let boot_id = Uuid::parse_str(boot.trim()).map_err(|source| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid Linux boot id: {source}"),
+        )
+    })?;
+    let (_, fields) = stat.rsplit_once(')').ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("malformed /proc/{pid}/stat"),
+        )
+    })?;
+    let start_ticks = fields
+        .split_whitespace()
+        .nth(19)
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("missing process start time in /proc/{pid}/stat"),
+            )
+        })?
+        .parse::<u64>()
+        .map_err(|source| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid process start time in /proc/{pid}/stat: {source}"),
+            )
+        })?;
+    Ok(Some(ProcessIncarnation {
+        boot_id,
+        start_ticks,
+    }))
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn process_incarnation(_pid: u32) -> io::Result<Option<ProcessIncarnation>> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "exact process incarnation requires Linux /proc",
+    ))
 }
 
 /// Runtime role for one invocation attempt.
@@ -135,6 +302,8 @@ pub(crate) struct Invocation {
     pub active_parent_root: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_profile: Option<RunProfileCommitment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub predecessor_attempt: Option<PredecessorAttempt>,
     pub created_at: String,
 }
 
@@ -184,6 +353,7 @@ impl Invocation {
             resolved,
             active_parent_root: None,
             run_profile: None,
+            predecessor_attempt: None,
             created_at: Utc::now().to_rfc3339(),
         }
     }
@@ -196,6 +366,7 @@ impl Invocation {
         journal_path: PathBuf,
         channel_root: PathBuf,
         active_parent_root: PathBuf,
+        predecessor_attempt: PredecessorAttempt,
     ) -> Self {
         let run_profile = journal_path.parent().and_then(|prototype1_root| {
             profile::load_admitted_commitment_from_prototype_root(prototype1_root)
@@ -215,6 +386,7 @@ impl Invocation {
             resolved: None,
             active_parent_root: Some(active_parent_root),
             run_profile,
+            predecessor_attempt: Some(predecessor_attempt),
             created_at: Utc::now().to_rfc3339(),
         }
     }
@@ -371,6 +543,7 @@ impl SuccessorInvocation {
         journal_path: PathBuf,
         channel_root: PathBuf,
         active_parent_root: PathBuf,
+        predecessor_attempt: PredecessorAttempt,
     ) -> Self {
         Self {
             inner: Invocation::successor(
@@ -380,6 +553,7 @@ impl SuccessorInvocation {
                 journal_path,
                 channel_root,
                 active_parent_root,
+                predecessor_attempt,
             ),
         }
     }
@@ -393,6 +567,7 @@ impl SuccessorInvocation {
         journal_path: PathBuf,
         channel_root: PathBuf,
         active_parent_root: PathBuf,
+        predecessor_attempt: PredecessorAttempt,
     ) -> Self {
         Self::new(
             campaign_id,
@@ -401,6 +576,7 @@ impl SuccessorInvocation {
             journal_path,
             channel_root,
             active_parent_root,
+            predecessor_attempt,
         )
     }
 
@@ -418,6 +594,7 @@ impl SuccessorInvocation {
         runtime_id: RuntimeId,
         journal_path: PathBuf,
         active_parent_root: PathBuf,
+        predecessor_attempt: PredecessorAttempt,
     ) -> Self {
         let channel_root = successor_channel_root_from_journal(&journal_path, &node_id, runtime_id);
         Self::from_retired_parent_with_channel_root(
@@ -428,6 +605,7 @@ impl SuccessorInvocation {
             journal_path,
             channel_root,
             active_parent_root,
+            predecessor_attempt,
         )
     }
 
@@ -454,6 +632,38 @@ impl SuccessorInvocation {
     /// Stable active parent checkout root for this successor runtime.
     pub(crate) fn active_parent_root(&self) -> Option<&Path> {
         self.inner.active_parent_root.as_deref()
+    }
+
+    /// Exact predecessor attempt whose capabilities constrain this runtime.
+    pub(crate) fn predecessor_attempt(&self) -> Option<&PredecessorAttempt> {
+        self.inner.predecessor_attempt.as_ref()
+    }
+
+    /// Reject a handoff command whose effect flags differ from the exact
+    /// predecessor attempt persisted in this invocation.
+    pub(crate) fn validate_capabilities(
+        &self,
+        allow_live_api: bool,
+        allow_git_changes: bool,
+    ) -> Result<(), PrepareError> {
+        let attempt =
+            self.predecessor_attempt()
+                .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                    detail: "successor invocation has no exact predecessor attempt authority"
+                        .to_string(),
+                })?;
+        if attempt.allow_live_api() != allow_live_api
+            || attempt.allow_git_changes() != allow_git_changes
+        {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "successor command capabilities live_api={allow_live_api} git_changes={allow_git_changes} do not match persisted predecessor authority live_api={} git_changes={}",
+                    attempt.allow_live_api(),
+                    attempt.allow_git_changes()
+                ),
+            });
+        }
+        Ok(())
     }
 
     /// Shared journal path used for successor acknowledgement and completion.
@@ -637,6 +847,16 @@ pub(crate) fn write_successor_invocation_for_retired_parent(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn predecessor_attempt(live: bool, git: bool) -> PredecessorAttempt {
+        PredecessorAttempt::new(
+            crate::cli::prototype1_state::session::SessionId::for_test(1),
+            crate::cli::prototype1_state::event::TransitionId::new(),
+            crate::cli::prototype1_state::session::Fence::for_test(1),
+            live,
+            git,
+        )
+    }
 
     #[test]
     fn prototype1_eval_store_child_invocation_writes_owner_db_row() {
@@ -848,6 +1068,7 @@ mod tests {
             prototype1_root.join("transition-journal.jsonl"),
             channel_root(&prototype1_root.join("nodes/node-successor"), runtime_id),
             tmp.path().join("active-parent"),
+            predecessor_attempt(true, true),
         );
 
         write_successor_invocation(&invocation_path, &invocation)
@@ -1090,6 +1311,7 @@ mod tests {
             PathBuf::from("/tmp/prototype1/journal.jsonl"),
             PathBuf::from("/tmp/prototype1/nodes/node-2/channels/runtime-2"),
             PathBuf::from("/repo/stable-parent"),
+            predecessor_attempt(false, true),
         );
         let invocation_path =
             PathBuf::from(format!("/tmp/prototype1/invocations/{runtime_id}.json"));
@@ -1109,12 +1331,17 @@ mod tests {
                 "/repo/stable-parent",
                 "--handoff-invocation",
                 invocation_path.to_str().expect("utf8 path"),
-                "--stop-after",
-                "complete",
-                "--format",
-                "json",
+                "--allow",
+                "git-changes",
             ]
         );
+
+        let mut legacy = invocation.clone();
+        legacy.inner.predecessor_attempt = None;
+        let error = legacy
+            .launch_args(&invocation_path)
+            .expect_err("legacy successor invocation must fail closed");
+        assert!(error.to_string().contains("no exact predecessor attempt"));
     }
 
     #[test]
@@ -1128,6 +1355,7 @@ mod tests {
             PathBuf::from("/tmp/prototype1/journal.jsonl"),
             channel_root.clone(),
             PathBuf::from("/repo/stable-parent"),
+            predecessor_attempt(true, true),
         );
 
         let endpoints = invocation

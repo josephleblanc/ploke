@@ -42,16 +42,23 @@
 
 use crate::prelude::*;
 
-use std::fs::OpenOptions;
-use std::io::{BufRead, BufReader, Write};
+use std::fs::{File, OpenOptions};
+use std::io::{self, BufRead, BufReader, Write};
 use std::time::Duration;
+
+#[cfg(unix)]
+use std::os::fd::AsRawFd;
 
 use super::event::{
     ChildRuntimeLifecycle, ContentHash, Hashes, ObservedChildTerminal, Paths, RecordedAt, Refs,
     RuntimeId, TransitionId, World,
 };
 use super::identity::ParentIdentity;
+use super::invocation::{ProcessIncarnation, record_runtime_id};
 use super::profile::DEFAULT_OBSERVE_CHILD_STALE_AFTER_SECS;
+use super::successor::{
+    HandoffAcceptance, ReadyReceipt, Record as SuccessorRecord, State as SuccessorState,
+};
 use crate::branch_evaluation::BranchDisposition;
 use crate::intervention::{
     CommitPhase, Prototype1RunnerDisposition, RecordStore, load_runner_result_at,
@@ -140,11 +147,40 @@ pub(crate) struct SpawnEntry {
     pub child_lifecycle: ChildRuntimeLifecycle,
     pub parent_pid: u32,
     pub child_pid: Option<u32>,
+    /// Exact process identity for current-schema Spawned/Observed records.
+    ///
+    /// Legacy journal entries deserialize without this field so they remain
+    /// inspectable, but they cannot authorize process cleanup or child launch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub incarnation: Option<ProcessIncarnation>,
     pub argv: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub streams: Option<Streams>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result: Option<SpawnObservation>,
+}
+
+impl SpawnEntry {
+    /// Return exact authority to signal the spawned process.
+    ///
+    /// `None` deliberately makes PID-only legacy replay read-only: a reused
+    /// numeric PID must never become a cleanup target.
+    pub(crate) fn cleanup_authority(&self) -> Option<(u32, &ProcessIncarnation)> {
+        if self.phase != SpawnPhase::Spawned {
+            return None;
+        }
+        Some((self.child_pid?, self.incarnation.as_ref()?))
+    }
+
+    /// Whether this is the exact durable Spawned receipt awaited by a child.
+    pub(crate) fn matches_child(
+        &self,
+        runtime_id: RuntimeId,
+        pid: u32,
+        incarnation: &ProcessIncarnation,
+    ) -> bool {
+        self.runtime_id == runtime_id && self.cleanup_authority() == Some((pid, incarnation))
+    }
 }
 
 /// Files receiving stdout and stderr for a spawned child process.
@@ -334,6 +370,8 @@ pub(crate) struct SuccessorHandoffEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub streams: Option<Streams>,
     pub pid: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acceptance: Option<HandoffAcceptance>,
 }
 
 /// Single append-only journal entry for typed prototype1 transitions.
@@ -738,6 +776,366 @@ impl PrototypeJournal {
 
         Ok(replay)
     }
+
+    /// Project one exact successor Ready record under a cross-process
+    /// check-and-append lock. The session journal remains the Ready authority;
+    /// this transition-journal record is its idempotent lifecycle projection.
+    pub(crate) fn project_ready(
+        &mut self,
+        proposed: SuccessorRecord,
+    ) -> Result<ReadyReceipt, PrototypeJournalError> {
+        let runtime_id =
+            proposed
+                .runtime_id
+                .ok_or_else(|| PrototypeJournalError::ReadyConflict {
+                    runtime_id: None,
+                    detail: "Ready projection has no successor runtime".to_string(),
+                })?;
+        let (pid, ready_path, receipt) = match &proposed.state {
+            SuccessorState::Ready {
+                pid,
+                ready_path,
+                controller: Some(receipt),
+            } => (*pid, ready_path, receipt.clone()),
+            _ => {
+                return Err(PrototypeJournalError::ReadyConflict {
+                    runtime_id: Some(runtime_id),
+                    detail: "projection is not a controller-backed Ready record".to_string(),
+                });
+            }
+        };
+        receipt
+            .validate_persisted()
+            .map_err(|detail| PrototypeJournalError::ReadyConflict {
+                runtime_id: Some(runtime_id),
+                detail: format!("Ready receipt is invalid: {detail}"),
+            })?;
+
+        let _lock = lock_ready(&self.path)?;
+        let entries = self.load_entries()?;
+        let mut spawned = false;
+        let mut persisted = None;
+        for record in entries.iter().filter_map(|entry| match entry {
+            JournalEntry::Successor(record)
+                if record.campaign_id == proposed.campaign_id
+                    && record.node_id == proposed.node_id
+                    && record.runtime_id == Some(runtime_id) =>
+            {
+                Some(record)
+            }
+            _ => None,
+        }) {
+            match &record.state {
+                SuccessorState::Spawned {
+                    pid: spawned_pid,
+                    ready_path: spawned_path,
+                    ..
+                } => {
+                    if spawned || *spawned_pid != pid || spawned_path != ready_path {
+                        return Err(PrototypeJournalError::ReadyConflict {
+                            runtime_id: Some(runtime_id),
+                            detail: "Ready does not match one exact Spawned record".to_string(),
+                        });
+                    }
+                    spawned = true;
+                }
+                SuccessorState::Ready {
+                    pid: existing_pid,
+                    ready_path: existing_path,
+                    controller: Some(existing),
+                } => {
+                    if persisted.is_some()
+                        || *existing_pid != pid
+                        || existing_path != ready_path
+                        || existing != &receipt
+                    {
+                        return Err(PrototypeJournalError::ReadyConflict {
+                            runtime_id: Some(runtime_id),
+                            detail: "successor runtime has conflicting or duplicate Ready evidence"
+                                .to_string(),
+                        });
+                    }
+                    persisted = Some(existing.clone());
+                }
+                SuccessorState::Ready { .. } => {
+                    return Err(PrototypeJournalError::ReadyConflict {
+                        runtime_id: Some(runtime_id),
+                        detail: "successor runtime has legacy Ready without controller authority"
+                            .to_string(),
+                    });
+                }
+                SuccessorState::TimedOut { .. }
+                | SuccessorState::ExitedBeforeReady { .. }
+                | SuccessorState::Completed { .. } => {
+                    return Err(PrototypeJournalError::ReadyConflict {
+                        runtime_id: Some(runtime_id),
+                        detail: "terminal successor runtime cannot publish Ready".to_string(),
+                    });
+                }
+                _ => {}
+            }
+        }
+        if !spawned {
+            return Err(PrototypeJournalError::ReadyConflict {
+                runtime_id: Some(runtime_id),
+                detail: "Ready has no matching Spawned record".to_string(),
+            });
+        }
+        if let Some(existing) = persisted {
+            return Ok(existing);
+        }
+
+        RecordStore::append(self, JournalEntry::Successor(proposed))?;
+        Ok(receipt)
+    }
+
+    /// Project one exact predecessor acceptance under the same successor
+    /// lifecycle transaction used by Ready publication.
+    ///
+    /// The accepted Ready receipt remains session authority. This projection
+    /// is idempotent so a recovery process can finish the stranded predecessor
+    /// fence after crashing between transition-journal and session-journal
+    /// writes.
+    pub(crate) fn project_handoff(
+        &mut self,
+        runtime_id: RuntimeId,
+        acceptance: HandoffAcceptance,
+    ) -> Result<SuccessorHandoffEntry, PrototypeJournalError> {
+        acceptance.ready().validate_persisted().map_err(|detail| {
+            PrototypeJournalError::HandoffConflict {
+                runtime_id,
+                detail: format!("accepted Ready receipt is invalid: {detail}"),
+            }
+        })?;
+        let ready = acceptance.ready().record();
+        if ready.runtime_id != record_runtime_id(runtime_id) {
+            return Err(PrototypeJournalError::HandoffConflict {
+                runtime_id,
+                detail: "accepted Ready receipt names a different runtime".to_string(),
+            });
+        }
+
+        let _lock = lock_ready(&self.path)?;
+        let entries = self.load_entries()?;
+        let mut spawned = None;
+        let mut projected = None;
+        let mut existing = None;
+        for entry in entries {
+            match entry {
+                JournalEntry::Successor(record)
+                    if record.campaign_id == ready.campaign_id
+                        && record.node_id == ready.node_id
+                        && record.runtime_id == Some(runtime_id) =>
+                {
+                    match record.state {
+                        SuccessorState::Spawned {
+                            pid,
+                            incarnation: _,
+                            active_parent_root,
+                            binary_path,
+                            invocation_path,
+                            ready_path,
+                            streams,
+                        } => {
+                            if spawned.is_some() || pid != ready.pid {
+                                return Err(PrototypeJournalError::HandoffConflict {
+                                    runtime_id,
+                                    detail: "handoff does not match one exact Spawned record"
+                                        .to_string(),
+                                });
+                            }
+                            spawned = Some((
+                                active_parent_root,
+                                binary_path,
+                                invocation_path,
+                                ready_path,
+                                streams,
+                                pid,
+                            ));
+                        }
+                        SuccessorState::Ready {
+                            pid,
+                            ready_path,
+                            controller: Some(receipt),
+                        } => {
+                            if projected.is_some()
+                                || pid != ready.pid
+                                || receipt != *acceptance.ready()
+                            {
+                                return Err(PrototypeJournalError::HandoffConflict {
+                                    runtime_id,
+                                    detail: "handoff acceptance conflicts with Ready projection"
+                                        .to_string(),
+                                });
+                            }
+                            projected = Some(ready_path);
+                        }
+                        SuccessorState::Ready { .. }
+                        | SuccessorState::TimedOut { .. }
+                        | SuccessorState::ExitedBeforeReady { .. }
+                        | SuccessorState::Completed { .. } => {
+                            return Err(PrototypeJournalError::HandoffConflict {
+                                runtime_id,
+                                detail: "handoff cannot follow conflicting or terminal successor evidence"
+                                    .to_string(),
+                            });
+                        }
+                        SuccessorState::Selected { .. }
+                        | SuccessorState::Stopped { .. }
+                        | SuccessorState::Checkout { .. } => {}
+                    }
+                }
+                JournalEntry::SuccessorHandoff(entry)
+                    if entry.campaign_id == ready.campaign_id
+                        && entry.node_id == ready.node_id
+                        && entry.runtime_id == runtime_id =>
+                {
+                    if existing.is_some() {
+                        return Err(PrototypeJournalError::HandoffConflict {
+                            runtime_id,
+                            detail: "successor runtime has duplicate handoff projections"
+                                .to_string(),
+                        });
+                    }
+                    existing = Some(entry);
+                }
+                _ => {}
+            }
+        }
+
+        let (active_parent_root, binary_path, invocation_path, ready_path, streams, pid) = spawned
+            .ok_or_else(|| PrototypeJournalError::HandoffConflict {
+                runtime_id,
+                detail: "handoff has no matching Spawned record".to_string(),
+            })?;
+        let projected = projected.ok_or_else(|| PrototypeJournalError::HandoffConflict {
+            runtime_id,
+            detail: "handoff has no matching Ready projection".to_string(),
+        })?;
+        if projected != ready_path {
+            return Err(PrototypeJournalError::HandoffConflict {
+                runtime_id,
+                detail: "Spawned and Ready records disagree on the channel path".to_string(),
+            });
+        }
+        let proposed = SuccessorHandoffEntry {
+            recorded_at: RecordedAt::now(),
+            campaign_id: ready.campaign_id.clone(),
+            node_id: ready.node_id.clone(),
+            runtime_id,
+            active_parent_root,
+            binary_path,
+            invocation_path,
+            ready_path,
+            streams: Some(streams),
+            pid,
+            acceptance: Some(acceptance),
+        };
+        if let Some(existing) = existing {
+            if same_handoff(&existing, &proposed) {
+                return Ok(existing);
+            }
+            return Err(PrototypeJournalError::HandoffConflict {
+                runtime_id,
+                detail: "successor runtime has a conflicting handoff projection".to_string(),
+            });
+        }
+        RecordStore::append(self, JournalEntry::SuccessorHandoff(proposed.clone()))?;
+        Ok(proposed)
+    }
+
+    /// Probe the dedicated Ready projection transaction without waiting.
+    pub(crate) fn ready_idle(&self) -> Result<bool, PrototypeJournalError> {
+        let (file, path) = open_ready(&self.path)?;
+        #[cfg(unix)]
+        {
+            // SAFETY: `file` owns a valid descriptor and remains alive for
+            // this nonblocking transaction-barrier probe.
+            let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+            if result == 0 {
+                return Ok(true);
+            }
+            let source = io::Error::last_os_error();
+            if source
+                .raw_os_error()
+                .is_some_and(|code| code == libc::EWOULDBLOCK || code == libc::EAGAIN)
+            {
+                return Ok(false);
+            }
+            return Err(PrototypeJournalError::Lock { path, source });
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = file;
+            Err(PrototypeJournalError::Lock {
+                path,
+                source: io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "successor Ready projection requires an OS file lock",
+                ),
+            })
+        }
+    }
+}
+
+fn same_handoff(left: &SuccessorHandoffEntry, right: &SuccessorHandoffEntry) -> bool {
+    left.campaign_id == right.campaign_id
+        && left.node_id == right.node_id
+        && left.runtime_id == right.runtime_id
+        && left.active_parent_root == right.active_parent_root
+        && left.binary_path == right.binary_path
+        && left.invocation_path == right.invocation_path
+        && left.ready_path == right.ready_path
+        && left.streams == right.streams
+        && left.pid == right.pid
+        && left.acceptance == right.acceptance
+}
+
+fn lock_ready(path: &Path) -> Result<File, PrototypeJournalError> {
+    let (file, lock_path) = open_ready(path)?;
+    #[cfg(unix)]
+    {
+        // SAFETY: `file` owns a valid descriptor and remains alive for the
+        // complete Ready check-and-append transaction.
+        let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
+        if result != 0 {
+            return Err(PrototypeJournalError::Lock {
+                path: lock_path,
+                source: io::Error::last_os_error(),
+            });
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        return Err(PrototypeJournalError::Lock {
+            path: lock_path,
+            source: io::Error::new(
+                io::ErrorKind::Unsupported,
+                "successor Ready projection requires an OS file lock",
+            ),
+        });
+    }
+    Ok(file)
+}
+
+fn open_ready(path: &Path) -> Result<(File, PathBuf), PrototypeJournalError> {
+    let lock_path = path.with_extension("ready.lock");
+    if let Some(parent) = lock_path.parent() {
+        fs::create_dir_all(parent).map_err(|source| PrototypeJournalError::CreateDir {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    let file = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .map_err(|source| PrototypeJournalError::Open {
+            path: lock_path.clone(),
+            source,
+        })?;
+    Ok((file, lock_path))
 }
 
 fn count_lines(path: &Path) -> Result<usize, PrototypeJournalError> {
@@ -1179,6 +1577,11 @@ pub(crate) enum PrototypeJournalError {
         path: PathBuf,
         source: std::io::Error,
     },
+    #[error("failed to lock journal transaction '{path}': {source}")]
+    Lock {
+        path: PathBuf,
+        source: std::io::Error,
+    },
     #[error("failed to serialize journal entry: {0}")]
     Serialize(serde_json::Error),
     #[error("failed to write journal '{path}': {source}")]
@@ -1228,6 +1631,16 @@ pub(crate) enum PrototypeJournalError {
         "found a child-ready entry without a matching spawned entry for runtime '{runtime_id}'"
     )]
     ReadyWithoutSpawned { runtime_id: RuntimeId },
+    #[error("successor Ready projection conflict for runtime {runtime_id:?}: {detail}")]
+    ReadyConflict {
+        runtime_id: Option<RuntimeId>,
+        detail: String,
+    },
+    #[error("successor handoff projection conflict for runtime {runtime_id}: {detail}")]
+    HandoffConflict {
+        runtime_id: RuntimeId,
+        detail: String,
+    },
 }
 
 #[cfg(test)]
@@ -1236,9 +1649,145 @@ mod tests {
 
     use tempfile::tempdir;
 
-    use crate::cli::prototype1_state::event::{
-        Hashes, LineageMark, Paths, RecordedAt, Refs, RuntimeId, World,
+    use crate::cli::prototype1_state::{
+        event::{Hashes, LineageMark, Paths, RecordedAt, Refs, RuntimeId, World},
+        invocation::{SUCCESSOR_READY_SCHEMA_VERSION, SuccessorReadyRecord},
+        profile::RunMode,
+        session::{Cursor, Fence, SessionId},
+        successor::{HandoffAcceptance, PredecessorAttempt, ReadyCommit, ReadyReceipt},
+        walk::phase::WalkPhase,
     };
+
+    #[cfg(unix)]
+    #[test]
+    fn ready_idle_detects_projection_lock() {
+        let temp = tempdir().expect("tempdir");
+        let journal = PrototypeJournal::new(temp.path().join("transition-journal.jsonl"));
+        assert!(journal.ready_idle().expect("idle Ready probe"));
+        let (guard, _) = open_ready(journal.path()).expect("open Ready lock");
+        // SAFETY: `guard` owns the descriptor for the duration of this test.
+        assert_eq!(unsafe { libc::flock(guard.as_raw_fd(), libc::LOCK_EX) }, 0);
+        assert!(!journal.ready_idle().expect("busy Ready probe"));
+        drop(guard);
+        assert!(journal.ready_idle().expect("released Ready probe"));
+    }
+
+    #[test]
+    fn handoff_projection_is_exact_and_idempotent() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("transition-journal.jsonl");
+        let mut journal = PrototypeJournal::new(path);
+        let runtime_id = RuntimeId::new();
+        let campaign_id = CampaignId::from("campaign");
+        let node_id = "node-1".to_string();
+        let pid = 8_080;
+        let ready_path = temp.path().join("successor-ready.json");
+        let spawned = SuccessorRecord {
+            runtime_id: Some(runtime_id),
+            recorded_at: RecordedAt::now(),
+            campaign_id: campaign_id.clone(),
+            node_id: node_id.clone(),
+            state: SuccessorState::Spawned {
+                pid,
+                incarnation: None,
+                active_parent_root: temp.path().to_path_buf(),
+                binary_path: temp.path().join("ploke-eval"),
+                invocation_path: temp.path().join("successor-invocation.json"),
+                ready_path: ready_path.clone(),
+                streams: Streams {
+                    stdout: temp.path().join("successor.stdout"),
+                    stderr: temp.path().join("successor.stderr"),
+                },
+            },
+        };
+        RecordStore::append(&mut journal, JournalEntry::Successor(spawned))
+            .expect("record successor spawn");
+
+        let commit = ReadyCommit::new(
+            SessionId::for_test(9),
+            TransitionId::new(),
+            Fence::for_test(2),
+            Cursor::new(WalkPhase::R4c, ContentHash::of("successor R4c"))
+                .expect("valid R4c cursor"),
+            RunMode::Continuous,
+        )
+        .expect("construct Ready commit");
+        let ready = ReadyReceipt::new(
+            SuccessorReadyRecord {
+                schema_version: SUCCESSOR_READY_SCHEMA_VERSION.to_string(),
+                campaign_id,
+                node_id,
+                runtime_id: record_runtime_id(runtime_id),
+                pid,
+                incarnation: Some(
+                    crate::cli::prototype1_state::invocation::ProcessIncarnation {
+                        boot_id: uuid::Uuid::from_u128(1),
+                        start_ticks: 1,
+                    },
+                ),
+                recorded_at: "2026-07-13T00:00:00Z".to_string(),
+            },
+            commit,
+            None,
+            None,
+        )
+        .expect("construct Ready receipt");
+        let projected = journal
+            .project_ready(SuccessorRecord {
+                runtime_id: Some(runtime_id),
+                recorded_at: RecordedAt::now(),
+                campaign_id: ready.record().campaign_id.clone(),
+                node_id: ready.record().node_id.clone(),
+                state: SuccessorState::Ready {
+                    pid,
+                    ready_path,
+                    controller: Some(ready.clone()),
+                },
+            })
+            .expect("project exact Ready");
+        assert_eq!(projected, ready);
+
+        let attempt = PredecessorAttempt::new(
+            SessionId::for_test(10),
+            TransitionId::new(),
+            Fence::for_test(4),
+            true,
+            true,
+        );
+        let acceptance = HandoffAcceptance::from_persisted(ready, attempt)
+            .expect("construct handoff acceptance");
+        let first = journal
+            .project_handoff(runtime_id, acceptance.clone())
+            .expect("project handoff");
+        let second = journal
+            .project_handoff(runtime_id, acceptance.clone())
+            .expect("retry exact handoff");
+        assert_eq!(second, first);
+        let entries = journal.load_entries().expect("load handoff journal");
+        assert_eq!(
+            entries
+                .iter()
+                .filter(|entry| matches!(entry, JournalEntry::SuccessorHandoff(_)))
+                .count(),
+            1
+        );
+
+        let conflict = HandoffAcceptance::from_persisted(
+            acceptance.ready().clone(),
+            PredecessorAttempt::new(
+                acceptance.attempt().session(),
+                TransitionId::new(),
+                acceptance.attempt().fence(),
+                acceptance.attempt().allow_live_api(),
+                acceptance.attempt().allow_git_changes(),
+            ),
+        )
+        .expect("construct conflicting acceptance");
+        assert!(matches!(
+            journal.project_handoff(runtime_id, conflict),
+            Err(PrototypeJournalError::HandoffConflict { .. })
+        ));
+    }
 
     fn sample_entry(
         transition_id: TransitionId,
@@ -1374,6 +1923,10 @@ mod tests {
             child_lifecycle,
             parent_pid: 111,
             child_pid: Some(222),
+            incarnation: Some(ProcessIncarnation {
+                boot_id: uuid::Uuid::from_u128(1),
+                start_ticks: 2,
+            }),
             argv: vec!["prototype1-runner".to_string()],
             streams: None,
             result,
@@ -1404,6 +1957,34 @@ mod tests {
             },
             pid: 222,
         }
+    }
+
+    #[test]
+    fn legacy_spawn_replays_without_cleanup_authority() {
+        let tmp = tempdir().expect("tempdir");
+        let runtime_id = RuntimeId::new();
+        let entry = sample_spawn_entry(
+            runtime_id,
+            SpawnPhase::Spawned,
+            &tmp.path().join("ploke-eval"),
+            None,
+        );
+        let mut value = serde_json::to_value(JournalEntry::SpawnChild(entry))
+            .expect("serialize current Spawned entry");
+        value
+            .as_object_mut()
+            .expect("journal entry object")
+            .remove("incarnation");
+
+        let JournalEntry::SpawnChild(legacy) =
+            serde_json::from_value(value).expect("deserialize legacy Spawned entry")
+        else {
+            panic!("expected SpawnChild entry");
+        };
+
+        assert_eq!(legacy.child_pid, Some(222));
+        assert_eq!(legacy.incarnation, None);
+        assert_eq!(legacy.cleanup_authority(), None);
     }
 
     fn sample_completion_entry(

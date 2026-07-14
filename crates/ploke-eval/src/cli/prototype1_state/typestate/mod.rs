@@ -93,7 +93,7 @@ pub(in crate::cli::prototype1_state::typestate) struct Private;
 //   record terminal facts.
 // - Selected-successor handoff is represented by R13b/R14b with
 //   `Parent<Retired>` plus History/continuation/handoff axes. The `walk` CLI
-//   admits this path only with `--watch --allow git-changes`.
+//   admits this path only with `--allow git-changes`.
 // - `Prototype1ContinuationDecision` remains a value-level decision carried in
 //   the continuation axis; the authority to mutate checkout/History still comes
 //   from consuming the typed parent state plus the explicit operator gate.

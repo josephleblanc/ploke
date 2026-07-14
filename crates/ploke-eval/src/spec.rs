@@ -373,6 +373,8 @@ pub enum PrepareError {
     },
     #[error("batch selection is invalid: {detail}")]
     InvalidBatchSelection { detail: String },
+    #[error("controller recovery is already in progress under '{path}'")]
+    RecoveryInProgress { path: PathBuf },
     #[error("MBE submission artifact '{0}' does not exist")]
     MissingMbeSubmission(PathBuf),
     #[error("MBE final report '{0}' does not exist")]

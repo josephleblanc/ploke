@@ -217,6 +217,7 @@ impl JournalProjection {
         };
         let successor::State::Spawned {
             pid,
+            incarnation: _,
             active_parent_root,
             binary_path,
             invocation_path,
@@ -1403,6 +1404,7 @@ mod tests {
             runtime_id,
             successor::State::Spawned {
                 pid: 42,
+                incarnation: None,
                 active_parent_root: PathBuf::from("/tmp/repo"),
                 binary_path: PathBuf::from("/tmp/ploke-eval"),
                 invocation_path: PathBuf::from("/tmp/invocation.json"),
@@ -1421,6 +1423,7 @@ mod tests {
             successor::State::Ready {
                 pid: 42,
                 ready_path: PathBuf::from("/tmp/ready.jsonl"),
+                controller: None,
             },
         ))
     }
@@ -1437,6 +1440,7 @@ mod tests {
             ready_path: PathBuf::from("/tmp/ready.jsonl"),
             streams: None,
             pid: 42,
+            acceptance: None,
         })
     }
 

@@ -10,7 +10,7 @@ use super::{
     schema::{EvalRelationSchema, define_eval_schema, put_eval_params},
 };
 
-pub(crate) const WALK_EVENT_SCHEMA_VERSION: &str = "prototype1-walk-event.v1";
+pub(crate) const WALK_EVENT_SCHEMA_VERSION: &str = "prototype1-walk-event.v2";
 
 define_eval_schema!(WalkEventSchema {
     "eval_walk_event",
@@ -27,6 +27,7 @@ define_eval_schema!(WalkEventSchema {
     phase_after: "String",
     target_phase: "String?",
     watch: "Bool?",
+    allow_live_api: "Bool?",
     allow_git_changes: "Bool?",
     transition_count: "Int",
     protocol_version: "Int",
@@ -63,6 +64,7 @@ pub(crate) struct WalkEventEvidence {
     pub(crate) phase_after: String,
     pub(crate) target_phase: Option<String>,
     pub(crate) watch: Option<bool>,
+    pub(crate) allow_live_api: Option<bool>,
     pub(crate) allow_git_changes: Option<bool>,
     pub(crate) transitions: Vec<String>,
     pub(crate) protocol_version: u32,
@@ -118,6 +120,7 @@ struct WalkEventRow {
     phase_after: String,
     target_phase: Option<String>,
     watch: Option<bool>,
+    allow_live_api: Option<bool>,
     allow_git_changes: Option<bool>,
     transition_count: i64,
     transitions: Vec<String>,
@@ -165,6 +168,7 @@ impl WalkEventRow {
             phase_after: evidence.phase_after,
             target_phase: evidence.target_phase,
             watch: evidence.watch,
+            allow_live_api: evidence.allow_live_api,
             allow_git_changes: evidence.allow_git_changes,
             transition_count: usize_to_i64(
                 evidence.transitions.len(),
@@ -215,6 +219,10 @@ fn put_walk_event_row<D: EvalDb + ?Sized>(
         option_string_param(row.target_phase.clone()),
     );
     params.insert("watch".to_string(), option_bool_param(row.watch));
+    params.insert(
+        "allow_live_api".to_string(),
+        option_bool_param(row.allow_live_api),
+    );
     params.insert(
         "allow_git_changes".to_string(),
         option_bool_param(row.allow_git_changes),

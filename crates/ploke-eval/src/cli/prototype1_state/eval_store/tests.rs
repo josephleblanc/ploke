@@ -819,8 +819,8 @@ fn eval_store_non_agent_schema_scripts_are_stable() {
         ),
         (
             "eval_walk_event",
-            r#":create eval_walk_event { event_id: String => campaign_id: String, schema_version: String, node_id: String, parent_id: String, generation: Int, branch_id: String, command: String, status: String, phase_before: String?, phase_after: String, target_phase: String?, watch: Bool?, allow_git_changes: Bool?, transition_count: Int, protocol_version: Int, transition_graph_version: String, repo_root: String, exe_path: String, exe_sha256: String, exe_modified_unix_ms: Int?, git_head: String?, source_status_hash: String?, recorded_at: String, ingested_at: String }"#,
-            r#"?[event_id, campaign_id, schema_version, node_id, parent_id, generation, branch_id, command, status, phase_before, phase_after, target_phase, watch, allow_git_changes, transition_count, protocol_version, transition_graph_version, repo_root, exe_path, exe_sha256, exe_modified_unix_ms, git_head, source_status_hash, recorded_at, ingested_at] <- [[$event_id, $campaign_id, $schema_version, $node_id, $parent_id, $generation, $branch_id, $command, $status, $phase_before, $phase_after, $target_phase, $watch, $allow_git_changes, $transition_count, $protocol_version, $transition_graph_version, $repo_root, $exe_path, $exe_sha256, $exe_modified_unix_ms, $git_head, $source_status_hash, $recorded_at, $ingested_at]] :put eval_walk_event { event_id => campaign_id, schema_version, node_id, parent_id, generation, branch_id, command, status, phase_before, phase_after, target_phase, watch, allow_git_changes, transition_count, protocol_version, transition_graph_version, repo_root, exe_path, exe_sha256, exe_modified_unix_ms, git_head, source_status_hash, recorded_at, ingested_at }"#,
+            r#":create eval_walk_event { event_id: String => campaign_id: String, schema_version: String, node_id: String, parent_id: String, generation: Int, branch_id: String, command: String, status: String, phase_before: String?, phase_after: String, target_phase: String?, watch: Bool?, allow_live_api: Bool?, allow_git_changes: Bool?, transition_count: Int, protocol_version: Int, transition_graph_version: String, repo_root: String, exe_path: String, exe_sha256: String, exe_modified_unix_ms: Int?, git_head: String?, source_status_hash: String?, recorded_at: String, ingested_at: String }"#,
+            r#"?[event_id, campaign_id, schema_version, node_id, parent_id, generation, branch_id, command, status, phase_before, phase_after, target_phase, watch, allow_live_api, allow_git_changes, transition_count, protocol_version, transition_graph_version, repo_root, exe_path, exe_sha256, exe_modified_unix_ms, git_head, source_status_hash, recorded_at, ingested_at] <- [[$event_id, $campaign_id, $schema_version, $node_id, $parent_id, $generation, $branch_id, $command, $status, $phase_before, $phase_after, $target_phase, $watch, $allow_live_api, $allow_git_changes, $transition_count, $protocol_version, $transition_graph_version, $repo_root, $exe_path, $exe_sha256, $exe_modified_unix_ms, $git_head, $source_status_hash, $recorded_at, $ingested_at]] :put eval_walk_event { event_id => campaign_id, schema_version, node_id, parent_id, generation, branch_id, command, status, phase_before, phase_after, target_phase, watch, allow_live_api, allow_git_changes, transition_count, protocol_version, transition_graph_version, repo_root, exe_path, exe_sha256, exe_modified_unix_ms, git_head, source_status_hash, recorded_at, ingested_at }"#,
         ),
         (
             "eval_walk_event_transition",
@@ -1443,6 +1443,7 @@ fn prototype1_eval_store_walk_event_rows_capture_epoch_and_phase() {
             phase_after: "r8".to_string(),
             target_phase: Some("r8".to_string()),
             watch: Some(true),
+            allow_live_api: Some(true),
             allow_git_changes: Some(false),
             transitions: vec!["r7->r8:r7_to_r8".to_string()],
             protocol_version: 3,
@@ -1467,6 +1468,7 @@ fn prototype1_eval_store_walk_event_rows_capture_epoch_and_phase() {
         "r7"
     );
     assert_eq!(row.get::<String>("phase_after").expect("phase after"), "r8");
+    assert!(row.get::<bool>("allow_live_api").expect("live capability"));
     assert_eq!(row.get::<i64>("transition_count").expect("count"), 1);
     assert!(!row.get::<String>("exe_sha256").expect("exe sha").is_empty());
     let transitions = query_walk_event_transitions(&db, &CampaignId::from("campaign"));
@@ -3045,8 +3047,8 @@ fn query_walk_events(db: &Database, campaign_id: &CampaignId) -> QueryResult {
     params.insert("campaign_id".to_string(), campaign_id.to_string().into());
     db.raw_query_params(
         r#"
-?[command, phase_before, phase_after, transition_count, exe_sha256] :=
-    *eval_walk_event { campaign_id, command, phase_before, phase_after, transition_count, exe_sha256 },
+?[command, phase_before, phase_after, allow_live_api, transition_count, exe_sha256] :=
+    *eval_walk_event { campaign_id, command, phase_before, phase_after, allow_live_api, transition_count, exe_sha256 },
     campaign_id = $campaign_id
 "#,
         params,

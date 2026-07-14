@@ -2747,6 +2747,7 @@ mod tests {
                 node_id: node.to_string(),
                 state: successor::State::Spawned {
                     pid: 42,
+                    incarnation: None,
                     active_parent_root: PathBuf::from("/tmp/repo"),
                     binary_path: PathBuf::from("/tmp/ploke-eval"),
                     invocation_path: PathBuf::from("/tmp/invocation.json"),
@@ -2819,6 +2820,7 @@ mod tests {
                 successor::State::Ready {
                     pid: 43,
                     ready_path: PathBuf::from("/tmp/unrelated-ready.jsonl"),
+                    controller: None,
                 },
             ),
         ]);
@@ -2848,6 +2850,7 @@ mod tests {
                 successor::State::Ready {
                     pid: 44,
                     ready_path: PathBuf::from("/tmp/retry-ready.jsonl"),
+                    controller: None,
                 },
             ),
         ]);

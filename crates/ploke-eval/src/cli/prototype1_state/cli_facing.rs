@@ -60,8 +60,7 @@ use crate::{
         print_issue_case_block,
         prototype1_process::{
             SuccessorHandoffMode, cleanup_prototype1_child_build_products,
-            persist_prototype1_buildable_child_artifact, record_prototype1_successor_completion,
-            validate_child_surface,
+            persist_prototype1_buildable_child_artifact, validate_child_surface,
         },
         prototype1_state::{
             backend::{
@@ -106,7 +105,7 @@ use crate::{
                 parent_identity_relpath, write_parent_identity,
             },
             inner::{Locked, Open, Received},
-            invocation::{self, InvocationAuthority, SuccessorCompletionStatus},
+            invocation::{self, InvocationAuthority},
             journal::{self, JournalEntry, PrototypeJournal, prototype1_transition_journal_path},
             observe,
             parent::{
@@ -2117,7 +2116,11 @@ pub(crate) enum CandidateGenerationConfig {
 
 impl CandidateGenerationConfig {
     fn from_command(command: &Prototype1StateCommand) -> Self {
-        Self::from_generator(command.candidate_generator)
+        Self::from_generator(
+            command
+                .candidate_generator
+                .unwrap_or(Prototype1CandidateGenerator::BroadHarnessRequest),
+        )
     }
 
     fn from_profile_generation(generation: profile::Generation) -> Self {
@@ -2179,13 +2182,19 @@ pub(crate) struct Prototype1StateRunShape {
 impl Prototype1StateRunShape {
     fn from_command(command: &Prototype1StateCommand) -> Self {
         Self {
-            stop_after: command.stop_after,
+            stop_after: command
+                .stop_after
+                .unwrap_or(Prototype1StateStopAfter::Complete),
             observe_child_stale_after: profile::Execution::default().observe_child_stale_after(),
             broad_tui: profile::BroadTui::default(),
             candidate_generation: CandidateGenerationConfig::from_command(command),
-            successor_selection: command.successor_selection,
-            successor_selection_seed: command.successor_selection_seed,
-            successor_selection_metrics: command.successor_selection_metrics,
+            successor_selection: command
+                .successor_selection
+                .unwrap_or(Prototype1SuccessorSelection::HistoryScoreChildProp),
+            successor_selection_seed: command.successor_selection_seed.unwrap_or(0),
+            successor_selection_metrics: command
+                .successor_selection_metrics
+                .unwrap_or(Prototype1TraversalMetrics::Operational),
             successor_oracle_mode: crate::successor_selection::OracleMode::RecordOnly,
             successor_oracle_require_evidence: true,
             successor_metrics_policy: crate::successor_selection::metrics::Policy::default(),
@@ -9577,29 +9586,6 @@ pub(crate) fn resolve_prototype1_parent_identity(
     })
 }
 
-pub(crate) fn record_failed_successor_turn(invocation_path: &Path, error: &PrepareError) {
-    let Ok(InvocationAuthority::Successor(invocation)) =
-        invocation::load_executable(invocation_path)
-    else {
-        return;
-    };
-    let Ok(manifest_path) = campaign_manifest_path(invocation.campaign_id()) else {
-        return;
-    };
-    if let Err(record_error) = record_prototype1_successor_completion(
-        &invocation,
-        &manifest_path,
-        SuccessorCompletionStatus::Failed,
-        None,
-        Some(format!("prototype1-state successor failed: {error}")),
-    ) {
-        eprintln!(
-            "failed to record successor failure for '{}': {record_error}",
-            invocation_path.display()
-        );
-    }
-}
-
 fn directory_size_bytes(path: &Path) -> io::Result<u64> {
     let metadata = fs::symlink_metadata(path)?;
     if metadata.is_file() {
@@ -9718,8 +9704,15 @@ pub(crate) fn prototype1_state_successor_handoff_mode() -> SuccessorHandoffMode 
 )]
 pub(crate) async fn run_prototype1_state_turn(
     command: Prototype1StateCommand,
+    allow_live_api: bool,
+    allow_git_changes: bool,
 ) -> Result<(), PrepareError> {
-    crate::cli::prototype1_state::driver::advance::run_to_terminal(command).await
+    crate::cli::prototype1_state::driver::advance::run_to_terminal(
+        command,
+        allow_live_api,
+        allow_git_changes,
+    )
+    .await
 }
 
 pub(crate) fn traversal_metric_inputs(input: Prototype1TraversalMetrics) -> crate::metric::Inputs {

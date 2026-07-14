@@ -172,11 +172,11 @@ fn state_command_without_ids() -> Prototype1StateCommand {
         identity_branch: None,
         identity_instance: None,
         handoff_invocation: None,
-        stop_after: Prototype1StateStopAfter::Complete,
-        successor_selection: Prototype1SuccessorSelection::HistoryScoreChildProp,
-        successor_selection_seed: 0,
-        successor_selection_metrics: Prototype1TraversalMetrics::Operational,
-        candidate_generator: Prototype1CandidateGenerator::BroadHarnessRequest,
+        stop_after: Some(Prototype1StateStopAfter::Complete),
+        successor_selection: Some(Prototype1SuccessorSelection::HistoryScoreChildProp),
+        successor_selection_seed: Some(0),
+        successor_selection_metrics: Some(Prototype1TraversalMetrics::Operational),
+        candidate_generator: Some(Prototype1CandidateGenerator::BroadHarnessRequest),
         format: InspectOutputFormat::Table,
     }
 }
@@ -678,7 +678,7 @@ fn test_history_candidate(
 #[test]
 fn candidate_generation_config_dispatches_broad_harness_surface() {
     let mut command = state_command_without_ids();
-    command.candidate_generator = Prototype1CandidateGenerator::BroadHarnessRequest;
+    command.candidate_generator = Some(Prototype1CandidateGenerator::BroadHarnessRequest);
     let config = CandidateGenerationConfig::from_command(&command);
 
     assert_eq!(config, CandidateGenerationConfig::BroadHarnessRequest);
@@ -687,7 +687,7 @@ fn candidate_generation_config_dispatches_broad_harness_surface() {
 #[test]
 fn candidate_generation_config_dispatches_deterministic_tui_tools_fixture() {
     let mut command = state_command_without_ids();
-    command.candidate_generator = Prototype1CandidateGenerator::DeterministicTuiTools;
+    command.candidate_generator = Some(Prototype1CandidateGenerator::DeterministicTuiTools);
     let config = CandidateGenerationConfig::from_command(&command);
 
     assert_eq!(config, CandidateGenerationConfig::DeterministicTuiTools);
@@ -1130,8 +1130,8 @@ name = "setup-preview"
     assert_eq!(admitted.commitment.sha256, planned_sha);
 }
 
-#[test]
-fn prototype1_setup_recovers_and_completed_retry_is_read_only() {
+#[tokio::test]
+async fn prototype1_setup_recovers_and_completed_retry_is_read_only() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let eval_home = tmp.path().join("eval-home");
     let repo_root = tmp.path().join("repo");
@@ -1310,6 +1310,90 @@ fn prototype1_setup_recovers_and_completed_retry_is_read_only() {
     );
     crate::durable_io::write_atomic(&scheduler_path, &scheduler_bytes).expect("restore scheduler");
 
+    let mismatch = Prototype1StateCommand {
+        campaign: Some(report.campaign_id.clone()),
+        node_id: None,
+        repo_root: Some(repo_root.clone()),
+        init_parent_identity: false,
+        identity_branch: None,
+        identity_instance: None,
+        handoff_invocation: None,
+        stop_after: None,
+        successor_selection: None,
+        successor_selection_seed: None,
+        successor_selection_metrics: None,
+        candidate_generator: Some(Prototype1CandidateGenerator::Legacy),
+        format: InspectOutputFormat::Table,
+    };
+    let error =
+        crate::cli::prototype1_state::driver::advance::run_to_terminal(mismatch, false, false)
+            .await
+            .expect_err("profile assertions cannot override admitted configuration");
+    assert!(error.to_string().contains("--candidate-generator"));
+    assert!(error.to_string().contains("BroadHarnessRequest"));
+
+    let lease = crate::cli::prototype1_state::driver::control::claim_controller(
+        &repo_root,
+        profile::RunMode::Continuous,
+    )
+    .expect("completed setup admits the continuous controller");
+    assert_eq!(
+        lease.cursor().phase,
+        crate::cli::prototype1_state::walk::phase::WalkPhase::R3
+    );
+    let conflict = crate::cli::prototype1_state::driver::control::claim_active(&repo_root)
+        .expect_err("ancillary mutation must not bypass the active controller lease");
+    assert!(
+        conflict
+            .to_string()
+            .contains("controller session claim conflicted"),
+        "{conflict}"
+    );
+    let intent = lease
+        .intent_with_live_api(false, false)
+        .expect("R3 edge intent");
+    let (lease, receipt) =
+        match crate::cli::prototype1_state::driver::control::advance_controlled(lease, intent)
+            .await
+            .expect("R3 edge is controlled")
+        {
+            crate::cli::prototype1_state::driver::control::ControlAdvance::Finished(
+                crate::cli::prototype1_state::session::Finished::Terminal {
+                    lease, receipt, ..
+                },
+            ) => (lease, receipt),
+            other => panic!("unexpected R3 controller result: {other:?}"),
+        };
+    assert_eq!(
+        lease.cursor().phase,
+        crate::cli::prototype1_state::walk::phase::WalkPhase::R4a
+    );
+    let evidence = receipt
+        .evidence
+        .as_ref()
+        .expect("committed edge has certified evidence");
+    assert_eq!(
+        evidence.edge(),
+        crate::cli::prototype1_state::edge::ControlEdge::R3ToR4a
+    );
+    assert_eq!(
+        evidence.cursor().expect("certified cursor"),
+        lease.cursor().clone()
+    );
+    lease.release().expect("release controlled setup session");
+
+    let session = crate::cli::prototype1_state::session::Store::for_manifest(
+        plan.content.campaign.manifest_path(),
+    )
+    .inspect(&admitted_identity)
+    .expect("inspect controlled setup session")
+    .expect("session exists");
+    assert!(session.active.is_none());
+    assert_eq!(
+        session.cursor.expect("committed cursor").phase,
+        crate::cli::prototype1_state::walk::phase::WalkPhase::R4a
+    );
+
     let mut drifted =
         crate::cli::prototype1_state::setup_admission::load_setup_admission(&admission_path)
             .expect("load completed receipt")
@@ -1319,6 +1403,413 @@ fn prototype1_setup_recovers_and_completed_retry_is_read_only() {
     let error = prepare_prototype1_parent_setup_at(&command, Some(&expected_sha), repo_root)
         .expect_err("receipt fields must remain bound to the reviewed plan");
     assert!(error.to_string().contains("deterministic intent"));
+}
+
+fn assert_session_absent(manifest: &Path, parent: &ParentIdentity) {
+    let store = crate::cli::prototype1_state::session::Store::for_manifest(manifest);
+    let paths = store.paths(parent);
+    assert!(
+        store
+            .inspect(parent)
+            .expect("inspect successor session")
+            .is_none(),
+        "rejected successor evidence must not create a session"
+    );
+    assert!(
+        !paths.journal().exists(),
+        "rejected successor evidence must not create a session journal"
+    );
+}
+
+#[test]
+fn successor_transfer_claims_exact_origin_and_rejects_drift() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let eval_home = tmp.path().join("eval-home");
+    let repo_root = tmp.path().join("repo");
+    let _guard =
+        crate::test_support::env_guard_os(vec![("PLOKE_EVAL_HOME", eval_home.as_os_str().into())]);
+
+    init_indexed_repo(&repo_root);
+    let predecessor = parent_identity_for("node-predecessor", 0);
+    let parent = ParentIdentity::from_record_for_test(ParentIdentityRecord {
+        schema_version: crate::cli::prototype1_state::identity::PARENT_IDENTITY_SCHEMA_VERSION
+            .to_string(),
+        campaign_id: predecessor.campaign_id().clone(),
+        parent_id: "node-successor".to_string(),
+        node_id: "node-successor".to_string(),
+        generation: 1,
+        instance_id: Some("clap-rs__clap-3670".to_string()),
+        previous_parent_id: Some(predecessor.parent_id().to_string()),
+        parent_node_id: Some(predecessor.node_id().to_string()),
+        branch_id: "branch-node-successor".to_string(),
+        artifact_branch: Some("prototype1-node-successor".to_string()),
+        created_at: "2026-05-06T00:00:00Z".to_string(),
+    });
+    let branch = parent
+        .artifact_branch()
+        .expect("successor artifact branch")
+        .to_string();
+    let status = std::process::Command::new("git")
+        .current_dir(&repo_root)
+        .args(["switch", "-c", &branch])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .expect("create successor branch");
+    assert!(status.success(), "create successor branch failed");
+    write_parent_identity(&repo_root, &parent).expect("write successor parent identity");
+    index_repo(&repo_root);
+    commit_indexed_repo(&repo_root, "seed successor parent");
+    let head = GitWorktreeBackend
+        .head_commit(&repo_root)
+        .expect("successor checkout head");
+
+    let manifest = campaign_manifest_path(parent.campaign_id()).expect("campaign manifest path");
+    let profile = toml::from_str::<profile::Prototype1RunProfile>(
+        "schema_version = \"prototype1-run-profile.v1\"\nname = \"successor-transfer\"\n",
+    )
+    .expect("run profile parses");
+    let admitted = profile::admit_run_profile(
+        &manifest,
+        &profile::OperatorRunProfile {
+            source_path: eval_home.join("successor-transfer.toml"),
+            profile,
+        },
+    )
+    .expect("run profile admitted");
+    let journal_path = prototype1_transition_journal_path(&manifest);
+    let node_dir = journal_path
+        .parent()
+        .expect("prototype1 root")
+        .join("nodes")
+        .join(parent.node_id());
+    let ready_path = node_dir.join("successor-ready.json");
+    let binary_path = std::env::current_exe().expect("current test executable");
+    let runtime_other = RuntimeId::new();
+    let runtime_wrong = RuntimeId::new();
+    let runtime_path = RuntimeId::new();
+    let runtime_checkout = RuntimeId::new();
+    let runtime_exact = RuntimeId::new();
+    let runtime_timeout = RuntimeId::new();
+
+    let invocation_for = |runtime_id| {
+        let path = invocation::invocation_path(&node_dir, runtime_id);
+        let invocation = crate::cli::prototype1_state::invocation::Invocation {
+            schema_version: invocation::SCHEMA_VERSION.to_string(),
+            role: crate::cli::prototype1_state::invocation::Role::Successor,
+            campaign_id: parent.campaign_id().clone(),
+            node_id: parent.node_id().to_string(),
+            runtime_id,
+            journal_path: journal_path.clone(),
+            channel_root: Some(invocation::channel_root(&node_dir, runtime_id)),
+            node: None,
+            request: None,
+            resolved: None,
+            active_parent_root: Some(repo_root.clone()),
+            run_profile: Some(admitted.commitment.clone()),
+            predecessor_attempt: Some(
+                crate::cli::prototype1_state::successor::PredecessorAttempt::new(
+                    crate::cli::prototype1_state::session::SessionId::for_test(1),
+                    crate::cli::prototype1_state::event::TransitionId::new(),
+                    crate::cli::prototype1_state::session::Fence::for_test(1),
+                    true,
+                    true,
+                ),
+            ),
+            created_at: Utc::now().to_rfc3339(),
+        };
+        write_json_atomic(&path, &invocation).expect("write successor invocation");
+        (path, invocation)
+    };
+    let spawn_for =
+        |runtime_id, invocation_path: PathBuf| crate::cli::prototype1_state::successor::Record {
+            runtime_id: Some(runtime_id),
+            recorded_at: RecordedAt::now(),
+            campaign_id: parent.campaign_id().clone(),
+            node_id: parent.node_id().to_string(),
+            state: crate::cli::prototype1_state::successor::State::Spawned {
+                pid: std::process::id(),
+                incarnation: crate::cli::prototype1_state::invocation::process_incarnation(
+                    std::process::id(),
+                )
+                .expect("capture successor process"),
+                active_parent_root: repo_root.clone(),
+                binary_path: binary_path.clone(),
+                invocation_path,
+                ready_path: ready_path.clone(),
+                streams: journal::Streams {
+                    stdout: node_dir.join("successor.stdout"),
+                    stderr: node_dir.join("successor.stderr"),
+                },
+            },
+        };
+    let checkout_for = |installed_commit: String| journal::ActiveCheckoutAdvancedEntry {
+        recorded_at: RecordedAt::now(),
+        campaign_id: parent.campaign_id().clone(),
+        previous_parent_identity: Some(predecessor.clone()),
+        selected_parent_identity: parent.clone(),
+        active_parent_root: repo_root.clone(),
+        selected_branch: branch.clone(),
+        installed_commit,
+    };
+    let mut journal = PrototypeJournal::new(journal_path.clone());
+    let exact_checkout = checkout_for(head.to_string());
+
+    let (wrong_path, _) = invocation_for(runtime_wrong);
+    journal
+        .append(JournalEntry::Successor(spawn_for(
+            runtime_other,
+            wrong_path.clone(),
+        )))
+        .expect("append wrong-runtime spawn");
+    let error = crate::cli::prototype1_state::driver::control::claim_successor(
+        &repo_root,
+        profile::RunMode::Continuous,
+        &wrong_path,
+    )
+    .expect_err("wrong runtime evidence must be rejected");
+    assert!(
+        error.to_string().contains("exact Spawned runtime"),
+        "{error}"
+    );
+    assert_session_absent(&manifest, &parent);
+
+    journal
+        .append(JournalEntry::ActiveCheckoutAdvanced(exact_checkout.clone()))
+        .expect("append path-test checkout");
+    let (path_drift, _) = invocation_for(runtime_path);
+    journal
+        .append(JournalEntry::Successor(spawn_for(
+            runtime_path,
+            node_dir.join("invocations/other.json"),
+        )))
+        .expect("append wrong-path spawn");
+    let error = crate::cli::prototype1_state::driver::control::claim_successor(
+        &repo_root,
+        profile::RunMode::Continuous,
+        &path_drift,
+    )
+    .expect_err("wrong invocation evidence must be rejected");
+    assert!(error.to_string().contains("Spawned paths"), "{error}");
+    assert_session_absent(&manifest, &parent);
+
+    let bad_checkout = checkout_for("wrong-installed-commit".to_string());
+    let (checkout_path, _) = invocation_for(runtime_checkout);
+    let checkout_spawn = spawn_for(runtime_checkout, checkout_path.clone());
+    journal
+        .append(JournalEntry::ActiveCheckoutAdvanced(bad_checkout))
+        .expect("append wrong checkout");
+    journal
+        .append(JournalEntry::Successor(checkout_spawn))
+        .expect("append checkout-test spawn");
+    let error = crate::cli::prototype1_state::driver::control::claim_successor(
+        &repo_root,
+        profile::RunMode::Continuous,
+        &checkout_path,
+    )
+    .expect_err("wrong checkout evidence must be rejected");
+    assert!(
+        error
+            .to_string()
+            .contains("does not match controller epoch Git HEAD"),
+        "{error}"
+    );
+    assert_session_absent(&manifest, &parent);
+
+    let (exact_path, exact_invocation) = invocation_for(runtime_exact);
+    let exact_spawn = spawn_for(runtime_exact, exact_path.clone());
+    journal
+        .append(JournalEntry::ActiveCheckoutAdvanced(exact_checkout.clone()))
+        .expect("append exact checkout before spawn");
+    journal
+        .append(JournalEntry::Successor(exact_spawn.clone()))
+        .expect("append exact spawn after checkout");
+    let error = crate::cli::prototype1_state::driver::control::claim_successor(
+        &repo_root,
+        profile::RunMode::Step,
+        &exact_path,
+    )
+    .expect_err("mode mismatch must be rejected");
+    assert!(
+        error
+            .to_string()
+            .contains("admitted run profile requires Continuous"),
+        "{error}"
+    );
+    assert_session_absent(&manifest, &parent);
+
+    let expected_origin = crate::cli::prototype1_state::control_evidence::SuccessorOrigin::new(
+        exact_path
+            .canonicalize()
+            .expect("canonical invocation path"),
+        exact_invocation,
+        exact_checkout.clone(),
+        exact_spawn,
+        &parent,
+        &admitted.commitment,
+        &repo_root,
+    )
+    .expect("exact successor origin");
+    let expected_cursor = crate::cli::prototype1_state::control_evidence::successor_cursor(
+        &expected_origin,
+        &parent,
+        &admitted.commitment,
+        &repo_root,
+    )
+    .expect("successor R3 cursor");
+    let lease = crate::cli::prototype1_state::driver::control::claim_successor(
+        &repo_root,
+        profile::RunMode::Continuous,
+        &exact_path,
+    )
+    .expect("exact successor transfer claims session");
+    assert_eq!(lease.runtime_id(), Some(runtime_exact));
+    assert_eq!(lease.mode(), profile::RunMode::Continuous);
+    assert_eq!(lease.cursor(), &expected_cursor);
+    assert_eq!(
+        lease.cursor().phase,
+        crate::cli::prototype1_state::walk::phase::WalkPhase::R3
+    );
+    assert_eq!(
+        lease.handoff_path(),
+        Some(expected_origin.invocation_path())
+    );
+    let store = crate::cli::prototype1_state::session::Store::for_manifest(&manifest);
+    let snapshot = store
+        .inspect(&parent)
+        .expect("inspect claimed successor session")
+        .expect("successor session exists");
+    assert_eq!(
+        snapshot
+            .active
+            .as_ref()
+            .and_then(|owner| owner.runtime_id()),
+        Some(runtime_exact)
+    );
+    assert_eq!(snapshot.cursor.as_ref(), Some(&expected_cursor));
+    lease.release().expect("release successor session");
+
+    let session_path = store.paths(&parent).journal().to_path_buf();
+    let session_text = fs::read_to_string(&session_path).expect("read successor session");
+    let mut created = serde_json::from_str::<serde_json::Value>(
+        session_text.lines().next().expect("Created session entry"),
+    )
+    .expect("decode Created session entry");
+    assert_eq!(
+        created["schema_version"],
+        serde_json::json!("prototype1-control-session.v5")
+    );
+    assert_eq!(created["origin"]["kind"], serde_json::json!("successor"));
+    created["cursor"]["phase"] = serde_json::json!("r4c");
+    let tampered =
+        crate::cli::prototype1_state::session::Store::new(eval_home.join("tampered-control"));
+    let tampered_path = tampered.paths(&parent).journal().to_path_buf();
+    fs::create_dir_all(tampered_path.parent().expect("tampered session parent"))
+        .expect("create tampered session parent");
+    fs::write(
+        &tampered_path,
+        format!(
+            "{}\n",
+            serde_json::to_string(&created).expect("encode tampered Created entry")
+        ),
+    )
+    .expect("write tampered Created entry");
+    let error = tampered
+        .inspect(&parent)
+        .expect_err("tampered successor origin cursor must be rejected");
+    assert!(
+        error
+            .to_string()
+            .contains("session origin cursor does not match its admitted authority"),
+        "{error}"
+    );
+
+    fs::remove_dir_all(store.paths(&parent).root()).expect("remove completed test session");
+    journal
+        .append(JournalEntry::Successor(
+            crate::cli::prototype1_state::successor::Record {
+                runtime_id: Some(runtime_exact),
+                recorded_at: RecordedAt::now(),
+                campaign_id: parent.campaign_id().clone(),
+                node_id: parent.node_id().to_string(),
+                state: crate::cli::prototype1_state::successor::State::Ready {
+                    pid: std::process::id(),
+                    ready_path: ready_path.clone(),
+                    controller: None,
+                },
+            },
+        ))
+        .expect("append successor ready");
+    let error = crate::cli::prototype1_state::driver::control::claim_successor(
+        &repo_root,
+        profile::RunMode::Continuous,
+        &exact_path,
+    )
+    .expect_err("matching Ready evidence must prevent fresh session creation");
+    assert!(error.to_string().contains("legacy Ready"), "{error}");
+    assert_session_absent(&manifest, &parent);
+
+    let (timeout_path, _) = invocation_for(runtime_timeout);
+    journal
+        .append(JournalEntry::ActiveCheckoutAdvanced(exact_checkout))
+        .expect("append timeout checkout before spawn");
+    journal
+        .append(JournalEntry::Successor(spawn_for(
+            runtime_timeout,
+            timeout_path.clone(),
+        )))
+        .expect("append timeout spawn after checkout");
+    let lease = crate::cli::prototype1_state::driver::control::claim_successor(
+        &repo_root,
+        profile::RunMode::Continuous,
+        &timeout_path,
+    )
+    .expect("Spawned timeout runtime claims initial session");
+    assert_eq!(lease.runtime_id(), Some(runtime_timeout));
+    lease.release().expect("release timeout runtime session");
+    journal
+        .append(JournalEntry::Successor(
+            crate::cli::prototype1_state::successor::Record {
+                runtime_id: Some(runtime_timeout),
+                recorded_at: RecordedAt::now(),
+                campaign_id: parent.campaign_id().clone(),
+                node_id: parent.node_id().to_string(),
+                state: crate::cli::prototype1_state::successor::State::TimedOut {
+                    waited_ms: 1,
+                    ready_path: ready_path.clone(),
+                },
+            },
+        ))
+        .expect("append successor timeout");
+    let error = crate::cli::prototype1_state::driver::control::claim_successor(
+        &repo_root,
+        profile::RunMode::Continuous,
+        &timeout_path,
+    )
+    .expect_err("TimedOut runtime must not reclaim its session");
+    assert!(error.to_string().contains("cannot reclaim"), "{error}");
+    assert!(error.to_string().contains("TimedOut"), "{error}");
+    assert!(
+        store
+            .inspect(&parent)
+            .expect("inspect released timeout session")
+            .is_some(),
+        "terminal lifecycle rejection must preserve its existing session"
+    );
+
+    fs::remove_dir_all(store.paths(&parent).root()).expect("remove timeout test session");
+    let error = crate::cli::prototype1_state::driver::control::claim_successor(
+        &repo_root,
+        profile::RunMode::Continuous,
+        &timeout_path,
+    )
+    .expect_err("TimedOut runtime must not create a fresh session");
+    assert!(
+        error.to_string().contains("cannot create a fresh"),
+        "{error}"
+    );
+    assert!(error.to_string().contains("TimedOut"), "{error}");
+    assert_session_absent(&manifest, &parent);
 }
 
 #[test]
@@ -2403,6 +2894,8 @@ async fn broad_tui_prep_failure_is_setup_blocker() {
 
 #[tokio::test]
 async fn zero_admission_batch_is_persisted() {
+    let _slot_env =
+        crate::test_support::env_guard_os(vec![("PLOKE_EVAL_BROAD_TUI_SLOT_LIMIT", "9".into())]);
     let historical_request: PublishedBroadHarnessRequest = json_fixture(include_str!(
         "../../../tests/fixtures/prototype1-zero-admission-child-plan/node-18f71c7f3b1718b8.request.json"
     ));

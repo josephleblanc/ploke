@@ -145,11 +145,11 @@ fn state_command_for_typestate_test() -> Prototype1StateCommand {
         identity_branch: None,
         identity_instance: None,
         handoff_invocation: None,
-        stop_after: Prototype1StateStopAfter::Complete,
-        successor_selection: Prototype1SuccessorSelection::HistoryScoreChildProp,
-        successor_selection_seed: 0,
-        successor_selection_metrics: Prototype1TraversalMetrics::Operational,
-        candidate_generator: Prototype1CandidateGenerator::BroadHarnessRequest,
+        stop_after: Some(Prototype1StateStopAfter::Complete),
+        successor_selection: Some(Prototype1SuccessorSelection::HistoryScoreChildProp),
+        successor_selection_seed: Some(0),
+        successor_selection_metrics: Some(Prototype1TraversalMetrics::Operational),
+        candidate_generator: Some(Prototype1CandidateGenerator::BroadHarnessRequest),
         format: InspectOutputFormat::Table,
     }
 }

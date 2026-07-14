@@ -16,8 +16,8 @@ use crate::{
     campaign::{EmbeddingRoute, PROTOTYPE1_PROTOCOL_MIN_SAFE_MAX_TOKENS, resolve_campaign_config},
     campaign_manifest_path,
     cli::{
-        InspectOutputFormat, Prototype1CandidateGenerator, Prototype1ControlCommand,
-        Prototype1DoctorCommand, Prototype1PromptCommand,
+        InspectOutputFormat, Prototype1AdvanceCommand, Prototype1CandidateGenerator,
+        Prototype1ControlCommand, Prototype1DoctorCommand, Prototype1PromptCommand,
     },
     closure::load_closure_state,
     intervention::{
@@ -33,10 +33,7 @@ use crate::{
 use crate::cli::handlers::closure::{
     advance_eval_closure, advance_protocol_or_block, protocol_llm_config,
 };
-use crate::cli::prototype1_process::{
-    HandoffOutcome, SuccessorHandoffMode, persist_prototype1_buildable_child_artifact,
-    spawn_and_handoff_prototype1_successor,
-};
+use crate::cli::prototype1_process::persist_prototype1_buildable_child_artifact;
 use crate::cli::prototype1_state::backend::GitWorktreeBackend;
 use crate::cli::prototype1_state::{
     c1::{
@@ -51,9 +48,9 @@ use crate::cli::prototype1_state::{
         ensure_prototype1_baseline_closure_state, establish_parent_baseline,
         live_successor_continuation_decision, prototype1_branch_evaluation_path,
         reserve_profile_child_budget, resolve_profile_child_plan, run_planned_child,
-        select_artifact_for_handoff, select_successor_for_profile,
-        selection_input_from_child_report,
+        select_successor_for_profile, selection_input_from_child_report,
     },
+    driver::advance as session_driver,
     edit_surface::harness_request::{
         BroadHarnessRequest, EvidenceRootKind, EvidenceRootLocation, HarnessChildBudget,
         ProtectedCoreAnchor, PublishedBroadHarnessRequest,
@@ -320,30 +317,15 @@ pub(crate) async fn prompt(command: Prototype1PromptCommand) -> Result<(), Prepa
 }
 
 // ANCHOR: prototype1_continue_guard
-pub(crate) async fn resume(command: Prototype1ControlCommand) -> Result<(), PrepareError> {
-    let mut guard = 0usize;
-    loop {
-        guard += 1;
-        if guard > 256 {
-            return Err(PrepareError::InvalidBatchSelection {
-                detail: "prototype1-continue exceeded 256 phase advances without reaching a terminal state".to_string(),
-            });
-        }
-        let diagnosis = diagnose(&resolve_context(command.repo_root.as_deref())?)?;
-        if diagnosis.phase == DiagnosedPhase::Blocked {
-            return Err(PrepareError::InvalidBatchSelection {
-                detail: format!(
-                    "prototype1-continue refused: {}",
-                    diagnosis.blockers.join("; ")
-                ),
-            });
-        }
-        if diagnosis.phase == DiagnosedPhase::Complete {
-            let status = into_status(diagnosis);
-            return render_status(command.format, &status);
-        }
-        advance(diagnosis, ExecuteMode::Continuous).await?;
-    }
+pub(crate) async fn resume(command: Prototype1AdvanceCommand) -> Result<(), PrepareError> {
+    session_driver::continue_session(
+        command.control.repo_root.as_deref(),
+        command.capabilities.allow_live_api,
+        command.capabilities.allow_git_changes(),
+    )
+    .await?;
+    let status = diagnose_command(&command.control)?;
+    render_status(command.control.format, &status)
 }
 // ANCHOR_END: prototype1_continue_guard
 
@@ -355,27 +337,15 @@ pub(crate) async fn resume(command: Prototype1ControlCommand) -> Result<(), Prep
 /// context from the checkout, diagnoses the next admissible phase, advances
 /// that phase at most once, and then diagnoses again so the rendered status is
 /// the post-step state.
-pub(crate) async fn step(command: Prototype1ControlCommand) -> Result<(), PrepareError> {
-    // Resolve from the active parent checkout every time. This keeps the step
-    // command tied to the artifact-carried parent identity and admitted run
-    // profile, not to caller-supplied scheduler coordinates.
-    let diagnosis = diagnose(&resolve_context(command.repo_root.as_deref())?)?;
-    if diagnosis.phase == DiagnosedPhase::Blocked {
-        return Err(PrepareError::InvalidBatchSelection {
-            detail: format!("prototype1-step refused: {}", diagnosis.blockers.join("; ")),
-        });
-    }
-    // A completed parent is already terminal, so step only renders its current
-    // state. Every other phase advances through the same dispatcher, but with
-    // ExecuteMode::Step so child execution phases run at most one child.
-    if diagnosis.phase != DiagnosedPhase::Complete {
-        advance(diagnosis, ExecuteMode::Step).await?;
-    }
-    // Re-diagnose after the mutation. The status printed by prototype1-step is
-    // therefore the state the operator should act on next, not the stale
-    // pre-advance diagnosis.
-    let status = diagnose_command(&command)?;
-    render_status(command.format, &status)
+pub(crate) async fn step(command: Prototype1AdvanceCommand) -> Result<(), PrepareError> {
+    session_driver::step_session(
+        command.control.repo_root.as_deref(),
+        command.capabilities.allow_live_api,
+        command.capabilities.allow_git_changes(),
+    )
+    .await?;
+    let status = diagnose_command(&command.control)?;
+    render_status(command.control.format, &status)
 }
 // ANCHOR_END: prototype1_step_diagnosis_driven
 
@@ -2519,7 +2489,9 @@ fn classify_successor_entries(entries: &[&JournalEntry]) -> Option<SuccessorMark
                         }
                         SuccessorMarkerState::Incomplete
                     }
-                    successor::State::Ready { pid, ready_path } => {
+                    successor::State::Ready {
+                        pid, ready_path, ..
+                    } => {
                         saw_process = true;
                         let Some(attempt) = record
                             .runtime_id
@@ -2610,6 +2582,7 @@ fn spawn_matches_handoff(
     match &record.state {
         successor::State::Spawned {
             pid,
+            incarnation: _,
             active_parent_root,
             binary_path,
             invocation_path,
@@ -2641,6 +2614,7 @@ fn needs_terminal_observe(snapshot: &ChildSnapshot) -> bool {
     snapshot.node.status == Prototype1NodeStatus::Succeeded && snapshot.evaluation_report.is_none()
 }
 
+#[cfg(test)]
 async fn advance(diagnosis: Diagnosis, mode: ExecuteMode) -> Result<(), PrepareError> {
     let _trace_guard = scoped_eval_trace_sink_for_context(&diagnosis.context);
     match diagnosis.phase {
@@ -3169,89 +3143,11 @@ fn advance_select(diagnosis: Diagnosis) -> Result<(), PrepareError> {
     Ok(())
 }
 
-async fn advance_handoff(diagnosis: Diagnosis) -> Result<(), PrepareError> {
-    let child_outcomes = reconstruct_terminal_outcomes(&diagnosis.child_snapshots)?;
-    let Some((selection_decision, material)) = select_successor_for_profile(
-        &diagnosis.context.manifest_path,
-        &diagnosis.context.parent_identity,
-        &child_outcomes,
-        diagnosis
-            .child_plan
-            .as_ref()
-            .map(|plan| plan.rejected_surface_attempts())
-            .unwrap_or(&[]),
-        &diagnosis.context.admitted_profile.profile,
-    )?
-    else {
-        return Ok(());
-    };
-    let selected = material.selected_artifact()?;
-    let node = selected.node().clone();
-    let decision = live_successor_continuation_decision(
-        &diagnosis.context.manifest_path,
-        &diagnosis.context.parent_identity,
-        &diagnosis.context.admitted_profile.profile.search_policy(),
-        &selection_decision,
-        &material,
-        &node,
-    )?;
-    let mut journal = PrototypeJournal::new(prototype1_transition_journal_path(
-        &diagnosis.context.manifest_path,
-    ));
-    if decision.disposition.allows_successor() {
-        let search_policy = diagnosis.context.admitted_profile.profile.search_policy();
-        let child_budget = reserve_profile_child_budget(
-            &search_policy,
-            persisted_node_count(&diagnosis.context.manifest_path)?,
-        )?;
-        let parent = resolve_profile_child_plan(
-            &diagnosis.context.campaign_id,
-            &diagnosis.context.manifest_path,
-            &diagnosis.context.repo_root,
-            active_parent_ready(&diagnosis.context)?,
-            &diagnosis.context.admitted_profile.profile,
-            child_budget,
-            diagnosis.context.resolved_campaign.route_source,
-        )
-        .await?
-        .parent;
-        let selected_artifact = select_artifact_for_handoff(&selection_decision, &material)?;
-        let selection_entry = material.into_entry(selection_decision)?;
-        let (_retired, outcome) = spawn_and_handoff_prototype1_successor(
-            &diagnosis.context.campaign_id,
-            selected_artifact,
-            &diagnosis.context.repo_root,
-            parent,
-            selection_entry,
-            SuccessorHandoffMode::Detached,
-        )?;
-        if let HandoffOutcome::Incomplete(record) = outcome {
-            let detail = match &record.state {
-                successor::State::TimedOut { waited_ms, .. } => format!(
-                    "successor handoff timed out after {waited_ms}ms without a durable same-runtime acknowledgement"
-                ),
-                successor::State::ExitedBeforeReady { exit_code } => format!(
-                    "successor process exited before handoff acknowledgement (exit_code={exit_code:?})"
-                ),
-                state => {
-                    format!("successor handoff returned incomplete with unexpected state {state:?}")
-                }
-            };
-            return Err(PrepareError::InvalidBatchSelection { detail });
-        }
-    } else {
-        journal
-            .append(JournalEntry::Successor(successor::Record::stopped(
-                diagnosis.context.campaign_id.clone(),
-                node.node_id.clone(),
-                decision,
-                selection_decision,
-            )))
-            .map_err(|err| PrepareError::InvalidBatchSelection {
-                detail: format!("failed to append stopped successor record: {err}"),
-            })?;
-    }
-    Ok(())
+async fn advance_handoff(_diagnosis: Diagnosis) -> Result<(), PrepareError> {
+    Err(PrepareError::InvalidBatchSelection {
+        detail: "legacy diagnosis-driven handoff cannot mint a fenced controller attempt; use the session-backed prototype1-state, prototype1-step, or walk driver"
+            .to_string(),
+    })
 }
 
 fn persisted_node_count(campaign_manifest_path: &Path) -> Result<u32, PrepareError> {
@@ -4325,7 +4221,7 @@ Suggested validation after editing: run `cargo test`.
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn step_persists_zero_admission_plan() {
+    async fn legacy_child_plan_persists_zero_admission_plan() {
         let temp = tempfile::tempdir().expect("tempdir");
         let eval_home = temp.path().join("eval-home");
         let summary_fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(
@@ -4341,12 +4237,9 @@ Suggested validation after editing: run `cargo test`.
             .expect("diagnose pre-child-plan world");
         assert_eq!(diagnosis.phase, DiagnosedPhase::ChildPlan);
 
-        let err = step(Prototype1ControlCommand {
-            repo_root: Some(world.repo_root.clone()),
-            format: InspectOutputFormat::Json,
-        })
-        .await
-        .expect_err("zero-admission child planning still returns the below-minimum error");
+        let err = advance(diagnosis, ExecuteMode::Step)
+            .await
+            .expect_err("zero-admission child planning still returns the below-minimum error");
 
         let PrepareError::ChildPlanBelowMinimum {
             runnable_children,
@@ -4456,9 +4349,15 @@ Suggested validation after editing: run `cargo test`.
             assert_eq!(diagnosis.phase, DiagnosedPhase::ChildPlan);
             print_live_step_timing("diagnosed_child_plan", started, &mut previous);
 
-            let step_result = step(Prototype1ControlCommand {
-                repo_root: Some(world.repo_root.clone()),
-                format: InspectOutputFormat::Json,
+            let step_result = step(Prototype1AdvanceCommand {
+                control: Prototype1ControlCommand {
+                    repo_root: Some(world.repo_root.clone()),
+                    format: InspectOutputFormat::Json,
+                },
+                capabilities: crate::cli::Prototype1MutationCapabilities {
+                    allow_live_api: true,
+                    allow: Vec::new(),
+                },
             })
             .await;
             print_live_step_timing("step_returned", started, &mut previous);
@@ -4593,9 +4492,15 @@ Suggested validation after editing: run `cargo test`.
         assert_eq!(diagnosis.phase, DiagnosedPhase::ChildPlan);
         print_live_step_timing("diagnosed_child_plan", started, &mut previous);
 
-        let step_result = step(Prototype1ControlCommand {
-            repo_root: Some(world.repo_root.clone()),
-            format: InspectOutputFormat::Json,
+        let step_result = step(Prototype1AdvanceCommand {
+            control: Prototype1ControlCommand {
+                repo_root: Some(world.repo_root.clone()),
+                format: InspectOutputFormat::Json,
+            },
+            capabilities: crate::cli::Prototype1MutationCapabilities {
+                allow_live_api: true,
+                allow: Vec::new(),
+            },
         })
         .await;
         print_live_step_timing("step_returned", started, &mut previous);
@@ -4779,14 +4684,21 @@ Suggested validation after editing: run `cargo test`.
             identity_branch: None,
             identity_instance: None,
             handoff_invocation: None,
-            stop_after: crate::cli::Prototype1StateStopAfter::Complete,
-            successor_selection: crate::cli::Prototype1SuccessorSelection::HistoryScoreChildProp,
-            successor_selection_seed: 0,
-            successor_selection_metrics: crate::cli::Prototype1TraversalMetrics::Operational,
-            candidate_generator: crate::cli::Prototype1CandidateGenerator::BroadHarnessRequest,
+            stop_after: Some(crate::cli::Prototype1StateStopAfter::Complete),
+            successor_selection: Some(
+                crate::cli::Prototype1SuccessorSelection::HistoryScoreChildProp,
+            ),
+            successor_selection_seed: Some(0),
+            successor_selection_metrics: Some(crate::cli::Prototype1TraversalMetrics::Operational),
+            candidate_generator: Some(
+                crate::cli::Prototype1CandidateGenerator::BroadHarnessRequest,
+            ),
             format: InspectOutputFormat::Json,
         };
-        let state_result = command.run().await;
+        let state_result = crate::cli::prototype1_state::cli_facing::run_prototype1_state_turn(
+            command, true, true,
+        )
+        .await;
         print_live_step_timing("prototype1_state_returned", started, &mut previous);
         state_result
             .as_ref()
@@ -5344,6 +5256,7 @@ Suggested validation after editing: run `cargo test`.
                 ready_path: PathBuf::from("/tmp/ready.jsonl"),
                 streams: None,
                 pid: 42,
+                acceptance: None,
             },
         )
     }
@@ -5441,6 +5354,7 @@ Suggested validation after editing: run `cargo test`.
             Some(runtime_id),
             successor::State::Spawned {
                 pid: 42,
+                incarnation: None,
                 active_parent_root: PathBuf::from("/tmp/repo"),
                 binary_path: PathBuf::from("/tmp/ploke-eval"),
                 invocation_path: PathBuf::from("/tmp/invocation.json"),
@@ -5456,6 +5370,7 @@ Suggested validation after editing: run `cargo test`.
             successor::State::Ready {
                 pid: 42,
                 ready_path: PathBuf::from("/tmp/ready.jsonl"),
+                controller: None,
             },
         );
         let timed_out = successor_entry(
@@ -5532,6 +5447,7 @@ Suggested validation after editing: run `cargo test`.
         let malformed_states = [
             successor::State::Spawned {
                 pid: 42,
+                incarnation: None,
                 active_parent_root: PathBuf::from("/tmp/repo"),
                 binary_path: PathBuf::from("/tmp/ploke-eval"),
                 invocation_path: PathBuf::from("/tmp/invocation.json"),
@@ -5935,6 +5851,7 @@ Suggested validation after editing: run `cargo test`.
             child_lifecycle: ChildRuntimeLifecycle::Acknowledged,
             parent_pid: std::process::id(),
             child_pid: Some(child_pid),
+            incarnation: None,
             argv: vec!["loop".to_string(), "prototype1-runner".to_string()],
             streams: None,
             result: Some(SpawnObservation::Acknowledged),

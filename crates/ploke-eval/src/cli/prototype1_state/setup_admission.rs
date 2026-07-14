@@ -184,7 +184,7 @@ impl Prototype1SetupAdmission {
         }
     }
 
-    fn validate(&self) -> Result<(), PrepareError> {
+    pub(crate) fn validate(&self) -> Result<(), PrepareError> {
         if self.schema_version != SETUP_ADMISSION_SCHEMA {
             return Err(admission_error(format!(
                 "unsupported setup admission schema '{}'",

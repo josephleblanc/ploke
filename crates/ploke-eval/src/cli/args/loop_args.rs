@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use super::common::{InspectOutputFormat, parse_embedding_route, parse_model_route_source};
 use crate::campaign::EmbeddingRoute;
-use crate::cli::prototype1_state::walk::phase::WalkPhase;
+use crate::cli::prototype1_state::walk::{phase::WalkPhase, protocol::OperationId};
 
 #[derive(Debug, Parser)]
 #[command(about = "Run higher-level loop wrappers over eval, protocol, and intervention stages")]
@@ -28,18 +28,18 @@ pub enum LoopSubcommand {
     /// Print the broad-harness prompt for the active Prototype 1 parent checkout.
     Prototype1Prompt(Prototype1PromptCommand),
     /// Resume the active Prototype 1 parent checkout until the current turn completes or hands off.
-    Prototype1Continue(Prototype1ControlCommand),
+    Prototype1Continue(Prototype1AdvanceCommand),
     /// Advance exactly one diagnosed Prototype 1 parent phase.
-    Prototype1Step(Prototype1ControlCommand),
+    Prototype1Step(Prototype1AdvanceCommand),
     /// Drive the typed Prototype 1 parent runtime path.
-    Prototype1State(Prototype1StateCommand),
+    Prototype1State(Prototype1StateAdvanceCommand),
     // ANCHOR: prototype1_walk_command_safety_help
     /// Debug-only local server for stepping Prototype 1 typestate transitions.
     #[command(
         name = "walk",
         about = "Debug-step Prototype 1 typestate transitions through a local walk server",
         long_about = "Debug-step Prototype 1 typestate transitions through a local walk server.\n\nThe walk server is a local debugging harness over live Prototype 1 transition edges. It is not production loop authority. By default it uses the active walk context if one was set with `walk use`, otherwise the current directory, and a repo-hashed socket under the runtime directory.\n\nLive start/step requests are submitted as one supervised server job. A second live start/step request returns the active job instead of starting a duplicate attempt. Use `walk status` to query the server while a job is running, and `walk step --watch` to follow the accepted step job until it finishes.",
-        after_help = "Common workflows:\n  Set context:       ploke-eval loop walk use /path/to/parent-worktree\n  Start live walk:   ploke-eval loop walk start\n  Inspect server:    ploke-eval loop walk status\n  Inspect progress:  ploke-eval loop walk summary -v\n  Replay history:    ploke-eval loop walk replay --index 0\n  Query eval DB:     ploke-eval loop walk db_query --script '::relations'\n  Move replay:       ploke-eval loop walk forward --steps 10 --tail 20\n  Live step:         ploke-eval loop walk step --until r6\n\nSafety notes:\n  replay/back/forward and db_query are read-only inspection commands.\n  step submits a live typestate job; --watch follows that job instead of changing admission.\n  R12 -> R13b successor handoff mutates checkout state and requires --allow git-changes.\n  stop cancels the active server job, signals recorded child/successor process groups, then stops the server.\n  branch-live writes only explicit provenance and requires --allow provenance-record."
+        after_help = "Common workflows:\n  Set context:       ploke-eval loop walk use /path/to/parent-worktree\n  Start live walk:   ploke-eval loop walk start\n  Inspect server:    ploke-eval loop walk status\n  Inspect progress:  ploke-eval loop walk summary -v\n  Replay history:    ploke-eval loop walk replay --index 0\n  Query eval DB:     ploke-eval loop walk db_query --script '::relations'\n  Move replay:       ploke-eval loop walk forward --steps 10 --tail 20\n  Live step:         ploke-eval loop walk step --until r6 --allow-live-api\n\nSafety notes:\n  replay/back/forward and db_query are read-only inspection commands.\n  step submits a typestate job; --watch only follows that job and never admits provider calls.\n  Provider-backed edges require --allow-live-api.\n  R12 -> R13b successor handoff mutates checkout state and requires --allow git-changes.\n  stop shuts down only an idle server. It never aborts an admitted effectful edge; wait for its receipt, then recover or abandon explicitly if needed.\n  branch-live writes only explicit provenance and requires --allow provenance-record."
     )]
     Prototype1StateWalk(Prototype1StateWalkCommand),
     // ANCHOR_END: prototype1_walk_command_safety_help
@@ -97,7 +97,8 @@ pub struct Prototype1StateCommand {
     #[arg(long)]
     pub campaign: Option<CampaignId>,
 
-    /// Candidate node id to materialize/evaluate. During --init-parent-identity only, this is the generation-0 parent node.
+    /// Legacy inspection target. Live controller runs reject this field in
+    /// favor of the admitted profile and durable child-plan authority.
     #[arg(long)]
     pub node_id: Option<String>,
 
@@ -121,27 +122,38 @@ pub struct Prototype1StateCommand {
     #[arg(long, value_name = "PATH")]
     pub handoff_invocation: Option<PathBuf>,
 
-    #[arg(long, value_enum, default_value_t = Prototype1StateStopAfter::Complete)]
-    pub stop_after: Prototype1StateStopAfter,
+    /// Assert the admitted profile's debug cut. Omit to use profile authority.
+    #[arg(long, value_enum)]
+    pub stop_after: Option<Prototype1StateStopAfter>,
 
     /// Successor-selection strategy. Active selection defaults to History traversal with current-generation candidates appended before scoring.
-    #[arg(long, value_enum, default_value_t = Prototype1SuccessorSelection::HistoryScoreChildProp)]
-    pub successor_selection: Prototype1SuccessorSelection,
+    #[arg(long, value_enum)]
+    pub successor_selection: Option<Prototype1SuccessorSelection>,
 
     /// Replay seed committed by History-backed traversal selection.
-    #[arg(long, default_value_t = 0)]
-    pub successor_selection_seed: u64,
+    #[arg(long)]
+    pub successor_selection_seed: Option<u64>,
 
     /// Metric-bearing states used by History-backed traversal scoring.
-    #[arg(long, value_enum, default_value_t = Prototype1TraversalMetrics::Operational)]
-    pub successor_selection_metrics: Prototype1TraversalMetrics,
+    #[arg(long, value_enum)]
+    pub successor_selection_metrics: Option<Prototype1TraversalMetrics>,
 
     /// Candidate generator used before publishing the child plan.
-    #[arg(long, value_enum, default_value_t = Prototype1CandidateGenerator::BroadHarnessRequest)]
-    pub candidate_generator: Prototype1CandidateGenerator,
+    #[arg(long, value_enum)]
+    pub candidate_generator: Option<Prototype1CandidateGenerator>,
 
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
     pub format: InspectOutputFormat,
+}
+
+/// CLI admission envelope around the unchanged typed Prototype 1 command.
+#[derive(Debug, Parser)]
+pub struct Prototype1StateAdvanceCommand {
+    #[command(flatten)]
+    pub state: Prototype1StateCommand,
+
+    #[command(flatten)]
+    pub capabilities: Prototype1MutationCapabilities,
 }
 
 #[derive(Debug, Parser)]
@@ -157,12 +169,14 @@ pub enum Prototype1StateWalkSubcommand {
     Serve(Prototype1StateWalkServeCommand),
     /// Save the active parent checkout for later walk commands.
     Use(Prototype1StateWalkUseCommand),
-    /// Submit a new in-memory walk job, defaulting to R0.
+    /// Attach to the setup-derived controller session, defaulting to R3.
     Start(Prototype1StateWalkStartCommand),
     /// Submit one live typestate job by one step or until a target phase.
     Step(Prototype1StateWalkStepCommand),
     /// Reset the current in-memory walk without stopping the server.
-    Reset(Prototype1StateWalkControlCommand),
+    Reset(Prototype1StateWalkResetCommand),
+    /// Inspect or explicitly resolve one durable controller recovery cause.
+    Recover(Prototype1StateWalkRecoverCommand),
     /// Print tracked output files for the current walk.
     Files(Prototype1StateWalkControlCommand),
     /// Show current in-memory walk state or the last step delta.
@@ -186,7 +200,7 @@ pub enum Prototype1StateWalkSubcommand {
     BranchLive(Prototype1StateWalkBranchLiveCommand),
     /// Query server liveness, phase, and active or most recent job.
     Status(Prototype1StateWalkControlCommand),
-    /// Cancel the active job, signal recorded child jobs, and stop the server.
+    /// Stop an idle server; active effectful jobs must reach a durable boundary first.
     Stop(Prototype1StateWalkControlCommand),
 }
 
@@ -715,7 +729,7 @@ pub struct Prototype1StateWalkBranchLiveCommand {
 #[derive(Debug, Clone, Parser)]
 #[command(
     about = "Submit one live typestate step job to the walk server",
-    after_help = "Examples:\n  ploke-eval loop walk step\n  ploke-eval loop walk step --until r6\n  ploke-eval loop walk step --until r8 --watch\n  ploke-eval loop walk step --until r13b --watch --allow git-changes\n\nUse replay/back/forward for read-only historical inspection. Use step only when you intend to drive live typestate edges. Without --watch the command returns after the server accepts the job; with --watch it follows status until the job finishes. Checkout-mutating successor handoff requires --allow git-changes."
+    after_help = "Examples:\n  ploke-eval loop walk step\n  ploke-eval loop walk step --until r6 --allow-live-api\n  ploke-eval loop walk step --until r8 --allow-live-api --watch\n  ploke-eval loop walk step --until r13b --watch --allow git-changes\n\nUse replay/back/forward for read-only historical inspection. Use step only when you intend to drive live typestate edges. Without --watch the command returns after the server accepts the job; with --watch it follows status until the job finishes. The follow flag never admits provider calls; provider-backed edges require --allow-live-api. Checkout-mutating successor handoff requires --allow git-changes."
 )]
 pub struct Prototype1StateWalkStepCommand {
     /// Parent checkout root. Defaults to active walk context, then current directory.
@@ -734,6 +748,14 @@ pub struct Prototype1StateWalkStepCommand {
     #[arg(long)]
     pub watch: bool,
 
+    /// Admit typestate edges that call a configured live provider.
+    #[arg(long)]
+    pub allow_live_api: bool,
+
+    /// Reuse a prior semantic operation identity to attach to the exact same request.
+    #[arg(long, value_name = "UUID")]
+    pub(crate) operation_id: Option<OperationId>,
+
     /// Admit typed edges that intentionally install the selected successor into
     /// the active checkout. Required for R12 -> R13b handoff.
     #[arg(long = "allow", value_name = "CAPABILITY", value_parser = ["git-changes"])]
@@ -750,17 +772,13 @@ pub struct Prototype1StateWalkStepCommand {
 
 #[derive(Debug, Clone, Parser)]
 #[command(
-    about = "Submit a live in-memory walk start job, defaulting to R0",
-    after_help = "Examples:\n  ploke-eval loop walk start\n  ploke-eval loop walk start --until r6\n  ploke-eval loop walk start --no-ttl\n\nStart creates or contacts the local walk server for the selected parent checkout, submits one start job, and returns the accepted job. Use `walk status` to inspect an active or completed server job. Use summary/replay when you only need to inspect a completed historical run."
+    about = "Attach to the setup-derived controller session, defaulting to R3",
+    after_help = "Examples:\n  ploke-eval loop walk start\n  ploke-eval loop walk start --until r6 --allow-live-api\n  ploke-eval loop walk start --no-ttl\n\nStart creates or contacts the local walk server for the selected parent checkout, attaches to its completed setup authority, submits one start job, and returns the accepted job. Provider-backed edges require --allow-live-api. Use `walk status` to inspect an active or completed server job. Use summary/replay when you only need to inspect a completed historical run."
 )]
 pub struct Prototype1StateWalkStartCommand {
     /// Campaign id. Defaults to parent identity, then active `select campaign`.
     #[arg(long)]
     pub campaign: Option<CampaignId>,
-
-    /// Candidate node id to materialize/evaluate. During --init-parent-identity only, this is the generation-0 parent node.
-    #[arg(long)]
-    pub node_id: Option<String>,
 
     /// Parent checkout root. Defaults to active walk context, then current directory.
     #[arg(long, value_name = "PATH")]
@@ -778,44 +796,17 @@ pub struct Prototype1StateWalkStartCommand {
     #[arg(long)]
     pub no_ttl: bool,
 
-    /// Bootstrap the active checkout by writing and committing parent identity.
-    #[arg(long)]
-    pub init_parent_identity: bool,
-
-    /// Branch to create or switch to before writing initial parent identity.
-    #[arg(long, value_name = "BRANCH", requires = "init_parent_identity")]
-    pub identity_branch: Option<String>,
-
-    /// Prepared instance id for the generation-0 parent identity.
-    #[arg(long, value_name = "INSTANCE", requires = "init_parent_identity")]
-    pub identity_instance: Option<String>,
-
-    /// Successor handoff token written by the previous parent runtime.
-    #[arg(long, value_name = "PATH")]
-    pub handoff_invocation: Option<PathBuf>,
-
-    #[arg(long, value_enum, default_value_t = Prototype1StateStopAfter::Complete)]
-    pub stop_after: Prototype1StateStopAfter,
-
-    /// Successor-selection strategy. Active selection defaults to History traversal with current-generation candidates appended before scoring.
-    #[arg(long, value_enum, default_value_t = Prototype1SuccessorSelection::HistoryScoreChildProp)]
-    pub successor_selection: Prototype1SuccessorSelection,
-
-    /// Replay seed committed by History-backed traversal selection.
-    #[arg(long, default_value_t = 0)]
-    pub successor_selection_seed: u64,
-
-    /// Metric-bearing states used by History-backed traversal scoring.
-    #[arg(long, value_enum, default_value_t = Prototype1TraversalMetrics::Operational)]
-    pub successor_selection_metrics: Prototype1TraversalMetrics,
-
-    /// Candidate generator used before publishing the child plan.
-    #[arg(long, value_enum, default_value_t = Prototype1CandidateGenerator::BroadHarnessRequest)]
-    pub candidate_generator: Prototype1CandidateGenerator,
-
-    /// Stop after this admitted typestate phase. Defaults to R0.
-    #[arg(long, value_enum, default_value_t = WalkPhase::R0)]
+    /// Stop after this admitted typestate phase. Defaults to R3.
+    #[arg(long, value_enum, default_value_t = WalkPhase::R3)]
     pub until: WalkPhase,
+
+    /// Admit typestate edges that call a configured live provider.
+    #[arg(long)]
+    pub allow_live_api: bool,
+
+    /// Reuse a prior semantic operation identity to attach to the exact same request.
+    #[arg(long, value_name = "UUID")]
+    pub(crate) operation_id: Option<OperationId>,
 
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
     pub format: InspectOutputFormat,
@@ -823,6 +814,43 @@ pub struct Prototype1StateWalkStartCommand {
     /// Include protocol and transition-graph versions in table output.
     #[arg(long)]
     pub with_version: bool,
+}
+
+#[derive(Debug, Clone, Parser)]
+#[command(about = "Reset the current in-memory walk without stopping the server")]
+pub struct Prototype1StateWalkResetCommand {
+    #[command(flatten)]
+    pub control: Prototype1StateWalkControlCommand,
+
+    /// Reuse a prior semantic operation identity to attach to the exact same request.
+    #[arg(long, value_name = "UUID")]
+    pub(crate) operation_id: Option<OperationId>,
+}
+
+#[derive(Debug, Clone, Parser)]
+#[command(
+    about = "Inspect or explicitly resolve one durable controller recovery cause",
+    after_help = "Examples:\n  ploke-eval loop walk recover\n  ploke-eval loop walk recover --abandon-owner\n  ploke-eval loop walk recover --abandon-session\n  ploke-eval loop walk recover --admit-epoch\n\nWith no resolution flag this command is read-only. Owner abandonment is admitted only for an exact lost-owner cause. Session abandonment permanently terminalizes unresolved pending or indeterminate authority without making the session runnable again; preserve that run as evidence and start fresh. Epoch admission records the exact prior and current source/binary epochs."
+)]
+pub struct Prototype1StateWalkRecoverCommand {
+    #[command(flatten)]
+    pub control: Prototype1StateWalkControlCommand,
+
+    /// Resolve an exact journal owner whose kernel lock and process incarnation are gone.
+    #[arg(long, conflicts_with_all = ["abandon_session", "admit_epoch"])]
+    pub abandon_owner: bool,
+
+    /// Permanently terminalize an unresolved session without restoring mutation authority.
+    #[arg(long, conflicts_with_all = ["abandon_owner", "admit_epoch"])]
+    pub abandon_session: bool,
+
+    /// Admit the exact current source/binary epoch over the journal's prior epoch.
+    #[arg(long, conflicts_with_all = ["abandon_owner", "abandon_session"])]
+    pub admit_epoch: bool,
+
+    /// Reuse a prior semantic operation identity for the same recovery resolution.
+    #[arg(long, value_name = "UUID")]
+    pub(crate) operation_id: Option<OperationId>,
 }
 
 #[derive(Debug, Clone, Parser)]
@@ -837,6 +865,34 @@ pub struct Prototype1ControlCommand {
 
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
     pub format: InspectOutputFormat,
+}
+
+/// Explicit mutation capabilities shared by the direct step/continue clients.
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1AdvanceCommand {
+    #[command(flatten)]
+    pub control: Prototype1ControlCommand,
+
+    #[command(flatten)]
+    pub capabilities: Prototype1MutationCapabilities,
+}
+
+/// Explicit effect capabilities shared by every direct mutation client.
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1MutationCapabilities {
+    /// Admit typed edges that call a configured live provider.
+    #[arg(long)]
+    pub allow_live_api: bool,
+
+    /// Admit typed edges that install a successor into the active checkout.
+    #[arg(long = "allow", value_name = "CAPABILITY", value_parser = ["git-changes"])]
+    pub allow: Vec<String>,
+}
+
+impl Prototype1MutationCapabilities {
+    pub(crate) fn allow_git_changes(&self) -> bool {
+        self.allow.iter().any(|value| value == "git-changes")
+    }
 }
 
 #[derive(Debug, Clone, Parser)]

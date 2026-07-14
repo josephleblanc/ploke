@@ -36,7 +36,10 @@ use super::c1::{Acknowledged, Binary, Child, ChildAckState, Parent, Present, Pro
 use super::channel::{Channel, Cursor, FileTransport, ToParent};
 use super::eval_store;
 use super::event::{ChildRuntimeLifecycle, ContentHash, Paths, RecordedAt, Refs, RuntimeId};
-use super::invocation::{ChildInvocation, channel_root, invocation_path, write_child_invocation};
+use super::invocation::{
+    ChildInvocation, ProcessIncarnation, channel_root, invocation_path, process_incarnation,
+    write_child_invocation,
+};
 use super::journal::{
     JournalEntry, PrototypeJournal, PrototypeJournalError, ReadyEntry, SpawnEntry,
     SpawnObservation, SpawnPhase, Streams,
@@ -78,6 +81,7 @@ fn spawn_entry<AckState>(
     argv: Vec<String>,
     parent_pid: u32,
     child_pid: Option<u32>,
+    incarnation: Option<ProcessIncarnation>,
     streams: Streams,
     result: Option<SpawnObservation>,
 ) -> SpawnEntry
@@ -127,6 +131,7 @@ where
         child_lifecycle,
         parent_pid,
         child_pid,
+        incarnation,
         argv,
         streams: Some(streams),
         result,
@@ -180,6 +185,67 @@ fn isolate_process_group(command: &mut ProcessCommand) {
     {
         use std::os::unix::process::CommandExt;
         command.process_group(0);
+    }
+}
+
+/// Durable release path written only after the matching Spawned journal entry
+/// has been fsynced.
+pub(crate) fn spawn_barrier_path(invocation_path: &Path) -> PathBuf {
+    invocation_path.with_extension("spawned")
+}
+
+fn publish_spawn_barrier(
+    path: &Path,
+    incarnation: &ProcessIncarnation,
+) -> Result<(), std::io::Error> {
+    let bytes = serde_json::to_vec(incarnation).map_err(std::io::Error::other)?;
+    if crate::durable_io::create_atomic(path, &bytes)? {
+        Ok(())
+    } else {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!("spawn barrier '{}' already exists", path.display()),
+        ))
+    }
+}
+
+fn terminate_spawned_child(child: &mut ProcessChild) -> Result<(), std::io::Error> {
+    if child.try_wait()?.is_some() {
+        return Ok(());
+    }
+
+    #[cfg(unix)]
+    {
+        let pid = i32::try_from(child.id()).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("child pid {} exceeds the process-id range", child.id()),
+            )
+        })?;
+        // SAFETY: C3 gives the child its own process group before spawn. A
+        // negative PID therefore targets only this attempted child runtime.
+        if unsafe { libc::kill(-pid, libc::SIGKILL) } != 0 {
+            let source = std::io::Error::last_os_error();
+            if source.raw_os_error() != Some(libc::ESRCH) {
+                return Err(source);
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    child.kill()?;
+
+    child.wait().map(|_| ())
+}
+
+fn cleanup_spawn_error(child: &mut ProcessChild, error: SpawnChildError) -> SpawnChildError {
+    let child_pid = child.id();
+    match terminate_spawned_child(child) {
+        Ok(()) => error,
+        Err(source) => SpawnChildError::CleanupSpawn {
+            child_pid,
+            detail: error.to_string(),
+            source,
+        },
     }
 }
 
@@ -301,6 +367,26 @@ pub(crate) enum SpawnChildError {
     #[error("failed to spawn child binary '{path}': {source}")]
     SpawnInvoke {
         path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("spawned child process {child_pid} disappeared before its identity was captured")]
+    ChildDisappeared { child_pid: u32 },
+    #[error("failed to capture exact identity for spawned child process {child_pid}: {source}")]
+    CaptureIncarnation {
+        child_pid: u32,
+        source: std::io::Error,
+    },
+    #[error("failed to publish child spawn barrier '{path}': {source}")]
+    PublishBarrier {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error(
+        "failed to terminate and reap child process {child_pid} after spawn failure ({detail}): {source}"
+    )]
+    CleanupSpawn {
+        child_pid: u32,
+        detail: String,
         source: std::io::Error,
     },
     #[error("invalid child process stream path '{path}'")]
@@ -499,6 +585,7 @@ impl Intervention<C3, C4> for SpawnChild {
                     child_argv.clone(),
                     parent_pid,
                     None,
+                    None,
                     streams.clone(),
                     None,
                 ))
@@ -529,6 +616,21 @@ impl Intervention<C3, C4> for SpawnChild {
             })
         })?;
         let child_pid = child.id();
+        let incarnation = match process_incarnation(child_pid) {
+            Ok(Some(incarnation)) => incarnation,
+            Ok(None) => {
+                let error = SpawnChildError::ChildDisappeared { child_pid };
+                return Err(CommitError::Transition(cleanup_spawn_error(
+                    &mut child, error,
+                )));
+            }
+            Err(source) => {
+                let error = SpawnChildError::CaptureIncarnation { child_pid, source };
+                return Err(CommitError::Transition(cleanup_spawn_error(
+                    &mut child, error,
+                )));
+            }
+        };
         debug!(
             target: ploke_core::EXECUTION_DEBUG_TARGET,
             node_id = %from.node.node_id,
@@ -539,23 +641,43 @@ impl Intervention<C3, C4> for SpawnChild {
             "spawned child runtime"
         );
 
-        handoff
-            .with_txn(|txn| {
-                txn.record_spawned(spawn_entry(
-                    &from,
-                    self.runtime_id,
-                    SpawnPhase::Spawned,
-                    child_argv.clone(),
-                    parent_pid,
-                    Some(child_pid),
-                    streams.clone(),
-                    None,
-                ))
-            })
-            .map_err(|source| CommitError::Record {
+        let spawned = handoff.with_txn(|txn| {
+            txn.record_spawned(spawn_entry(
+                &from,
+                self.runtime_id,
+                SpawnPhase::Spawned,
+                child_argv.clone(),
+                parent_pid,
+                Some(child_pid),
+                Some(incarnation.clone()),
+                streams.clone(),
+                None,
+            ))
+        });
+        if let Err(source) = spawned {
+            let detail = format!("failed to publish Spawned journal entry: {source}");
+            if let Err(cleanup) = terminate_spawned_child(&mut child) {
+                return Err(CommitError::Transition(SpawnChildError::CleanupSpawn {
+                    child_pid,
+                    detail,
+                    source: cleanup,
+                }));
+            }
+            return Err(CommitError::Record {
                 phase: crate::intervention::CommitPhase::Before,
                 source,
-            })?;
+            });
+        }
+        let barrier_path = spawn_barrier_path(&invocation_path);
+        if let Err(source) = publish_spawn_barrier(&barrier_path, &incarnation) {
+            let error = SpawnChildError::PublishBarrier {
+                path: barrier_path,
+                source,
+            };
+            return Err(CommitError::Transition(cleanup_spawn_error(
+                &mut child, error,
+            )));
+        }
 
         let parent_channel = invocation
             .channel_endpoints()
@@ -599,6 +721,7 @@ impl Intervention<C3, C4> for SpawnChild {
                             child_argv.clone(),
                             parent_pid,
                             Some(child_pid),
+                            Some(incarnation.clone()),
                             streams.clone(),
                             Some(SpawnObservation::Acknowledged),
                         ))
@@ -661,6 +784,7 @@ impl Intervention<C3, C4> for SpawnChild {
                             child_argv.clone(),
                             parent_pid,
                             Some(child_pid),
+                            Some(incarnation),
                             streams.clone(),
                             Some(rejected.spawn_result()),
                         ))
@@ -845,6 +969,18 @@ mod tests {
         let pid = parts.next().expect("pid");
         let pgid = parts.next().expect("pgid");
         assert_eq!(pid, pgid);
+    }
+
+    #[test]
+    fn terminate_spawned_child_reaps_process_group() {
+        let mut command = ProcessCommand::new("sh");
+        command.arg("-c").arg("while :; do sleep 1; done");
+        isolate_process_group(&mut command);
+        let mut child = command.spawn().expect("spawn child stand-in");
+
+        terminate_spawned_child(&mut child).expect("terminate spawned child");
+
+        assert!(child.try_wait().expect("inspect reaped child").is_some());
     }
 
     #[test]

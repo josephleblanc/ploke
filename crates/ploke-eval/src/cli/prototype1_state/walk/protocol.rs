@@ -5,66 +5,104 @@
 //! enough for the server to construct the real `Prototype1StateCommand` before
 //! entering `R0`.
 
-use std::path::PathBuf;
+use std::{fmt, path::PathBuf, str::FromStr};
 
 use ploke_records::ids::CampaignId;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::cli::{
-    InspectOutputFormat, Prototype1CandidateGenerator, Prototype1StateCommand,
-    Prototype1StateStopAfter, Prototype1StateWalkAuditScope, Prototype1StateWalkAuditTransition,
-    Prototype1StateWalkLlmStepSource, Prototype1SuccessorSelection, Prototype1TraversalMetrics,
+    Prototype1StateWalkAuditScope, Prototype1StateWalkAuditTransition,
+    Prototype1StateWalkLlmStepSource,
+    prototype1_state::{
+        driver::control::RecoveryDirective,
+        session::{Cursor, SessionId},
+    },
 };
 
 use super::{audit::WalkAuditReport, epoch::ServerEpoch, phase::WalkPhase};
 
-/// Serializable form of the arguments needed to create `typestate::R0`.
-///
-/// This is not a second source of command semantics: `into_state_command`
-/// immediately rebuilds the existing `Prototype1StateCommand`, and all later
-/// transitions use `live_edges`.
+/// Serializable identity needed to attach to a setup-derived session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct WalkStartConfig {
     pub(crate) campaign: Option<CampaignId>,
-    pub(crate) node_id: Option<String>,
     pub(crate) repo_root: Option<PathBuf>,
-    pub(crate) init_parent_identity: bool,
-    pub(crate) identity_branch: Option<String>,
-    pub(crate) identity_instance: Option<String>,
-    pub(crate) handoff_invocation: Option<PathBuf>,
-    pub(crate) stop_after: Prototype1StateStopAfter,
-    pub(crate) successor_selection: Prototype1SuccessorSelection,
-    pub(crate) successor_selection_seed: u64,
-    pub(crate) successor_selection_metrics: Prototype1TraversalMetrics,
-    pub(crate) candidate_generator: Prototype1CandidateGenerator,
-    pub(crate) format: InspectOutputFormat,
 }
 
-impl WalkStartConfig {
-    /// Rehydrate the existing live command type consumed by `typestate::R0`.
-    pub(crate) fn into_state_command(self) -> Prototype1StateCommand {
-        Prototype1StateCommand {
-            campaign: self.campaign,
-            node_id: self.node_id,
-            repo_root: self.repo_root,
-            init_parent_identity: self.init_parent_identity,
-            identity_branch: self.identity_branch,
-            identity_instance: self.identity_instance,
-            handoff_invocation: self.handoff_invocation,
-            stop_after: self.stop_after,
-            successor_selection: self.successor_selection,
-            successor_selection_seed: self.successor_selection_seed,
-            successor_selection_metrics: self.successor_selection_metrics,
-            candidate_generator: self.candidate_generator,
-            format: self.format,
+/// Client-selected identity for one semantic walk mutation.
+///
+/// This is distinct from the server-local numeric job id and from typestate
+/// transition ids. A client may deliberately reuse it to attach to the exact
+/// same accepted request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub(crate) struct OperationId(Uuid);
+
+impl OperationId {
+    pub(crate) fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn for_test(value: u128) -> Self {
+        Self(Uuid::from_u128(value))
+    }
+}
+
+impl fmt::Display for OperationId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl FromStr for OperationId {
+    type Err = uuid::Error;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Uuid::parse_str(value).map(Self)
+    }
+}
+
+/// Exact durable controller-session position observed by a client.
+///
+/// `Cursor` already owns the phase/evidence relationship, so the socket
+/// protocol does not flatten or duplicate those fields.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SessionVersion {
+    pub(crate) session_id: Option<SessionId>,
+    pub(crate) cursor: Option<Cursor>,
+    pub(crate) journal_revision: usize,
+}
+
+impl SessionVersion {
+    pub(crate) const fn empty() -> Self {
+        Self {
+            session_id: None,
+            cursor: None,
+            journal_revision: 0,
         }
     }
+
+    pub(crate) fn phase(&self) -> WalkPhase {
+        self.cursor
+            .as_ref()
+            .map_or(WalkPhase::Empty, |cursor| cursor.phase)
+    }
+}
+
+/// Admission envelope for a live socket mutation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct MutationGuard {
+    pub(crate) operation: OperationId,
+    pub(crate) expected: SessionVersion,
 }
 
 /// One framed client-to-server request.
 ///
-/// Mutating requests include `client_epoch`; read-only requests may omit it so
-/// stale servers remain inspectable and stoppable.
+/// Mutating requests include a freshly captured `client_epoch`; read-only
+/// requests may omit it so stale servers remain inspectable. `Stop` also binds
+/// shutdown to the caller's selected repository rather than trusting an
+/// explicitly supplied socket as repository authority.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct WalkRequest {
     pub(crate) client_epoch: Option<ServerEpoch>,
@@ -77,26 +115,47 @@ pub(crate) struct WalkRequest {
 pub(crate) enum WalkRequestBody {
     /// Probe liveness and receive the current phase without mutating state.
     Health,
-    /// Create a fresh in-memory walk and advance until an admitted target phase.
+    /// Attach to the durable controller session and optionally advance.
     Start {
-        /// Captured command arguments for the new walk.
+        /// Idempotency and exact durable-session admission guard.
+        guard: MutationGuard,
+        /// Session coordinate selected by the client.
         config: WalkStartConfig,
-        /// Phase to stop at after creating `R0`.
+        /// Phase to stop at after attaching.
         until: WalkPhase,
+        /// Admit typestate edges that call a configured live provider.
+        #[serde(default)]
+        allow_live_api: bool,
     },
     /// Advance the existing in-memory walk.
     Step {
+        /// Idempotency and exact durable-session admission guard.
+        guard: MutationGuard,
         /// If present, advance repeatedly until this phase; otherwise one step.
         until: Option<WalkPhase>,
         /// Ask the short-lived client to follow the accepted server job.
         #[serde(default)]
         watch: bool,
+        /// Admit typestate edges that call a configured live provider.
+        #[serde(default)]
+        allow_live_api: bool,
         /// Admit typed edges that mutate the active checkout during handoff.
         #[serde(default)]
         allow_git_changes: bool,
     },
     /// Clear the in-memory walk while keeping the server process alive.
-    Reset,
+    Reset {
+        /// Idempotency and exact durable-session admission guard.
+        guard: MutationGuard,
+    },
+    /// Inspect or explicitly resolve one exact durable recovery cause.
+    Recover {
+        /// Resolution to inspect or apply.
+        directive: RecoveryDirective,
+        /// Required for a mutating resolution and forbidden for inspection.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        guard: Option<MutationGuard>,
+    },
     /// Print tracked output files produced or touched by the current walk.
     Files,
     /// Inspect current phase and summary without mutating state.
@@ -325,12 +384,15 @@ impl WalkJobStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct WalkJobSnapshot {
     pub(crate) job_id: u64,
+    pub(crate) operation_id: OperationId,
+    pub(crate) expected: SessionVersion,
     pub(crate) command: String,
     pub(crate) status: WalkJobStatus,
     pub(crate) phase_before: WalkPhase,
     pub(crate) phase_after: Option<WalkPhase>,
     pub(crate) target_phase: Option<WalkPhase>,
     pub(crate) watch: Option<bool>,
+    pub(crate) allow_live_api: Option<bool>,
     pub(crate) allow_git_changes: Option<bool>,
     pub(crate) started_at: String,
     pub(crate) updated_at: String,
@@ -382,6 +444,8 @@ pub(crate) enum WalkResponse {
         message: String,
         /// Active or most recent live command job, if one exists.
         job: Option<WalkJobSnapshot>,
+        /// Exact durable controller-session position read without controller ownership.
+        version: SessionVersion,
         /// Server freshness identity.
         epoch: ServerEpoch,
     },
@@ -393,6 +457,9 @@ pub(crate) enum WalkResponse {
         detail: String,
         /// Best known phase when the error was produced.
         phase: Option<WalkPhase>,
+        /// Current durable session position for typed admission conflicts.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        version: Option<SessionVersion>,
         /// Server freshness identity.
         epoch: ServerEpoch,
     },
@@ -437,12 +504,14 @@ impl WalkResponse {
         phase: WalkPhase,
         message: impl Into<String>,
         job: Option<WalkJobSnapshot>,
+        version: SessionVersion,
         epoch: ServerEpoch,
     ) -> Self {
         Self::Status {
             phase,
             message: message.into(),
             job,
+            version,
             epoch,
         }
     }
@@ -458,6 +527,23 @@ impl WalkResponse {
             code: code.into(),
             detail: detail.into(),
             phase,
+            version: None,
+            epoch,
+        }
+    }
+
+    /// Build a typed admission conflict with the actual durable session version.
+    pub(crate) fn conflict(
+        code: impl Into<String>,
+        detail: impl Into<String>,
+        version: SessionVersion,
+        epoch: ServerEpoch,
+    ) -> Self {
+        Self::Error {
+            code: code.into(),
+            detail: detail.into(),
+            phase: Some(version.phase()),
+            version: Some(version),
             epoch,
         }
     }
