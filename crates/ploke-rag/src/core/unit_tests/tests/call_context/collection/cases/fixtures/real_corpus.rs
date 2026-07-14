@@ -859,6 +859,40 @@ async fn call_context_collection_reads_chrono_strftime_queue_slice_frontier() ->
             .all(|edge| edge.call_site_id != call.site_id)),
         "RAG reach must not fabricate a traversal edge for the external slice method: {reach:#?}"
     );
+    let projected = db.project_call_proof_facts_for_node(owner, "bd:corpus-chrono-call-graph")?;
+    assert!(
+        projected >= 2,
+        "chrono shared-matrix owner should project node-scoped call proof rows: {projected}"
+    );
+    let needs = rag
+        .exact_external_summary_needs_for_owner(
+            owner,
+            CallPathOptions {
+                max_depth: 2,
+                max_paths: 64,
+            },
+        )?
+        .expect("call context enabled");
+    let need = needs
+        .iter()
+        .find(|need| need.call_site.site_id == call.site_id)
+        .unwrap_or_else(|| {
+            panic!(
+                "RAG external-summary needs should preserve the guarded slice `is_empty` frontier: {needs:#?}"
+            )
+        });
+    assert_eq!(need.call_site.owner_id, owner);
+    assert_eq!(need.call_site.status, CallStatusKind::External);
+    assert!(
+        need.call_site.targets.is_empty(),
+        "RAG external-summary need should keep chrono queue.is_empty targetless: {need:#?}"
+    );
+    assert!(
+        need.blocker_reasons
+            .iter()
+            .any(|reason| reason == "external_dependency_summary_missing"),
+        "RAG external-summary need should preserve the missing-summary blocker: {need:#?}"
+    );
 
     Ok(())
 }

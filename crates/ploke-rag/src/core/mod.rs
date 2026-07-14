@@ -579,19 +579,26 @@ fn reach_effect_info(
 }
 
 fn external_summary_need_info(
-    db: &Database,
     row: DbExternalSummaryNeed,
+    node_cache: &BTreeMap<Uuid, CallPathNodeInfo>,
 ) -> Result<ExternalSummaryNeedInfo, RagError> {
-    let paths_to_owner = row
-        .paths_to_owner
-        .into_iter()
-        .map(|path| path_info(db, path))
-        .collect::<Result<Vec<_>, RagError>>()?;
+    let paths_to_owner = cached_path_infos(row.paths_to_owner, node_cache);
     Ok(ExternalSummaryNeedInfo {
         paths_to_owner,
         call_site: row_to_call_context(row.call_site, usize::MAX)?,
         blocker_reasons: row.blocker_reasons,
     })
+}
+
+fn external_summary_need_infos(
+    db: &Database,
+    rows: Vec<DbExternalSummaryNeed>,
+) -> Result<Vec<ExternalSummaryNeedInfo>, RagError> {
+    let node_cache =
+        path_node_cache_for_paths(db, rows.iter().flat_map(|row| row.paths_to_owner.iter()))?;
+    rows.into_iter()
+        .map(|row| external_summary_need_info(row, &node_cache))
+        .collect()
 }
 
 fn runtime_dispatch_need_info(
@@ -809,8 +816,15 @@ fn path_node_cache(
     db: &Database,
     paths: &[DbCallPath],
 ) -> Result<BTreeMap<Uuid, CallPathNodeInfo>, RagError> {
+    path_node_cache_for_paths(db, paths)
+}
+
+fn path_node_cache_for_paths<'a>(
+    db: &Database,
+    paths: impl IntoIterator<Item = &'a DbCallPath>,
+) -> Result<BTreeMap<Uuid, CallPathNodeInfo>, RagError> {
     let ids = paths
-        .iter()
+        .into_iter()
         .flat_map(path_node_ids)
         .collect::<BTreeSet<_>>();
     let cache = db
@@ -829,6 +843,19 @@ fn path_node_cache(
         })
         .collect::<BTreeMap<_, _>>();
     Ok(cache)
+}
+
+fn cached_path_infos(
+    paths: Vec<DbCallPath>,
+    node_cache: &BTreeMap<Uuid, CallPathNodeInfo>,
+) -> Vec<CallPathInfo> {
+    paths
+        .into_iter()
+        .map(|path| {
+            let nodes = cached_path_nodes(&path, node_cache);
+            path_info_with_nodes(path, nodes)
+        })
+        .collect()
 }
 
 fn cached_path_nodes(
@@ -1344,13 +1371,11 @@ impl RagService {
             return Ok(None);
         }
 
-        Ok(Some(
+        Ok(Some(external_summary_need_infos(
+            self.db.as_ref(),
             self.db
-                .external_summary_needs_for_owner(owner_id, options)?
-                .into_iter()
-                .map(|row| external_summary_need_info(self.db.as_ref(), row))
-                .collect::<Result<Vec<_>, RagError>>()?,
-        ))
+                .external_summary_needs_for_owner(owner_id, options)?,
+        )?))
     }
 
     pub fn exact_runtime_dispatch_needs_for_owner(
