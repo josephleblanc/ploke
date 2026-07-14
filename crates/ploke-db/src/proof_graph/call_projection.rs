@@ -97,7 +97,22 @@ impl Database {
                 ),
                 "evidence_use": "proof_only"
             }))),
+            "ReturnedPathCall" => Ok(Some(serde_json::json!({
+                "fact_kind": "proof_blocker",
+                "schema_version": PROOF_FACT_SCHEMA_VERSION,
+                "blocker_id": format!("blocker:returned-callable-poll-resume:{}", row.site.id),
+                "reason": "dynamic_dispatch_unbounded",
+                "status": "blocked",
+                "call_site_id": row.site.id.to_string(),
+                "detail": format!(
+                    "{} invokes callable returned by {} without proof that the returned future is polled at this call boundary; traversal remains targetless until async poll/resume proof is modeled",
+                    row.site.owner_id,
+                    evidence.path.join("::")
+                ),
+                "evidence_use": "proof_only"
+            }))),
             "AwaitedAsyncClosureBinding" => Ok(None),
+            "AwaitedReturnedPathCall" => Ok(None),
             other => Err(DbError::Cozo(format!(
                 "unknown call_callee_evidence kind {other:?} for call site {}",
                 row.site.id

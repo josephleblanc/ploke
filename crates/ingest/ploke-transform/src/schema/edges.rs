@@ -931,19 +931,27 @@ fn call_callee_evidence_params(call_site: &CallNode) -> Option<BTreeMap<String, 
     let (kind, path, closure_id) = match call_site {
         CallNode::PathCall(call) => match &call.callee {
             PathCallCallee::AsyncClosureBinding { path, closure_id } => {
-                ("AsyncClosureBinding", path, closure_id)
+                ("AsyncClosureBinding", path, Some(closure_id))
             }
             PathCallCallee::AwaitedAsyncClosureBinding { path, closure_id } => {
-                ("AwaitedAsyncClosureBinding", path, closure_id)
+                ("AwaitedAsyncClosureBinding", path, Some(closure_id))
             }
             _ => return None,
         },
         CallNode::DynamicCall(call) => match &call.callee {
             DynamicCallCallee::AsyncClosureBinding { path, closure_id } => {
-                ("AsyncClosureBinding", path, closure_id)
+                ("AsyncClosureBinding", path, Some(closure_id))
             }
             DynamicCallCallee::AwaitedAsyncClosureBinding { path, closure_id } => {
-                ("AwaitedAsyncClosureBinding", path, closure_id)
+                ("AwaitedAsyncClosureBinding", path, Some(closure_id))
+            }
+            DynamicCallCallee::ReturnedPathCall { path, is_awaited } => {
+                let kind = if *is_awaited {
+                    "AwaitedReturnedPathCall"
+                } else {
+                    "ReturnedPathCall"
+                };
+                (kind, path, None)
             }
             _ => return None,
         },
@@ -961,7 +969,10 @@ fn call_callee_evidence_params(call_site: &CallNode) -> Option<BTreeMap<String, 
         ),
         ("callee_kind".to_string(), cozo::DataValue::from(kind)),
         ("callee_path".to_string(), string_list(path)),
-        ("closure_id".to_string(), closure_id.to_cozo_uuid()),
+        (
+            "closure_id".to_string(),
+            closure_id.map_or(cozo::DataValue::Null, |id| id.to_cozo_uuid()),
+        ),
     ]))
 }
 

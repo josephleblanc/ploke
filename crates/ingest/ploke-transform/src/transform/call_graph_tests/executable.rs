@@ -187,12 +187,56 @@ fn test_call_graph_projection_for_async_closure_callee_evidence()
                 }
             })
             .unwrap_or_else(|| panic!("{owner_name} should expose closure() callee evidence"));
-        expected.push((site.to_cozo_uuid(), kind, closure.to_cozo_uuid()));
+        expected.push((
+            site.to_cozo_uuid(),
+            "Path",
+            kind,
+            vec!["closure"],
+            closure.to_cozo_uuid(),
+        ));
     }
+
+    let returned_owner = merged
+        .functions()
+        .iter()
+        .find(|function| function.name == "make_forwarded_returned_async_future")
+        .map(|function| function.id)
+        .expect("fixture_call_graph should define make_forwarded_returned_async_future");
+    let returned_path = vec!["make_returned_async_closure"];
+    let returned_site = merged
+        .call_sites()
+        .iter()
+        .find_map(|call| {
+            let CallNode::DynamicCall(call) = call else {
+                return None;
+            };
+            let DynamicCallCallee::ReturnedPathCall { path, is_awaited } = &call.callee else {
+                return None;
+            };
+            if call.owner == CallBodyOwnerId::Function(returned_owner)
+                && !*is_awaited
+                && path
+                    .iter()
+                    .map(String::as_str)
+                    .eq(returned_path.iter().copied())
+            {
+                Some(call.id)
+            } else {
+                None
+            }
+        })
+        .expect("make_forwarded_returned_async_future should expose returned-path callee evidence");
+    expected.push((
+        returned_site.to_cozo_uuid(),
+        "Dynamic",
+        "ReturnedPathCall",
+        returned_path,
+        DataValue::Null,
+    ));
 
     transform_parsed_graph(&db, merged, &tree)?;
 
-    for (site, kind, closure) in expected {
+    for (site, source_kind, kind, path, closure_id) in expected {
         let mut params = BTreeMap::new();
         params.insert("site_id".to_string(), site.clone());
         let rows = db.run_script(
@@ -213,13 +257,13 @@ fn test_call_graph_projection_for_async_closure_callee_evidence()
             1,
             "expected one persisted {kind} call_callee_evidence row"
         );
-        assert_eq!(&rows.rows[0][1], &DataValue::from("Path"));
+        assert_eq!(&rows.rows[0][1], &DataValue::from(source_kind));
         assert_eq!(&rows.rows[0][2], &DataValue::from(kind));
         assert_eq!(
             &rows.rows[0][3],
-            &DataValue::List(vec![DataValue::from("closure")])
+            &DataValue::List(path.iter().map(|part| DataValue::from(*part)).collect())
         );
-        assert_eq!(&rows.rows[0][4], &closure);
+        assert_eq!(&rows.rows[0][4], &closure_id);
     }
 
     Ok(())

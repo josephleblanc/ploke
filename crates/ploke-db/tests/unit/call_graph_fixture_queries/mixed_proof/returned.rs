@@ -357,7 +357,12 @@ fn fixture_projection_stores_awaited_returned_async_closure_edge_only_when_polle
     );
     let no_await_count =
         db.project_call_proof_facts_for_owner(no_await_owner, "bd:fixture-call-graph")?;
-    assert_eq!(no_await_count, 5);
+    assert_eq!(no_await_count, 6);
+    assert_returned_path_poll_resume_blocker(
+        &db,
+        no_await_dynamic,
+        "un-awaited returned async closure",
+    )?;
 
     let mut expected = vec![OwnerProofEdge {
         owner: no_await_owner,
@@ -451,6 +456,9 @@ fn fixture_projection_keeps_forwarded_returned_async_future_fail_closed() -> Res
         relations_for_site(&db, dynamic.site.id)?.rows.is_empty(),
         "non-local returned async future flow must not persist a call edge"
     );
+    let count = db.project_call_proof_facts_for_owner(producer, "bd:fixture-call-graph")?;
+    assert_eq!(count, 6, "forwarded returned async future proof facts");
+    assert_returned_path_poll_resume_blocker(&db, dynamic, "forwarded returned async future")?;
 
     let producer_paths = db.call_paths_between(
         owner,
@@ -480,6 +488,37 @@ fn fixture_projection_keeps_forwarded_returned_async_future_fail_closed() -> Res
     assert!(
         local_target_paths.is_empty(),
         "non-local returned async future flow should remain fail-closed until a typed future-flow carrier exists: {local_target_paths:#?}"
+    );
+
+    Ok(())
+}
+
+fn assert_returned_path_poll_resume_blocker(
+    db: &ploke_db::Database,
+    row: &CallContextRow,
+    label: &str,
+) -> Result<(), DbError> {
+    let site = row.site.id.to_string();
+    let blockers = db.proof_blockers()?;
+    assert!(
+        blockers.iter().any(|proof| {
+            proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.reason == "dynamic_dispatch_unbounded"
+                && proof.status == "blocked"
+                && proof.detail.contains("returned future")
+                && proof.detail.contains("async poll/resume proof")
+        }),
+        "{label} should expose a returned-future poll/resume proof blocker: {blockers:#?}"
+    );
+
+    let proof_rows = db.proof_graphrag_context("dynamic_dispatch_unbounded")?;
+    assert!(
+        proof_rows.iter().any(|proof| {
+            proof.kind == "proof_blocker"
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.blocker_reason.as_deref() == Some("dynamic_dispatch_unbounded")
+        }),
+        "{label} GraphRAG proof context should expose the returned-future blocker: {proof_rows:#?}"
     );
 
     Ok(())
