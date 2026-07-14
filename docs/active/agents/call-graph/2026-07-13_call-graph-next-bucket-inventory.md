@@ -70,6 +70,28 @@ Next bucket rule: pick one row below only when there is a fresh proof input and
 a DB-first assertion. Do not add another fixture-only breadth slice for shapes
 already listed as covered in the goal coverage matrix.
 
+Post-regeneration checkpoint, 2026-07-13:
+
+- Active call-graph fixtures were regenerated and backup DB verification passed
+  with no tracked fixture DB diff to commit.
+- Current bucket: async poll/resume and future value flow.
+- Exit criteria: the next code slice must introduce a typed future-flow proof
+  carrier over a reviewed source oracle, or an explicit blocker/summary for a
+  reviewed non-local future-flow row. The DB assertion comes first, and no
+  local traversal edge is admitted unless the producer future and poll point are
+  both identified.
+- Status: same-block async closure future bindings, aliases, tuple/named/indexed
+  aggregate storage, directly awaited returned async closures, and same-block
+  stored returned async closures are already covered. The remaining useful
+  source shapes are non-local flow, forwarded returned futures, stored returned
+  futures inside broader aggregates, async callable trait objects, and general
+  poll/resume.
+- Next bucket if this does not produce a concrete source oracle: generated or
+  macro-expanded source bodies with a bounded real-corpus template.
+- Reason to stay in this bucket: it is the first remaining row in the matrix
+  that names a genuine missing proof carrier rather than another same-family
+  fixture variant.
+
 ## Remaining Candidate Buckets
 
 | Bucket | Current state | Entry criterion for implementation | First proof target |
