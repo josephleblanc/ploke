@@ -4257,14 +4257,12 @@ async fn runtime_dispatch_needs_exact_reads_axum_dyn_future_poll_queue() -> Resu
     db.project_call_proof_facts_for_owner(owner, domain_id)?;
     db.upsert_proof_fact_values(&[ploke_test_utils::axum_dyn_future_poll_blocker(poll.site.id)])?;
 
+    let options = CallPathOptions {
+        max_depth: 1,
+        max_paths: 16,
+    };
     let needs = rag
-        .exact_runtime_dispatch_needs_for_owner(
-            owner,
-            CallPathOptions {
-                max_depth: 1,
-                max_paths: 16,
-            },
-        )?
+        .exact_runtime_dispatch_needs_for_owner(owner, options)?
         .expect("call context enabled");
     let need = needs
         .iter()
@@ -4293,6 +4291,30 @@ async fn runtime_dispatch_needs_exact_reads_axum_dyn_future_poll_queue() -> Resu
             } if name == "poll"
         ),
         "RAG need should preserve the unsupported dyn Future::poll receiver payload: {need:#?}"
+    );
+
+    db.upsert_proof_fact_values(&[
+        ploke_test_utils::axum_dyn_future_poll_runtime_dispatch_summary(poll.site.id),
+    ])?;
+    let after = rag
+        .exact_runtime_dispatch_needs_for_owner(owner, options)?
+        .expect("call context enabled");
+    assert!(
+        after
+            .iter()
+            .all(|need| need.call_site.site_id != poll.site.id),
+        "admitted dyn Future::poll runtime-dispatch summary should remove the exact RAG authoring need: {after:#?}"
+    );
+    let context_after = db.call_context_for_owner(owner)?;
+    let poll_after = context_after
+        .iter()
+        .find(|row| row.site.id == poll.site.id)
+        .unwrap_or_else(|| {
+            panic!("dyn Future::poll row should remain visible after summary: {context_after:#?}")
+        });
+    assert!(
+        poll_after.targets.is_empty(),
+        "summary admission must not fabricate a local dyn Future::poll edge: {poll_after:#?}"
     );
 
     Ok(())

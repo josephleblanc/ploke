@@ -50,6 +50,17 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
+Latest completed slice: axum dyn `Future::poll` runtime-dispatch summary
+proof-authority. The real-corpus source oracle is
+`axum/src/error_handling/mod.rs:251`, where `HandleErrorFuture::poll` calls
+`self.project().future.poll(cx)` through a boxed dyn future. The DB usage
+question now proves the unsupported receiver row remains targetless and
+edge-free, appears as an owner-scoped `dynamic_dispatch_unbounded` need after
+the blocker is inserted, and disappears from that authoring queue after an
+admitted runtime-dispatch summary. Exact RAG and exact `code_item_lookup` /
+`code_item_edges` payloads preserve the same before/after state. This is not
+async poll/resume traversal and does not infer the concrete runtime future.
+
 Latest completed slice: memchr boxed `dyn FnMut` runtime-dispatch summary
 proof-authority. The real-corpus source oracle is
 `memchr/src/tests/substring/mod.rs:94,110`, where `Runner::run` calls the

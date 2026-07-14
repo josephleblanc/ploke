@@ -2672,6 +2672,27 @@ fn axum_usage_questions_list_runtime_dispatch_needs_for_owner() -> Result<(), Db
         "runtime-dispatch proof queue must not fabricate a dyn Future::poll edge"
     );
 
+    db.upsert_proof_fact_values(&[
+        ploke_test_utils::axum_dyn_future_poll_runtime_dispatch_summary(poll.site.id),
+    ])?;
+    let after = db.runtime_dispatch_needs_for_owner(
+        owner,
+        CallPathOptions {
+            max_depth: 1,
+            max_paths: 16,
+        },
+    )?;
+    assert!(
+        after
+            .iter()
+            .all(|need| need.call_site.site.id != poll.site.id),
+        "admitted dyn Future::poll runtime-dispatch summary should discharge the proof-authoring need: {after:#?}"
+    );
+    assert!(
+        relations_for_site(&db, poll.site.id)?.rows.is_empty(),
+        "admitted dyn Future::poll runtime-dispatch summary must not fabricate a local edge"
+    );
+
     Ok(())
 }
 

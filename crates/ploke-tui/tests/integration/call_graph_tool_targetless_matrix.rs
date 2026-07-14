@@ -511,9 +511,10 @@ async fn code_item_lookup_returns_unsupported_receiver_targetless_real_corpus_ro
             allowed_effects: Vec::new(),
         };
 
-        let result = CodeItemLookup::execute(params, fixture.ctx("axum-request-parts-lookup"))
-            .await
-            .unwrap_or_else(|err| panic!("{} code_item_lookup: {err}", fixture.case.label));
+        let result =
+            CodeItemLookup::execute(params.clone(), fixture.ctx("axum-request-parts-lookup"))
+                .await
+                .unwrap_or_else(|err| panic!("{} code_item_lookup: {err}", fixture.case.label));
         let payload: serde_json::Value =
             serde_json::from_str(&result.content).expect("deserialize ConciseContext");
         let call_context = payload
@@ -592,6 +593,54 @@ async fn code_item_lookup_returns_unsupported_receiver_targetless_real_corpus_ro
                     "lookup",
                 );
                 assert_runtime_dispatch_need(runtime_needs, site_id, fixture.case.label, "lookup");
+                fixture
+                    .state
+                    .db
+                    .upsert_proof_fact_values(&[
+                        ploke_test_utils::axum_dyn_future_poll_runtime_dispatch_summary(site_id),
+                    ])
+                    .unwrap_or_else(|err| {
+                        panic!(
+                            "{} runtime dispatch summary insert: {err}",
+                            fixture.case.label
+                        )
+                    });
+
+                let after = CodeItemLookup::execute(
+                    params,
+                    fixture.ctx("axum-future-poll-summary-after-lookup"),
+                )
+                .await
+                .unwrap_or_else(|err| {
+                    panic!("{} summary code_item_lookup: {err}", fixture.case.label)
+                });
+                let payload: serde_json::Value =
+                    serde_json::from_str(&after.content).expect("deserialize ConciseContext");
+                let call_context = payload
+                    .get("call_context")
+                    .and_then(serde_json::Value::as_array)
+                    .expect("call_context array");
+                let runtime_needs = payload
+                    .get("runtime_dispatch_needs")
+                    .and_then(serde_json::Value::as_array)
+                    .expect("runtime_dispatch_needs array");
+                assert_method_context(
+                    call_context,
+                    fixture.owner,
+                    &callee,
+                    &fixture.case.status,
+                    fixture.case.generic_arg_count,
+                    fixture.case.label,
+                    "lookup",
+                );
+                assert_no_runtime_dispatch_need(
+                    runtime_needs,
+                    site_id,
+                    fixture.case.label,
+                    "lookup",
+                );
+                let ui = after.ui_payload.as_ref().expect("ui payload");
+                assert_eq!(ui_field(ui, "runtime_dispatch_needs"), "0");
             }
         }
 
@@ -1554,9 +1603,10 @@ async fn code_item_edges_returns_unsupported_receiver_targetless_real_corpus_row
             allowed_effects: Vec::new(),
         };
 
-        let result = CodeItemEdges::execute(params, fixture.ctx("axum-request-parts-edges"))
-            .await
-            .unwrap_or_else(|err| panic!("{} code_item_edges: {err}", fixture.case.label));
+        let result =
+            CodeItemEdges::execute(params.clone(), fixture.ctx("axum-request-parts-edges"))
+                .await
+                .unwrap_or_else(|err| panic!("{} code_item_edges: {err}", fixture.case.label));
         let payload: serde_json::Value =
             serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
         let call_context = payload
@@ -1623,6 +1673,56 @@ async fn code_item_edges_returns_unsupported_receiver_targetless_real_corpus_row
                     "edges",
                 );
                 assert_runtime_dispatch_need(runtime_needs, site_id, fixture.case.label, "edges");
+                fixture
+                    .state
+                    .db
+                    .upsert_proof_fact_values(&[
+                        ploke_test_utils::axum_dyn_future_poll_runtime_dispatch_summary(site_id),
+                    ])
+                    .unwrap_or_else(|err| {
+                        panic!(
+                            "{} runtime dispatch summary insert: {err}",
+                            fixture.case.label
+                        )
+                    });
+
+                let after = CodeItemEdges::execute(
+                    params,
+                    fixture.ctx("axum-future-poll-summary-after-edges"),
+                )
+                .await
+                .unwrap_or_else(|err| {
+                    panic!("{} summary code_item_edges: {err}", fixture.case.label)
+                });
+                let payload: serde_json::Value =
+                    serde_json::from_str(&after.content).expect("deserialize NodeEdgeInfo");
+                let call_context = payload
+                    .get("node_info")
+                    .and_then(|node| node.get("call_context"))
+                    .and_then(serde_json::Value::as_array)
+                    .expect("node_info.call_context array");
+                let runtime_needs = payload
+                    .get("node_info")
+                    .and_then(|node| node.get("runtime_dispatch_needs"))
+                    .and_then(serde_json::Value::as_array)
+                    .expect("node_info.runtime_dispatch_needs array");
+                assert_method_context(
+                    call_context,
+                    fixture.owner,
+                    &callee,
+                    &fixture.case.status,
+                    fixture.case.generic_arg_count,
+                    fixture.case.label,
+                    "edges",
+                );
+                assert_no_runtime_dispatch_need(
+                    runtime_needs,
+                    site_id,
+                    fixture.case.label,
+                    "edges",
+                );
+                let ui = after.ui_payload.as_ref().expect("ui payload");
+                assert_eq!(ui_field(ui, "runtime_dispatch_needs"), "0");
             }
         }
 
