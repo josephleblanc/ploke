@@ -11,6 +11,7 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
     let make_closure = unique_id_by_name(&db, "function", "make_closure")?;
     let make_bound = unique_id_by_name(&db, "function", "make_bound_closure")?;
     let make_alias = unique_id_by_name(&db, "function", "make_alias_bound_closure")?;
+    let make_returned_async = unique_id_by_name(&db, "function", "make_returned_async_closure")?;
     let returned_param_helper =
         unique_id_by_name(&db, "function", "return_forwarded_function_pointer")?;
     let returned_conflicting_helper = unique_id_by_name(
@@ -56,6 +57,14 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
     let alias_owner = one_uuid(
         &db,
         &function_in_module_query(&["crate"], "call_returned_alias_bound_closure"),
+    )?;
+    let returned_async_no_await_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_returned_async_closure_without_await"),
+    )?;
+    let returned_async_awaited_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_awaited_returned_async_closure"),
     )?;
     let branch_owner = one_uuid(
         &db,
@@ -160,6 +169,8 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
         (returned_closure_owner, 1.0),
         (bound_owner, 1.0),
         (alias_owner, 1.0),
+        (returned_async_no_await_owner, 1.0),
+        (returned_async_awaited_owner, 1.0),
         (branch_owner, 1.0),
         (block_owner, 1.0),
         (fn_param_owner, 1.0),
@@ -384,6 +395,64 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
             "outer returned-closure dynamic target should be the closure owner, not the maker function"
         );
         assert_eq!(dynamic.targets[0].relation, CallTargetKind::DynamicClosure);
+    }
+
+    for (owner, label) in [
+        (
+            returned_async_no_await_owner,
+            "un-awaited returned async closure",
+        ),
+        (
+            returned_async_awaited_owner,
+            "awaited returned async closure",
+        ),
+    ] {
+        // tests/fixture_crates/fixture_call_graph/src/lib.rs:2355-2360:
+        // both owners call the same async-closure maker, but only the awaited
+        // caller polls the returned future and may receive a DynamicClosure edge.
+        let context = call_context
+            .get(&owner)
+            .unwrap_or_else(|| panic!("{label} should receive outgoing call context"));
+        assert_eq!(context.len(), 2, "{label} context: {context:#?}");
+
+        let path = context
+            .iter()
+            .find(|call| {
+                call.kind == CallSiteKind::Path
+                    && call.callee
+                        == CallCalleeInfo::Path {
+                            path: vec!["make_returned_async_closure".to_string()],
+                        }
+            })
+            .unwrap_or_else(|| panic!("{label} should include the async closure maker path call"));
+        assert_eq!(path.status, CallStatusKind::Resolved);
+        assert_eq!(path.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(path.targets.len(), 1);
+        assert_eq!(path.targets[0].target_id, make_returned_async);
+        assert_eq!(path.targets[0].relation, CallTargetKind::Function);
+
+        let dynamic = context
+            .iter()
+            .find(|call| call.kind == CallSiteKind::Dynamic)
+            .unwrap_or_else(|| panic!("{label} should include an outer dynamic call"));
+        assert_eq!(dynamic.callee, CallCalleeInfo::Dynamic);
+        if owner == returned_async_awaited_owner {
+            assert_eq!(dynamic.status, CallStatusKind::Resolved);
+            assert_eq!(dynamic.resolution, Some(CallResolutionKind::LocalExact));
+            assert_eq!(dynamic.targets.len(), 1);
+            assert_ne!(
+                dynamic.targets[0].target_id, make_returned_async,
+                "awaited returned async closure dynamic target should be the closure owner, not the maker function"
+            );
+            assert_eq!(dynamic.targets[0].relation, CallTargetKind::DynamicClosure);
+        } else {
+            assert_eq!(dynamic.status, CallStatusKind::Unsupported);
+            assert_eq!(dynamic.resolution, None);
+            assert!(
+                dynamic.targets.is_empty(),
+                "un-awaited returned async closure must not fabricate a closure target: {dynamic:#?}"
+            );
+        }
     }
 
     let branch_context = call_context

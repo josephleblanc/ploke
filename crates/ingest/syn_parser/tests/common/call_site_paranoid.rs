@@ -382,7 +382,10 @@ pub enum ExpectedDynamicCallee<'a> {
     /// The callee expression is a path cast to a bare function pointer before being called.
     FnPointerCastPath { path: &'a [&'a str] },
     /// The callee expression is the result of calling a path.
-    ReturnedPathCall { path: &'a [&'a str] },
+    ReturnedPathCall {
+        path: &'a [&'a str],
+        is_awaited: bool,
+    },
     /// The callee expression is an initialized local binding cast to a bare function pointer.
     FnPointerCastInitializedLocalBinding {
         path: &'a [&'a str],
@@ -500,8 +503,9 @@ impl ExpectedDynamicCallee<'_> {
             Self::FnPointerCastPath { path } => DynamicCallCallee::FnPointerCastPath {
                 path: path.iter().copied().map(String::from).collect(),
             },
-            Self::ReturnedPathCall { path } => DynamicCallCallee::ReturnedPathCall {
+            Self::ReturnedPathCall { path, is_awaited } => DynamicCallCallee::ReturnedPathCall {
                 path: path.iter().copied().map(String::from).collect(),
+                is_awaited,
             },
             Self::FnPointerCastInitializedLocalBinding { path, init_path } => {
                 DynamicCallCallee::FnPointerCastInitializedLocalBinding {
@@ -1012,7 +1016,32 @@ impl<'a> ExpectedCallSite<'a> {
     ) -> Self {
         Self {
             kind: ExpectedCallKind::Dynamic {
-                callee: ExpectedDynamicCallee::ReturnedPathCall { path },
+                callee: ExpectedDynamicCallee::ReturnedPathCall {
+                    path,
+                    is_awaited: false,
+                },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for an awaited dynamic-call expectation whose callee is a returned path call.
+    pub const fn dynamic_awaited_returned_path_call(
+        path: &'a [&'a str],
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::ReturnedPathCall {
+                    path,
+                    is_awaited: true,
+                },
                 arg_count,
             },
             span,

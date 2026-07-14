@@ -110,6 +110,11 @@ const RETURNED_BOUND_CLOSURE_DYNAMIC_CALL_SPAN: (usize, usize) = (32010, 32032);
 const MAKE_ALIAS_BOUND_CLOSURE_INNER_CALL_SPAN: (usize, usize) = (32966, 32992);
 const MAKE_ALIAS_BOUND_CLOSURE_RETURNED_CLOSURE_SPAN: (usize, usize) = (32865, 32870);
 const RETURNED_ALIAS_BOUND_CLOSURE_DYNAMIC_CALL_SPAN: (usize, usize) = (32966, 32994);
+const MAKE_RETURNED_ASYNC_CLOSURE_INNER_CALL_SPAN: (usize, usize) = (56714, 56743);
+const MAKE_RETURNED_ASYNC_CLOSURE_SPAN: (usize, usize) = (56630, 56653);
+const RETURNED_ASYNC_CLOSURE_DYNAMIC_CALL_SPAN: (usize, usize) = (56714, 56745);
+const AWAITED_RETURNED_ASYNC_CLOSURE_INNER_CALL_SPAN: (usize, usize) = (56814, 56843);
+const AWAITED_RETURNED_ASYNC_CLOSURE_DYNAMIC_CALL_SPAN: (usize, usize) = (56814, 56845);
 const LOCAL_ASSOC_IMPL_SPAN: (usize, usize) = (736, 868);
 const SELF_ASSOC_MAKE_CALL_SPAN: (usize, usize) = (848, 860);
 const LOCAL_ASSOC_MAKE_CALL_SPAN: (usize, usize) = (921, 939);
@@ -4306,6 +4311,96 @@ paranoid_call_site_test!(
         ExpectedCallSite::dynamic_returned_path_call(
             &["make_alias_bound_closure"],
             RETURNED_ALIAS_BOUND_CLOSURE_DYNAMIC_CALL_SPAN,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedDynamicClosureLocalExact { target: closure },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_returned_async_closure_without_await_resolves_inner_maker_path_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_returned_async_closure_without_await"
+    },
+    expected: {
+        let target_args = fixture_call_graph_function_args(&["crate"], "make_returned_async_closure");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("make_returned_async_closure should regenerate a FunctionNodeId");
+        ExpectedCallSite::path(
+            &["make_returned_async_closure"],
+            MAKE_RETURNED_ASYNC_CLOSURE_INNER_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_returned_async_closure_without_await_fails_closed_outer_dynamic_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_returned_async_closure_without_await"
+    },
+    expected: ExpectedCallSite::dynamic_returned_path_call(
+        &["make_returned_async_closure"],
+        RETURNED_ASYNC_CLOSURE_DYNAMIC_CALL_SPAN,
+        0,
+        &[],
+        ExpectedCallOutcome::Unsupported,
+    ),
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_awaited_returned_async_closure_resolves_inner_maker_path_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_awaited_returned_async_closure"
+    },
+    expected: {
+        let target_args = fixture_call_graph_function_args(&["crate"], "make_returned_async_closure");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("make_returned_async_closure should regenerate a FunctionNodeId");
+        ExpectedCallSite::path(
+            &["make_returned_async_closure"],
+            AWAITED_RETURNED_ASYNC_CLOSURE_INNER_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_awaited_returned_async_closure_resolves_outer_dynamic_closure_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_awaited_returned_async_closure"
+    },
+    expected: {
+        let (graph, _tree) = crate::common::build_tree_for_tests("fixture_call_graph");
+        let owner = crate::common::call_site_paranoid::function_owner_context(
+            &graph,
+            &["crate"],
+            "make_returned_async_closure",
+        );
+        let closure =
+            closure_body_inside_span(&graph, &owner, MAKE_RETURNED_ASYNC_CLOSURE_SPAN);
+        ExpectedCallSite::dynamic_awaited_returned_path_call(
+            &["make_returned_async_closure"],
+            AWAITED_RETURNED_ASYNC_CLOSURE_DYNAMIC_CALL_SPAN,
             0,
             &[],
             ExpectedCallOutcome::ResolvedDynamicClosureLocalExact { target: closure },

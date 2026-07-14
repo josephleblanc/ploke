@@ -207,7 +207,10 @@ impl BodyCallVisitor<'_> {
             cfgs: self.cfgs.to_vec(),
             unsafe_block,
             arg_count: call.dynamic_arg_count,
-            callee: DynamicCallCallee::ReturnedPathCall { path: call.path },
+            callee: DynamicCallCallee::ReturnedPathCall {
+                path: call.path,
+                is_awaited: false,
+            },
         }));
         self.relations.push(CallSiteRelation::BodyContainsCall {
             source: self.owner,

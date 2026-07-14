@@ -280,9 +280,14 @@ pub enum DynamicCallCallee {
     /// being called, such as `(local_target as fn() -> i32)()`.
     FnPointerCastPath { path: Vec<String> },
     /// The callee expression is the result of calling a path, such as
-    /// `make_fn()()`. This records only the inner path call; semantic proof of
-    /// the returned callable belongs to the resolver.
-    ReturnedPathCall { path: Vec<String> },
+    /// `make_fn()()`. This records only the inner path call plus whether the
+    /// returned callable future is immediately awaited; semantic proof of the
+    /// returned callable belongs to the resolver.
+    ReturnedPathCall {
+        path: Vec<String>,
+        #[serde(default)]
+        is_awaited: bool,
+    },
     /// The callee expression is a visible local binding initialized from a path
     /// and then cast to a bare function pointer before being called, such as
     /// `let f = local_target; (f as fn() -> i32)()`.

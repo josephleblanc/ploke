@@ -26,6 +26,22 @@ enum DynamicPathResolution {
     Unsupported,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReturnedClosure {
+    Sync(ExecutableBodyId),
+    Async(ExecutableBodyId),
+}
+
+impl ReturnedClosure {
+    fn new(id: ExecutableBodyId, is_async: bool) -> Self {
+        if is_async {
+            Self::Async(id)
+        } else {
+            Self::Sync(id)
+        }
+    }
+}
+
 impl CallRelationResolver<'_> {
     pub(super) fn resolve_dynamic_call(
         &self,
@@ -76,8 +92,15 @@ impl CallRelationResolver<'_> {
             return Ok(());
         }
 
-        if let DynamicCallCallee::ReturnedPathCall { path } = &call.callee {
-            self.resolve_returned_path_call(call, path, type_relations, relations, statuses)?;
+        if let DynamicCallCallee::ReturnedPathCall { path, is_awaited } = &call.callee {
+            self.resolve_returned_path_call(
+                call,
+                path,
+                *is_awaited,
+                type_relations,
+                relations,
+                statuses,
+            )?;
             return Ok(());
         }
 
@@ -226,6 +249,7 @@ impl CallRelationResolver<'_> {
         &self,
         call: &DynamicCallNode,
         path: &[String],
+        is_awaited: bool,
         type_relations: &[TypeRelation],
         relations: &mut Vec<CallRelation>,
         statuses: &mut Vec<CallResolutionStatus>,
@@ -251,16 +275,36 @@ impl CallRelationResolver<'_> {
             }
         };
 
-        if let Some(target) = self.direct_return_closure(returning_function)? {
-            relations.push(CallRelation::DynamicClosure {
-                source: call.id,
-                target,
-            });
-            statuses.push(CallResolutionStatus::Resolved {
-                source,
-                kind: CallResolutionKind::LocalExact,
-            });
-            return Ok(());
+        match self.direct_return_closure(returning_function)? {
+            Some(ReturnedClosure::Sync(target)) | Some(ReturnedClosure::Async(target))
+                if is_awaited =>
+            {
+                relations.push(CallRelation::DynamicClosure {
+                    source: call.id,
+                    target,
+                });
+                statuses.push(CallResolutionStatus::Resolved {
+                    source,
+                    kind: CallResolutionKind::LocalExact,
+                });
+                return Ok(());
+            }
+            Some(ReturnedClosure::Sync(target)) => {
+                relations.push(CallRelation::DynamicClosure {
+                    source: call.id,
+                    target,
+                });
+                statuses.push(CallResolutionStatus::Resolved {
+                    source,
+                    kind: CallResolutionKind::LocalExact,
+                });
+                return Ok(());
+            }
+            Some(ReturnedClosure::Async(_)) => {
+                statuses.push(CallResolutionStatus::Unsupported { source });
+                return Ok(());
+            }
+            None => {}
         }
 
         let Some(return_path) = self.direct_return_path(returning_function)? else {
@@ -388,7 +432,7 @@ impl CallRelationResolver<'_> {
     fn direct_return_closure(
         &self,
         function_id: FunctionNodeId,
-    ) -> Result<Option<ExecutableBodyId>, SynParserError> {
+    ) -> Result<Option<ReturnedClosure>, SynParserError> {
         let function = self.graph.get_function_checked(function_id)?;
         let Some(body) = function.body.as_deref() else {
             return Ok(None);
@@ -403,14 +447,14 @@ impl CallRelationResolver<'_> {
             return Ok(None);
         };
 
-        if is_closure_literal(expr) {
-            return self.recorded_return_closure(function_id);
+        if let Some(is_async) = closure_literal_asyncness(expr) {
+            return self.recorded_return_closure(function_id, is_async);
         }
 
         if let Some(name) = expr_path_ident(expr)
-            && local_closure_binding_is_closure(&block, &name)
+            && let Some(is_async) = local_closure_binding_asyncness(&block, &name)
         {
-            return self.recorded_return_closure(function_id);
+            return self.recorded_return_closure(function_id, is_async);
         }
 
         Ok(None)
@@ -419,7 +463,8 @@ impl CallRelationResolver<'_> {
     fn recorded_return_closure(
         &self,
         function_id: FunctionNodeId,
-    ) -> Result<Option<ExecutableBodyId>, SynParserError> {
+        is_async: bool,
+    ) -> Result<Option<ReturnedClosure>, SynParserError> {
         let owner = CallBodyOwnerId::Function(function_id);
         let closures = self
             .graph
@@ -429,7 +474,7 @@ impl CallRelationResolver<'_> {
             .collect::<Vec<_>>();
 
         match closures.as_slice() {
-            [closure] => Ok(Some(closure.id)),
+            [closure] => Ok(Some(ReturnedClosure::new(closure.id, is_async))),
             [] => Err(SynParserError::InternalState(format!(
                 "function {function_id} returns a closure but no closure executable body was recorded"
             ))),
@@ -699,8 +744,8 @@ fn expr_path_ident(expr: &syn::Expr) -> Option<String> {
     path.path.get_ident().map(|ident| ident.to_string())
 }
 
-fn local_closure_binding_is_closure(block: &syn::Block, name: &str) -> bool {
-    local_binding_closure_source(
+fn local_closure_binding_asyncness(block: &syn::Block, name: &str) -> Option<bool> {
+    local_binding_closure_asyncness(
         block,
         name,
         block.stmts.len().saturating_sub(1),
@@ -708,14 +753,14 @@ fn local_closure_binding_is_closure(block: &syn::Block, name: &str) -> bool {
     )
 }
 
-fn local_binding_closure_source(
+fn local_binding_closure_asyncness(
     block: &syn::Block,
     name: &str,
     end: usize,
     seen: &mut Vec<String>,
-) -> bool {
+) -> Option<bool> {
     if seen.iter().any(|candidate| candidate == name) {
-        return false;
+        return None;
     }
     seen.push(name.to_string());
 
@@ -731,21 +776,24 @@ fn local_binding_closure_source(
             continue;
         }
         let Some(init) = local.init.as_ref() else {
-            return false;
+            return None;
         };
-        if is_closure_literal(init.expr.as_ref()) {
-            return true;
+        if let Some(is_async) = closure_literal_asyncness(init.expr.as_ref()) {
+            return Some(is_async);
         }
         let Some(alias) = expr_path_ident(init.expr.as_ref()) else {
-            return false;
+            return None;
         };
-        return local_binding_closure_source(block, &alias, index, seen);
+        return local_binding_closure_asyncness(block, &alias, index, seen);
     }
-    false
+    None
 }
 
-fn is_closure_literal(expr: &syn::Expr) -> bool {
-    matches!(unparen_expr(expr), syn::Expr::Closure(_))
+fn closure_literal_asyncness(expr: &syn::Expr) -> Option<bool> {
+    let syn::Expr::Closure(closure) = unparen_expr(expr) else {
+        return None;
+    };
+    Some(closure.asyncness.is_some())
 }
 
 fn unparen_expr(expr: &syn::Expr) -> &syn::Expr {

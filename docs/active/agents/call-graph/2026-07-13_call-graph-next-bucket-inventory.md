@@ -28,6 +28,10 @@ Current completed checkpoint:
   representative matrix.
 - Active corpus fixtures have been regenerated with baseline call-graph
   relations and verified.
+- The latest committed returned-async slice records returned-path dynamic
+  callee awaitedness, resolves `make_returned_async_closure()().await` to the
+  returned async-closure owner, and keeps the un-awaited
+  `make_returned_async_closure()()` targetless with no traversal edge.
 - The latest committed runtime slice models the bounded axum
   `middleware/map_response.rs` generated `impl_service!(...)` frontier rows,
   regenerates active fixtures, and preserves `std::mem::replace` as targetless
@@ -49,7 +53,7 @@ already listed as covered in the goal coverage matrix.
 | --- | --- | --- | --- |
 | Broader object/field callable value flow | Axum `self.layer`, `self.tap_fn`, and router-side `self.into_route` remain targetless or candidate-only because construction/value flow is not complete. Runtime-dispatch summaries can discharge authoring needs without fabricating edges. | A source-visible construction path proves every callable value reaching a field, or the implementation introduces a typed value-flow carrier with strict incomplete-proof blockers. | DB real-corpus assertion over one field callsite, preserving no edge when proof is incomplete. |
 | Callable trait-object dispatch | Fixture-backed exact `&dyn Fn`, `Box<dyn Fn>`, and `FnMut` local-binding cases are covered only when initializer or complete private-caller proof is exact. Memchr boxed `dyn FnMut` field rows remain targetless blockers. | A bounded local source oracle proves a callable trait-object target without public API ambiguity or runtime vtable guessing. | Parser/DB proof for one exact trait-object row; otherwise keep `dynamic_dispatch_unbounded`. |
-| Async poll/resume and future value flow | Immediate/same-block async closure calls, aliases, tuple/named/indexed storage, and proof-only blockers are covered. Returned futures, non-local flow, async callable trait objects, and general poll/resume remain future work. | A typed future-flow carrier identifies the future producer and poll point without flattening async state-machine execution into ordinary source calls. | One DB traversal or one explicit blocker over a reviewed source oracle. |
+| Async poll/resume and future value flow | Immediate/same-block async closure calls, aliases, tuple/named/indexed storage, and immediate awaited returned async closures are covered. Un-awaited returned async closures fail closed. Non-local flow, async callable trait objects, returned futures that are stored/forwarded before polling, and general poll/resume remain future work. | A typed future-flow carrier identifies the future producer and poll point without flattening async state-machine execution into ordinary source calls. | One DB traversal or one explicit blocker over a reviewed source oracle. |
 | Generated or macro-expanded source bodies | Bounded axum and fixture macro models cover reviewed item/local-item/generated-method cases, including the axum middleware `from_fn`, `map_request`, and `map_response` `std::mem::replace` frontiers. Arbitrary macro expansion remains out of scope. | A specific macro template and invocation pair can be modeled narrowly through normal item/call visitors, with proof metadata explaining the boundary. | DB real-corpus traversal for one generated owner or a targetless proof row for unsupported expansion. |
 | Workspace dependency-root/import families | Existing dependency-root proof rows cover the named axum `FromRef`, `Router::new`, `TestClient::new`, and direct `Body::empty` import families. | A new workspace-import source oracle has a resolved edge that needs an explicit proof-authority row; do not add carrier rows just to increase counts. | Target-centered DB/RAG/TUI proof row tied to exact callsite and import path. |
 | External summary/source-sink policy | External frontiers, effect seeds, effect policies, runtime summaries, and proof blockers exist for current usage questions. | A concrete usage question requires a new summary or source/sink fact that cannot be answered from current frontier/effect data. | Proof-store validation plus one DB/RAG/TUI query that consumes the new fact. |
@@ -63,6 +67,8 @@ already listed as covered in the goal coverage matrix.
   typed proof carrier.
 - More awaited async closure storage variants that only exercise the existing
   same-block tracker.
+- More returned async closure variants unless they introduce stored/forwarded
+  future value flow or a new explicit blocker.
 - Axum `self.tap_fn` or router-side `self.into_route` as resolved edges unless
   the new implementation proves complete callable field value flow.
 - External frontier rows as traversal edges unless a trusted external summary

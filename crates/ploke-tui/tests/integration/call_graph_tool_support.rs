@@ -771,7 +771,22 @@ impl AsyncFutureToolFixture {
         Self::for_owner("call_awaited_async_closure_future_indexed_array_with_body_call").await
     }
 
+    pub(crate) async fn returned_async_closure() -> Self {
+        Self::for_owner_with_closure_parent(
+            "call_awaited_returned_async_closure",
+            "make_returned_async_closure",
+        )
+        .await
+    }
+
     async fn for_owner(owner_name: &'static str) -> Self {
+        Self::for_owner_with_closure_parent(owner_name, owner_name).await
+    }
+
+    async fn for_owner_with_closure_parent(
+        owner_name: &'static str,
+        closure_parent_name: &'static str,
+    ) -> Self {
         let db = Arc::new(Database::new(
             setup_db_full_multi_embedding("fixture_call_graph").expect("fixture_call_graph db"),
         ));
@@ -795,7 +810,7 @@ impl AsyncFutureToolFixture {
             &module_path,
             "async_closure",
             "Closure",
-            owner_name,
+            closure_parent_name,
         )
         .expect("resolve async closure owner");
         assert_eq!(

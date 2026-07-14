@@ -2347,3 +2347,15 @@ pub async fn call_awaited_async_closure_future_indexed_array_with_body_call() {
     let futures = [closure()];
     futures[0].await;
 }
+
+pub fn make_returned_async_closure() -> impl AsyncFn() -> i32 {
+    async || local_target()
+}
+
+pub fn call_returned_async_closure_without_await() {
+    make_returned_async_closure()();
+}
+
+pub async fn call_awaited_returned_async_closure() -> i32 {
+    make_returned_async_closure()().await
+}

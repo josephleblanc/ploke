@@ -1432,6 +1432,41 @@ pub(crate) fn assert_resolved_path_context(
     site_id
 }
 
+pub(crate) fn assert_resolved_dynamic_context(
+    calls: &[serde_json::Value],
+    owner: Uuid,
+    target: Uuid,
+    relation: CallTargetKind,
+    label: &str,
+    tool: &str,
+) -> Uuid {
+    let matching = calls
+        .iter()
+        .filter_map(|call| serde_json::from_value::<CallContextInfo>(call.clone()).ok())
+        .filter(|call| {
+            call.owner_id == owner
+                && call.kind == CallSiteKind::Dynamic
+                && call.callee == CallCalleeInfo::Dynamic
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching.len(),
+        1,
+        "{tool} should return exactly one resolved dynamic row for {label}: {calls:#?}"
+    );
+    let call = &matching[0];
+    assert_eq!(call.status, CallStatusKind::Resolved);
+    assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+    assert_eq!(
+        call.targets.len(),
+        1,
+        "{tool} dynamic target rows for {label}: {call:#?}"
+    );
+    assert_eq!(call.targets[0].target_id, target);
+    assert_eq!(call.targets[0].relation, relation);
+    call.site_id
+}
+
 pub(crate) fn assert_resolved_path_context_target(
     calls: &[serde_json::Value],
     owner: Uuid,

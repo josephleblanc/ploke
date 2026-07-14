@@ -118,7 +118,7 @@ pub(super) fn classify_dynamic_callee(
     }
 
     if let Some(path) = returned_path_call(callee) {
-        return DynamicCallCallee::ReturnedPathCall { path };
+        return DynamicCallCallee::ReturnedPathCall { path, is_awaited };
     }
 
     if let Some(paths) = if_branch_paths(callee, param_names, local_scopes) {
