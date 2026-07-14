@@ -264,7 +264,10 @@ fn validate_local_binding_shape(binding: &LocalBindingRow) -> Result<(), DbError
         "ReturnExpression" => binding.name == "return",
         "LetBinding" => {
             non_empty_string(Some(binding.name.as_str()))
-                && matches!(binding.source_kind.as_str(), "Closure" | "AsyncClosure")
+                && matches!(
+                    binding.source_kind.as_str(),
+                    "Closure" | "AsyncClosure" | "PathCallResult" | "DynamicCallResult"
+                )
         }
         _ => false,
     };

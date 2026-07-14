@@ -352,7 +352,12 @@ impl BodyCallVisitor<'_> {
         self.record_local_binding("return", span, LocalBindingKind::ReturnExpression, source);
     }
 
-    fn record_let_binding(&mut self, binding: &LocalBindingProof, pat: &syn::Pat) {
+    fn record_let_binding(
+        &mut self,
+        binding: &LocalBindingProof,
+        pat: &syn::Pat,
+        init_expr: Option<&syn::Expr>,
+    ) {
         let source = match binding {
             LocalBindingProof::Closure {
                 closure_id,
@@ -369,7 +374,32 @@ impl BodyCallVisitor<'_> {
                     }
                 }
             }
-            _ => return,
+            _ => {
+                let Some(init_expr) = init_expr else {
+                    return;
+                };
+                let Some(span) = future_call_span(init_expr) else {
+                    return;
+                };
+                if !self.awaited_call_spans.contains(&span) {
+                    return;
+                }
+                let Some(source) = return_binding_source(
+                    init_expr,
+                    self.owner,
+                    self.cfgs,
+                    self.param_names,
+                    &self.local_scopes,
+                    true,
+                ) else {
+                    return;
+                };
+                match source {
+                    LocalBindingSource::PathCallResult { .. }
+                    | LocalBindingSource::DynamicCallResult { .. } => source,
+                    _ => return,
+                }
+            }
         };
         let byte_range = pat.span().byte_range();
         self.record_local_binding(
@@ -501,7 +531,7 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
             &self.local_scopes,
         );
         for binding in &bindings {
-            self.record_let_binding(binding, &local.pat);
+            self.record_let_binding(binding, &local.pat, init_expr);
         }
         if let Some(scope) = self.local_scopes.last_mut() {
             scope.extend(bindings);
