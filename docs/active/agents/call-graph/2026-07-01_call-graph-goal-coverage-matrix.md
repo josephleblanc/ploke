@@ -50,6 +50,18 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
+Latest completed slice: unsupported axum `assert_eq!` macro-bound
+`try_downcast` proof blockers. The real-corpus source oracles are
+`axum-core/src/body.rs:251,252` and `axum/src/util.rs:114,115`, where
+`try_downcast::<i32, _>(...)` calls occur inside `assert_eq!` invocations.
+The existing DB matrix test still proves the only local traversal edges are
+the resolved non-macro `try_downcast` rows, while the macro-bound rows remain
+unsupported `Macro` callsites with no local targets and no traversal
+candidates. The proof projection now also proves those unsupported macro rows
+emit `macro_expansion_not_available` blockers and are retrievable through
+proof GraphRAG context. This does not expand `assert_eq!` or flatten inner
+macro arguments into path-call rows.
+
 Latest completed slice: axum dyn `Future::poll` runtime-dispatch summary
 proof-authority. The real-corpus source oracle is
 `axum/src/error_handling/mod.rs:251`, where `HandleErrorFuture::poll` calls

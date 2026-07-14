@@ -1760,6 +1760,7 @@ fn axum_real_target_generated_chained_method_functions_resolve() -> Result<(), D
 #[test]
 fn axum_real_target_try_downcast_helpers_reach_current_resolved_subset() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
+    let domain_id = "bd:corpus-axum-call-graph";
 
     // Matrix: same-named `try_downcast` helpers.
     // Source chain:
@@ -1826,11 +1827,12 @@ fn axum_real_target_try_downcast_helpers_reach_current_resolved_subset() -> Resu
         }
     }
 
-    let macro_bound_cases = [
+    let macro_cases = [
         ("axum-core/src/body.rs:251 and :252", &["crate", "body"][..]),
         ("axum/src/util.rs:114 and :115", &["crate", "util"][..]),
     ];
-    for (label, module_path) in macro_bound_cases {
+    let mut macro_sites = Vec::new();
+    for (label, module_path) in macro_cases {
         let owner = function_id_by_name_in_module(&db, module_path, "test_try_downcast")?;
         let context = db.call_context_for_owner(owner)?;
         let path_rows = context
@@ -1863,7 +1865,35 @@ fn axum_real_target_try_downcast_helpers_reach_current_resolved_subset() -> Resu
                 "{label} macro-bound try_downcast rows should not fabricate local targets"
             );
             assert_no_traversal_candidates_for_site(&db, owner, row.site.id, label)?;
+            macro_sites.push((label, row.site.id));
         }
+        let projected = db.project_call_proof_facts_for_owner(owner, domain_id)?;
+        assert!(
+            projected >= 4,
+            "{label} should project call_site and blocked call_resolution facts for both assert_eq! macro rows: {projected}"
+        );
+    }
+
+    let blockers = db.proof_blockers()?;
+    let proof_rows = db.proof_graphrag_context("macro_expansion_not_available")?;
+    for (label, site_id) in macro_sites {
+        let site = site_id.to_string();
+        assert!(
+            blockers.iter().any(|proof| {
+                proof.call_site_id.as_deref() == Some(site.as_str())
+                    && proof.reason == "macro_expansion_not_available"
+                    && proof.status == "blocked"
+            }),
+            "{label} should expose a macro-expansion blocker for unsupported assert_eq! row {site}: {blockers:#?}"
+        );
+        assert!(
+            proof_rows.iter().any(|proof| {
+                proof.kind == "call_resolution"
+                    && proof.call_site_id.as_deref() == Some(site.as_str())
+                    && proof.blocker_reason.as_deref() == Some("macro_expansion_not_available")
+            }),
+            "{label} should be retrievable as macro-expansion proof context for unsupported assert_eq! row {site}: {proof_rows:#?}"
+        );
     }
 
     Ok(())
