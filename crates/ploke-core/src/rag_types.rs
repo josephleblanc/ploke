@@ -598,6 +598,21 @@ pub struct RuntimeDispatchNeedInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct AwaitedCallSiteInfo {
+    pub site_id: Uuid,
+    pub owner_id: Uuid,
+    pub kind: CallSiteKind,
+    pub span: (u32, u32),
+    #[serde(default)]
+    pub path: Option<Vec<String>>,
+    #[serde(default)]
+    pub arg_count: Option<u32>,
+    #[serde(default)]
+    pub generic_arg_count: Option<u32>,
+    pub callee: CallCalleeInfo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum LocalBindingRelationKind {
     BindingSourceClosure,
@@ -900,6 +915,7 @@ impl From<ContextPart> for ConciseContext {
             call_proof_invariant_findings: Vec::new(),
             external_summary_needs: Vec::new(),
             runtime_dispatch_needs: Vec::new(),
+            awaited_call_sites: Vec::new(),
             returned_call_binding_flows: Vec::new(),
             module_boundary_edges: Vec::new(),
             crate_boundary_edges: Vec::new(),
@@ -977,6 +993,8 @@ pub struct ConciseContext {
     pub external_summary_needs: Vec<ExternalSummaryNeedInfo>,
     #[serde(default)]
     pub runtime_dispatch_needs: Vec<RuntimeDispatchNeedInfo>,
+    #[serde(default)]
+    pub awaited_call_sites: Vec<AwaitedCallSiteInfo>,
     #[serde(default)]
     pub returned_call_binding_flows: Vec<ReturnedCallBindingFlowInfo>,
     #[serde(default)]

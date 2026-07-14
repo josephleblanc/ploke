@@ -30,19 +30,20 @@ use crate::call_graph_tool_support::{
     assert_branch_receiver_context, assert_branch_receiver_proof, assert_call_path_node,
     assert_chrono_naive_utc_incoming_context, assert_dynamic_context, assert_dynamic_proof,
     assert_expected_path_incoming_context, assert_fixture_extern_c_abs_effects,
-    assert_forwarded_returned_closure_binding_flow, assert_from_fn_basic_body_empty_crate_boundary,
-    assert_generated_rejection_outgoing_context, assert_handler_call_incoming_context,
-    assert_incoming_context, assert_initialized_local_receiver_context,
-    assert_initialized_local_receiver_proof, assert_json_from_bytes_incoming_context,
-    assert_no_external_summary_need_for_site, assert_parse_attrs_incoming_context,
-    assert_path_blocker_proof, assert_path_context, assert_path_resolution_proof,
-    assert_process_invariant_findings, assert_resolved_callable_param_proof,
-    assert_resolved_dynamic_context, assert_resolved_method_target_context,
-    assert_resolved_path_context, assert_run_ui_tests_incoming_context,
-    assert_runtime_dispatch_blocker, assert_self_field_receiver_context,
-    assert_self_field_receiver_proof, assert_serde_json_summary_proof,
-    assert_serde_json_surface_measure_effect, assert_target_proof, assert_task_spawn_effects,
-    assert_task_spawn_policy_violation, assert_two_hop_call_path, ui_field,
+    assert_forwarded_async_future_awaited_site, assert_forwarded_returned_closure_binding_flow,
+    assert_from_fn_basic_body_empty_crate_boundary, assert_generated_rejection_outgoing_context,
+    assert_handler_call_incoming_context, assert_incoming_context,
+    assert_initialized_local_receiver_context, assert_initialized_local_receiver_proof,
+    assert_json_from_bytes_incoming_context, assert_no_external_summary_need_for_site,
+    assert_parse_attrs_incoming_context, assert_path_blocker_proof, assert_path_context,
+    assert_path_resolution_proof, assert_process_invariant_findings,
+    assert_resolved_callable_param_proof, assert_resolved_dynamic_context,
+    assert_resolved_method_target_context, assert_resolved_path_context,
+    assert_run_ui_tests_incoming_context, assert_runtime_dispatch_blocker,
+    assert_self_field_receiver_context, assert_self_field_receiver_proof,
+    assert_serde_json_summary_proof, assert_serde_json_surface_measure_effect, assert_target_proof,
+    assert_task_spawn_effects, assert_task_spawn_policy_violation, assert_two_hop_call_path,
+    ui_field,
 };
 
 #[tokio::test]
@@ -1026,6 +1027,61 @@ async fn code_item_lookup_returns_forwarded_returned_closure_context() {
         "forwarded-returned-closure-lookup",
     )
     .await;
+}
+
+#[tokio::test]
+async fn code_item_lookup_returns_forwarded_async_future_awaited_site() {
+    let fixture = CallGraphToolFixture::new().await;
+    let params = LookupParams {
+        item_name: Cow::Borrowed("call_forwarded_returned_async_future"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("function"),
+        module_path: Cow::Borrowed("crate"),
+        owner_trait: None,
+        owner_type: None,
+        parent_name: None,
+        allowed_effects: Vec::new(),
+    };
+
+    let result = CodeItemLookup::execute(params, fixture.ctx("forwarded-async-future-lookup"))
+        .await
+        .expect("forwarded async future lookup should succeed");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize ConciseContext");
+    let owner = payload
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .expect("payload id")
+        .parse()
+        .expect("payload id should be a UUID");
+    let awaited_sites = payload
+        .get("awaited_call_sites")
+        .and_then(serde_json::Value::as_array)
+        .expect("awaited_call_sites array");
+    let returned_flows = payload
+        .get("returned_call_binding_flows")
+        .and_then(serde_json::Value::as_array)
+        .expect("returned_call_binding_flows array");
+
+    // Source oracle:
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:2384-2385
+    //   `call_forwarded_returned_async_future()` awaits the producer call
+    //   `make_forwarded_returned_async_future().await`, but the returned
+    //   future boundary remains fail-closed for returned-call binding flow.
+    assert_forwarded_async_future_awaited_site(
+        awaited_sites,
+        owner,
+        "forwarded returned async future",
+        "code_item_lookup",
+    );
+    assert!(
+        returned_flows.is_empty(),
+        "lookup should not expose returned-call binding flow through the forwarded future boundary: {returned_flows:#?}"
+    );
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert_eq!(ui_field(ui, "awaited_call_sites"), "1");
+    assert_eq!(ui_field(ui, "returned_call_binding_flows"), "0");
 }
 
 async fn assert_awaited_async_closure_future_lookup(

@@ -11,7 +11,7 @@ mod unit_tests;
 use super::*;
 use ploke_core::rag_types::AssembledContext;
 use ploke_core::rag_types::{
-    CallBuildDomainInfo, CallCalleeInfo, CallContextInfo, CallEffectGuardInfo,
+    AwaitedCallSiteInfo, CallBuildDomainInfo, CallCalleeInfo, CallContextInfo, CallEffectGuardInfo,
     CallEffectPolicyViolationInfo, CallEndpointKind, CallExpansionInfo, CallExpansionKind,
     CallGuardInfo, CallImpactInfo, CallNodeInfo, CallPathEdgeInfo, CallPathInfo, CallPathNodeInfo,
     CallProofInvariantFindingInfo, CallReachEffectInfo, CallReachInfo, CallReceiverInfo,
@@ -618,6 +618,20 @@ fn runtime_dispatch_need_info(
         paths_to_owner,
         call_site: row_to_call_context(row.call_site, usize::MAX)?,
         blocker_reasons: row.blocker_reasons,
+    })
+}
+
+fn awaited_call_site_info(site: CallSiteRow) -> Result<AwaitedCallSiteInfo, RagError> {
+    let callee = call_site_callee_info(&site)?;
+    Ok(AwaitedCallSiteInfo {
+        site_id: site.id,
+        owner_id: site.owner_id,
+        kind: site_kind(site.kind),
+        span: site.span,
+        path: site.path,
+        arg_count: site.arg_count,
+        generic_arg_count: site.generic_arg_count,
+        callee,
     })
 }
 
@@ -1467,6 +1481,23 @@ impl RagService {
                 .returned_call_binding_flows_for_owner(owner_id)?
                 .into_iter()
                 .map(returned_call_binding_flow_info)
+                .collect::<Result<Vec<_>, RagError>>()?,
+        ))
+    }
+
+    pub fn exact_awaited_call_sites_for_owner(
+        &self,
+        owner_id: Uuid,
+    ) -> Result<Option<Vec<AwaitedCallSiteInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .awaited_call_sites_for_owner(owner_id)?
+                .into_iter()
+                .map(awaited_call_site_info)
                 .collect::<Result<Vec<_>, RagError>>()?,
         ))
     }

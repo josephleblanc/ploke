@@ -8,10 +8,11 @@ use cozo::DataValue;
 use ploke_core::{
     ArcStr,
     rag_types::{
-        CallCalleeInfo, CallContextInfo, CallEndpointKind, CallPathInfo, CallReachEffectInfo,
-        CallReceiverInfo, CallResolutionKind, CallSiteBucketInfo, CallSiteKind, CallStatusKind,
-        CallTargetKind, CrateBoundaryEdgeInfo, LocalBindingRelationKind, ProofContextInfo,
-        ReturnedCallBindingFlowInfo, ReturnedCallSourceKind,
+        AwaitedCallSiteInfo, CallCalleeInfo, CallContextInfo, CallEndpointKind, CallPathInfo,
+        CallReachEffectInfo, CallReceiverInfo, CallResolutionKind, CallSiteBucketInfo,
+        CallSiteKind, CallStatusKind, CallTargetKind, CrateBoundaryEdgeInfo,
+        LocalBindingRelationKind, ProofContextInfo, ReturnedCallBindingFlowInfo,
+        ReturnedCallSourceKind,
     },
 };
 use ploke_db::{
@@ -3284,6 +3285,32 @@ pub(crate) fn assert_forwarded_returned_closure_binding_flow(
     assert_eq!(
         matches, 1,
         "{tool} should return exactly one returned-call binding flow for {label}: {flows:#?}"
+    );
+}
+
+pub(crate) fn assert_forwarded_async_future_awaited_site(
+    sites: &[serde_json::Value],
+    owner: Uuid,
+    label: &str,
+    tool: &str,
+) {
+    let rows = sites
+        .iter()
+        .filter_map(|site| serde_json::from_value::<AwaitedCallSiteInfo>(site.clone()).ok())
+        .collect::<Vec<_>>();
+    let path = vec!["make_forwarded_returned_async_future".to_string()];
+    let matches = rows
+        .iter()
+        .filter(|site| {
+            site.owner_id == owner
+                && site.kind == CallSiteKind::Path
+                && site.path.as_deref() == Some(path.as_slice())
+                && site.callee == (CallCalleeInfo::Path { path: path.clone() })
+        })
+        .count();
+    assert_eq!(
+        matches, 1,
+        "{tool} should return exactly one awaited producer callsite for {label}: {sites:#?}"
     );
 }
 

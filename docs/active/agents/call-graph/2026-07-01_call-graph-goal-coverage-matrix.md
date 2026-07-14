@@ -62,16 +62,19 @@ binding source. This completes the DB, RAG, and exact TUI surface for the sync
 forwarded-closure binding-flow proof. The forwarded returned async future
 remains fail-closed in DB/RAG and does not gain a traversal edge.
 
-Latest completed slice: source-visible awaited call-result proof. The parser
-now records `CallResultAwaited` as a proof-only `call_site_edge` relation for
-direct path/dynamic/method call expressions whose returned future is awaited at
-that source boundary. Transform projection keeps `relation_kind` in the
-`call_site_edge` key so `BodyContainsCall` and `CallResultAwaited` can coexist
-for the same owner/callsite endpoint pair. `ploke-db` exposes
-`awaited_call_sites_for_owner`, and the forwarded returned async future fixture
-test proves the caller awaits exactly the producer path call while the producer
-still exposes no awaited inner dynamic row and no returned-callable flow. This
-is not cross-function future value-flow or a new traversal edge.
+Latest completed slice: source-visible awaited call-result proof and exact
+tool payload. The parser now records `CallResultAwaited` as a proof-only
+`call_site_edge` relation for direct path/dynamic/method call expressions whose
+returned future is awaited at that source boundary. Transform projection keeps
+`relation_kind` in the `call_site_edge` key so `BodyContainsCall` and
+`CallResultAwaited` can coexist for the same owner/callsite endpoint pair.
+`ploke-db` exposes `awaited_call_sites_for_owner`, `ploke-rag` exposes the same
+rows as `AwaitedCallSiteInfo`, and exact `code_item_lookup` / `code_item_edges`
+payloads now carry `awaited_call_sites` plus a UI count. The forwarded returned
+async future fixture proves the caller awaits exactly the producer path call
+while the producer still exposes no awaited inner dynamic row and no
+returned-callable flow. This is not cross-function future value-flow or a new
+traversal edge.
 
 Recent completed slice: exact RAG returned-callable binding-flow surface.
 `ploke-rag` now exposes `exact_returned_call_binding_flows_for_owner` over the

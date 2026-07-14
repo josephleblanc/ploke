@@ -1,7 +1,8 @@
 use super::super::super::super::super::*;
 use super::super::super::helpers::*;
 use ploke_core::rag_types::{
-    CallEndpointKind, CallTargetKind, LocalBindingRelationKind, ReturnedCallSourceKind,
+    CallCalleeInfo, CallEndpointKind, CallSiteKind, CallTargetKind, LocalBindingRelationKind,
+    ReturnedCallSourceKind,
 };
 
 #[tokio::test]
@@ -81,6 +82,25 @@ async fn returned_call_binding_flows_exact_expose_forwarded_closure_proof() -> R
         &db,
         &function_in_module_query(&["crate"], "make_forwarded_returned_async_future"),
     )?;
+    let awaited_sites = rag
+        .exact_awaited_call_sites_for_owner(future_owner)?
+        .expect("call context is enabled");
+    assert_eq!(
+        awaited_sites.len(),
+        1,
+        "RAG should expose the awaited producer source-site proof for forwarded async future: {awaited_sites:#?}"
+    );
+    let awaited = &awaited_sites[0];
+    assert_eq!(awaited.owner_id, future_owner);
+    assert_eq!(awaited.kind, CallSiteKind::Path);
+    assert_eq!(
+        awaited.callee,
+        CallCalleeInfo::Path {
+            path: vec!["make_forwarded_returned_async_future".to_string()]
+        }
+    );
+    let awaited_path = vec!["make_forwarded_returned_async_future".to_string()];
+    assert_eq!(awaited.path.as_deref(), Some(awaited_path.as_slice()));
     let owner_flows = rag
         .exact_returned_call_binding_flows_for_owner(future_owner)?
         .expect("call context is enabled");
@@ -94,6 +114,13 @@ async fn returned_call_binding_flows_exact_expose_forwarded_closure_proof() -> R
     assert!(
         producer_flows.is_empty(),
         "targetless returned async future producer must remain absent from exact RAG binding flows: {producer_flows:#?}"
+    );
+    let producer_awaited_sites = rag
+        .exact_awaited_call_sites_for_owner(future_producer)?
+        .expect("call context is enabled");
+    assert!(
+        producer_awaited_sites.is_empty(),
+        "producer returns its async future without awaiting the inner returned callable: {producer_awaited_sites:#?}"
     );
 
     Ok(())
