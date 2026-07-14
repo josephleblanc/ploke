@@ -46,7 +46,13 @@ fn fixture_projection_stores_real_returned_function_call_proof_facts() -> Result
     );
 
     let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
-    assert_eq!(count, 6);
+    assert_eq!(count, 7);
+    assert_returned_callable_binding_evidence(
+        &db,
+        dynamic_row,
+        "resolved",
+        "returned function dynamic call",
+    )?;
 
     assert_owner_proof_edges(
         &db,
@@ -111,7 +117,13 @@ fn fixture_projection_stores_returned_parameter_function_call_proof_facts() -> R
     );
 
     let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
-    assert_eq!(count, 6);
+    assert_eq!(count, 7);
+    assert_returned_callable_binding_evidence(
+        &db,
+        dynamic_row,
+        "resolved",
+        "returned parameter function dynamic call",
+    )?;
 
     assert_owner_proof_edges(
         &db,
@@ -357,7 +369,13 @@ fn fixture_projection_stores_awaited_returned_async_closure_edge_only_when_polle
     );
     let no_await_count =
         db.project_call_proof_facts_for_owner(no_await_owner, "bd:fixture-call-graph")?;
-    assert_eq!(no_await_count, 6);
+    assert_eq!(no_await_count, 7);
+    assert_returned_callable_binding_evidence(
+        &db,
+        no_await_dynamic,
+        "blocked",
+        "un-awaited returned async closure",
+    )?;
     assert_returned_path_poll_resume_blocker(
         &db,
         no_await_dynamic,
@@ -457,7 +475,13 @@ fn fixture_projection_keeps_forwarded_returned_async_future_fail_closed() -> Res
         "non-local returned async future flow must not persist a call edge"
     );
     let count = db.project_call_proof_facts_for_owner(producer, "bd:fixture-call-graph")?;
-    assert_eq!(count, 6, "forwarded returned async future proof facts");
+    assert_eq!(count, 7, "forwarded returned async future proof facts");
+    assert_returned_callable_binding_evidence(
+        &db,
+        dynamic,
+        "blocked",
+        "forwarded returned async future",
+    )?;
     assert_returned_path_poll_resume_blocker(&db, dynamic, "forwarded returned async future")?;
 
     let producer_paths = db.call_paths_between(
@@ -524,6 +548,35 @@ fn assert_returned_path_poll_resume_blocker(
     Ok(())
 }
 
+fn assert_returned_callable_binding_evidence(
+    db: &ploke_db::Database,
+    row: &CallContextRow,
+    state: &str,
+    label: &str,
+) -> Result<(), DbError> {
+    let site = row.site.id.to_string();
+    let owner = row.site.owner_id.to_string();
+    let proof_rows = db.proof_graphrag_context("returned_callable")?;
+    assert!(
+        proof_rows.iter().any(|proof| {
+            proof.kind == "binding_evidence"
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.caller_def_id.as_deref() == Some(owner.as_str())
+                && proof.resolution_state.as_deref() == Some(state)
+                && proof
+                    .source_file
+                    .as_deref()
+                    .is_some_and(|file| file.ends_with("fixture_call_graph/src/lib.rs"))
+                && proof.detail.as_deref().is_some_and(|detail| {
+                    detail.contains("callable returned by") && detail.contains("binding evidence")
+                })
+        }),
+        "{label} should expose returned-callable binding evidence for {site}: {proof_rows:#?}"
+    );
+
+    Ok(())
+}
+
 fn project_polled_returned_async_proof(
     db: &ploke_db::Database,
     owner_name: &str,
@@ -558,7 +611,8 @@ fn project_polled_returned_async_proof(
         CallTargetKind::Closure,
     );
     let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
-    assert_eq!(count, 6, "{label} proof fact count");
+    assert_eq!(count, 7, "{label} proof fact count");
+    assert_returned_callable_binding_evidence(db, dynamic_row, "resolved", label)?;
 
     Ok(vec![
         OwnerProofEdge {
@@ -626,7 +680,8 @@ fn project_returned_closure_proof(
     );
 
     let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
-    assert_eq!(count, 6);
+    assert_eq!(count, 7);
+    assert_returned_callable_binding_evidence(db, dynamic_row, "resolved", case.owner)?;
 
     Ok(vec![
         OwnerProofEdge {

@@ -27,6 +27,12 @@ pub(in crate::proof_graph::projection) fn validate_enum_fields(
         "expansion_state",
         &["expanded", "unresolved", "externally_summarized", "blocked"],
     )?;
+    validate_optional_enum(value, "binding_evidence_kind", &["returned_callable"])?;
+    validate_optional_enum(
+        value,
+        "callee_kind",
+        &["ReturnedPathCall", "AwaitedReturnedPathCall"],
+    )?;
     validate_optional_enum(value, "effect_class", EFFECT_CLASSES)?;
     validate_optional_enum_array(value, "allowed_effects", EFFECT_CLASSES)?;
     validate_optional_enum(value, "summary_class", SUMMARY_CLASSES)?;

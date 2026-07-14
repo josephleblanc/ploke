@@ -59,6 +59,27 @@ fn proof_records() -> Vec<serde_json::Value> {
             "evidence_use": "proof_only"
         }),
         json!({
+            "fact_kind": "binding_evidence",
+            "schema_version": PROOF_FACT_SCHEMA_VERSION,
+            "binding_evidence_id": "binding-evidence:spawn",
+            "build_domain_id": "bd:main",
+            "call_site_id": "call:spawn",
+            "caller_def_id": "def:launch",
+            "binding_evidence_kind": "returned_callable",
+            "callee_kind": "ReturnedPathCall",
+            "callee_path": ["make_spawn"],
+            "resolution_state": "blocked",
+            "detail": "returned callable binding evidence for process spawn proof context",
+            "source_span": {
+                "file": "src/lib.rs",
+                "start_byte": 10,
+                "end_byte": 20,
+                "line_start": 4,
+                "line_end": 4
+            },
+            "evidence_use": "proof_only"
+        }),
+        json!({
             "fact_kind": "proof_blocker",
             "schema_version": PROOF_FACT_SCHEMA_VERSION,
             "blocker_id": "blocker:spawn:lifetime",

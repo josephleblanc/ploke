@@ -59,6 +59,44 @@ pub(super) fn call_resolution_fact(row: &CallContextRow) -> Value {
     value
 }
 
+pub(super) fn binding_evidence_fact(
+    row: &CallContextRow,
+    evidence_kind: &str,
+    evidence_path: &[String],
+    build_domain_id: &str,
+    source_file: &str,
+) -> Value {
+    let callee_path = evidence_path.join("::");
+    serde_json::json!({
+        "fact_kind": "binding_evidence",
+        "schema_version": PROOF_FACT_SCHEMA_VERSION,
+        "binding_evidence_id": format!("binding-evidence:returned-callable:{}", row.site.id),
+        "build_domain_id": build_domain_id,
+        "call_site_id": row.site.id.to_string(),
+        "caller_def_id": row.site.owner_id.to_string(),
+        "binding_evidence_kind": "returned_callable",
+        "callee_kind": evidence_kind,
+        "callee_path": evidence_path,
+        "resolution_state": resolution_state(row.status.status),
+        "detail": match row.status.status {
+            CallStatusKind::Resolved => format!(
+                "{} invokes callable returned by {callee_path}; returned-callable binding evidence is projected for proof context",
+                row.site.owner_id
+            ),
+            _ => format!(
+                "{} invokes callable returned by {callee_path}; binding evidence records the fail-closed boundary until returned-callable value flow is proven",
+                row.site.owner_id
+            ),
+        },
+        "source_span": {
+            "file": source_file,
+            "start_byte": row.site.span.0,
+            "end_byte": row.site.span.1
+        },
+        "evidence_use": "proof_only"
+    })
+}
+
 fn call_edge_fact(row: &CallContextRow, target: &CallTargetRow) -> Value {
     serde_json::json!({
         "fact_kind": "call_edge",

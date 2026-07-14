@@ -103,6 +103,24 @@ pub(in crate::proof_graph::projection) fn validate_required_fields(
             require_fields(value, &["call_site_id", "resolution_state", "evidence_use"])?;
             require_summary_fields_for_state(value, "resolution_state")
         }
+        "binding_evidence" => {
+            require_fields(
+                value,
+                &[
+                    "binding_evidence_id",
+                    "build_domain_id",
+                    "call_site_id",
+                    "caller_def_id",
+                    "binding_evidence_kind",
+                    "callee_kind",
+                    "resolution_state",
+                    "detail",
+                    "evidence_use",
+                ],
+            )?;
+            require_json_string_array(value, "callee_path")?;
+            require_source_span(value)
+        }
         "external_summary" => {
             require_fields(
                 value,

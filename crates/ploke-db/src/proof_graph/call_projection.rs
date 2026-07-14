@@ -17,7 +17,7 @@ mod facts;
 mod source;
 
 use context::validate_call_context;
-use facts::{call_edge_facts, call_resolution_fact, call_site_fact};
+use facts::{binding_evidence_fact, call_edge_facts, call_resolution_fact, call_site_fact};
 
 fn append_call_proof_facts(
     db: &Database,
@@ -30,8 +30,19 @@ fn append_call_proof_facts(
     values.push(call_site_fact(&row, build_domain_id, source_file));
     values.extend(call_edge_facts(&row));
     values.push(call_resolution_fact(&row));
-    if let Some(fact) = db.async_blocker_fact(&row)? {
-        values.push(fact);
+    if let Some(evidence) = db.callee_evidence_for_site(row.site.id)? {
+        if is_returned_callable_evidence(row.site.id, &evidence)? {
+            values.push(binding_evidence_fact(
+                &row,
+                &evidence.kind,
+                &evidence.path,
+                build_domain_id,
+                source_file,
+            ));
+        }
+        if let Some(fact) = async_blocker_fact(&row, &evidence) {
+            values.push(fact);
+        }
     }
     Ok(())
 }
@@ -39,6 +50,58 @@ fn append_call_proof_facts(
 struct CalleeEvidence {
     kind: String,
     path: Vec<String>,
+}
+
+fn is_returned_callable_evidence(
+    site_id: Uuid,
+    evidence: &CalleeEvidence,
+) -> Result<bool, DbError> {
+    match evidence.kind.as_str() {
+        "ReturnedPathCall" | "AwaitedReturnedPathCall" => Ok(true),
+        "AsyncClosureBinding" | "AwaitedAsyncClosureBinding" => Ok(false),
+        other => Err(DbError::Cozo(format!(
+            "unknown call_callee_evidence kind {other:?} for call site {site_id}"
+        ))),
+    }
+}
+
+fn async_blocker_fact(row: &CallContextRow, evidence: &CalleeEvidence) -> Option<Value> {
+    if row.status.status != CallStatusKind::Unsupported {
+        return None;
+    }
+
+    match evidence.kind.as_str() {
+        "AsyncClosureBinding" => Some(serde_json::json!({
+            "fact_kind": "proof_blocker",
+            "schema_version": PROOF_FACT_SCHEMA_VERSION,
+            "blocker_id": format!("blocker:async-closure-poll-resume:{}", row.site.id),
+            "reason": "dynamic_dispatch_unbounded",
+            "status": "blocked",
+            "call_site_id": row.site.id.to_string(),
+            "detail": format!(
+                "{} calls async closure binding {} without awaiting the returned future; traversal remains targetless until async poll/resume proof is modeled",
+                row.site.owner_id,
+                evidence.path.join("::")
+            ),
+            "evidence_use": "proof_only"
+        })),
+        "ReturnedPathCall" => Some(serde_json::json!({
+            "fact_kind": "proof_blocker",
+            "schema_version": PROOF_FACT_SCHEMA_VERSION,
+            "blocker_id": format!("blocker:returned-callable-poll-resume:{}", row.site.id),
+            "reason": "dynamic_dispatch_unbounded",
+            "status": "blocked",
+            "call_site_id": row.site.id.to_string(),
+            "detail": format!(
+                "{} invokes callable returned by {} without proof that the returned future is polled at this call boundary; traversal remains targetless until async poll/resume proof is modeled",
+                row.site.owner_id,
+                evidence.path.join("::")
+            ),
+            "evidence_use": "proof_only"
+        })),
+        "AwaitedAsyncClosureBinding" | "AwaitedReturnedPathCall" => None,
+        _ => None,
+    }
 }
 
 impl Database {
@@ -69,53 +132,6 @@ impl Database {
             rows => Err(DbError::Cozo(format!(
                 "expected at most one call_callee_evidence row for call site {site_id}, found {}",
                 rows.len()
-            ))),
-        }
-    }
-
-    fn async_blocker_fact(&self, row: &CallContextRow) -> Result<Option<Value>, DbError> {
-        if row.status.status != CallStatusKind::Unsupported {
-            return Ok(None);
-        }
-
-        let Some(evidence) = self.callee_evidence_for_site(row.site.id)? else {
-            return Ok(None);
-        };
-
-        match evidence.kind.as_str() {
-            "AsyncClosureBinding" => Ok(Some(serde_json::json!({
-                "fact_kind": "proof_blocker",
-                "schema_version": PROOF_FACT_SCHEMA_VERSION,
-                "blocker_id": format!("blocker:async-closure-poll-resume:{}", row.site.id),
-                "reason": "dynamic_dispatch_unbounded",
-                "status": "blocked",
-                "call_site_id": row.site.id.to_string(),
-                "detail": format!(
-                    "{} calls async closure binding {} without awaiting the returned future; traversal remains targetless until async poll/resume proof is modeled",
-                    row.site.owner_id,
-                    evidence.path.join("::")
-                ),
-                "evidence_use": "proof_only"
-            }))),
-            "ReturnedPathCall" => Ok(Some(serde_json::json!({
-                "fact_kind": "proof_blocker",
-                "schema_version": PROOF_FACT_SCHEMA_VERSION,
-                "blocker_id": format!("blocker:returned-callable-poll-resume:{}", row.site.id),
-                "reason": "dynamic_dispatch_unbounded",
-                "status": "blocked",
-                "call_site_id": row.site.id.to_string(),
-                "detail": format!(
-                    "{} invokes callable returned by {} without proof that the returned future is polled at this call boundary; traversal remains targetless until async poll/resume proof is modeled",
-                    row.site.owner_id,
-                    evidence.path.join("::")
-                ),
-                "evidence_use": "proof_only"
-            }))),
-            "AwaitedAsyncClosureBinding" => Ok(None),
-            "AwaitedReturnedPathCall" => Ok(None),
-            other => Err(DbError::Cozo(format!(
-                "unknown call_callee_evidence kind {other:?} for call site {}",
-                row.site.id
             ))),
         }
     }
