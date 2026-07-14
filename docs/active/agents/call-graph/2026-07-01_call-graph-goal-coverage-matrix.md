@@ -3317,6 +3317,18 @@ RAG callable-path collection, exact `code_item_lookup`, and exact
 This is not general returned-future value flow, non-local future tracking,
 async callable trait-object dispatch, or arbitrary poll/resume modeling.
 
+Update 2026-07-13: non-local returned async future flow now has a fail-closed
+DB/RAG fixture proof. The source oracle is
+`tests/fixture_crates/fixture_call_graph/src/lib.rs:2368-2373`, where
+`make_forwarded_returned_async_future()` returns the future produced by
+`make_returned_async_closure()()`, and
+`call_forwarded_returned_async_future()` awaits only the producer function
+result. The caller traverses exactly one resolved `Function` edge to the
+producer. The producer exposes the returned async closure maker path row plus a
+targetless `Unsupported` dynamic row; no path is admitted from the caller to
+`local_target`. This documents the missing typed future-flow carrier without
+fabricating a cross-function async closure edge.
+
 ## Parking Lot
 
 - Add binding tracking plan that ties syntax body ownership, local bindings, and type graph edges before attempting receiver/dynamic traversal.

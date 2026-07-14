@@ -92,6 +92,31 @@ Post-regeneration checkpoint, 2026-07-13:
   that names a genuine missing proof carrier rather than another same-family
   fixture variant.
 
+Forwarded returned-future checkpoint, 2026-07-13:
+
+- Source oracle:
+  `tests/fixture_crates/fixture_call_graph/src/lib.rs:2368-2373`.
+  `make_forwarded_returned_async_future()` returns the future produced by
+  `make_returned_async_closure()()`, and
+  `call_forwarded_returned_async_future()` awaits the producer function result.
+- DB/RAG status: the caller has one resolved `Function` edge to the producer.
+  The producer has a resolved path call to `make_returned_async_closure` plus a
+  targetless `Unsupported` dynamic row for the returned async closure call. RAG
+  node context also includes the incoming caller row when the producer itself
+  is a seed.
+- Traversal status: `call_forwarded_returned_async_future ->
+  make_forwarded_returned_async_future` is traversable as one edge, but there
+  is no path from the caller to `local_target`. This is intentional until a
+  typed future-flow carrier proves both the producer future and the poll point
+  across the function boundary.
+- Fixture status: active fixtures were regenerated after adding this source
+  oracle, and `verify-backup-dbs` passed for all registered active fixtures.
+  The shared corpus snapshots were refreshed under the configured shared
+  fixture directory; no tracked backup DB files changed.
+- This keeps the async bucket fail-closed and gives the next implementation
+  step a concrete blocker: non-local future value flow, not another same-block
+  awaited async closure variant.
+
 ## Remaining Candidate Buckets
 
 | Bucket | Current state | Entry criterion for implementation | First proof target |

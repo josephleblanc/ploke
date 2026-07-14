@@ -258,6 +258,99 @@ fn fixture_projection_stores_awaited_returned_async_closure_edge_only_when_polle
     Ok(())
 }
 
+#[test]
+fn fixture_projection_keeps_forwarded_returned_async_future_fail_closed() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:2368-2373:
+    // `make_forwarded_returned_async_future()` returns the future produced by
+    // `make_returned_async_closure()()`, while
+    // `call_forwarded_returned_async_future()` awaits only the producer
+    // function result. Current call-graph proof does not carry future value
+    // flow across that function boundary, so only the producer call traverses.
+    let owner = function_id_by_name(&db, "call_forwarded_returned_async_future")?;
+    let producer = function_id_by_name(&db, "make_forwarded_returned_async_future")?;
+    let returned_maker = function_id_by_name(&db, "make_returned_async_closure")?;
+    let local_target = function_id_by_name(&db, "local_target")?;
+
+    let owner_context = db.call_context_for_owner(owner)?;
+    assert_eq!(
+        owner_context.len(),
+        1,
+        "forwarded returned async future caller should only expose the awaited producer call: {owner_context:#?}"
+    );
+    let producer_row = row_by_path(&owner_context, &["make_forwarded_returned_async_future"]);
+    assert_resolved_target(
+        producer_row,
+        producer,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
+
+    let producer_context = db.call_context_for_owner(producer)?;
+    assert_eq!(
+        producer_context.len(),
+        2,
+        "producer should expose the returned async closure maker path plus targetless outer call: {producer_context:#?}"
+    );
+    let returned_maker_row = row_by_path(&producer_context, &["make_returned_async_closure"]);
+    assert_resolved_target(
+        returned_maker_row,
+        returned_maker,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
+    let dynamic = row_by_kind_path(
+        &producer_context,
+        CallSiteKind::Dynamic,
+        &["make_returned_async_closure"],
+    );
+    assert_eq!(dynamic.status.status, CallStatusKind::Unsupported);
+    assert_eq!(dynamic.status.resolution, None);
+    assert!(
+        dynamic.targets.is_empty(),
+        "non-local returned async future flow must not fabricate a closure edge: {dynamic:#?}"
+    );
+    assert!(
+        relations_for_site(&db, dynamic.site.id)?.rows.is_empty(),
+        "non-local returned async future flow must not persist a call edge"
+    );
+
+    let producer_paths = db.call_paths_between(
+        owner,
+        producer,
+        ploke_db::CallPathOptions {
+            max_depth: 1,
+            max_paths: 8,
+        },
+    )?;
+    assert_eq!(
+        producer_paths.len(),
+        1,
+        "caller should traverse exactly one resolved edge to the future producer: {producer_paths:#?}"
+    );
+    assert_eq!(producer_paths[0].depth, 1);
+    assert_eq!(producer_paths[0].edges[0].caller_id, owner);
+    assert_eq!(producer_paths[0].edges[0].callee_id, producer);
+
+    let local_target_paths = db.call_paths_between(
+        owner,
+        local_target,
+        ploke_db::CallPathOptions {
+            max_depth: 4,
+            max_paths: 16,
+        },
+    )?;
+    assert!(
+        local_target_paths.is_empty(),
+        "non-local returned async future flow should remain fail-closed until a typed future-flow carrier exists: {local_target_paths:#?}"
+    );
+
+    Ok(())
+}
+
 fn project_polled_returned_async_proof(
     db: &ploke_db::Database,
     owner_name: &str,

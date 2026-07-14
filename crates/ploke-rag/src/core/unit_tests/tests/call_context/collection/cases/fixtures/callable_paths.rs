@@ -12,6 +12,8 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
     let make_bound = unique_id_by_name(&db, "function", "make_bound_closure")?;
     let make_alias = unique_id_by_name(&db, "function", "make_alias_bound_closure")?;
     let make_returned_async = unique_id_by_name(&db, "function", "make_returned_async_closure")?;
+    let future_producer =
+        unique_id_by_name(&db, "function", "make_forwarded_returned_async_future")?;
     let returned_param_helper =
         unique_id_by_name(&db, "function", "return_forwarded_function_pointer")?;
     let returned_conflicting_helper = unique_id_by_name(
@@ -69,6 +71,10 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
     let returned_async_stored_owner = one_uuid(
         &db,
         &function_in_module_query(&["crate"], "call_stored_returned_async_closure"),
+    )?;
+    let future_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_forwarded_returned_async_future"),
     )?;
     let branch_owner = one_uuid(
         &db,
@@ -176,6 +182,8 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
         (returned_async_no_await_owner, 1.0),
         (returned_async_awaited_owner, 1.0),
         (returned_async_stored_owner, 1.0),
+        (future_owner, 1.0),
+        (future_producer, 1.0),
         (branch_owner, 1.0),
         (block_owner, 1.0),
         (fn_param_owner, 1.0),
@@ -464,6 +472,96 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
             assert_eq!(dynamic.targets[0].relation, CallTargetKind::DynamicClosure);
         }
     }
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:2368-2373:
+    // the caller awaits a producer function that returns a future, but the
+    // current graph does not carry future value flow across that function
+    // boundary. RAG should expose the producer call and leave the producer's
+    // inner returned async closure dynamic row targetless.
+    let future_context = call_context
+        .get(&future_owner)
+        .expect("forwarded returned async future caller should receive outgoing call context");
+    assert_eq!(
+        future_context.len(),
+        1,
+        "forwarded returned async future caller context: {future_context:#?}"
+    );
+    let producer_call = &future_context[0];
+    assert_eq!(producer_call.kind, CallSiteKind::Path);
+    assert_eq!(
+        producer_call.callee,
+        CallCalleeInfo::Path {
+            path: vec!["make_forwarded_returned_async_future".to_string()],
+        }
+    );
+    assert_eq!(producer_call.status, CallStatusKind::Resolved);
+    assert_eq!(
+        producer_call.resolution,
+        Some(CallResolutionKind::LocalExact)
+    );
+    assert_eq!(producer_call.targets.len(), 1);
+    assert_eq!(producer_call.targets[0].target_id, future_producer);
+    assert_eq!(producer_call.targets[0].relation, CallTargetKind::Function);
+
+    let producer_context = call_context
+        .get(&future_producer)
+        .expect("forwarded returned async future producer should receive outgoing call context");
+    assert_eq!(
+        producer_context.len(),
+        3,
+        "forwarded returned async future producer context: {producer_context:#?}"
+    );
+    let incoming_call = producer_context
+        .iter()
+        .find(|call| {
+            call.owner_id == future_owner
+                && call.kind == CallSiteKind::Path
+                && call.callee
+                    == CallCalleeInfo::Path {
+                        path: vec!["make_forwarded_returned_async_future".to_string()],
+                    }
+        })
+        .expect("producer context should include the incoming caller edge");
+    assert_eq!(incoming_call.status, CallStatusKind::Resolved);
+    assert_eq!(
+        incoming_call.resolution,
+        Some(CallResolutionKind::LocalExact)
+    );
+    assert_eq!(incoming_call.targets.len(), 1);
+    assert_eq!(incoming_call.targets[0].target_id, future_producer);
+    assert_eq!(incoming_call.targets[0].relation, CallTargetKind::Function);
+
+    let producer_path = producer_context
+        .iter()
+        .find(|call| {
+            call.owner_id == future_producer
+                && call.kind == CallSiteKind::Path
+                && call.callee
+                    == CallCalleeInfo::Path {
+                        path: vec!["make_returned_async_closure".to_string()],
+                    }
+        })
+        .expect("producer should include the returned async closure maker path call");
+    assert_eq!(producer_path.status, CallStatusKind::Resolved);
+    assert_eq!(
+        producer_path.resolution,
+        Some(CallResolutionKind::LocalExact)
+    );
+    assert_eq!(producer_path.targets.len(), 1);
+    assert_eq!(producer_path.targets[0].target_id, make_returned_async);
+    assert_eq!(producer_path.targets[0].relation, CallTargetKind::Function);
+
+    let producer_dynamic = producer_context
+        .iter()
+        .find(|call| call.owner_id == future_producer && call.kind == CallSiteKind::Dynamic)
+        .expect("producer should include a targetless outer dynamic call");
+    assert_eq!(producer_dynamic.callee, CallCalleeInfo::Dynamic);
+    assert_eq!(producer_dynamic.status, CallStatusKind::Unsupported);
+    assert_eq!(producer_dynamic.resolution, None);
+    assert!(
+        producer_dynamic.targets.is_empty(),
+        "non-local returned future flow must not fabricate a dynamic target: {producer_dynamic:#?}"
+    );
 
     let branch_context = call_context
         .get(&branch_owner)

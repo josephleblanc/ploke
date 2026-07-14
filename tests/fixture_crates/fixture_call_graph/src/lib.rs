@@ -2364,3 +2364,11 @@ pub async fn call_stored_returned_async_closure() -> i32 {
     let future = make_returned_async_closure()();
     future.await
 }
+
+pub fn make_forwarded_returned_async_future() -> impl std::future::Future<Output = i32> {
+    make_returned_async_closure()()
+}
+
+pub async fn call_forwarded_returned_async_future() -> i32 {
+    make_forwarded_returned_async_future().await
+}
