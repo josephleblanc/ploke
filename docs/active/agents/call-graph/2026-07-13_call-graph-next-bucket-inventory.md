@@ -103,7 +103,9 @@ Forwarded returned-future checkpoint, 2026-07-13:
   The producer has a resolved path call to `make_returned_async_closure` plus a
   targetless `Unsupported` dynamic row for the returned async closure call. RAG
   node context also includes the incoming caller row when the producer itself
-  is a seed.
+  is a seed. The transform now persists `ReturnedPathCall` callee evidence for
+  that dynamic row with no closure target, and DB proof projection derives a
+  `dynamic_dispatch_unbounded` returned-future poll/resume blocker from it.
 - Traversal status: `call_forwarded_returned_async_future ->
   make_forwarded_returned_async_future` is traversable as one edge, but there
   is no path from the caller to `local_target`. This is intentional until a
@@ -115,7 +117,8 @@ Forwarded returned-future checkpoint, 2026-07-13:
   fixture directory; no tracked backup DB files changed.
 - This keeps the async bucket fail-closed and gives the next implementation
   step a concrete blocker: non-local future value flow, not another same-block
-  awaited async closure variant.
+  awaited async closure variant. The explicit blocker is proof-only and does
+  not admit a local edge.
 
 Forwarded returned-closure checkpoint, updated 2026-07-14:
 

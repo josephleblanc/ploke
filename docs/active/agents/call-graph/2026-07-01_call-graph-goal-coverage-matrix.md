@@ -3326,8 +3326,11 @@ DB/RAG fixture proof. The source oracle is
 result. The caller traverses exactly one resolved `Function` edge to the
 producer. The producer exposes the returned async closure maker path row plus a
 targetless `Unsupported` dynamic row; no path is admitted from the caller to
-`local_target`. This documents the missing typed future-flow carrier without
-fabricating a cross-function async closure edge.
+`local_target`. Transform projection now preserves that returned-path dynamic
+callee as `ReturnedPathCall` evidence without a closure target, and DB proof
+projection derives a `dynamic_dispatch_unbounded` returned-future poll/resume
+blocker for the targetless dynamic row. This documents the missing typed
+future-flow carrier without fabricating a cross-function async closure edge.
 
 Update 2026-07-14: non-local returned closure value flow now has a bounded
 sync DB/RAG fixture proof. The source oracle is
