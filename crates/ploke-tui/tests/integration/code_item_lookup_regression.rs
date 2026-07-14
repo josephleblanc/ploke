@@ -1007,6 +1007,16 @@ async fn code_item_lookup_returns_awaited_returned_async_closure_context() {
     .await;
 }
 
+#[tokio::test]
+async fn code_item_lookup_returns_stored_returned_async_closure_context() {
+    assert_awaited_returned_async_closure_lookup(
+        AsyncFutureToolFixture::stored_returned_async_closure().await,
+        "stored returned async closure future",
+        "stored-returned-async-closure-lookup",
+    )
+    .await;
+}
+
 async fn assert_awaited_async_closure_future_lookup(
     fixture: AsyncFutureToolFixture,
     label: &'static str,
@@ -1100,10 +1110,11 @@ async fn assert_awaited_returned_async_closure_lookup(
         .and_then(serde_json::Value::as_array)
         .expect("proof_context array");
 
-    // Fixture source:
-    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:2359-2360
-    //     `make_returned_async_closure()().await` polls the returned async
-    //     closure future, so lookup should expose the DynamicClosure edge.
+    // Fixture sources:
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:2359-2365
+    //     direct `.await` and same-block `let future = ...; future.await`
+    //     both poll the returned async closure future, so lookup should expose
+    //     the DynamicClosure edge.
     assert_resolved_dynamic_context(
         call_context,
         fixture.owner,

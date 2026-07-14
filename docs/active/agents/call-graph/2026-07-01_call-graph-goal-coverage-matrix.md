@@ -3259,15 +3259,17 @@ cost category.
 
 Update 2026-07-13: returned async closures now have a bounded immediate-await
 proof. The fixture source oracle is
-`tests/fixture_crates/fixture_call_graph/src/lib.rs:2351-2360`, where
+`tests/fixture_crates/fixture_call_graph/src/lib.rs:2351-2365`, where
 `make_returned_async_closure()` returns `async || local_target()`;
 `call_returned_async_closure_without_await()` invokes the returned callable but
-does not poll the future, while `call_awaited_returned_async_closure()` invokes
-and immediately awaits it. Parser extraction records returned-path dynamic
-callee awaitedness, the resolver emits a `DynamicClosure` edge only for the
-awaited owner, and the un-awaited owner stays `Unsupported` with no traversal
-edge. DB context/traversal/proof tests, RAG callable-path collection, exact
-`code_item_lookup`, and exact `code_item_edges` all preserve that distinction.
+does not poll the future, `call_awaited_returned_async_closure()` invokes and
+immediately awaits it, and `call_stored_returned_async_closure()` stores the
+returned future in a same-block local binding before awaiting it. Parser
+extraction records returned-path dynamic callee awaitedness, the resolver emits
+a `DynamicClosure` edge only for the polled owners, and the un-awaited owner
+stays `Unsupported` with no traversal edge. DB context/traversal/proof tests,
+RAG callable-path collection, exact `code_item_lookup`, and exact
+`code_item_edges` all preserve that distinction.
 This is not general returned-future value flow, non-local future tracking,
 async callable trait-object dispatch, or arbitrary poll/resume modeling.
 

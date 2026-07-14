@@ -1792,21 +1792,37 @@ fn future_call_binding(stmt: &syn::Stmt) -> Option<FutureBinding> {
     };
     let name = pat_ident_name(&local.pat)?;
     let init_expr = local.init.as_ref()?.expr.as_ref();
-    let syn::Expr::Call(call) = unparen_expr(init_expr) else {
+    let span = future_call_span(init_expr)?;
+
+    Some(FutureBinding {
+        path: vec![name],
+        span,
+    })
+}
+
+fn future_call_span(expr: &syn::Expr) -> Option<(usize, usize)> {
+    let syn::Expr::Call(call) = unparen_expr(expr) else {
         return None;
     };
-    let syn::Expr::Path(path) = unparen_expr(call.func.as_ref()) else {
-        return None;
-    };
-    if path.qself.is_some() || path.path.segments.len() != 1 {
-        return None;
+    match unparen_expr(call.func.as_ref()) {
+        syn::Expr::Path(path) => {
+            if path.qself.is_some() || path.path.segments.len() != 1 {
+                return None;
+            }
+        }
+        syn::Expr::Call(inner) => {
+            let syn::Expr::Path(path) = unparen_expr(inner.func.as_ref()) else {
+                return None;
+            };
+            if path.qself.is_some() || path.path.segments.is_empty() {
+                return None;
+            }
+        }
+        _ => return None,
     }
 
     let byte_range = call.span().byte_range();
-    Some(FutureBinding {
-        path: vec![name],
-        span: (byte_range.start, byte_range.end),
-    })
+    Some((byte_range.start, byte_range.end))
 }
 
 fn future_tuple_bindings(stmt: &syn::Stmt) -> Option<Vec<FutureBinding>> {

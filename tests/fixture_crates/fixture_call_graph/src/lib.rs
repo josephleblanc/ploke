@@ -2359,3 +2359,8 @@ pub fn call_returned_async_closure_without_await() {
 pub async fn call_awaited_returned_async_closure() -> i32 {
     make_returned_async_closure()().await
 }
+
+pub async fn call_stored_returned_async_closure() -> i32 {
+    let future = make_returned_async_closure()();
+    future.await
+}

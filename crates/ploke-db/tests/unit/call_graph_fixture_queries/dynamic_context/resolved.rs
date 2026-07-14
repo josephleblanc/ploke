@@ -151,72 +151,32 @@ fn fixture_context_resolves_awaited_returned_async_closure_only_when_polled() ->
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let maker = function_id_by_name(&db, "make_returned_async_closure")?;
 
-    // tests/fixture_crates/fixture_call_graph/src/lib.rs:2355-2360:
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:2355-2365:
     // the un-awaited caller invokes the returned async closure but never polls
-    // the future, while the awaited caller immediately polls it with `.await`.
+    // the future, while the awaited and stored callers poll it with `.await`.
     let no_await_owner = function_id_by_name(&db, "call_returned_async_closure_without_await")?;
-    let awaited_owner = function_id_by_name(&db, "call_awaited_returned_async_closure")?;
-
-    let awaited_context = db.call_context_for_owner(awaited_owner)?;
-    assert_eq!(
-        awaited_context.len(),
-        2,
-        "awaited returned async closure context rows: {awaited_context:#?}"
-    );
-    assert_returned_async_maker_path(&awaited_context, awaited_owner, maker);
-
-    let awaited_dynamic = row_by_kind_path(
-        &awaited_context,
-        CallSiteKind::Dynamic,
-        &["make_returned_async_closure"],
-    );
-    assert_eq!(awaited_dynamic.site.owner_id, awaited_owner);
-    assert_eq!(awaited_dynamic.site.arg_count, Some(0));
-    assert_eq!(awaited_dynamic.site.generic_arg_count, None);
-    assert_eq!(
-        awaited_dynamic.targets.len(),
-        1,
-        "awaited returned async closure dynamic row: {awaited_dynamic:#?}"
-    );
-    let closure = awaited_dynamic.targets[0].target_id;
-    assert_resolved_target(
-        awaited_dynamic,
-        closure,
-        CallRelationKind::DynamicClosure,
-        CallSiteKind::Dynamic,
-        CallTargetKind::Closure,
-    );
-
-    let callers = db.callers_for_target(closure)?;
-    let caller = caller_by_owner_kind_path(
-        &callers,
-        awaited_owner,
-        CallSiteKind::Dynamic,
-        &["make_returned_async_closure"],
-    );
-    assert_eq!(caller.status.status, CallStatusKind::Resolved);
-    assert_eq!(
-        caller.status.resolution,
-        Some(CallResolutionKind::LocalExact)
-    );
-    assert_eq!(caller.target.relation, CallRelationKind::DynamicClosure);
-
-    let awaited_paths = db.call_paths_from_owner(
-        awaited_owner,
-        CallPathOptions {
-            max_depth: 1,
-            max_paths: 8,
-        },
-    )?;
-    assert!(
-        awaited_paths.iter().any(|path| {
-            path.start_id == awaited_owner
-                && path.end_id == closure
-                && path.depth == 1
-                && path.edges[0].relation == CallRelationKind::DynamicClosure
-        }),
-        "awaited returned async closure should traverse one hop to the closure owner: {awaited_paths:#?}"
-    );
+    let mut closure = None;
+    for (owner_name, label) in [
+        (
+            "call_awaited_returned_async_closure",
+            "awaited returned async closure",
+        ),
+        (
+            "call_stored_returned_async_closure",
+            "stored returned async closure future",
+        ),
+    ] {
+        let target = assert_polled_returned_async_context(&db, owner_name, label, maker)?;
+        if let Some(existing) = closure {
+            assert_eq!(
+                target, existing,
+                "{label} should target the same returned async-closure owner"
+            );
+        } else {
+            closure = Some(target);
+        }
+    }
+    let closure = closure.expect("polled returned async closure cases should establish a target");
 
     let no_await_context = db.call_context_for_owner(no_await_owner)?;
     assert_eq!(
@@ -274,6 +234,73 @@ fn assert_returned_async_maker_path(context: &[CallContextRow], owner: Uuid, mak
         CallSiteKind::Path,
         CallTargetKind::Function,
     );
+}
+
+fn assert_polled_returned_async_context(
+    db: &ploke_db::Database,
+    owner_name: &str,
+    label: &str,
+    maker: Uuid,
+) -> Result<Uuid, DbError> {
+    let owner = function_id_by_name(db, owner_name)?;
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(context.len(), 2, "{label} context rows: {context:#?}");
+    assert_returned_async_maker_path(&context, owner, maker);
+
+    let dynamic = row_by_kind_path(
+        &context,
+        CallSiteKind::Dynamic,
+        &["make_returned_async_closure"],
+    );
+    assert_eq!(dynamic.site.owner_id, owner);
+    assert_eq!(dynamic.site.arg_count, Some(0));
+    assert_eq!(dynamic.site.generic_arg_count, None);
+    assert_eq!(
+        dynamic.targets.len(),
+        1,
+        "{label} dynamic row: {dynamic:#?}"
+    );
+    let closure = dynamic.targets[0].target_id;
+    assert_resolved_target(
+        dynamic,
+        closure,
+        CallRelationKind::DynamicClosure,
+        CallSiteKind::Dynamic,
+        CallTargetKind::Closure,
+    );
+
+    let callers = db.callers_for_target(closure)?;
+    let caller = caller_by_owner_kind_path(
+        &callers,
+        owner,
+        CallSiteKind::Dynamic,
+        &["make_returned_async_closure"],
+    );
+    assert_eq!(caller.status.status, CallStatusKind::Resolved);
+    assert_eq!(
+        caller.status.resolution,
+        Some(CallResolutionKind::LocalExact)
+    );
+    assert_eq!(caller.target.relation, CallRelationKind::DynamicClosure);
+
+    let paths = db.call_paths_from_owner(
+        owner,
+        CallPathOptions {
+            max_depth: 1,
+            max_paths: 8,
+        },
+    )?;
+    assert!(
+        paths.iter().any(|path| {
+            path.start_id == owner
+                && path.end_id == closure
+                && path.depth == 1
+                && path.edges[0].relation == CallRelationKind::DynamicClosure
+        }),
+        "{label} should traverse one hop to the closure owner: {paths:#?}"
+    );
+
+    Ok(closure)
 }
 
 fn assert_returned_closure_context(

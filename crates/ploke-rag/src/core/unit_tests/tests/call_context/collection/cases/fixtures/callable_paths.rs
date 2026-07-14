@@ -66,6 +66,10 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
         &db,
         &function_in_module_query(&["crate"], "call_awaited_returned_async_closure"),
     )?;
+    let returned_async_stored_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_stored_returned_async_closure"),
+    )?;
     let branch_owner = one_uuid(
         &db,
         &function_in_module_query(&["crate"], "call_if_initialized_function_item_binding"),
@@ -171,6 +175,7 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
         (alias_owner, 1.0),
         (returned_async_no_await_owner, 1.0),
         (returned_async_awaited_owner, 1.0),
+        (returned_async_stored_owner, 1.0),
         (branch_owner, 1.0),
         (block_owner, 1.0),
         (fn_param_owner, 1.0),
@@ -406,10 +411,15 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
             returned_async_awaited_owner,
             "awaited returned async closure",
         ),
+        (
+            returned_async_stored_owner,
+            "stored returned async closure future",
+        ),
     ] {
-        // tests/fixture_crates/fixture_call_graph/src/lib.rs:2355-2360:
+        // tests/fixture_crates/fixture_call_graph/src/lib.rs:2355-2365:
         // both owners call the same async-closure maker, but only the awaited
-        // caller polls the returned future and may receive a DynamicClosure edge.
+        // and stored callers poll the returned future and may receive a
+        // DynamicClosure edge.
         let context = call_context
             .get(&owner)
             .unwrap_or_else(|| panic!("{label} should receive outgoing call context"));
@@ -436,7 +446,14 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
             .find(|call| call.kind == CallSiteKind::Dynamic)
             .unwrap_or_else(|| panic!("{label} should include an outer dynamic call"));
         assert_eq!(dynamic.callee, CallCalleeInfo::Dynamic);
-        if owner == returned_async_awaited_owner {
+        if owner == returned_async_no_await_owner {
+            assert_eq!(dynamic.status, CallStatusKind::Unsupported);
+            assert_eq!(dynamic.resolution, None);
+            assert!(
+                dynamic.targets.is_empty(),
+                "un-awaited returned async closure must not fabricate a closure target: {dynamic:#?}"
+            );
+        } else {
             assert_eq!(dynamic.status, CallStatusKind::Resolved);
             assert_eq!(dynamic.resolution, Some(CallResolutionKind::LocalExact));
             assert_eq!(dynamic.targets.len(), 1);
@@ -445,13 +462,6 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
                 "awaited returned async closure dynamic target should be the closure owner, not the maker function"
             );
             assert_eq!(dynamic.targets[0].relation, CallTargetKind::DynamicClosure);
-        } else {
-            assert_eq!(dynamic.status, CallStatusKind::Unsupported);
-            assert_eq!(dynamic.resolution, None);
-            assert!(
-                dynamic.targets.is_empty(),
-                "un-awaited returned async closure must not fabricate a closure target: {dynamic:#?}"
-            );
         }
     }
 

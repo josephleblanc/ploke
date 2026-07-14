@@ -1587,6 +1587,16 @@ async fn code_item_edges_returns_awaited_returned_async_closure_context() {
     .await;
 }
 
+#[tokio::test]
+async fn code_item_edges_returns_stored_returned_async_closure_context() {
+    assert_awaited_returned_async_closure_edges(
+        AsyncFutureToolFixture::stored_returned_async_closure().await,
+        "stored returned async closure future",
+        "stored-returned-async-closure-edges",
+    )
+    .await;
+}
+
 async fn assert_awaited_async_closure_future_edges(
     fixture: AsyncFutureToolFixture,
     label: &'static str,
@@ -1681,8 +1691,9 @@ async fn assert_awaited_returned_async_closure_edges(
         .expect("node_info.proof_context array");
 
     // Same fixture oracle as lookup:
-    // tests/fixture_crates/fixture_call_graph/src/lib.rs:2359-2360 polls the
-    // returned async closure future with `.await`.
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:2359-2365 polls the
+    // returned async closure future either directly or through a same-block
+    // local future binding.
     assert_resolved_dynamic_context(
         call_context,
         fixture.owner,

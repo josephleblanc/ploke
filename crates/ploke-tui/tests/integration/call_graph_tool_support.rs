@@ -779,6 +779,14 @@ impl AsyncFutureToolFixture {
         .await
     }
 
+    pub(crate) async fn stored_returned_async_closure() -> Self {
+        Self::for_owner_with_closure_parent(
+            "call_stored_returned_async_closure",
+            "make_returned_async_closure",
+        )
+        .await
+    }
+
     async fn for_owner(owner_name: &'static str) -> Self {
         Self::for_owner_with_closure_parent(owner_name, owner_name).await
     }

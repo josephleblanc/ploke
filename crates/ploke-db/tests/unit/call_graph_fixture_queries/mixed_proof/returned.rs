@@ -191,9 +191,10 @@ fn fixture_projection_stores_awaited_returned_async_closure_edge_only_when_polle
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let maker = function_id_by_name(&db, "make_returned_async_closure")?;
 
-    // tests/fixture_crates/fixture_call_graph/src/lib.rs:2355-2360:
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:2355-2365:
     // `make_returned_async_closure()()` is targetless until the returned async
-    // closure future is immediately polled by `.await`.
+    // closure future is immediately polled by `.await`, either directly or
+    // through a same-block local future binding.
     let no_await_owner = function_id_by_name(&db, "call_returned_async_closure_without_await")?;
     let no_await_context = db.call_context_for_owner(no_await_owner)?;
     assert_eq!(
@@ -224,68 +225,89 @@ fn fixture_projection_stores_awaited_returned_async_closure_edge_only_when_polle
         db.project_call_proof_facts_for_owner(no_await_owner, "bd:fixture-call-graph")?;
     assert_eq!(no_await_count, 5);
 
-    let awaited_owner = function_id_by_name(&db, "call_awaited_returned_async_closure")?;
-    let awaited_context = db.call_context_for_owner(awaited_owner)?;
-    assert_eq!(
-        awaited_context.len(),
-        2,
-        "awaited returned async closure proof context rows: {awaited_context:#?}"
-    );
-    let awaited_path = row_by_path(&awaited_context, &["make_returned_async_closure"]);
-    assert_resolved_target(
-        awaited_path,
-        maker,
-        CallRelationKind::Function,
-        CallSiteKind::Path,
-        CallTargetKind::Function,
-    );
-    let awaited_dynamic = row_by_kind_path(
-        &awaited_context,
-        CallSiteKind::Dynamic,
-        &["make_returned_async_closure"],
-    );
-    assert_eq!(awaited_dynamic.targets.len(), 1);
-    let closure = awaited_dynamic.targets[0].target_id;
-    assert_resolved_target(
-        awaited_dynamic,
-        closure,
-        CallRelationKind::DynamicClosure,
-        CallSiteKind::Dynamic,
-        CallTargetKind::Closure,
-    );
-    let awaited_count =
-        db.project_call_proof_facts_for_owner(awaited_owner, "bd:fixture-call-graph")?;
-    assert_eq!(awaited_count, 6);
+    let mut expected = vec![OwnerProofEdge {
+        owner: no_await_owner,
+        site: no_await_path.site.id,
+        span: no_await_path.site.span,
+        target: maker,
+    }];
+    for (owner, label) in [
+        (
+            "call_awaited_returned_async_closure",
+            "awaited returned async closure",
+        ),
+        (
+            "call_stored_returned_async_closure",
+            "stored returned async closure future",
+        ),
+    ] {
+        expected.extend(project_polled_returned_async_proof(
+            &db, owner, label, maker,
+        )?);
+    }
 
     assert_owner_proof_edges(
         &db,
         "returned async closure resolved calls",
-        &[
-            OwnerProofEdge {
-                owner: no_await_owner,
-                site: no_await_path.site.id,
-                span: no_await_path.site.span,
-                target: maker,
-            },
-            OwnerProofEdge {
-                owner: awaited_owner,
-                site: awaited_path.site.id,
-                span: awaited_path.site.span,
-                target: maker,
-            },
-            OwnerProofEdge {
-                owner: awaited_owner,
-                site: awaited_dynamic.site.id,
-                span: awaited_dynamic.site.span,
-                target: closure,
-            },
-        ],
+        &expected,
         "fixture_call_graph/src/lib.rs",
         "type_resolution_missing",
         ProofEdgeCount::Exact,
     )?;
 
     Ok(())
+}
+
+fn project_polled_returned_async_proof(
+    db: &ploke_db::Database,
+    owner_name: &str,
+    label: &str,
+    maker: Uuid,
+) -> Result<Vec<OwnerProofEdge>, DbError> {
+    let owner = function_id_by_name(db, owner_name)?;
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(context.len(), 2, "{label} proof context rows: {context:#?}");
+
+    let path_row = row_by_path(&context, &["make_returned_async_closure"]);
+    assert_resolved_target(
+        path_row,
+        maker,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
+
+    let dynamic_row = row_by_kind_path(
+        &context,
+        CallSiteKind::Dynamic,
+        &["make_returned_async_closure"],
+    );
+    assert_eq!(dynamic_row.targets.len(), 1);
+    let closure = dynamic_row.targets[0].target_id;
+    assert_resolved_target(
+        dynamic_row,
+        closure,
+        CallRelationKind::DynamicClosure,
+        CallSiteKind::Dynamic,
+        CallTargetKind::Closure,
+    );
+    let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
+    assert_eq!(count, 6, "{label} proof fact count");
+
+    Ok(vec![
+        OwnerProofEdge {
+            owner,
+            site: path_row.site.id,
+            span: path_row.site.span,
+            target: maker,
+        },
+        OwnerProofEdge {
+            owner,
+            site: dynamic_row.site.id,
+            span: dynamic_row.site.span,
+            target: closure,
+        },
+    ])
 }
 
 struct ReturnedClosureProofCase {
