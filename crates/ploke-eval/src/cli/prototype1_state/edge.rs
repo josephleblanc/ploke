@@ -13,7 +13,7 @@ pub(crate) const GRAPH_VERSION_V2: &str = "walk-r0-r14a-v2";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum ControlEdge {
+pub enum ControlEdge {
     StartToR0,
     R0ToR1,
     R1ToR2a,
@@ -68,7 +68,7 @@ impl ControlEdge {
         Self::R13bToR14b,
     ];
 
-    pub(crate) const fn from(self) -> WalkPhase {
+    pub const fn from(self) -> WalkPhase {
         match self {
             Self::StartToR0 => WalkPhase::Empty,
             Self::R0ToR1 => WalkPhase::R0,
@@ -92,7 +92,7 @@ impl ControlEdge {
         }
     }
 
-    pub(crate) const fn to(self) -> WalkPhase {
+    pub const fn to(self) -> WalkPhase {
         match self {
             Self::StartToR0 => WalkPhase::R0,
             Self::R0ToR1 => WalkPhase::R1,
@@ -118,7 +118,7 @@ impl ControlEdge {
         }
     }
 
-    pub(crate) const fn id(self) -> &'static str {
+    pub const fn id(self) -> &'static str {
         match self {
             Self::StartToR0 => "start_to_r0",
             Self::R0ToR1 => "r0_to_r1",
@@ -147,18 +147,18 @@ impl ControlEdge {
         }
     }
 
-    pub(crate) const fn requires_live(self) -> bool {
+    pub const fn requires_live(self) -> bool {
         matches!(
             self,
             Self::R5ToR6 | Self::R7ToR8 | Self::R10ToR11a | Self::R10ToR11
         )
     }
 
-    pub(crate) const fn requires_checkout(self) -> bool {
+    pub const fn requires_checkout(self) -> bool {
         matches!(self, Self::R12ToR13b | Self::R12ToR13c)
     }
 
-    pub(crate) fn from_phases(from: WalkPhase, to: WalkPhase) -> Option<Self> {
+    pub fn from_phases(from: WalkPhase, to: WalkPhase) -> Option<Self> {
         Self::ALL
             .into_iter()
             .find(|edge| edge.from() == from && edge.to() == to)

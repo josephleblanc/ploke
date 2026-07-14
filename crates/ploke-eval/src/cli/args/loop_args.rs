@@ -331,7 +331,7 @@ pub struct Prototype1StateWalkAuditCommand {
 #[derive(Debug, Clone, Parser)]
 #[command(
     about = "Run an immutable CozoScript query against the active loop run eval DB",
-    after_help = "Examples:\n  ploke-eval loop walk db_query --script '::relations'\n  ploke-eval loop walk db_query --script '?[campaign_id, dataset_sources] := *eval_campaign { campaign_id, dataset_sources }'\n  ploke-eval loop walk db_query --repo-root /path/to/parent-worktree --format json --script '::relations'\n\nThis command is read-only: it restores the owner eval DB backup into memory and executes the script with Cozo ScriptMutability::Immutable."
+    after_help = "Examples:\n  ploke-eval loop walk db_query --script '::relations'\n  ploke-eval loop walk db_query --script '?[campaign_id, dataset_sources] := *eval_campaign { campaign_id, dataset_sources }'\n  ploke-eval loop walk db_query --repo-root /path/to/parent-worktree --format json --script '::relations'\n\nThis command is read-only: the walk service reads one exact owner DB snapshot, reports its content revision, restores it in isolation, and executes the script with Cozo ScriptMutability::Immutable."
 )]
 pub struct Prototype1StateWalkDbQueryCommand {
     /// Parent checkout root. Defaults to active walk context, then current directory.
@@ -569,6 +569,10 @@ pub struct Prototype1StateWalkLlmToolCommand {
 
 #[derive(Debug, Clone, Parser)]
 pub struct Prototype1StateWalkLlmStepCommand {
+    /// Reuse a prior semantic operation identity to attach to the exact same request.
+    #[arg(long, value_name = "UUID")]
+    pub(crate) operation_id: Option<OperationId>,
+
     /// Lane id, usually the candidate workspace basename. Defaults to current focus.
     #[arg(long)]
     pub lane: Option<String>,
@@ -612,6 +616,10 @@ pub struct Prototype1StateWalkLlmStepCommand {
 
 #[derive(Debug, Clone, Parser)]
 pub struct Prototype1StateWalkLlmFinishCommand {
+    /// Reuse a prior semantic operation identity to attach to the exact same request.
+    #[arg(long, value_name = "UUID")]
+    pub(crate) operation_id: Option<OperationId>,
+
     /// Lane id, usually the candidate workspace basename. Defaults to current focus.
     #[arg(long)]
     pub lane: Option<String>,
@@ -715,6 +723,10 @@ pub struct Prototype1StateWalkReplayMoveCommand {
 pub struct Prototype1StateWalkBranchLiveCommand {
     #[command(flatten)]
     pub control: Prototype1StateWalkControlCommand,
+
+    /// Reuse a prior semantic operation identity to attach to the exact same request.
+    #[arg(long, value_name = "UUID")]
+    pub(crate) operation_id: Option<OperationId>,
 
     /// Operator reason for leaving read-only historical replay.
     #[arg(long)]
@@ -830,26 +842,34 @@ pub struct Prototype1StateWalkResetCommand {
 #[derive(Debug, Clone, Parser)]
 #[command(
     about = "Inspect or explicitly resolve one durable controller recovery cause",
-    after_help = "Examples:\n  ploke-eval loop walk recover\n  ploke-eval loop walk recover --abandon-owner\n  ploke-eval loop walk recover --abandon-session\n  ploke-eval loop walk recover --admit-epoch\n\nWith no resolution flag this command is read-only. Owner abandonment is admitted only for an exact lost-owner cause. Session abandonment permanently terminalizes unresolved pending or indeterminate authority without making the session runnable again; preserve that run as evidence and start fresh. Epoch admission records the exact prior and current source/binary epochs."
+    after_help = "Examples:\n  ploke-eval loop walk recover\n  ploke-eval loop walk recover --abandon-job 11111111-1111-4111-8111-111111111111\n  ploke-eval loop walk recover --abandon-owner\n  ploke-eval loop walk recover --abandon-session\n  ploke-eval loop walk recover --admit-epoch\n\nWith no resolution flag this command is read-only. Job abandonment preserves an indeterminate operation as evidence while releasing its mutation blocker; it does not claim that the operation had no effects. Owner abandonment is admitted only for an exact lost-owner cause. Session abandonment permanently terminalizes unresolved pending or indeterminate authority without making the session runnable again; preserve that run as evidence and start fresh. Epoch admission records the exact prior and current source/binary epochs."
 )]
 pub struct Prototype1StateWalkRecoverCommand {
     #[command(flatten)]
     pub control: Prototype1StateWalkControlCommand,
 
     /// Resolve an exact journal owner whose kernel lock and process incarnation are gone.
-    #[arg(long, conflicts_with_all = ["abandon_session", "admit_epoch"])]
+    #[arg(long, conflicts_with_all = ["abandon_job", "abandon_session", "admit_epoch"])]
     pub abandon_owner: bool,
 
     /// Permanently terminalize an unresolved session without restoring mutation authority.
-    #[arg(long, conflicts_with_all = ["abandon_owner", "admit_epoch"])]
+    #[arg(long, conflicts_with_all = ["abandon_job", "abandon_owner", "admit_epoch"])]
     pub abandon_session: bool,
 
     /// Admit the exact current source/binary epoch over the journal's prior epoch.
-    #[arg(long, conflicts_with_all = ["abandon_owner", "abandon_session"])]
+    #[arg(long, conflicts_with_all = ["abandon_job", "abandon_owner", "abandon_session"])]
     pub admit_epoch: bool,
 
+    /// Preserve one indeterminate operation as abandoned and release its mutation blocker.
+    #[arg(
+        long,
+        value_name = "UUID",
+        conflicts_with_all = ["abandon_owner", "abandon_session", "admit_epoch", "operation_id"]
+    )]
+    pub abandon_job: Option<OperationId>,
+
     /// Reuse a prior semantic operation identity for the same recovery resolution.
-    #[arg(long, value_name = "UUID")]
+    #[arg(long, value_name = "UUID", conflicts_with = "abandon_job")]
     pub(crate) operation_id: Option<OperationId>,
 }
 

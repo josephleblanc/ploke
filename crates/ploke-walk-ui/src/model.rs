@@ -1,11 +1,12 @@
 use std::{path::PathBuf, time::Duration};
 
-use ploke_eval::walk_client::{DbQueryResult, WalkSnapshot};
+use ploke_eval::walk_client::{WalkQuerySnapshot, WalkResponse};
 
 pub(crate) const DEFAULT_QUERY: &str = "::relations";
 pub(crate) const MAX_TABLE_ROWS: usize = 200;
 pub(crate) const RUN_LABEL_MAX_CHARS: usize = 48;
 pub(crate) const WALK_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
+pub(crate) const DB_QUERY_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct UiButtonState {
@@ -32,14 +33,14 @@ pub(crate) enum UiEvent {
         kind: WalkRequestKind,
         result: WalkRequestResult,
     },
-    Query(Result<DbQueryResult, String>),
+    Query(Result<WalkQuerySnapshot, String>),
 }
 
 pub(crate) enum WalkRequestResult {
-    Snapshot(WalkSnapshot),
+    Response(WalkResponse),
     Offline(PathBuf),
     TimedOut,
-    Error(String),
+    ClientError(String),
 }
 
 impl WalkRequestKind {

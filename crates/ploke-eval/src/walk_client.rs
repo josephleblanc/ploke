@@ -5,39 +5,60 @@
 //! authoritative.
 
 use std::{
-    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use cozo::DataValue;
-use ploke_db::QueryResult;
-use ploke_records::ids::CampaignId;
 use serde::{Deserialize, Serialize};
 use tokio::net::UnixStream;
 
 use crate::{
-    campaign::campaign_manifest_path,
     cli::prototype1_state::{
-        eval_store::{load_owner_eval_database, prototype1_eval_store_db_path},
+        eval_store::prototype1_eval_store_db_path,
         identity,
-        walk::{
-            ipc, paths,
-            protocol::{WalkRequest, WalkRequestBody, WalkResponse},
-        },
+        walk::{endpoint, ipc, paths},
     },
     layout::{campaigns_dir, ploke_eval_home},
     spec::PrepareError,
 };
 
-pub use crate::cli::prototype1_state::walk::phase::WalkPhase;
+pub use crate::cli::{
+    Prototype1StateWalkAuditScope, Prototype1StateWalkAuditTransition,
+    Prototype1StateWalkLlmStepSource,
+};
+
+pub use crate::cli::prototype1_state::{
+    driver::control::RecoveryDirective,
+    edge::ControlEdge,
+    session::{Cursor, SessionId},
+    walk::{
+        audit::{
+            AuditSummary, AuditVerdict, CampaignAudit, CampaignSource, DatabaseAudit,
+            DatabaseStatus, DocumentAudit, DocumentExpectation, DocumentRole, DocumentStatus,
+            ExpectedAt, ExpectedPersistence, ExpectedStatus, PersistenceItemAudit, PersistenceSide,
+            PersistenceStatus, RelationCount, TransitionAudit, TransitionChecklist,
+            WalkAuditReport,
+        },
+        epoch::ServerEpoch,
+        phase::WalkPhase,
+        protocol::{
+            MutationGuard, OperationId, SessionVersion, WalkAction, WalkActionKind, WalkAuthority,
+            WalkBlocker, WalkBlockerCode, WalkErrorCode, WalkEventProjection, WalkJobKind,
+            WalkJobResolutionKind, WalkJobResolutionReceipt, WalkJobSnapshot, WalkJobStatus,
+            WalkOkKind, WalkOkPayload, WalkQuerySnapshot, WalkRequest, WalkRequestBody,
+            WalkResponse, WalkSessionSnapshot, WalkStartConfig, WalkTransitionReceipt,
+        },
+        query::{DbQueryResult, DbQueryRow, ReadRevision},
+    },
+};
 
 /// Resolved local walk service endpoint for one parent checkout.
 #[derive(Debug, Clone)]
 pub struct WalkClient {
     repo_root: PathBuf,
     socket: PathBuf,
+    follow_endpoint: bool,
 }
 
 /// One Prototype 1 run candidate discovered under the local ploke-eval home.
@@ -76,61 +97,13 @@ pub struct PhaseInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NextStepInfo {
-    pub edge: String,
+    pub edge: ControlEdge,
     pub phase: WalkPhase,
     pub phase_id: String,
     pub detail: String,
     pub requires_watch: bool,
     pub requires_live_api: bool,
     pub requires_git_changes: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum WalkReplyStatus {
-    Ok,
-    Audit,
-    Error,
-}
-
-/// UI-safe projection of one walk server response.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WalkSnapshot {
-    pub status: WalkReplyStatus,
-    pub phase: Option<WalkPhase>,
-    pub phase_id: Option<String>,
-    pub phase_label: Option<String>,
-    pub message: String,
-    pub error_code: Option<String>,
-    pub epoch: ServerEpochView,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ServerEpochView {
-    pub protocol_version: u32,
-    pub transition_graph_version: String,
-    pub repo_root: PathBuf,
-    pub exe_path: PathBuf,
-    pub exe_modified_unix_ms: Option<u64>,
-    pub git_head: Option<String>,
-    pub source_status_hash: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DbQueryResult {
-    pub repo_root: PathBuf,
-    pub campaign_id: String,
-    pub db_path: PathBuf,
-    pub script: String,
-    pub headers: Vec<String>,
-    pub row_count: usize,
-    pub rows: Vec<DbQueryRow>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DbQueryRow {
-    pub cells: Vec<serde_json::Value>,
-    pub object: serde_json::Value,
 }
 
 impl WalkClient {
@@ -170,16 +143,35 @@ impl WalkClient {
                 .filter(|context| context.repo_root == repo_root)
                 .and_then(|context| context.socket.as_deref())
         });
-        let socket = paths::socket_path(&repo_root, socket_override)?;
-        Ok(Self { repo_root, socket })
+        let socket_path = paths::socket_path(&repo_root, socket_override)?;
+        Ok(Self {
+            repo_root,
+            socket: socket_path,
+            follow_endpoint: socket.is_none(),
+        })
     }
 
     /// Resolve a client endpoint using the same context/socket rules as
     /// `ploke-eval loop walk`.
     pub fn resolve(repo_root: Option<&Path>, socket: Option<&Path>) -> Result<Self, PrepareError> {
         let repo_root = paths::resolve_repo_root(repo_root)?;
-        let socket = paths::socket_path(&repo_root, socket)?;
-        Ok(Self { repo_root, socket })
+        let context = if socket.is_none() {
+            paths::load_context()?
+        } else {
+            None
+        };
+        let fallback = socket.or_else(|| {
+            context
+                .as_ref()
+                .filter(|context| context.repo_root == repo_root)
+                .and_then(|context| context.socket.as_deref())
+        });
+        let socket_path = paths::socket_path(&repo_root, fallback)?;
+        Ok(Self {
+            repo_root,
+            socket: socket_path,
+            follow_endpoint: socket.is_none(),
+        })
     }
 
     pub fn repo_root(&self) -> &Path {
@@ -190,99 +182,170 @@ impl WalkClient {
         &self.socket
     }
 
+    /// Resolve the currently authoritative endpoint for an unpinned client.
+    pub fn resolved_socket(&self) -> Result<PathBuf, PrepareError> {
+        self.endpoint_observation().map(|(socket, _)| socket)
+    }
+
+    fn endpoint_observation(
+        &self,
+    ) -> Result<(PathBuf, Option<endpoint::ServerEndpoint>), PrepareError> {
+        if self.follow_endpoint
+            && let Some(active) = endpoint::load(&self.repo_root)?
+            && active.repo_root() == self.repo_root
+            && active.owns_socket()
+        {
+            return Ok((active.socket().to_path_buf(), Some(active)));
+        }
+        Ok((self.socket.clone(), None))
+    }
+
     /// Probe the server without mutating state. `Ok(None)` means no server is
     /// currently listening at the resolved socket.
-    pub async fn health(&self) -> Result<Option<WalkSnapshot>, PrepareError> {
-        let mut stream = match UnixStream::connect(&self.socket).await {
-            Ok(stream) => stream,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => {
-                let _ = paths::remove_socket_file(&self.socket);
-                return Ok(None);
-            }
-            Err(source) => {
-                return Err(PrepareError::DatabaseSetup {
-                    phase: "prototype1_state_walk_health_connect",
-                    detail: format!(
-                        "failed to probe walk socket '{}': {source}",
-                        self.socket.display()
-                    ),
-                });
-            }
-        };
-        ipc::send(
-            &mut stream,
-            &WalkRequest {
-                client_epoch: None,
-                body: WalkRequestBody::Health,
-            },
-        )
-        .await?;
-        let response = ipc::recv(&mut stream).await?;
-        Ok(Some(WalkSnapshot::from_response(response)))
+    pub async fn health(&self) -> Result<Option<WalkResponse>, PrepareError> {
+        Ok(self
+            .health_observation()
+            .await?
+            .map(|(_, response)| response))
+    }
+
+    pub(crate) async fn health_observation(
+        &self,
+    ) -> Result<Option<(PathBuf, WalkResponse)>, PrepareError> {
+        self.exchange_read_only(WalkRequestBody::Health).await
     }
 
     /// Read the current in-memory walk state from the server.
-    pub async fn show(&self) -> Result<WalkSnapshot, PrepareError> {
+    pub async fn show(&self) -> Result<WalkResponse, PrepareError> {
         self.send_read_only(WalkRequestBody::Show).await
     }
 
-    /// Run an immutable CozoScript query against the owner eval DB snapshot.
-    pub fn query_db(
+    /// Run an immutable query through the walk service against one exact owner snapshot.
+    pub async fn query_db(
         &self,
         campaign: Option<&str>,
         script: &str,
-    ) -> Result<DbQueryResult, PrepareError> {
-        let campaign_id = self.resolve_campaign(campaign)?;
-        query_campaign_db_at(self.repo_root.clone(), campaign_id, script)
-    }
-
-    /// Run an immutable CozoScript query for a campaign without requiring a
-    /// live walk server or parent checkout.
-    pub fn query_campaign_db(campaign: &str, script: &str) -> Result<DbQueryResult, PrepareError> {
-        let campaign_id = CampaignId::from(campaign.trim());
-        let repo_root = discover_walk_runs()?
-            .into_iter()
-            .find(|run| run.campaign_id == campaign_id.as_str())
-            .and_then(|run| run.worktree_root.or(Some(run.prototype1_root)))
-            .unwrap_or_else(|| {
-                campaign_manifest_path(&campaign_id)
-                    .ok()
-                    .and_then(|path| path.parent().map(Path::to_path_buf))
-                    .unwrap_or_default()
-            });
-        query_campaign_db_at(repo_root, campaign_id, script)
-    }
-
-    async fn send_read_only(&self, body: WalkRequestBody) -> Result<WalkSnapshot, PrepareError> {
-        let mut stream = ipc::connect(&self.socket).await?;
-        ipc::send(
-            &mut stream,
-            &WalkRequest {
-                client_epoch: None,
-                body,
-            },
-        )
-        .await?;
-        let response = ipc::recv(&mut stream).await?;
-        Ok(WalkSnapshot::from_response(response))
-    }
-
-    fn resolve_campaign(&self, campaign: Option<&str>) -> Result<CampaignId, PrepareError> {
-        if let Some(campaign) = campaign.filter(|text| !text.trim().is_empty()) {
-            return Ok(CampaignId::from(campaign.trim()));
+    ) -> Result<WalkQuerySnapshot, PrepareError> {
+        let campaign = campaign
+            .filter(|text| !text.trim().is_empty())
+            .map(|text| ploke_records::ids::CampaignId::from(text.trim()));
+        match self
+            .send_read_only(WalkRequestBody::DbQuery {
+                campaign,
+                script: script.to_string(),
+            })
+            .await?
+        {
+            WalkResponse::Query { query } => Ok(query),
+            WalkResponse::Error { code, detail, .. } => Err(PrepareError::DatabaseSetup {
+                phase: "prototype1_state_walk_db_query",
+                detail: format!("{code}: {detail}"),
+            }),
+            response => Err(PrepareError::DatabaseSetup {
+                phase: "prototype1_state_walk_db_query",
+                detail: format!(
+                    "walk server returned {:?} instead of a query response",
+                    response.phase()
+                ),
+            }),
         }
-        identity::load_parent_identity_optional(&self.repo_root)?.map_or_else(
-            || {
-                Err(PrepareError::InvalidBatchSelection {
-                    detail: format!(
-                        "cannot infer campaign id for db query; provide a campaign id or use a parent checkout containing '{}'",
-                        identity::parent_identity_relpath().display()
-                    ),
-                })
-            },
-            |identity| Ok(identity.campaign_id().clone()),
-        )
+    }
+
+    pub(crate) async fn send_read_only(
+        &self,
+        body: WalkRequestBody,
+    ) -> Result<WalkResponse, PrepareError> {
+        self.exchange_read_only(body)
+            .await?
+            .map(|(_, response)| response)
+            .ok_or_else(|| PrepareError::DatabaseSetup {
+                phase: "prototype1_state_walk_connect",
+                detail: format!(
+                    "walk server is not listening at '{}'",
+                    self.resolved_socket()
+                        .unwrap_or_else(|_| self.socket.clone())
+                        .display()
+                ),
+            })
+    }
+
+    async fn exchange_read_only(
+        &self,
+        body: WalkRequestBody,
+    ) -> Result<Option<(PathBuf, WalkResponse)>, PrepareError> {
+        for exchange in 0..2 {
+            let Some((socket, endpoint, mut stream)) = self.connect_optional().await? else {
+                return Ok(None);
+            };
+            let request = WalkRequest {
+                client_epoch: None,
+                body: body.clone(),
+            };
+            let result = match ipc::send(&mut stream, &request).await {
+                Ok(()) => ipc::recv(&mut stream).await,
+                Err(error) => Err(error),
+            };
+            match result {
+                Ok(response) => return Ok(Some((socket, response))),
+                Err(_)
+                    if exchange == 0
+                        && self.follow_endpoint
+                        && self.wait_for_successor(&socket, endpoint.as_ref()).await? =>
+                {
+                    continue;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        unreachable!("read-only exchange either returns or retries once")
+    }
+
+    async fn wait_for_successor(
+        &self,
+        prior_socket: &Path,
+        prior_endpoint: Option<&endpoint::ServerEndpoint>,
+    ) -> Result<bool, PrepareError> {
+        for _ in 0..5 {
+            let (socket, endpoint) = self.endpoint_observation()?;
+            if socket != prior_socket || endpoint.as_ref() != prior_endpoint {
+                return Ok(true);
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let (socket, endpoint) = self.endpoint_observation()?;
+        Ok(socket != prior_socket || endpoint.as_ref() != prior_endpoint)
+    }
+
+    async fn connect_optional(
+        &self,
+    ) -> Result<Option<(PathBuf, Option<endpoint::ServerEndpoint>, UnixStream)>, PrepareError> {
+        for attempt in 0..2 {
+            let (socket, endpoint) = self.endpoint_observation()?;
+            match UnixStream::connect(&socket).await {
+                Ok(stream) => return Ok(Some((socket, endpoint, stream))),
+                Err(source)
+                    if matches!(
+                        source.kind(),
+                        std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
+                    ) =>
+                {
+                    if !self.follow_endpoint || attempt == 1 {
+                        return Ok(None);
+                    }
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+                Err(source) => {
+                    return Err(PrepareError::DatabaseSetup {
+                        phase: "prototype1_state_walk_connect",
+                        detail: format!(
+                            "failed to connect to walk socket '{}': {source}",
+                            socket.display()
+                        ),
+                    });
+                }
+            }
+        }
+        Ok(None)
     }
 }
 
@@ -356,38 +419,6 @@ pub fn discover_walk_runs() -> Result<Vec<WalkRunEntry>, PrepareError> {
     Ok(runs)
 }
 
-fn query_campaign_db_at(
-    repo_root: PathBuf,
-    campaign_id: CampaignId,
-    script: &str,
-) -> Result<DbQueryResult, PrepareError> {
-    let manifest = campaign_manifest_path(&campaign_id)?;
-    let db_path = prototype1_eval_store_db_path(&manifest);
-    if !db_path.exists() {
-        return Err(PrepareError::DatabaseSetup {
-            phase: "prototype1_state_walk_db_query_db_missing",
-            detail: format!("owner eval DB does not exist at '{}'", db_path.display()),
-        });
-    }
-    let db = load_owner_eval_database(&db_path).map_err(|source| PrepareError::DatabaseSetup {
-        phase: "prototype1_state_walk_db_query_open",
-        detail: source.to_string(),
-    })?;
-    let result = db
-        .raw_query_params(script, BTreeMap::new())
-        .map_err(|source| PrepareError::DatabaseSetup {
-            phase: "prototype1_state_walk_db_query_run",
-            detail: source.to_string(),
-        })?;
-    Ok(query_result_view(
-        repo_root,
-        campaign_id,
-        db_path,
-        script,
-        &result,
-    ))
-}
-
 fn system_time_unix_ms(time: SystemTime) -> Option<u64> {
     let millis = time.duration_since(UNIX_EPOCH).ok()?.as_millis();
     u64::try_from(millis).ok()
@@ -405,99 +436,23 @@ impl PhaseInventory {
                 next: phase
                     .next_steps()
                     .iter()
-                    .map(|step| NextStepInfo {
-                        edge: step.edge.to_string(),
-                        phase: step.phase,
-                        phase_id: step.phase.as_str().to_string(),
-                        detail: step.detail.to_string(),
-                        requires_watch: false,
-                        requires_live_api: step.edge.contains("--allow-live-api"),
-                        requires_git_changes: step.edge.contains("--allow git-changes"),
+                    .map(|step| {
+                        let edge = ControlEdge::from_phases(phase, step.phase)
+                            .expect("walk inventory edge must exist in the control graph");
+                        NextStepInfo {
+                            edge,
+                            phase: step.phase,
+                            phase_id: step.phase.as_str().to_string(),
+                            detail: step.detail.to_string(),
+                            requires_watch: false,
+                            requires_live_api: edge.requires_live(),
+                            requires_git_changes: edge.requires_checkout(),
+                        }
                     })
                     .collect(),
             })
             .collect();
         Self { phases }
-    }
-}
-
-impl WalkSnapshot {
-    fn from_response(response: WalkResponse) -> Self {
-        match response {
-            WalkResponse::Ok {
-                phase,
-                message,
-                epoch,
-            } => Self::from_parts(WalkReplyStatus::Ok, Some(phase), message, None, epoch),
-            WalkResponse::Audit {
-                phase,
-                report,
-                epoch,
-            } => Self::from_parts(
-                WalkReplyStatus::Audit,
-                Some(phase),
-                report.render_table(),
-                None,
-                epoch,
-            ),
-            WalkResponse::Job {
-                phase,
-                job,
-                message,
-                epoch,
-            } => {
-                let mut lines = vec![message];
-                if let Some(job_message) = job.message {
-                    lines.push(job_message);
-                }
-                Self::from_parts(
-                    WalkReplyStatus::Ok,
-                    Some(phase),
-                    lines.join("\n"),
-                    None,
-                    epoch,
-                )
-            }
-            WalkResponse::Status {
-                phase,
-                message,
-                epoch,
-                ..
-            } => Self::from_parts(WalkReplyStatus::Ok, Some(phase), message, None, epoch),
-            WalkResponse::Error {
-                code,
-                detail,
-                phase,
-                epoch,
-                ..
-            } => Self::from_parts(WalkReplyStatus::Error, phase, detail, Some(code), epoch),
-        }
-    }
-
-    fn from_parts(
-        status: WalkReplyStatus,
-        phase: Option<WalkPhase>,
-        message: String,
-        error_code: Option<String>,
-        epoch: crate::cli::prototype1_state::walk::epoch::ServerEpoch,
-    ) -> Self {
-        Self {
-            status,
-            phase,
-            phase_id: phase.map(|phase| phase.as_str().to_string()),
-            phase_label: phase.map(|phase| phase.detail().to_string()),
-            message,
-            error_code,
-            epoch: ServerEpochView {
-                protocol_version: epoch.protocol_version,
-                transition_graph_version: epoch.transition_graph_version,
-                repo_root: epoch.repo_root,
-                exe_path: epoch.exe_path,
-                exe_modified_unix_ms: epoch.exe_modified_unix_ms,
-                git_head: epoch.git_head,
-                source_status_hash: epoch.source_status_hash,
-            },
-        }
     }
 }
 
@@ -527,53 +482,200 @@ fn all_phases() -> [WalkPhase; 21] {
     ]
 }
 
-fn query_result_view(
-    repo_root: PathBuf,
-    campaign_id: CampaignId,
-    db_path: PathBuf,
-    script: &str,
-    result: &QueryResult,
-) -> DbQueryResult {
-    let rows = result
-        .rows
-        .iter()
-        .map(|row| {
-            let cells = row.iter().map(data_value_json).collect::<Vec<_>>();
-            let object = query_row_object(&result.headers, row);
-            DbQueryRow { cells, object }
-        })
-        .collect::<Vec<_>>();
-    DbQueryResult {
-        repo_root,
-        campaign_id: campaign_id.to_string(),
-        db_path,
-        script: script.to_string(),
-        headers: result.headers.clone(),
-        row_count: rows.len(),
-        rows,
-    }
-}
-
-fn query_row_object(headers: &[String], row: &[DataValue]) -> serde_json::Value {
-    let mut object = serde_json::Map::new();
-    for (header, value) in headers.iter().zip(row.iter()) {
-        object.insert(header.clone(), data_value_json(value));
-    }
-    serde_json::Value::Object(object)
-}
-
-fn data_value_json(value: &DataValue) -> serde_json::Value {
-    match value {
-        DataValue::Bot => serde_json::json!({ "cozo": "bot" }),
-        other => serde_json::Value::from(other.clone()),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::ffi::OsString;
 
+    use crate::cli::prototype1_state::event::ContentHash;
+
     use super::*;
+
+    #[test]
+    fn public_reply_round_trip_preserves_all_protocol_fields() {
+        let repo = tempfile::tempdir().expect("audit repo");
+        let epoch = ServerEpoch {
+            protocol_version: 6,
+            transition_graph_version: "walk-r0-r14a-v2".to_string(),
+            repo_root: repo.path().to_path_buf(),
+            exe_path: repo.path().join("ploke-eval"),
+            exe_modified_unix_ms: Some(17),
+            git_head: Some("abc123".to_string()),
+            active_branch: Some("successor/runtime-2".to_string()),
+            source_status_hash: Some("def456".to_string()),
+        };
+        let cursor =
+            Cursor::new(WalkPhase::R6, ContentHash::of("r6 evidence")).expect("valid cursor");
+        let version = SessionVersion {
+            session_id: Some(SessionId::for_test(7)),
+            cursor: Some(cursor),
+            journal_revision: 11,
+        };
+        let job = WalkJobSnapshot {
+            job_id: 23,
+            operation_id: OperationId::for_test(29),
+            expected: version.clone(),
+            command: WalkJobKind::Step,
+            status: WalkJobStatus::Running,
+            phase_before: WalkPhase::R6,
+            phase_after: None,
+            target_phase: Some(WalkPhase::R7),
+            watch: Some(true),
+            allow_live_api: Some(false),
+            allow_git_changes: Some(false),
+            llm_source: None,
+            allow_workspace_mutation: None,
+            allow_provenance_record: None,
+            started_at: "2026-07-13T00:00:00Z".to_string(),
+            updated_at: "2026-07-13T00:00:01Z".to_string(),
+            finished_at: None,
+            message: Some("running controlled edge".to_string()),
+            receipt: None,
+            resolution: None,
+        };
+        let audit = crate::cli::prototype1_state::walk::audit::audit_r0_to_r1(
+            repo.path().to_path_buf(),
+            WalkPhase::R0,
+            None,
+            None,
+        );
+        let query: DbQueryResult = serde_json::from_value(serde_json::json!({
+            "repo_root": repo.path(),
+            "campaign_id": "walk-query-round-trip",
+            "db_path": repo.path().join("owner.cozo"),
+            "script": "::relations",
+            "revision": "abc123",
+            "headers": ["name"],
+            "row_count": 1,
+            "rows": [{"cells": ["eval_campaign"], "object": {"name": "eval_campaign"}}]
+        }))
+        .expect("query result carrier");
+        let replies = vec![
+            WalkResponse::Ok {
+                phase: WalkPhase::R6,
+                result: WalkOkPayload::Show {
+                    report: "show".to_string(),
+                },
+                epoch: epoch.clone(),
+            },
+            WalkResponse::Audit {
+                phase: WalkPhase::R0,
+                report: audit,
+                epoch: epoch.clone(),
+            },
+            WalkResponse::Query {
+                query: WalkQuerySnapshot {
+                    phase: WalkPhase::R6,
+                    result: query,
+                    version: version.clone(),
+                    epoch: epoch.clone(),
+                },
+            },
+            WalkResponse::Job {
+                phase: WalkPhase::R6,
+                job: job.clone(),
+                message: "accepted".to_string(),
+                epoch: epoch.clone(),
+            },
+            WalkResponse::Status {
+                message: "online".to_string(),
+                snapshot: WalkSessionSnapshot {
+                    phase: WalkPhase::R6,
+                    version: version.clone(),
+                    controller_attached: true,
+                    authority: WalkAuthority::JobActive,
+                    job: Some(job),
+                    blocker: Some(WalkBlocker {
+                        code: WalkBlockerCode::JobActive,
+                        detail: "step is running".to_string(),
+                    }),
+                    actions: vec![WalkAction {
+                        kind: WalkActionKind::Inspect,
+                        edge: None,
+                        target: None,
+                        enabled: true,
+                        requires_live_api: false,
+                        requires_git_changes: false,
+                        blocker: None,
+                    }],
+                },
+                epoch: epoch.clone(),
+            },
+            WalkResponse::Error {
+                code: WalkErrorCode::StaleVersion,
+                detail: "expected revision 10".to_string(),
+                phase: Some(WalkPhase::R6),
+                version: Some(version),
+                epoch,
+            },
+        ];
+
+        for reply in replies {
+            let encoded = serde_json::to_value(&reply).expect("serialize public reply");
+            let decoded: WalkResponse =
+                serde_json::from_value(encoded.clone()).expect("deserialize public reply");
+            assert_eq!(
+                serde_json::to_value(decoded).expect("reserialize public reply"),
+                encoded
+            );
+        }
+    }
+
+    #[test]
+    fn public_request_round_trip_preserves_guard_and_capabilities() {
+        let repo = tempfile::tempdir().expect("request repo");
+        let epoch = ServerEpoch {
+            protocol_version: 6,
+            transition_graph_version: "walk-r0-r14a-v2".to_string(),
+            repo_root: repo.path().to_path_buf(),
+            exe_path: repo.path().join("ploke-eval"),
+            exe_modified_unix_ms: Some(19),
+            git_head: Some("abc123".to_string()),
+            active_branch: Some("parent/runtime-1".to_string()),
+            source_status_hash: Some("def456".to_string()),
+        };
+        let request = WalkRequest {
+            client_epoch: Some(epoch),
+            body: WalkRequestBody::LlmStep {
+                guard: MutationGuard {
+                    operation: OperationId::for_test(31),
+                    expected: SessionVersion::empty(),
+                },
+                session_id: Some("session-1".to_string()),
+                lane: Some("lane-1".to_string()),
+                step: Some(4),
+                source: Prototype1StateWalkLlmStepSource::Live,
+                watch: true,
+                allow_workspace_mutation: true,
+                model_id: Some("google/gemini-3.5-flash".to_string()),
+                provider: Some("google".to_string()),
+                max_attempts: 2,
+                timeout_secs: 90,
+            },
+        };
+        let bytes = serde_json::to_vec(&request).expect("serialize public request");
+        let decoded: WalkRequest =
+            serde_json::from_slice(&bytes).expect("deserialize public request");
+        assert_eq!(decoded, request);
+    }
+
+    #[test]
+    fn public_job_resolution_request_round_trip_preserves_target_and_version() {
+        let request = WalkRequest {
+            client_epoch: None,
+            body: WalkRequestBody::ResolveJob {
+                guard: MutationGuard {
+                    operation: OperationId::for_test(32),
+                    expected: SessionVersion::empty(),
+                },
+                resolution: WalkJobResolutionKind::Abandon,
+            },
+        };
+
+        let bytes = serde_json::to_vec(&request).expect("serialize resolution request");
+        let decoded: WalkRequest =
+            serde_json::from_slice(&bytes).expect("deserialize resolution request");
+        assert_eq!(decoded, request);
+    }
 
     #[test]
     fn phase_inventory_separates_follow_from_effect_capabilities() {
@@ -648,6 +750,272 @@ mod tests {
             .expect("resolve client with explicit socket");
 
         assert_eq!(client.socket(), explicit_socket.as_path());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn client_follows_endpoint_after_successor_takeover() {
+        let tmp = tempfile::tempdir().expect("temp eval home");
+        let _env = crate::test_support::env_guard_os(vec![(
+            "PLOKE_EVAL_HOME",
+            OsString::from(tmp.path()),
+        )]);
+        let repo_root = tmp.path().join("parent");
+        fs::create_dir_all(&repo_root).expect("create repo root");
+        let repo_root = paths::resolve_repo_root(Some(&repo_root)).expect("resolve repo root");
+        let old_socket = tmp.path().join("old.sock");
+        let _old_listener =
+            std::os::unix::net::UnixListener::bind(&old_socket).expect("bind old endpoint");
+        let old = endpoint::ServerEndpoint::from_bound(repo_root.clone(), old_socket.clone())
+            .expect("old endpoint");
+        old.activate().expect("activate old endpoint");
+        let client = WalkClient::resolve(Some(&repo_root), None).expect("resolve following client");
+        assert_eq!(client.resolved_socket().expect("old socket"), old_socket);
+
+        let next_socket = tmp.path().join("next.sock");
+        let _next_listener =
+            std::os::unix::net::UnixListener::bind(&next_socket).expect("bind next endpoint");
+        let next = endpoint::ServerEndpoint::from_bound(repo_root, next_socket.clone())
+            .expect("next endpoint");
+        next.take_over(Some(&old)).expect("successor takeover");
+
+        assert_eq!(
+            client.resolved_socket().expect("successor socket"),
+            next_socket
+        );
+        next.cleanup().expect("cleanup next endpoint");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn read_only_request_retries_successor_after_midflight_handoff() {
+        let tmp = tempfile::tempdir().expect("temp eval home");
+        let _env = crate::test_support::env_guard_os(vec![(
+            "PLOKE_EVAL_HOME",
+            OsString::from(tmp.path()),
+        )]);
+        let repo_root = tmp.path().join("parent");
+        fs::create_dir_all(&repo_root).expect("create repo root");
+        let repo_root = paths::resolve_repo_root(Some(&repo_root)).expect("resolve repo root");
+        let old_socket = tmp.path().join("old-midflight.sock");
+        let old_listener = tokio::net::UnixListener::bind(&old_socket).expect("bind predecessor");
+        let old = endpoint::ServerEndpoint::from_bound(repo_root.clone(), old_socket)
+            .expect("predecessor endpoint");
+        old.activate().expect("activate predecessor");
+        let next_socket = tmp.path().join("next-midflight.sock");
+        let next_listener = tokio::net::UnixListener::bind(&next_socket).expect("bind successor");
+        let next = endpoint::ServerEndpoint::from_bound(repo_root.clone(), next_socket.clone())
+            .expect("successor endpoint");
+        let client = WalkClient::resolve(Some(&repo_root), None).expect("following client");
+        let old_for_task = old.clone();
+        let next_for_task = next.clone();
+        let predecessor = tokio::spawn(async move {
+            let (mut stream, _) = old_listener
+                .accept()
+                .await
+                .expect("accept predecessor request");
+            let request: WalkRequest = ipc::recv(&mut stream).await.expect("read health request");
+            assert!(matches!(request.body, WalkRequestBody::Health));
+            next_for_task
+                .take_over(Some(&old_for_task))
+                .expect("publish successor during request");
+            drop(stream);
+        });
+        let epoch = ServerEpoch::capture(&repo_root).expect("capture response epoch");
+        let successor = tokio::spawn(async move {
+            let (mut stream, _) = next_listener
+                .accept()
+                .await
+                .expect("accept retried request");
+            let request: WalkRequest = ipc::recv(&mut stream).await.expect("read retried health");
+            assert!(matches!(request.body, WalkRequestBody::Health));
+            ipc::send(
+                &mut stream,
+                &WalkResponse::Ok {
+                    phase: WalkPhase::R6,
+                    result: WalkOkPayload::Show {
+                        report: "successor response".to_string(),
+                    },
+                    epoch,
+                },
+            )
+            .await
+            .expect("write successor response");
+        });
+
+        let (observed_socket, response) = client
+            .health_observation()
+            .await
+            .expect("health follows handoff")
+            .expect("successor health response");
+        assert_eq!(observed_socket, next_socket);
+        assert!(matches!(
+            response,
+            WalkResponse::Ok {
+                phase: WalkPhase::R6,
+                result: WalkOkPayload::Show { .. },
+                ..
+            }
+        ));
+        predecessor.await.expect("predecessor task");
+        successor.await.expect("successor task");
+        next.cleanup().expect("cleanup successor endpoint");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn read_only_request_retries_same_path_endpoint_replacement() {
+        let tmp = tempfile::tempdir().expect("temp eval home");
+        let _env = crate::test_support::env_guard_os(vec![(
+            "PLOKE_EVAL_HOME",
+            OsString::from(tmp.path()),
+        )]);
+        let repo_root = tmp.path().join("parent");
+        fs::create_dir_all(&repo_root).expect("create repo root");
+        let repo_root = paths::resolve_repo_root(Some(&repo_root)).expect("resolve repo root");
+        let socket = tmp.path().join("shared-midflight.sock");
+        let old_listener = tokio::net::UnixListener::bind(&socket).expect("bind predecessor");
+        let old = endpoint::ServerEndpoint::from_bound(repo_root.clone(), socket.clone())
+            .expect("predecessor endpoint");
+        old.activate().expect("activate predecessor");
+        let client = WalkClient::resolve(Some(&repo_root), None).expect("following client");
+        let epoch = ServerEpoch::capture(&repo_root).expect("capture response epoch");
+        let repo_for_task = repo_root.clone();
+        let socket_for_task = socket.clone();
+        let old_for_task = old.clone();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = old_listener
+                .accept()
+                .await
+                .expect("accept predecessor request");
+            let request: WalkRequest = ipc::recv(&mut stream).await.expect("read health request");
+            assert!(matches!(request.body, WalkRequestBody::Health));
+
+            fs::remove_file(&socket_for_task).expect("unlink predecessor socket");
+            let next_listener =
+                tokio::net::UnixListener::bind(&socket_for_task).expect("bind same-path successor");
+            let next = endpoint::ServerEndpoint::from_bound(repo_for_task, socket_for_task)
+                .expect("successor endpoint");
+            next.take_over(Some(&old_for_task))
+                .expect("publish same-path successor");
+            drop(stream);
+
+            let (mut stream, _) = next_listener
+                .accept()
+                .await
+                .expect("accept retried request");
+            let request: WalkRequest = ipc::recv(&mut stream).await.expect("read retried health");
+            assert!(matches!(request.body, WalkRequestBody::Health));
+            ipc::send(
+                &mut stream,
+                &WalkResponse::Ok {
+                    phase: WalkPhase::R6,
+                    result: WalkOkPayload::Show {
+                        report: "same-path successor response".to_string(),
+                    },
+                    epoch,
+                },
+            )
+            .await
+            .expect("write successor response");
+            next
+        });
+
+        let response = client
+            .health()
+            .await
+            .expect("health follows same-path handoff")
+            .expect("successor health response");
+        assert!(matches!(
+            response,
+            WalkResponse::Ok {
+                phase: WalkPhase::R6,
+                result: WalkOkPayload::Show { .. },
+                ..
+            }
+        ));
+        server
+            .await
+            .expect("same-path successor task")
+            .cleanup()
+            .expect("cleanup successor endpoint");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn explicit_socket_does_not_retry_midflight_handoff() {
+        let tmp = tempfile::tempdir().expect("temp eval home");
+        let _env = crate::test_support::env_guard_os(vec![(
+            "PLOKE_EVAL_HOME",
+            OsString::from(tmp.path()),
+        )]);
+        let repo_root = tmp.path().join("parent");
+        fs::create_dir_all(&repo_root).expect("create repo root");
+        let repo_root = paths::resolve_repo_root(Some(&repo_root)).expect("resolve repo root");
+        let old_socket = tmp.path().join("pinned-midflight.sock");
+        let old_listener = tokio::net::UnixListener::bind(&old_socket).expect("bind predecessor");
+        let old = endpoint::ServerEndpoint::from_bound(repo_root.clone(), old_socket.clone())
+            .expect("predecessor endpoint");
+        old.activate().expect("activate predecessor");
+        let next_socket = tmp.path().join("unused-successor.sock");
+        let _next_listener = tokio::net::UnixListener::bind(&next_socket).expect("bind successor");
+        let next = endpoint::ServerEndpoint::from_bound(repo_root.clone(), next_socket)
+            .expect("successor endpoint");
+        let client = WalkClient::resolve(Some(&repo_root), Some(&old_socket))
+            .expect("explicitly pinned client");
+        let old_for_task = old.clone();
+        let next_for_task = next.clone();
+        let predecessor = tokio::spawn(async move {
+            let (mut stream, _) = old_listener
+                .accept()
+                .await
+                .expect("accept predecessor request");
+            let _: WalkRequest = ipc::recv(&mut stream).await.expect("read health request");
+            next_for_task
+                .take_over(Some(&old_for_task))
+                .expect("publish successor during request");
+            drop(stream);
+        });
+
+        let error = client
+            .health()
+            .await
+            .expect_err("explicit socket must remain pinned after midflight failure");
+        assert!(
+            error.to_string().contains("prototype1_state_walk_ipc_read")
+                || error.to_string().contains("early eof"),
+            "unexpected pinned-client error: {error}"
+        );
+        predecessor.await.expect("predecessor task");
+        next.cleanup().expect("cleanup successor endpoint");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn explicit_socket_override_remains_pinned() {
+        let tmp = tempfile::tempdir().expect("temp eval home");
+        let _env = crate::test_support::env_guard_os(vec![(
+            "PLOKE_EVAL_HOME",
+            OsString::from(tmp.path()),
+        )]);
+        let repo_root = tmp.path().join("parent");
+        fs::create_dir_all(&repo_root).expect("create repo root");
+        let repo_root = paths::resolve_repo_root(Some(&repo_root)).expect("resolve repo root");
+        let pinned_socket = tmp.path().join("pinned.sock");
+        let pinned = WalkClient::resolve(Some(&repo_root), Some(&pinned_socket))
+            .expect("resolve pinned client");
+        let active_socket = tmp.path().join("active.sock");
+        let _active_listener =
+            std::os::unix::net::UnixListener::bind(&active_socket).expect("bind active endpoint");
+        let active = endpoint::ServerEndpoint::from_bound(repo_root, active_socket)
+            .expect("active endpoint");
+        active.activate().expect("activate endpoint");
+
+        assert_eq!(
+            pinned.resolved_socket().expect("pinned socket"),
+            pinned_socket
+        );
+        active.cleanup().expect("cleanup active endpoint");
     }
 
     fn test_run_entry(

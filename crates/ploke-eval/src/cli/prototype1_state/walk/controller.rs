@@ -118,6 +118,7 @@ pub(crate) struct WalkAdvanceReport {
     from: WalkPhase,
     to: WalkPhase,
     transitions: Vec<WalkTransition>,
+    version: Option<SessionVersion>,
 }
 
 #[derive(Clone, Copy)]
@@ -153,6 +154,30 @@ impl WalkAdvanceReport {
                 )
             })
             .collect()
+    }
+
+    pub(crate) fn transition_edges(&self) -> Result<Vec<ControlEdge>, PrepareError> {
+        self.transitions
+            .iter()
+            .map(|transition| {
+                ControlEdge::from_phases(transition.from, transition.to).ok_or_else(|| {
+                    PrepareError::InvalidBatchSelection {
+                        detail: format!(
+                            "walk transition receipt has no admitted edge for {} -> {}",
+                            transition.from, transition.to
+                        ),
+                    }
+                })
+            })
+            .collect()
+    }
+
+    pub(crate) fn exact_version(&self) -> Result<SessionVersion, PrepareError> {
+        self.version
+            .clone()
+            .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                detail: "walk transition report has no exact durable session version".to_string(),
+            })
     }
 
     /// Render from/to, applied edges, typestate deltas, and next admitted steps.
@@ -260,6 +285,18 @@ impl WalkController {
     /// Return the current protocol-visible phase cursor.
     pub(crate) fn phase(&self) -> WalkPhase {
         self.state.phase()
+    }
+
+    pub(crate) fn blocker_detail(&self) -> Option<String> {
+        match &self.state {
+            WalkState::Blocked { phase, detail } => {
+                Some(format!("controller is blocked at {phase}: {detail}"))
+            }
+            WalkState::Failed { phase, detail } => {
+                Some(format!("controller failed at {phase}: {detail}"))
+            }
+            _ => None,
+        }
     }
 
     /// Produce a human-readable summary for `show` and `health`.
@@ -1481,16 +1518,17 @@ impl WalkController {
         self.state = state;
         self.reconstruction = None;
         let reconstructed = claimed;
-        let transitions = if phase_rank(reconstructed) < phase_rank(until) {
+        let (transitions, version) = if phase_rank(reconstructed) < phase_rank(until) {
             self.advance_until(until, allow_live_api, false, Some(version))
                 .await?
         } else {
-            Vec::new()
+            (Vec::new(), Some(version))
         };
         let report = WalkAdvanceReport {
             from: reconstructed,
             to: self.phase(),
             transitions,
+            version,
         };
         self.last_delta = Some(report.clone());
         Ok(report)
@@ -1553,26 +1591,37 @@ impl WalkController {
         });
         ensure_supported_target(target)?;
         self.ensure_branch_target(target)?;
-        let transitions = if until.is_none() && self.phase() == target && !branch_step {
-            vec![
-                self.step_once(allow_live_api, allow_git_changes, expected)
-                    .await?,
-            ]
+        let (transitions, version) = if until.is_none() && self.phase() == target && !branch_step {
+            let (transition, version) = self
+                .step_once(allow_live_api, allow_git_changes, expected)
+                .await?;
+            (vec![transition], Some(version))
         } else if self.phase() == target && !branch_step {
-            Vec::new()
+            let (transition, version) = self
+                .step_toward(target, allow_live_api, allow_git_changes, expected)
+                .await?;
+            if transition.is_some() {
+                return Err(PrepareError::InvalidBatchSelection {
+                    detail: format!(
+                        "walk no-op claim unexpectedly advanced beyond current target {target}"
+                    ),
+                });
+            }
+            (Vec::new(), Some(version))
         } else if until.is_some() {
             self.advance_until(target, allow_live_api, allow_git_changes, expected.cloned())
                 .await?
         } else {
-            vec![
-                self.step_once(allow_live_api, allow_git_changes, expected)
-                    .await?,
-            ]
+            let (transition, version) = self
+                .step_once(allow_live_api, allow_git_changes, expected)
+                .await?;
+            (vec![transition], Some(version))
         };
         let report = WalkAdvanceReport {
             from,
             to: self.phase(),
             transitions,
+            version,
         };
         self.last_delta = Some(report.clone());
         Ok(report)
@@ -1746,7 +1795,7 @@ impl WalkController {
         allow_live_api: bool,
         allow_git_changes: bool,
         mut expected: Option<SessionVersion>,
-    ) -> Result<Vec<WalkTransition>, PrepareError> {
+    ) -> Result<(Vec<WalkTransition>, Option<SessionVersion>), PrepareError> {
         let mut guard = 0_u8;
         let mut transitions = Vec::new();
         loop {
@@ -1775,7 +1824,7 @@ impl WalkController {
                 });
             }
         }
-        Ok(transitions)
+        Ok((transitions, expected))
     }
 
     async fn step_once(
@@ -1783,10 +1832,12 @@ impl WalkController {
         allow_live_api: bool,
         allow_git_changes: bool,
         expected: Option<&SessionVersion>,
-    ) -> Result<WalkTransition, PrepareError> {
-        self.step_claimed(None, allow_live_api, allow_git_changes, expected)
-            .await?
-            .0
+    ) -> Result<(WalkTransition, SessionVersion), PrepareError> {
+        let (transition, version) = self
+            .step_claimed(None, allow_live_api, allow_git_changes, expected)
+            .await?;
+        transition
+            .map(|transition| (transition, version))
             .ok_or_else(|| PrepareError::InvalidBatchSelection {
                 detail: "unbounded walk step stopped without executing an edge".to_string(),
             })

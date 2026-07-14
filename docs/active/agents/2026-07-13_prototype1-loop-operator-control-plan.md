@@ -2,8 +2,8 @@
 
 - Date: 2026-07-13
 - Baseline: `de76eaee34e6f4c4c3a19543c4cf91b217aa3bb9`
-- Status: active implementation; Stages 0-1 complete, Stage 2 implementation
-  verified and awaiting checkpoint/live canary
+- Status: active implementation; Stages 0-3 implemented and verified, Stage 3
+  awaiting checkpoint/live canary
 
 ## Implementation progress
 
@@ -43,13 +43,28 @@
   real transition journal, child-plan bytes, and saved DB-query response. The
   final focused gate passes 13/13; `cargo test -p ploke-eval` passes 1,168 tests
   with 46 ignored/live tests; and independent authority review reports no
-  actionable blocker. The required checkpoint commit and bounded live canary
-  are the next gates; no live loop was advanced from the uncommitted tree.
+  actionable blocker. It is committed as `aa0af840a` (`Establish durable
+  Prototype 1 controller authority`).
+- Stage 3 publishes protocol v6 as the exact sibling-client contract. It adds
+  typed session authority, blocker, action, job-kind, transition-receipt,
+  success-payload, and error carriers; a revision-tagged immutable database
+  query service; concurrent connection handling; endpoint following; and exact
+  public request/response round trips. Outer and nested effectful operations
+  share durable idempotent job supervision, and terminal operation receipts are
+  published before terminal in-memory state is exposed. Restarted unresolved
+  jobs become durable recovery blockers, operator abandonment is explicit, and
+  per-operation terminal publication is serialized across processes. CLI and UI
+  render the same carriers without parsing prose. Independent source review
+  reports no actionable correctness blocker; focused socket, restart,
+  supervision, recovery, and protocol tests pass; all five UI tests pass; and
+  the full `ploke-eval` gate passes 1,195 tests with 46 ignored/live tests. The
+  protocol-v6 epoch intentionally updates the golden controller-certificate
+  digest because protocol version is part of its signed preimage.
 
-Stage 3 and later remain planned, not implemented. CLI mutation adapters now
-share the exclusive durable loop session, but the UI remains an inspection
-client until the lossless sibling-client contract and later control-parity
-stages are complete.
+Stage 4 and later remain planned, not implemented. The UI remains an inspection
+client until the observability read model and later control-parity stages are
+complete. No live loop was advanced from the uncommitted Stage 3 tree; the
+checkpoint commit and bounded live canary are the next gates.
 
 ## Purpose
 

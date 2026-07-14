@@ -1,9 +1,8 @@
 //! Request and response DTOs for the typestate walk socket protocol.
 //!
-//! The protocol is private to `ploke-eval` and intentionally uses serde JSON
-//! over explicit frame lengths. It mirrors the current CLI command surface just
-//! enough for the server to construct the real `Prototype1StateCommand` before
-//! entering `R0`.
+//! The public application contract uses serde JSON over explicit frame lengths.
+//! CLI and native UI clients consume these exact carriers; transition authority
+//! remains behind the server-side controller and durable session boundary.
 
 use std::{fmt, path::PathBuf, str::FromStr};
 
@@ -16,17 +15,18 @@ use crate::cli::{
     Prototype1StateWalkLlmStepSource,
     prototype1_state::{
         driver::control::RecoveryDirective,
+        edge::ControlEdge,
         session::{Cursor, SessionId},
     },
 };
 
-use super::{audit::WalkAuditReport, epoch::ServerEpoch, phase::WalkPhase};
+use super::{audit::WalkAuditReport, epoch::ServerEpoch, phase::WalkPhase, query::DbQueryResult};
 
 /// Serializable identity needed to attach to a setup-derived session.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct WalkStartConfig {
-    pub(crate) campaign: Option<CampaignId>,
-    pub(crate) repo_root: Option<PathBuf>,
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WalkStartConfig {
+    pub campaign: Option<CampaignId>,
+    pub repo_root: Option<PathBuf>,
 }
 
 /// Client-selected identity for one semantic walk mutation.
@@ -36,10 +36,10 @@ pub(crate) struct WalkStartConfig {
 /// same accepted request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
-pub(crate) struct OperationId(Uuid);
+pub struct OperationId(Uuid);
 
 impl OperationId {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self(Uuid::new_v4())
     }
 
@@ -68,7 +68,7 @@ impl FromStr for OperationId {
 /// `Cursor` already owns the phase/evidence relationship, so the socket
 /// protocol does not flatten or duplicate those fields.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct SessionVersion {
+pub struct SessionVersion {
     pub(crate) session_id: Option<SessionId>,
     pub(crate) cursor: Option<Cursor>,
     pub(crate) journal_revision: usize,
@@ -83,18 +83,30 @@ impl SessionVersion {
         }
     }
 
-    pub(crate) fn phase(&self) -> WalkPhase {
+    pub fn phase(&self) -> WalkPhase {
         self.cursor
             .as_ref()
             .map_or(WalkPhase::Empty, |cursor| cursor.phase)
+    }
+
+    pub fn session_id(&self) -> Option<SessionId> {
+        self.session_id
+    }
+
+    pub fn cursor(&self) -> Option<&Cursor> {
+        self.cursor.as_ref()
+    }
+
+    pub const fn journal_revision(&self) -> usize {
+        self.journal_revision
     }
 }
 
 /// Admission envelope for a live socket mutation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct MutationGuard {
-    pub(crate) operation: OperationId,
-    pub(crate) expected: SessionVersion,
+pub struct MutationGuard {
+    pub operation: OperationId,
+    pub expected: SessionVersion,
 }
 
 /// One framed client-to-server request.
@@ -103,16 +115,16 @@ pub(crate) struct MutationGuard {
 /// requests may omit it so stale servers remain inspectable. `Stop` also binds
 /// shutdown to the caller's selected repository rather than trusting an
 /// explicitly supplied socket as repository authority.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct WalkRequest {
-    pub(crate) client_epoch: Option<ServerEpoch>,
-    pub(crate) body: WalkRequestBody,
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WalkRequest {
+    pub client_epoch: Option<ServerEpoch>,
+    pub body: WalkRequestBody,
 }
 
 /// Operation requested over the walk socket.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub(crate) enum WalkRequestBody {
+pub enum WalkRequestBody {
     /// Probe liveness and receive the current phase without mutating state.
     Health,
     /// Attach to the durable controller session and optionally advance.
@@ -156,10 +168,25 @@ pub(crate) enum WalkRequestBody {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         guard: Option<MutationGuard>,
     },
+    /// Explicitly resolve one indeterminate supervised operation.
+    ResolveJob {
+        /// Target operation identity plus the currently observed session version.
+        guard: MutationGuard,
+        resolution: WalkJobResolutionKind,
+    },
     /// Print tracked output files produced or touched by the current walk.
     Files,
+    /// Run an immutable expert query against one exact owner-DB snapshot.
+    DbQuery {
+        /// Campaign id. Defaults to the selected parent identity.
+        campaign: Option<CampaignId>,
+        /// Immutable CozoScript query.
+        script: String,
+    },
     /// Inspect current phase and summary without mutating state.
     Show,
+    /// Inspect one exact supervised operation, including terminal history.
+    OperationStatus { operation: OperationId },
     /// Inspect only the last successful step delta.
     ShowDelta {
         /// Include changed axis values plus added/removed nested type structures.
@@ -258,6 +285,8 @@ pub(crate) enum WalkRequestBody {
     },
     /// Execute one historical or live provider response step through current tools.
     LlmStep {
+        /// Idempotency and exact durable-session admission guard.
+        guard: MutationGuard,
         /// Specific checkpoint session id. Defaults to selected lane/latest session.
         session_id: Option<String>,
         /// Lane id. Defaults to current focus.
@@ -281,6 +310,8 @@ pub(crate) enum WalkRequestBody {
     },
     /// Continue live provider response steps until terminal or max steps.
     LlmFinish {
+        /// Idempotency and exact durable-session admission guard.
+        guard: MutationGuard,
         /// Specific checkpoint session id. Defaults to selected lane/latest session.
         session_id: Option<String>,
         /// Lane id. Defaults to current focus.
@@ -344,6 +375,8 @@ pub(crate) enum WalkRequestBody {
     },
     /// Record explicit provenance for leaving historical replay toward live work.
     BranchLive {
+        /// Idempotency and exact durable-session admission guard.
+        guard: MutationGuard,
         /// Operator-supplied reason for leaving read-only replay.
         reason: String,
         /// Explicit admission that this request writes a provenance record.
@@ -361,18 +394,78 @@ pub(crate) enum WalkRequestBody {
 /// remain non-blocking while the controller owns the actual typestate edge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum WalkJobStatus {
+pub enum WalkJobStatus {
     Running,
     Succeeded,
     Failed,
     CancelRequested,
     Cancelled,
+    /// Effects may have occurred, so another mutation must not be admitted.
+    Indeterminate,
+    /// An operator preserved the uncertainty and explicitly abandoned retry.
+    Abandoned,
 }
 
 impl WalkJobStatus {
     /// True while a duplicate live mutation must not be admitted.
-    pub(crate) fn is_active(self) -> bool {
+    pub fn is_active(self) -> bool {
         matches!(self, Self::Running | Self::CancelRequested)
+    }
+
+    /// True while admitting another effectful operation would be unsafe.
+    pub fn blocks_mutation(self) -> bool {
+        self.is_active() || self == Self::Indeterminate
+    }
+}
+
+/// Explicit operator decision for an indeterminate supervised operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WalkJobResolutionKind {
+    Abandon,
+}
+
+/// Durable evidence that an operator resolved an indeterminate job blocker.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WalkJobResolutionReceipt {
+    pub kind: WalkJobResolutionKind,
+    pub observed: SessionVersion,
+    pub resolved_at: String,
+}
+
+/// Closed identity of a supervised mutating operation.
+///
+/// The snake-case wire representation intentionally matches the command
+/// strings written by protocol-v5 durable operation records.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WalkJobKind {
+    Start,
+    Step,
+    LlmStep,
+    LlmFinish,
+    BranchLive,
+    Reset,
+    Recover,
+}
+
+impl WalkJobKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Start => "start",
+            Self::Step => "step",
+            Self::LlmStep => "llm_step",
+            Self::LlmFinish => "llm_finish",
+            Self::BranchLive => "branch_live",
+            Self::Reset => "reset",
+            Self::Recover => "recover",
+        }
+    }
+}
+
+impl fmt::Display for WalkJobKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 
@@ -381,23 +474,318 @@ impl WalkJobStatus {
 /// The server intentionally permits only one active job at a time because there
 /// is one `WalkController`, one active checkout, and one in-memory typestate
 /// position. Parallel mutation requests would otherwise race the parent loop.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WalkJobSnapshot {
+    pub job_id: u64,
+    pub operation_id: OperationId,
+    pub expected: SessionVersion,
+    pub command: WalkJobKind,
+    pub status: WalkJobStatus,
+    pub phase_before: WalkPhase,
+    pub phase_after: Option<WalkPhase>,
+    pub target_phase: Option<WalkPhase>,
+    pub watch: Option<bool>,
+    pub allow_live_api: Option<bool>,
+    pub allow_git_changes: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub llm_source: Option<Prototype1StateWalkLlmStepSource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_workspace_mutation: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_provenance_record: Option<bool>,
+    pub started_at: String,
+    pub updated_at: String,
+    pub finished_at: Option<String>,
+    pub message: Option<String>,
+    /// Exact durable transition result for an outer typestate job.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receipt: Option<WalkTransitionReceipt>,
+    /// Explicit operator resolution of an earlier indeterminate outcome.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<WalkJobResolutionReceipt>,
+}
+
+/// Typed outer-loop transition receipt attached to a terminal supervised job.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WalkTransitionReceipt {
+    pub phase_before: WalkPhase,
+    pub phase_after: WalkPhase,
+    pub edges: Vec<ControlEdge>,
+    /// Durable session position observed after the transition committed.
+    pub version: SessionVersion,
+    /// Typed outcome of projecting this receipt into the owner database.
+    #[serde(default)]
+    pub event_projection: WalkEventProjection,
+}
+
+/// Owner-database projection outcome for one committed walk transition.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "status")]
+pub enum WalkEventProjection {
+    /// Compatibility value for receipts written before projection was typed.
+    #[default]
+    Unknown,
+    Recorded,
+    NotApplicable {
+        detail: String,
+    },
+    Failed {
+        detail: String,
+    },
+}
+
+/// Current ability of this server to admit a mutating operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WalkAuthority {
+    Active,
+    TransferPending,
+    JobActive,
+    RecoveryRequired,
+    Abandoned,
+    Stopping,
+}
+
+/// Stable blocker classes used by sibling clients instead of message parsing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WalkBlockerCode {
+    TransferPending,
+    JobActive,
+    JobIndeterminate,
+    JournalDamaged,
+    AttemptPending,
+    AttemptIndeterminate,
+    ControllerBlocked,
+    SessionAbandoned,
+    ServerStopping,
+}
+
+/// Active mutation blocker with operator-facing detail.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WalkBlocker {
+    pub code: WalkBlockerCode,
+    pub detail: String,
+}
+
+/// Closed action vocabulary rendered by the CLI and native UI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WalkActionKind {
+    Inspect,
+    Query,
+    Start,
+    Step,
+    Reset,
+    Recover,
+    Stop,
+}
+
+/// One possible action and the exact gate that currently admits or blocks it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WalkAction {
+    pub kind: WalkActionKind,
+    pub edge: Option<ControlEdge>,
+    pub target: Option<WalkPhase>,
+    pub enabled: bool,
+    pub requires_live_api: bool,
+    pub requires_git_changes: bool,
+    pub blocker: Option<WalkBlockerCode>,
+}
+
+/// Nonblocking, structured read model shared by every walk client.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WalkSessionSnapshot {
+    pub phase: WalkPhase,
+    pub version: SessionVersion,
+    /// Whether this server currently carries the reconstructed typed value.
+    pub controller_attached: bool,
+    pub authority: WalkAuthority,
+    pub job: Option<WalkJobSnapshot>,
+    pub blocker: Option<WalkBlocker>,
+    pub actions: Vec<WalkAction>,
+}
+
+/// Complete immutable-query observation returned to every sibling client.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct WalkJobSnapshot {
-    pub(crate) job_id: u64,
-    pub(crate) operation_id: OperationId,
-    pub(crate) expected: SessionVersion,
-    pub(crate) command: String,
-    pub(crate) status: WalkJobStatus,
-    pub(crate) phase_before: WalkPhase,
-    pub(crate) phase_after: Option<WalkPhase>,
-    pub(crate) target_phase: Option<WalkPhase>,
-    pub(crate) watch: Option<bool>,
-    pub(crate) allow_live_api: Option<bool>,
-    pub(crate) allow_git_changes: Option<bool>,
-    pub(crate) started_at: String,
-    pub(crate) updated_at: String,
-    pub(crate) finished_at: Option<String>,
-    pub(crate) message: Option<String>,
+pub struct WalkQuerySnapshot {
+    pub phase: WalkPhase,
+    pub result: DbQueryResult,
+    pub version: SessionVersion,
+    pub epoch: ServerEpoch,
+}
+
+/// Stable application error classes carried by every walk client.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WalkErrorCode {
+    BadRequest,
+    JobActive,
+    OperationConflict,
+    OperationRestart,
+    RecoveryInProgress,
+    RequestFailed,
+    ServerStopping,
+    StaleVersion,
+    TransferPending,
+}
+
+impl fmt::Display for WalkErrorCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::BadRequest => "bad_request",
+            Self::JobActive => "job_active",
+            Self::OperationConflict => "operation_conflict",
+            Self::OperationRestart => "operation_restart",
+            Self::RecoveryInProgress => "recovery_in_progress",
+            Self::RequestFailed => "request_failed",
+            Self::ServerStopping => "server_stopping",
+            Self::StaleVersion => "stale_version",
+            Self::TransferPending => "transfer_pending",
+        })
+    }
+}
+
+/// Operation identity for successful read-only or local cursor responses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WalkOkKind {
+    Files,
+    LlmBack,
+    LlmFocus,
+    LlmForward,
+    LlmHead,
+    LlmLanes,
+    LlmPrompt,
+    LlmProtocol,
+    LlmShow,
+    LlmTimeline,
+    LlmTool,
+    RecoverInspect,
+    Replay,
+    ReplayBack,
+    ReplayForward,
+    Show,
+    ShowDelta,
+}
+
+impl WalkOkKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Files => "files",
+            Self::LlmBack => "llm_back",
+            Self::LlmFocus => "llm_focus",
+            Self::LlmForward => "llm_forward",
+            Self::LlmHead => "llm_head",
+            Self::LlmLanes => "llm_lanes",
+            Self::LlmPrompt => "llm_prompt",
+            Self::LlmProtocol => "llm_protocol",
+            Self::LlmShow => "llm_show",
+            Self::LlmTimeline => "llm_timeline",
+            Self::LlmTool => "llm_tool",
+            Self::RecoverInspect => "recover_inspect",
+            Self::Replay => "replay",
+            Self::ReplayBack => "replay_back",
+            Self::ReplayForward => "replay_forward",
+            Self::Show => "show",
+            Self::ShowDelta => "show_delta",
+        }
+    }
+}
+
+/// Operation-specific payload for successful local/read-only walk commands.
+///
+/// These reports remain human-oriented until the Stage 4 read models replace
+/// each report with its normalized carrier. The closed variant set prevents a
+/// client from inferring which result it received from prose.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum WalkOkPayload {
+    Files { report: String },
+    LlmBack { receipt: String },
+    LlmFocus { receipt: String },
+    LlmForward { receipt: String },
+    LlmHead { receipt: String },
+    LlmLanes { report: String },
+    LlmPrompt { report: String },
+    LlmProtocol { report: String },
+    LlmShow { report: String },
+    LlmTimeline { report: String },
+    LlmTool { report: String },
+    RecoverInspect { report: String },
+    Replay { snapshot: String },
+    ReplayBack { snapshot: String },
+    ReplayForward { snapshot: String },
+    Show { report: String },
+    ShowDelta { report: String },
+}
+
+impl WalkOkPayload {
+    fn from_parts(kind: WalkOkKind, text: String) -> Self {
+        match kind {
+            WalkOkKind::Files => Self::Files { report: text },
+            WalkOkKind::LlmBack => Self::LlmBack { receipt: text },
+            WalkOkKind::LlmFocus => Self::LlmFocus { receipt: text },
+            WalkOkKind::LlmForward => Self::LlmForward { receipt: text },
+            WalkOkKind::LlmHead => Self::LlmHead { receipt: text },
+            WalkOkKind::LlmLanes => Self::LlmLanes { report: text },
+            WalkOkKind::LlmPrompt => Self::LlmPrompt { report: text },
+            WalkOkKind::LlmProtocol => Self::LlmProtocol { report: text },
+            WalkOkKind::LlmShow => Self::LlmShow { report: text },
+            WalkOkKind::LlmTimeline => Self::LlmTimeline { report: text },
+            WalkOkKind::LlmTool => Self::LlmTool { report: text },
+            WalkOkKind::RecoverInspect => Self::RecoverInspect { report: text },
+            WalkOkKind::Replay => Self::Replay { snapshot: text },
+            WalkOkKind::ReplayBack => Self::ReplayBack { snapshot: text },
+            WalkOkKind::ReplayForward => Self::ReplayForward { snapshot: text },
+            WalkOkKind::Show => Self::Show { report: text },
+            WalkOkKind::ShowDelta => Self::ShowDelta { report: text },
+        }
+    }
+
+    pub const fn kind(&self) -> WalkOkKind {
+        match self {
+            Self::Files { .. } => WalkOkKind::Files,
+            Self::LlmBack { .. } => WalkOkKind::LlmBack,
+            Self::LlmFocus { .. } => WalkOkKind::LlmFocus,
+            Self::LlmForward { .. } => WalkOkKind::LlmForward,
+            Self::LlmHead { .. } => WalkOkKind::LlmHead,
+            Self::LlmLanes { .. } => WalkOkKind::LlmLanes,
+            Self::LlmPrompt { .. } => WalkOkKind::LlmPrompt,
+            Self::LlmProtocol { .. } => WalkOkKind::LlmProtocol,
+            Self::LlmShow { .. } => WalkOkKind::LlmShow,
+            Self::LlmTimeline { .. } => WalkOkKind::LlmTimeline,
+            Self::LlmTool { .. } => WalkOkKind::LlmTool,
+            Self::RecoverInspect { .. } => WalkOkKind::RecoverInspect,
+            Self::Replay { .. } => WalkOkKind::Replay,
+            Self::ReplayBack { .. } => WalkOkKind::ReplayBack,
+            Self::ReplayForward { .. } => WalkOkKind::ReplayForward,
+            Self::Show { .. } => WalkOkKind::Show,
+            Self::ShowDelta { .. } => WalkOkKind::ShowDelta,
+        }
+    }
+
+    pub fn text(&self) -> &str {
+        match self {
+            Self::Files { report }
+            | Self::LlmLanes { report }
+            | Self::LlmPrompt { report }
+            | Self::LlmProtocol { report }
+            | Self::LlmShow { report }
+            | Self::LlmTimeline { report }
+            | Self::LlmTool { report }
+            | Self::RecoverInspect { report }
+            | Self::Show { report }
+            | Self::ShowDelta { report } => report,
+            Self::LlmBack { receipt }
+            | Self::LlmFocus { receipt }
+            | Self::LlmForward { receipt }
+            | Self::LlmHead { receipt } => receipt,
+            Self::Replay { snapshot }
+            | Self::ReplayBack { snapshot }
+            | Self::ReplayForward { snapshot } => snapshot,
+        }
+    }
 }
 
 /// One framed server-to-client response.
@@ -406,15 +794,20 @@ pub(crate) struct WalkJobSnapshot {
 /// binary/source snapshot is holding the in-memory state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub(crate) enum WalkResponse {
+pub enum WalkResponse {
     /// Successful request result.
     Ok {
         /// Current phase after the request.
         phase: WalkPhase,
-        /// Human-readable summary for table output and debugging.
-        message: String,
+        /// Closed operation-specific result; prose is never its discriminator.
+        result: WalkOkPayload,
         /// Server freshness identity.
         epoch: ServerEpoch,
+    },
+    /// Revision-tagged immutable owner database query.
+    Query {
+        /// Rows plus the controller and server revisions observed with them.
+        query: WalkQuerySnapshot,
     },
     /// Structured audit result.
     Audit {
@@ -438,21 +831,17 @@ pub(crate) enum WalkResponse {
     },
     /// Non-mutating status/health snapshot.
     Status {
-        /// Best known current phase.
-        phase: WalkPhase,
         /// Human-readable summary for table output.
         message: String,
-        /// Active or most recent live command job, if one exists.
-        job: Option<WalkJobSnapshot>,
-        /// Exact durable controller-session position read without controller ownership.
-        version: SessionVersion,
+        /// Exact structured session state observed without waiting on the controller.
+        snapshot: WalkSessionSnapshot,
         /// Server freshness identity.
         epoch: ServerEpoch,
     },
     /// Failed request result.
     Error {
         /// Stable-ish error class for clients.
-        code: String,
+        code: WalkErrorCode,
         /// Human-readable error detail.
         detail: String,
         /// Best known phase when the error was produced.
@@ -467,10 +856,15 @@ pub(crate) enum WalkResponse {
 
 impl WalkResponse {
     /// Build a successful response at `phase`.
-    pub(crate) fn ok(phase: WalkPhase, message: impl Into<String>, epoch: ServerEpoch) -> Self {
+    pub(crate) fn ok(
+        kind: WalkOkKind,
+        phase: WalkPhase,
+        message: impl Into<String>,
+        epoch: ServerEpoch,
+    ) -> Self {
         Self::Ok {
             phase,
-            message: message.into(),
+            result: WalkOkPayload::from_parts(kind, message.into()),
             epoch,
         }
     }
@@ -481,6 +875,23 @@ impl WalkResponse {
             phase,
             report,
             epoch,
+        }
+    }
+
+    /// Build a revision-tagged immutable database query response.
+    pub(crate) fn query(
+        phase: WalkPhase,
+        result: DbQueryResult,
+        version: SessionVersion,
+        epoch: ServerEpoch,
+    ) -> Self {
+        Self::Query {
+            query: WalkQuerySnapshot {
+                phase,
+                result,
+                version,
+                epoch,
+            },
         }
     }
 
@@ -501,30 +912,26 @@ impl WalkResponse {
 
     /// Build a non-mutating status response.
     pub(crate) fn status(
-        phase: WalkPhase,
+        snapshot: WalkSessionSnapshot,
         message: impl Into<String>,
-        job: Option<WalkJobSnapshot>,
-        version: SessionVersion,
         epoch: ServerEpoch,
     ) -> Self {
         Self::Status {
-            phase,
             message: message.into(),
-            job,
-            version,
+            snapshot,
             epoch,
         }
     }
 
     /// Build an error response with optional current phase.
     pub(crate) fn error(
-        code: impl Into<String>,
+        code: WalkErrorCode,
         detail: impl Into<String>,
         phase: Option<WalkPhase>,
         epoch: ServerEpoch,
     ) -> Self {
         Self::Error {
-            code: code.into(),
+            code,
             detail: detail.into(),
             phase,
             version: None,
@@ -534,13 +941,13 @@ impl WalkResponse {
 
     /// Build a typed admission conflict with the actual durable session version.
     pub(crate) fn conflict(
-        code: impl Into<String>,
+        code: WalkErrorCode,
         detail: impl Into<String>,
         version: SessionVersion,
         epoch: ServerEpoch,
     ) -> Self {
         Self::Error {
-            code: code.into(),
+            code,
             detail: detail.into(),
             phase: Some(version.phase()),
             version: Some(version),
@@ -549,22 +956,36 @@ impl WalkResponse {
     }
 
     /// Return the response phase, if one was available.
-    pub(crate) fn phase(&self) -> Option<WalkPhase> {
+    pub fn phase(&self) -> Option<WalkPhase> {
         match self {
             WalkResponse::Ok { phase, .. }
             | WalkResponse::Audit { phase, .. }
-            | WalkResponse::Job { phase, .. }
-            | WalkResponse::Status { phase, .. } => Some(*phase),
+            | WalkResponse::Job { phase, .. } => Some(*phase),
+            WalkResponse::Query { query } => Some(query.phase),
+            WalkResponse::Status { snapshot, .. } => Some(snapshot.phase),
             WalkResponse::Error { phase, .. } => *phase,
         }
     }
 
+    /// Exact server/binary identity that produced this response.
+    pub fn epoch(&self) -> &ServerEpoch {
+        match self {
+            WalkResponse::Ok { epoch, .. }
+            | WalkResponse::Audit { epoch, .. }
+            | WalkResponse::Job { epoch, .. }
+            | WalkResponse::Status { epoch, .. }
+            | WalkResponse::Error { epoch, .. } => epoch,
+            WalkResponse::Query { query } => &query.epoch,
+        }
+    }
+
     /// Return whether this response is `Ok`.
-    pub(crate) fn is_ok(&self) -> bool {
+    pub fn is_ok(&self) -> bool {
         matches!(
             self,
             WalkResponse::Ok { .. }
                 | WalkResponse::Audit { .. }
+                | WalkResponse::Query { .. }
                 | WalkResponse::Job { .. }
                 | WalkResponse::Status { .. }
         )

@@ -25,7 +25,7 @@ use sha2::{Digest, Sha256};
 use crate::spec::PrepareError;
 
 /// Wire-protocol version for framed JSON walk requests.
-pub(crate) const WALK_PROTOCOL_VERSION: u32 = 5;
+pub(crate) const WALK_PROTOCOL_VERSION: u32 = 6;
 
 /// Semantic version for the currently admitted transition graph slice.
 pub(crate) const TRANSITION_GRAPH_VERSION: &str = "walk-r0-r14a-v2";
@@ -50,16 +50,16 @@ const SOURCE_GUARD_PATHS: &[&str] = &[
 /// server compares that client epoch with both its startup epoch and the current
 /// filesystem state before it advances typestate.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct ServerEpoch {
-    pub(crate) protocol_version: u32,
-    pub(crate) transition_graph_version: String,
-    pub(crate) repo_root: PathBuf,
-    pub(crate) exe_path: PathBuf,
-    pub(crate) exe_modified_unix_ms: Option<u64>,
-    pub(crate) git_head: Option<String>,
+pub struct ServerEpoch {
+    pub protocol_version: u32,
+    pub transition_graph_version: String,
+    pub repo_root: PathBuf,
+    pub exe_path: PathBuf,
+    pub exe_modified_unix_ms: Option<u64>,
+    pub git_head: Option<String>,
     #[serde(default)]
-    pub(crate) active_branch: Option<String>,
-    pub(crate) source_status_hash: Option<String>,
+    pub active_branch: Option<String>,
+    pub source_status_hash: Option<String>,
 }
 
 impl ServerEpoch {

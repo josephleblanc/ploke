@@ -53,7 +53,7 @@ const JOURNAL_FILE: &str = "control-journal.jsonl";
 /// Durable identity for one parent-scoped controller session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
-pub(crate) struct SessionId(Uuid);
+pub struct SessionId(Uuid);
 
 impl SessionId {
     fn new() -> Self {
@@ -78,7 +78,7 @@ impl fmt::Display for SessionId {
 /// driver that reconstructs the typed state owns the evidence preimage.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Cursor {
+pub struct Cursor {
     pub(crate) phase: WalkPhase,
     pub(crate) evidence: ContentHash,
 }
@@ -92,6 +92,16 @@ impl Cursor {
 
     fn validate(&self) -> Result<(), Error> {
         validate_hash(&self.evidence).map_err(|detail| Error::InvalidIntent { detail })
+    }
+
+    /// Operator-facing typestate phase proven by this durable cursor.
+    pub const fn phase(&self) -> WalkPhase {
+        self.phase
+    }
+
+    /// Canonical evidence digest bound to this cursor.
+    pub fn evidence(&self) -> &str {
+        &self.evidence.0
     }
 }
 
@@ -5467,7 +5477,7 @@ mode = "continuous"
         }
     }
 
-    fn abandon(owner: Lease<Idle>) {
+    fn abandon<S>(owner: Lease<S>) {
         #[cfg(unix)]
         {
             // The library test process stays alive and may have concurrent
@@ -7093,7 +7103,7 @@ mode = "continuous"
             Begin::Started { lease, .. } => lease,
             Begin::Existing { .. } => panic!("new transition should start"),
         };
-        drop(pending);
+        abandon(pending);
 
         let mut recovery = match store
             .claim(claim(temp.path(), RunMode::Continuous))
@@ -7143,7 +7153,7 @@ mode = "continuous"
             Begin::Started { lease, .. } => lease,
             Begin::Existing { .. } => panic!("fresh effectful attempt must start"),
         };
-        drop(pending);
+        abandon(pending);
 
         let recovery = match store.claim(request.clone()).expect("recovery claim") {
             Outcome::Recoverable(recovery) => recovery,
@@ -7203,7 +7213,7 @@ mode = "continuous"
             .expect("inspect indeterminate")
             .expect("session snapshot");
         assert_eq!(snapshot.cursor, Some(cursor(WalkPhase::R7, "r7-evidence")));
-        drop(lease);
+        abandon(lease);
 
         let recovery = match store
             .claim(claim(temp.path(), RunMode::Step))
@@ -7436,7 +7446,7 @@ mode = "continuous"
             Begin::Started { lease, .. } => lease,
             Begin::Existing { .. } => panic!("new transition should start"),
         };
-        drop(pending);
+        abandon(pending);
 
         let recovery = match store
             .claim(claim(temp.path(), RunMode::Step))
@@ -8584,7 +8594,7 @@ mode = "continuous"
             Begin::Started { lease, .. } => lease,
             Begin::Existing { .. } => panic!("fresh handoff must start"),
         };
-        drop(pending);
+        abandon(pending);
 
         let snapshot = store
             .inspect(&parent())

@@ -398,7 +398,7 @@ pub(crate) enum ServerAdmission {
 /// One explicit production reconciliation admitted by the operator.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum RecoveryDirective {
+pub enum RecoveryDirective {
     Inspect,
     AbandonOwner,
     AbandonSession,

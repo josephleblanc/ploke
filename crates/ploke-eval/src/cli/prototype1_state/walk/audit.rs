@@ -80,56 +80,56 @@ const EVAL_RELS: &[(&str, &str)] = &[
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct WalkAuditReport {
-    pub(crate) schema_version: String,
-    pub(crate) generated_at: String,
-    pub(crate) scope: Prototype1StateWalkAuditScope,
-    pub(crate) transition_filter: Option<Prototype1StateWalkAuditTransition>,
-    pub(crate) phase: WalkPhase,
-    pub(crate) verbose: bool,
-    pub(crate) with_note: bool,
-    pub(crate) repo_root: PathBuf,
-    pub(crate) campaign: CampaignAudit,
-    pub(crate) documents: Vec<DocumentAudit>,
-    pub(crate) database: DatabaseAudit,
-    pub(crate) transition: TransitionAudit,
-    pub(crate) transitions: Vec<TransitionChecklist>,
-    pub(crate) summary: AuditSummary,
-    pub(crate) notes: Vec<String>,
+pub struct WalkAuditReport {
+    pub schema_version: String,
+    pub generated_at: String,
+    pub scope: Prototype1StateWalkAuditScope,
+    pub transition_filter: Option<Prototype1StateWalkAuditTransition>,
+    pub phase: WalkPhase,
+    pub verbose: bool,
+    pub with_note: bool,
+    pub repo_root: PathBuf,
+    pub campaign: CampaignAudit,
+    pub documents: Vec<DocumentAudit>,
+    pub database: DatabaseAudit,
+    pub transition: TransitionAudit,
+    pub transitions: Vec<TransitionChecklist>,
+    pub summary: AuditSummary,
+    pub notes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct TransitionChecklist {
-    pub(crate) transition: String,
-    pub(crate) from: WalkPhase,
-    pub(crate) to: WalkPhase,
-    pub(crate) file_status: PersistenceStatus,
-    pub(crate) db_status: PersistenceStatus,
-    pub(crate) overall_status: PersistenceStatus,
-    pub(crate) items: Vec<PersistenceItemAudit>,
+pub struct TransitionChecklist {
+    pub transition: String,
+    pub from: WalkPhase,
+    pub to: WalkPhase,
+    pub file_status: PersistenceStatus,
+    pub db_status: PersistenceStatus,
+    pub overall_status: PersistenceStatus,
+    pub items: Vec<PersistenceItemAudit>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct PersistenceItemAudit {
-    pub(crate) name: String,
-    pub(crate) file: PersistenceSide,
-    pub(crate) database: PersistenceSide,
-    pub(crate) overall_status: PersistenceStatus,
-    pub(crate) note: String,
+pub struct PersistenceItemAudit {
+    pub name: String,
+    pub file: PersistenceSide,
+    pub database: PersistenceSide,
+    pub overall_status: PersistenceStatus,
+    pub note: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct PersistenceSide {
-    pub(crate) status: PersistenceStatus,
-    pub(crate) count: Option<i64>,
-    pub(crate) path: Option<PathBuf>,
-    pub(crate) relation: Option<String>,
-    pub(crate) detail: Option<String>,
+pub struct PersistenceSide {
+    pub status: PersistenceStatus,
+    pub count: Option<i64>,
+    pub path: Option<PathBuf>,
+    pub relation: Option<String>,
+    pub detail: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum PersistenceStatus {
+pub enum PersistenceStatus {
     Ok,
     Partial,
     None,
@@ -138,36 +138,36 @@ pub(crate) enum PersistenceStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct CampaignAudit {
-    pub(crate) campaign_id: Option<CampaignId>,
-    pub(crate) source: CampaignSource,
-    pub(crate) detail: Option<String>,
+pub struct CampaignAudit {
+    pub campaign_id: Option<CampaignId>,
+    pub source: CampaignSource,
+    pub detail: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum CampaignSource {
+pub enum CampaignSource {
     Explicit,
     ParentIdentity,
     Unresolved,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct DocumentAudit {
-    pub(crate) name: String,
-    pub(crate) path: PathBuf,
-    pub(crate) role: DocumentRole,
-    pub(crate) expectation: DocumentExpectation,
-    pub(crate) expected_at: ExpectedAt,
-    pub(crate) exists: bool,
-    pub(crate) status: DocumentStatus,
-    pub(crate) sha256: Option<String>,
-    pub(crate) detail: Option<String>,
+pub struct DocumentAudit {
+    pub name: String,
+    pub path: PathBuf,
+    pub role: DocumentRole,
+    pub expectation: DocumentExpectation,
+    pub expected_at: ExpectedAt,
+    pub exists: bool,
+    pub status: DocumentStatus,
+    pub sha256: Option<String>,
+    pub detail: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum DocumentRole {
+pub enum DocumentRole {
     Authority,
     Projection,
     DerivedCache,
@@ -176,7 +176,7 @@ pub(crate) enum DocumentRole {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum DocumentExpectation {
+pub enum DocumentExpectation {
     Required,
     Optional,
     DerivedIfMissing,
@@ -186,7 +186,7 @@ pub(crate) enum DocumentExpectation {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum ExpectedAt {
+pub enum ExpectedAt {
     Precondition,
     TransitionOutput,
     TransitionPath,
@@ -194,7 +194,7 @@ pub(crate) enum ExpectedAt {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum DocumentStatus {
+pub enum DocumentStatus {
     Ok,
     Missing,
     ReadError,
@@ -203,17 +203,17 @@ pub(crate) enum DocumentStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct DatabaseAudit {
-    pub(crate) path: Option<PathBuf>,
-    pub(crate) exists: bool,
-    pub(crate) status: DatabaseStatus,
-    pub(crate) relation_counts: Vec<RelationCount>,
-    pub(crate) detail: Option<String>,
+pub struct DatabaseAudit {
+    pub path: Option<PathBuf>,
+    pub exists: bool,
+    pub status: DatabaseStatus,
+    pub relation_counts: Vec<RelationCount>,
+    pub detail: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum DatabaseStatus {
+pub enum DatabaseStatus {
     Ok,
     Missing,
     OpenError,
@@ -221,54 +221,54 @@ pub(crate) enum DatabaseStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct RelationCount {
-    pub(crate) relation: String,
-    pub(crate) exists: bool,
-    pub(crate) count: Option<i64>,
-    pub(crate) detail: Option<String>,
+pub struct RelationCount {
+    pub relation: String,
+    pub exists: bool,
+    pub count: Option<i64>,
+    pub detail: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct TransitionAudit {
-    pub(crate) transition: String,
-    pub(crate) from: WalkPhase,
-    pub(crate) to: WalkPhase,
-    pub(crate) code_symbol: String,
-    pub(crate) expected_file_writes: Vec<ExpectedPersistence>,
-    pub(crate) expected_db_writes: Vec<ExpectedPersistence>,
+pub struct TransitionAudit {
+    pub transition: String,
+    pub from: WalkPhase,
+    pub to: WalkPhase,
+    pub code_symbol: String,
+    pub expected_file_writes: Vec<ExpectedPersistence>,
+    pub expected_db_writes: Vec<ExpectedPersistence>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct ExpectedPersistence {
-    pub(crate) surface: String,
-    pub(crate) expectation: DocumentExpectation,
-    pub(crate) status: ExpectedStatus,
-    pub(crate) detail: String,
+pub struct ExpectedPersistence {
+    pub surface: String,
+    pub expectation: DocumentExpectation,
+    pub status: ExpectedStatus,
+    pub detail: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum ExpectedStatus {
+pub enum ExpectedStatus {
     Expected,
     NotExpected,
     Conditional,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct AuditSummary {
-    pub(crate) required_documents: usize,
-    pub(crate) required_ok: usize,
-    pub(crate) missing_required: usize,
-    pub(crate) parse_errors: usize,
-    pub(crate) db_rows_total: i64,
-    pub(crate) expected_transition_db_rows: i64,
-    pub(crate) observed_transition_db_rows: i64,
-    pub(crate) verdict: AuditVerdict,
+pub struct AuditSummary {
+    pub required_documents: usize,
+    pub required_ok: usize,
+    pub missing_required: usize,
+    pub parse_errors: usize,
+    pub db_rows_total: i64,
+    pub expected_transition_db_rows: i64,
+    pub observed_transition_db_rows: i64,
+    pub verdict: AuditVerdict,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum AuditVerdict {
+pub enum AuditVerdict {
     Ready,
     MissingPreconditions,
     NeedsReview,
@@ -405,7 +405,7 @@ pub(crate) fn audit_r0_to_r1(
 }
 
 impl WalkAuditReport {
-    pub(crate) fn render_table(&self) -> String {
+    pub fn render_table(&self) -> String {
         let mut lines = Vec::new();
         lines.push("walk audit".to_string());
         lines.push("-".repeat(40));

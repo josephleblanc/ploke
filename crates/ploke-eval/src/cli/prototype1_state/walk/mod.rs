@@ -14,6 +14,7 @@ pub(crate) mod ipc;
 pub(crate) mod paths;
 pub(crate) mod phase;
 pub(crate) mod protocol;
+pub(crate) mod query;
 pub(crate) mod server;
 pub(crate) mod summary;
 

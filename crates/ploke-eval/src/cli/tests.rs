@@ -2121,6 +2121,55 @@ fn loop_walk_recover_command_parses() {
 }
 
 #[test]
+fn loop_walk_recover_abandon_job_is_an_exclusive_resolution() {
+    let parsed = Cli::try_parse_from([
+        "ploke-eval",
+        "loop",
+        "walk",
+        "recover",
+        "--repo-root",
+        "/tmp/parent",
+        "--abandon-job",
+        "22222222-2222-4222-8222-222222222222",
+    ])
+    .expect("job abandonment should parse");
+
+    match parsed.command {
+        Command::Loop(LoopCommand {
+            command: LoopSubcommand::Prototype1StateWalk(cmd),
+        }) => match cmd.command {
+            Prototype1StateWalkSubcommand::Recover(cmd) => {
+                assert_eq!(
+                    cmd.abandon_job.map(|operation| operation.to_string()),
+                    Some("22222222-2222-4222-8222-222222222222".to_string())
+                );
+                assert!(cmd.operation_id.is_none());
+                assert!(!cmd.abandon_owner);
+                assert!(!cmd.abandon_session);
+                assert!(!cmd.admit_epoch);
+            }
+            other => panic!("unexpected walk subcommand: {other:?}"),
+        },
+        other => panic!("unexpected command shape: {other:?}"),
+    }
+
+    assert!(
+        Cli::try_parse_from([
+            "ploke-eval",
+            "loop",
+            "walk",
+            "recover",
+            "--abandon-job",
+            "22222222-2222-4222-8222-222222222222",
+            "--operation-id",
+            "33333333-3333-4333-8333-333333333333",
+        ])
+        .is_err(),
+        "job target and controller-recovery operation id must not be conflated"
+    );
+}
+
+#[test]
 fn loop_walk_show_delta_command_parses() {
     let parsed = Cli::try_parse_from([
         "ploke-eval",
@@ -2304,6 +2353,77 @@ fn loop_walk_llm_tool_command_parses() {
 }
 
 #[test]
+fn loop_walk_llm_step_operation_id_parses() {
+    let operation = "00000000-0000-0000-0000-000000000041";
+    let parsed = Cli::try_parse_from([
+        "ploke-eval",
+        "loop",
+        "walk",
+        "llm",
+        "step",
+        "--operation-id",
+        operation,
+        "--allow",
+        "workspace-mutation",
+    ])
+    .expect("loop walk llm step operation id should parse");
+
+    match parsed.command {
+        Command::Loop(LoopCommand {
+            command: LoopSubcommand::Prototype1StateWalk(cmd),
+        }) => match cmd.command {
+            Prototype1StateWalkSubcommand::Llm(cmd) => match cmd.command {
+                Prototype1StateWalkLlmSubcommand::Step(step) => {
+                    assert_eq!(
+                        step.operation_id.map(|id| id.to_string()).as_deref(),
+                        Some(operation)
+                    );
+                }
+                other => panic!("unexpected llm subcommand: {other:?}"),
+            },
+            other => panic!("unexpected walk subcommand: {other:?}"),
+        },
+        other => panic!("unexpected command shape: {other:?}"),
+    }
+}
+
+#[test]
+fn loop_walk_llm_finish_operation_id_parses() {
+    let operation = "00000000-0000-0000-0000-000000000042";
+    let parsed = Cli::try_parse_from([
+        "ploke-eval",
+        "loop",
+        "walk",
+        "llm",
+        "finish",
+        "--operation-id",
+        operation,
+        "--watch",
+        "--allow",
+        "workspace-mutation",
+    ])
+    .expect("loop walk llm finish operation id should parse");
+
+    match parsed.command {
+        Command::Loop(LoopCommand {
+            command: LoopSubcommand::Prototype1StateWalk(cmd),
+        }) => match cmd.command {
+            Prototype1StateWalkSubcommand::Llm(cmd) => match cmd.command {
+                Prototype1StateWalkLlmSubcommand::Finish(finish) => {
+                    assert_eq!(
+                        finish.operation_id.map(|id| id.to_string()).as_deref(),
+                        Some(operation)
+                    );
+                }
+                other => panic!("unexpected llm subcommand: {other:?}"),
+            },
+            other => panic!("unexpected walk subcommand: {other:?}"),
+        },
+        other => panic!("unexpected command shape: {other:?}"),
+    }
+}
+
+#[test]
 fn loop_walk_replay_and_back_commands_parse() {
     let replay = Cli::try_parse_from([
         "ploke-eval",
@@ -2375,6 +2495,7 @@ fn loop_walk_replay_and_back_commands_parse() {
 
 #[test]
 fn loop_walk_branch_live_requires_explicit_provenance_capability() {
+    let operation = "00000000-0000-0000-0000-000000000043";
     let parsed = Cli::try_parse_from([
         "ploke-eval",
         "loop",
@@ -2384,6 +2505,8 @@ fn loop_walk_branch_live_requires_explicit_provenance_capability() {
         "/tmp/parent",
         "--reason",
         "debug from historical cursor",
+        "--operation-id",
+        operation,
         "--allow",
         "provenance-record",
     ])
@@ -2397,6 +2520,10 @@ fn loop_walk_branch_live_requires_explicit_provenance_capability() {
                 assert_eq!(cmd.control.repo_root, Some(PathBuf::from("/tmp/parent")));
                 assert_eq!(cmd.reason, "debug from historical cursor");
                 assert_eq!(cmd.allow, vec!["provenance-record".to_string()]);
+                assert_eq!(
+                    cmd.operation_id.map(|id| id.to_string()).as_deref(),
+                    Some(operation)
+                );
             }
             other => panic!("unexpected walk subcommand: {:?}", other),
         },

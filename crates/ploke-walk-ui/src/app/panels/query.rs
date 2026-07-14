@@ -1,7 +1,7 @@
 use eframe::egui::{
     self, Color32, Grid, Response, RichText, ScrollArea, TextEdit, TextStyle, Ui, Widget,
 };
-use ploke_eval::walk_client::DbQueryResult;
+use ploke_eval::walk_client::{DbQueryResult, WalkQuerySnapshot};
 
 use crate::model::{DEFAULT_QUERY, MAX_TABLE_ROWS};
 
@@ -9,7 +9,7 @@ pub(in crate::app) struct QueryPanel<'a> {
     pub(in crate::app) campaign_input: &'a mut String,
     pub(in crate::app) query_script: &'a mut String,
     pub(in crate::app) query_pending: bool,
-    pub(in crate::app) query_result: Option<&'a DbQueryResult>,
+    pub(in crate::app) query_result: Option<&'a WalkQuerySnapshot>,
     pub(in crate::app) selected_row: &'a mut Option<usize>,
     pub(in crate::app) selected_campaign: Option<&'a str>,
 }
@@ -54,9 +54,9 @@ impl QueryPanel<'_> {
         ui.separator();
         ui.add_space(8.0);
         match self.query_result.as_ref() {
-            Some(result) => {
+            Some(query) => {
                 ui.add(QueryResultTable {
-                    result,
+                    query,
                     selected_row: self.selected_row,
                 });
             }
@@ -69,20 +69,39 @@ impl QueryPanel<'_> {
 }
 
 struct QueryResultTable<'a> {
-    result: &'a DbQueryResult,
+    query: &'a WalkQuerySnapshot,
     selected_row: &'a mut Option<usize>,
 }
 
 impl Widget for QueryResultTable<'_> {
     fn ui(self, ui: &mut Ui) -> Response {
+        let result: &DbQueryResult = &self.query.result;
         ui.vertical(|ui| {
             ui.horizontal(|ui| {
-                ui.label(format!("rows: {}", self.result.row_count));
+                ui.label(format!("rows: {}", result.row_count));
                 ui.separator();
-                ui.label(self.result.db_path.display().to_string());
+                ui.label(format!(
+                    "revision: {}",
+                    short_revision(result.revision.as_str())
+                ))
+                .on_hover_text(
+                    "Content identity of the exact owner database snapshot queried by the walk service",
+                );
+                ui.separator();
+                ui.label(format!(
+                    "session: {}",
+                    self.query.version.journal_revision()
+                ))
+                .on_hover_text("Durable controller journal revision observed with this query");
+                ui.separator();
+                ui.label(format!("phase: {}", self.query.phase));
+                ui.separator();
+                ui.label(format!("protocol: {}", self.query.epoch.protocol_version));
+                ui.separator();
+                ui.label(result.db_path.display().to_string());
             });
             ui.add_space(6.0);
-            if self.result.headers.is_empty() {
+            if result.headers.is_empty() {
                 ui.label("No headers");
                 return;
             }
@@ -94,12 +113,12 @@ impl Widget for QueryResultTable<'_> {
                         .min_col_width(120.0)
                         .show(ui, |ui| {
                             ui.label(RichText::new("#").strong());
-                            for header in &self.result.headers {
+                            for header in &result.headers {
                                 ui.label(RichText::new(header).strong());
                             }
                             ui.end_row();
                             for (index, row) in
-                                self.result.rows.iter().take(MAX_TABLE_ROWS).enumerate()
+                                result.rows.iter().take(MAX_TABLE_ROWS).enumerate()
                             {
                                 let selected = *self.selected_row == Some(index);
                                 if ui.selectable_label(selected, index.to_string()).clicked() {
@@ -123,4 +142,8 @@ fn format_cell(value: &serde_json::Value) -> String {
         serde_json::Value::String(text) => text.clone(),
         other => other.to_string(),
     }
+}
+
+fn short_revision(revision: &str) -> &str {
+    revision.get(..12).unwrap_or(revision)
 }

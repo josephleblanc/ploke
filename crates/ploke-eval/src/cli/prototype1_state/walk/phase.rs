@@ -229,7 +229,7 @@ const NO_NEXT: &[WalkNextStep] = &[];
 
 impl WalkPhase {
     /// Stable lowercase spelling used by table output and `Display`.
-    pub(crate) fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             WalkPhase::Empty => "empty",
             WalkPhase::R0 => "r0",
@@ -257,7 +257,7 @@ impl WalkPhase {
     }
 
     /// Short human label for the phase.
-    pub(crate) fn detail(self) -> &'static str {
+    pub fn detail(self) -> &'static str {
         match self {
             WalkPhase::Empty => "no active walk",
             WalkPhase::R0 => "command captured",

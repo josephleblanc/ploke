@@ -4,7 +4,7 @@ use std::{sync::mpsc, thread};
 
 use eframe::egui;
 use ploke_eval::walk_client::{
-    DbQueryResult, PhaseInventory, WalkClient, WalkReplyStatus, WalkRunEntry, WalkSnapshot,
+    PhaseInventory, WalkClient, WalkQuerySnapshot, WalkResponse, WalkRunEntry,
 };
 
 use crate::client;
@@ -32,8 +32,8 @@ pub(crate) struct WalkUiApp {
     client: Option<WalkClient>,
     phases: PhaseInventory,
     status: ServiceStatus,
-    snapshot: Option<WalkSnapshot>,
-    query_result: Option<DbQueryResult>,
+    response: Option<WalkResponse>,
+    query_result: Option<WalkQuerySnapshot>,
     selected_row: Option<usize>,
     notice: Option<String>,
     walk_pending: Option<WalkRequestKind>,
@@ -58,7 +58,7 @@ impl WalkUiApp {
             client: None,
             phases: PhaseInventory::current(),
             status: ServiceStatus::Unresolved,
-            snapshot: None,
+            response: None,
             query_result: None,
             selected_row: None,
             notice: None,
@@ -110,7 +110,7 @@ impl WalkUiApp {
     fn resolve_selected_client(&mut self) {
         let Some(run) = self.selected_run().cloned() else {
             self.client = None;
-            self.snapshot = None;
+            self.response = None;
             self.status = ServiceStatus::Unresolved;
             self.notice = Some("no Prototype 1 run selected".to_string());
             return;
@@ -119,7 +119,7 @@ impl WalkUiApp {
         self.campaign_input = run.campaign_id.clone();
         if run.worktree_root.is_none() {
             self.client = None;
-            self.snapshot = None;
+            self.response = None;
             self.status = ServiceStatus::Unresolved;
             self.notice = Some(format!(
                 "selected run '{}' has no local worktree; DB queries can still run",
@@ -181,13 +181,20 @@ impl WalkUiApp {
             self.notice = Some("query already pending".to_string());
             return;
         }
+        let Some(client) = self.client.clone() else {
+            self.notice = Some(
+                "the selected run has no walk service; start or select its server before querying"
+                    .to_string(),
+            );
+            return;
+        };
 
         self.query_pending = true;
         self.notice = Some("query pending".to_string());
         let script = self.query_script.clone();
         let tx = self.event_tx.clone();
         thread::spawn(move || {
-            let result = client::query_campaign_db(&campaign, &script);
+            let result = client::query_db(client, &campaign, &script);
             let _ = tx.send(UiEvent::Query(result));
             if let Some(ctx) = repaint {
                 ctx.request_repaint();
@@ -209,18 +216,17 @@ impl WalkUiApp {
             self.walk_pending = None;
         }
         match result {
-            WalkRequestResult::Snapshot(snapshot) => {
-                self.status = if snapshot.status == WalkReplyStatus::Error {
-                    ServiceStatus::Error(snapshot.message.clone())
-                } else {
-                    ServiceStatus::Online
+            WalkRequestResult::Response(response) => {
+                self.status = match &response {
+                    WalkResponse::Error { detail, .. } => ServiceStatus::Error(detail.clone()),
+                    _ => ServiceStatus::Online,
                 };
                 self.notice = Some(format!("{} response received", kind.label()));
-                self.snapshot = Some(snapshot);
+                self.response = Some(response);
             }
             WalkRequestResult::Offline(socket) => {
                 self.status = ServiceStatus::Offline;
-                self.snapshot = None;
+                self.response = None;
                 self.notice = Some(format!("walk server is offline at {}", socket.display()));
             }
             WalkRequestResult::TimedOut => {
@@ -231,18 +237,18 @@ impl WalkUiApp {
                     crate::model::WALK_REQUEST_TIMEOUT.as_secs()
                 ));
             }
-            WalkRequestResult::Error(error) => {
+            WalkRequestResult::ClientError(error) => {
                 self.status = ServiceStatus::Error(error);
             }
         }
     }
 
-    fn finish_query(&mut self, result: Result<DbQueryResult, String>) {
+    fn finish_query(&mut self, result: Result<WalkQuerySnapshot, String>) {
         self.query_pending = false;
         match result {
             Ok(result) => {
                 self.selected_row = None;
-                self.notice = Some(format!("{} row(s)", result.row_count));
+                self.notice = Some(format!("{} row(s)", result.result.row_count));
                 self.query_result = Some(result);
             }
             Err(error) => {
@@ -316,7 +322,7 @@ impl eframe::App for WalkUiApp {
             .show_inside(ui, |ui| {
                 PhaseRail {
                     phases: &self.phases,
-                    current: self.snapshot.as_ref().and_then(|snapshot| snapshot.phase),
+                    current: self.response.as_ref().and_then(WalkResponse::phase),
                 }
                 .show(ui);
             });
@@ -331,7 +337,7 @@ impl eframe::App for WalkUiApp {
                     run_error: self.run_error.as_deref(),
                     client_available: self.client.is_some(),
                     walk_pending: self.walk_pending,
-                    snapshot: self.snapshot.as_ref(),
+                    response: self.response.as_ref(),
                     notice: self.notice.as_deref(),
                     query_result: self.query_result.as_ref(),
                     selected_row: self.selected_row,
@@ -369,7 +375,10 @@ impl eframe::App for WalkUiApp {
                 walk_pending: self.walk_pending,
                 query_pending: self.query_pending,
                 runs_len: self.runs.len(),
-                row_count: self.query_result.as_ref().map(|result| result.row_count),
+                row_count: self
+                    .query_result
+                    .as_ref()
+                    .map(|query| query.result.row_count),
             }
             .show(ui.ctx());
         }
@@ -405,6 +414,97 @@ mod tests {
     }
 
     #[test]
+    fn typed_error_response_retains_version_and_epoch() {
+        let response: WalkResponse = serde_json::from_value(serde_json::json!({
+            "type": "error",
+            "code": "stale_version",
+            "detail": "client observed an older session revision",
+            "phase": "r6",
+            "version": {
+                "session_id": null,
+                "cursor": null,
+                "journal_revision": 9
+            },
+            "epoch": {
+                "protocol_version": 6,
+                "transition_graph_version": "walk-r0-r14a-v2",
+                "repo_root": "/tmp/ploke-parent",
+                "exe_path": "/tmp/ploke-eval",
+                "exe_modified_unix_ms": 17,
+                "git_head": "abc123",
+                "active_branch": "successor/runtime-2",
+                "source_status_hash": "def456"
+            }
+        }))
+        .expect("typed error response");
+        let mut app = test_app();
+
+        app.finish_walk_request(
+            WalkRequestKind::Health,
+            WalkRequestResult::Response(response),
+        );
+
+        assert!(matches!(app.status, ServiceStatus::Error(_)));
+        let Some(WalkResponse::Error {
+            code,
+            version: Some(version),
+            epoch,
+            ..
+        }) = app.response.as_ref()
+        else {
+            panic!("UI must retain the exact structured error response");
+        };
+        assert_eq!(*code, ploke_eval::walk_client::WalkErrorCode::StaleVersion);
+        assert_eq!(version.journal_revision(), 9);
+        assert_eq!(epoch.active_branch.as_deref(), Some("successor/runtime-2"));
+    }
+
+    #[test]
+    fn query_result_retains_phase_session_and_epoch_envelope() {
+        let query: WalkQuerySnapshot = serde_json::from_value(serde_json::json!({
+            "phase": "r6",
+            "result": {
+                "repo_root": "/tmp/ploke-parent",
+                "campaign_id": "campaign-query",
+                "db_path": "/tmp/owner.cozo.sqlite",
+                "script": "::relations",
+                "revision": "abc123",
+                "headers": ["name"],
+                "row_count": 1,
+                "rows": [{"cells": ["eval_campaign"], "object": {"name": "eval_campaign"}}]
+            },
+            "version": {
+                "session_id": null,
+                "cursor": null,
+                "journal_revision": 12
+            },
+            "epoch": {
+                "protocol_version": 6,
+                "transition_graph_version": "walk-r0-r14a-v2",
+                "repo_root": "/tmp/ploke-parent",
+                "exe_path": "/tmp/ploke-eval",
+                "exe_modified_unix_ms": 17,
+                "git_head": "abc123",
+                "active_branch": "successor/runtime-2",
+                "source_status_hash": "def456"
+            }
+        }))
+        .expect("typed query envelope");
+        let mut app = test_app();
+
+        app.finish_query(Ok(query));
+
+        let stored = app.query_result.as_ref().expect("stored query envelope");
+        assert_eq!(stored.phase, ploke_eval::walk_client::WalkPhase::R6);
+        assert_eq!(stored.version.journal_revision(), 12);
+        assert_eq!(
+            stored.epoch.active_branch.as_deref(),
+            Some("successor/runtime-2")
+        );
+        assert_eq!(stored.result.row_count, 1);
+    }
+
+    #[test]
     fn show_state_treats_missing_socket_as_offline() {
         let root = unique_temp_dir("ploke-walk-ui-missing-socket");
         fs::create_dir_all(&root).expect("create temp repo root");
@@ -416,7 +516,7 @@ mod tests {
         wait_for_events(&mut app);
 
         assert!(matches!(app.status, ServiceStatus::Offline));
-        assert!(app.snapshot.is_none());
+        assert!(app.response.is_none());
         assert!(
             app.notice
                 .as_deref()
@@ -483,7 +583,7 @@ mod tests {
             client: None,
             phases: PhaseInventory::current(),
             status: ServiceStatus::Unresolved,
-            snapshot: None,
+            response: None,
             query_result: None,
             selected_row: None,
             notice: None,
