@@ -136,6 +136,15 @@ fn fixture_context_reads_projected_returned_closure_nested_calls() -> Result<(),
             maker: "make_alias_bound_closure",
             path: &["make_alias_bound_closure"],
         },
+        // tests/fixture_crates/fixture_call_graph/src/lib.rs:1511-1520:
+        // `make_forwarded_returned_closure()()` resolves through a bounded
+        // sync returned-callable forwarding proof from the producer to
+        // `make_target_closure`'s returned closure owner.
+        ReturnedClosureCase {
+            owner: "call_forwarded_returned_closure",
+            maker: "make_forwarded_returned_closure",
+            path: &["make_forwarded_returned_closure"],
+        },
     ];
 
     for case in cases {

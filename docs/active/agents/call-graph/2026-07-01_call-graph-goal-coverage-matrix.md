@@ -3329,17 +3329,18 @@ targetless `Unsupported` dynamic row; no path is admitted from the caller to
 `local_target`. This documents the missing typed future-flow carrier without
 fabricating a cross-function async closure edge.
 
-Update 2026-07-13: non-local returned closure value flow now has a fail-closed
-DB/RAG fixture proof. The source oracle is
+Update 2026-07-14: non-local returned closure value flow now has a bounded
+sync DB/RAG fixture proof. The source oracle is
 `tests/fixture_crates/fixture_call_graph/src/lib.rs:1511-1520`, where
 `make_forwarded_returned_closure()` returns the closure produced by
 `make_target_closure()`, and `call_forwarded_returned_closure()` immediately
-invokes only the producer function result. The caller traverses exactly one
-resolved `Function` edge to the producer. The caller's outer returned-callable
-dynamic row stays targetless `Unsupported`, the producer only exposes the
-maker path row, and no path is admitted from the caller to `local_target`.
-This documents the missing returned-callable value-flow carrier without
-fabricating a cross-function closure edge.
+invokes only the producer function result. The caller traverses a resolved
+`Function` edge to the producer, and the outer returned-callable dynamic row now
+resolves to the closure owner returned by `make_target_closure`. DB traversal
+admits the two-hop path from the caller to `local_target` through that closure
+owner. This remains intentionally narrow: it covers one zero-argument sync
+producer forwarding a local function that directly returns a closure, not
+general recursive returned-callable value flow.
 
 ## Parking Lot
 

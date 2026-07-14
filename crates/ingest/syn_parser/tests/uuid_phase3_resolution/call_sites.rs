@@ -110,6 +110,10 @@ const RETURNED_BOUND_CLOSURE_DYNAMIC_CALL_SPAN: (usize, usize) = (32010, 32032);
 const MAKE_ALIAS_BOUND_CLOSURE_INNER_CALL_SPAN: (usize, usize) = (32966, 32992);
 const MAKE_ALIAS_BOUND_CLOSURE_RETURNED_CLOSURE_SPAN: (usize, usize) = (32865, 32870);
 const RETURNED_ALIAS_BOUND_CLOSURE_DYNAMIC_CALL_SPAN: (usize, usize) = (32966, 32994);
+const MAKE_TARGET_CLOSURE_RETURNED_CLOSURE_SPAN: (usize, usize) = (33053, 33070);
+const FORWARDED_RETURNED_CLOSURE_PRODUCER_CALL_SPAN: (usize, usize) = (33141, 33162);
+const FORWARDED_RETURNED_CLOSURE_INNER_CALL_SPAN: (usize, usize) = (33220, 33253);
+const FORWARDED_RETURNED_CLOSURE_DYNAMIC_CALL_SPAN: (usize, usize) = (33220, 33255);
 const MAKE_RETURNED_ASYNC_CLOSURE_INNER_CALL_SPAN: (usize, usize) = (56714, 56743);
 const MAKE_RETURNED_ASYNC_CLOSURE_SPAN: (usize, usize) = (56630, 56653);
 const RETURNED_ASYNC_CLOSURE_DYNAMIC_CALL_SPAN: (usize, usize) = (56714, 56745);
@@ -4313,6 +4317,81 @@ paranoid_call_site_test!(
         ExpectedCallSite::dynamic_returned_path_call(
             &["make_alias_bound_closure"],
             RETURNED_ALIAS_BOUND_CLOSURE_DYNAMIC_CALL_SPAN,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedDynamicClosureLocalExact { target: closure },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_forwarded_returned_closure_resolves_producer_maker_path_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "make_forwarded_returned_closure"
+    },
+    expected: {
+        let target_args = fixture_call_graph_function_args(&["crate"], "make_target_closure");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("make_target_closure should regenerate a FunctionNodeId");
+        ExpectedCallSite::path(
+            &["make_target_closure"],
+            FORWARDED_RETURNED_CLOSURE_PRODUCER_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_forwarded_returned_closure_resolves_inner_producer_path_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_forwarded_returned_closure"
+    },
+    expected: {
+        let target_args =
+            fixture_call_graph_function_args(&["crate"], "make_forwarded_returned_closure");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("make_forwarded_returned_closure should regenerate a FunctionNodeId");
+        ExpectedCallSite::path(
+            &["make_forwarded_returned_closure"],
+            FORWARDED_RETURNED_CLOSURE_INNER_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_forwarded_returned_closure_resolves_outer_dynamic_closure_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_forwarded_returned_closure"
+    },
+    expected: {
+        let (graph, _tree) = crate::common::build_tree_for_tests("fixture_call_graph");
+        let owner = crate::common::call_site_paranoid::function_owner_context(
+            &graph,
+            &["crate"],
+            "make_target_closure",
+        );
+        let closure =
+            closure_body_inside_span(&graph, &owner, MAKE_TARGET_CLOSURE_RETURNED_CLOSURE_SPAN);
+        ExpectedCallSite::dynamic_returned_path_call(
+            &["make_forwarded_returned_closure"],
+            FORWARDED_RETURNED_CLOSURE_DYNAMIC_CALL_SPAN,
             0,
             &[],
             ExpectedCallOutcome::ResolvedDynamicClosureLocalExact { target: closure },

@@ -307,6 +307,18 @@ impl CallRelationResolver<'_> {
             None => {}
         }
 
+        if let Some(target) = self.direct_returned_call_closure(returning_function)? {
+            relations.push(CallRelation::DynamicClosure {
+                source: call.id,
+                target,
+            });
+            statuses.push(CallResolutionStatus::Resolved {
+                source,
+                kind: CallResolutionKind::LocalExact,
+            });
+            return Ok(());
+        }
+
         let Some(return_path) = self.direct_return_path(returning_function)? else {
             statuses.push(CallResolutionStatus::Unsupported { source });
             return Ok(());
@@ -427,6 +439,37 @@ impl CallRelationResolver<'_> {
             return Ok(None);
         };
         Ok(expr_return_path(&expr))
+    }
+
+    fn direct_returned_call_closure(
+        &self,
+        function_id: FunctionNodeId,
+    ) -> Result<Option<ExecutableBodyId>, SynParserError> {
+        let Some(path) = self.direct_return_call_path(function_id)? else {
+            return Ok(None);
+        };
+        let target = match self.resolve_dynamic_path(function_id.into(), &path)? {
+            DynamicPathResolution::Resolved(target) => target,
+            DynamicPathResolution::Unresolved
+            | DynamicPathResolution::Ambiguous
+            | DynamicPathResolution::External
+            | DynamicPathResolution::Unsupported => return Ok(None),
+        };
+        match self.direct_return_closure(target)? {
+            Some(ReturnedClosure::Sync(closure)) => Ok(Some(closure)),
+            Some(ReturnedClosure::Async(_)) | None => Ok(None),
+        }
+    }
+
+    fn direct_return_call_path(
+        &self,
+        function_id: FunctionNodeId,
+    ) -> Result<Option<Vec<String>>, SynParserError> {
+        let Some(expr) = self.direct_return_expr(function_id, "returned-call closure proof")?
+        else {
+            return Ok(None);
+        };
+        Ok(expr_return_call_path(&expr))
     }
 
     fn direct_return_closure(
@@ -732,6 +775,16 @@ fn expr_return_path(expr: &syn::Expr) -> Option<Vec<String>> {
         .map(|segment| segment.ident.to_string())
         .collect::<Vec<_>>();
     (!path.is_empty()).then_some(path)
+}
+
+fn expr_return_call_path(expr: &syn::Expr) -> Option<Vec<String>> {
+    let syn::Expr::Call(call) = unparen_expr(expr) else {
+        return None;
+    };
+    if !call.args.is_empty() {
+        return None;
+    }
+    expr_return_path(call.func.as_ref())
 }
 
 fn expr_path_ident(expr: &syn::Expr) -> Option<String> {

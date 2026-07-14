@@ -374,6 +374,14 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
         // tests/fixture_crates/fixture_call_graph/src/lib.rs:1500:
         // `make_alias_bound_closure()()` returns a local alias of a closure binding.
         (alias_owner, make_alias, "make_alias_bound_closure"),
+        // tests/fixture_crates/fixture_call_graph/src/lib.rs:1511-1520:
+        // `make_forwarded_returned_closure()()` returns a sync closure through
+        // a bounded producer-to-maker forwarding proof.
+        (
+            closure_owner,
+            closure_producer,
+            "make_forwarded_returned_closure",
+        ),
     ];
     for (owner, maker, name) in closure_cases {
         let context = call_context
@@ -419,50 +427,8 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
     }
 
     // tests/fixture_crates/fixture_call_graph/src/lib.rs:1511-1520:
-    // `call_forwarded_returned_closure()` invokes a closure value returned by a
-    // producer function. RAG should expose the producer call and targetless
-    // outer dynamic row, while the producer context exposes the maker path plus
-    // the incoming caller row.
-    let closure_context = call_context
-        .get(&closure_owner)
-        .expect("forwarded returned closure caller should receive outgoing call context");
-    assert_eq!(
-        closure_context.len(),
-        2,
-        "forwarded returned closure caller context: {closure_context:#?}"
-    );
-    let producer_path = closure_context
-        .iter()
-        .find(|call| {
-            call.owner_id == closure_owner
-                && call.kind == CallSiteKind::Path
-                && call.callee
-                    == CallCalleeInfo::Path {
-                        path: vec!["make_forwarded_returned_closure".to_string()],
-                    }
-        })
-        .expect("forwarded returned closure caller should include the producer path");
-    assert_eq!(producer_path.status, CallStatusKind::Resolved);
-    assert_eq!(
-        producer_path.resolution,
-        Some(CallResolutionKind::LocalExact)
-    );
-    assert_eq!(producer_path.targets.len(), 1);
-    assert_eq!(producer_path.targets[0].target_id, closure_producer);
-    assert_eq!(producer_path.targets[0].relation, CallTargetKind::Function);
-
-    let closure_dynamic = closure_context
-        .iter()
-        .find(|call| call.owner_id == closure_owner && call.kind == CallSiteKind::Dynamic)
-        .expect("forwarded returned closure caller should include a targetless dynamic row");
-    assert_eq!(closure_dynamic.callee, CallCalleeInfo::Dynamic);
-    assert_eq!(closure_dynamic.status, CallStatusKind::Unsupported);
-    assert_eq!(closure_dynamic.resolution, None);
-    assert!(
-        closure_dynamic.targets.is_empty(),
-        "non-local returned closure flow must not fabricate a dynamic target: {closure_dynamic:#?}"
-    );
-
+    // the forwarded returned closure producer context exposes both the incoming
+    // caller row and its own maker path.
     let closure_producer_context = call_context
         .get(&closure_producer)
         .expect("forwarded returned closure producer should receive call context");

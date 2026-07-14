@@ -117,7 +117,7 @@ Forwarded returned-future checkpoint, 2026-07-13:
   step a concrete blocker: non-local future value flow, not another same-block
   awaited async closure variant.
 
-Forwarded returned-closure checkpoint, 2026-07-13:
+Forwarded returned-closure checkpoint, updated 2026-07-14:
 
 - Selected bucket: interprocedural callable value flow.
 - Source oracle:
@@ -126,17 +126,15 @@ Forwarded returned-closure checkpoint, 2026-07-13:
   `make_target_closure()`, and `call_forwarded_returned_closure()` immediately
   invokes the producer function result.
 - DB/RAG status: the caller has a resolved `Function` edge to the producer and
-  a targetless `Unsupported` dynamic row for the outer returned-callable
-  invocation. The producer has a resolved path call to `make_target_closure`;
-  RAG node context also includes the incoming caller row when the producer is a
-  seed.
+  a resolved `DynamicClosure` edge for the outer returned-callable invocation.
+  The producer has a resolved path call to `make_target_closure`; RAG node
+  context also includes the incoming caller row when the producer is a seed.
 - Traversal status: `call_forwarded_returned_closure ->
-  make_forwarded_returned_closure` is traversable as one edge, but there is no
-  path from the caller to `local_target`. This is intentional until a typed
-  returned-callable value-flow carrier proves the closure value across the
-  function boundary.
-- This is a sync callable-value-flow blocker, not another async poll/resume
-  case and not broad returned-closure modeling.
+  make_forwarded_returned_closure` is traversable as one edge, and the bounded
+  sync returned-callable carrier admits `call_forwarded_returned_closure ->
+  returned closure owner -> local_target`.
+- This is a narrow sync callable-value-flow proof, not async poll/resume
+  modeling and not broad returned-closure recursion.
 
 ## Remaining Candidate Buckets
 
