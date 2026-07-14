@@ -51,6 +51,14 @@ Current completed checkpoint:
   returned async-closure owner, also resolves the same returned future after a
   same-block `let future = ...; future.await` binding, and keeps the un-awaited
   `make_returned_async_closure()()` targetless with no traversal edge.
+- The latest durable binding slice persists the same-block stored returned
+  async future proof as a `LetBinding` sourced by a `DynamicCallResult`. The
+  fixture oracle is
+  `tests/fixture_crates/fixture_call_graph/src/lib.rs:2375-2377`, where
+  `let future = make_returned_async_closure()(); future.await` proves the
+  earlier dynamic call result is polled. This adds owner/source
+  `local_binding_edge` evidence only; it does not model non-local future flow
+  or add a new traversal edge.
 - The latest proof-authority slice keeps memchr
   `memchr/src/tests/substring/mod.rs:94,110` boxed `dyn FnMut` path rows
   targetless, but admits runtime-dispatch summaries that discharge their
@@ -111,6 +119,8 @@ Selection update, 2026-07-14:
 Local-binding projection checkpoint, 2026-07-14:
 
 - Source oracles:
+  `tests/fixture_crates/fixture_call_graph/src/lib.rs:2375-2377` for
+  same-block stored returned async future let-binding evidence,
   `tests/fixture_crates/fixture_call_graph/src/lib.rs:1511-1520` for sync
   returned-closure forwarding, and
   `tests/fixture_crates/fixture_call_graph/src/lib.rs:2380-2385` for
@@ -126,6 +136,10 @@ Local-binding projection checkpoint, 2026-07-14:
   binding pointing at its targetless `ReturnedPathCall` dynamic row. Each owner
   now has exactly the expected `OwnerContainsBinding` edge plus a
   `BindingSourceClosure` or `BindingSourceCallResult` edge.
+- Additional verified behavior: `call_stored_returned_async_closure()` now has
+  a `LetBinding` named `future` whose source is the awaited returned-callable
+  `DynamicCallResult` for `make_returned_async_closure()()`, with
+  `OwnerContainsBinding` and `BindingSourceCallResult` edges.
 - Query behavior: `returned_call_binding_flows_for_owner` now joins the
   caller's resolved returned-callable dynamic row to the producer path call and
   the producer's persisted return binding/source edge. The sync forwarded

@@ -110,6 +110,17 @@ awaits the producer nor the targetless producer dynamic row exposes a returned
 call binding flow. This does not add parser breadth, fixture DB churn, or a new
 call traversal edge.
 
+Recent completed slice: same-block awaited returned async future let-binding
+carrier. The parser now persists
+`call_stored_returned_async_closure()`'s `let future =
+make_returned_async_closure()(); future.await` proof as a `LetBinding` sourced
+by the awaited returned-callable `DynamicCallResult`. `ploke-db` validates the
+row shape strictly and fixture tests assert the binding plus
+`OwnerContainsBinding` / `BindingSourceCallResult` edges. Active call-graph
+fixtures were regenerated and verified. This is still local proof evidence; it
+does not add non-local future value flow, general async poll/resume traversal,
+or a new call edge.
+
 Recent completed slice: durable returned-callable `local_binding_edge`
 projection. The parser now records typed `LocalBindingRelation` facts for
 owner-to-binding containment and binding-to-source endpoints. Transform

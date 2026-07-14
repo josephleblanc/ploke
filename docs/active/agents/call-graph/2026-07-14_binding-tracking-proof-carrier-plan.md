@@ -280,6 +280,37 @@ What remains:
   poll/resume traversal still require separate source-oracle-driven carrier
   slices.
 
+## 2026-07-14 Awaited Future Let-Binding Carrier Checkpoint
+
+Committed slices: `a62bf6d59 Project awaited future let binding evidence` and
+`0dfd1d6d3 test: refresh awaited future binding fixtures`.
+
+What is complete:
+
+- Parser extraction now persists a strict `LetBinding` row for same-block
+  awaited future call-result evidence. The source oracle is
+  `tests/fixture_crates/fixture_call_graph/src/lib.rs:2375-2377`, where
+  `let future = make_returned_async_closure()(); future.await` proves the
+  earlier dynamic returned-callable result is polled.
+- The row uses the existing typed `DynamicCallResult` source shape and records
+  `AwaitedReturnedPathCall` callee evidence for
+  `make_returned_async_closure()`. It does not use body-text lookup as
+  authority.
+- `ploke-db` validation remains strict: `LetBinding` rows may now use
+  `PathCallResult` or `DynamicCallResult` sources only when the same typed
+  source-shape checks already required for return bindings pass.
+- Fixture-backed DB tests assert the `future` binding, its source callsite, and
+  the `OwnerContainsBinding` plus `BindingSourceCallResult` edges.
+- Active call-graph fixtures were regenerated and `verify-backup-dbs` passed
+  with the refreshed committed seed checksums.
+
+What remains:
+
+- This is not non-local returned future value flow, general `let` binding
+  tracking, async poll/resume traversal, or a new call edge. The forwarded
+  returned async future remains fail-closed until a carrier proves both the
+  producer future and the poll point across the function boundary.
+
 ## Exit Criteria
 
 For the first carrier slice:
