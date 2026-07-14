@@ -368,6 +368,63 @@ fn chrono_guarded_match_arm_slice_method_guard_is_external_frontier() -> Result<
 }
 
 #[test]
+fn chrono_guarded_match_arm_slice_method_guard_reach_is_bounded() -> Result<(), DbError> {
+    let db = setup_call_graph_db(&CORPUS_CHRONO_CALL_GRAPH)?;
+
+    // Matrix: `Fallback Source Oracle Matrix` in
+    // docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md.
+    //
+    // Source chain:
+    //   chrono/src/format/strftime.rs:193-198 defines `StrftimeItems::queue`.
+    //   chrono/src/format/strftime.rs:635 guards a match arm with
+    //   `self.queue.is_empty()`.
+    //
+    // Expected traversal: owner reach over the long `parse_next_item` body must
+    // remain bounded and keep the slice method call as an external frontier,
+    // without fabricating a local `is_empty` traversal edge.
+    let owner = method_id_by_name_body_and_file_suffix(
+        &db,
+        "parse_next_item",
+        "self.queue.is_empty()",
+        "src/format/strftime.rs",
+    )?;
+    let site = assert_owner_method_targetless(
+        &db,
+        owner,
+        "is_empty",
+        &CallReceiver::SelfField {
+            path: vec!["queue".to_string()],
+        },
+        CallStatusKind::External,
+        "chrono/src/format/strftime.rs:635 self.queue.is_empty",
+    )?;
+
+    let report = db.call_reach_for_owner(
+        owner,
+        CallPathOptions {
+            max_depth: 2,
+            max_paths: 64,
+        },
+    )?;
+    let frontier = report
+        .external_frontier_calls
+        .iter()
+        .find(|row| row.site.id == site)
+        .unwrap_or_else(|| {
+            panic!("reach should preserve the guarded slice `is_empty` frontier: {report:#?}")
+        });
+    assert_external_targetless(frontier);
+    assert_eq!(frontier.site.owner_id, owner);
+    assert_eq!(
+        relations_for_site(&db, site)?.rows.len(),
+        0,
+        "slice method frontier must not fabricate a local call edge"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn memchr_function_pointer_field_calls_preserve_ambiguous_candidates() -> Result<(), DbError> {
     let db = setup_call_graph_db(&CORPUS_MEMCHR_CALL_GRAPH)?;
 
