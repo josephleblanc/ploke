@@ -941,6 +941,92 @@ async fn code_item_lookup_returns_memchr_callable_trait_object_path_rows() {
 }
 
 #[tokio::test]
+async fn code_item_lookup_omits_admitted_memchr_runtime_dispatch_summary_needs() {
+    for case in PathToolCase::MEMCHR_CALLABLE_TRAIT_OBJECT {
+        let fixture = PathToolFixture::new(case.clone()).await;
+        let params = LookupParams {
+            item_name: Cow::Borrowed(case.item),
+            file_path: Cow::Owned(fixture.file_path.display().to_string()),
+            node_kind: Cow::Borrowed(case.node_kind()),
+            module_path: Cow::Owned(fixture.module_path_arg()),
+            owner_trait: case.owner_trait().map(Cow::Borrowed),
+            owner_type: case.owner_type().map(Cow::Borrowed),
+            parent_name: None,
+            allowed_effects: Vec::new(),
+        };
+
+        let initial = CodeItemLookup::execute(
+            params.clone(),
+            fixture.ctx("memchr-callable-summary-before"),
+        )
+        .await
+        .unwrap_or_else(|err| panic!("{} initial code_item_lookup: {err}", fixture.case.label));
+        let payload: serde_json::Value =
+            serde_json::from_str(&initial.content).expect("deserialize ConciseContext");
+        let call_context = payload
+            .get("call_context")
+            .and_then(serde_json::Value::as_array)
+            .expect("call_context array");
+        let runtime_needs = payload
+            .get("runtime_dispatch_needs")
+            .and_then(serde_json::Value::as_array)
+            .expect("runtime_dispatch_needs array");
+
+        // Same memchr boxed dyn FnMut source oracle as the path-row lookup
+        // test above. Admitting a runtime-dispatch summary should remove the
+        // exact authoring need without creating a local traversal target.
+        let site_id = assert_path_context(
+            call_context,
+            fixture.owner,
+            &fixture.case.callee(),
+            &fixture.case.status,
+            fixture.case.label,
+            "lookup",
+        );
+        assert_runtime_dispatch_need(runtime_needs, site_id, fixture.case.label, "lookup");
+
+        fixture
+            .state
+            .db
+            .upsert_proof_fact_values(&[
+                ploke_test_utils::memchr_callable_trait_object_runtime_dispatch_summary(site_id),
+            ])
+            .unwrap_or_else(|err| {
+                panic!(
+                    "{} runtime dispatch summary insert: {err}",
+                    fixture.case.label
+                )
+            });
+
+        let result = CodeItemLookup::execute(params, fixture.ctx("memchr-callable-summary-after"))
+            .await
+            .unwrap_or_else(|err| panic!("{} summary code_item_lookup: {err}", fixture.case.label));
+        let payload: serde_json::Value =
+            serde_json::from_str(&result.content).expect("deserialize ConciseContext");
+        let call_context = payload
+            .get("call_context")
+            .and_then(serde_json::Value::as_array)
+            .expect("call_context array");
+        let runtime_needs = payload
+            .get("runtime_dispatch_needs")
+            .and_then(serde_json::Value::as_array)
+            .expect("runtime_dispatch_needs array");
+        assert_path_context(
+            call_context,
+            fixture.owner,
+            &fixture.case.callee(),
+            &fixture.case.status,
+            fixture.case.label,
+            "lookup",
+        );
+        assert_no_runtime_dispatch_need(runtime_needs, site_id, fixture.case.label, "lookup");
+
+        let ui = result.ui_payload.as_ref().expect("ui payload");
+        assert_eq!(ui_field(ui, "runtime_dispatch_needs"), "0");
+    }
+}
+
+#[tokio::test]
 async fn code_item_lookup_returns_generated_macro_boundary_path_rows() {
     for case in PathToolCase::INTO_SERVICE_FUTURE_NEW
         .into_iter()
@@ -1940,6 +2026,98 @@ async fn code_item_edges_returns_memchr_callable_trait_object_path_rows() {
         );
         let proof_count = proof_context.len().to_string();
         assert_eq!(ui_field(ui, "proof_context"), proof_count.as_str());
+    }
+}
+
+#[tokio::test]
+async fn code_item_edges_omits_admitted_memchr_runtime_dispatch_summary_needs() {
+    for case in PathToolCase::MEMCHR_CALLABLE_TRAIT_OBJECT {
+        let fixture = PathToolFixture::new(case.clone()).await;
+        let params = EdgesParams {
+            item_name: Cow::Borrowed(case.item),
+            file_path: Cow::Owned(fixture.file_path.display().to_string()),
+            node_kind: Cow::Borrowed(case.node_kind()),
+            module_path: Cow::Owned(fixture.module_path_arg()),
+            owner_trait: case.owner_trait().map(Cow::Borrowed),
+            owner_type: case.owner_type().map(Cow::Borrowed),
+            parent_name: None,
+            allowed_effects: Vec::new(),
+        };
+
+        let initial = CodeItemEdges::execute(
+            params.clone(),
+            fixture.ctx("memchr-callable-summary-before-edges"),
+        )
+        .await
+        .unwrap_or_else(|err| panic!("{} initial code_item_edges: {err}", fixture.case.label));
+        let payload: serde_json::Value =
+            serde_json::from_str(&initial.content).expect("deserialize NodeEdgeInfo");
+        let call_context = payload
+            .get("node_info")
+            .and_then(|node| node.get("call_context"))
+            .and_then(serde_json::Value::as_array)
+            .expect("node_info.call_context array");
+        let runtime_needs = payload
+            .get("node_info")
+            .and_then(|node| node.get("runtime_dispatch_needs"))
+            .and_then(serde_json::Value::as_array)
+            .expect("node_info.runtime_dispatch_needs array");
+
+        // Same memchr boxed dyn FnMut source oracle as the lookup summary
+        // test above, exercised through the edge-oriented exact tool payload.
+        let site_id = assert_path_context(
+            call_context,
+            fixture.owner,
+            &fixture.case.callee(),
+            &fixture.case.status,
+            fixture.case.label,
+            "edges",
+        );
+        assert_runtime_dispatch_need(runtime_needs, site_id, fixture.case.label, "edges");
+
+        fixture
+            .state
+            .db
+            .upsert_proof_fact_values(&[
+                ploke_test_utils::memchr_callable_trait_object_runtime_dispatch_summary(site_id),
+            ])
+            .unwrap_or_else(|err| {
+                panic!(
+                    "{} runtime dispatch summary insert: {err}",
+                    fixture.case.label
+                )
+            });
+
+        let result =
+            CodeItemEdges::execute(params, fixture.ctx("memchr-callable-summary-after-edges"))
+                .await
+                .unwrap_or_else(|err| {
+                    panic!("{} summary code_item_edges: {err}", fixture.case.label)
+                });
+        let payload: serde_json::Value =
+            serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
+        let call_context = payload
+            .get("node_info")
+            .and_then(|node| node.get("call_context"))
+            .and_then(serde_json::Value::as_array)
+            .expect("node_info.call_context array");
+        let runtime_needs = payload
+            .get("node_info")
+            .and_then(|node| node.get("runtime_dispatch_needs"))
+            .and_then(serde_json::Value::as_array)
+            .expect("node_info.runtime_dispatch_needs array");
+        assert_path_context(
+            call_context,
+            fixture.owner,
+            &fixture.case.callee(),
+            &fixture.case.status,
+            fixture.case.label,
+            "edges",
+        );
+        assert_no_runtime_dispatch_need(runtime_needs, site_id, fixture.case.label, "edges");
+
+        let ui = result.ui_payload.as_ref().expect("ui payload");
+        assert_eq!(ui_field(ui, "runtime_dispatch_needs"), "0");
     }
 }
 

@@ -46,6 +46,23 @@ const AXUM_CALLABLE_FIELD_CASES: [DynamicCase; 2] = [
     },
 ];
 
+const MEMCHR_CALLABLE_TRAIT_OBJECT_CASES: [MemchrPathCase; 2] = [
+    MemchrPathCase {
+        label: "memchr/src/tests/substring/mod.rs:94 Runner.fwd boxed dyn FnMut",
+        method: "run",
+        body: "fwd(t.haystack.as_bytes(), t.needle.as_bytes())",
+        path: &["fwd"],
+        expected_arg_count: 2,
+    },
+    MemchrPathCase {
+        label: "memchr/src/tests/substring/mod.rs:110 Runner.rev boxed dyn FnMut",
+        method: "run",
+        body: "rev(t.haystack.as_bytes(), t.needle.as_bytes())",
+        path: &["rev"],
+        expected_arg_count: 2,
+    },
+];
+
 #[tokio::test]
 async fn call_context_collection_reads_axum_dynamic_callable_field_gaps() -> Result<(), Error> {
     init_tracing_once();
@@ -438,24 +455,7 @@ async fn call_context_collection_reads_memchr_callable_trait_object_path_gaps() 
     // visible path callsites in `Runner::run`, but have zero traversable edges
     // until local binding and callable trait-object dispatch proof is modeled.
     // RAG must preserve the targetless unsupported rows without guessing.
-    let cases = [
-        MemchrPathCase {
-            label: "memchr/src/tests/substring/mod.rs:94 Runner.fwd boxed dyn FnMut",
-            method: "run",
-            body: "fwd(t.haystack.as_bytes(), t.needle.as_bytes())",
-            path: &["fwd"],
-            expected_arg_count: 2,
-        },
-        MemchrPathCase {
-            label: "memchr/src/tests/substring/mod.rs:110 Runner.rev boxed dyn FnMut",
-            method: "run",
-            body: "rev(t.haystack.as_bytes(), t.needle.as_bytes())",
-            path: &["rev"],
-            expected_arg_count: 2,
-        },
-    ];
-
-    for case in cases {
+    for case in MEMCHR_CALLABLE_TRAIT_OBJECT_CASES {
         let owner = method_id_by_name_and_body_substring(&db, case.method, case.body)?;
         let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
         let context = call_context
@@ -483,6 +483,94 @@ async fn call_context_collection_reads_memchr_callable_trait_object_path_gaps() 
         assert!(
             call.targets.is_empty(),
             "{} should remain targetless in RAG call context: {call:#?}",
+            case.label
+        );
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn runtime_dispatch_needs_exact_respects_memchr_callable_trait_object_summaries()
+-> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_memchr_call_graph_rag()?;
+    let options = CallPathOptions {
+        max_depth: 1,
+        max_paths: 16,
+    };
+    let owner = method_id_by_name_and_body_substring(
+        &db,
+        "run",
+        "fwd(t.haystack.as_bytes(), t.needle.as_bytes())",
+    )?;
+    db.project_call_proof_facts_for_owner(owner, "bd:corpus-memchr-call-graph")?;
+
+    // Same memchr source oracle as the call-context test above. Exact RAG
+    // should expose proof-authoring needs while boxed dyn FnMut dispatch is
+    // blocked, then omit them after admitted runtime-dispatch summaries.
+    for case in MEMCHR_CALLABLE_TRAIT_OBJECT_CASES {
+        let context = db.call_context_for_owner(owner)?;
+        let row = context
+            .iter()
+            .find(|row| {
+                row.site.kind == DbCallSiteKind::Path
+                    && row.status.status == DbCallStatusKind::Unsupported
+                    && row.site.path.as_ref().is_some_and(|path| {
+                        path.iter()
+                            .map(String::as_str)
+                            .eq(case.path.iter().copied())
+                    })
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "{} should expose the unsupported boxed dyn FnMut path callsite: {context:#?}",
+                    case.label
+                )
+            });
+        assert!(
+            row.targets.is_empty(),
+            "{} should stay targetless before and after summary admission: {row:#?}",
+            case.label
+        );
+
+        db.upsert_proof_fact_values(&[
+            ploke_test_utils::memchr_callable_trait_object_runtime_dispatch_blocker(row.site.id),
+        ])?;
+        let needs = rag
+            .exact_runtime_dispatch_needs_for_owner(owner, options)?
+            .expect("call context enabled");
+        assert!(
+            needs.iter().any(|need| {
+                need.call_site.site_id == row.site.id
+                    && need
+                        .blocker_reasons
+                        .iter()
+                        .any(|reason| reason == "dynamic_dispatch_unbounded")
+            }),
+            "{} should be visible as an exact RAG runtime-dispatch need before summary admission: {needs:#?}",
+            case.label
+        );
+
+        db.upsert_proof_fact_values(&[
+            ploke_test_utils::memchr_callable_trait_object_runtime_dispatch_summary(row.site.id),
+        ])?;
+        let after = rag
+            .exact_runtime_dispatch_needs_for_owner(owner, options)?
+            .expect("call context enabled");
+        assert!(
+            after
+                .iter()
+                .all(|need| need.call_site.site_id != row.site.id),
+            "{} admitted runtime-dispatch summary should remove the exact RAG authoring need: {after:#?}",
+            case.label
+        );
+        assert!(
+            db.call_context_for_owner(owner)?
+                .into_iter()
+                .find(|candidate| candidate.site.id == row.site.id)
+                .is_some_and(|candidate| candidate.targets.is_empty()),
+            "{} summary admission must not fabricate a local boxed dyn FnMut edge",
             case.label
         );
     }

@@ -50,6 +50,18 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
+Latest completed slice: memchr boxed `dyn FnMut` runtime-dispatch summary
+proof-authority. The real-corpus source oracle is
+`memchr/src/tests/substring/mod.rs:94,110`, where `Runner::run` calls the
+boxed `dyn FnMut` fields `fwd(...)` and `rev(...)`. The DB matrix test now
+proves both path rows remain unsupported, targetless, and edge-free; inserting
+explicit `dynamic_dispatch_unbounded` blockers makes them owner-scoped
+runtime-dispatch needs; inserting admitted runtime-dispatch summaries removes
+those authoring needs without creating `call_site_edge` rows. RAG exact
+runtime-dispatch needs and exact `code_item_lookup` / `code_item_edges`
+payloads now preserve the same before/after behavior. This does not resolve
+boxed trait-object dispatch or model callable field value flow.
+
 Latest completed slice: conservative DB call-test selection summary.
 `call_test_selection_for_target` now composes existing source-call impact data
 with admitted generated-entrypoint and build-domain proof metadata for a

@@ -1,6 +1,7 @@
 use uuid::Uuid;
 
 const AXUM_CALL_GRAPH_DOMAIN_ID: &str = "bd:corpus-axum-call-graph";
+const MEMCHR_CALL_GRAPH_DOMAIN_ID: &str = "bd:corpus-memchr-call-graph";
 pub const AXUM_OPAQUE_FUTURE_SUMMARY_ID: &str = "external-summary:axum-opaque-future-macro";
 pub const AXUM_ROUTING_POST_SUMMARY_ID: &str = "external-summary:axum-routing-post-macro";
 pub const AXUM_ROUTING_GET_SERVICE_SUMMARY_ID: &str =
@@ -685,6 +686,27 @@ pub fn memchr_callable_trait_object_runtime_dispatch_blocker(
         "status": "blocked",
         "call_site_id": call_site_id.to_string(),
         "detail": "memchr/src/tests/substring/mod.rs Runner.fwd/rev boxed dyn FnMut dispatch remains targetless until callable trait-object value-flow proof is modeled",
+        "evidence_use": "proof_only"
+    })
+}
+
+pub fn memchr_callable_trait_object_runtime_dispatch_summary(
+    call_site_id: Uuid,
+) -> serde_json::Value {
+    serde_json::json!({
+        "fact_kind": "runtime_dispatch_summary",
+        "schema_version": "ploke-proof-facts.v1",
+        "dispatch_summary_id": format!("runtime-dispatch-summary:memchr-callable-trait-object:{call_site_id}"),
+        "build_domain_id": MEMCHR_CALL_GRAPH_DOMAIN_ID,
+        "call_site_id": call_site_id.to_string(),
+        "summary_class": "allowed_only_under_containment",
+        "artifact_hash": "sha256:memchr-callable-trait-object-runtime-dispatch",
+        "version": "memchr-callable-trait-object-runtime-dispatch-summary-v1",
+        "review_method": "source-oracle-review",
+        "scope_of_validity": "memchr/src/tests/substring/mod.rs Runner.fwd/rev boxed dyn FnMut targetless runtime dispatch frontier in corpus_memchr_call_graph",
+        "required_containment": "runtime-dispatch summary does not create local traversal edges",
+        "invalidation_conditions": "source oracle, fixture hash, callable trait-object value-flow modeling, or proof policy changes",
+        "status": "admitted",
         "evidence_use": "proof_only"
     })
 }

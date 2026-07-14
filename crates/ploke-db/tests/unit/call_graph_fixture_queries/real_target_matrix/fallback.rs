@@ -1,3 +1,4 @@
+use ploke_db::CallPathOptions;
 use ploke_test_utils::{
     CORPUS_CHRONO_CALL_GRAPH, CORPUS_GENERIC_ARRAY_CALL_GRAPH, CORPUS_MEMCHR_CALL_GRAPH,
 };
@@ -553,6 +554,78 @@ fn memchr_callable_trait_object_field_calls_are_visible_targetless_path_rows() -
         ploke_test_utils::memchr_callable_trait_object_runtime_dispatch_blocker(fwd_site),
         ploke_test_utils::memchr_callable_trait_object_runtime_dispatch_blocker(rev_site),
     ])?;
+
+    let needs = db.runtime_dispatch_needs_for_owner(
+        owner,
+        CallPathOptions {
+            max_depth: 1,
+            max_paths: 16,
+        },
+    )?;
+    for (site, label) in [
+        (
+            fwd_site,
+            "memchr/src/tests/substring/mod.rs:94 boxed fwd dyn FnMut local binding",
+        ),
+        (
+            rev_site,
+            "memchr/src/tests/substring/mod.rs:110 boxed rev dyn FnMut local binding",
+        ),
+    ] {
+        let need = needs
+            .iter()
+            .find(|need| need.call_site.site.id == site)
+            .unwrap_or_else(|| {
+                panic!(
+                    "{label} should be listed as an owner-scoped runtime-dispatch need: {needs:#?}"
+                )
+            });
+        assert!(
+            need.paths_to_owner.is_empty(),
+            "{label} is a direct boxed dyn FnMut frontier and should not need an intermediate path: {need:#?}"
+        );
+        assert!(
+            need.blocker_reasons
+                .iter()
+                .any(|reason| reason == "dynamic_dispatch_unbounded"),
+            "{label} should retain the dynamic dispatch blocker: {need:#?}"
+        );
+        assert!(
+            relations_for_site(&db, site)?.rows.is_empty(),
+            "{label} runtime-dispatch proof queue must not fabricate a boxed dyn FnMut edge"
+        );
+    }
+
+    db.upsert_proof_fact_values(&[
+        ploke_test_utils::memchr_callable_trait_object_runtime_dispatch_summary(fwd_site),
+        ploke_test_utils::memchr_callable_trait_object_runtime_dispatch_summary(rev_site),
+    ])?;
+    let after = db.runtime_dispatch_needs_for_owner(
+        owner,
+        CallPathOptions {
+            max_depth: 1,
+            max_paths: 16,
+        },
+    )?;
+    for (site, label) in [
+        (
+            fwd_site,
+            "memchr/src/tests/substring/mod.rs:94 boxed fwd dyn FnMut local binding",
+        ),
+        (
+            rev_site,
+            "memchr/src/tests/substring/mod.rs:110 boxed rev dyn FnMut local binding",
+        ),
+    ] {
+        assert!(
+            after.iter().all(|need| need.call_site.site.id != site),
+            "{label} admitted runtime-dispatch summary should discharge the proof-authoring need: {after:#?}"
+        );
+        assert!(
+            relations_for_site(&db, site)?.rows.is_empty(),
+            "{label} admitted runtime-dispatch summary must not fabricate a boxed dyn FnMut edge"
+        );
+    }
 
     let projected = db.project_call_proof_facts_for_owner(owner, "bd:corpus-memchr-call-graph")?;
     assert!(
