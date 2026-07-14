@@ -336,6 +336,8 @@ for a more fuzzy search."#
             lookup_support::returned_call_binding_flows_for_node(&ctx, resolved_item_id)?;
         let returned_future_flows =
             lookup_support::returned_future_flows_for_node(&ctx, resolved_item_id)?;
+        let returned_future_execution_flows =
+            lookup_support::returned_future_execution_flows_for_node(&ctx, resolved_item_id)?;
         let module_boundary_edges =
             lookup_support::module_boundary_edges_for_node(&ctx, resolved_item_id)?;
         let crate_boundary_edges =
@@ -391,6 +393,7 @@ for a more fuzzy search."#
             awaited_call_sites,
             returned_call_binding_flows,
             returned_future_flows,
+            returned_future_execution_flows,
             module_boundary_edges,
             crate_boundary_edges,
             call_build_domains,
@@ -432,6 +435,7 @@ for a more fuzzy search."#
             &concise_context.awaited_call_sites,
             &concise_context.returned_call_binding_flows,
             &concise_context.returned_future_flows,
+            &concise_context.returned_future_execution_flows,
             &concise_context.module_boundary_edges,
             &concise_context.crate_boundary_edges,
             &concise_context.call_build_domains,

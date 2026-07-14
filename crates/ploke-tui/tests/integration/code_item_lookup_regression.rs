@@ -30,20 +30,21 @@ use crate::call_graph_tool_support::{
     assert_branch_receiver_context, assert_branch_receiver_proof, assert_call_path_node,
     assert_chrono_naive_utc_incoming_context, assert_dynamic_context, assert_dynamic_proof,
     assert_expected_path_incoming_context, assert_fixture_extern_c_abs_effects,
-    assert_forwarded_async_future_awaited_site, assert_forwarded_async_future_flow,
-    assert_forwarded_returned_closure_binding_flow, assert_from_fn_basic_body_empty_crate_boundary,
-    assert_generated_rejection_outgoing_context, assert_handler_call_incoming_context,
-    assert_incoming_context, assert_initialized_local_receiver_context,
-    assert_initialized_local_receiver_proof, assert_json_from_bytes_incoming_context,
-    assert_no_external_summary_need_for_site, assert_parse_attrs_incoming_context,
-    assert_path_blocker_proof, assert_path_context, assert_path_resolution_proof,
-    assert_process_invariant_findings, assert_resolved_callable_param_proof,
-    assert_resolved_dynamic_context, assert_resolved_method_target_context,
-    assert_resolved_path_context, assert_run_ui_tests_incoming_context,
-    assert_runtime_dispatch_blocker, assert_self_field_receiver_context,
-    assert_self_field_receiver_proof, assert_serde_json_summary_proof,
-    assert_serde_json_surface_measure_effect, assert_target_proof, assert_task_spawn_effects,
-    assert_task_spawn_policy_violation, assert_two_hop_call_path, ui_field,
+    assert_forwarded_async_future_awaited_site, assert_forwarded_async_future_execution_flow,
+    assert_forwarded_async_future_flow, assert_forwarded_returned_closure_binding_flow,
+    assert_from_fn_basic_body_empty_crate_boundary, assert_generated_rejection_outgoing_context,
+    assert_handler_call_incoming_context, assert_incoming_context,
+    assert_initialized_local_receiver_context, assert_initialized_local_receiver_proof,
+    assert_json_from_bytes_incoming_context, assert_no_external_summary_need_for_site,
+    assert_parse_attrs_incoming_context, assert_path_blocker_proof, assert_path_context,
+    assert_path_resolution_proof, assert_process_invariant_findings,
+    assert_resolved_callable_param_proof, assert_resolved_dynamic_context,
+    assert_resolved_method_target_context, assert_resolved_path_context,
+    assert_run_ui_tests_incoming_context, assert_runtime_dispatch_blocker,
+    assert_self_field_receiver_context, assert_self_field_receiver_proof,
+    assert_serde_json_summary_proof, assert_serde_json_surface_measure_effect, assert_target_proof,
+    assert_task_spawn_effects, assert_task_spawn_policy_violation, assert_two_hop_call_path,
+    ui_field,
 };
 
 #[tokio::test]
@@ -1066,6 +1067,10 @@ async fn code_item_lookup_returns_forwarded_async_future_awaited_site() {
         .get("returned_future_flows")
         .and_then(serde_json::Value::as_array)
         .expect("returned_future_flows array");
+    let future_execution_flows = payload
+        .get("returned_future_execution_flows")
+        .and_then(serde_json::Value::as_array)
+        .expect("returned_future_execution_flows array");
 
     // Source oracle:
     //   tests/fixture_crates/fixture_call_graph/src/lib.rs:2384-2385
@@ -1088,11 +1093,18 @@ async fn code_item_lookup_returns_forwarded_async_future_awaited_site() {
         "forwarded returned async future",
         "code_item_lookup",
     );
+    assert_forwarded_async_future_execution_flow(
+        future_execution_flows,
+        owner,
+        "forwarded returned async future",
+        "code_item_lookup",
+    );
 
     let ui = result.ui_payload.as_ref().expect("ui payload");
     assert_eq!(ui_field(ui, "awaited_call_sites"), "1");
     assert_eq!(ui_field(ui, "returned_call_binding_flows"), "0");
     assert_eq!(ui_field(ui, "returned_future_flows"), "1");
+    assert_eq!(ui_field(ui, "returned_future_execution_flows"), "1");
 }
 
 async fn assert_awaited_async_closure_future_lookup(

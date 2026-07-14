@@ -685,6 +685,17 @@ pub struct ReturnedFutureFlowInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct ReturnedFutureExecutionFlowInfo {
+    pub caller_id: Uuid,
+    pub producer: ReturnedCallProducerInfo,
+    pub producer_binding: ReturnedCallBindingInfo,
+    pub future: ReturnedFutureSiteInfo,
+    pub maker: ReturnedCallProducerInfo,
+    pub callable_binding: ReturnedCallBindingInfo,
+    pub body_edge: CallPathEdgeInfo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct CallBuildDomainInfo {
     pub build_domain_id: String,
     #[serde(default)]
@@ -934,6 +945,7 @@ impl From<ContextPart> for ConciseContext {
             awaited_call_sites: Vec::new(),
             returned_call_binding_flows: Vec::new(),
             returned_future_flows: Vec::new(),
+            returned_future_execution_flows: Vec::new(),
             module_boundary_edges: Vec::new(),
             crate_boundary_edges: Vec::new(),
             call_build_domains: Vec::new(),
@@ -1016,6 +1028,8 @@ pub struct ConciseContext {
     pub returned_call_binding_flows: Vec<ReturnedCallBindingFlowInfo>,
     #[serde(default)]
     pub returned_future_flows: Vec<ReturnedFutureFlowInfo>,
+    #[serde(default)]
+    pub returned_future_execution_flows: Vec<ReturnedFutureExecutionFlowInfo>,
     #[serde(default)]
     pub module_boundary_edges: Vec<ModuleBoundaryEdgeInfo>,
     #[serde(default)]

@@ -12,7 +12,7 @@ use ploke_core::{
         CallReachEffectInfo, CallReceiverInfo, CallResolutionKind, CallSiteBucketInfo,
         CallSiteKind, CallStatusKind, CallTargetKind, CrateBoundaryEdgeInfo,
         LocalBindingRelationKind, ProofContextInfo, ReturnedCallBindingFlowInfo,
-        ReturnedCallSourceKind, ReturnedFutureFlowInfo,
+        ReturnedCallSourceKind, ReturnedFutureExecutionFlowInfo, ReturnedFutureFlowInfo,
     },
 };
 use ploke_db::{
@@ -3340,6 +3340,45 @@ pub(crate) fn assert_forwarded_async_future_flow(
     assert_eq!(
         matches, 1,
         "{tool} should return exactly one returned future flow for {label}: {flows:#?}"
+    );
+}
+
+pub(crate) fn assert_forwarded_async_future_execution_flow(
+    flows: &[serde_json::Value],
+    owner: Uuid,
+    label: &str,
+    tool: &str,
+) {
+    let rows = flows
+        .iter()
+        .filter_map(|flow| {
+            serde_json::from_value::<ReturnedFutureExecutionFlowInfo>(flow.clone()).ok()
+        })
+        .collect::<Vec<_>>();
+    let producer_path = vec!["make_forwarded_returned_async_future".to_string()];
+    let future_path = vec!["make_returned_async_closure".to_string()];
+    let matches = rows
+        .iter()
+        .filter(|flow| {
+            flow.caller_id == owner
+                && flow.producer.path == producer_path
+                && flow.producer_binding.source.relation
+                    == LocalBindingRelationKind::BindingSourceCallResult
+                && flow.producer_binding.source.kind == ReturnedCallSourceKind::Dynamic
+                && flow.future.path == future_path
+                && flow.future.callee_kind == "ReturnedPathCall"
+                && flow.maker.path == future_path
+                && flow.callable_binding.source.relation
+                    == LocalBindingRelationKind::BindingSourceClosure
+                && flow.callable_binding.source.kind == ReturnedCallSourceKind::Closure
+                && flow.body_edge.relation == CallTargetKind::Function
+                && flow.body_edge.source_kind == CallSiteKind::Path
+                && flow.body_edge.target_kind == CallEndpointKind::Function
+        })
+        .count();
+    assert_eq!(
+        matches, 1,
+        "{tool} should return exactly one contextual returned future execution flow for {label}: {flows:#?}"
     );
 }
 
