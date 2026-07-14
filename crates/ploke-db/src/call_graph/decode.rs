@@ -7,11 +7,11 @@ use crate::{
 };
 
 use super::{
-    CallContextRow, CallReceiver, CallRelationKind, CallResolutionKind, CallResolutionRow,
-    CallSiteKind, CallSiteRow, CallStatusKind, CallTargetKind, CallTargetRow, LocalBindingEdgeRow,
-    LocalBindingRelationKind, LocalBindingRow, ReturnedCallBinding, ReturnedCallBindingFlow,
-    ReturnedCallProducer, ReturnedCallSite, ReturnedCallSource, ReturnedFutureFlow,
-    ReturnedFutureSite,
+    CallContextRow, CallPathEdge, CallReceiver, CallRelationKind, CallResolutionKind,
+    CallResolutionRow, CallSiteKind, CallSiteRow, CallStatusKind, CallTargetKind, CallTargetRow,
+    LocalBindingEdgeRow, LocalBindingRelationKind, LocalBindingRow, ReturnedCallBinding,
+    ReturnedCallBindingFlow, ReturnedCallProducer, ReturnedCallSite, ReturnedCallSource,
+    ReturnedFutureExecutionFlow, ReturnedFutureFlow, ReturnedFutureSite,
 };
 
 pub(super) fn decode_site(row: &[DataValue]) -> Result<CallSiteRow, DbError> {
@@ -256,6 +256,83 @@ fn validate_returned_future_flow(flow: &ReturnedFutureFlow) -> Result<(), DbErro
     } else {
         Err(DbError::Cozo(format!(
             "malformed returned future flow for producer call {}",
+            flow.producer.site_id
+        )))
+    }
+}
+
+pub(super) fn decode_returned_future_execution_flow(
+    row: &[DataValue],
+) -> Result<ReturnedFutureExecutionFlow, DbError> {
+    let flow = ReturnedFutureExecutionFlow {
+        caller_id: to_uuid(&row[0])?,
+        producer: ReturnedCallProducer {
+            site_id: to_uuid(&row[1])?,
+            span: span_pair(&row[2])?,
+            path: to_string_list(&row[3])?,
+            id: to_uuid(&row[4])?,
+        },
+        producer_binding: ReturnedCallBinding {
+            id: to_uuid(&row[5])?,
+            source: ReturnedCallSource {
+                id: to_uuid(&row[6])?,
+                relation: LocalBindingRelationKind::from_str(&to_string(&row[10])?)?,
+                kind: to_string(&row[11])?,
+            },
+        },
+        future: ReturnedFutureSite {
+            id: to_uuid(&row[6])?,
+            span: span_pair(&row[7])?,
+            path: to_string_list(&row[8])?,
+            callee_kind: to_string(&row[9])?,
+        },
+        maker: ReturnedCallProducer {
+            site_id: to_uuid(&row[12])?,
+            span: span_pair(&row[13])?,
+            path: to_string_list(&row[8])?,
+            id: to_uuid(&row[14])?,
+        },
+        callable_binding: ReturnedCallBinding {
+            id: to_uuid(&row[15])?,
+            source: ReturnedCallSource {
+                id: to_uuid(&row[16])?,
+                relation: LocalBindingRelationKind::from_str(&to_string(&row[17])?)?,
+                kind: to_string(&row[18])?,
+            },
+        },
+        body_edge: CallPathEdge {
+            caller_id: to_uuid(&row[16])?,
+            call_site_id: to_uuid(&row[19])?,
+            span: span_pair(&row[20])?,
+            callee_id: to_uuid(&row[22])?,
+            relation: CallRelationKind::from_str(&to_string(&row[23])?)?,
+            source_kind: CallSiteKind::from_str(&to_string(&row[24])?)?,
+            target_kind: CallTargetKind::from_str(&to_string(&row[25])?)?,
+        },
+    };
+    validate_returned_future_execution_flow(&flow)?;
+    Ok(flow)
+}
+
+fn validate_returned_future_execution_flow(
+    flow: &ReturnedFutureExecutionFlow,
+) -> Result<(), DbError> {
+    let valid = flow.producer_binding.source.relation
+        == LocalBindingRelationKind::BindingSourceCallResult
+        && flow.producer_binding.source.kind == "Dynamic"
+        && flow.producer_binding.source.id == flow.future.id
+        && flow.future.callee_kind == "ReturnedPathCall"
+        && flow.maker.path == flow.future.path
+        && !flow.maker.path.is_empty()
+        && flow.callable_binding.source.relation == LocalBindingRelationKind::BindingSourceClosure
+        && flow.callable_binding.source.kind == "Closure"
+        && flow.body_edge.caller_id == flow.callable_binding.source.id;
+
+    if valid {
+        Ok(())
+    } else {
+        Err(DbError::Cozo(format!(
+            "malformed returned future execution flow for producer call {}",
             flow.producer.site_id
         )))
     }

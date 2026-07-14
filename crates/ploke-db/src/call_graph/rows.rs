@@ -128,6 +128,17 @@ pub struct ReturnedFutureFlow {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ReturnedFutureExecutionFlow {
+    pub caller_id: Uuid,
+    pub producer: ReturnedCallProducer,
+    pub producer_binding: ReturnedCallBinding,
+    pub future: ReturnedFutureSite,
+    pub maker: ReturnedCallProducer,
+    pub callable_binding: ReturnedCallBinding,
+    pub body_edge: CallPathEdge,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CallSiteBucket {
     pub kind: CallSiteKind,
     pub relation: CallRelationKind,

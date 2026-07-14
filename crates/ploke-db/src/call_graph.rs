@@ -21,5 +21,6 @@ pub use rows::{
     CrateBoundaryPolicyViolation, ExternalSummaryNeed, LocalBindingEdgeRow, LocalBindingRow,
     ModuleBoundaryEdge, ModuleBoundaryPolicyRule, ModuleBoundaryPolicyViolation,
     ReturnedCallBinding, ReturnedCallBindingFlow, ReturnedCallProducer, ReturnedCallSite,
-    ReturnedCallSource, ReturnedFutureFlow, ReturnedFutureSite, RuntimeDispatchNeed,
+    ReturnedCallSource, ReturnedFutureExecutionFlow, ReturnedFutureFlow, ReturnedFutureSite,
+    RuntimeDispatchNeed,
 };

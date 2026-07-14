@@ -565,6 +565,56 @@ fn fixture_projection_keeps_forwarded_returned_async_future_fail_closed() -> Res
         LocalBindingRelationKind::BindingSourceCallResult
     );
     assert_eq!(flow.binding.source.kind, "Dynamic");
+    let returned_maker_binding =
+        only_return_binding(&db, returned_maker, "make_returned_async_closure")?;
+    assert_eq!(
+        returned_maker_binding.source_kind, "AsyncClosure",
+        "returned async closure maker should return an async closure owner"
+    );
+    let returned_async_closure = returned_maker_binding
+        .source_id
+        .expect("async closure maker return binding should point at the closure owner");
+
+    let execution_flows = db.returned_future_execution_flows_for_owner(owner)?;
+    assert_eq!(
+        execution_flows.len(),
+        1,
+        "awaiting caller should expose one contextual returned-future execution proof flow: {execution_flows:#?}"
+    );
+    let execution = &execution_flows[0];
+    assert_eq!(execution.caller_id, owner);
+    assert_eq!(execution.producer.id, producer);
+    assert_eq!(execution.producer.site_id, producer_row.site.id);
+    assert_eq!(execution.producer_binding.id, flow.binding.id);
+    assert_eq!(execution.producer_binding.source.id, dynamic.site.id);
+    assert_eq!(
+        execution.producer_binding.source.relation,
+        LocalBindingRelationKind::BindingSourceCallResult
+    );
+    assert_eq!(execution.producer_binding.source.kind, "Dynamic");
+    assert_eq!(execution.future.id, dynamic.site.id);
+    assert_eq!(
+        execution.future.path,
+        path(&["make_returned_async_closure"])
+    );
+    assert_eq!(execution.future.callee_kind, "ReturnedPathCall");
+    assert_eq!(execution.maker.id, returned_maker);
+    assert_eq!(execution.maker.site_id, returned_maker_row.site.id);
+    assert_eq!(execution.maker.span, returned_maker_row.site.span);
+    assert_eq!(execution.maker.path, path(&["make_returned_async_closure"]));
+    assert_eq!(execution.callable_binding.id, returned_maker_binding.id);
+    assert_eq!(execution.callable_binding.source.id, returned_async_closure);
+    assert_eq!(
+        execution.callable_binding.source.relation,
+        LocalBindingRelationKind::BindingSourceClosure
+    );
+    assert_eq!(execution.callable_binding.source.kind, "Closure");
+    assert_eq!(execution.body_edge.caller_id, returned_async_closure);
+    assert_eq!(execution.body_edge.callee_id, local_target);
+    assert_eq!(execution.body_edge.relation, CallRelationKind::Function);
+    assert_eq!(execution.body_edge.source_kind, CallSiteKind::Path);
+    assert_eq!(execution.body_edge.target_kind, CallTargetKind::Function);
+
     let awaited_producer_sites = db.awaited_call_sites_for_owner(producer)?;
     assert!(
         awaited_producer_sites.is_empty(),
@@ -579,6 +629,11 @@ fn fixture_projection_keeps_forwarded_returned_async_future_fail_closed() -> Res
     assert!(
         producer_future_flows.is_empty(),
         "returned future proof flow belongs to the awaiting caller, not to the producer that only returns the future: {producer_future_flows:#?}"
+    );
+    let producer_execution_flows = db.returned_future_execution_flows_for_owner(producer)?;
+    assert!(
+        producer_execution_flows.is_empty(),
+        "contextual returned-future execution proof belongs to the awaiting caller, not the producer: {producer_execution_flows:#?}"
     );
     let count = db.project_call_proof_facts_for_owner(producer, "bd:fixture-call-graph")?;
     assert_eq!(count, 7, "forwarded returned async future proof facts");

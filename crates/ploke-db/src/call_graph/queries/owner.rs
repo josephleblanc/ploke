@@ -7,11 +7,12 @@ use crate::{Database, DbError, database::to_string};
 
 use super::super::{
     CallContextRow, CallResolutionRow, CallSiteKind, CallSiteRow, CallStatusKind, CallTargetRow,
-    LocalBindingEdgeRow, LocalBindingRow, ReturnedCallBindingFlow, ReturnedFutureFlow,
+    LocalBindingEdgeRow, LocalBindingRow, ReturnedCallBindingFlow, ReturnedFutureExecutionFlow,
+    ReturnedFutureFlow,
     decode::{
         decode_local_binding, decode_local_binding_edge, decode_resolution,
-        decode_returned_call_binding_flow, decode_returned_future_flow, decode_site, decode_target,
-        validate_owner_context_targets,
+        decode_returned_call_binding_flow, decode_returned_future_execution_flow,
+        decode_returned_future_flow, decode_site, decode_target, validate_owner_context_targets,
     },
     families::{valid_call_owner_rules, valid_call_target, valid_call_target_rules},
 };
@@ -431,6 +432,152 @@ impl Database {
         rows.rows
             .iter()
             .map(|row| decode_returned_future_flow(row))
+            .collect::<Result<Vec<_>, DbError>>()
+    }
+
+    pub fn returned_future_execution_flows_for_owner(
+        &self,
+        owner_id: Uuid,
+    ) -> Result<Vec<ReturnedFutureExecutionFlow>, DbError> {
+        let mut params = BTreeMap::new();
+        params.insert(
+            "owner_id".to_string(),
+            DataValue::Uuid(UuidWrapper(owner_id)),
+        );
+
+        let mut script = valid_call_target_rules();
+        script.push_str(
+            r#"
+            ?[
+                caller_id,
+                producer_site_id,
+                producer_span,
+                producer_path,
+                producer_id,
+                producer_binding_id,
+                future_id,
+                future_span,
+                future_path,
+                callee_kind,
+                producer_source_relation,
+                producer_source_kind,
+                maker_site_id,
+                maker_span,
+                maker_id,
+                callable_binding_id,
+                callable_id,
+                callable_source_relation,
+                callable_source_kind,
+                body_site_id,
+                body_span,
+                body_path,
+                body_target_id,
+                body_relation,
+                body_source_kind,
+                body_target_kind
+            ] :=
+                caller_id = $owner_id,
+                *call_site_edge {
+                    source_id: caller_id,
+                    target_id: producer_site_id,
+                    relation_kind: "CallResultAwaited",
+                    source_kind: caller_kind,
+                    target_kind: "Path" @ 'NOW'
+                },
+                *call_site {
+                    id: producer_site_id,
+                    owner_id: caller_id,
+                    call_kind: "Path",
+                    span: producer_span,
+                    path: producer_path @ 'NOW'
+                },
+                *call_relation {
+                    source_id: producer_site_id,
+                    target_id: producer_id,
+                    relation_kind: "Function",
+                    source_kind: "Path",
+                    target_kind: "Function" @ 'NOW'
+                },
+                valid_target[producer_id, "Function", "Path", "Function"],
+                *local_binding {
+                    id: producer_binding_id,
+                    owner_id: producer_id,
+                    binding_kind: "ReturnExpression",
+                    source_kind: "DynamicCallResult",
+                    source_id: future_id,
+                    source_call_kind: "Dynamic",
+                    callee_kind,
+                    callee_path: future_path @ 'NOW'
+                },
+                callee_kind = "ReturnedPathCall",
+                *local_binding_edge {
+                    source_id: producer_binding_id,
+                    target_id: future_id,
+                    relation_kind: producer_source_relation,
+                    source_kind: "LocalBinding",
+                    target_kind: producer_source_kind @ 'NOW'
+                },
+                producer_source_relation = "BindingSourceCallResult",
+                producer_source_kind = "Dynamic",
+                *call_site {
+                    id: future_id,
+                    owner_id: producer_id,
+                    call_kind: "Dynamic",
+                    span: future_span,
+                    path: future_path @ 'NOW'
+                },
+                *call_site {
+                    id: maker_site_id,
+                    owner_id: producer_id,
+                    call_kind: "Path",
+                    span: maker_span,
+                    path: future_path @ 'NOW'
+                },
+                *call_relation {
+                    source_id: maker_site_id,
+                    target_id: maker_id,
+                    relation_kind: "Function",
+                    source_kind: "Path",
+                    target_kind: "Function" @ 'NOW'
+                },
+                valid_target[maker_id, "Function", "Path", "Function"],
+                *local_binding {
+                    id: callable_binding_id,
+                    owner_id: maker_id,
+                    binding_kind: "ReturnExpression",
+                    source_kind: "AsyncClosure",
+                    source_id: callable_id @ 'NOW'
+                },
+                *local_binding_edge {
+                    source_id: callable_binding_id,
+                    target_id: callable_id,
+                    relation_kind: callable_source_relation,
+                    source_kind: "LocalBinding",
+                    target_kind: callable_source_kind @ 'NOW'
+                },
+                callable_source_relation = "BindingSourceClosure",
+                callable_source_kind = "Closure",
+                *call_site {
+                    id: body_site_id,
+                    owner_id: callable_id,
+                    span: body_span,
+                    path: body_path @ 'NOW'
+                },
+                *call_relation {
+                    source_id: body_site_id,
+                    target_id: body_target_id,
+                    relation_kind: body_relation,
+                    source_kind: body_source_kind,
+                    target_kind: body_target_kind @ 'NOW'
+                },
+                valid_target[body_target_id, body_relation, body_source_kind, body_target_kind]
+            :sort producer_span, future_span, maker_span, body_span"#,
+        );
+        let rows = self.run_script(&script, params, ScriptMutability::Immutable)?;
+
+        rows.rows
+            .iter()
+            .map(|row| decode_returned_future_execution_flow(row))
             .collect::<Result<Vec<_>, DbError>>()
     }
 
