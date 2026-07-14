@@ -51,8 +51,8 @@ pub use observability::{
 };
 pub use ploke_error::PrettyDebug;
 pub use proof_graph::{
-    ProofBlockerRow, ProofCheckerEdgeRow, ProofGraphContextRow, ProofGraphStore,
-    ProofInvariantFinding, ProofInvariantStatus, ProofSourceProvenanceRow,
+    ProofBindingEvidenceRow, ProofBlockerRow, ProofCheckerEdgeRow, ProofGraphContextRow,
+    ProofGraphStore, ProofInvariantFinding, ProofInvariantStatus, ProofSourceProvenanceRow,
 };
 pub use query::{
     QueryBuilder,

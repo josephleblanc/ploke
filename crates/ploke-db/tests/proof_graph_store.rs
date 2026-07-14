@@ -437,6 +437,50 @@ fn proof_context_rows_include_derived_blocker_reasons() {
 }
 
 #[test]
+fn proof_graph_store_exposes_binding_evidence_rows() {
+    let db = Database::new_init().expect("create db");
+    db.ensure_proof_graph_schema().expect("proof graph schema");
+    db.upsert_proof_fact_values(&proof_records())
+        .expect("import proof facts");
+
+    let rows = db
+        .proof_binding_evidence_for_call_site("call:spawn")
+        .expect("binding evidence rows");
+    assert_eq!(rows.len(), 1, "binding evidence rows: {rows:#?}");
+    let row = &rows[0];
+    assert_eq!(row.binding_evidence_id, "binding-evidence:spawn");
+    assert_eq!(row.binding_evidence_kind, "returned_callable");
+    assert_eq!(row.callee_kind, "ReturnedPathCall");
+    assert_eq!(row.callee_path, vec!["make_spawn".to_string()]);
+    assert_eq!(row.build_domain_id, "bd:main");
+    assert_eq!(row.call_site_id, "call:spawn");
+    assert_eq!(row.caller_def_id, "def:launch");
+    assert_eq!(row.resolution_state, "blocked");
+    assert_eq!(row.evidence_use, "proof_only");
+    assert_eq!(row.source_file, "src/lib.rs");
+    assert_eq!(row.start_byte, 10);
+    assert_eq!(row.end_byte, 20);
+    assert_eq!(row.line_start, Some(4));
+    assert_eq!(row.line_end, Some(4));
+    assert!(row.detail.contains("returned callable"));
+
+    assert!(
+        db.proof_binding_evidence_for_call_site("call:missing")
+            .expect("missing binding evidence")
+            .is_empty(),
+        "missing call site should not match binding evidence"
+    );
+
+    let error = db
+        .proof_binding_evidence_for_call_site("")
+        .expect_err("empty binding evidence lookup should fail closed");
+    assert!(
+        error.to_string().contains("call_site_id"),
+        "unexpected empty binding evidence lookup error: {error}"
+    );
+}
+
+#[test]
 fn proof_graphrag_context_exposes_authority_terms() {
     let db = Database::new_init().expect("create db");
     db.ensure_proof_graph_schema().expect("proof graph schema");

@@ -556,12 +556,29 @@ fn assert_returned_callable_binding_evidence(
 ) -> Result<(), DbError> {
     let site = row.site.id.to_string();
     let owner = row.site.owner_id.to_string();
+    let typed_rows = db.proof_binding_evidence_for_call_site(&site)?;
+    assert!(
+        typed_rows.iter().any(|proof| {
+            proof.binding_evidence_kind == "returned_callable"
+                && matches!(
+                    proof.callee_kind.as_str(),
+                    "ReturnedPathCall" | "AwaitedReturnedPathCall"
+                )
+                && proof.callee_path == row.site.path.clone().unwrap_or_default()
+                && proof.call_site_id == site
+                && proof.caller_def_id == owner
+                && proof.resolution_state == state
+                && proof.source_file.ends_with("fixture_call_graph/src/lib.rs")
+                && proof.detail.contains("callable returned by")
+        }),
+        "{label} should expose typed returned-callable binding evidence for {site}: {typed_rows:#?}"
+    );
+
     let proof_rows = db.proof_graphrag_context("returned_callable")?;
     assert!(
         proof_rows.iter().any(|proof| {
             proof.kind == "binding_evidence"
                 && proof.call_site_id.as_deref() == Some(site.as_str())
-                && proof.caller_def_id.as_deref() == Some(owner.as_str())
                 && proof.resolution_state.as_deref() == Some(state)
                 && proof
                     .source_file

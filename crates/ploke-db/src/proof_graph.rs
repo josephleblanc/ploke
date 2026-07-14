@@ -92,6 +92,26 @@ pub struct ProofBlockerRow {
     pub detail: String,
 }
 
+/// Structured binding evidence decoded from proof facts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProofBindingEvidenceRow {
+    pub binding_evidence_id: String,
+    pub binding_evidence_kind: String,
+    pub callee_kind: String,
+    pub callee_path: Vec<String>,
+    pub build_domain_id: String,
+    pub call_site_id: String,
+    pub caller_def_id: String,
+    pub resolution_state: String,
+    pub evidence_use: String,
+    pub source_file: String,
+    pub start_byte: u32,
+    pub end_byte: u32,
+    pub line_start: Option<u32>,
+    pub line_end: Option<u32>,
+    pub detail: String,
+}
+
 /// Source provenance for one proof call-site.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProofSourceProvenanceRow {
@@ -137,6 +157,10 @@ pub trait ProofGraphStore {
         &self,
         call_site_ids: &BTreeSet<String>,
     ) -> Result<Vec<ProofBlockerRow>, DbError>;
+    fn proof_binding_evidence_for_call_site(
+        &self,
+        call_site_id: &str,
+    ) -> Result<Vec<ProofBindingEvidenceRow>, DbError>;
     fn proof_source_provenance(
         &self,
         call_site_id: &str,
@@ -185,6 +209,13 @@ impl ProofGraphStore for Database {
         call_site_ids: &BTreeSet<String>,
     ) -> Result<Vec<ProofBlockerRow>, DbError> {
         Database::proof_blockers_for_call_sites(self, call_site_ids)
+    }
+
+    fn proof_binding_evidence_for_call_site(
+        &self,
+        call_site_id: &str,
+    ) -> Result<Vec<ProofBindingEvidenceRow>, DbError> {
+        Database::proof_binding_evidence_for_call_site(self, call_site_id)
     }
 
     fn proof_source_provenance(

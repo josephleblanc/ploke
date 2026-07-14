@@ -3,8 +3,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::{Database, DbError};
 
 use super::{
-    ProofBlockerRow, ProofCheckerEdgeRow, ProofGraphContextRow, ProofInvariantFinding,
-    ProofSourceProvenanceRow,
+    ProofBindingEvidenceRow, ProofBlockerRow, ProofCheckerEdgeRow, ProofGraphContextRow,
+    ProofInvariantFinding, ProofSourceProvenanceRow,
     invariants::{
         derived_proof_blocker_reason, derived_proof_blocker_reasons, evaluate_proof_invariants,
     },
@@ -153,6 +153,25 @@ impl Database {
                     .iter()
                     .flat_map(|row| derived_blocker_rows(row, &rows)),
             )
+            .collect())
+    }
+
+    pub fn proof_binding_evidence_for_call_site(
+        &self,
+        call_site_id: &str,
+    ) -> Result<Vec<ProofBindingEvidenceRow>, DbError> {
+        if call_site_id.is_empty() {
+            return Err(DbError::QueryConstruction(
+                "binding evidence lookup requires non-empty call_site_id".to_string(),
+            ));
+        }
+
+        Ok(self
+            .fetch_proof_rows()?
+            .iter()
+            .filter(|row| row.kind == "binding_evidence")
+            .filter(|row| row.call_site_id.as_deref() == Some(call_site_id))
+            .filter_map(binding_evidence_row)
             .collect())
     }
 
@@ -350,6 +369,30 @@ fn derived_blocker_rows(row: &ProofFactRow, rows: &[ProofFactRow]) -> Vec<ProofB
             call_site_id: row.call_site_id.clone(),
         })
         .collect()
+}
+
+fn binding_evidence_row(row: &ProofFactRow) -> Option<ProofBindingEvidenceRow> {
+    Some(ProofBindingEvidenceRow {
+        binding_evidence_id: row.binding_evidence_id.clone()?,
+        binding_evidence_kind: row.binding_evidence_kind.clone()?,
+        callee_kind: row.callee_kind.clone()?,
+        callee_path: non_empty(row.callee_path.clone())?,
+        build_domain_id: row.build_domain_id.clone()?,
+        call_site_id: row.call_site_id.clone()?,
+        caller_def_id: row.caller_def_id.clone()?,
+        resolution_state: row.resolution_state.clone()?,
+        evidence_use: row.evidence_use.clone()?,
+        source_file: row.source_file.clone()?,
+        start_byte: row.start_byte?,
+        end_byte: row.end_byte?,
+        line_start: row.line_start,
+        line_end: row.line_end,
+        detail: row.detail.clone()?,
+    })
+}
+
+fn non_empty(values: Vec<String>) -> Option<Vec<String>> {
+    (!values.is_empty()).then_some(values)
 }
 
 fn linked_context_rows(

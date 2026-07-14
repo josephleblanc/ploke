@@ -57,6 +57,10 @@ pub(super) struct ProofFactRow {
     pub(super) blocker_reason: Option<String>,
     pub(super) status: Option<String>,
     pub(super) detail: Option<String>,
+    pub(super) binding_evidence_id: Option<String>,
+    pub(super) binding_evidence_kind: Option<String>,
+    pub(super) callee_kind: Option<String>,
+    pub(super) callee_path: Vec<String>,
     json_terms: Vec<String>,
 }
 
@@ -121,6 +125,13 @@ impl ProofFactRow {
             blocker_reason: optional_string(row, 16),
             status: optional_string(row, 17),
             detail: optional_string(row, 18),
+            binding_evidence_id: json.and_then(|value| json_string(value, "binding_evidence_id")),
+            binding_evidence_kind: json
+                .and_then(|value| json_string(value, "binding_evidence_kind")),
+            callee_kind: json.and_then(|value| json_string(value, "callee_kind")),
+            callee_path: json
+                .map(|value| json_string_array(value, "callee_path"))
+                .unwrap_or_default(),
             json_terms: json.map(json_search_terms).unwrap_or_default(),
         })
     }
