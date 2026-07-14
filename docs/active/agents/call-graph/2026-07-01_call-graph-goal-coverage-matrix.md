@@ -50,22 +50,19 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Latest completed slice: durable returned-callable `local_binding` projection.
-The parser now records a typed `LocalBindingNode` carrier for exact
-return-expression evidence under call body owners. The first bounded shapes are
-closure literal returns, path-call return forwarding, and targetless dynamic
-returned-path call results. Transform projection persists these rows in the
-strict `local_binding` relation, `ploke-db` exposes
-`local_bindings_for_owner`, and fixture-backed DB tests prove
-`make_target_closure()` returns the closure owner,
-`make_forwarded_returned_closure()` returns the `make_target_closure` path-call
-result, and `make_forwarded_returned_async_future()` records the targetless
-`ReturnedPathCall` dynamic result without admitting a path to `local_target`.
-Active fixtures were regenerated with `--features call_graph`; backup DB
-verification passed with the refreshed 65-relation call-graph snapshots. This
-is still projection-first: it does not add `local_binding_edge`, general let
-binding flow, callable-field flow, trait-object dispatch, or new async
-poll/resume traversal.
+Latest completed slice: durable returned-callable `local_binding_edge`
+projection. The parser now records typed `LocalBindingRelation` facts for
+owner-to-binding containment and binding-to-source endpoints. Transform
+projection persists those facts in `local_binding_edge`, and `ploke-db` exposes
+`local_binding_edges_for_owner` with strict row-shape validation. Existing
+fixture-backed DB tests now prove each returned-callable binding has exactly
+the expected owner edge and source edge for `make_target_closure()`,
+`make_forwarded_returned_closure()`, and
+`make_forwarded_returned_async_future()`. Active fixtures were regenerated with
+`--features call_graph`; backup DB verification passed with the refreshed
+66-relation call-graph snapshots. This is still projection-first: it does not
+add general let binding flow, callable-field flow, trait-object dispatch, or
+new async poll/resume traversal.
 
 Recent completed slice: returned-callable binding evidence proof projection.
 The proof graph now has a strict `binding_evidence` fact kind for returned

@@ -27,8 +27,13 @@ use crate::parser::nodes::{
     generate_dynamic_call_site_id, generate_local_binding_id, generate_local_item_body_id,
     generate_macro_call_site_id, generate_method_call_site_id, generate_path_call_site_id,
 };
-use crate::parser::nodes::{LocalBindingKind, LocalBindingNode, LocalBindingSource};
-use crate::parser::{nodes::CallSiteKind, relations::CallSiteRelation};
+use crate::parser::nodes::{
+    LocalBindingId, LocalBindingKind, LocalBindingNode, LocalBindingSource,
+};
+use crate::parser::{
+    nodes::CallSiteKind,
+    relations::{CallSiteRelation, LocalBindingRelation},
+};
 
 /// Extracts structural call-site facts from one function-like body.
 ///
@@ -44,6 +49,7 @@ pub(super) fn extract_body_call_sites(
 ) -> (
     Vec<CallNode>,
     Vec<CallSiteRelation>,
+    Vec<LocalBindingRelation>,
     Vec<ExecutableBodyNode>,
     Vec<LocalBindingNode>,
 ) {
@@ -55,6 +61,7 @@ pub(super) fn extract_body_call_sites(
         local_scopes: Vec::new(),
         calls: Vec::new(),
         relations: Vec::new(),
+        local_binding_relations: Vec::new(),
         executable_bodies: Vec::new(),
         local_bindings: Vec::new(),
         awaited_call_spans: Vec::new(),
@@ -65,6 +72,7 @@ pub(super) fn extract_body_call_sites(
     (
         visitor.calls,
         visitor.relations,
+        visitor.local_binding_relations,
         visitor.executable_bodies,
         visitor.local_bindings,
     )
@@ -78,6 +86,7 @@ pub(super) fn extract_expr_call_sites(
 ) -> (
     Vec<CallNode>,
     Vec<CallSiteRelation>,
+    Vec<LocalBindingRelation>,
     Vec<ExecutableBodyNode>,
     Vec<LocalBindingNode>,
 ) {
@@ -90,6 +99,7 @@ pub(super) fn extract_expr_call_sites(
         local_scopes: Vec::new(),
         calls: Vec::new(),
         relations: Vec::new(),
+        local_binding_relations: Vec::new(),
         executable_bodies: Vec::new(),
         local_bindings: Vec::new(),
         awaited_call_spans: Vec::new(),
@@ -100,6 +110,7 @@ pub(super) fn extract_expr_call_sites(
     (
         visitor.calls,
         visitor.relations,
+        visitor.local_binding_relations,
         visitor.executable_bodies,
         visitor.local_bindings,
     )
@@ -113,6 +124,7 @@ struct BodyCallVisitor<'a> {
     local_scopes: Vec<Vec<LocalBindingProof>>,
     calls: Vec<CallNode>,
     relations: Vec<CallSiteRelation>,
+    local_binding_relations: Vec<LocalBindingRelation>,
     executable_bodies: Vec<ExecutableBodyNode>,
     local_bindings: Vec<LocalBindingNode>,
     awaited_call_spans: Vec<(usize, usize)>,
@@ -327,8 +339,16 @@ impl BodyCallVisitor<'_> {
         let byte_range = expr.span().byte_range();
         let span = (byte_range.start, byte_range.end);
         let kind = LocalBindingKind::ReturnExpression;
+        let id = generate_local_binding_id(self.owner, "return", span, kind, self.cfgs);
+        self.local_binding_relations
+            .push(LocalBindingRelation::OwnerContainsBinding {
+                source: self.owner,
+                target: id,
+            });
+        self.local_binding_relations
+            .push(local_binding_source_relation(id, &source));
         self.local_bindings.push(LocalBindingNode {
-            id: generate_local_binding_id(self.owner, "return", span, kind, self.cfgs),
+            id,
             owner: self.owner,
             span,
             cfgs: self.cfgs.to_vec(),
@@ -570,6 +590,7 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
                 local_scopes: Vec::new(),
                 calls: Vec::new(),
                 relations: Vec::new(),
+                local_binding_relations: Vec::new(),
                 executable_bodies: Vec::new(),
                 local_bindings: Vec::new(),
                 awaited_call_spans: Vec::new(),
@@ -610,6 +631,7 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
             local_scopes: Vec::new(),
             calls: Vec::new(),
             relations: Vec::new(),
+            local_binding_relations: Vec::new(),
             executable_bodies: Vec::new(),
             local_bindings: Vec::new(),
             awaited_call_spans: Vec::new(),
@@ -619,6 +641,8 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
         visitor.visit_expr(closure.body.as_ref());
         self.calls.append(&mut visitor.calls);
         self.relations.append(&mut visitor.relations);
+        self.local_binding_relations
+            .append(&mut visitor.local_binding_relations);
         self.executable_bodies
             .append(&mut visitor.executable_bodies);
         self.local_bindings.append(&mut visitor.local_bindings);
@@ -645,6 +669,7 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
             local_scopes: Vec::new(),
             calls: Vec::new(),
             relations: Vec::new(),
+            local_binding_relations: Vec::new(),
             executable_bodies: Vec::new(),
             local_bindings: Vec::new(),
             awaited_call_spans: Vec::new(),
@@ -654,6 +679,8 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
         visitor.visit_block(&async_block.block);
         self.calls.append(&mut visitor.calls);
         self.relations.append(&mut visitor.relations);
+        self.local_binding_relations
+            .append(&mut visitor.local_binding_relations);
         self.executable_bodies
             .append(&mut visitor.executable_bodies);
         self.local_bindings.append(&mut visitor.local_bindings);
@@ -687,6 +714,7 @@ impl BodyCallVisitor<'_> {
             local_scopes: Vec::new(),
             calls: Vec::new(),
             relations: Vec::new(),
+            local_binding_relations: Vec::new(),
             executable_bodies: Vec::new(),
             local_bindings: Vec::new(),
             awaited_call_spans: Vec::new(),
@@ -708,6 +736,7 @@ impl BodyCallVisitor<'_> {
             local_scopes: Vec::new(),
             calls: Vec::new(),
             relations: Vec::new(),
+            local_binding_relations: Vec::new(),
             executable_bodies: Vec::new(),
             local_bindings: Vec::new(),
             awaited_call_spans: Vec::new(),
@@ -742,6 +771,7 @@ impl BodyCallVisitor<'_> {
             local_scopes: vec![vec![LocalBindingProof::LocalFunction { name, body_id }]],
             calls: Vec::new(),
             relations: Vec::new(),
+            local_binding_relations: Vec::new(),
             executable_bodies: Vec::new(),
             local_bindings: Vec::new(),
             awaited_call_spans: Vec::new(),
@@ -767,9 +797,32 @@ impl BodyCallVisitor<'_> {
     fn append_child(&mut self, mut visitor: BodyCallVisitor<'_>) {
         self.calls.append(&mut visitor.calls);
         self.relations.append(&mut visitor.relations);
+        self.local_binding_relations
+            .append(&mut visitor.local_binding_relations);
         self.executable_bodies
             .append(&mut visitor.executable_bodies);
         self.local_bindings.append(&mut visitor.local_bindings);
+    }
+}
+
+fn local_binding_source_relation(
+    source: LocalBindingId,
+    binding_source: &LocalBindingSource,
+) -> LocalBindingRelation {
+    match binding_source {
+        LocalBindingSource::Closure { body_id } | LocalBindingSource::AsyncClosure { body_id } => {
+            LocalBindingRelation::BindingSourceClosure {
+                source,
+                target: *body_id,
+            }
+        }
+        LocalBindingSource::PathCallResult { call_site_id, .. }
+        | LocalBindingSource::DynamicCallResult { call_site_id, .. } => {
+            LocalBindingRelation::BindingSourceCallResult {
+                source,
+                target: *call_site_id,
+            }
+        }
     }
 }
 

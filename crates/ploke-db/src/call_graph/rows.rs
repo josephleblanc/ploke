@@ -3,7 +3,7 @@ use uuid::Uuid;
 
 use super::{
     CallNodeKind, CallReceiver, CallRelationKind, CallResolutionKind, CallSiteKind, CallStatusKind,
-    CallTargetKind,
+    CallTargetKind, LocalBindingRelationKind,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -61,6 +61,15 @@ pub struct LocalBindingRow {
     pub source_path: Option<Vec<String>>,
     pub callee_kind: Option<String>,
     pub callee_path: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct LocalBindingEdgeRow {
+    pub source_id: Uuid,
+    pub target_id: Uuid,
+    pub relation: LocalBindingRelationKind,
+    pub source_kind: String,
+    pub target_kind: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

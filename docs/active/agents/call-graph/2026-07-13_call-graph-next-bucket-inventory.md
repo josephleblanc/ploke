@@ -111,18 +111,21 @@ Local-binding projection checkpoint, 2026-07-14:
   returned-closure forwarding, and
   `tests/fixture_crates/fixture_call_graph/src/lib.rs:2380-2385` for
   fail-closed forwarded returned async futures.
-- Persisted relation: `local_binding` with strict owner, binding kind, span,
-  source kind, source endpoint, and optional returned-path callee fields.
+- Persisted relations: `local_binding` with strict owner, binding kind, span,
+  source kind, source endpoint, and optional returned-path callee fields; and
+  `local_binding_edge` with typed owner-to-binding and binding-to-source
+  endpoint facts.
 - Verified behavior: `make_target_closure()` has a `Closure` return binding,
   `make_forwarded_returned_closure()` has a `PathCallResult` return binding
   pointing at the `make_target_closure` callsite, and
   `make_forwarded_returned_async_future()` has a `DynamicCallResult` return
-  binding pointing at its targetless `ReturnedPathCall` dynamic row.
+  binding pointing at its targetless `ReturnedPathCall` dynamic row. Each owner
+  now has exactly the expected `OwnerContainsBinding` edge plus a
+  `BindingSourceClosure` or `BindingSourceCallResult` edge.
 - Fixtures: active call-graph fixtures regenerated and verified; shared corpus
-  snapshots now report 65 relations.
-- Boundary: this is not `local_binding_edge`, general let-binding flow,
-  callable-field value flow, trait-object dispatch, or async poll/resume
-  traversal.
+  snapshots now report 66 relations.
+- Boundary: this is not general let-binding flow, callable-field value flow,
+  trait-object dispatch, or async poll/resume traversal.
 
 Post-regeneration checkpoint, 2026-07-13:
 

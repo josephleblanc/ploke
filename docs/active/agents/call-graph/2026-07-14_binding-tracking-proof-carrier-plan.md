@@ -166,9 +166,10 @@ What remains:
 - Do not use this checkpoint to justify broad callable-field, public callable
   parameter, trait-object, or async poll/resume traversal.
 
-## 2026-07-14 Durable Local Binding Checkpoint
+## 2026-07-14 Durable Local Binding Edge Checkpoint
 
-Committed slice: durable returned-callable `local_binding` projection.
+Committed slice: durable returned-callable `local_binding` and
+`local_binding_edge` projection.
 
 What is complete:
 
@@ -184,17 +185,20 @@ What is complete:
 - Transform projection persists those rows in `local_binding` with a typed
   local binding ID, owner, span, binding kind, source kind, source endpoint,
   and optional returned-path callee fields.
-- `ploke-db` exposes `local_bindings_for_owner` with strict row-shape
-  validation.
+- Transform projection also persists `local_binding_edge` facts for
+  owner-to-binding containment and binding-to-source endpoints.
+- `ploke-db` exposes `local_bindings_for_owner` and
+  `local_binding_edges_for_owner` with strict row-shape validation.
 - Fixture-backed DB tests prove the sync returned-closure carrier and the
-  forwarded returned async future fail-closed carrier. The async case remains
-  targetless and still has no path to `local_target`.
+  forwarded returned async future fail-closed carrier, including the expected
+  `OwnerContainsBinding`, `BindingSourceClosure`, and
+  `BindingSourceCallResult` edge rows. The async case remains targetless and
+  still has no path to `local_target`.
 - Active call-graph fixtures were regenerated and `verify-backup-dbs` passed;
-  the shared corpus snapshots now include 65 relations.
+  the shared corpus snapshots now include 66 relations.
 
 What remains:
 
-- No `local_binding_edge` relation exists yet.
 - No general `let` binding, parameter binding, field projection, tuple
   projection, argument-to-parameter flow, callable-field value flow,
   trait-object dispatch, or async poll/resume traversal is admitted by this

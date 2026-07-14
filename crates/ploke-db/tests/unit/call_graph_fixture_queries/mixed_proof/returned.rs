@@ -749,6 +749,7 @@ fn assert_return_closure_binding(
     assert_eq!(binding.source_path, None);
     assert_eq!(binding.callee_kind, None);
     assert_eq!(binding.callee_path, None);
+    assert_return_binding_edges(db, owner, binding.id, closure, "Closure", label)?;
     Ok(())
 }
 
@@ -773,6 +774,7 @@ fn assert_return_path_call_binding(
     assert_eq!(binding.source_path.as_ref(), Some(&path(expected_path)));
     assert_eq!(binding.callee_kind, None);
     assert_eq!(binding.callee_path, None);
+    assert_return_binding_edges(db, owner, binding.id, call_site, "Path", label)?;
     Ok(())
 }
 
@@ -798,6 +800,59 @@ fn assert_return_dynamic_binding(
     assert_eq!(binding.source_path, None);
     assert_eq!(binding.callee_kind.as_deref(), Some(callee_kind));
     assert_eq!(binding.callee_path.as_ref(), Some(&path(expected_path)));
+    assert_return_binding_edges(db, owner, binding.id, call_site, "Dynamic", label)?;
+    Ok(())
+}
+
+fn assert_return_binding_edges(
+    db: &ploke_db::Database,
+    owner: Uuid,
+    binding: Uuid,
+    source: Uuid,
+    source_kind: &str,
+    label: &str,
+) -> Result<(), DbError> {
+    let edges = db.local_binding_edges_for_owner(owner)?;
+    assert_eq!(
+        edges.len(),
+        2,
+        "{label} should expose owner->binding and binding->source edges: {edges:#?}"
+    );
+
+    let owner_edge = edges
+        .iter()
+        .find(|edge| edge.relation == LocalBindingRelationKind::OwnerContainsBinding)
+        .unwrap_or_else(|| panic!("{label} missing OwnerContainsBinding edge: {edges:#?}"));
+    assert_eq!(owner_edge.source_id, owner, "{label} owner edge source");
+    assert_eq!(
+        owner_edge.target_id, binding,
+        "{label} owner edge target should be the return binding"
+    );
+    assert_eq!(
+        owner_edge.target_kind, "LocalBinding",
+        "{label} owner edge target kind"
+    );
+
+    let source_edge = edges
+        .iter()
+        .find(|edge| edge.relation != LocalBindingRelationKind::OwnerContainsBinding)
+        .unwrap_or_else(|| panic!("{label} missing binding source edge: {edges:#?}"));
+    assert_eq!(
+        source_edge.source_id, binding,
+        "{label} source edge should start at the return binding"
+    );
+    assert_eq!(
+        source_edge.target_id, source,
+        "{label} source edge should target the binding source"
+    );
+    assert_eq!(
+        source_edge.source_kind, "LocalBinding",
+        "{label} source edge source kind"
+    );
+    assert_eq!(
+        source_edge.target_kind, source_kind,
+        "{label} source edge target kind"
+    );
     Ok(())
 }
 

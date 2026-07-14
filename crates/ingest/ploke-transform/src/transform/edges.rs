@@ -80,7 +80,7 @@
 
 use cozo::{Db, MemStorage};
 use syn_parser::parser::nodes::{CallNode, ExecutableBodyNode, LocalBindingNode};
-use syn_parser::parser::relations::{CallSiteRelation, SyntacticRelation};
+use syn_parser::parser::relations::{CallSiteRelation, LocalBindingRelation, SyntacticRelation};
 use syn_parser::resolve::call_resolution::CallResolutionReport;
 use syn_parser::resolve::type_resolution_v2::TypeRelationReport;
 use tracing::instrument;
@@ -88,8 +88,8 @@ use tracing::instrument;
 use super::*;
 use crate::schema::edges::{
     CallBodyOwnerSchema, CallCalleeEvidenceSchema, CallRelationSchema, CallResolutionStatusSchema,
-    CallSiteRelationSchema, CallSiteSchema, LocalBindingSchema, SyntacticRelationSchema,
-    TypeRelationSchema,
+    CallSiteRelationSchema, CallSiteSchema, LocalBindingRelationSchema, LocalBindingSchema,
+    SyntacticRelationSchema, TypeRelationSchema,
 };
 
 #[instrument(skip_all)]
@@ -150,6 +150,18 @@ pub(super) fn transform_local_bindings(
 ) -> Result<(), TransformError> {
     for binding in bindings {
         LocalBindingSchema::insert_binding(db, binding)?;
+    }
+    Ok(())
+}
+
+#[instrument(skip_all)]
+pub(super) fn transform_local_binding_relations(
+    db: &Db<MemStorage>,
+    relations: &[LocalBindingRelation],
+) -> Result<(), TransformError> {
+    let schema = &LocalBindingRelationSchema::SCHEMA;
+    for relation in relations {
+        schema.insert_relation(db, relation)?;
     }
     Ok(())
 }

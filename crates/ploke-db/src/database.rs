@@ -79,6 +79,7 @@ fn is_call_graph_relation(relation: &str) -> bool {
             | "call_site"
             | "call_callee_evidence"
             | "local_binding"
+            | "local_binding_edge"
             | "call_site_edge"
             | "call_relation"
             | "call_resolution_status"
@@ -3926,6 +3927,7 @@ mod tests {
             "call_site",
             "call_callee_evidence",
             "local_binding",
+            "local_binding_edge",
             "call_site_edge",
             "call_relation",
             "call_resolution_status",

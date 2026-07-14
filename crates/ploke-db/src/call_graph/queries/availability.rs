@@ -4,11 +4,12 @@ use crate::{Database, DbError};
 
 impl Database {
     pub fn has_call_graph_relations(&self) -> Result<bool, DbError> {
-        const REQUIRED: [&str; 7] = [
+        const REQUIRED: [&str; 8] = [
             "call_body_owner",
             "call_site",
             "call_callee_evidence",
             "local_binding",
+            "local_binding_edge",
             "call_site_edge",
             "call_relation",
             "call_resolution_status",

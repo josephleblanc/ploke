@@ -84,6 +84,26 @@ impl CallRelationKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum LocalBindingRelationKind {
+    OwnerContainsBinding,
+    BindingSourceClosure,
+    BindingSourceCallResult,
+}
+
+impl LocalBindingRelationKind {
+    pub(super) fn from_str(value: &str) -> Result<Self, DbError> {
+        match value {
+            "OwnerContainsBinding" => Ok(Self::OwnerContainsBinding),
+            "BindingSourceClosure" => Ok(Self::BindingSourceClosure),
+            "BindingSourceCallResult" => Ok(Self::BindingSourceCallResult),
+            other => Err(DbError::Cozo(format!(
+                "unknown local binding relation kind {other:?}"
+            ))),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CallTargetKind {
     Function,
     Closure,

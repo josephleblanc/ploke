@@ -144,6 +144,12 @@ impl ParsedCodeGraph {
         self.graph
             .local_bindings
             .retain(|binding| live_owners.contains(&binding.owner));
+        let live_bindings: HashSet<LocalBindingId> = self
+            .graph
+            .local_bindings
+            .iter()
+            .map(|binding| binding.id)
+            .collect();
 
         self.call_sites_mut()
             .retain(|call| live_owners.contains(&call.owner()));
@@ -153,6 +159,19 @@ impl ParsedCodeGraph {
             .retain(|relation| match relation {
                 CallSiteRelation::BodyContainsCall { source, target } => {
                     live_owners.contains(source) && live_calls.contains(target)
+                }
+            });
+        self.local_binding_relations_mut()
+            .retain(|relation| match relation {
+                LocalBindingRelation::OwnerContainsBinding { source, target } => {
+                    live_owners.contains(source) && live_bindings.contains(target)
+                }
+                LocalBindingRelation::BindingSourceClosure { source, target } => {
+                    live_bindings.contains(source)
+                        && live_owners.contains(&CallBodyOwnerId::Executable(*target))
+                }
+                LocalBindingRelation::BindingSourceCallResult { source, target } => {
+                    live_bindings.contains(source) && live_calls.contains(target)
                 }
             });
     }
@@ -384,6 +403,9 @@ impl ParsedCodeGraph {
         self.graph
             .call_site_relations
             .append(&mut other.graph.call_site_relations);
+        self.graph
+            .local_binding_relations
+            .append(&mut other.graph.local_binding_relations);
         self.graph
             .executable_bodies
             .append(&mut other.graph.executable_bodies);
@@ -1140,6 +1162,10 @@ impl GraphAccess for ParsedCodeGraph {
         &self.graph.call_site_relations
     }
 
+    fn local_binding_relations(&self) -> &[LocalBindingRelation] {
+        &self.graph.local_binding_relations
+    }
+
     fn executable_bodies(&self) -> &[ExecutableBodyNode] {
         &self.graph.executable_bodies
     }
@@ -1198,6 +1224,10 @@ impl GraphAccess for ParsedCodeGraph {
 
     fn call_site_relations_mut(&mut self) -> &mut Vec<CallSiteRelation> {
         &mut self.graph.call_site_relations
+    }
+
+    fn local_binding_relations_mut(&mut self) -> &mut Vec<LocalBindingRelation> {
+        &mut self.graph.local_binding_relations
     }
 
     fn executable_bodies_mut(&mut self) -> &mut Vec<ExecutableBodyNode> {
@@ -1270,6 +1300,7 @@ mod tests {
             relations: Vec::new(),
             call_sites: Vec::new(),
             call_site_relations: Vec::new(),
+            local_binding_relations: Vec::new(),
             executable_bodies: Vec::new(),
             local_bindings: Vec::new(),
             modules: Vec::new(),

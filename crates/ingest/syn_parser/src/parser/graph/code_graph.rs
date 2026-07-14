@@ -9,7 +9,7 @@ use crate::parser::{
         LocalBindingNode, MacroNode, ModuleNode, StaticNode, TraitNode, TypeDefNode,
         UnresolvedNode,
     },
-    relations::{CallSiteRelation, SyntacticRelation}, // Use new relation enum
+    relations::{CallSiteRelation, LocalBindingRelation, SyntacticRelation}, // Use new relation enum
     types::TypeNode,
 };
 
@@ -37,6 +37,9 @@ pub struct CodeGraph {
     // Relations between function-like bodies and call-site records
     #[serde(default)]
     pub call_site_relations: Vec<CallSiteRelation>,
+    // Relations between function-like bodies, local bindings, and their sources
+    #[serde(default)]
+    pub local_binding_relations: Vec<LocalBindingRelation>,
     // Parser-owned executable-local body records.
     #[serde(default)]
     pub executable_bodies: Vec<ExecutableBodyNode>,
@@ -88,6 +91,10 @@ impl GraphAccess for CodeGraph {
 
     fn call_site_relations(&self) -> &[CallSiteRelation] {
         &self.call_site_relations
+    }
+
+    fn local_binding_relations(&self) -> &[LocalBindingRelation] {
+        &self.local_binding_relations
     }
 
     fn executable_bodies(&self) -> &[ExecutableBodyNode] {
@@ -152,6 +159,10 @@ impl GraphAccess for CodeGraph {
         &mut self.call_site_relations
     }
 
+    fn local_binding_relations_mut(&mut self) -> &mut Vec<LocalBindingRelation> {
+        &mut self.local_binding_relations
+    }
+
     fn executable_bodies_mut(&mut self) -> &mut Vec<ExecutableBodyNode> {
         &mut self.executable_bodies
     }
@@ -209,6 +220,8 @@ impl CodeGraph {
         self.call_sites.append(&mut other.call_sites);
         self.call_site_relations
             .append(&mut other.call_site_relations);
+        self.local_binding_relations
+            .append(&mut other.local_binding_relations);
         self.executable_bodies.append(&mut other.executable_bodies);
         self.local_bindings.append(&mut other.local_bindings);
         self.modules.append(&mut other.modules);

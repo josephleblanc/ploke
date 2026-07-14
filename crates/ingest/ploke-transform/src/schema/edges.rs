@@ -16,8 +16,8 @@ use syn_parser::parser::nodes::{
     ToCozoUuid,
 };
 use syn_parser::parser::relations::{
-    CallRelation, CallResolutionKind, CallResolutionStatus, CallSiteRelation, SyntacticRelation,
-    TypeRelation,
+    CallRelation, CallResolutionKind, CallResolutionStatus, CallSiteRelation, LocalBindingRelation,
+    SyntacticRelation, TypeRelation,
 };
 use syn_parser::resolve::Colorize;
 use syn_parser::utils::{LogStyle, LogStyleDebug};
@@ -42,6 +42,15 @@ define_schema!(TypeRelationSchema {
 
 define_schema!(CallSiteRelationSchema {
     "call_site_edge",
+    source_id: "Uuid",
+    target_id: "Uuid",
+    relation_kind: "String",
+    source_kind: "String",
+    target_kind: "String"
+});
+
+define_schema!(LocalBindingRelationSchema {
+    "local_binding_edge",
     source_id: "Uuid",
     target_id: "Uuid",
     relation_kind: "String",
@@ -1305,6 +1314,76 @@ impl CallSiteRelationSchema {
                 (
                     schema.source_kind().to_string(),
                     cozo::DataValue::from(call_body_owner_kind(*source)),
+                ),
+                (
+                    schema.target_kind().to_string(),
+                    cozo::DataValue::from(call_site_kind(*target)),
+                ),
+            ]),
+        };
+
+        let script = schema.script_put(&params);
+        db.run_script(&script, params, cozo::ScriptMutability::Mutable)?;
+        Ok(())
+    }
+}
+
+impl LocalBindingRelationSchema {
+    pub fn insert_relation(
+        &self,
+        db: &Db<MemStorage>,
+        relation: &LocalBindingRelation,
+    ) -> Result<(), TransformError> {
+        let schema = &LocalBindingRelationSchema::SCHEMA;
+        let params = match relation {
+            LocalBindingRelation::OwnerContainsBinding { source, target } => BTreeMap::from([
+                (
+                    schema.source_id().to_string(),
+                    call_body_owner_to_cozo(*source),
+                ),
+                (schema.target_id().to_string(), target.to_cozo_uuid()),
+                (
+                    schema.relation_kind().to_string(),
+                    cozo::DataValue::from(relation.kind_str()),
+                ),
+                (
+                    schema.source_kind().to_string(),
+                    cozo::DataValue::from(call_body_owner_kind(*source)),
+                ),
+                (
+                    schema.target_kind().to_string(),
+                    cozo::DataValue::from("LocalBinding"),
+                ),
+            ]),
+            LocalBindingRelation::BindingSourceClosure { source, target } => BTreeMap::from([
+                (schema.source_id().to_string(), source.to_cozo_uuid()),
+                (schema.target_id().to_string(), target.to_cozo_uuid()),
+                (
+                    schema.relation_kind().to_string(),
+                    cozo::DataValue::from(relation.kind_str()),
+                ),
+                (
+                    schema.source_kind().to_string(),
+                    cozo::DataValue::from("LocalBinding"),
+                ),
+                (
+                    schema.target_kind().to_string(),
+                    cozo::DataValue::from(executable_body_kind(target.kind())),
+                ),
+            ]),
+            LocalBindingRelation::BindingSourceCallResult { source, target } => BTreeMap::from([
+                (schema.source_id().to_string(), source.to_cozo_uuid()),
+                (
+                    schema.target_id().to_string(),
+                    call_site_id_to_cozo(*target),
+                ),
+                (
+                    schema.relation_kind().to_string(),
+                    cozo::DataValue::from(relation.kind_str()),
+                ),
+                (
+                    schema.source_kind().to_string(),
+                    cozo::DataValue::from("LocalBinding"),
                 ),
                 (
                     schema.target_kind().to_string(),

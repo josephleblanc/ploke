@@ -7,10 +7,10 @@ use crate::{Database, DbError, database::to_string};
 
 use super::super::{
     CallContextRow, CallResolutionRow, CallSiteKind, CallSiteRow, CallStatusKind, CallTargetRow,
-    LocalBindingRow,
+    LocalBindingEdgeRow, LocalBindingRow,
     decode::{
-        decode_local_binding, decode_resolution, decode_site, decode_target,
-        validate_owner_context_targets,
+        decode_local_binding, decode_local_binding_edge, decode_resolution, decode_site,
+        decode_target, validate_owner_context_targets,
     },
     families::{valid_call_owner_rules, valid_call_target, valid_call_target_rules},
 };
@@ -131,6 +131,65 @@ impl Database {
         rows.rows
             .iter()
             .map(|row| decode_local_binding(row))
+            .collect::<Result<Vec<_>, DbError>>()
+    }
+
+    pub fn local_binding_edges_for_owner(
+        &self,
+        owner_id: Uuid,
+    ) -> Result<Vec<LocalBindingEdgeRow>, DbError> {
+        let mut params = BTreeMap::new();
+        params.insert(
+            "owner_id".to_string(),
+            DataValue::Uuid(UuidWrapper(owner_id)),
+        );
+
+        let mut script = valid_call_owner_rules();
+        script.push_str(
+            r#"
+            binding_for_owner[binding_id] :=
+                owner_id = $owner_id,
+                valid_owner[owner_id, owner_kind],
+                *local_binding_edge {
+                    source_id: owner_id,
+                    target_id: binding_id,
+                    relation_kind: "OwnerContainsBinding",
+                    source_kind: owner_kind,
+                    target_kind: "LocalBinding" @ 'NOW'
+                }
+
+            ?[source_id, target_id, relation_kind, source_kind, target_kind] :=
+                owner_id = $owner_id,
+                source_id = owner_id,
+                relation_kind = "OwnerContainsBinding",
+                target_kind = "LocalBinding",
+                valid_owner[owner_id, owner_kind],
+                source_kind = owner_kind,
+                *local_binding_edge {
+                    source_id,
+                    target_id,
+                    relation_kind,
+                    source_kind,
+                    target_kind @ 'NOW'
+                }
+
+            ?[source_id, target_id, relation_kind, source_kind, target_kind] :=
+                binding_for_owner[binding_id],
+                source_id = binding_id,
+                *local_binding_edge {
+                    source_id,
+                    target_id,
+                    relation_kind,
+                    source_kind,
+                    target_kind @ 'NOW'
+                }
+            :sort relation_kind, target_kind, target_id"#,
+        );
+        let rows = self.run_script(&script, params, ScriptMutability::Immutable)?;
+
+        rows.rows
+            .iter()
+            .map(|row| decode_local_binding_edge(row))
             .collect::<Result<Vec<_>, DbError>>()
     }
 

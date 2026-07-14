@@ -3,10 +3,10 @@ use super::nodes::{AnyNodeId, PrimaryNodeIdTrait};
 use crate::parser::nodes::{
     AnyCallSiteId, AnyGenericParamId, AssociatedItemNodeId, CallBodyOwnerId,
     ConstGenericParamNodeId, DynamicCallSiteId, EnumNodeId, ExecutableBodyId, FieldNodeId,
-    FunctionNodeId, GenericParamOwnerId, ImplNodeId, ImportNodeId, MethodCallSiteId, MethodNodeId,
-    ModuleNodeId, OrdinaryTypeSourceId, OrdinaryTypeTargetId, OrdinaryTypeUseId, PathCallSiteId,
-    PrimaryNodeId, StructNodeId, TraitNodeId, TraitTypeSourceId, TraitTypeTargetId,
-    TypeGenericParamNodeId, UnionNodeId, VariantNodeId,
+    FunctionNodeId, GenericParamOwnerId, ImplNodeId, ImportNodeId, LocalBindingId,
+    MethodCallSiteId, MethodNodeId, ModuleNodeId, OrdinaryTypeSourceId, OrdinaryTypeTargetId,
+    OrdinaryTypeUseId, PathCallSiteId, PrimaryNodeId, StructNodeId, TraitNodeId, TraitTypeSourceId,
+    TraitTypeTargetId, TypeGenericParamNodeId, UnionNodeId, VariantNodeId,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -151,6 +151,54 @@ impl CallSiteRelation {
     pub fn kind_str(&self) -> &'static str {
         match self {
             Self::BodyContainsCall { .. } => "BodyContainsCall",
+        }
+    }
+}
+
+/// Type-safe structural relations for parser-owned local binding records.
+///
+/// These edges make the local binding proof carrier traversable without
+/// changing call resolution. They describe containment by a function-like owner
+/// and the structural source of the binding value.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum LocalBindingRelation {
+    /// A function-like body contains a parser-owned binding/value-flow record.
+    ///
+    /// ```text
+    /// OwnerContainsBinding ⊆ CallBodyOwnerId × LocalBindingId
+    /// ```
+    OwnerContainsBinding {
+        source: CallBodyOwnerId,
+        target: LocalBindingId,
+    },
+    /// A binding is sourced by an executable-local body, such as a closure.
+    ///
+    /// ```text
+    /// BindingSourceClosure ⊆ LocalBindingId × ExecutableBodyId
+    /// ```
+    BindingSourceClosure {
+        source: LocalBindingId,
+        target: ExecutableBodyId,
+    },
+    /// A binding is sourced by the result of a call-site expression.
+    ///
+    /// ```text
+    /// BindingSourceCallResult ⊆ LocalBindingId × AnyCallSiteId
+    /// ```
+    BindingSourceCallResult {
+        source: LocalBindingId,
+        target: AnyCallSiteId,
+    },
+}
+
+impl LocalBindingRelation {
+    /// Returns the relation kind as a stable string for diagnostics or database
+    /// projection.
+    pub fn kind_str(&self) -> &'static str {
+        match self {
+            Self::OwnerContainsBinding { .. } => "OwnerContainsBinding",
+            Self::BindingSourceClosure { .. } => "BindingSourceClosure",
+            Self::BindingSourceCallResult { .. } => "BindingSourceCallResult",
         }
     }
 }

@@ -8,7 +8,7 @@ mod rows;
 pub use families::{call_target_endpoint_relation, valid_call_target_family};
 pub use kinds::{
     CallNodeKind, CallRelationKind, CallResolutionKind, CallSiteKind, CallStatusKind,
-    CallTargetKind,
+    CallTargetKind, LocalBindingRelationKind,
 };
 pub use receiver::CallReceiver;
 pub use rows::{
@@ -18,6 +18,7 @@ pub use rows::{
     CallPathOptions, CallProofInvariantFinding, CallReachEffect, CallReachReport,
     CallResolutionRow, CallSiteBucket, CallSiteRow, CallTargetRow, CallTestEntrypoint,
     CallTestSelectionReport, CrateBoundaryEdge, CrateBoundaryPolicyRule,
-    CrateBoundaryPolicyViolation, ExternalSummaryNeed, LocalBindingRow, ModuleBoundaryEdge,
-    ModuleBoundaryPolicyRule, ModuleBoundaryPolicyViolation, RuntimeDispatchNeed,
+    CrateBoundaryPolicyViolation, ExternalSummaryNeed, LocalBindingEdgeRow, LocalBindingRow,
+    ModuleBoundaryEdge, ModuleBoundaryPolicyRule, ModuleBoundaryPolicyViolation,
+    RuntimeDispatchNeed,
 };

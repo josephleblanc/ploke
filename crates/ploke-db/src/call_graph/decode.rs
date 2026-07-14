@@ -8,7 +8,8 @@ use crate::{
 
 use super::{
     CallContextRow, CallReceiver, CallRelationKind, CallResolutionKind, CallResolutionRow,
-    CallSiteKind, CallSiteRow, CallStatusKind, CallTargetKind, CallTargetRow, LocalBindingRow,
+    CallSiteKind, CallSiteRow, CallStatusKind, CallTargetKind, CallTargetRow, LocalBindingEdgeRow,
+    LocalBindingRelationKind, LocalBindingRow,
 };
 
 pub(super) fn decode_site(row: &[DataValue]) -> Result<CallSiteRow, DbError> {
@@ -138,6 +139,41 @@ pub(super) fn decode_local_binding(row: &[DataValue]) -> Result<LocalBindingRow,
     Ok(binding)
 }
 
+pub(super) fn decode_local_binding_edge(row: &[DataValue]) -> Result<LocalBindingEdgeRow, DbError> {
+    let edge = LocalBindingEdgeRow {
+        source_id: to_uuid(&row[0])?,
+        target_id: to_uuid(&row[1])?,
+        relation: LocalBindingRelationKind::from_str(&to_string(&row[2])?)?,
+        source_kind: to_string(&row[3])?,
+        target_kind: to_string(&row[4])?,
+    };
+    validate_local_binding_edge_shape(&edge)?;
+    Ok(edge)
+}
+
+fn validate_local_binding_edge_shape(edge: &LocalBindingEdgeRow) -> Result<(), DbError> {
+    let valid = match edge.relation {
+        LocalBindingRelationKind::OwnerContainsBinding => {
+            is_call_owner_kind(&edge.source_kind) && edge.target_kind == "LocalBinding"
+        }
+        LocalBindingRelationKind::BindingSourceClosure => {
+            edge.source_kind == "LocalBinding" && edge.target_kind == "Closure"
+        }
+        LocalBindingRelationKind::BindingSourceCallResult => {
+            edge.source_kind == "LocalBinding" && is_call_site_kind(&edge.target_kind)
+        }
+    };
+
+    if valid {
+        Ok(())
+    } else {
+        Err(DbError::Cozo(format!(
+            "malformed local_binding_edge {:?}: {} -> {}",
+            edge.relation, edge.source_kind, edge.target_kind
+        )))
+    }
+}
+
 fn validate_local_binding_shape(binding: &LocalBindingRow) -> Result<(), DbError> {
     let valid = match binding.source_kind.as_str() {
         "Closure" | "AsyncClosure" => {
@@ -172,6 +208,24 @@ fn validate_local_binding_shape(binding: &LocalBindingRow) -> Result<(), DbError
             binding.id, binding.source_kind
         )))
     }
+}
+
+fn is_call_owner_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "Function"
+            | "Macro"
+            | "Method"
+            | "Const"
+            | "Static"
+            | "Closure"
+            | "AsyncBlock"
+            | "LocalItem"
+    )
+}
+
+fn is_call_site_kind(kind: &str) -> bool {
+    matches!(kind, "Path" | "Method" | "Dynamic" | "Macro")
 }
 
 fn validate_resolution_shape(status: &CallResolutionRow) -> Result<(), DbError> {
