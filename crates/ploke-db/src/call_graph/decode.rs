@@ -260,7 +260,16 @@ fn validate_local_binding_shape(binding: &LocalBindingRow) -> Result<(), DbError
         _ => false,
     };
 
-    if valid && binding.kind == "ReturnExpression" && binding.name == "return" {
+    let valid_kind = match binding.kind.as_str() {
+        "ReturnExpression" => binding.name == "return",
+        "LetBinding" => {
+            non_empty_string(Some(binding.name.as_str()))
+                && matches!(binding.source_kind.as_str(), "Closure" | "AsyncClosure")
+        }
+        _ => false,
+    };
+
+    if valid && valid_kind {
         Ok(())
     } else {
         Err(DbError::Cozo(format!(

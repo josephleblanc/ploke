@@ -349,8 +349,45 @@ impl BodyCallVisitor<'_> {
 
         let byte_range = expr.span().byte_range();
         let span = (byte_range.start, byte_range.end);
-        let kind = LocalBindingKind::ReturnExpression;
-        let id = generate_local_binding_id(self.owner, "return", span, kind, self.cfgs);
+        self.record_local_binding("return", span, LocalBindingKind::ReturnExpression, source);
+    }
+
+    fn record_let_binding(&mut self, binding: &LocalBindingProof, pat: &syn::Pat) {
+        let source = match binding {
+            LocalBindingProof::Closure {
+                closure_id,
+                is_async,
+                ..
+            } => {
+                if *is_async {
+                    LocalBindingSource::AsyncClosure {
+                        body_id: *closure_id,
+                    }
+                } else {
+                    LocalBindingSource::Closure {
+                        body_id: *closure_id,
+                    }
+                }
+            }
+            _ => return,
+        };
+        let byte_range = pat.span().byte_range();
+        self.record_local_binding(
+            binding.name(),
+            (byte_range.start, byte_range.end),
+            LocalBindingKind::LetBinding,
+            source,
+        );
+    }
+
+    fn record_local_binding(
+        &mut self,
+        name: &str,
+        span: (usize, usize),
+        kind: LocalBindingKind,
+        source: LocalBindingSource,
+    ) {
+        let id = generate_local_binding_id(self.owner, name, span, kind, self.cfgs);
         self.local_binding_relations
             .push(LocalBindingRelation::OwnerContainsBinding {
                 source: self.owner,
@@ -364,7 +401,7 @@ impl BodyCallVisitor<'_> {
             span,
             cfgs: self.cfgs.to_vec(),
             kind,
-            name: "return".to_string(),
+            name: name.to_string(),
             source,
         });
     }
@@ -463,6 +500,9 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
             self.param_names,
             &self.local_scopes,
         );
+        for binding in &bindings {
+            self.record_let_binding(binding, &local.pat);
+        }
         if let Some(scope) = self.local_scopes.last_mut() {
             scope.extend(bindings);
         }

@@ -50,6 +50,18 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
+Latest completed slice: durable let-closure binding projection. The parser now
+records exact `LetBinding` rows for local closure bindings such as the fixture
+oracle `call_shadowed_local_target_binding() { let local_target = || 377;
+local_target() }`. The existing closure call edge still resolves to the closure
+owner, and the new `local_binding` / `local_binding_edge` rows provide durable
+owner-to-binding plus binding-to-closure proof that the local binding shadows
+the module-level `local_target` function. `ploke-db` strictly decodes
+`LetBinding` rows only when they have a nonempty binding name and a closure or
+async-closure source. This is a projection/proof carrier slice only: it does
+not add general let-binding value flow, path-item binding projection, parameter
+binding projection, field projection, or new traversal edges.
+
 Recent completed slice: exact TUI returned-callable binding-flow payload.
 `ConciseContext` now carries the exact RAG
 `ReturnedCallBindingFlowInfo` payload, and `code_item_lookup` /

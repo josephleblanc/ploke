@@ -59,12 +59,14 @@ pub struct LocalBindingNode {
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum LocalBindingKind {
+    LetBinding,
     ReturnExpression,
 }
 
 impl LocalBindingKind {
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::LetBinding => "LetBinding",
             Self::ReturnExpression => "ReturnExpression",
         }
     }
