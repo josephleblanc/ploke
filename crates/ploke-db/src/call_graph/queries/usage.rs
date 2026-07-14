@@ -1271,13 +1271,9 @@ fn reachable_callsite_context_rows(
     }
 
     let mut rows = BTreeMap::new();
-    for owner in owners {
-        for row in db.call_context_for_owner(owner)? {
-            if resolved_sites.contains(&row.site.id)
-                || row.status.status != CallStatusKind::Resolved
-            {
-                rows.entry(row.site.id).or_insert(row);
-            }
+    for row in db.call_context_for_owners(&owners)? {
+        if resolved_sites.contains(&row.site.id) || row.status.status != CallStatusKind::Resolved {
+            rows.entry(row.site.id).or_insert(row);
         }
     }
     Ok(rows)
@@ -1483,13 +1479,11 @@ fn frontier_calls_for_paths(
     }
 
     let mut rows = BTreeMap::new();
-    for owner in owners {
-        for row in db.call_context_for_owner(owner)? {
-            if row.status.status == CallStatusKind::Resolved {
-                continue;
-            }
-            rows.entry(row.site.id).or_insert(row);
+    for row in db.call_context_for_owners(&owners)? {
+        if row.status.status == CallStatusKind::Resolved {
+            continue;
         }
+        rows.entry(row.site.id).or_insert(row);
     }
 
     let mut rows = rows.into_values().collect::<Vec<_>>();

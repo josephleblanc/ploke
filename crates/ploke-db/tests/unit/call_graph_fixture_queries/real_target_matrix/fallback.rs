@@ -425,6 +425,73 @@ fn chrono_guarded_match_arm_slice_method_guard_reach_is_bounded() -> Result<(), 
 }
 
 #[test]
+fn chrono_guarded_match_arm_external_summary_need_is_bounded() -> Result<(), DbError> {
+    let db = setup_call_graph_db(&CORPUS_CHRONO_CALL_GRAPH)?;
+
+    // Matrix: `Fallback Source Oracle Matrix` in
+    // docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md.
+    //
+    // Source chain:
+    //   chrono/src/format/strftime.rs:193-198 defines `StrftimeItems::queue`.
+    //   chrono/src/format/strftime.rs:635 guards a match arm with
+    //   `self.queue.is_empty()`.
+    //
+    // Expected traversal: proof-needs queries over the long `parse_next_item`
+    // body must remain bounded, keep the slice call as an external summary
+    // need, and avoid creating a local `is_empty` edge.
+    let owner = method_id_by_name_body_and_file_suffix(
+        &db,
+        "parse_next_item",
+        "self.queue.is_empty()",
+        "src/format/strftime.rs",
+    )?;
+    let site = assert_owner_method_targetless(
+        &db,
+        owner,
+        "is_empty",
+        &CallReceiver::SelfField {
+            path: vec!["queue".to_string()],
+        },
+        CallStatusKind::External,
+        "chrono/src/format/strftime.rs:635 self.queue.is_empty",
+    )?;
+    let projected = db.project_call_proof_facts_for_owner(owner, "bd:corpus-chrono-call-graph")?;
+    assert!(
+        projected >= 2,
+        "chrono parse_next_item should project node-scoped call proof rows: {projected}"
+    );
+
+    let needs = db.external_summary_needs_for_owner(
+        owner,
+        CallPathOptions {
+            max_depth: 2,
+            max_paths: 64,
+        },
+    )?;
+    let need = needs
+        .iter()
+        .find(|need| need.call_site.site.id == site)
+        .unwrap_or_else(|| {
+            panic!("external-summary needs should preserve queue.is_empty: {needs:#?}")
+        });
+    assert_external_targetless(&need.call_site);
+    assert_eq!(need.call_site.site.owner_id, owner);
+    assert!(
+        need.blocker_reasons
+            .iter()
+            .any(|reason| reason == "external_dependency_summary_missing"),
+        "need should preserve the missing-summary blocker: {need:#?}"
+    );
+    assert_eq!(
+        relations_for_site(&db, site)?.rows.len(),
+        0,
+        "external-summary needs must not fabricate a local call edge"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn memchr_function_pointer_field_calls_preserve_ambiguous_candidates() -> Result<(), DbError> {
     let db = setup_call_graph_db(&CORPUS_MEMCHR_CALL_GRAPH)?;
 

@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use cozo::{DataValue, ScriptMutability, UuidWrapper};
 use uuid::Uuid;
@@ -120,7 +120,18 @@ impl Database {
     }
 
     pub fn call_context_for_owner(&self, owner_id: Uuid) -> Result<Vec<CallContextRow>, DbError> {
-        let sites = self.call_sites_for_owner(owner_id)?;
+        self.call_context_for_owners(&BTreeSet::from([owner_id]))
+    }
+
+    pub(crate) fn call_context_for_owners(
+        &self,
+        owner_ids: &BTreeSet<Uuid>,
+    ) -> Result<Vec<CallContextRow>, DbError> {
+        if owner_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let sites = self.call_sites_for_owners(owner_ids)?;
         let resolutions = self.call_resolutions_for_sites(&sites)?;
         let targets = self.call_targets_for_sites(&sites)?;
 
@@ -143,6 +154,79 @@ impl Database {
                 Ok(row)
             })
             .collect()
+    }
+
+    fn call_sites_for_owners(
+        &self,
+        owner_ids: &BTreeSet<Uuid>,
+    ) -> Result<Vec<CallSiteRow>, DbError> {
+        if owner_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let input_rows = owner_ids
+            .iter()
+            .map(|owner| format!("[to_uuid(\"{owner}\")]"))
+            .collect::<Vec<_>>()
+            .join(",\n");
+
+        let mut script = valid_call_owner_rules();
+        script.push_str(&format!(
+            r#"
+            input_owner[owner_id] <- [
+{input_rows}
+            ]
+
+            ?[
+                id,
+                owner_id,
+                call_kind,
+                span,
+                cfgs,
+                unsafe_block,
+                path,
+                method_name,
+                macro_name,
+                receiver_kind,
+                receiver_path,
+                arg_count,
+                generic_arg_count
+            ] :=
+                input_owner[owner_id],
+                valid_owner[owner_id, owner_kind],
+                *call_site_edge {{
+                    source_id: owner_id,
+                    target_id: id,
+                    relation_kind: "BodyContainsCall",
+                    source_kind: owner_kind,
+                    target_kind: call_kind @ 'NOW'
+                }},
+                *call_site {{
+                    id,
+                    owner_id,
+                    call_kind,
+                    span,
+                    cfgs,
+                    unsafe_block,
+                    path,
+                    method_name,
+                    macro_name,
+                    receiver_kind,
+                    receiver_path,
+                    arg_count,
+                    generic_arg_count @ 'NOW'
+                }}
+            :sort owner_id, span"#
+        ));
+        let rows = self.run_script(&script, BTreeMap::new(), ScriptMutability::Immutable)?;
+
+        let mut sites = rows
+            .rows
+            .iter()
+            .map(|row| decode_site(row))
+            .collect::<Result<Vec<_>, DbError>>()?;
+        enrich_call_site_cfgs(self, &mut sites)?;
+        Ok(sites)
     }
 
     fn call_resolutions_for_sites(
