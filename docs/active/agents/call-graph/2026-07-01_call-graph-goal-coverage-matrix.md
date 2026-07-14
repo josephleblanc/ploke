@@ -10,7 +10,7 @@ Related planning files:
 - [`2026-06-28_real-corpus-call-site-oracle-matrices.md`](2026-06-28_real-corpus-call-site-oracle-matrices.md)
 - [`2026-07-07_call-graph-usage-question-gap-audit.md`](2026-07-07_call-graph-usage-question-gap-audit.md)
 
-Status date: 2026-07-13
+Status date: 2026-07-14
 Baseline HEAD when created: `19860cc40`
 
 ## Operating Rule
@@ -49,6 +49,21 @@ An unsupported bucket is done for now when it has:
 No bucket should receive more than four consecutive commits without re-checking this matrix and either switching buckets or recording a concrete reason to stay.
 
 ## Current And Recent Buckets
+
+Latest completed slice: returned-callable binding evidence proof projection.
+The proof graph now has a strict `binding_evidence` fact kind for returned
+callable callee evidence. Existing `ReturnedPathCall` and
+`AwaitedReturnedPathCall` rows now project searchable `returned_callable`
+binding evidence with call-site identity, caller identity, build domain,
+source span, callee path, and resolution state. Fixture DB tests prove this for
+returned functions, returned function parameters, returned closure values,
+awaited returned async closures, and same-block stored returned async closure
+futures. The forwarded returned async future oracle remains fail-closed:
+`make_forwarded_returned_async_future()` still has a targetless dynamic row and
+the caller still has no path to `local_target`, but the row now carries
+returned-callable binding evidence plus the existing async poll/resume blocker.
+This is a proof substrate over existing `call_callee_evidence`, not a general
+`local_binding` relation family and not a new traversal edge.
 
 Latest completed slice: unsupported axum `assert_eq!` macro-bound
 `try_downcast` proof blockers. The real-corpus source oracles are

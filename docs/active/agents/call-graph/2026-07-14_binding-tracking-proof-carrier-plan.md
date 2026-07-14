@@ -135,6 +135,37 @@ Preferred first slice:
 This gives DB/RAG/TUI query work a durable proof substrate without widening
 runtime dispatch or async poll/resume semantics.
 
+## 2026-07-14 Projection-First Checkpoint
+
+Committed slice: `2f8aac74f Project returned callable binding evidence`.
+
+What is complete:
+
+- `ploke-db` proof projection now emits a strict proof-only
+  `binding_evidence` fact for `ReturnedPathCall` and
+  `AwaitedReturnedPathCall` callee evidence.
+- Proof-store validation recognizes the new fact kind, requires
+  `binding_evidence_id`, call-site/caller/build-domain fields, typed
+  `binding_evidence_kind`, typed `callee_kind`, non-empty `callee_path`,
+  `resolution_state`, `detail`, `source_span`, and `evidence_use`.
+- Fixture DB tests assert returned functions, returned function parameters,
+  returned closures, awaited returned async closures, same-block stored
+  returned async closures, and fail-closed forwarded returned async futures all
+  surface searchable returned-callable binding evidence.
+- The forwarded returned async future remains targetless and still projects the
+  poll/resume proof blocker. No new traversal edge is admitted.
+
+What remains:
+
+- This is not yet the `local_binding` / `local_binding_edge` relation family
+  sketched below. It reuses existing parser and transform
+  `call_callee_evidence`.
+- The next code slice should add one durable parser-owned binding relationship
+  only if the source oracle needs a relation beyond callsite-local callee
+  evidence. Otherwise keep emitting explicit proof blockers or summaries.
+- Do not use this checkpoint to justify broad callable-field, public callable
+  parameter, trait-object, or async poll/resume traversal.
+
 ## Exit Criteria
 
 For the first carrier slice:
@@ -156,4 +187,3 @@ For the first carrier slice:
 - No public API caller-set inference.
 - No external frontier traversal edge from an admitted summary alone.
 - No catchall fixture/helper file growth.
-

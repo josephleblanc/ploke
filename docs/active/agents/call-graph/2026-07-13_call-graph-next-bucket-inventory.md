@@ -29,6 +29,13 @@ Current completed checkpoint:
   representative matrix.
 - Active corpus fixtures have been regenerated with baseline call-graph
   relations and verified.
+- The latest binding-carrier projection slice adds a strict proof-only
+  `binding_evidence` fact for returned-callable callee evidence. Resolved
+  returned functions, returned closure values, awaited returned async closures,
+  and same-block stored returned async closures now project searchable
+  `returned_callable` binding evidence. Un-awaited and forwarded returned async
+  future rows project the same binding evidence with blocked resolution plus
+  the existing poll/resume blocker, without admitting a path to `local_target`.
 - The latest committed returned-async slice records returned-path dynamic
   callee awaitedness, resolves `make_returned_async_closure()().await` to the
   returned async-closure owner, also resolves the same returned future after a
@@ -84,6 +91,12 @@ Selection update, 2026-07-14:
   instead of adding more parser breadth. The first slice is projection-first:
   persist exact returned-callable binding evidence and its async fail-closed
   counterpart before promoting any new resolver edge.
+- Status update: the projection-first proof slice is complete as
+  `binding_evidence` facts over existing `call_callee_evidence`. This is not
+  yet a general `local_binding` relation family. The next implementation must
+  either promote one exact parser-owned binding relationship into a durable
+  typed relation, or choose a reviewed async/value-flow blocker that needs that
+  carrier before any new traversal edge can be admitted.
 
 Post-regeneration checkpoint, 2026-07-13:
 
