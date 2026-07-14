@@ -7,10 +7,11 @@ use crate::{Database, DbError, database::to_string};
 
 use super::super::{
     CallContextRow, CallResolutionRow, CallSiteKind, CallSiteRow, CallStatusKind, CallTargetRow,
-    LocalBindingEdgeRow, LocalBindingRow,
+    LocalBindingEdgeRow, LocalBindingRow, ReturnedCallBindingFlow,
     decode::{
-        decode_local_binding, decode_local_binding_edge, decode_resolution, decode_site,
-        decode_target, validate_owner_context_targets,
+        decode_local_binding, decode_local_binding_edge, decode_resolution,
+        decode_returned_call_binding_flow, decode_site, decode_target,
+        validate_owner_context_targets,
     },
     families::{valid_call_owner_rules, valid_call_target, valid_call_target_rules},
 };
@@ -190,6 +191,94 @@ impl Database {
         rows.rows
             .iter()
             .map(|row| decode_local_binding_edge(row))
+            .collect::<Result<Vec<_>, DbError>>()
+    }
+
+    pub fn returned_call_binding_flows_for_owner(
+        &self,
+        owner_id: Uuid,
+    ) -> Result<Vec<ReturnedCallBindingFlow>, DbError> {
+        let mut params = BTreeMap::new();
+        params.insert(
+            "owner_id".to_string(),
+            DataValue::Uuid(UuidWrapper(owner_id)),
+        );
+
+        let mut script = valid_call_target_rules();
+        script.push_str(
+            r#"
+            ?[
+                caller_id,
+                dynamic_id,
+                dynamic_span,
+                path,
+                dynamic_target_id,
+                dynamic_relation,
+                dynamic_target_kind,
+                producer_site_id,
+                producer_span,
+                producer_id,
+                binding_id,
+                source_id,
+                source_relation,
+                source_kind
+            ] :=
+                caller_id = $owner_id,
+                *call_site {
+                    id: dynamic_id,
+                    owner_id: caller_id,
+                    call_kind: "Dynamic",
+                    span: dynamic_span,
+                    path @ 'NOW'
+                },
+                *call_resolution_status {
+                    source_id: dynamic_id,
+                    source_kind: "Dynamic",
+                    status_kind: "Resolved",
+                    resolution_kind: "LocalExact" @ 'NOW'
+                },
+                *call_relation {
+                    source_id: dynamic_id,
+                    target_id: dynamic_target_id,
+                    relation_kind: dynamic_relation,
+                    source_kind: "Dynamic",
+                    target_kind: dynamic_target_kind @ 'NOW'
+                },
+                valid_target[dynamic_target_id, dynamic_relation, "Dynamic", dynamic_target_kind],
+                *call_site {
+                    id: producer_site_id,
+                    owner_id: caller_id,
+                    call_kind: "Path",
+                    span: producer_span,
+                    path @ 'NOW'
+                },
+                *call_relation {
+                    source_id: producer_site_id,
+                    target_id: producer_id,
+                    relation_kind: "Function",
+                    source_kind: "Path",
+                    target_kind: "Function" @ 'NOW'
+                },
+                valid_target[producer_id, "Function", "Path", "Function"],
+                *local_binding {
+                    id: binding_id,
+                    owner_id: producer_id,
+                    binding_kind: "ReturnExpression" @ 'NOW'
+                },
+                *local_binding_edge {
+                    source_id: binding_id,
+                    target_id: source_id,
+                    relation_kind: source_relation,
+                    source_kind: "LocalBinding",
+                    target_kind: source_kind @ 'NOW'
+                }
+            :sort dynamic_span, producer_span, source_kind"#,
+        );
+        let rows = self.run_script(&script, params, ScriptMutability::Immutable)?;
+
+        rows.rows
+            .iter()
+            .map(|row| decode_returned_call_binding_flow(row))
             .collect::<Result<Vec<_>, DbError>>()
     }
 

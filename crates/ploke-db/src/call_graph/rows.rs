@@ -73,6 +73,45 @@ pub struct LocalBindingEdgeRow {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ReturnedCallSite {
+    pub id: Uuid,
+    pub span: (u32, u32),
+    pub path: Vec<String>,
+    pub target_id: Uuid,
+    pub relation: CallRelationKind,
+    pub target_kind: CallTargetKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ReturnedCallProducer {
+    pub id: Uuid,
+    pub site_id: Uuid,
+    pub span: (u32, u32),
+    pub path: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ReturnedCallSource {
+    pub id: Uuid,
+    pub relation: LocalBindingRelationKind,
+    pub kind: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ReturnedCallBinding {
+    pub id: Uuid,
+    pub source: ReturnedCallSource,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ReturnedCallBindingFlow {
+    pub caller_id: Uuid,
+    pub dynamic: ReturnedCallSite,
+    pub producer: ReturnedCallProducer,
+    pub binding: ReturnedCallBinding,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CallSiteBucket {
     pub kind: CallSiteKind,
     pub relation: CallRelationKind,

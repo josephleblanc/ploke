@@ -50,7 +50,20 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Latest completed slice: durable returned-callable `local_binding_edge`
+Latest completed slice: returned-callable binding-flow query helper.
+`ploke-db` now exposes `returned_call_binding_flows_for_owner`, a DB-only
+explanatory proof path that joins a resolved dynamic returned-callable callsite
+to the matching producer path call and that producer's persisted return
+binding/source edge. The fixture-backed sync oracle proves
+`call_forwarded_returned_closure()` has exactly one flow from the outer dynamic
+call through `make_forwarded_returned_closure()` to the producer return
+binding sourced by the `make_target_closure()` path call. The forwarded
+returned async future oracle remains fail-closed: neither the caller that
+awaits the producer nor the targetless producer dynamic row exposes a returned
+call binding flow. This does not add parser breadth, fixture DB churn, or a new
+call traversal edge.
+
+Recent completed slice: durable returned-callable `local_binding_edge`
 projection. The parser now records typed `LocalBindingRelation` facts for
 owner-to-binding containment and binding-to-source endpoints. Transform
 projection persists those facts in `local_binding_edge`, and `ploke-db` exposes

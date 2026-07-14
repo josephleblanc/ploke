@@ -122,10 +122,17 @@ Local-binding projection checkpoint, 2026-07-14:
   binding pointing at its targetless `ReturnedPathCall` dynamic row. Each owner
   now has exactly the expected `OwnerContainsBinding` edge plus a
   `BindingSourceClosure` or `BindingSourceCallResult` edge.
+- Query behavior: `returned_call_binding_flows_for_owner` now joins the
+  caller's resolved returned-callable dynamic row to the producer path call and
+  the producer's persisted return binding/source edge. The sync forwarded
+  closure oracle returns exactly one explanatory flow; the forwarded returned
+  async future oracle returns no flow for both caller and producer because the
+  producer-side dynamic row remains targetless.
 - Fixtures: active call-graph fixtures regenerated and verified; shared corpus
   snapshots now report 66 relations.
 - Boundary: this is not general let-binding flow, callable-field value flow,
-  trait-object dispatch, or async poll/resume traversal.
+  trait-object dispatch, async poll/resume traversal, or a new call traversal
+  edge.
 
 Post-regeneration checkpoint, 2026-07-13:
 

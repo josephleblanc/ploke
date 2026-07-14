@@ -206,6 +206,35 @@ What remains:
 - The next durable carrier step should be driven by a DB-first source oracle
   that needs one exact relationship beyond return-expression source facts.
 
+## 2026-07-14 Returned-Callable Binding-Flow Query Checkpoint
+
+Committed slice: DB query helper over returned-callable binding evidence.
+
+What is complete:
+
+- `ploke-db` exposes `returned_call_binding_flows_for_owner` as an
+  owner-scoped explanatory query over existing persisted facts. It joins a
+  resolved dynamic returned-callable callsite to the matching producer path call
+  and the producer's `ReturnExpression` `local_binding` source edge.
+- The fixture-backed sync oracle
+  `call_forwarded_returned_closure() -> make_forwarded_returned_closure()`
+  returns exactly one flow. The row identifies the caller dynamic site, the
+  producer path call, the producer return binding, and the
+  `BindingSourceCallResult` edge to `make_target_closure()`.
+- The forwarded returned async future oracle remains fail-closed. The caller
+  that awaits `make_forwarded_returned_async_future()` returns no flow, and the
+  producer itself returns no flow because its returned async future dynamic row
+  is unsupported, targetless, and still blocked on future value flow /
+  poll-resume proof.
+
+What remains:
+
+- This is not a new resolver edge, not a parser extraction expansion, and not a
+  general value-flow graph. It is a query surface that proves when existing
+  returned-callable traversal has durable binding evidence.
+- RAG/TUI can consume this row shape later, but this slice deliberately keeps
+  downstream presentation out until the DB helper is stable.
+
 ## Exit Criteria
 
 For the first carrier slice:

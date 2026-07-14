@@ -20,5 +20,6 @@ pub use rows::{
     CallTestSelectionReport, CrateBoundaryEdge, CrateBoundaryPolicyRule,
     CrateBoundaryPolicyViolation, ExternalSummaryNeed, LocalBindingEdgeRow, LocalBindingRow,
     ModuleBoundaryEdge, ModuleBoundaryPolicyRule, ModuleBoundaryPolicyViolation,
-    RuntimeDispatchNeed,
+    ReturnedCallBinding, ReturnedCallBindingFlow, ReturnedCallProducer, ReturnedCallSite,
+    ReturnedCallSource, RuntimeDispatchNeed,
 };

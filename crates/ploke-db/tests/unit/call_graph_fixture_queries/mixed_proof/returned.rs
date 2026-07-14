@@ -276,6 +276,40 @@ fn fixture_projection_resolves_forwarded_returned_closure_value_flow() -> Result
         &["make_target_closure"],
         "make_forwarded_returned_closure",
     )?;
+    let producer_binding =
+        only_return_binding(&db, producer, "make_forwarded_returned_closure flow")?;
+
+    let flows = db.returned_call_binding_flows_for_owner(owner)?;
+    assert_eq!(
+        flows.len(),
+        1,
+        "forwarded returned closure should expose one dynamic-call-to-return-binding proof path: {flows:#?}"
+    );
+    let flow = &flows[0];
+    assert_eq!(flow.caller_id, owner);
+    assert_eq!(flow.dynamic.id, dynamic.site.id);
+    assert_eq!(flow.dynamic.span, dynamic.site.span);
+    assert_eq!(
+        flow.dynamic.path,
+        path(&["make_forwarded_returned_closure"])
+    );
+    assert_eq!(flow.dynamic.target_id, closure);
+    assert_eq!(flow.dynamic.relation, CallRelationKind::DynamicClosure);
+    assert_eq!(flow.dynamic.target_kind, CallTargetKind::Closure);
+    assert_eq!(flow.producer.id, producer);
+    assert_eq!(flow.producer.site_id, producer_row.site.id);
+    assert_eq!(flow.producer.span, producer_row.site.span);
+    assert_eq!(flow.producer.path, flow.dynamic.path);
+    assert_eq!(flow.binding.id, producer_binding.id);
+    assert_eq!(
+        flow.binding.source.id, maker_row.site.id,
+        "producer return binding should be sourced by the maker callsite"
+    );
+    assert_eq!(
+        flow.binding.source.relation,
+        LocalBindingRelationKind::BindingSourceCallResult
+    );
+    assert_eq!(flow.binding.source.kind, "Path");
 
     let producer_paths = db.call_paths_between(
         owner,
@@ -452,6 +486,11 @@ fn fixture_projection_keeps_forwarded_returned_async_future_fail_closed() -> Res
         CallSiteKind::Path,
         CallTargetKind::Function,
     );
+    let owner_flows = db.returned_call_binding_flows_for_owner(owner)?;
+    assert!(
+        owner_flows.is_empty(),
+        "awaiting a forwarded future producer must not create a returned-callable binding flow in the caller: {owner_flows:#?}"
+    );
 
     let producer_context = db.call_context_for_owner(producer)?;
     assert_eq!(
@@ -490,6 +529,11 @@ fn fixture_projection_keeps_forwarded_returned_async_future_fail_closed() -> Res
         &["make_returned_async_closure"],
         "make_forwarded_returned_async_future",
     )?;
+    let producer_flows = db.returned_call_binding_flows_for_owner(producer)?;
+    assert!(
+        producer_flows.is_empty(),
+        "targetless returned async future dynamic call must not expose a returned-call binding flow: {producer_flows:#?}"
+    );
     let count = db.project_call_proof_facts_for_owner(producer, "bd:fixture-call-graph")?;
     assert_eq!(count, 7, "forwarded returned async future proof facts");
     assert_returned_callable_binding_evidence(

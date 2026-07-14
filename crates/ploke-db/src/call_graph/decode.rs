@@ -9,7 +9,8 @@ use crate::{
 use super::{
     CallContextRow, CallReceiver, CallRelationKind, CallResolutionKind, CallResolutionRow,
     CallSiteKind, CallSiteRow, CallStatusKind, CallTargetKind, CallTargetRow, LocalBindingEdgeRow,
-    LocalBindingRelationKind, LocalBindingRow,
+    LocalBindingRelationKind, LocalBindingRow, ReturnedCallBinding, ReturnedCallBindingFlow,
+    ReturnedCallProducer, ReturnedCallSite, ReturnedCallSource,
 };
 
 pub(super) fn decode_site(row: &[DataValue]) -> Result<CallSiteRow, DbError> {
@@ -149,6 +150,65 @@ pub(super) fn decode_local_binding_edge(row: &[DataValue]) -> Result<LocalBindin
     };
     validate_local_binding_edge_shape(&edge)?;
     Ok(edge)
+}
+
+pub(super) fn decode_returned_call_binding_flow(
+    row: &[DataValue],
+) -> Result<ReturnedCallBindingFlow, DbError> {
+    let flow = ReturnedCallBindingFlow {
+        caller_id: to_uuid(&row[0])?,
+        dynamic: ReturnedCallSite {
+            id: to_uuid(&row[1])?,
+            span: span_pair(&row[2])?,
+            path: to_string_list(&row[3])?,
+            target_id: to_uuid(&row[4])?,
+            relation: CallRelationKind::from_str(&to_string(&row[5])?)?,
+            target_kind: CallTargetKind::from_str(&to_string(&row[6])?)?,
+        },
+        producer: ReturnedCallProducer {
+            id: to_uuid(&row[9])?,
+            site_id: to_uuid(&row[7])?,
+            span: span_pair(&row[8])?,
+            path: to_string_list(&row[3])?,
+        },
+        binding: ReturnedCallBinding {
+            id: to_uuid(&row[10])?,
+            source: ReturnedCallSource {
+                id: to_uuid(&row[11])?,
+                relation: LocalBindingRelationKind::from_str(&to_string(&row[12])?)?,
+                kind: to_string(&row[13])?,
+            },
+        },
+    };
+    validate_returned_call_binding_flow(&flow)?;
+    Ok(flow)
+}
+
+fn validate_returned_call_binding_flow(flow: &ReturnedCallBindingFlow) -> Result<(), DbError> {
+    let target_is_callable = matches!(
+        (flow.dynamic.relation, flow.dynamic.target_kind),
+        (CallRelationKind::DynamicFunction, CallTargetKind::Function)
+            | (CallRelationKind::DynamicClosure, CallTargetKind::Closure)
+    );
+    let source_is_binding_edge = matches!(
+        flow.binding.source.relation,
+        LocalBindingRelationKind::BindingSourceClosure
+            | LocalBindingRelationKind::BindingSourceCallResult
+    );
+
+    if target_is_callable
+        && source_is_binding_edge
+        && flow.dynamic.path == flow.producer.path
+        && !flow.dynamic.path.is_empty()
+        && !flow.binding.source.kind.is_empty()
+    {
+        Ok(())
+    } else {
+        Err(DbError::Cozo(format!(
+            "malformed returned call binding flow for dynamic call {}",
+            flow.dynamic.id
+        )))
+    }
 }
 
 fn validate_local_binding_edge_shape(edge: &LocalBindingEdgeRow) -> Result<(), DbError> {
