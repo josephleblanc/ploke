@@ -50,7 +50,17 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Latest completed slice: returned-callable binding-flow query helper.
+Latest completed slice: exact RAG returned-callable binding-flow surface.
+`ploke-rag` now exposes `exact_returned_call_binding_flows_for_owner` over the
+DB helper without changing `CallContextInfo` or `ConciseContext`. The shared
+RAG type surface has a typed `ReturnedCallBindingFlowInfo` payload that
+preserves the dynamic callsite, producer path call, return binding, binding
+source relation, and source kind. The fixture RAG test proves the sync
+forwarded-closure oracle is visible through exact RAG and that the forwarded
+returned async future still returns no flow. TUI/tool payloads are intentionally
+not widened in this slice.
+
+Recent completed slice: returned-callable binding-flow query helper.
 `ploke-db` now exposes `returned_call_binding_flows_for_owner`, a DB-only
 explanatory proof path that joins a resolved dynamic returned-callable callsite
 to the matching producer path call and that producer's persisted return

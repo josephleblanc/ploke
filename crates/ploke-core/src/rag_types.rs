@@ -598,6 +598,62 @@ pub struct RuntimeDispatchNeedInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalBindingRelationKind {
+    BindingSourceClosure,
+    BindingSourceCallResult,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum ReturnedCallSourceKind {
+    Closure,
+    Path,
+    Method,
+    Dynamic,
+    Macro,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct ReturnedCallSiteInfo {
+    pub id: Uuid,
+    pub span: (u32, u32),
+    pub path: Vec<String>,
+    pub target_id: Uuid,
+    pub relation: CallTargetKind,
+    pub target_kind: CallEndpointKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct ReturnedCallProducerInfo {
+    pub id: Uuid,
+    pub site_id: Uuid,
+    pub span: (u32, u32),
+    pub path: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct ReturnedCallSourceInfo {
+    pub id: Uuid,
+    pub relation: LocalBindingRelationKind,
+    pub kind: ReturnedCallSourceKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct ReturnedCallBindingInfo {
+    pub id: Uuid,
+    pub source: ReturnedCallSourceInfo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct ReturnedCallBindingFlowInfo {
+    pub caller_id: Uuid,
+    pub dynamic: ReturnedCallSiteInfo,
+    pub producer: ReturnedCallProducerInfo,
+    pub binding: ReturnedCallBindingInfo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct CallBuildDomainInfo {
     pub build_domain_id: String,
     #[serde(default)]

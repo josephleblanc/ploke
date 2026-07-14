@@ -1,0 +1,100 @@
+use super::super::super::super::super::*;
+use super::super::super::helpers::*;
+use ploke_core::rag_types::{
+    CallEndpointKind, CallTargetKind, LocalBindingRelationKind, ReturnedCallSourceKind,
+};
+
+#[tokio::test]
+async fn returned_call_binding_flows_exact_expose_forwarded_closure_proof() -> Result<(), Error> {
+    init_tracing_once();
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let rag = init_test_rag_mock(Arc::clone(&db));
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:1511-1520:
+    // `call_forwarded_returned_closure()` invokes a sync closure returned
+    // through `make_forwarded_returned_closure()`. The DB helper proves the
+    // dynamic call through the producer's persisted return binding instead of
+    // relying only on the admitted call edge.
+    let owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_forwarded_returned_closure"),
+    )?;
+    let producer = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "make_forwarded_returned_closure"),
+    )?;
+    let maker = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "make_target_closure"),
+    )?;
+    let flows = rag
+        .exact_returned_call_binding_flows_for_owner(owner)?
+        .expect("call context is enabled");
+    assert_eq!(
+        flows.len(),
+        1,
+        "RAG should expose one returned-call binding flow for forwarded sync closure: {flows:#?}"
+    );
+    let flow = &flows[0];
+    let sync_path = vec!["make_forwarded_returned_closure".to_string()];
+    assert_eq!(flow.caller_id, owner);
+    assert_eq!(flow.dynamic.path, sync_path);
+    assert_eq!(flow.dynamic.relation, CallTargetKind::DynamicClosure);
+    assert_eq!(flow.dynamic.target_kind, CallEndpointKind::Closure);
+    assert_eq!(flow.producer.id, producer);
+    assert_eq!(flow.producer.path, flow.dynamic.path);
+    assert_eq!(
+        flow.binding.source.relation,
+        LocalBindingRelationKind::BindingSourceCallResult
+    );
+    assert_eq!(flow.binding.source.kind, ReturnedCallSourceKind::Path);
+
+    let db_flows = db.returned_call_binding_flows_for_owner(owner)?;
+    assert_eq!(db_flows.len(), 1);
+    assert_eq!(
+        flow.binding.source.id, db_flows[0].binding.source.id,
+        "RAG should preserve the exact producer return-binding source callsite"
+    );
+    assert_eq!(
+        db_flows[0].producer.id, producer,
+        "DB producer endpoint should be the forwarded closure producer"
+    );
+    assert_ne!(
+        db_flows[0].binding.source.id, db_flows[0].producer.site_id,
+        "producer return binding source should be the inner maker callsite, not the caller's producer callsite"
+    );
+    assert_ne!(
+        db_flows[0].binding.source.id, maker,
+        "binding source is a callsite ID, not the maker function ID"
+    );
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:2368-2373:
+    // The forwarded async future path remains fail-closed because future value
+    // flow and poll/resume proof are not modeled across this producer boundary.
+    let future_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_forwarded_returned_async_future"),
+    )?;
+    let future_producer = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "make_forwarded_returned_async_future"),
+    )?;
+    let owner_flows = rag
+        .exact_returned_call_binding_flows_for_owner(future_owner)?
+        .expect("call context is enabled");
+    assert!(
+        owner_flows.is_empty(),
+        "awaiting the producer result must not expose a returned-call flow without future proof: {owner_flows:#?}"
+    );
+    let producer_flows = rag
+        .exact_returned_call_binding_flows_for_owner(future_producer)?
+        .expect("call context is enabled");
+    assert!(
+        producer_flows.is_empty(),
+        "targetless returned async future producer must remain absent from exact RAG binding flows: {producer_flows:#?}"
+    );
+
+    Ok(())
+}

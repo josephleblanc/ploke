@@ -235,6 +235,27 @@ What remains:
 - RAG/TUI can consume this row shape later, but this slice deliberately keeps
   downstream presentation out until the DB helper is stable.
 
+## 2026-07-14 Exact RAG Binding-Flow Surface Checkpoint
+
+Committed slice: exact RAG propagation of returned-callable binding flows.
+
+What is complete:
+
+- `ploke-rag` exposes `exact_returned_call_binding_flows_for_owner`, preserving
+  the DB helper's fail-closed semantics.
+- `ploke_core::rag_types` defines typed returned-call binding-flow payloads
+  rather than adding stringly fields to `CallContextInfo`.
+- The fixture-backed exact RAG test proves the sync forwarded-closure flow and
+  proves both sides of the forwarded returned async future remain empty.
+
+What remains:
+
+- `ConciseContext`, `code_item_lookup`, and `code_item_edges` do not yet expose
+  the new flow rows. That should be a separate tool payload slice after the
+  exact RAG helper remains stable.
+- The helper still does not model future value flow, callable fields, trait
+  objects, or general local bindings.
+
 ## Exit Criteria
 
 For the first carrier slice:

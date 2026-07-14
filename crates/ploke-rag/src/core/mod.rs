@@ -19,8 +19,10 @@ use ploke_core::rag_types::{
     CallSiteKind as RagCallSiteKind, CallStatusKind as RagCallStatusKind, CallTargetInfo,
     CallTargetKind, CallTestEntrypointInfo, CallTestSelectionInfo, CanonPath,
     CrateBoundaryEdgeInfo, CrateBoundaryPolicyViolationInfo, ExternalSummaryNeedInfo,
-    ModuleBoundaryEdgeInfo, ModuleBoundaryPolicyViolationInfo, NodeFilepath, ProofContextInfo,
-    RuntimeDispatchNeedInfo,
+    LocalBindingRelationKind as RagLocalBindingRelationKind, ModuleBoundaryEdgeInfo,
+    ModuleBoundaryPolicyViolationInfo, NodeFilepath, ProofContextInfo, ReturnedCallBindingFlowInfo,
+    ReturnedCallBindingInfo, ReturnedCallProducerInfo, ReturnedCallSiteInfo,
+    ReturnedCallSourceInfo, ReturnedCallSourceKind, RuntimeDispatchNeedInfo,
 };
 use ploke_db::{
     CallBuildDomain as DbCallBuildDomain, CallContextCandidate, CallContextOptions,
@@ -36,10 +38,12 @@ use ploke_db::{
     CallTestSelectionReport as DbCallTestSelectionReport, CrateBoundaryEdge as DbCrateBoundaryEdge,
     CrateBoundaryPolicyRule as DbCrateBoundaryPolicyRule,
     CrateBoundaryPolicyViolation as DbCrateBoundaryPolicyViolation,
-    ExternalSummaryNeed as DbExternalSummaryNeed, ModuleBoundaryEdge as DbModuleBoundaryEdge,
+    ExternalSummaryNeed as DbExternalSummaryNeed, LocalBindingRelationKind,
+    ModuleBoundaryEdge as DbModuleBoundaryEdge,
     ModuleBoundaryPolicyRule as DbModuleBoundaryPolicyRule,
     ModuleBoundaryPolicyViolation as DbModuleBoundaryPolicyViolation, ProofGraphContextRow,
-    ProofGraphStore, RuntimeDispatchNeed as DbRuntimeDispatchNeed,
+    ProofGraphStore, ReturnedCallBindingFlow as DbReturnedCallBindingFlow,
+    RuntimeDispatchNeed as DbRuntimeDispatchNeed,
 };
 use ploke_embed::indexer::EmbeddingProcessor;
 use ploke_embed::runtime::EmbeddingRuntime;
@@ -617,6 +621,36 @@ fn runtime_dispatch_need_info(
     })
 }
 
+fn returned_call_binding_flow_info(
+    row: DbReturnedCallBindingFlow,
+) -> Result<ReturnedCallBindingFlowInfo, RagError> {
+    Ok(ReturnedCallBindingFlowInfo {
+        caller_id: row.caller_id,
+        dynamic: ReturnedCallSiteInfo {
+            id: row.dynamic.id,
+            span: row.dynamic.span,
+            path: row.dynamic.path,
+            target_id: row.dynamic.target_id,
+            relation: target_kind(row.dynamic.relation),
+            target_kind: call_target_kind(row.dynamic.target_kind),
+        },
+        producer: ReturnedCallProducerInfo {
+            id: row.producer.id,
+            site_id: row.producer.site_id,
+            span: row.producer.span,
+            path: row.producer.path,
+        },
+        binding: ReturnedCallBindingInfo {
+            id: row.binding.id,
+            source: ReturnedCallSourceInfo {
+                id: row.binding.source.id,
+                relation: local_binding_relation_kind(row.binding.source.relation)?,
+                kind: returned_call_source_kind(&row.binding.source.kind)?,
+            },
+        },
+    })
+}
+
 fn boundary_site_info(
     edge: DbCallPathEdge,
     site: CallSiteRow,
@@ -1076,6 +1110,33 @@ fn call_target_kind(kind: DbCallTargetKind) -> CallEndpointKind {
         DbCallTargetKind::Variant => CallEndpointKind::Variant,
     }
 }
+fn local_binding_relation_kind(
+    kind: LocalBindingRelationKind,
+) -> Result<RagLocalBindingRelationKind, RagError> {
+    match kind {
+        LocalBindingRelationKind::BindingSourceClosure => {
+            Ok(RagLocalBindingRelationKind::BindingSourceClosure)
+        }
+        LocalBindingRelationKind::BindingSourceCallResult => {
+            Ok(RagLocalBindingRelationKind::BindingSourceCallResult)
+        }
+        LocalBindingRelationKind::OwnerContainsBinding => Err(RagError::Db(DbError::Cozo(
+            "OwnerContainsBinding is not a returned-call source relation".to_string(),
+        ))),
+    }
+}
+fn returned_call_source_kind(kind: &str) -> Result<ReturnedCallSourceKind, RagError> {
+    match kind {
+        "Closure" => Ok(ReturnedCallSourceKind::Closure),
+        "Path" => Ok(ReturnedCallSourceKind::Path),
+        "Method" => Ok(ReturnedCallSourceKind::Method),
+        "Dynamic" => Ok(ReturnedCallSourceKind::Dynamic),
+        "Macro" => Ok(ReturnedCallSourceKind::Macro),
+        other => Err(RagError::Db(DbError::Cozo(format!(
+            "unknown returned-call source kind {other:?}"
+        )))),
+    }
+}
 fn status_kind(kind: DbCallStatusKind) -> RagCallStatusKind {
     match kind {
         DbCallStatusKind::Resolved => RagCallStatusKind::Resolved,
@@ -1389,6 +1450,23 @@ impl RagService {
                 .runtime_dispatch_needs_for_owner(owner_id, options)?
                 .into_iter()
                 .map(|row| runtime_dispatch_need_info(self.db.as_ref(), row))
+                .collect::<Result<Vec<_>, RagError>>()?,
+        ))
+    }
+
+    pub fn exact_returned_call_binding_flows_for_owner(
+        &self,
+        owner_id: Uuid,
+    ) -> Result<Option<Vec<ReturnedCallBindingFlowInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .returned_call_binding_flows_for_owner(owner_id)?
+                .into_iter()
+                .map(returned_call_binding_flow_info)
                 .collect::<Result<Vec<_>, RagError>>()?,
         ))
     }
