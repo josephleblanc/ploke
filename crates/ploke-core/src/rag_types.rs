@@ -900,6 +900,7 @@ impl From<ContextPart> for ConciseContext {
             call_proof_invariant_findings: Vec::new(),
             external_summary_needs: Vec::new(),
             runtime_dispatch_needs: Vec::new(),
+            returned_call_binding_flows: Vec::new(),
             module_boundary_edges: Vec::new(),
             crate_boundary_edges: Vec::new(),
             call_build_domains: Vec::new(),
@@ -976,6 +977,8 @@ pub struct ConciseContext {
     pub external_summary_needs: Vec<ExternalSummaryNeedInfo>,
     #[serde(default)]
     pub runtime_dispatch_needs: Vec<RuntimeDispatchNeedInfo>,
+    #[serde(default)]
+    pub returned_call_binding_flows: Vec<ReturnedCallBindingFlowInfo>,
     #[serde(default)]
     pub module_boundary_edges: Vec<ModuleBoundaryEdgeInfo>,
     #[serde(default)]

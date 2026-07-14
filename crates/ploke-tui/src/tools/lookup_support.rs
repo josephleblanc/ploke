@@ -4,7 +4,8 @@ use ploke_core::{
         CallBuildDomainInfo, CallContextInfo, CallEffectPolicyViolationInfo, CallImpactInfo,
         CallPathInfo, CallProofInvariantFindingInfo, CallReachEffectInfo, CallReachInfo,
         CallTestEntrypointInfo, CallTestSelectionInfo, CrateBoundaryEdgeInfo,
-        ExternalSummaryNeedInfo, ModuleBoundaryEdgeInfo, ProofContextInfo, RuntimeDispatchNeedInfo,
+        ExternalSummaryNeedInfo, ModuleBoundaryEdgeInfo, ProofContextInfo,
+        ReturnedCallBindingFlowInfo, RuntimeDispatchNeedInfo,
     },
     tool_types::ToolName,
 };
@@ -611,6 +612,25 @@ pub(super) fn runtime_dispatch_needs_for_node(
     }
 }
 
+pub(super) fn returned_call_binding_flows_for_node(
+    ctx: &super::Ctx,
+    node_id: Uuid,
+) -> Result<Vec<ReturnedCallBindingFlowInfo>, ploke_error::Error> {
+    use ploke_error::InternalError;
+
+    match ctx.state.rag.as_ref() {
+        Some(rag) if !rag.call_context_degraded() => Ok(rag
+            .exact_returned_call_binding_flows_for_owner(node_id)
+            .map_err(|err| {
+                ploke_error::Error::Internal(InternalError::CompilerError(format!(
+                    "failed to collect returned-call binding flows for code item {node_id}: {err}"
+                )))
+            })?
+            .unwrap_or_default()),
+        _ => Ok(Vec::new()),
+    }
+}
+
 pub(super) fn module_boundary_edges_for_node(
     ctx: &super::Ctx,
     node_id: Uuid,
@@ -773,6 +793,7 @@ pub(super) fn with_call_usage_fields(
     invariant_findings: &[CallProofInvariantFindingInfo],
     summary_needs: &[ExternalSummaryNeedInfo],
     runtime_needs: &[RuntimeDispatchNeedInfo],
+    returned_flows: &[ReturnedCallBindingFlowInfo],
     module_boundary_edges: &[ModuleBoundaryEdgeInfo],
     crate_boundary_edges: &[CrateBoundaryEdgeInfo],
     build_domains: &[CallBuildDomainInfo],
@@ -892,6 +913,10 @@ pub(super) fn with_call_usage_fields(
         )
         .with_field("external_summary_needs", summary_needs.len().to_string())
         .with_field("runtime_dispatch_needs", runtime_needs.len().to_string())
+        .with_field(
+            "returned_call_binding_flows",
+            returned_flows.len().to_string(),
+        )
         .with_field(
             "module_boundary_edges",
             module_boundary_edges.len().to_string(),

@@ -35,6 +35,10 @@ Current completed checkpoint:
   forwarding, and targetless dynamic returned-path call results. DB tests prove
   the sync returned-closure producer path and the fail-closed forwarded
   returned async future blocker without admitting a new traversal edge.
+- The returned-callable binding-flow proof is now surfaced through DB, exact
+  RAG, and exact TUI lookup/edges payloads for the sync
+  `call_forwarded_returned_closure()` oracle. It remains an explanatory proof
+  payload over existing traversal, not a new call edge.
 - The latest binding-carrier projection slice adds a strict proof-only
   `binding_evidence` fact for returned-callable callee evidence. Resolved
   returned functions, returned closure values, awaited returned async closures,
@@ -127,7 +131,9 @@ Local-binding projection checkpoint, 2026-07-14:
   the producer's persisted return binding/source edge. The sync forwarded
   closure oracle returns exactly one explanatory flow; the forwarded returned
   async future oracle returns no flow for both caller and producer because the
-  producer-side dynamic row remains targetless.
+  producer-side dynamic row remains targetless. Exact RAG and exact
+  `code_item_lookup` / `code_item_edges` payloads expose the sync flow and
+  preserve the same fail-closed boundary.
 - Fixtures: active call-graph fixtures regenerated and verified; shared corpus
   snapshots now report 66 relations.
 - Boundary: this is not general let-binding flow, callable-field value flow,

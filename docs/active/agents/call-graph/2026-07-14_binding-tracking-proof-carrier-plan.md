@@ -250,11 +250,35 @@ What is complete:
 
 What remains:
 
-- `ConciseContext`, `code_item_lookup`, and `code_item_edges` do not yet expose
-  the new flow rows. That should be a separate tool payload slice after the
-  exact RAG helper remains stable.
 - The helper still does not model future value flow, callable fields, trait
   objects, or general local bindings.
+
+## 2026-07-14 Exact TUI Binding-Flow Payload Checkpoint
+
+Committed slice: exact tool payload propagation of returned-callable binding
+flows.
+
+What is complete:
+
+- `ConciseContext` now carries `returned_call_binding_flows` as typed
+  `ReturnedCallBindingFlowInfo` payloads.
+- `code_item_lookup` and `code_item_edges` obtain those rows from
+  `RagService::exact_returned_call_binding_flows_for_owner`, following the
+  existing exact-helper pattern for downstream call-graph summaries.
+- The fixture-backed lookup and edge-tool tests for
+  `call_forwarded_returned_closure()` assert one flow with the expected caller,
+  producer path, dynamic closure relation, return-binding source relation, and
+  UI count.
+
+What remains:
+
+- This remains a proof/explanation payload over the existing traversal edge; it
+  does not add a new traversal relation.
+- The forwarded returned async future remains fail-closed in DB/RAG because
+  future value flow and cross-function poll/resume proof are still not modeled.
+- Broader local bindings, callable fields, trait objects, and async
+  poll/resume traversal still require separate source-oracle-driven carrier
+  slices.
 
 ## Exit Criteria
 

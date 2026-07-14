@@ -50,15 +50,26 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Latest completed slice: exact RAG returned-callable binding-flow surface.
+Latest completed slice: exact TUI returned-callable binding-flow payload.
+`ConciseContext` now carries the exact RAG
+`ReturnedCallBindingFlowInfo` payload, and `code_item_lookup` /
+`code_item_edges` populate it through the RAG exact helper without adding
+tool-local semantics. The fixture lookup/edges tests for
+`call_forwarded_returned_closure()` assert the returned-call binding-flow array
+and the UI count while reusing the same typed flow assertion as the RAG/DB
+surface: caller dynamic callsite -> producer path call -> producer return
+binding source. This completes the DB, RAG, and exact TUI surface for the sync
+forwarded-closure binding-flow proof. The forwarded returned async future
+remains fail-closed in DB/RAG and does not gain a traversal edge.
+
+Recent completed slice: exact RAG returned-callable binding-flow surface.
 `ploke-rag` now exposes `exact_returned_call_binding_flows_for_owner` over the
-DB helper without changing `CallContextInfo` or `ConciseContext`. The shared
-RAG type surface has a typed `ReturnedCallBindingFlowInfo` payload that
-preserves the dynamic callsite, producer path call, return binding, binding
-source relation, and source kind. The fixture RAG test proves the sync
-forwarded-closure oracle is visible through exact RAG and that the forwarded
-returned async future still returns no flow. TUI/tool payloads are intentionally
-not widened in this slice.
+DB helper without changing `CallContextInfo`. The shared RAG type surface has a
+typed `ReturnedCallBindingFlowInfo` payload that preserves the dynamic
+callsite, producer path call, return binding, binding source relation, and
+source kind. The fixture RAG test proves the sync forwarded-closure oracle is
+visible through exact RAG and that the forwarded returned async future still
+returns no flow.
 
 Recent completed slice: returned-callable binding-flow query helper.
 `ploke-db` now exposes `returned_call_binding_flows_for_owner`, a DB-only

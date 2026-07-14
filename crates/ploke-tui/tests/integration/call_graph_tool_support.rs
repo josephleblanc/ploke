@@ -8,9 +8,10 @@ use cozo::DataValue;
 use ploke_core::{
     ArcStr,
     rag_types::{
-        CallCalleeInfo, CallContextInfo, CallPathInfo, CallReachEffectInfo, CallReceiverInfo,
-        CallResolutionKind, CallSiteBucketInfo, CallSiteKind, CallStatusKind, CallTargetKind,
-        CrateBoundaryEdgeInfo, ProofContextInfo,
+        CallCalleeInfo, CallContextInfo, CallEndpointKind, CallPathInfo, CallReachEffectInfo,
+        CallReceiverInfo, CallResolutionKind, CallSiteBucketInfo, CallSiteKind, CallStatusKind,
+        CallTargetKind, CrateBoundaryEdgeInfo, LocalBindingRelationKind, ProofContextInfo,
+        ReturnedCallBindingFlowInfo, ReturnedCallSourceKind,
     },
 };
 use ploke_db::{
@@ -3254,6 +3255,35 @@ pub(crate) fn assert_target_proof(
                     == Some(target.as_str())
         }),
         "{label} should return target-centered proof rows for local_target callers: {proofs:#?}"
+    );
+}
+
+pub(crate) fn assert_forwarded_returned_closure_binding_flow(
+    flows: &[serde_json::Value],
+    owner: Uuid,
+    label: &str,
+    tool: &str,
+) {
+    let rows = flows
+        .iter()
+        .filter_map(|flow| serde_json::from_value::<ReturnedCallBindingFlowInfo>(flow.clone()).ok())
+        .collect::<Vec<_>>();
+    let path = vec!["make_forwarded_returned_closure".to_string()];
+    let matches = rows
+        .iter()
+        .filter(|flow| {
+            flow.caller_id == owner
+                && flow.dynamic.path == path
+                && flow.dynamic.relation == CallTargetKind::DynamicClosure
+                && flow.dynamic.target_kind == CallEndpointKind::Closure
+                && flow.producer.path == path
+                && flow.binding.source.relation == LocalBindingRelationKind::BindingSourceCallResult
+                && flow.binding.source.kind == ReturnedCallSourceKind::Path
+        })
+        .count();
+    assert_eq!(
+        matches, 1,
+        "{tool} should return exactly one returned-call binding flow for {label}: {flows:#?}"
     );
 }
 

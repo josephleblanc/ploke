@@ -30,19 +30,19 @@ use crate::call_graph_tool_support::{
     assert_branch_receiver_context, assert_branch_receiver_proof, assert_call_path_node,
     assert_chrono_naive_utc_incoming_context, assert_dynamic_context, assert_dynamic_proof,
     assert_expected_path_incoming_context, assert_fixture_extern_c_abs_effects,
-    assert_from_fn_basic_body_empty_crate_boundary, assert_generated_rejection_outgoing_context,
-    assert_handler_call_incoming_context, assert_incoming_context,
-    assert_initialized_local_receiver_context, assert_initialized_local_receiver_proof,
-    assert_json_from_bytes_incoming_context, assert_no_external_summary_need_for_site,
-    assert_parse_attrs_incoming_context, assert_path_blocker_proof, assert_path_context,
-    assert_path_resolution_proof, assert_process_invariant_findings,
-    assert_resolved_callable_param_proof, assert_resolved_dynamic_context,
-    assert_resolved_method_target_context, assert_resolved_path_context,
-    assert_run_ui_tests_incoming_context, assert_runtime_dispatch_blocker,
-    assert_self_field_receiver_context, assert_self_field_receiver_proof,
-    assert_serde_json_summary_proof, assert_serde_json_surface_measure_effect, assert_target_proof,
-    assert_task_spawn_effects, assert_task_spawn_policy_violation, assert_two_hop_call_path,
-    ui_field,
+    assert_forwarded_returned_closure_binding_flow, assert_from_fn_basic_body_empty_crate_boundary,
+    assert_generated_rejection_outgoing_context, assert_handler_call_incoming_context,
+    assert_incoming_context, assert_initialized_local_receiver_context,
+    assert_initialized_local_receiver_proof, assert_json_from_bytes_incoming_context,
+    assert_no_external_summary_need_for_site, assert_parse_attrs_incoming_context,
+    assert_path_blocker_proof, assert_path_context, assert_path_resolution_proof,
+    assert_process_invariant_findings, assert_resolved_callable_param_proof,
+    assert_resolved_dynamic_context, assert_resolved_method_target_context,
+    assert_resolved_path_context, assert_run_ui_tests_incoming_context,
+    assert_runtime_dispatch_blocker, assert_self_field_receiver_context,
+    assert_self_field_receiver_proof, assert_serde_json_summary_proof,
+    assert_serde_json_surface_measure_effect, assert_target_proof, assert_task_spawn_effects,
+    assert_task_spawn_policy_violation, assert_two_hop_call_path, ui_field,
 };
 
 #[tokio::test]
@@ -1175,6 +1175,10 @@ async fn assert_forwarded_returned_closure_lookup(
         .get("proof_context")
         .and_then(serde_json::Value::as_array)
         .expect("proof_context array");
+    let returned_flows = payload
+        .get("returned_call_binding_flows")
+        .and_then(serde_json::Value::as_array)
+        .expect("returned_call_binding_flows array");
 
     // Source oracle:
     //   tests/fixture_crates/fixture_call_graph/src/lib.rs:1511-1520
@@ -1190,6 +1194,12 @@ async fn assert_forwarded_returned_closure_lookup(
         "code_item_lookup",
     );
     assert_target_proof(proof_context, fixture.owner, fixture.closure, label);
+    assert_forwarded_returned_closure_binding_flow(
+        returned_flows,
+        fixture.owner,
+        label,
+        "code_item_lookup",
+    );
 
     let ui = result.ui_payload.as_ref().expect("ui payload");
     assert!(
@@ -1199,6 +1209,7 @@ async fn assert_forwarded_returned_closure_lookup(
             >= 1,
         "code_item_lookup should surface the {label} dynamic closure call"
     );
+    assert_eq!(ui_field(ui, "returned_call_binding_flows"), "1");
 }
 
 #[tokio::test]
