@@ -22,7 +22,8 @@ use ploke_core::rag_types::{
     LocalBindingRelationKind as RagLocalBindingRelationKind, ModuleBoundaryEdgeInfo,
     ModuleBoundaryPolicyViolationInfo, NodeFilepath, ProofContextInfo, ReturnedCallBindingFlowInfo,
     ReturnedCallBindingInfo, ReturnedCallProducerInfo, ReturnedCallSiteInfo,
-    ReturnedCallSourceInfo, ReturnedCallSourceKind, RuntimeDispatchNeedInfo,
+    ReturnedCallSourceInfo, ReturnedCallSourceKind, ReturnedFutureFlowInfo, ReturnedFutureSiteInfo,
+    RuntimeDispatchNeedInfo,
 };
 use ploke_db::{
     CallBuildDomain as DbCallBuildDomain, CallContextCandidate, CallContextOptions,
@@ -43,7 +44,7 @@ use ploke_db::{
     ModuleBoundaryPolicyRule as DbModuleBoundaryPolicyRule,
     ModuleBoundaryPolicyViolation as DbModuleBoundaryPolicyViolation, ProofGraphContextRow,
     ProofGraphStore, ReturnedCallBindingFlow as DbReturnedCallBindingFlow,
-    RuntimeDispatchNeed as DbRuntimeDispatchNeed,
+    ReturnedFutureFlow as DbReturnedFutureFlow, RuntimeDispatchNeed as DbRuntimeDispatchNeed,
 };
 use ploke_embed::indexer::EmbeddingProcessor;
 use ploke_embed::runtime::EmbeddingRuntime;
@@ -661,6 +662,34 @@ fn returned_call_binding_flow_info(
                 relation: local_binding_relation_kind(row.binding.source.relation)?,
                 kind: returned_call_source_kind(&row.binding.source.kind)?,
             },
+        },
+    })
+}
+
+fn returned_future_flow_info(
+    row: DbReturnedFutureFlow,
+) -> Result<ReturnedFutureFlowInfo, RagError> {
+    Ok(ReturnedFutureFlowInfo {
+        caller_id: row.caller_id,
+        producer: ReturnedCallProducerInfo {
+            id: row.producer.id,
+            site_id: row.producer.site_id,
+            span: row.producer.span,
+            path: row.producer.path,
+        },
+        binding: ReturnedCallBindingInfo {
+            id: row.binding.id,
+            source: ReturnedCallSourceInfo {
+                id: row.binding.source.id,
+                relation: local_binding_relation_kind(row.binding.source.relation)?,
+                kind: returned_call_source_kind(&row.binding.source.kind)?,
+            },
+        },
+        future: ReturnedFutureSiteInfo {
+            id: row.future.id,
+            span: row.future.span,
+            path: row.future.path,
+            callee_kind: row.future.callee_kind,
         },
     })
 }
@@ -1481,6 +1510,23 @@ impl RagService {
                 .returned_call_binding_flows_for_owner(owner_id)?
                 .into_iter()
                 .map(returned_call_binding_flow_info)
+                .collect::<Result<Vec<_>, RagError>>()?,
+        ))
+    }
+
+    pub fn exact_returned_future_flows_for_owner(
+        &self,
+        owner_id: Uuid,
+    ) -> Result<Option<Vec<ReturnedFutureFlowInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .returned_future_flows_for_owner(owner_id)?
+                .into_iter()
+                .map(returned_future_flow_info)
                 .collect::<Result<Vec<_>, RagError>>()?,
         ))
     }

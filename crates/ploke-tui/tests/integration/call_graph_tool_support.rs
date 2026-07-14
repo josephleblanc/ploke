@@ -12,7 +12,7 @@ use ploke_core::{
         CallReachEffectInfo, CallReceiverInfo, CallResolutionKind, CallSiteBucketInfo,
         CallSiteKind, CallStatusKind, CallTargetKind, CrateBoundaryEdgeInfo,
         LocalBindingRelationKind, ProofContextInfo, ReturnedCallBindingFlowInfo,
-        ReturnedCallSourceKind,
+        ReturnedCallSourceKind, ReturnedFutureFlowInfo,
     },
 };
 use ploke_db::{
@@ -3311,6 +3311,35 @@ pub(crate) fn assert_forwarded_async_future_awaited_site(
     assert_eq!(
         matches, 1,
         "{tool} should return exactly one awaited producer callsite for {label}: {sites:#?}"
+    );
+}
+
+pub(crate) fn assert_forwarded_async_future_flow(
+    flows: &[serde_json::Value],
+    owner: Uuid,
+    label: &str,
+    tool: &str,
+) {
+    let rows = flows
+        .iter()
+        .filter_map(|flow| serde_json::from_value::<ReturnedFutureFlowInfo>(flow.clone()).ok())
+        .collect::<Vec<_>>();
+    let producer_path = vec!["make_forwarded_returned_async_future".to_string()];
+    let future_path = vec!["make_returned_async_closure".to_string()];
+    let matches = rows
+        .iter()
+        .filter(|flow| {
+            flow.caller_id == owner
+                && flow.producer.path == producer_path
+                && flow.future.path == future_path
+                && flow.future.callee_kind == "ReturnedPathCall"
+                && flow.binding.source.relation == LocalBindingRelationKind::BindingSourceCallResult
+                && flow.binding.source.kind == ReturnedCallSourceKind::Dynamic
+        })
+        .count();
+    assert_eq!(
+        matches, 1,
+        "{tool} should return exactly one returned future flow for {label}: {flows:#?}"
     );
 }
 

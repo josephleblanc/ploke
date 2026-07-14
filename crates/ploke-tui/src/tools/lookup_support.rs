@@ -5,7 +5,7 @@ use ploke_core::{
         CallImpactInfo, CallPathInfo, CallProofInvariantFindingInfo, CallReachEffectInfo,
         CallReachInfo, CallTestEntrypointInfo, CallTestSelectionInfo, CrateBoundaryEdgeInfo,
         ExternalSummaryNeedInfo, ModuleBoundaryEdgeInfo, ProofContextInfo,
-        ReturnedCallBindingFlowInfo, RuntimeDispatchNeedInfo,
+        ReturnedCallBindingFlowInfo, ReturnedFutureFlowInfo, RuntimeDispatchNeedInfo,
     },
     tool_types::ToolName,
 };
@@ -631,6 +631,25 @@ pub(super) fn returned_call_binding_flows_for_node(
     }
 }
 
+pub(super) fn returned_future_flows_for_node(
+    ctx: &super::Ctx,
+    node_id: Uuid,
+) -> Result<Vec<ReturnedFutureFlowInfo>, ploke_error::Error> {
+    use ploke_error::InternalError;
+
+    match ctx.state.rag.as_ref() {
+        Some(rag) if !rag.call_context_degraded() => Ok(rag
+            .exact_returned_future_flows_for_owner(node_id)
+            .map_err(|err| {
+                ploke_error::Error::Internal(InternalError::CompilerError(format!(
+                    "failed to collect returned future flows for code item {node_id}: {err}"
+                )))
+            })?
+            .unwrap_or_default()),
+        _ => Ok(Vec::new()),
+    }
+}
+
 pub(super) fn awaited_call_sites_for_node(
     ctx: &super::Ctx,
     node_id: Uuid,
@@ -814,6 +833,7 @@ pub(super) fn with_call_usage_fields(
     runtime_needs: &[RuntimeDispatchNeedInfo],
     awaited_sites: &[AwaitedCallSiteInfo],
     returned_flows: &[ReturnedCallBindingFlowInfo],
+    future_flows: &[ReturnedFutureFlowInfo],
     module_boundary_edges: &[ModuleBoundaryEdgeInfo],
     crate_boundary_edges: &[CrateBoundaryEdgeInfo],
     build_domains: &[CallBuildDomainInfo],
@@ -938,6 +958,7 @@ pub(super) fn with_call_usage_fields(
             "returned_call_binding_flows",
             returned_flows.len().to_string(),
         )
+        .with_field("returned_future_flows", future_flows.len().to_string())
         .with_field(
             "module_boundary_edges",
             module_boundary_edges.len().to_string(),
