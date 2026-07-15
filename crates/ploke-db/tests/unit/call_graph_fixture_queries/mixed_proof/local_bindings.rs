@@ -224,8 +224,8 @@ fn fixture_projection_stores_named_field_projection_edges() -> Result<(), DbErro
             .collect::<Vec<_>>();
         assert_eq!(
             projection_edges.len(),
-            2,
-            "{} projection should expose owner and base-binding edges: {edges:#?}",
+            3,
+            "{} projection should expose owner, base-binding, and source-function edges: {edges:#?}",
             case.projection_name
         );
         assert!(
@@ -234,6 +234,16 @@ fn fixture_projection_stores_named_field_projection_edges() -> Result<(), DbErro
                 && edge.source_id == owner
                 && edge.target_id == projection.id),
             "missing owner-to-projection binding edge for {}: {projection_edges:#?}",
+            case.projection_name
+        );
+        assert!(
+            projection_edges.iter().any(|edge| edge.relation
+                == LocalBindingRelationKind::BindingSourceFunction
+                && edge.source_id == projection.id
+                && edge.source_kind == "LocalBinding"
+                && edge.target_id == target
+                && edge.target_kind == "Function"),
+            "missing projection-to-function source edge for {}: {projection_edges:#?}",
             case.projection_name
         );
     }

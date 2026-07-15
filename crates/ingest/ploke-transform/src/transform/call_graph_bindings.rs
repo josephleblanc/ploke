@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use syn_parser::parser::{
     graph::CodeGraph,
     nodes::{
-        CallArgument, CallBodyOwnerId, CallNode, FunctionNodeId, LocalBindingId, LocalBindingKind,
-        LocalBindingSource, PathCallCallee,
+        CallArgument, CallBodyOwnerId, CallNode, DynamicCallCallee, FunctionNodeId, LocalBindingId,
+        LocalBindingKind, LocalBindingSource, PathCallCallee,
     },
     relations::{CallRelation, LocalBindingRelation},
 };
@@ -14,6 +14,12 @@ use syn_parser::resolve::call_resolution::CallResolutionReport;
 struct InitBinding<'a> {
     id: LocalBindingId,
     path: &'a [String],
+}
+
+#[derive(Clone, Copy)]
+struct FieldBinding<'a> {
+    id: LocalBindingId,
+    init_path: &'a [String],
 }
 
 pub(super) fn derive_argument_parameter_relations(
@@ -100,6 +106,50 @@ pub(super) fn derive_initialized_path_relations(
     relations
 }
 
+pub(super) fn derive_field_projection_function_relations(
+    graph: &CodeGraph,
+    report: &CallResolutionReport,
+) -> Vec<LocalBindingRelation> {
+    let bindings = field_projection_bindings_by_owner_path(graph);
+    let calls = dynamic_calls(graph);
+    let mut relations = Vec::new();
+
+    for relation in &report.relations {
+        let CallRelation::DynamicFunction { source, target } = relation else {
+            continue;
+        };
+        let Some(call) = calls.get(source) else {
+            continue;
+        };
+        let (path, init_path) = match &call.callee {
+            DynamicCallCallee::FieldInitializedLocalBinding { path, init_path }
+            | DynamicCallCallee::IndexedInitializedLocalBinding { path, init_path } => {
+                (path, init_path)
+            }
+            _ => continue,
+        };
+        let Some(candidates) = bindings.get(&(call.owner, path.clone())) else {
+            continue;
+        };
+        let proven = candidates
+            .iter()
+            .filter(|binding| binding.init_path == init_path.as_slice())
+            .map(|binding| binding.id)
+            .collect::<Vec<_>>();
+        let [binding] = proven.as_slice() else {
+            continue;
+        };
+        relations.push(LocalBindingRelation::BindingSourceFunction {
+            source: *binding,
+            target: *target,
+        });
+    }
+
+    relations.sort_unstable();
+    relations.dedup();
+    relations
+}
+
 pub(super) fn derive_value_alias_relations(graph: &CodeGraph) -> Vec<LocalBindingRelation> {
     let bindings_by_name = local_bindings_by_owner_name(graph);
     let mut relations = Vec::new();
@@ -141,6 +191,43 @@ fn local_bindings_by_owner_name(
             .or_default()
             .push(binding.id);
     }
+    bindings
+}
+
+fn field_projection_bindings_by_owner_path(
+    graph: &CodeGraph,
+) -> BTreeMap<(CallBodyOwnerId, Vec<String>), Vec<FieldBinding<'_>>> {
+    let binding_names = graph
+        .local_bindings
+        .iter()
+        .map(|binding| (binding.id, binding.name.as_str()))
+        .collect::<BTreeMap<_, _>>();
+    let mut bindings = BTreeMap::<(CallBodyOwnerId, Vec<String>), Vec<FieldBinding<'_>>>::new();
+
+    for binding in &graph.local_bindings {
+        let LocalBindingSource::FieldProjection {
+            base_binding_id,
+            field_path,
+            init_path,
+        } = &binding.source
+        else {
+            continue;
+        };
+        let Some(base_name) = binding_names.get(base_binding_id) else {
+            continue;
+        };
+        let mut path = Vec::with_capacity(field_path.len() + 1);
+        path.push((*base_name).to_string());
+        path.extend(field_path.iter().cloned());
+        bindings
+            .entry((binding.owner, path))
+            .or_default()
+            .push(FieldBinding {
+                id: binding.id,
+                init_path: init_path.as_slice(),
+            });
+    }
+
     bindings
 }
 
@@ -187,6 +274,22 @@ fn path_calls(
         .iter()
         .filter_map(|site| match site {
             CallNode::PathCall(call) => Some((call.id, call)),
+            _ => None,
+        })
+        .collect()
+}
+
+fn dynamic_calls(
+    graph: &CodeGraph,
+) -> BTreeMap<
+    syn_parser::parser::nodes::DynamicCallSiteId,
+    &syn_parser::parser::nodes::DynamicCallNode,
+> {
+    graph
+        .call_sites
+        .iter()
+        .filter_map(|site| match site {
+            CallNode::DynamicCall(call) => Some((call.id, call)),
             _ => None,
         })
         .collect()

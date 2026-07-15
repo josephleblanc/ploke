@@ -50,7 +50,19 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Latest completed slice: durable initialized-path source-function edge. The
+Latest completed slice: durable field-projection source-function edges. The
+existing `FieldProjection` local-binding rows for exact constructed callable
+projection oracles now have typed `BindingSourceFunction` edges to the resolved
+`local_target` endpoint. The table-driven fixture cases are the direct named
+field, indexed named field, and indexed tuple field calls through locally
+constructed holders. Transform derives each edge only from an existing resolved
+`DynamicFunction` relation plus the exact projection binding path and
+initializer path, so it explains admitted projection edges without adding
+general object value flow, public parameter-field inference, or new traversal
+semantics. Active fixture regeneration and `verify-backup-dbs` completed
+cleanly with no tracked snapshot/checksum drift.
+
+Recent completed slice: durable initialized-path source-function edge. The
 existing `InitializedPath` local-binding row for the fixture oracle
 `call_local_function_item_binding() { let f = local_target; f() }` now has a
 typed `BindingSourceFunction` edge from the `f` binding to the resolved

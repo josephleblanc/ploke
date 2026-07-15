@@ -665,6 +665,36 @@ What remains:
   call traversal edge. It is an explanatory proof edge for an already-admitted
   exact initialized-path call.
 
+## 2026-07-15 Field Projection Source Function Edge Checkpoint
+
+Implemented slice: durable `BindingSourceFunction` edges for exact constructed
+callable field/index projections.
+
+What is complete:
+
+- The fixture-backed source oracles are the existing projection table:
+  `tests/fixture_crates/fixture_call_graph/src/lib.rs:870-874` for
+  `holder.callback`, `:889-893` for `holder.callbacks[0]`, and `:914-916` for
+  `holder.0[0]`.
+- Transform derives a `BindingSourceFunction` edge only from existing exact
+  proof: a resolved `CallRelation::DynamicFunction` whose dynamic callee is a
+  `FieldInitializedLocalBinding` or `IndexedInitializedLocalBinding`, matched
+  against a unique persisted `FieldProjection` binding with the same owner,
+  projection path, and initializer path.
+- The existing DB projection test now asserts each projection binding has
+  `OwnerContainsBinding`, `BindingProjectsField`, and
+  `BindingSourceFunction` edges, while the fail-closed public parameter-field
+  table still asserts no `FieldProjection` or `BindingProjectsField` rows.
+- Active fixture regeneration and registry-backed backup verification passed
+  with no tracked snapshot/checksum drift.
+
+What remains:
+
+- This is not general object value-flow, aliases of constructed holders, public
+  parameter-field inference, trait-object dispatch, or a new traversal edge.
+  It explains already-admitted exact projection calls through typed binding
+  evidence only.
+
 ## Exit Criteria
 
 For the first carrier slice:
