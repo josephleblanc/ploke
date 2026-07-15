@@ -204,45 +204,45 @@ impl Drop for FixtureRestoreGuard {
 | `corpus_semver_type_graph_2026-05-17.sqlite` | `github:dtolnay/semver@8591f2344b52b31d85b538de58b76a676fe9ff90` | typed graphRAG type traversal corpus backup | 2026-05-17 |
 | `corpus_semver_openrouter_embeddings_2026-05-17.sqlite` | `github:dtolnay/semver@8591f2344b52b31d85b538de58b76a676fe9ff90` | OpenRouter-searchable corpus backup for type-context matrix tests | 2026-05-17 |
 | `corpus_memchr_type_graph_2026-05-17.sqlite` | `github:BurntSushi/memchr@24f5daa5257e00e87007c936761600e034827905` | typed graphRAG type traversal corpus backup | 2026-05-17 |
-| `corpus_memchr_call_graph_2026-07-13.sqlite` | `github:BurntSushi/memchr@24f5daa5257e00e87007c936761600e034827905` | plain corpus backup for real-target call graph query contracts | 2026-07-13 |
+| `corpus_memchr_call_graph_2026-07-15.sqlite` | `github:BurntSushi/memchr@24f5daa5257e00e87007c936761600e034827905` | plain corpus backup for real-target call graph query contracts | 2026-07-15 |
 | `corpus_memchr_openrouter_embeddings_2026-05-17.sqlite` | `github:BurntSushi/memchr@24f5daa5257e00e87007c936761600e034827905` | OpenRouter-searchable corpus backup for type-context matrix tests | 2026-05-17 |
 | `corpus_generic_array_type_graph_2026-05-17.sqlite` | `github:fizyk20/generic-array@80bab87431c2e29823dc551a3311324812838a23` | typed graphRAG type traversal corpus backup | 2026-05-17 |
-| `corpus_generic_array_call_graph_2026-07-11.sqlite` | `github:fizyk20/generic-array@80bab87431c2e29823dc551a3311324812838a23` | plain corpus backup for real-target call graph query contracts | 2026-07-11 |
+| `corpus_generic_array_call_graph_2026-07-15.sqlite` | `github:fizyk20/generic-array@80bab87431c2e29823dc551a3311324812838a23` | plain corpus backup for real-target call graph query contracts | 2026-07-15 |
 | `corpus_generic_array_openrouter_embeddings_2026-05-17.sqlite` | `github:fizyk20/generic-array@80bab87431c2e29823dc551a3311324812838a23` | OpenRouter-searchable corpus backup for type-context matrix tests | 2026-05-17 |
 | `corpus_chrono_type_graph_2026-05-17.sqlite` | `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be` | typed graphRAG type traversal corpus backup | 2026-05-17 |
-| `corpus_chrono_call_graph_2026-07-11.sqlite` | `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be` | plain corpus backup for real-target call graph query contracts | 2026-07-11 |
+| `corpus_chrono_call_graph_2026-07-15.sqlite` | `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be` | plain corpus backup for real-target call graph query contracts | 2026-07-15 |
 | `corpus_chrono_openrouter_embeddings_2026-05-17.sqlite` | `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be` | OpenRouter-searchable corpus backup for type-context matrix tests | 2026-05-17 |
 | `corpus_axum_type_graph_2026-05-17.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | typed graphRAG workspace-member corpus backup for type-context matrix tests | 2026-05-17 |
-| `corpus_axum_call_graph_2026-07-13.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | plain workspace-member corpus backup for real-target call graph query contracts | 2026-07-13 |
+| `corpus_axum_call_graph_2026-07-15.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | plain workspace-member corpus backup for real-target call graph query contracts | 2026-07-15 |
 | `corpus_axum_openrouter_embeddings_2026-05-17.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | OpenRouter-searchable workspace-member corpus backup for type-context matrix tests | 2026-05-17 |
 | `ploke-db_af8e3a20-728d-5967-8523-da8a5ccdae45` | `crates/ploke-db` | currently orphaned snapshot | 2026-03-20 |
 
 ## 2026-07-15 Active Call-Graph Fixture Refresh
 
-The active call-graph fixture set was refreshed with
-`cargo run -p xtask --features call_graph -- fixtures regenerate --active`
-after adding durable `ArgumentSuppliesParameter` local-binding edges for
-resolved private function-call arguments and durable named-field projection
-local-binding evidence for exact constructed field calls.
+The real-corpus active call-graph fixture set was refreshed with per-fixture
+`cargo run -p xtask --features call_graph -- recreate-backup-db --fixture <id>`
+commands after the stored forwarded returned-async-future proof slice.
 The regenerated shared call-graph corpus snapshots were copied into
 `tests/backup_dbs/` as committed seed artifacts.
 
 Post-regeneration verification:
 
-- `cargo run -p xtask --features call_graph -- fixtures regenerate --active`
-  completed with all registered active fixtures roundtripping successfully.
+- `cargo run -p xtask --features call_graph -- recreate-backup-db --fixture <id>`
+  completed for each registered real-corpus call-graph fixture:
+  `corpus_memchr_call_graph`, `corpus_generic_array_call_graph`,
+  `corpus_chrono_call_graph`, and `corpus_axum_call_graph`.
 - `cargo run -p xtask --features call_graph -- verify-backup-dbs` passed for
   all registered active fixtures after copying the regenerated shared snapshots
   into `tests/backup_dbs/`.
 - Current committed seed checksums:
-  - `corpus_memchr_call_graph_2026-07-13.sqlite`:
-    `5548ad8425bf26992dba2bd9c48512a8161b62c3f9db8fdb9007f71c324b12d2`
-  - `corpus_generic_array_call_graph_2026-07-11.sqlite`:
-    `13234b51c7b1436bc0ccb290441e53dc5e753593beef09767759072d7c5b288d`
-  - `corpus_chrono_call_graph_2026-07-11.sqlite`:
-    `6daff57a07c721a5cfe88285253599f0f297b6c8fed803074873f633f103a50d`
-  - `corpus_axum_call_graph_2026-07-13.sqlite`:
-    `d09911f4a246eeb64f73c5fa46efd3a0539d443b9f8b77c4d511f9130534f1ab`
+  - `corpus_memchr_call_graph_2026-07-15.sqlite`:
+    `491a19eb509c310774b041a72d18c382f82405a44603e67ec30cead29a1a9ccb`
+  - `corpus_generic_array_call_graph_2026-07-15.sqlite`:
+    `e1c51181cde66b0e6226901da5e91cb0231943c42a2bf85395f87e9019b6bafa`
+  - `corpus_chrono_call_graph_2026-07-15.sqlite`:
+    `f7c4ce66ac5cdd7bbb5d4505f7e7de77fb6e6fe6fbaeb7d6ec84e0f81144f23a`
+  - `corpus_axum_call_graph_2026-07-15.sqlite`:
+    `26a1fa515ea7686283fccbe04eccbc9fcc93a9a9e3ad198778de2b9f0ba20592`
 
 ## 2026-07-14 Active Call-Graph Fixture Refresh
 
@@ -1235,10 +1235,10 @@ Expected searchable corpus embedding config:
   - later traversal from iterator self types to `Iterator` and
     `DoubleEndedIterator` impl surfaces
 
-### `corpus_memchr_call_graph_2026-07-13.sqlite`
+### `corpus_memchr_call_graph_2026-07-15.sqlite`
 
 - Status: active
-- File: `tests/backup_dbs/corpus_memchr_call_graph_2026-07-13.sqlite`
+- File: `tests/backup_dbs/corpus_memchr_call_graph_2026-07-15.sqlite`
 - Parsed target: `github:BurntSushi/memchr@24f5daa5257e00e87007c936761600e034827905`
 - Checkout slug: `tests/fixture_github_clones/corpus/BurntSushi__memchr`
 - Expected DB config:
@@ -1291,10 +1291,10 @@ Expected searchable corpus embedding config:
     local generic parameter `T`
   - later traversal through const-generic bounds and associated impls
 
-### `corpus_generic_array_call_graph_2026-07-11.sqlite`
+### `corpus_generic_array_call_graph_2026-07-15.sqlite`
 
 - Status: active
-- File: `tests/backup_dbs/corpus_generic_array_call_graph_2026-07-11.sqlite`
+- File: `tests/backup_dbs/corpus_generic_array_call_graph_2026-07-15.sqlite`
 - Parsed target: `github:fizyk20/generic-array@80bab87431c2e29823dc551a3311324812838a23`
 - Checkout slug: `tests/fixture_github_clones/corpus/fizyk20__generic-array`
 - Expected DB config:
@@ -1341,10 +1341,10 @@ Expected searchable corpus embedding config:
   - traversal from `MappedLocalTime<T>` aliases to `LocalResult<T>`
   - later traversal from timezone API owners into their generic result model
 
-### `corpus_chrono_call_graph_2026-07-11.sqlite`
+### `corpus_chrono_call_graph_2026-07-15.sqlite`
 
 - Status: active
-- File: `tests/backup_dbs/corpus_chrono_call_graph_2026-07-11.sqlite`
+- File: `tests/backup_dbs/corpus_chrono_call_graph_2026-07-15.sqlite`
 - Parsed target: `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be`
 - Checkout slug: `tests/fixture_github_clones/corpus/chronotope__chrono`
 - Expected DB config:
@@ -1423,10 +1423,10 @@ Expected searchable corpus embedding config:
   - `Token![,]` under `Punctuated<syn::Variant, Token![,]>` retains a nested
     macro type without fabricating a terminal target
 
-### `corpus_axum_call_graph_2026-07-13.sqlite`
+### `corpus_axum_call_graph_2026-07-15.sqlite`
 
 - Status: active
-- File: `tests/backup_dbs/corpus_axum_call_graph_2026-07-13.sqlite`
+- File: `tests/backup_dbs/corpus_axum_call_graph_2026-07-15.sqlite`
 - Parsed target: `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1`
 - Checkout slug: `tests/fixture_github_clones/corpus/tokio-rs__axum`
 - Selected workspace members:
