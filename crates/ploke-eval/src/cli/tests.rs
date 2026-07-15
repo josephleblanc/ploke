@@ -1035,6 +1035,68 @@ fn sample_tool_call_completed(
 }
 
 #[test]
+fn stage6_gen2_cargo_failure_projects_as_failed_protocol_evidence() {
+    use ploke_protocol::step::MechanizedSpec;
+    use ploke_records::tool_contracts::{
+        CargoStatusReason, PersistedToolResultContent, ToolResultContent,
+        decode_tool_result_content,
+    };
+
+    const CALL_ID: &str = "function-call-7de6f9a0-1768-41e5-a7e1-3bc65ee743e8";
+    let record_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("src/tests/fixtures/stage6-gen2-protocol-tool-failure/record.json.gz");
+    let record = read_compressed_record(&record_path).expect("read Stage 6 run record");
+    let calls = record.tool_calls();
+    let call = calls.get(25).expect("historical cargo call 25");
+
+    assert_eq!(call.request.call_id, CALL_ID);
+    let crate::record::ToolResult::Completed(completed) = &call.result else {
+        panic!("cargo process failure should remain a completed tool lifecycle event");
+    };
+    let decoded = decode_tool_result_content(&completed.tool, &completed.content);
+    let PersistedToolResultContent::Decoded(ToolResultContent::Cargo(result)) = decoded else {
+        panic!("historical cargo payload should decode through the production carrier");
+    };
+    assert!(!result.ok);
+    assert_eq!(
+        result.status_reason,
+        CargoStatusReason::TestsFailedOrRuntime
+    );
+    assert_eq!(result.exit_code, Some(101));
+
+    let subject = build_tool_call_review_subject(&record, 25)
+        .expect("project historical protocol neighborhood");
+    assert!(subject.focal.failed);
+    assert_eq!(subject.turn.failed_tool_count, 5);
+    assert!(
+        subject
+            .focal
+            .summary
+            .contains("lifecycle=completed semantic_failed=true")
+    );
+    let compile_failure = subject
+        .after
+        .iter()
+        .find(|call| call.index == 27)
+        .expect("neighboring compile-failed cargo call 27");
+    assert!(compile_failure.failed);
+
+    let context = ploke_protocol::tool_calls::review::ContextualizeNeighborhood
+        .execute_mechanized(subject)
+        .expect("mechanized protocol contextualization");
+    assert_eq!(context.signals.failed_calls_in_scope, 2);
+    assert!(
+        context
+            .packet
+            .calls
+            .iter()
+            .find(|call| call.index == 25)
+            .expect("projected focal call")
+            .failed
+    );
+}
+
+#[test]
 #[ignore = "diagnostic prompt dump for tool-call intent segmentation context"]
 fn diagnostic_dump_tool_call_segmentation_prompt() {
     let record_path = PathBuf::from(

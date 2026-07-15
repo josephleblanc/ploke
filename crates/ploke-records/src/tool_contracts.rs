@@ -331,6 +331,22 @@ impl ToolResultContent {
             Self::ListDir(_) => ToolName::ListDir,
         }
     }
+
+    /// Semantic success reported by the typed tool payload, when that payload
+    /// owns an explicit `ok` field. This is separate from tool-call lifecycle:
+    /// a completed invocation can still report a failed command or operation.
+    pub fn semantic_ok(&self) -> Option<bool> {
+        match self {
+            Self::RequestCodeContext(result) => Some(result.ok),
+            Self::ApplyCodeEdit(result) | Self::InsertRustItem(result) => Some(result.ok),
+            Self::CreateFile(result) => Some(result.ok),
+            Self::NsPatch(result) => Some(result.ok),
+            Self::NsRead(result) => Some(result.ok),
+            Self::CodeItemLookup(_) => None,
+            Self::Cargo(result) => Some(result.ok),
+            Self::ListDir(result) => Some(result.ok),
+        }
+    }
 }
 
 /// Typed record emitted when a persisted tool result string cannot be decoded.
@@ -340,6 +356,18 @@ pub struct ToolResultParseFailure {
     pub tool: String,
     pub raw_content: String,
     pub error: ToolResultDecodeError,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl ToolResultParseFailure {
+    /// Read the producer's top-level semantic outcome without treating the
+    /// remainder of a schema-drifted payload as a valid current DTO.
+    pub fn reported_ok(&self) -> Option<bool> {
+        serde_json::from_str::<serde_json::Value>(&self.raw_content)
+            .ok()?
+            .get("ok")?
+            .as_bool()
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -570,6 +598,22 @@ mod tests {
             failure.error,
             ToolResultDecodeError::InvalidJson { .. }
         ));
+    }
+
+    #[test]
+    fn tool_result_parse_failure_preserves_reported_semantic_outcome() {
+        let raw = r#"{"ok":true,"applied":1,"results":[]}"#;
+        let decoded = decode_tool_result_content("apply_code_edit", raw);
+
+        let PersistedToolResultContent::ParseFailure(failure) = decoded else {
+            panic!("historical edit payload should remain a typed parse failure");
+        };
+
+        assert!(matches!(
+            failure.error,
+            ToolResultDecodeError::InvalidJson { .. }
+        ));
+        assert_eq!(failure.reported_ok(), Some(true));
     }
 
     #[test]
