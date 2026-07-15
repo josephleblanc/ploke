@@ -1,7 +1,6 @@
 # Walk Pre-Session Phase and Start Contract
 
-Status: fixed in source; focused regressions pass; live canary validation
-pending.
+Status: fixed, regression-covered, and live verified.
 
 Canary worktree:
 
@@ -160,11 +159,26 @@ reads it through the production Store, controller refresh, status response, and
 v9 serializer. It is persisted compatibility coverage, not a historical replay
 claim.
 
-## Remaining Validation
+## Live Validation
 
-- Build and commit protocol v9 before mutating the canary.
-- Confirm pre-claim status reports R4c from `position.source=reconstruction`, an
-  empty version, and only enabled `Start -> R3`.
-- Execute guarded Start and confirm the session cursor is R3 with
-  `position.source=session` and only the R3-to-R4a step exposed.
-- Confirm reusing the old empty mutation guard is rejected as stale.
+Commit `5c9745b2a` (`Expose authoritative Prototype 1 walk state`) was built
+before the preserved canary was advanced. Protocol-v9 status then reported
+R4c from `position.source=reconstruction`, the exact empty session version, and
+only the enabled `Start -> R3` controller mutation.
+
+Guarded operation `9f994800-4e28-4f9d-8c13-7e9d7c0d0001` successfully claimed
+session `7835dfe6-8ef5-437d-87f1-7a8e98c36663` at R3. The committed cursor has
+canonical evidence
+`c5e308e82010f86bcc0c97f56a43550a8e0465e585057bebc733ab69f06fd061`
+and journal revision 3. Session history contains exactly v5 `Created`,
+`Acquired(fence 1)`, and `Released(fence 1)` events, with no damage or
+abandonment. Settled status exposes only the R3-to-R4a step as the forward
+typestate action.
+
+A second raw protocol-v9 Start request reused the old empty version under
+operation `9f994800-4e28-4f9d-8c13-7e9d7c0d0002`. The server rejected it with
+`stale_version`, returned the exact current R3 session version, and created no
+durable operation record. The server then stopped cleanly. Doctor remained at
+`baseline_eval` with no blockers, closure counts and timestamp were unchanged,
+and the canary checkout remained clean at
+`fa2b9149b7932504f3e39169c95d57125a5dad39`.

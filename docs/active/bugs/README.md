@@ -160,4 +160,4 @@ file and current code before treating a report as still open.
 - [`2026-07-13-prototype1-doctor-relative-repo-root.md`](./2026-07-13-prototype1-doctor-relative-repo-root.md)
   Fixed and live verified: shared Prototype 1 control context canonicalizes `--repo-root .` before absolute-path headless indexing and other driver work.
 - [`2026-07-14-walk-pre-session-phase-and-start.md`](./2026-07-14-walk-pre-session-phase-and-start.md)
-  Fixed in source with focused regressions passing, pending live canary validation: walk protocol v9 separates strict pre-session reconstruction, cursorless durable sessions, and the committed controller cursor while restoring the first guarded Start at R3.
+  Fixed and live verified: walk protocol v9 separates strict pre-session reconstruction, cursorless durable sessions, and the committed controller cursor, restores the first guarded Start at R3, and rejects reuse of the old empty guard before persistence.

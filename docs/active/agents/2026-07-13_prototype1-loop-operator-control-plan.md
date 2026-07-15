@@ -170,10 +170,12 @@
   admission are enforced before operation persistence and again at their typed
   authority boundaries. Session positions reject empty or malformed cursors,
   and an indeterminate supervised job cannot advertise controller recovery
-  before its own outcome is resolved. The source and focused regressions are
-  green, but this slice is not complete until the exact committed binary proves R4c
-  reconstruction followed by the first durable R3 session claim on the
-  preserved canary.
+  before its own outcome is resolved. This boundary is checkpointed in
+  `5c9745b2a` (`Expose authoritative Prototype 1 walk state`) and is live
+  verified on the preserved canary: v9 reconstructed pre-session R4c, guarded
+  Start created and released a v5 session at R3, and reuse of the old empty
+  guard failed stale without operation persistence. Doctor/closure state and
+  the clean canary checkout remained unchanged outside the controller journal.
 - `ploke-walk-ui` now consumes that same position carrier, renders explicit
   source badges in the phase rail and details panel, and discards stale walk or
   DB-query replies after run selection. Complete authority snapshots are shown
