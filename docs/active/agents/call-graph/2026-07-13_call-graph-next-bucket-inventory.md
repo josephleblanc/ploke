@@ -73,7 +73,8 @@ Current completed checkpoint:
   `make_forwarded_returned_async_future()` is stored in `futures.0` and awaited.
   DB proof coverage asserts the `PathCallResult` local binding edge and the
   existing returned-future execution proof row, while ordinary traversal to
-  `local_target` remains empty.
+  `local_target` remains empty. Exact RAG and exact TUI lookup/edges tests now
+  table-drive this owner with the direct forwarded-future owner.
 - The latest returned-future query slice exposes the forwarded returned async
   future source oracle as `returned_future_flows` through DB, exact RAG, and
   exact TUI tool payloads. It identifies the awaiting caller's producer path

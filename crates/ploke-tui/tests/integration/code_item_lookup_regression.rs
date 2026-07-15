@@ -1033,78 +1033,81 @@ async fn code_item_lookup_returns_forwarded_returned_closure_context() {
 #[tokio::test]
 async fn code_item_lookup_returns_forwarded_async_future_awaited_site() {
     let fixture = CallGraphToolFixture::new().await;
-    let params = LookupParams {
-        item_name: Cow::Borrowed("call_forwarded_returned_async_future"),
-        file_path: Cow::Owned(fixture.file_path.display().to_string()),
-        node_kind: Cow::Borrowed("function"),
-        module_path: Cow::Borrowed("crate"),
-        owner_trait: None,
-        owner_type: None,
-        parent_name: None,
-        allowed_effects: Vec::new(),
-    };
+    for (item_name, label, ctx_name) in [
+        (
+            "call_forwarded_returned_async_future",
+            "forwarded returned async future",
+            "forwarded-async-future-lookup",
+        ),
+        (
+            "call_stored_forwarded_returned_async_future_tuple_field",
+            "stored forwarded returned async future",
+            "stored-forwarded-async-future-lookup",
+        ),
+    ] {
+        let params = LookupParams {
+            item_name: Cow::Borrowed(item_name),
+            file_path: Cow::Owned(fixture.file_path.display().to_string()),
+            node_kind: Cow::Borrowed("function"),
+            module_path: Cow::Borrowed("crate"),
+            owner_trait: None,
+            owner_type: None,
+            parent_name: None,
+            allowed_effects: Vec::new(),
+        };
 
-    let result = CodeItemLookup::execute(params, fixture.ctx("forwarded-async-future-lookup"))
-        .await
-        .expect("forwarded async future lookup should succeed");
-    let payload: serde_json::Value =
-        serde_json::from_str(&result.content).expect("deserialize ConciseContext");
-    let owner = payload
-        .get("id")
-        .and_then(serde_json::Value::as_str)
-        .expect("payload id")
-        .parse()
-        .expect("payload id should be a UUID");
-    let awaited_sites = payload
-        .get("awaited_call_sites")
-        .and_then(serde_json::Value::as_array)
-        .expect("awaited_call_sites array");
-    let returned_flows = payload
-        .get("returned_call_binding_flows")
-        .and_then(serde_json::Value::as_array)
-        .expect("returned_call_binding_flows array");
-    let future_flows = payload
-        .get("returned_future_flows")
-        .and_then(serde_json::Value::as_array)
-        .expect("returned_future_flows array");
-    let future_execution_flows = payload
-        .get("returned_future_execution_flows")
-        .and_then(serde_json::Value::as_array)
-        .expect("returned_future_execution_flows array");
+        let result = CodeItemLookup::execute(params, fixture.ctx(ctx_name))
+            .await
+            .expect("forwarded async future lookup should succeed");
+        let payload: serde_json::Value =
+            serde_json::from_str(&result.content).expect("deserialize ConciseContext");
+        let owner = payload
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .expect("payload id")
+            .parse()
+            .expect("payload id should be a UUID");
+        let awaited_sites = payload
+            .get("awaited_call_sites")
+            .and_then(serde_json::Value::as_array)
+            .expect("awaited_call_sites array");
+        let returned_flows = payload
+            .get("returned_call_binding_flows")
+            .and_then(serde_json::Value::as_array)
+            .expect("returned_call_binding_flows array");
+        let future_flows = payload
+            .get("returned_future_flows")
+            .and_then(serde_json::Value::as_array)
+            .expect("returned_future_flows array");
+        let future_execution_flows = payload
+            .get("returned_future_execution_flows")
+            .and_then(serde_json::Value::as_array)
+            .expect("returned_future_execution_flows array");
 
-    // Source oracle:
-    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:2384-2385
-    //   `call_forwarded_returned_async_future()` awaits the producer call
-    //   `make_forwarded_returned_async_future().await`, but the returned
-    //   future boundary remains fail-closed for returned-call binding flow.
-    assert_forwarded_async_future_awaited_site(
-        awaited_sites,
-        owner,
-        "forwarded returned async future",
-        "code_item_lookup",
-    );
-    assert!(
-        returned_flows.is_empty(),
-        "lookup should not expose returned-call binding flow through the forwarded future boundary: {returned_flows:#?}"
-    );
-    assert_forwarded_async_future_flow(
-        future_flows,
-        owner,
-        "forwarded returned async future",
-        "code_item_lookup",
-    );
-    assert_forwarded_async_future_execution_flow(
-        future_execution_flows,
-        owner,
-        "forwarded returned async future",
-        "code_item_lookup",
-    );
+        // Source oracle:
+        //   tests/fixture_crates/fixture_call_graph/src/lib.rs:2401-2407.
+        //   Both callers await `make_forwarded_returned_async_future()`,
+        //   directly or through `futures.0`, while returned-call binding flow
+        //   remains fail-closed.
+        assert_forwarded_async_future_awaited_site(awaited_sites, owner, label, "code_item_lookup");
+        assert!(
+            returned_flows.is_empty(),
+            "lookup should not expose returned-call binding flow through the forwarded future boundary for {label}: {returned_flows:#?}"
+        );
+        assert_forwarded_async_future_flow(future_flows, owner, label, "code_item_lookup");
+        assert_forwarded_async_future_execution_flow(
+            future_execution_flows,
+            owner,
+            label,
+            "code_item_lookup",
+        );
 
-    let ui = result.ui_payload.as_ref().expect("ui payload");
-    assert_eq!(ui_field(ui, "awaited_call_sites"), "1");
-    assert_eq!(ui_field(ui, "returned_call_binding_flows"), "0");
-    assert_eq!(ui_field(ui, "returned_future_flows"), "1");
-    assert_eq!(ui_field(ui, "returned_future_execution_flows"), "1");
+        let ui = result.ui_payload.as_ref().expect("ui payload");
+        assert_eq!(ui_field(ui, "awaited_call_sites"), "1");
+        assert_eq!(ui_field(ui, "returned_call_binding_flows"), "0");
+        assert_eq!(ui_field(ui, "returned_future_flows"), "1");
+        assert_eq!(ui_field(ui, "returned_future_execution_flows"), "1");
+    }
 }
 
 async fn assert_awaited_async_closure_future_lookup(

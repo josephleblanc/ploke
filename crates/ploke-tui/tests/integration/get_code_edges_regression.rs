@@ -1613,78 +1613,82 @@ async fn code_item_edges_returns_forwarded_returned_closure_context() {
 #[tokio::test]
 async fn code_item_edges_returns_forwarded_async_future_awaited_site() {
     let fixture = CallGraphToolFixture::new().await;
-    let params = EdgesParams {
-        item_name: Cow::Borrowed("call_forwarded_returned_async_future"),
-        file_path: Cow::Owned(fixture.file_path.display().to_string()),
-        node_kind: Cow::Borrowed("function"),
-        module_path: Cow::Borrowed("crate"),
-        owner_trait: None,
-        owner_type: None,
-        parent_name: None,
-        allowed_effects: Vec::new(),
-    };
+    for (item_name, label, ctx_name) in [
+        (
+            "call_forwarded_returned_async_future",
+            "forwarded returned async future",
+            "forwarded-async-future-edges",
+        ),
+        (
+            "call_stored_forwarded_returned_async_future_tuple_field",
+            "stored forwarded returned async future",
+            "stored-forwarded-async-future-edges",
+        ),
+    ] {
+        let params = EdgesParams {
+            item_name: Cow::Borrowed(item_name),
+            file_path: Cow::Owned(fixture.file_path.display().to_string()),
+            node_kind: Cow::Borrowed("function"),
+            module_path: Cow::Borrowed("crate"),
+            owner_trait: None,
+            owner_type: None,
+            parent_name: None,
+            allowed_effects: Vec::new(),
+        };
 
-    let result = CodeItemEdges::execute(params, fixture.ctx("forwarded-async-future-edges"))
-        .await
-        .expect("forwarded async future edges should succeed");
-    let payload: serde_json::Value =
-        serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
-    let node_info = payload.get("node_info").expect("node_info");
-    let owner = node_info
-        .get("id")
-        .and_then(serde_json::Value::as_str)
-        .expect("node_info.id")
-        .parse()
-        .expect("node_info.id should be a UUID");
-    let awaited_sites = node_info
-        .get("awaited_call_sites")
-        .and_then(serde_json::Value::as_array)
-        .expect("node_info.awaited_call_sites array");
-    let returned_flows = node_info
-        .get("returned_call_binding_flows")
-        .and_then(serde_json::Value::as_array)
-        .expect("node_info.returned_call_binding_flows array");
-    let future_flows = node_info
-        .get("returned_future_flows")
-        .and_then(serde_json::Value::as_array)
-        .expect("node_info.returned_future_flows array");
-    let future_execution_flows = node_info
-        .get("returned_future_execution_flows")
-        .and_then(serde_json::Value::as_array)
-        .expect("node_info.returned_future_execution_flows array");
+        let result = CodeItemEdges::execute(params, fixture.ctx(ctx_name))
+            .await
+            .expect("forwarded async future edges should succeed");
+        let payload: serde_json::Value =
+            serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
+        let node_info = payload.get("node_info").expect("node_info");
+        let owner = node_info
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .expect("node_info.id")
+            .parse()
+            .expect("node_info.id should be a UUID");
+        let awaited_sites = node_info
+            .get("awaited_call_sites")
+            .and_then(serde_json::Value::as_array)
+            .expect("node_info.awaited_call_sites array");
+        let returned_flows = node_info
+            .get("returned_call_binding_flows")
+            .and_then(serde_json::Value::as_array)
+            .expect("node_info.returned_call_binding_flows array");
+        let future_flows = node_info
+            .get("returned_future_flows")
+            .and_then(serde_json::Value::as_array)
+            .expect("node_info.returned_future_flows array");
+        let future_execution_flows = node_info
+            .get("returned_future_execution_flows")
+            .and_then(serde_json::Value::as_array)
+            .expect("node_info.returned_future_execution_flows array");
 
-    // Same source oracle as lookup:
-    // tests/fixture_crates/fixture_call_graph/src/lib.rs:2384-2385 awaits the
-    // producer call but does not prove returned-call binding flow through the
-    // opaque forwarded future boundary.
-    assert_forwarded_async_future_awaited_site(
-        awaited_sites,
-        owner,
-        "forwarded returned async future",
-        "code_item_edges",
-    );
-    assert!(
-        returned_flows.is_empty(),
-        "edges should not expose returned-call binding flow through the forwarded future boundary: {returned_flows:#?}"
-    );
-    assert_forwarded_async_future_flow(
-        future_flows,
-        owner,
-        "forwarded returned async future",
-        "code_item_edges",
-    );
-    assert_forwarded_async_future_execution_flow(
-        future_execution_flows,
-        owner,
-        "forwarded returned async future",
-        "code_item_edges",
-    );
+        // Same source oracle as lookup:
+        // tests/fixture_crates/fixture_call_graph/src/lib.rs:2401-2407 awaits
+        // the producer directly or through `futures.0`, without proving
+        // returned-call binding flow through the opaque forwarded future
+        // boundary.
+        assert_forwarded_async_future_awaited_site(awaited_sites, owner, label, "code_item_edges");
+        assert!(
+            returned_flows.is_empty(),
+            "edges should not expose returned-call binding flow through the forwarded future boundary for {label}: {returned_flows:#?}"
+        );
+        assert_forwarded_async_future_flow(future_flows, owner, label, "code_item_edges");
+        assert_forwarded_async_future_execution_flow(
+            future_execution_flows,
+            owner,
+            label,
+            "code_item_edges",
+        );
 
-    let ui = result.ui_payload.as_ref().expect("ui payload");
-    assert_eq!(ui_field(ui, "awaited_call_sites"), "1");
-    assert_eq!(ui_field(ui, "returned_call_binding_flows"), "0");
-    assert_eq!(ui_field(ui, "returned_future_flows"), "1");
-    assert_eq!(ui_field(ui, "returned_future_execution_flows"), "1");
+        let ui = result.ui_payload.as_ref().expect("ui payload");
+        assert_eq!(ui_field(ui, "awaited_call_sites"), "1");
+        assert_eq!(ui_field(ui, "returned_call_binding_flows"), "0");
+        assert_eq!(ui_field(ui, "returned_future_flows"), "1");
+        assert_eq!(ui_field(ui, "returned_future_execution_flows"), "1");
+    }
 }
 
 async fn assert_awaited_async_closure_future_edges(

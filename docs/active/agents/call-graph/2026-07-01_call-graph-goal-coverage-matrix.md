@@ -59,10 +59,14 @@ awaited `PathCallResult` in addition to the existing returned-callable
 `DynamicCallResult` case. DB coverage asserts the durable `futures.0`
 `LetBinding`, its `BindingSourceCallResult` edge to the producer path call, the
 existing returned-future proof/execution rows, and the invariant that ordinary
-call-path traversal from the caller to `local_target` remains empty. This
-proves one stored-plus-forwarded future source oracle without adding a new call
-edge, general aggregate alias/value flow, async callable trait-object dispatch,
-or general poll/resume traversal.
+call-path traversal from the caller to `local_target` remains empty. Exact RAG
+and exact TUI lookup/edges tests now table-drive the direct and stored
+forwarded-future owners, preserving one awaited producer site, one
+returned-future proof row, one returned-future execution row, and zero
+returned-call binding flows in both payloads. This proves one
+stored-plus-forwarded future source oracle without adding a new call edge,
+general aggregate alias/value flow, async callable trait-object dispatch, or
+general poll/resume traversal.
 
 Recent completed slice: durable field-projection source-function edges. The
 existing `FieldProjection` local-binding rows for exact constructed callable
@@ -3648,10 +3652,11 @@ oracle is
 slot. Parser extraction records a `PathCallResult` aggregate binding for the
 awaited producer path call. DB proof tests assert that binding edge, reuse the
 existing returned-future flow/execution queries, and keep ordinary paths from
-the caller to `local_target` empty. This covers one stored-plus-forwarded
-future source oracle; arbitrary aggregate aliases, async callable trait
-objects, general non-local future value flow, and poll/resume traversal remain
-open.
+the caller to `local_target` empty. Exact RAG and exact TUI lookup/edges tests
+now include the same owner in their forwarded-future matrices. This covers one
+stored-plus-forwarded future source oracle; arbitrary aggregate aliases, async
+callable trait objects, general non-local future value flow, and poll/resume
+traversal remain open.
 
 ## Parking Lot
 

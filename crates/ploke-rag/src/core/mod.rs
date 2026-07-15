@@ -1209,8 +1209,12 @@ fn local_binding_relation_kind(
         LocalBindingRelationKind::BindingSourceCallResult => {
             Ok(RagLocalBindingRelationKind::BindingSourceCallResult)
         }
-        LocalBindingRelationKind::OwnerContainsBinding => Err(RagError::Db(DbError::Cozo(
-            "OwnerContainsBinding is not a returned-call source relation".to_string(),
+        LocalBindingRelationKind::OwnerContainsBinding
+        | LocalBindingRelationKind::BindingSourceFunction
+        | LocalBindingRelationKind::BindingProjectsField
+        | LocalBindingRelationKind::BindingAliasesBinding
+        | LocalBindingRelationKind::ArgumentSuppliesParameter => Err(RagError::Db(DbError::Cozo(
+            format!("{kind:?} is not a returned-call source relation"),
         ))),
     }
 }

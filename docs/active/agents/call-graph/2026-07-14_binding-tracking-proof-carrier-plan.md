@@ -658,6 +658,15 @@ What is complete:
   Ordinary call-path traversal from the caller to `local_target` remains empty.
 - Focused DB tests passed for the new local-binding edge, the new
   returned-future proof flow, and the broader `mixed_proof::returned` module.
+- Exact RAG and exact TUI lookup/edges tests now table-drive the existing
+  direct forwarded-future proof alongside this stored-forwarded owner. The
+  payloads expose one awaited producer site, one returned-future flow, one
+  returned-future execution flow, and zero returned-call binding flows for both
+  owners.
+- RAG keeps `LocalBindingRelationKind` mapping fail-closed: only
+  `BindingSourceClosure` and `BindingSourceCallResult` are valid returned-call
+  source relations. Newer local-binding relation families produce explicit
+  errors if accidentally routed into returned-call payloads.
 
 What remains:
 
