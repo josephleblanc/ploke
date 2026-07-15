@@ -1,6 +1,6 @@
 # Walk summary rejects valid pre-child-plan campaigns
 
-Status: open non-blocker; target Stage 3 typed snapshot work
+Status: fixed and live verified; typed phase field remains later snapshot work
 
 Discovered: 2026-07-13
 
@@ -66,6 +66,32 @@ Add production-read-model coverage for both sides of the contract:
 
 The preferred repair is to reuse the canonical diagnosed phase in the future
 typed loop snapshot rather than infer phase from directory existence.
+
+## Fix
+
+`WalkSummary::load` now decides whether child-plan authority is required from
+canonical durable session phase plus downstream node, report, terminal broad
+harness, and transition-journal evidence. A missing child-plan directory is
+accepted only when those sources still prove a pre-plan generation-0 state.
+R8-or-later session state, later-generation identity, multiple node records,
+parent reports, terminal edit-harness results, damaged session evidence, or
+later transition evidence all keep the reader fail-closed.
+
+The child-plan loader handles `NotFound` locally. The shared directory helper
+and malformed existing JSON behavior remain strict.
+
+Regression coverage proves:
+
+1. an absent pre-authority child-plan directory produces an empty generation
+   list;
+2. the same absence fails with an explicit missing-authority error when
+   downstream evidence requires the plan;
+3. malformed existing child-plan JSON still fails closed.
+
+Live verification against
+`p1-stage0-g35f-pplxembed-3g1x3-p3-20260713-1` now renders
+`child_plan_count = 0`, `planned_generations = []`, and `generations = []`
+through the production `loop walk summary --format json` command.
 
 ## Operator Context Observation
 

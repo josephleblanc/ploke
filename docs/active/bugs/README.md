@@ -167,3 +167,9 @@ file and current code before treating a report as still open.
   Fixed and live verified: `walk step --until r4c` rejected the advertised R4b-to-R4c edge because the controller's coarse phase rank grouped two phases connected by a real forward edge.
 - [`2026-07-14-direct-openai-embedding-overlong-snippet.md`](./2026-07-14-direct-openai-embedding-overlong-snippet.md)
   Open backend-policy gap with config recovery selected: direct OpenAI accepted readiness preflight but rejected a 66,807-byte parsed node at production indexing; the failed run is preserved and the fresh run will use OpenRouter's approved truncation policy.
+- [`2026-07-14-prototype1-parent-patcher-role-not-admitted.md`](./2026-07-14-prototype1-parent-patcher-role-not-admitted.md)
+  Config-mitigated readiness gap: setup and doctor admitted direct-Google eval/protocol settings without surfacing the separate OpenRouter parent-patcher role that later exhausted all broad child slots with HTTP 402.
+- [`2026-07-14-walk-trace-show-tool-arguments-newtype.md`](./2026-07-14-walk-trace-show-tool-arguments-newtype.md)
+  Source-repaired typed IPC bug: completed sealed traces containing `ToolArgumentsJson` failed client decoding when buffered inside the internally tagged trace state.
+- [`2026-07-14-walk-llm-inspection-controller-lock.md`](./2026-07-14-walk-llm-inspection-controller-lock.md)
+  Source-repaired authority-boundary bug: persisted LLM inspector commands waited behind the mutation controller for an entire live typestate edge.
