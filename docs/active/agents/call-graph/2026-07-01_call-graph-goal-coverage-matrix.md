@@ -50,7 +50,21 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Latest completed slice: durable indexed field-projection binding evidence. The
+Latest completed slice: durable aggregate returned-future binding evidence. The
+fixture now includes same-block tuple-field, named-field, and indexed-array
+storage of the future returned by `make_returned_async_closure()()`, followed
+by awaiting the exact stored slot. Parser extraction reuses the existing
+same-block awaited-future carrier and records `LetBinding` rows named
+`futures.0` / `holder.future` with `source_kind = "DynamicCallResult"` and
+`callee_kind = "AwaitedReturnedPathCall"`. The DB proof is table-driven and
+asserts the resolved returned async-closure dynamic row, the durable aggregate
+future binding, and the `BindingSourceCallResult` edge back to the original
+dynamic callsite. Active fixture regeneration and `verify-backup-dbs`
+completed cleanly. This is bounded same-block returned-future storage proof,
+not non-local future value flow, general poll/resume traversal, async callable
+trait-object dispatch, or a new traversal edge.
+
+Recent completed slice: durable indexed field-projection binding evidence. The
 parser now reuses the existing `FieldProjection` carrier for exact constructed
 indexed callable projections whose resolver proof is already local and exact,
 such as `call_indexed_named_field_function_binding()`'s

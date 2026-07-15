@@ -424,6 +424,26 @@ impl BodyCallVisitor<'_> {
         );
     }
 
+    fn record_awaited_future_storage_bindings(&mut self, local: &syn::Local) {
+        for binding in future_storage_bindings(
+            local,
+            self.owner,
+            self.cfgs,
+            self.param_names,
+            &self.local_scopes,
+        ) {
+            if !self.awaited_call_spans.contains(&binding.span) {
+                continue;
+            }
+            self.record_local_binding(
+                &binding.name,
+                binding.span,
+                LocalBindingKind::LetBinding,
+                binding.source,
+            );
+        }
+    }
+
     fn record_field_projection_binding(
         &mut self,
         callee_expr: &syn::Expr,
@@ -611,6 +631,7 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
         for binding in &bindings {
             self.record_let_binding(binding, &local.pat, init_expr);
         }
+        self.record_awaited_future_storage_bindings(local);
         if let Some(scope) = self.local_scopes.last_mut() {
             scope.extend(bindings);
         }
@@ -2111,6 +2132,12 @@ struct FutureBinding {
     span: (usize, usize),
 }
 
+struct FutureStorageBinding {
+    name: String,
+    span: (usize, usize),
+    source: LocalBindingSource,
+}
+
 fn awaited_future_spans(block: &syn::Block) -> Vec<(usize, usize)> {
     let mut future_bindings = Vec::new();
     let mut awaited_spans = Vec::new();
@@ -2204,19 +2231,10 @@ fn future_tuple_bindings(stmt: &syn::Stmt) -> Option<Vec<FutureBinding>> {
         .iter()
         .enumerate()
         .filter_map(|(index, expr)| {
-            let syn::Expr::Call(call) = unparen_expr(expr) else {
-                return None;
-            };
-            let syn::Expr::Path(path) = unparen_expr(call.func.as_ref()) else {
-                return None;
-            };
-            if path.qself.is_some() || path.path.segments.len() != 1 {
-                return None;
-            }
-            let byte_range = call.span().byte_range();
+            let span = future_call_span(expr)?;
             Some(FutureBinding {
                 path: vec![name.clone(), index.to_string()],
-                span: (byte_range.start, byte_range.end),
+                span,
             })
         })
         .collect::<Vec<_>>();
@@ -2239,19 +2257,10 @@ fn future_array_bindings(stmt: &syn::Stmt) -> Option<Vec<FutureBinding>> {
         .iter()
         .enumerate()
         .filter_map(|(index, expr)| {
-            let syn::Expr::Call(call) = unparen_expr(expr) else {
-                return None;
-            };
-            let syn::Expr::Path(path) = unparen_expr(call.func.as_ref()) else {
-                return None;
-            };
-            if path.qself.is_some() || path.path.segments.len() != 1 {
-                return None;
-            }
-            let byte_range = call.span().byte_range();
+            let span = future_call_span(expr)?;
             Some(FutureBinding {
                 path: vec![name.clone(), index.to_string()],
-                span: (byte_range.start, byte_range.end),
+                span,
             })
         })
         .collect::<Vec<_>>();
@@ -2280,24 +2289,101 @@ fn future_struct_bindings(stmt: &syn::Stmt) -> Option<Vec<FutureBinding>> {
         .fields
         .iter()
         .filter_map(|field| {
-            let syn::Expr::Call(call) = unparen_expr(&field.expr) else {
-                return None;
-            };
-            let syn::Expr::Path(path) = unparen_expr(call.func.as_ref()) else {
-                return None;
-            };
-            if path.qself.is_some() || path.path.segments.len() != 1 {
-                return None;
-            }
-            let byte_range = call.span().byte_range();
+            let span = future_call_span(&field.expr)?;
             Some(FutureBinding {
                 path: vec![name.clone(), member_name(&field.member)],
-                span: (byte_range.start, byte_range.end),
+                span,
             })
         })
         .collect::<Vec<_>>();
 
     (!bindings.is_empty()).then_some(bindings)
+}
+
+fn future_storage_bindings(
+    local: &syn::Local,
+    owner: CallBodyOwnerId,
+    cfgs: &[String],
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Vec<FutureStorageBinding> {
+    let Some(name) = pat_ident_name(&local.pat) else {
+        return Vec::new();
+    };
+    let Some(init) = local.init.as_ref() else {
+        return Vec::new();
+    };
+    match unparen_expr(init.expr.as_ref()) {
+        syn::Expr::Tuple(tuple) => tuple
+            .elems
+            .iter()
+            .enumerate()
+            .filter_map(|(index, expr)| {
+                future_storage_binding(
+                    vec![name.clone(), index.to_string()],
+                    expr,
+                    owner,
+                    cfgs,
+                    param_names,
+                    local_scopes,
+                )
+            })
+            .collect(),
+        syn::Expr::Array(array) => array
+            .elems
+            .iter()
+            .enumerate()
+            .filter_map(|(index, expr)| {
+                future_storage_binding(
+                    vec![name.clone(), index.to_string()],
+                    expr,
+                    owner,
+                    cfgs,
+                    param_names,
+                    local_scopes,
+                )
+            })
+            .collect(),
+        syn::Expr::Struct(expr) => {
+            if expr.qself.is_some() || expr.rest.is_some() || path_segments(&expr.path).len() != 1 {
+                return Vec::new();
+            }
+            expr.fields
+                .iter()
+                .filter_map(|field| {
+                    future_storage_binding(
+                        vec![name.clone(), member_name(&field.member)],
+                        &field.expr,
+                        owner,
+                        cfgs,
+                        param_names,
+                        local_scopes,
+                    )
+                })
+                .collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn future_storage_binding(
+    path: Vec<String>,
+    expr: &syn::Expr,
+    owner: CallBodyOwnerId,
+    cfgs: &[String],
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<FutureStorageBinding> {
+    let span = future_call_span(expr)?;
+    let source = return_binding_source(expr, owner, cfgs, param_names, local_scopes, true)?;
+    if !matches!(source, LocalBindingSource::DynamicCallResult { .. }) {
+        return None;
+    }
+    Some(FutureStorageBinding {
+        name: path.join("."),
+        span,
+        source,
+    })
 }
 
 fn future_alias_binding(stmt: &syn::Stmt) -> Option<(String, Vec<String>)> {

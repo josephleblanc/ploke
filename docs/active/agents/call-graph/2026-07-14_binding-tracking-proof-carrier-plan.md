@@ -596,6 +596,42 @@ What remains:
   trait-object dispatch, or a new call edge. Broader aggregate forwarding needs
   its own reviewed source oracle and typed carrier slice.
 
+## 2026-07-15 Aggregate Returned Future Carrier Checkpoint
+
+Implemented slice: durable same-block aggregate storage evidence for returned
+async-closure futures.
+
+What is complete:
+
+- The fixture-backed source oracles are
+  `tests/fixture_crates/fixture_call_graph/src/lib.rs:2380-2382`, where
+  `make_returned_async_closure()()` is stored in `futures.0` and awaited;
+  `tests/fixture_crates/fixture_call_graph/src/lib.rs:2385-2389`, where the
+  same returned future is stored in `holder.future` and awaited; and
+  `tests/fixture_crates/fixture_call_graph/src/lib.rs:2392-2394`, where the
+  future is stored in `futures[0]` and awaited.
+- Parser extraction now lets tuple, array, and struct awaited-future storage
+  reuse the same `future_call_span` classifier as direct local future
+  bindings. This marks returned-path dynamic calls as awaited only when the
+  exact same-block aggregate slot is awaited.
+- Parser extraction records a durable `LetBinding` row for those aggregate
+  slots only when the source is a returned-call dynamic result. The rows use
+  names like `futures.0` / `holder.future`, `source_kind =
+  "DynamicCallResult"`, `source_call_kind = "Dynamic"`, and `callee_kind =
+  "AwaitedReturnedPathCall"`.
+- Transform and DB decoding reuse the existing `local_binding` and
+  `BindingSourceCallResult` relation shape. The DB proof is table-driven and
+  asserts the resolved returned async-closure dynamic row, the aggregate
+  binding row, and the binding-to-dynamic-call edge.
+- Active fixture regeneration and registry-backed backup verification passed.
+
+What remains:
+
+- This is not non-local future value flow, general aggregate alias/value-flow,
+  async callable trait-object dispatch, or a general poll/resume traversal
+  model. It only proves exact same-block aggregate slots whose producer
+  dynamic callsite and poll point are both source-visible in one owner.
+
 ## Exit Criteria
 
 For the first carrier slice:

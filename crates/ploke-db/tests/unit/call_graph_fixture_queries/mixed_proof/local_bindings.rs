@@ -705,3 +705,120 @@ fn fixture_projection_stores_awaited_future_let_call_result_edges() -> Result<()
 
     Ok(())
 }
+
+#[test]
+fn fixture_projection_stores_aggregate_returned_future_call_result_edges() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+
+    struct FutureCase {
+        owner: &'static str,
+        binding: &'static str,
+        source: &'static str,
+    }
+
+    let cases = [
+        FutureCase {
+            owner: "call_stored_returned_async_closure_tuple_field",
+            binding: "futures.0",
+            source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:2380-2382 `futures.0.await`",
+        },
+        FutureCase {
+            owner: "call_stored_returned_async_closure_named_field",
+            binding: "holder.future",
+            source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:2385-2389 `holder.future.await`",
+        },
+        FutureCase {
+            owner: "call_stored_returned_async_closure_indexed_array",
+            binding: "futures.0",
+            source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:2392-2394 `futures[0].await`",
+        },
+    ];
+
+    for case in cases {
+        // Source oracle: each aggregate stores the future returned by
+        // `make_returned_async_closure()()` and later awaits that exact slot.
+        // The durable binding row points back to the original dynamic
+        // returned-callable site without promoting general poll/resume.
+        assert_returned_future_storage_binding(&db, case.owner, case.binding, case.source)?;
+    }
+
+    Ok(())
+}
+
+fn assert_returned_future_storage_binding(
+    db: &ploke_db::Database,
+    owner_name: &str,
+    binding_name: &str,
+    source: &str,
+) -> Result<(), DbError> {
+    let owner = function_id_by_name(db, owner_name)?;
+    let context = db.call_context_for_owner(owner)?;
+    let dynamic = row_by_kind_path(
+        &context,
+        CallSiteKind::Dynamic,
+        &["make_returned_async_closure"],
+    );
+    assert_eq!(
+        dynamic.status.status,
+        CallStatusKind::Resolved,
+        "{owner_name} should resolve the awaited returned async-closure future: {source}; row: {dynamic:#?}"
+    );
+
+    let bindings = db.local_bindings_for_owner(owner)?;
+    let matches = bindings
+        .iter()
+        .filter(|binding| binding.kind == "LetBinding" && binding.name == binding_name)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matches.len(),
+        1,
+        "{owner_name} should expose one aggregate future binding {binding_name}: {source}; bindings: {bindings:#?}"
+    );
+    let binding = matches[0];
+    assert_eq!(binding.source_kind, "DynamicCallResult");
+    assert_eq!(
+        binding.source_id,
+        Some(dynamic.site.id),
+        "{owner_name} aggregate future binding should point at the returned-callable dynamic site"
+    );
+    assert_eq!(binding.source_call_kind.as_deref(), Some("Dynamic"));
+    assert_eq!(binding.source_path, None);
+    assert_eq!(
+        binding.callee_kind.as_deref(),
+        Some("AwaitedReturnedPathCall")
+    );
+    assert_eq!(
+        binding.callee_path.as_ref(),
+        Some(&path(&["make_returned_async_closure"]))
+    );
+
+    let edges = db.local_binding_edges_for_owner(owner)?;
+    let binding_edges = edges
+        .iter()
+        .filter(|edge| edge.source_id == binding.id || edge.target_id == binding.id)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        binding_edges.len(),
+        2,
+        "{owner_name} aggregate future binding should expose owner and source edges: {edges:#?}"
+    );
+    assert!(
+        binding_edges.iter().any(|edge| edge.relation
+            == LocalBindingRelationKind::OwnerContainsBinding
+            && edge.source_id == owner
+            && edge.target_id == binding.id
+            && edge.target_kind == "LocalBinding"),
+        "missing owner-to-aggregate-future binding edge for {owner_name}: {binding_edges:#?}"
+    );
+    assert!(
+        binding_edges.iter().any(|edge| edge.relation
+            == LocalBindingRelationKind::BindingSourceCallResult
+            && edge.source_id == binding.id
+            && edge.target_id == dynamic.site.id
+            && edge.source_kind == "LocalBinding"
+            && edge.target_kind == "Dynamic"),
+        "missing aggregate future binding-to-dynamic-call edge for {owner_name}: {binding_edges:#?}"
+    );
+
+    Ok(())
+}

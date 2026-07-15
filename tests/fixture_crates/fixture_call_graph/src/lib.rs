@@ -2377,6 +2377,23 @@ pub async fn call_stored_returned_async_closure() -> i32 {
     future.await
 }
 
+pub async fn call_stored_returned_async_closure_tuple_field() -> i32 {
+    let futures = (make_returned_async_closure()(),);
+    futures.0.await
+}
+
+pub async fn call_stored_returned_async_closure_named_field() -> i32 {
+    let holder = AsyncFutureHolder {
+        future: make_returned_async_closure()(),
+    };
+    holder.future.await
+}
+
+pub async fn call_stored_returned_async_closure_indexed_array() -> i32 {
+    let futures = [make_returned_async_closure()()];
+    futures[0].await
+}
+
 pub fn make_forwarded_returned_async_future() -> impl std::future::Future<Output = i32> {
     make_returned_async_closure()()
 }
