@@ -227,6 +227,75 @@ fn fixture_projection_keeps_unproven_field_parameter_without_projection_edge() -
 }
 
 #[test]
+fn fixture_projection_stores_constructed_field_argument_parameter_edge() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let owner = function_id_by_name(&db, "call_single_named_field_function_param")?;
+    let caller = function_id_by_name(
+        &db,
+        "call_single_named_field_function_param_with_local_target",
+    )?;
+    let target = function_id_by_name(&db, "local_target")?;
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:1610-1616:
+    // `call_single_named_field_function_param(holder) { (holder.callback)() }`
+    // is private and has one local caller that supplies
+    // `CallbackHolder { callback: local_target }`. The dynamic field call is
+    // already resolved; this test pins the durable argument-to-parameter proof
+    // row that explains which callsite supplies the `holder` parameter.
+    let context = db.call_context_for_owner(owner)?;
+    let row = row_by_kind_path(&context, CallSiteKind::Dynamic, &["holder", "callback"]);
+    assert_resolved_target(
+        row,
+        target,
+        CallRelationKind::DynamicFunction,
+        CallSiteKind::Dynamic,
+        CallTargetKind::Function,
+    );
+
+    let caller_context = db.call_context_for_owner(caller)?;
+    let helper_call = row_by_path(&caller_context, &["call_single_named_field_function_param"]);
+    assert_resolved_target(
+        helper_call,
+        owner,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
+
+    let bindings = db.local_bindings_for_owner(owner)?;
+    let holder = bindings
+        .iter()
+        .find(|binding| binding.kind == "ParameterBinding" && binding.name == "holder")
+        .expect("holder parameter binding should be persisted");
+    assert_eq!(holder.source_kind, "Parameter");
+
+    let edges = db.local_binding_edges_for_owner(owner)?;
+    let holder_edges = edges
+        .iter()
+        .filter(|edge| edge.source_id == holder.id || edge.target_id == holder.id)
+        .collect::<Vec<_>>();
+    assert!(
+        holder_edges.iter().any(|edge| edge.relation
+            == LocalBindingRelationKind::OwnerContainsBinding
+            && edge.source_id == owner
+            && edge.target_id == holder.id
+            && edge.target_kind == "LocalBinding"),
+        "missing owner-to-holder parameter edge: {holder_edges:#?}"
+    );
+    assert!(
+        holder_edges.iter().any(|edge| edge.relation
+            == LocalBindingRelationKind::ArgumentSuppliesParameter
+            && edge.source_id == helper_call.site.id
+            && edge.source_kind == "Path"
+            && edge.target_id == holder.id
+            && edge.target_kind == "LocalBinding"),
+        "missing constructed argument-to-holder parameter edge: {holder_edges:#?}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn fixture_projection_stores_let_closure_binding_edges() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let owner = function_id_by_name(&db, "call_shadowed_local_target_binding")?;

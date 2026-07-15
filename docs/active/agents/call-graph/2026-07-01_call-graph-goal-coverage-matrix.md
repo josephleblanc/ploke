@@ -50,7 +50,22 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Latest completed slice: durable named-field projection binding evidence. The
+Latest completed slice: durable constructed callable-field
+argument-to-parameter proof projection. Transform now projects
+`ArgumentSuppliesParameter` `local_binding_edge` rows when a resolved private
+callee parameter is supplied by a constructed argument with exact path-valued
+field initializers, matching the resolver's existing admitted proof for
+`call_single_named_field_function_param(CallbackHolder { callback:
+local_target })`. The DB fixture proof asserts both the already-resolved
+`(holder.callback)()` `DynamicFunction` edge to `local_target` and the durable
+edge from the caller's helper-call site to the callee-owned `holder`
+`ParameterBinding`. Active fixture regeneration and `verify-backup-dbs`
+completed cleanly with no tracked snapshot/checksum drift. This is proof
+projection for an already admitted private callable-field parameter edge, not
+general object field value-flow, public parameter-field resolution, tuple/index
+field projection, or trait-object dispatch.
+
+Recent completed slice: durable named-field projection binding evidence. The
 parser now persists a constructed base `LetBinding` plus a `FieldProjection`
 binding only for dynamic field calls that the existing parser-local proof
 already classifies as an exact `FieldInitializedLocalBinding`. The fixture

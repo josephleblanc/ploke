@@ -93,12 +93,15 @@ fn function_parameter_names(graph: &CodeGraph, id: FunctionNodeId) -> Option<Vec
 }
 
 fn argument_has_exact_callable_source(argument: &CallArgument) -> bool {
-    matches!(
-        argument,
+    match argument {
         CallArgument::Path { .. }
-            | CallArgument::ReferencedPath { .. }
-            | CallArgument::BoxedPath { .. }
-            | CallArgument::Closure { .. }
-            | CallArgument::ClosureBinding { .. }
-    )
+        | CallArgument::ReferencedPath { .. }
+        | CallArgument::BoxedPath { .. }
+        | CallArgument::Closure { .. }
+        | CallArgument::ClosureBinding { .. } => true,
+        CallArgument::Constructed { fields, .. } => fields
+            .iter()
+            .any(|field| !field.field_path.is_empty() && !field.init_path.is_empty()),
+        CallArgument::Array { .. } | CallArgument::Other => false,
+    }
 }

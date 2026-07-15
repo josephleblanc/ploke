@@ -462,6 +462,36 @@ What remains:
   dispatch, or a new traversal edge. Those need separate source oracles and
   proof carrier slices.
 
+## 2026-07-15 Constructed Field Argument Carrier Checkpoint
+
+Implemented slice: durable `ArgumentSuppliesParameter` proof for constructed
+callable-field arguments.
+
+What is complete:
+
+- Transform projection now treats `CallArgument::Constructed` with exact
+  path-valued field initializers as an argument shape eligible for the existing
+  `ArgumentSuppliesParameter` edge. This reuses the resolver's already-admitted
+  private caller proof instead of adding a new resolver path.
+- The fixture-backed DB oracle is
+  `tests/fixture_crates/fixture_call_graph/src/lib.rs:1610-1616`, where
+  `call_single_named_field_function_param_with_local_target()` calls the
+  private helper with `CallbackHolder { callback: local_target }`, and the
+  helper body calls `(holder.callback)()`.
+- DB coverage proves the dynamic field call still resolves to `local_target`,
+  the caller's helper call resolves to the private helper, and the helper-call
+  site now has a durable `ArgumentSuppliesParameter` edge to the helper-owned
+  `holder` `ParameterBinding`.
+- Active fixture regeneration and registry-backed backup verification passed;
+  no tracked snapshot/checksum drift was produced by this projection slice.
+
+What remains:
+
+- This is not general constructed object value-flow, public parameter-field
+  proof, tuple/index projection, trait-object dispatch, or a new call edge.
+  Broader field forwarding still needs separate exact source oracles and typed
+  carrier slices.
+
 ## Exit Criteria
 
 For the first carrier slice:
