@@ -45,12 +45,18 @@ pub(in crate::unit) const RETURNED_CONFLICTING_FUNCTION_POINTER_OWNERS: [&str; 2
     "call_returned_conflicting_forwarded_function_pointer_param_with_other_target",
 ];
 
+pub(in crate::unit) const OTHER_TARGET_DIRECT_RESOLVED_OWNERS: [&str; 1] =
+    ["direct_self_field_other"];
+
 pub(in crate::unit) const OTHER_TARGET_AMBIGUOUS_CANDIDATE_COUNT: usize = AMBIGUOUS_DYNAMIC_OWNERS
     .len()
     + 1
     + AMBIGUOUS_PATH_FUNCTION_CANDIDATES.len()
     + AMBIGUOUS_DYNAMIC_FUNCTION_CANDIDATES.len()
     + RETURNED_CONFLICTING_FUNCTION_POINTER_OWNERS.len();
+
+pub(in crate::unit) const OTHER_TARGET_CALLER_COUNT: usize =
+    OTHER_TARGET_AMBIGUOUS_CANDIDATE_COUNT + OTHER_TARGET_DIRECT_RESOLVED_OWNERS.len();
 
 pub(in crate::unit) fn dynamic_candidates(db: &Database) -> Result<Vec<Uuid>, DbError> {
     let mut expected = vec![

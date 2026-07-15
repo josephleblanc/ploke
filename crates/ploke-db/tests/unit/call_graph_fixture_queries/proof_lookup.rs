@@ -78,21 +78,31 @@ fn fixture_proof_symbol_lookup_matches_ambiguous_dynamic_candidate_payloads() ->
     let sibling = function_id_by_name(&db, "local_target")?;
     let owner = function_id_by_name(&db, "call_if_ambiguous_function_item")?;
     let path_owner = function_id_by_name(&db, AMBIGUOUS_PATH_OWNER)?;
+    let direct_owner = function_id_by_name(&db, OTHER_TARGET_DIRECT_RESOLVED_OWNERS[0])?;
     let callers = db.callers_for_target(target)?;
     assert_eq!(
         callers.len(),
-        OTHER_TARGET_AMBIGUOUS_CANDIDATE_COUNT,
-        "other_target should be reachable through every ambiguous fixture candidate caller: {callers:#?}"
+        OTHER_TARGET_CALLER_COUNT,
+        "other_target should be reachable through every direct and candidate fixture caller: {callers:#?}"
     );
+    let direct_site = caller_by_owner_kind_path(
+        &callers,
+        direct_owner,
+        CallSiteKind::Path,
+        &["other_target"],
+    )
+    .site
+    .id;
     let context = db.call_context_for_owner(owner)?;
     assert_eq!(context.len(), 1, "ambiguous owner context: {context:#?}");
     let site = context[0].site.id;
-    let mut expected_sites = vec![("dynamic branch candidate", site)];
+    let mut expected_sites = vec![("dynamic branch candidate", site, false)];
     expected_sites.push((
         "path initialized-binding candidate",
         caller_by_owner_kind_path(&callers, path_owner, CallSiteKind::Path, &["f"])
             .site
             .id,
+        false,
     ));
 
     for (owner_name, expected_path) in AMBIGUOUS_PATH_FUNCTION_CANDIDATES {
@@ -106,6 +116,7 @@ fn fixture_proof_symbol_lookup_matches_ambiguous_dynamic_candidate_payloads() ->
             )
             .site
             .id,
+            false,
         ));
     }
 
@@ -120,6 +131,7 @@ fn fixture_proof_symbol_lookup_matches_ambiguous_dynamic_candidate_payloads() ->
             )
             .site
             .id,
+            false,
         ));
     }
 
@@ -134,27 +146,42 @@ fn fixture_proof_symbol_lookup_matches_ambiguous_dynamic_candidate_payloads() ->
             )
             .site
             .id,
+            true,
         ));
     }
 
     let count = db.project_call_proof_facts_for_target(target, "bd:fixture-call-graph")?;
+    let expected_count =
+        expected_target_proof_count(&callers) + RETURNED_CONFLICTING_FUNCTION_POINTER_OWNERS.len();
     assert_eq!(
-        count,
-        expected_target_proof_count(&callers),
+        count, expected_count,
         "ambiguous target-centered proof count"
     );
 
     let rows = db.proof_symbol_lookup(&target.to_string())?;
-    for (label, site) in expected_sites {
+    assert_resolved_site_proof(
+        "direct other_target caller",
+        &rows,
+        direct_owner,
+        direct_site,
+        target,
+    );
+    for (label, site, has_binding_evidence) in expected_sites {
         let site_rows = proof_rows_for_site(&rows, site);
+        let expected_rows = if has_binding_evidence { 3 } else { 2 };
         assert_eq!(
             site_rows.len(),
-            2,
-            "{label} lookup should include linked call_site and call_resolution facts without a resolved call_edge: {site_rows:#?}"
+            expected_rows,
+            "{label} lookup should include linked call_site, call_resolution, and optional binding_evidence facts without a resolved call_edge: {site_rows:#?}"
         );
         assert_eq!(proof_kind_count(&site_rows, "call_site"), 1);
         assert_eq!(proof_kind_count(&site_rows, "call_resolution"), 1);
         assert_eq!(proof_kind_count(&site_rows, "call_edge"), 0);
+        assert_eq!(
+            proof_kind_count(&site_rows, "binding_evidence"),
+            usize::from(has_binding_evidence),
+            "{label} returned-callable binding evidence count"
+        );
 
         let resolution = proof_fact_for_kind(&site_rows, "call_resolution");
         assert_eq!(resolution.resolution_state.as_deref(), Some("ambiguous"));

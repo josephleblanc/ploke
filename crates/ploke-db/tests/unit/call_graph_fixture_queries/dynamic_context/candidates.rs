@@ -17,8 +17,8 @@ fn fixture_context_reads_projected_ambiguous_dynamic_candidates() -> Result<(), 
     let context = db.call_context_for_target(target)?;
     assert_eq!(
         context.len(),
-        OTHER_TARGET_AMBIGUOUS_CANDIDATE_COUNT,
-        "other_target should expose every ambiguous candidate caller: {context:#?}"
+        OTHER_TARGET_CALLER_COUNT,
+        "other_target should expose every direct and candidate caller: {context:#?}"
     );
 
     for owner_name in AMBIGUOUS_DYNAMIC_OWNERS {
@@ -89,6 +89,18 @@ fn fixture_context_reads_projected_ambiguous_dynamic_candidates() -> Result<(), 
             &["return_conflicting_forwarded_function_pointer"],
             &expected,
             owner_name,
+        );
+    }
+
+    for owner_name in OTHER_TARGET_DIRECT_RESOLVED_OWNERS {
+        let owner = function_id_by_name(&db, owner_name)?;
+        let row = row_by_owner_kind_path(&context, owner, CallSiteKind::Path, &["other_target"]);
+        assert_resolved_target(
+            row,
+            target,
+            CallRelationKind::Function,
+            CallSiteKind::Path,
+            CallTargetKind::Function,
         );
     }
 
