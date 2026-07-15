@@ -16,7 +16,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::{
-        Arc,
+        Arc, RwLock as SyncRwLock,
         atomic::{AtomicBool, Ordering},
     },
     time::Duration,
@@ -49,7 +49,8 @@ use crate::{
         prototype1_state::{
             driver::control::{
                 PredecessorRelease, RecoveryDirective, ServerAdmission,
-                recover_admitted_controller, recover_admitted_version, walk_server_admission,
+                recover_admitted_controller, recover_admitted_version, validate_fresh_session,
+                walk_server_admission,
             },
             edge::ControlEdge,
             event::RuntimeId,
@@ -76,8 +77,9 @@ use super::{
         MutationGuard, OperationId, SessionVersion, WalkAction, WalkActionKind, WalkAuthority,
         WalkBlocker, WalkBlockerCode, WalkDeltaSnapshot, WalkDeltaState, WalkErrorCode,
         WalkEventProjection, WalkJobKind, WalkJobResolutionKind, WalkJobResolutionReceipt,
-        WalkJobSnapshot, WalkJobStatus, WalkOkKind, WalkRequest, WalkRequestBody, WalkResponse,
-        WalkSessionHistory, WalkSessionSnapshot, WalkStartConfig, WalkTransitionReceipt,
+        WalkJobSnapshot, WalkJobStatus, WalkOkKind, WalkPosition, WalkRequest, WalkRequestBody,
+        WalkResponse, WalkSessionHistory, WalkSessionSnapshot, WalkStartConfig,
+        WalkTransitionReceipt,
     },
     query::run_snapshot_query,
     trace,
@@ -92,7 +94,106 @@ struct WalkServer {
     jobs: Arc<Mutex<JobRegistry>>,
     gate: MutationGate,
     operation_root: PathBuf,
-    controller_attached: Arc<AtomicBool>,
+    observed: Arc<ControllerCache>,
+}
+
+/// Complete controller observation captured while holding the controller lock.
+#[derive(Debug, Clone)]
+struct ControllerObservation {
+    phase: WalkPhase,
+    attached: bool,
+    blocker: Option<String>,
+    fresh: FreshAdmission,
+}
+
+impl ControllerObservation {
+    fn capture(controller: &WalkController, repo_root: &Path, session_exists: bool) -> Self {
+        let phase = controller.phase();
+        let fresh = if session_exists {
+            FreshAdmission::Unchecked
+        } else {
+            match validate_fresh_session(repo_root) {
+                Ok(()) => FreshAdmission::Ready,
+                Err(error) => FreshAdmission::Blocked(error.to_string()),
+            }
+        };
+        Self {
+            phase,
+            attached: phase != WalkPhase::Empty,
+            blocker: controller.blocker_detail(),
+            fresh,
+        }
+    }
+
+    fn controller(controller: &WalkController) -> Self {
+        let phase = controller.phase();
+        Self {
+            phase,
+            attached: phase != WalkPhase::Empty,
+            blocker: controller.blocker_detail(),
+            fresh: FreshAdmission::Unchecked,
+        }
+    }
+
+    fn unavailable() -> Self {
+        Self {
+            phase: WalkPhase::Empty,
+            attached: false,
+            blocker: Some(
+                "controller observation cache is contended; retry status before mutating"
+                    .to_string(),
+            ),
+            fresh: FreshAdmission::Blocked(
+                "fresh-session admission is unavailable while the observation cache is contended"
+                    .to_string(),
+            ),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+enum FreshAdmission {
+    Unchecked,
+    Ready,
+    Blocked(String),
+}
+
+/// Last complete observation, accessed only through bounded `try_*` locks so
+/// status never parks an async executor thread behind another observer.
+#[derive(Debug)]
+struct ControllerCache {
+    current: SyncRwLock<ControllerObservation>,
+}
+
+impl ControllerCache {
+    fn new(observation: ControllerObservation) -> Self {
+        Self {
+            current: SyncRwLock::new(observation),
+        }
+    }
+
+    fn read(&self) -> ControllerObservation {
+        for _ in 0..4 {
+            if let Ok(observation) = self.current.try_read() {
+                return observation.clone();
+            }
+            std::hint::spin_loop();
+        }
+        ControllerObservation::unavailable()
+    }
+
+    fn update(&self, mut observation: ControllerObservation) {
+        for _ in 0..4 {
+            if let Ok(mut current) = self.current.try_write() {
+                if matches!(observation.fresh, FreshAdmission::Unchecked) {
+                    observation.fresh = current.fresh.clone();
+                }
+                *current = observation;
+                return;
+            }
+            std::hint::spin_loop();
+        }
+    }
 }
 
 /// Immutable response material captured after a controller advance completes.
@@ -504,16 +605,15 @@ pub(crate) async fn serve_prepared(
         endpoint.activate()?;
     }
     let repo_root = endpoint.repo_root().to_path_buf();
-    let mut controller = WalkController::new(repo_root);
+    let mut controller = WalkController::new(repo_root.clone());
     controller.refresh_from_disk()?;
-    let delta = PublishedDelta::capture(
-        &controller,
-        durable_version_for(endpoint.repo_root())?,
-        None,
-    )?;
+    let version = durable_version_for(endpoint.repo_root())?;
+    let delta = PublishedDelta::capture(&controller, version.clone(), None)?;
     let operation_root = paths::operation_dir(endpoint.repo_root())?;
     paths::ensure_operation_dir(&operation_root)?;
-    let controller_attached = controller.phase() != WalkPhase::Empty;
+    let observation =
+        ControllerObservation::capture(&controller, &repo_root, version.session_id().is_some());
+    let observed = Arc::new(ControllerCache::new(observation));
     let jobs = restore_job_registry(&operation_root, &epoch)?;
     let server = WalkServer {
         epoch,
@@ -522,7 +622,7 @@ pub(crate) async fn serve_prepared(
         jobs: Arc::new(Mutex::new(jobs)),
         gate,
         operation_root,
-        controller_attached: Arc::new(AtomicBool::new(controller_attached)),
+        observed,
     };
     let result = accept_loop(server, listener, idle_ttl).await;
     if let Err(error) = endpoint.cleanup() {
@@ -731,6 +831,30 @@ async fn handle_stream(server: &WalkServer, mut stream: UnixStream) -> Result<bo
             return Ok(false);
         }
     };
+    if matches!(
+        &request.body,
+        WalkRequestBody::Health | WalkRequestBody::Show
+    ) && request.client_protocol != Some(server.epoch.protocol_version)
+    {
+        let phase = server
+            .durable_version()
+            .map(|version| version.phase())
+            .unwrap_or_else(|_| server.observed.read().phase);
+        let client = request
+            .client_protocol
+            .map_or_else(|| "missing".to_string(), |protocol| protocol.to_string());
+        let response = WalkResponse::error(
+            WalkErrorCode::BadRequest,
+            format!(
+                "walk protocol mismatch: client={client} server={}; restart the walk client before reading structured status",
+                server.epoch.protocol_version
+            ),
+            Some(phase),
+            server.epoch.clone(),
+        );
+        let _ = time::timeout(RESPONSE_WRITE_TIMEOUT, ipc::send(&mut stream, &response)).await;
+        return Ok(false);
+    }
     let (response, stop) = server.handle(request).await;
     match time::timeout(RESPONSE_WRITE_TIMEOUT, ipc::send(&mut stream, &response)).await {
         Ok(Ok(())) => {}
@@ -870,8 +994,8 @@ impl WalkServer {
                 if verify {
                     controller.refresh_from_disk().map(|_| {
                         let phase = controller.phase();
-                        self.controller_attached
-                            .store(phase != WalkPhase::Empty, Ordering::Release);
+                        self.observed
+                            .update(ControllerObservation::controller(&controller));
                         let mut report = controller.audit(scope, campaign, transition);
                         report.verbose = verbose;
                         report.with_note = with_note;
@@ -1259,7 +1383,7 @@ impl WalkServer {
         let jobs = Arc::clone(&self.jobs);
         let epoch = self.epoch.clone();
         let operation_root = self.operation_root.clone();
-        let controller_attached = Arc::clone(&self.controller_attached);
+        let observed = Arc::clone(&self.observed);
         let job_id = job.job_id;
         let expected = job.expected.clone();
         let handle = tokio::spawn(run_start_job(
@@ -1273,7 +1397,7 @@ impl WalkServer {
             config,
             until,
             allow_live_api,
-            controller_attached,
+            observed,
         ));
         self.attach_job_handle(job_id, handle).await;
         Ok(WalkResponse::job(
@@ -1328,7 +1452,7 @@ impl WalkServer {
         let jobs = Arc::clone(&self.jobs);
         let epoch = self.epoch.clone();
         let operation_root = self.operation_root.clone();
-        let controller_attached = Arc::clone(&self.controller_attached);
+        let observed = Arc::clone(&self.observed);
         let job_id = job.job_id;
         let expected = job.expected.clone();
         let handle = tokio::spawn(run_step_job(
@@ -1343,7 +1467,7 @@ impl WalkServer {
             watch,
             allow_live_api,
             allow_git_changes,
-            controller_attached,
+            observed,
         ));
         self.attach_job_handle(job_id, handle).await;
         Ok(WalkResponse::job(
@@ -1646,7 +1770,8 @@ impl WalkServer {
         let (phase, message) = {
             let mut controller = self.controller.lock().await;
             let phase = controller.reset();
-            self.controller_attached.store(false, Ordering::Release);
+            self.observed
+                .update(ControllerObservation::controller(&controller));
             (phase, format!("reset walk to {phase} - {}", phase.detail()))
         };
         let published = PublishedDelta::not_recorded(phase, job.expected.clone(), Some(job.job_id));
@@ -1743,8 +1868,8 @@ impl WalkServer {
                     match controller.refresh_from_disk() {
                         Ok(()) => {
                             let phase = controller.phase();
-                            self.controller_attached
-                                .store(phase != WalkPhase::Empty, Ordering::Release);
+                            self.observed
+                                .update(ControllerObservation::controller(&controller));
                             phase
                         }
                         Err(source) => {
@@ -2136,6 +2261,25 @@ impl WalkServer {
                 self.epoch.clone(),
             )));
         }
+        if command == WalkJobKind::Recover && actual.cursor().is_none() {
+            return Ok(JobAdmission::Rejected(WalkResponse::conflict(
+                WalkErrorCode::BadRequest,
+                "walk recover refused because durable controller recovery requires a committed session cursor",
+                actual,
+                self.epoch.clone(),
+            )));
+        }
+        if command == WalkJobKind::Start
+            && actual == SessionVersion::empty()
+            && let Err(error) = validate_fresh_session(&self.epoch.repo_root)
+        {
+            return Ok(JobAdmission::Rejected(WalkResponse::conflict(
+                WalkErrorCode::RecoveryInProgress,
+                format!("walk start refused because fresh-session admission failed: {error}"),
+                actual,
+                self.epoch.clone(),
+            )));
+        }
         let phase_before = actual.phase();
         if let Some(previous) = jobs.active.take() {
             jobs.completed.insert(
@@ -2335,17 +2479,69 @@ impl WalkServer {
                 jobs.stopping,
             )
         };
+        let session_exists = durable.version.session_id().is_some();
         let controller = self.controller.try_lock().ok();
+        let observation = controller.as_ref().map_or_else(
+            || self.observed.read(),
+            |controller| {
+                let observation = ControllerObservation::capture(
+                    controller,
+                    &self.epoch.repo_root,
+                    session_exists,
+                );
+                self.observed.update(observation.clone());
+                observation
+            },
+        );
         let controller_summary = controller.as_ref().map(|controller| controller.describe());
-        let controller_blocker = controller
-            .as_ref()
-            .and_then(|controller| controller.blocker_detail())
-            .map(|detail| WalkBlocker {
-                code: WalkBlockerCode::ControllerBlocked,
-                detail,
-            });
-        let controller_attached = self.controller_attached.load(Ordering::Acquire);
-        let phase = durable.version.phase();
+        let controller_blocker = observation.blocker.clone().map(|detail| WalkBlocker {
+            code: WalkBlockerCode::ControllerBlocked,
+            detail,
+        });
+        let fresh_blocker = (!session_exists)
+            .then(|| match &observation.fresh {
+                FreshAdmission::Blocked(detail) => Some(WalkBlocker {
+                    code: WalkBlockerCode::ControllerBlocked,
+                    detail: detail.clone(),
+                }),
+                FreshAdmission::Unchecked => Some(WalkBlocker {
+                    code: WalkBlockerCode::ControllerBlocked,
+                    detail:
+                        "fresh-session admission has not been checked; retry status before mutating"
+                            .to_string(),
+                }),
+                FreshAdmission::Ready => None,
+            })
+            .flatten();
+        let drift_blocker = (session_exists
+            && observation.attached
+            && observation.phase != durable.version.phase())
+        .then(|| WalkBlocker {
+            code: WalkBlockerCode::ControllerBlocked,
+            detail: format!(
+                "controller cache is at {}, but the durable session cursor is at {}; refresh or recover before mutating",
+                observation.phase,
+                durable.version.phase()
+            ),
+        });
+        let controller_attached = observation.attached;
+        let position = if session_exists && durable.version.cursor().is_some() {
+            WalkPosition::Session {
+                version: durable.version.clone(),
+            }
+        } else if session_exists {
+            WalkPosition::Unpositioned {
+                version: durable.version.clone(),
+            }
+        } else if job.as_ref().is_some_and(|job| job.status.blocks_mutation())
+            || observation.phase == WalkPhase::Empty
+        {
+            WalkPosition::NoSession
+        } else {
+            WalkPosition::Reconstruction {
+                phase: observation.phase,
+            }
+        };
         let blocker = if stopping {
             Some(WalkBlocker {
                 code: WalkBlockerCode::ServerStopping,
@@ -2375,17 +2571,23 @@ impl WalkServer {
             })
         } else if durable.blocker.is_some() {
             durable.blocker.clone()
-        } else {
+        } else if controller_blocker.is_some() {
             controller_blocker
+        } else if fresh_blocker.is_some() {
+            fresh_blocker
+        } else if drift_blocker.is_some() {
+            drift_blocker
+        } else {
+            None
         };
         let authority = authority_for(blocker.as_ref());
+        let actions = actions_for(&position, controller_attached, authority, blocker.as_ref());
         let snapshot = WalkSessionSnapshot {
-            phase,
-            version: durable.version,
+            position,
             controller_attached,
             authority,
             job: job.clone(),
-            actions: actions_for(phase, controller_attached, authority, blocker.as_ref()),
+            actions,
             blocker,
         };
         let message = self.render_status_message(heading, job.as_ref(), controller_summary);
@@ -2441,8 +2643,12 @@ impl WalkServer {
         }
         let mut controller = self.controller.lock().await;
         controller.refresh_from_disk()?;
-        self.controller_attached
-            .store(controller.phase() != WalkPhase::Empty, Ordering::Release);
+        let session_exists = self.durable_version()?.session_id().is_some();
+        self.observed.update(ControllerObservation::capture(
+            &controller,
+            &self.epoch.repo_root,
+            session_exists,
+        ));
         Ok(WalkResponse::ok(
             WalkOkKind::Show,
             controller.phase(),
@@ -2576,11 +2782,12 @@ fn authority_for(blocker: Option<&WalkBlocker>) -> WalkAuthority {
 }
 
 fn actions_for(
-    phase: WalkPhase,
+    position: &WalkPosition,
     controller_attached: bool,
     authority: WalkAuthority,
     blocker: Option<&WalkBlocker>,
 ) -> Vec<WalkAction> {
+    let phase = position.phase();
     let mut actions = vec![
         WalkAction {
             kind: WalkActionKind::Inspect,
@@ -2605,36 +2812,54 @@ fn actions_for(
     let blocker_code = (!mutation_enabled)
         .then(|| blocker.map(|blocker| blocker.code))
         .flatten();
-    if !controller_attached {
-        actions.push(WalkAction {
-            kind: WalkActionKind::Start,
-            edge: None,
-            target: Some(phase),
-            enabled: mutation_enabled,
-            requires_live_api: false,
-            requires_git_changes: false,
-            blocker: blocker_code,
-        });
-    } else {
-        actions.extend(
-            ControlEdge::ALL
-                .into_iter()
-                .filter(|edge| edge.from() == phase)
-                .map(|edge| {
-                    edge_action(WalkActionKind::Step, edge, mutation_enabled, blocker_code)
-                }),
-        );
-        actions.push(WalkAction {
-            kind: WalkActionKind::Reset,
-            edge: None,
-            target: Some(WalkPhase::Empty),
-            enabled: mutation_enabled,
-            requires_live_api: false,
-            requires_git_changes: false,
-            blocker: blocker_code,
-        });
+    match position {
+        WalkPosition::NoSession | WalkPosition::Reconstruction { .. } => {
+            actions.push(WalkAction {
+                kind: WalkActionKind::Start,
+                edge: None,
+                target: Some(WalkPhase::R3),
+                enabled: mutation_enabled,
+                requires_live_api: false,
+                requires_git_changes: false,
+                blocker: blocker_code,
+            });
+        }
+        WalkPosition::Session { .. } if !controller_attached => {
+            actions.push(WalkAction {
+                kind: WalkActionKind::Start,
+                edge: None,
+                target: Some(phase),
+                enabled: mutation_enabled,
+                requires_live_api: false,
+                requires_git_changes: false,
+                blocker: blocker_code,
+            });
+        }
+        WalkPosition::Session { .. } => {
+            actions.extend(
+                ControlEdge::ALL
+                    .into_iter()
+                    .filter(|edge| edge.from() == phase)
+                    .map(|edge| {
+                        edge_action(WalkActionKind::Step, edge, mutation_enabled, blocker_code)
+                    }),
+            );
+            actions.push(WalkAction {
+                kind: WalkActionKind::Reset,
+                edge: None,
+                target: Some(WalkPhase::Empty),
+                enabled: mutation_enabled,
+                requires_live_api: false,
+                requires_git_changes: false,
+                blocker: blocker_code,
+            });
+        }
+        WalkPosition::Unpositioned { .. } | WalkPosition::Legacy { .. } => (),
     }
-    if authority == WalkAuthority::RecoveryRequired {
+    if authority == WalkAuthority::RecoveryRequired
+        && matches!(position, WalkPosition::Session { .. })
+        && blocker.map(|blocker| blocker.code) != Some(WalkBlockerCode::JobIndeterminate)
+    {
         actions.push(WalkAction {
             kind: WalkActionKind::Recover,
             edge: None,
@@ -2828,11 +3053,11 @@ async fn run_start_job(
     config: WalkStartConfig,
     until: WalkPhase,
     allow_live_api: bool,
-    controller_attached: Arc<AtomicBool>,
+    observed: Arc<ControllerCache>,
 ) {
-    let result = {
+    let (result, observation) = {
         let mut controller = controller.lock().await;
-        match controller
+        let result = match controller
             .start_version(config, until, allow_live_api, &expected)
             .await
         {
@@ -2874,12 +3099,10 @@ async fn run_start_job(
                 }
             }
             Err(error) => Err((controller.phase(), TransitionFailure::Attempt(error))),
-        }
+        };
+        (result, ControllerObservation::controller(&controller))
     };
-    let attached = match &result {
-        Ok((phase, ..)) | Err((phase, _)) => *phase != WalkPhase::Empty,
-    };
-    controller_attached.store(attached, Ordering::Release);
+    observed.update(observation);
     match result {
         Ok((phase, event, message, phase_before, phase_after, edges, version, published)) => {
             let event_projection = match record_walk_event(&epoch, event) {
@@ -2958,11 +3181,11 @@ async fn run_step_job(
     client_watch: bool,
     allow_live_api: bool,
     allow_git_changes: bool,
-    controller_attached: Arc<AtomicBool>,
+    observed: Arc<ControllerCache>,
 ) {
-    let result = {
+    let (result, observation) = {
         let mut controller = controller.lock().await;
-        match controller
+        let result = match controller
             .step_version(until, allow_live_api, allow_git_changes, &expected)
             .await
         {
@@ -3003,12 +3226,10 @@ async fn run_step_job(
                 }
             }
             Err(error) => Err((controller.phase(), TransitionFailure::Attempt(error))),
-        }
+        };
+        (result, ControllerObservation::controller(&controller))
     };
-    let attached = match &result {
-        Ok((phase, ..)) | Err((phase, _)) => *phase != WalkPhase::Empty,
-    };
-    controller_attached.store(attached, Ordering::Release);
+    observed.update(observation);
     match result {
         Ok((phase, event, message, phase_before, phase_after, edges, version, published)) => {
             let event_projection = match record_walk_event(&epoch, event) {
@@ -3903,7 +4124,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     use std::{os::unix::process::CommandExt, process::Command};
 
-    use ploke_records::ids::CampaignId;
+    use ploke_records::{identity::ParentIdentityRecord, ids::CampaignId};
     use tempfile::tempdir;
 
     use crate::{
@@ -3911,8 +4132,11 @@ mod tests {
             Prototype1StateWalkAuditScope, Prototype1StateWalkLlmStepSource,
             prototype1_state::{
                 driver::control::PredecessorRelease,
-                event::{RecordedAt, RuntimeId},
+                event::{ContentHash, RecordedAt, RuntimeId},
+                identity::{ParentIdentity, write_parent_identity},
                 journal::{Streams, SuccessorHandoffEntry},
+                profile::{RunMode, RunProfileCommitment},
+                session::{Claim, Cursor, Outcome, SessionId},
                 walk::{endpoint, epoch::ServerEpoch},
             },
         },
@@ -3929,6 +4153,7 @@ mod tests {
         let controller = WalkController::new(repo_root.to_path_buf());
         let delta = PublishedDelta::capture(&controller, SessionVersion::empty(), None)
             .expect("capture initial delta");
+        let observation = ControllerObservation::capture(&controller, repo_root, false);
         WalkServer {
             epoch,
             controller: Arc::new(Mutex::new(controller)),
@@ -3936,7 +4161,7 @@ mod tests {
             jobs: Arc::new(Mutex::new(jobs)),
             gate,
             operation_root,
-            controller_attached: Arc::new(AtomicBool::new(false)),
+            observed: Arc::new(ControllerCache::new(observation)),
         }
     }
 
@@ -3944,6 +4169,17 @@ mod tests {
         MutationGuard {
             operation: OperationId::for_test(value),
             expected: SessionVersion::empty(),
+        }
+    }
+
+    fn test_version(phase: WalkPhase, value: u128) -> SessionVersion {
+        let evidence = format!("test-session-{value}");
+        SessionVersion {
+            session_id: Some(SessionId::for_test(value)),
+            cursor: Some(
+                Cursor::new(phase, ContentHash::of(&evidence)).expect("valid test cursor"),
+            ),
+            journal_revision: 1,
         }
     }
 
@@ -4142,13 +4378,26 @@ mod tests {
 
     fn walk_request(body: WalkRequestBody) -> WalkRequest {
         WalkRequest {
+            client_protocol: None,
             client_epoch: None,
             body,
         }
     }
 
     async fn health_over_socket(socket: &Path) -> Result<WalkResponse, PrepareError> {
-        request_over_socket(socket, WalkRequestBody::Health).await
+        let mut stream = ipc::connect(socket).await?;
+        ipc::send(
+            &mut stream,
+            &WalkRequest {
+                client_protocol: Some(
+                    crate::cli::prototype1_state::walk::epoch::WALK_PROTOCOL_VERSION,
+                ),
+                client_epoch: None,
+                body: WalkRequestBody::Health,
+            },
+        )
+        .await?;
+        ipc::recv(&mut stream).await
     }
 
     async fn request_over_socket(
@@ -4219,6 +4468,7 @@ mod tests {
 
         gate.allow(PredecessorRelease::for_test());
         let request = WalkRequest {
+            client_protocol: None,
             client_epoch: Some(server.epoch.clone()),
             body: WalkRequestBody::Reset {
                 guard: test_guard(5),
@@ -4237,6 +4487,7 @@ mod tests {
         let pending = test_server(repo.path(), MutationGate::closed());
         let (response, stop) = pending
             .handle(WalkRequest {
+                client_protocol: None,
                 client_epoch: Some(pending.epoch.clone()),
                 body: WalkRequestBody::Stop,
             })
@@ -4313,6 +4564,7 @@ mod tests {
 
         let (response, stop) = server
             .handle(WalkRequest {
+                client_protocol: None,
                 client_epoch: Some(server.epoch.clone()),
                 body: WalkRequestBody::Start {
                     guard: test_guard(40),
@@ -4341,6 +4593,125 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn start_rejects_failed_fresh_admission_before_operation_persistence() {
+        let repo = tempdir().expect("server repo");
+        let server = test_server(repo.path(), MutationGate::open());
+        let guard = test_guard(41);
+        let operation = guard.operation;
+        let operation_path = server.operation_path(operation);
+
+        let (response, stop) = server
+            .handle(WalkRequest {
+                client_protocol: Some(
+                    crate::cli::prototype1_state::walk::epoch::WALK_PROTOCOL_VERSION,
+                ),
+                client_epoch: Some(server.epoch.clone()),
+                body: WalkRequestBody::Start {
+                    guard,
+                    config: WalkStartConfig {
+                        campaign: None,
+                        repo_root: Some(repo.path().to_path_buf()),
+                    },
+                    until: WalkPhase::R3,
+                    allow_live_api: false,
+                },
+            })
+            .await;
+
+        assert!(!stop);
+        let WalkResponse::Error {
+            code,
+            detail,
+            version: Some(version),
+            ..
+        } = response
+        else {
+            panic!("failed fresh admission must return a typed conflict");
+        };
+        assert_eq!(code, WalkErrorCode::RecoveryInProgress);
+        assert!(
+            detail.contains("fresh-session admission failed"),
+            "{detail}"
+        );
+        assert_eq!(version, SessionVersion::empty());
+        assert!(server.latest_job().await.is_none());
+        assert!(
+            server
+                .load_operation(operation)
+                .expect("inspect rejected operation")
+                .is_none()
+        );
+        assert!(
+            !operation_path.exists(),
+            "rejected fresh admission must not create a durable operation record"
+        );
+        assert!(
+            fs::read_dir(&server.operation_root)
+                .expect("read operation directory")
+                .next()
+                .is_none(),
+            "rejected fresh admission must leave the operation directory empty"
+        );
+    }
+
+    #[tokio::test]
+    async fn recover_without_session_rejects_before_operation_persistence() {
+        let repo = tempdir().expect("server repo");
+        let server = test_server(repo.path(), MutationGate::open());
+        server.observed.update(ControllerObservation {
+            phase: WalkPhase::R5,
+            attached: true,
+            blocker: None,
+            fresh: FreshAdmission::Blocked("R5 cannot begin a fresh session".to_string()),
+        });
+
+        let status = server
+            .status_response("walk server online")
+            .await
+            .expect("blocked status");
+        let WalkResponse::Status { snapshot, .. } = status else {
+            panic!("expected status response");
+        };
+        assert!(
+            snapshot
+                .actions
+                .iter()
+                .all(|action| action.kind != WalkActionKind::Recover),
+            "a checkout without a durable session must not advertise recovery"
+        );
+
+        let guard = test_guard(42);
+        let operation = guard.operation;
+        let (response, stop) = server
+            .handle(WalkRequest {
+                client_protocol: Some(
+                    crate::cli::prototype1_state::walk::epoch::WALK_PROTOCOL_VERSION,
+                ),
+                client_epoch: Some(server.epoch.clone()),
+                body: WalkRequestBody::Recover {
+                    directive: RecoveryDirective::AdmitEpoch,
+                    guard: Some(guard),
+                },
+            })
+            .await;
+
+        assert!(!stop);
+        let WalkResponse::Error { code, detail, .. } = response else {
+            panic!("unavailable recovery must return a typed error");
+        };
+        assert_eq!(code, WalkErrorCode::BadRequest);
+        assert!(detail.contains("committed session cursor"), "{detail}");
+        assert!(server.latest_job().await.is_none());
+        assert!(
+            server
+                .load_operation(operation)
+                .expect("inspect rejected recovery")
+                .is_none(),
+            "unavailable recovery must not create an operation record"
+        );
+    }
+
+    #[tokio::test]
     async fn effectful_debug_requests_are_supervised_and_durable() {
         for expected in ["branch_live", "llm_step", "llm_finish"] {
             let repo = tempdir().expect("repo tempdir");
@@ -4350,6 +4721,7 @@ mod tests {
                 .expect("effectful debug request");
             let server = test_server(repo.path(), MutationGate::open());
             let request = WalkRequest {
+                client_protocol: None,
                 client_epoch: Some(server.epoch.clone()),
                 body,
             };
@@ -4394,6 +4766,7 @@ mod tests {
         let server = test_server(repo.path(), MutationGate::open());
         let (response, stop) = server
             .handle(WalkRequest {
+                client_protocol: None,
                 client_epoch: Some(server.epoch.clone()),
                 body: WalkRequestBody::BranchLive {
                     guard: test_guard(8),
@@ -4447,19 +4820,9 @@ mod tests {
         .expect("show must not wait for the live job's controller lock");
 
         match handled {
-            (
-                WalkResponse::Status {
-                    snapshot:
-                        WalkSessionSnapshot {
-                            phase,
-                            job: Some(active),
-                            ..
-                        },
-                    ..
-                },
-                false,
-            ) => {
-                assert_eq!(phase, WalkPhase::Empty);
+            (WalkResponse::Status { snapshot, .. }, false) => {
+                let active = snapshot.job.as_ref().expect("active job snapshot");
+                assert_eq!(snapshot.phase(), WalkPhase::Empty);
                 assert_eq!(active.job_id, job.job_id);
                 assert_eq!(active.status, WalkJobStatus::Running);
             }
@@ -4678,11 +5041,38 @@ mod tests {
         assert!(matches!(delta.snapshot.state, WalkDeltaState::NotRecorded));
     }
 
+    #[test]
+    fn contended_cache_does_not_claim_an_attached_controller() {
+        let cache = ControllerCache::new(ControllerObservation {
+            phase: WalkPhase::R4c,
+            attached: true,
+            blocker: None,
+            fresh: FreshAdmission::Ready,
+        });
+        let _write = cache.current.write().expect("hold cache writer");
+
+        let observation = cache.read();
+
+        assert_eq!(observation.phase, WalkPhase::Empty);
+        assert!(!observation.attached);
+        assert!(
+            observation
+                .blocker
+                .as_deref()
+                .is_some_and(|detail| detail.contains("cache is contended"))
+        );
+    }
+
     #[tokio::test]
-    async fn health_preserves_cached_attachment_while_controller_is_locked() {
+    async fn pre_session_health_uses_cached_reconstruction_while_controller_is_locked() {
         let repo = tempdir().expect("repo tempdir");
         let server = test_server(repo.path(), MutationGate::open());
-        server.controller_attached.store(true, Ordering::Release);
+        server.observed.update(ControllerObservation {
+            phase: WalkPhase::R4c,
+            attached: true,
+            blocker: None,
+            fresh: FreshAdmission::Ready,
+        });
         let _controller = server.controller.lock().await;
 
         let response = tokio::time::timeout(
@@ -4695,13 +5085,160 @@ mod tests {
         let WalkResponse::Status { snapshot, .. } = response else {
             panic!("expected status response");
         };
+        assert_eq!(snapshot.phase(), WalkPhase::R4c);
+        assert!(matches!(
+            &snapshot.position,
+            WalkPosition::Reconstruction {
+                phase: WalkPhase::R4c
+            }
+        ));
+        assert_eq!(snapshot.version(), SessionVersion::empty());
         assert!(snapshot.controller_attached);
+        assert!(
+            snapshot.actions.iter().any(|action| {
+                action.kind == WalkActionKind::Start
+                    && action.target == Some(WalkPhase::R3)
+                    && action.enabled
+            }),
+            "setup reconstruction must advertise the R3 controller-session claim"
+        );
         assert!(
             snapshot
                 .actions
                 .iter()
-                .all(|action| action.kind != WalkActionKind::Start),
-            "lock contention must not advertise a second controller start"
+                .all(|action| !matches!(action.kind, WalkActionKind::Step | WalkActionKind::Reset)),
+            "pre-session reconstruction must not advertise session-only controls"
+        );
+
+        server.observed.update(ControllerObservation {
+            phase: WalkPhase::R5,
+            attached: true,
+            blocker: None,
+            fresh: FreshAdmission::Blocked(
+                "pre-session loop artifacts reconstruct through r5; preserve this run as read-only or migrate it explicitly"
+                    .to_string(),
+            ),
+        });
+        let response = server
+            .status_response("walk server online")
+            .await
+            .expect("historical status response");
+        let WalkResponse::Status { snapshot, .. } = response else {
+            panic!("expected historical status response");
+        };
+        assert_eq!(snapshot.phase(), WalkPhase::R5);
+        assert_eq!(snapshot.authority, WalkAuthority::RecoveryRequired);
+        assert_eq!(
+            snapshot.blocker.as_ref().map(|blocker| blocker.code),
+            Some(WalkBlockerCode::ControllerBlocked)
+        );
+        assert!(snapshot.actions.iter().any(|action| {
+            action.kind == WalkActionKind::Start
+                && !action.enabled
+                && action.blocker == Some(WalkBlockerCode::ControllerBlocked)
+        }));
+        assert!(
+            snapshot
+                .actions
+                .iter()
+                .all(|action| action.kind != WalkActionKind::Recover),
+            "a blocked pre-session checkout has no durable recovery target"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn cursorless_v1_status_serializes_through_the_production_store() {
+        let root = tempdir().expect("test root");
+        let eval_home = root.path().join("eval-home");
+        let _env = env_guard_os(vec![("PLOKE_EVAL_HOME", OsString::from(&eval_home))]);
+        let repo = root.path().join("repo");
+        fs::create_dir_all(&repo).expect("create repo");
+        let campaign = CampaignId::from("walk-cursorless-v1");
+        let parent = ParentIdentity::from_record_for_test(ParentIdentityRecord {
+            schema_version: "prototype1-parent-identity.v1".to_string(),
+            campaign_id: campaign.clone(),
+            parent_id: "node-parent".to_string(),
+            node_id: "node-parent".to_string(),
+            generation: 1,
+            instance_id: Some("instance-1".to_string()),
+            previous_parent_id: Some("node-root".to_string()),
+            parent_node_id: Some("node-root".to_string()),
+            branch_id: "branch-parent".to_string(),
+            artifact_branch: Some("artifact-parent".to_string()),
+            created_at: "2026-06-30T21:38:52Z".to_string(),
+        });
+        write_parent_identity(&repo, &parent).expect("write parent identity");
+        let profile = RunProfileCommitment {
+            schema_version: "prototype1-run-profile-commitment.v1".to_string(),
+            profile_path: PathBuf::from("prototype1/run-profile.toml"),
+            sha256: "a".repeat(64),
+            source_path: Some(PathBuf::from("operator-profile.toml")),
+            admitted_at: "2026-06-30T20:00:00Z".to_string(),
+        };
+        let cursor =
+            Cursor::new(WalkPhase::R3, ContentHash::of("v1 origin")).expect("valid origin cursor");
+        // No real v1 journal survived in the fixture corpus. This synthetic compatibility
+        // shape is still persisted with the canonical serializer and read only by production code.
+        let claim = Claim::historical(
+            ContentHash::of("cursorless-v1-fixture"),
+            parent.clone(),
+            profile,
+            RunMode::Step,
+            cursor,
+            ServerEpoch::capture(&repo).expect("capture fixture epoch"),
+        );
+        let manifest = campaign_manifest_path(&campaign).expect("campaign manifest path");
+        let session_id = Store::for_manifest(&manifest)
+            .write_v1_active(&claim)
+            .expect("persist cursorless v1 session");
+        let server = test_server(&repo, MutationGate::open());
+        server
+            .controller
+            .lock()
+            .await
+            .refresh_from_disk()
+            .expect("cursorless active-owner session remains inspectable");
+
+        let response = server
+            .status_response("walk server online")
+            .await
+            .expect("cursorless status response");
+        let encoded = serde_json::to_value(&response).expect("serialize v9 status response");
+        let decoded: WalkResponse =
+            serde_json::from_value(encoded.clone()).expect("decode serialized v9 status response");
+        assert!(matches!(decoded, WalkResponse::Status { .. }));
+        let WalkResponse::Status { snapshot, .. } = response else {
+            panic!("expected status response");
+        };
+
+        assert_eq!(snapshot.phase(), WalkPhase::Empty);
+        assert_eq!(snapshot.version().session_id(), Some(session_id));
+        assert_eq!(snapshot.version().cursor(), None);
+        assert_eq!(snapshot.version().journal_revision(), 2);
+        assert!(!snapshot.controller_attached);
+        assert_eq!(snapshot.authority, WalkAuthority::RecoveryRequired);
+        assert!(matches!(
+            snapshot.blocker.as_ref(),
+            Some(WalkBlocker {
+                code: WalkBlockerCode::ControllerBlocked,
+                detail,
+            }) if detail.contains("owner is recorded at fence 1")
+        ));
+        assert_eq!(encoded["snapshot"]["phase"], "empty");
+        assert_eq!(
+            encoded["snapshot"]["version"],
+            serde_json::to_value(snapshot.version()).expect("serialize expected version")
+        );
+        assert_eq!(encoded["snapshot"]["position"]["source"], "unpositioned");
+        assert!(
+            snapshot.actions.iter().all(|action| !matches!(
+                action.kind,
+                WalkActionKind::Start
+                    | WalkActionKind::Step
+                    | WalkActionKind::Reset
+                    | WalkActionKind::Recover
+            )),
+            "cursorless sessions cannot satisfy any controller-mutation precondition"
         );
     }
 
@@ -4709,6 +5246,12 @@ mod tests {
     async fn indeterminate_status_uses_durable_phase() {
         let repo = tempdir().expect("repo tempdir");
         let server = test_server(repo.path(), MutationGate::open());
+        server.observed.update(ControllerObservation {
+            phase: WalkPhase::R4c,
+            attached: true,
+            blocker: None,
+            fresh: FreshAdmission::Ready,
+        });
         server
             .register_job(
                 test_guard(10_000),
@@ -4733,8 +5276,9 @@ mod tests {
         let WalkResponse::Status { snapshot, .. } = response else {
             panic!("expected status response");
         };
-        assert_eq!(snapshot.phase, WalkPhase::Empty);
-        assert_eq!(snapshot.version, SessionVersion::empty());
+        assert_eq!(snapshot.phase(), WalkPhase::Empty);
+        assert!(matches!(&snapshot.position, WalkPosition::NoSession));
+        assert_eq!(snapshot.version(), SessionVersion::empty());
 
         let (response, stop) = server
             .handle(walk_request(WalkRequestBody::OperationStatus {
@@ -4748,11 +5292,122 @@ mod tests {
         assert_eq!(phase, WalkPhase::Empty);
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    async fn indeterminate_session_status_does_not_advertise_recover() {
+        let root = tempdir().expect("test root");
+        let eval_home = root.path().join("eval-home");
+        let _env = env_guard_os(vec![("PLOKE_EVAL_HOME", OsString::from(&eval_home))]);
+        let repo = root.path().join("repo");
+        fs::create_dir_all(&repo).expect("create repo");
+        let campaign = CampaignId::from("walk-indeterminate-session");
+        let parent = ParentIdentity::from_record_for_test(ParentIdentityRecord {
+            schema_version: "prototype1-parent-identity.v1".to_string(),
+            campaign_id: campaign.clone(),
+            parent_id: "node-parent".to_string(),
+            node_id: "node-parent".to_string(),
+            generation: 1,
+            instance_id: Some("instance-1".to_string()),
+            previous_parent_id: Some("node-root".to_string()),
+            parent_node_id: Some("node-root".to_string()),
+            branch_id: "branch-parent".to_string(),
+            artifact_branch: Some("artifact-parent".to_string()),
+            created_at: "2026-06-30T21:38:52Z".to_string(),
+        });
+        write_parent_identity(&repo, &parent).expect("write parent identity");
+        let profile = RunProfileCommitment {
+            schema_version: "prototype1-run-profile-commitment.v1".to_string(),
+            profile_path: PathBuf::from("prototype1/run-profile.toml"),
+            sha256: "a".repeat(64),
+            source_path: Some(PathBuf::from("operator-profile.toml")),
+            admitted_at: "2026-06-30T20:00:00Z".to_string(),
+        };
+        let cursor = Cursor::new(
+            WalkPhase::R6,
+            ContentHash::of("indeterminate session cursor"),
+        )
+        .expect("valid session cursor");
+        let claim = Claim::historical(
+            ContentHash::of("indeterminate-session-fixture"),
+            parent,
+            profile,
+            RunMode::Step,
+            cursor,
+            ServerEpoch::capture(&repo).expect("capture fixture epoch"),
+        );
+        let manifest = campaign_manifest_path(&campaign).expect("campaign manifest path");
+        let lease = match Store::for_manifest(&manifest)
+            .claim(claim)
+            .expect("claim fixture session")
+        {
+            Outcome::Acquired(lease) => lease,
+            Outcome::Conflict(_) | Outcome::Recoverable(_) => {
+                panic!("fresh fixture session must acquire normally")
+            }
+        };
+        assert!(lease.release().is_ok(), "release fixture session");
+
+        let server = test_server(&repo, MutationGate::open());
+        let expected = server.durable_version().expect("read durable session");
+        server
+            .register_job(
+                MutationGuard {
+                    operation: OperationId::for_test(10_001),
+                    expected: expected.clone(),
+                },
+                b"step".to_vec(),
+                test_step_intent(WalkPhase::R7),
+            )
+            .await
+            .map(accepted)
+            .expect("register test job");
+        {
+            let mut jobs = server.jobs.lock().await;
+            let active = jobs.active.as_mut().expect("active test job");
+            active.snapshot.status = WalkJobStatus::Indeterminate;
+            active.snapshot.phase_before = WalkPhase::R6;
+        }
+        server.observed.update(ControllerObservation {
+            phase: WalkPhase::R6,
+            attached: true,
+            blocker: None,
+            fresh: FreshAdmission::Ready,
+        });
+        let _controller = server.controller.lock().await;
+
+        let response = server
+            .status_response("walk server online")
+            .await
+            .expect("status response");
+        let WalkResponse::Status { snapshot, .. } = response else {
+            panic!("expected status response");
+        };
+
+        assert_eq!(snapshot.version(), expected);
+        assert!(matches!(snapshot.position, WalkPosition::Session { .. }));
+        assert_eq!(snapshot.authority, WalkAuthority::RecoveryRequired);
+        assert_eq!(
+            snapshot.blocker.as_ref().map(|blocker| blocker.code),
+            Some(WalkBlockerCode::JobIndeterminate)
+        );
+        assert!(
+            snapshot
+                .actions
+                .iter()
+                .all(|action| action.kind != WalkActionKind::Recover),
+            "an indeterminate job must be resolved before session recovery can be admitted"
+        );
+    }
+
     #[tokio::test]
     async fn verified_audit_refreshes_cached_attachment() {
         let repo = tempdir().expect("repo tempdir");
         let server = test_server(repo.path(), MutationGate::open());
-        server.controller_attached.store(true, Ordering::Release);
+        server.observed.update(ControllerObservation {
+            phase: WalkPhase::R4c,
+            attached: true,
+            blocker: None,
+            fresh: FreshAdmission::Ready,
+        });
 
         let (response, stop) = server
             .handle(walk_request(WalkRequestBody::Audit {
@@ -4767,7 +5422,7 @@ mod tests {
 
         assert!(!stop);
         assert!(matches!(response, WalkResponse::Audit { .. }));
-        assert!(!server.controller_attached.load(Ordering::Acquire));
+        assert_eq!(server.observed.read().phase, WalkPhase::Empty);
     }
 
     #[tokio::test]
@@ -4843,6 +5498,60 @@ mod tests {
             .expect("later health request must not time out")
             .expect("later health request must reach the same server");
         assert!(matches!(response, WalkResponse::Status { .. }));
+    }
+
+    #[tokio::test]
+    async fn socket_status_requires_the_current_protocol() {
+        let repo = tempdir().expect("repo tempdir");
+        let socket = repo.path().join("walk.sock");
+        let listener = UnixListener::bind(&socket).expect("bind walk socket");
+        let server = test_server(repo.path(), MutationGate::open());
+        let serving = tokio::spawn(accept_loop(server, listener, None));
+
+        let missing = request_over_socket(&socket, WalkRequestBody::Health)
+            .await
+            .expect("missing-epoch response");
+        assert!(matches!(
+            missing,
+            WalkResponse::Error {
+                code: WalkErrorCode::BadRequest,
+                ref detail,
+                ..
+            } if detail.contains("client=missing server=9")
+        ));
+
+        let mut old_epoch = ServerEpoch::capture(repo.path()).expect("capture old client epoch");
+        old_epoch.protocol_version -= 1;
+        let mut stream = ipc::connect(&socket).await.expect("connect old client");
+        ipc::send(
+            &mut stream,
+            &WalkRequest {
+                client_protocol: Some(old_epoch.protocol_version),
+                client_epoch: Some(old_epoch),
+                body: WalkRequestBody::Show,
+            },
+        )
+        .await
+        .expect("send old client request");
+        let outdated: WalkResponse = ipc::recv(&mut stream)
+            .await
+            .expect("outdated-protocol response");
+        assert!(matches!(
+            outdated,
+            WalkResponse::Error {
+                code: WalkErrorCode::BadRequest,
+                ref detail,
+                ..
+            } if detail.contains("client=8 server=9")
+        ));
+
+        let current = health_over_socket(&socket)
+            .await
+            .expect("current client status response");
+        serving.abort();
+        let _ = serving.await;
+
+        assert!(matches!(current, WalkResponse::Status { .. }));
     }
 
     #[tokio::test]
@@ -5077,6 +5786,10 @@ mod tests {
             panic!("expected abandoned job response");
         };
         assert_eq!(abandoned.status, WalkJobStatus::Abandoned);
+        assert!(
+            !abandoned.status.blocks_mutation(),
+            "durable abandonment must release the indeterminate job blocker"
+        );
         assert_eq!(
             abandoned.resolution.as_ref().map(|receipt| receipt.kind),
             Some(WalkJobResolutionKind::Abandon)
@@ -5101,8 +5814,22 @@ mod tests {
             .await
             .expect("recovery admission response");
         assert!(
-            matches!(recovery, JobAdmission::Accepted(_)),
-            "durable abandonment must release the indeterminate job blocker"
+            matches!(
+                &recovery,
+                JobAdmission::Rejected(WalkResponse::Error {
+                    code: WalkErrorCode::BadRequest,
+                    detail,
+                    ..
+                }) if detail.contains("committed session cursor")
+            ),
+            "job abandonment must not invent controller recovery authority"
+        );
+        assert!(
+            server
+                .load_operation(OperationId::for_test(10_004))
+                .expect("inspect rejected recovery")
+                .is_none(),
+            "cursorless recovery rejection must not persist an operation"
         );
     }
 
@@ -5230,6 +5957,7 @@ mod tests {
 
         let (response, stop) = server
             .handle(WalkRequest {
+                client_protocol: None,
                 client_epoch: Some(observed),
                 body: WalkRequestBody::Stop,
             })
@@ -5273,6 +6001,7 @@ mod tests {
 
         let (rejected, stop) = server
             .handle(WalkRequest {
+                client_protocol: None,
                 client_epoch: Some(ServerEpoch::capture(other.path()).expect("other epoch")),
                 body: WalkRequestBody::Stop,
             })
@@ -5288,6 +6017,7 @@ mod tests {
         drifted.git_head = Some("new-source-head".to_string());
         let (accepted, stop) = server
             .handle(WalkRequest {
+                client_protocol: None,
                 client_epoch: Some(drifted),
                 body: WalkRequestBody::Stop,
             })
@@ -5311,25 +6041,34 @@ mod tests {
 
         match handled {
             (WalkResponse::Status { snapshot, .. }, false) => {
-                assert_eq!(snapshot.version, SessionVersion::empty());
-                assert_eq!(snapshot.phase, WalkPhase::Empty);
+                assert_eq!(snapshot.version(), SessionVersion::empty());
+                assert_eq!(snapshot.phase(), WalkPhase::Empty);
+                assert!(matches!(snapshot.position, WalkPosition::NoSession));
             }
             other => panic!("health did not expose a durable version: {other:?}"),
         }
     }
 
     #[tokio::test]
-    async fn health_exposes_typed_authority_blocker_and_actions() {
+    async fn health_exposes_missing_setup_blocker_and_actions() {
         let repo = tempdir().expect("repo tempdir");
         let server = test_server(repo.path(), MutationGate::open());
         let (open, _) = server.handle(walk_request(WalkRequestBody::Health)).await;
         let WalkResponse::Status { snapshot, .. } = open else {
             panic!("health did not return a session snapshot");
         };
-        assert_eq!(snapshot.authority, WalkAuthority::Active);
-        assert!(snapshot.blocker.is_none());
+        assert!(matches!(&snapshot.position, WalkPosition::NoSession));
+        assert_eq!(snapshot.authority, WalkAuthority::RecoveryRequired);
+        assert_eq!(
+            snapshot.blocker.as_ref().map(|blocker| blocker.code),
+            Some(WalkBlockerCode::ControllerBlocked)
+        );
         assert!(snapshot.actions.iter().any(|action| {
-            action.kind == WalkActionKind::Start && action.edge.is_none() && action.enabled
+            action.kind == WalkActionKind::Start
+                && action.edge.is_none()
+                && action.target == Some(WalkPhase::R3)
+                && !action.enabled
+                && action.blocker == Some(WalkBlockerCode::ControllerBlocked)
         }));
 
         let pending = test_server(repo.path(), MutationGate::closed());
@@ -5623,7 +6362,7 @@ mod tests {
     #[test]
     fn durable_controller_blocker_only_allows_recovery_job() {
         let durable = DurableSessionState {
-            version: SessionVersion::empty(),
+            version: test_version(WalkPhase::R6, 61),
             blocker: Some(WalkBlocker {
                 code: WalkBlockerCode::AttemptPending,
                 detail: "pending transition".to_string(),
@@ -5642,7 +6381,10 @@ mod tests {
             detail: "reconstruction failed".to_string(),
         };
         let authority = authority_for(Some(&blocker));
-        let actions = actions_for(WalkPhase::R6, true, authority, Some(&blocker));
+        let position = WalkPosition::Session {
+            version: test_version(WalkPhase::R6, 62),
+        };
+        let actions = actions_for(&position, true, authority, Some(&blocker));
 
         assert_eq!(authority, WalkAuthority::RecoveryRequired);
         assert!(

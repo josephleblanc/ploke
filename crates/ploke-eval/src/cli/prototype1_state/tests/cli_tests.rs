@@ -7,6 +7,11 @@ use crate::cli::prototype1_state::edit_surface::harness_request::{
 use crate::cli::prototype1_state::edit_surface::surface::SurfacePolicyId;
 use crate::cli::prototype1_state::eval_store;
 use crate::cli::prototype1_state::typestate::{self, StepInput};
+use crate::cli::prototype1_state::walk::{
+    controller::WalkController,
+    phase::WalkPhase,
+    protocol::{SessionVersion, WalkStartConfig},
+};
 use crate::cli::{
     InspectOutputFormat, Prototype1CandidateGenerator,
     Prototype1ChildScheduleMode as CliPrototype1ChildScheduleMode, Prototype1LoopCommand,
@@ -1129,6 +1134,118 @@ name = "setup-preview"
         planned_toml
     );
     assert_eq!(admitted.commitment.sha256, planned_sha);
+}
+
+#[tokio::test]
+async fn fresh_setup_reconstruction_claims_first_walk_session_at_r3() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let eval_home = tmp.path().join("eval-home");
+    let repo_root = tmp.path().join("repo");
+    let _guard =
+        crate::test_support::env_guard_os(vec![("PLOKE_EVAL_HOME", eval_home.as_os_str().into())]);
+    write_direct_google_registry(&eval_home);
+
+    init_indexed_repo(&repo_root);
+    fs::write(repo_root.join("README.md"), "fresh walk setup\n").expect("write seed file");
+    index_repo(&repo_root);
+    commit_indexed_repo(&repo_root, "seed fresh walk setup");
+
+    let dataset_file = eval_home.join("dataset.jsonl");
+    fs::create_dir_all(&eval_home).expect("create eval home");
+    fs::write(
+        &dataset_file,
+        r#"{"instance_id":"BurntSushi__ripgrep-2209","org":"BurntSushi","repo":"ripgrep","number":2209,"title":"Fix multiline replacement","body":"body one","base":{"sha":"abc123"},"fix_patch":"diff --git a/crates/printer/src/util.rs b/crates/printer/src/util.rs\n--- a/crates/printer/src/util.rs\n+++ b/crates/printer/src/util.rs\n@@ -1 +1 @@\n-old\n+new\n"}"#,
+    )
+    .expect("write dataset");
+    let batch = crate::spec::PreparedMsbBatch {
+        batch_id: "fresh-walk-batch".to_string(),
+        dataset_file,
+        dataset_url: None,
+        repo_cache: eval_home.join("repo-cache"),
+        instances_root: eval_home.join("instances"),
+        output_dir: eval_home.join("batches/fresh-walk-batch"),
+        budget: crate::spec::EvalBudget::default(),
+        instances: vec!["BurntSushi__ripgrep-2209".to_string()],
+        campaign: None,
+    };
+    let batch_path = eval_home.join("prepared-batch.json");
+    fs::write(
+        &batch_path,
+        serde_json::to_vec_pretty(&batch).expect("serialize batch"),
+    )
+    .expect("write batch");
+    let profile_path = eval_home.join("run-profile.toml");
+    fs::write(
+        &profile_path,
+        r#"schema_version = "prototype1-run-profile.v1"
+name = "fresh-walk-start"
+
+[control]
+mode = "step"
+
+[storage.eval]
+backend = "dual-strict"
+"#,
+    )
+    .expect("write profile");
+    let mut command = setup_preview_command(batch_path, profile_path);
+    command.campaign = Some(CampaignId::from("fresh-walk-campaign"));
+    let plan =
+        preview_prototype1_parent_setup_at(&command, repo_root.clone()).expect("preview setup");
+    let setup =
+        prepare_prototype1_parent_setup_at(&command, Some(&plan.plan_sha256), repo_root.clone())
+            .expect("prepare completed setup");
+    let parent = load_parent_identity_optional(&repo_root)
+        .expect("load admitted identity")
+        .expect("stored admitted identity");
+    assert_eq!(parent.node_id(), setup.node_id);
+    let manifest = plan.content.campaign.manifest_path();
+    assert_session_absent(manifest, &parent);
+
+    let mut controller = WalkController::new(
+        repo_root
+            .canonicalize()
+            .expect("canonical fresh setup root"),
+    );
+    controller
+        .refresh_from_disk()
+        .expect("reconstruct completed setup");
+    assert_eq!(controller.phase(), WalkPhase::R4c);
+
+    let advance = controller
+        .start_version(
+            WalkStartConfig {
+                campaign: Some(parent.campaign_id().clone()),
+                repo_root: None,
+            },
+            WalkPhase::R3,
+            false,
+            &SessionVersion::empty(),
+        )
+        .await
+        .expect("fresh reconstructed setup should admit its first session claim");
+    assert_eq!(advance.from(), WalkPhase::R3);
+    assert_eq!(advance.to(), WalkPhase::R3);
+    assert!(
+        advance
+            .transition_edges()
+            .expect("transition edges")
+            .is_empty()
+    );
+    let version = advance.exact_version().expect("exact session version");
+    assert!(version.session_id().is_some());
+    assert_eq!(version.phase(), WalkPhase::R3);
+    assert!(version.journal_revision() > 0);
+
+    let store = crate::cli::prototype1_state::session::Store::for_manifest(manifest);
+    let paths = store.paths(&parent);
+    let session = store
+        .inspect(&parent)
+        .expect("inspect claimed session")
+        .expect("claimed session exists");
+    assert!(session.active.is_none());
+    assert_eq!(session.cursor.expect("session cursor").phase, WalkPhase::R3);
+    assert!(paths.journal().exists());
 }
 
 #[tokio::test]

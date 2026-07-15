@@ -80,7 +80,10 @@ impl DetailsPanel<'_> {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
                 let walk_idle = self.walk_pending.is_none();
                 if ui
-                    .add_enabled(walk_idle, egui::Button::new("Health"))
+                    .add_enabled(
+                        self.client_available && walk_idle,
+                        egui::Button::new("Health"),
+                    )
                     .clicked()
                 {
                     action.refresh_health = true;
@@ -115,6 +118,10 @@ impl DetailsPanel<'_> {
                 ui.label(format!("git: {}", short_hash(head)));
             }
             if let WalkResponse::Status { snapshot, .. } = response {
+                ui.label(format!(
+                    "phase source: {}",
+                    snapshot.position.source_label()
+                ));
                 let authority_color =
                     if snapshot.authority == ploke_eval::walk_client::WalkAuthority::Active {
                         Color32::LIGHT_GREEN

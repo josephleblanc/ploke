@@ -25,11 +25,11 @@ use crate::{
 
 use super::{
     args,
-    epoch::ServerEpoch,
+    epoch::{ServerEpoch, WALK_PROTOCOL_VERSION},
     ipc, paths,
     protocol::{
         MutationGuard, OperationId, SessionVersion, WalkDeltaState, WalkJobResolutionKind,
-        WalkJobSnapshot, WalkJobStatus, WalkRequest, WalkRequestBody, WalkResponse,
+        WalkJobSnapshot, WalkJobStatus, WalkPosition, WalkRequest, WalkRequestBody, WalkResponse,
     },
     summary,
     trace::{EvaluationRunCoordinate, EvaluationTraceState},
@@ -59,6 +59,7 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
             let response = send_request(
                 &socket,
                 WalkRequest {
+                    client_protocol: Some(WALK_PROTOCOL_VERSION),
                     client_epoch: Some(epoch),
                     body: WalkRequestBody::Step {
                         guard,
@@ -94,6 +95,7 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
             let response = send_request(
                 &socket,
                 WalkRequest {
+                    client_protocol: Some(WALK_PROTOCOL_VERSION),
                     client_epoch: Some(epoch),
                     body: WalkRequestBody::Reset { guard },
                 },
@@ -124,6 +126,7 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
                 let response = send_request(
                     &socket,
                     WalkRequest {
+                        client_protocol: Some(WALK_PROTOCOL_VERSION),
                         client_epoch: Some(epoch),
                         body: WalkRequestBody::ResolveJob {
                             guard,
@@ -150,6 +153,7 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
             let response = send_request(
                 &socket,
                 WalkRequest {
+                    client_protocol: Some(WALK_PROTOCOL_VERSION),
                     client_epoch: Some(epoch),
                     body: WalkRequestBody::Recover {
                         directive,
@@ -400,7 +404,15 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
             let response = if client_epoch.is_none() && retry_safe_read(&body) {
                 client.send_read_only(body).await?
             } else {
-                send_request(&socket, WalkRequest { client_epoch, body }).await?
+                send_request(
+                    &socket,
+                    WalkRequest {
+                        client_protocol: Some(WALK_PROTOCOL_VERSION),
+                        client_epoch,
+                        body,
+                    },
+                )
+                .await?
             };
             if raw_json_message && response.is_ok() {
                 print_ok_message(&response);
@@ -450,6 +462,7 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
             let response = send_request(
                 &socket,
                 WalkRequest {
+                    client_protocol: Some(WALK_PROTOCOL_VERSION),
                     client_epoch: None,
                     body: WalkRequestBody::ReplayBack {
                         steps: command.steps,
@@ -473,6 +486,7 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
             let response = send_request(
                 &socket,
                 WalkRequest {
+                    client_protocol: Some(WALK_PROTOCOL_VERSION),
                     client_epoch: None,
                     body: WalkRequestBody::ReplayForward {
                         steps: command.steps,
@@ -498,6 +512,7 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
             let response = send_request(
                 &socket,
                 WalkRequest {
+                    client_protocol: Some(WALK_PROTOCOL_VERSION),
                     client_epoch: Some(epoch),
                     body: WalkRequestBody::BranchLive {
                         guard,
@@ -553,6 +568,7 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
             let response = send_request(
                 &socket,
                 WalkRequest {
+                    client_protocol: Some(WALK_PROTOCOL_VERSION),
                     client_epoch: Some(epoch),
                     body: WalkRequestBody::Stop,
                 },
@@ -581,6 +597,7 @@ async fn start(command: Prototype1StateWalkStartCommand) -> Result<(), PrepareEr
     let response = send_request(
         &socket,
         WalkRequest {
+            client_protocol: Some(WALK_PROTOCOL_VERSION),
             client_epoch: Some(epoch),
             body: WalkRequestBody::Start {
                 guard,
@@ -863,7 +880,7 @@ async fn mutation_guard(
                 epoch,
                 MutationGuard {
                     operation: operation.unwrap_or_else(OperationId::new),
-                    expected: snapshot.version,
+                    expected: snapshot.version(),
                 },
             ))
         }
@@ -908,7 +925,7 @@ fn stop_epoch(repo_root: &Path, response: &WalkResponse) -> Result<ServerEpoch, 
 #[cfg(test)]
 mod epoch_tests {
     use super::*;
-    use crate::cli::prototype1_state::walk::{phase::WalkPhase, protocol::WalkSessionSnapshot};
+    use crate::cli::prototype1_state::walk::protocol::{WalkPosition, WalkSessionSnapshot};
 
     #[test]
     fn fresh_epoch_rejects_socket_for_different_repo() {
@@ -917,8 +934,7 @@ mod epoch_tests {
         let response = WalkResponse::Status {
             message: "online".to_string(),
             snapshot: WalkSessionSnapshot {
-                phase: WalkPhase::Empty,
-                version: SessionVersion::empty(),
+                position: WalkPosition::NoSession,
                 controller_attached: false,
                 authority: crate::cli::prototype1_state::walk::protocol::WalkAuthority::Active,
                 job: None,
@@ -983,10 +999,7 @@ fn print_response(
 ) -> Result<(), PrepareError> {
     match format {
         InspectOutputFormat::Json => {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(response).map_err(PrepareError::Serialize)?
-            );
+            println!("{}", render_response_json(response)?);
         }
         InspectOutputFormat::Table => match response {
             WalkResponse::Ok {
@@ -1283,8 +1296,9 @@ fn print_response(
                 println!("walk");
                 println!("{}", "-".repeat(40));
                 println!("status: ok");
-                let phase = snapshot.phase;
+                let phase = snapshot.phase();
                 println!("phase: {phase} - {}", phase.detail());
+                println!("phase_source: {}", snapshot.position.source_label());
                 println!("controller_attached: {}", snapshot.controller_attached);
                 println!("mutation_authority: {:?}", snapshot.authority);
                 if let Some(blocker) = &snapshot.blocker {
@@ -1316,7 +1330,7 @@ fn print_response(
                 }
                 print_multiline("message", message);
                 if with_version {
-                    print_session_version(&snapshot.version);
+                    print_session_version(&snapshot.version());
                     println!("protocol_version: {}", epoch.protocol_version);
                     println!(
                         "transition_graph_version: {}",
@@ -1443,6 +1457,41 @@ fn print_response(
         },
     }
     Ok(())
+}
+
+pub(crate) fn render_response_json(response: &WalkResponse) -> Result<String, PrepareError> {
+    if let WalkResponse::Status {
+        message,
+        snapshot,
+        epoch,
+    } = response
+        && let WalkPosition::Legacy { phase, version } = &snapshot.position
+    {
+        if epoch.protocol_version >= WALK_PROTOCOL_VERSION {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "walk protocol {} status cannot emit legacy position authority",
+                    epoch.protocol_version
+                ),
+            });
+        }
+        let wire = serde_json::json!({
+            "type": "status",
+            "message": message,
+            "snapshot": {
+                "phase": phase,
+                "version": version,
+                "controller_attached": snapshot.controller_attached,
+                "authority": snapshot.authority,
+                "job": &snapshot.job,
+                "blocker": &snapshot.blocker,
+                "actions": &snapshot.actions,
+            },
+            "epoch": epoch,
+        });
+        return serde_json::to_string_pretty(&wire).map_err(PrepareError::Serialize);
+    }
+    serde_json::to_string_pretty(response).map_err(PrepareError::Serialize)
 }
 
 fn print_session_version(version: &SessionVersion) {

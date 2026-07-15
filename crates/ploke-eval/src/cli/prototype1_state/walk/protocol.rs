@@ -132,11 +132,15 @@ pub struct MutationGuard {
 /// One framed client-to-server request.
 ///
 /// Mutating requests include a freshly captured `client_epoch`; read-only
-/// requests may omit it so stale servers remain inspectable. `Stop` also binds
-/// shutdown to the caller's selected repository rather than trusting an
-/// explicitly supplied socket as repository authority.
+/// requests carry only `client_protocol` for schema negotiation without
+/// granting mutation authority. `Stop` also binds shutdown to the caller's
+/// selected repository rather than trusting an explicitly supplied socket as
+/// repository authority.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WalkRequest {
+    /// Lightweight schema negotiation for read-only responses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_protocol: Option<u32>,
     pub client_epoch: Option<ServerEpoch>,
     pub body: WalkRequestBody,
 }
@@ -621,17 +625,184 @@ pub struct WalkAction {
     pub blocker: Option<WalkBlockerCode>,
 }
 
-/// Nonblocking, structured read model shared by every walk client.
+/// Closed authority-bearing position displayed in a session snapshot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "source")]
+pub enum WalkPosition {
+    /// No durable controller cursor is available for the phase projection.
+    NoSession,
+    /// A reconstruction observed before durable session authority exists.
+    Reconstruction { phase: WalkPhase },
+    /// A durable controller session exists but has no committed cursor.
+    Unpositioned { version: SessionVersion },
+    /// The exact committed durable controller-session position.
+    Session { version: SessionVersion },
+    /// A status decoded from an older protocol that did not identify phase authority.
+    Legacy {
+        phase: WalkPhase,
+        version: SessionVersion,
+    },
+}
+
+impl WalkPosition {
+    pub fn phase(&self) -> WalkPhase {
+        match self {
+            Self::NoSession => WalkPhase::Empty,
+            Self::Reconstruction { phase } | Self::Legacy { phase, .. } => *phase,
+            Self::Unpositioned { version } | Self::Session { version } => version.phase(),
+        }
+    }
+
+    pub fn version(&self) -> SessionVersion {
+        match self {
+            Self::NoSession | Self::Reconstruction { .. } => SessionVersion::empty(),
+            Self::Unpositioned { version }
+            | Self::Session { version }
+            | Self::Legacy { version, .. } => version.clone(),
+        }
+    }
+
+    pub const fn source_label(&self) -> &'static str {
+        match self {
+            Self::NoSession => "no session",
+            Self::Reconstruction { .. } => "pre-session reconstruction",
+            Self::Unpositioned { .. } => "durable session without cursor",
+            Self::Session { .. } => "durable session cursor",
+            Self::Legacy { .. } => "legacy protocol snapshot",
+        }
+    }
+
+    fn validate(&self) -> Result<(), &'static str> {
+        match self {
+            Self::NoSession => Ok(()),
+            Self::Reconstruction {
+                phase: WalkPhase::Empty,
+            } => Err("pre-session reconstruction cannot identify the empty phase"),
+            Self::Reconstruction { .. } => Ok(()),
+            Self::Unpositioned { version } if version.session_id().is_none() => {
+                Err("unpositioned durable session has no session id")
+            }
+            Self::Unpositioned { version } if version.cursor().is_some() => {
+                Err("unpositioned durable session has a committed cursor")
+            }
+            Self::Unpositioned { version } if version.journal_revision() == 0 => {
+                Err("unpositioned durable session has no committed journal revision")
+            }
+            Self::Unpositioned { .. } => Ok(()),
+            Self::Session { version } if version.session_id().is_none() => {
+                Err("durable session position has no session id")
+            }
+            Self::Session { version } if version.cursor().is_none() => {
+                Err("durable session position has no committed cursor")
+            }
+            Self::Session { version } if version.journal_revision() == 0 => {
+                Err("durable session position has no committed journal revision")
+            }
+            Self::Session { version } if version.phase() == WalkPhase::Empty => {
+                Err("durable session position has an empty cursor phase")
+            }
+            Self::Session { version }
+                if version
+                    .cursor()
+                    .is_some_and(|cursor| cursor.validate().is_err()) =>
+            {
+                Err("durable session position has invalid cursor evidence")
+            }
+            Self::Session { .. } => Ok(()),
+            Self::Legacy { .. } => {
+                Err("legacy position is receive-only and requires an omitted position field")
+            }
+        }
+    }
+}
+
+/// Nonblocking, structured read model shared by every walk client.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WalkSessionSnapshot {
-    pub phase: WalkPhase,
-    pub version: SessionVersion,
+    pub position: WalkPosition,
     /// Whether this server currently carries the reconstructed typed value.
     pub controller_attached: bool,
     pub authority: WalkAuthority,
     pub job: Option<WalkJobSnapshot>,
     pub blocker: Option<WalkBlocker>,
     pub actions: Vec<WalkAction>,
+}
+
+impl WalkSessionSnapshot {
+    pub fn phase(&self) -> WalkPhase {
+        self.position.phase()
+    }
+
+    pub fn version(&self) -> SessionVersion {
+        self.position.version()
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct WalkSessionSnapshotWire {
+    phase: WalkPhase,
+    version: SessionVersion,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    position: Option<WalkPosition>,
+    controller_attached: bool,
+    authority: WalkAuthority,
+    job: Option<WalkJobSnapshot>,
+    blocker: Option<WalkBlocker>,
+    actions: Vec<WalkAction>,
+}
+
+impl Serialize for WalkSessionSnapshot {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.position
+            .validate()
+            .map_err(serde::ser::Error::custom)?;
+        WalkSessionSnapshotWire {
+            phase: self.phase(),
+            version: self.version(),
+            position: Some(self.position.clone()),
+            controller_attached: self.controller_attached,
+            authority: self.authority,
+            job: self.job.clone(),
+            blocker: self.blocker.clone(),
+            actions: self.actions.clone(),
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for WalkSessionSnapshot {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = WalkSessionSnapshotWire::deserialize(deserializer)?;
+        let position = match wire.position {
+            Some(position) => {
+                position.validate().map_err(serde::de::Error::custom)?;
+                if position.phase() != wire.phase || position.version() != wire.version {
+                    return Err(serde::de::Error::custom(
+                        "walk position disagrees with its compatibility phase/version fields",
+                    ));
+                }
+                position
+            }
+            None => WalkPosition::Legacy {
+                phase: wire.phase,
+                version: wire.version,
+            },
+        };
+        Ok(Self {
+            position,
+            controller_attached: wire.controller_attached,
+            authority: wire.authority,
+            job: wire.job,
+            blocker: wire.blocker,
+            actions: wire.actions,
+        })
+    }
 }
 
 /// Explicit terminal state recorded for an abandoned controller session.
@@ -2096,7 +2267,7 @@ impl WalkResponse {
             | WalkResponse::Job { phase, .. }
             | WalkResponse::Delta { phase, .. } => Some(*phase),
             WalkResponse::Query { query } => Some(query.phase),
-            WalkResponse::Status { snapshot, .. } => Some(snapshot.phase),
+            WalkResponse::Status { snapshot, .. } => Some(snapshot.phase()),
             WalkResponse::History { history } => Some(history.version.phase()),
             WalkResponse::EvaluationTraceIndex { index } => Some(index.version.phase()),
             WalkResponse::EvaluationTrace { snapshot } => Some(snapshot.version.phase()),
@@ -2136,5 +2307,262 @@ impl WalkResponse {
                 | WalkResponse::EvaluationTraceIndex { .. }
                 | WalkResponse::EvaluationTrace { .. }
         )
+    }
+}
+
+#[cfg(test)]
+mod snapshot_tests {
+    use super::*;
+
+    fn reconstructed() -> WalkSessionSnapshot {
+        WalkSessionSnapshot {
+            position: WalkPosition::Reconstruction {
+                phase: WalkPhase::R4c,
+            },
+            controller_attached: true,
+            authority: WalkAuthority::Active,
+            job: None,
+            blocker: None,
+            actions: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn snapshot_round_trip_preserves_closed_position_and_compatibility_fields() {
+        let snapshot = reconstructed();
+
+        let encoded = serde_json::to_value(&snapshot).expect("serialize snapshot");
+        let decoded: WalkSessionSnapshot =
+            serde_json::from_value(encoded.clone()).expect("deserialize snapshot");
+
+        assert_eq!(decoded, snapshot);
+        assert_eq!(encoded["phase"], serde_json::json!("r4c"));
+        assert_eq!(
+            encoded["version"],
+            serde_json::to_value(SessionVersion::empty()).expect("serialize empty version")
+        );
+        assert_eq!(encoded["position"]["source"], "reconstruction");
+    }
+
+    #[test]
+    fn snapshot_rejects_position_that_disagrees_with_compatibility_fields() {
+        let mut encoded = serde_json::to_value(reconstructed()).expect("serialize snapshot");
+        encoded["phase"] = serde_json::json!("r4a");
+
+        let error = serde_json::from_value::<WalkSessionSnapshot>(encoded)
+            .expect_err("mismatched position must be rejected")
+            .to_string();
+
+        assert!(error.contains("walk position disagrees"), "{error}");
+    }
+
+    #[test]
+    fn snapshot_without_position_decodes_as_legacy_authority() {
+        let mut encoded = serde_json::to_value(reconstructed()).expect("serialize snapshot");
+        encoded
+            .as_object_mut()
+            .expect("snapshot object")
+            .remove("position");
+
+        let decoded: WalkSessionSnapshot =
+            serde_json::from_value(encoded).expect("decode v8 snapshot");
+
+        assert!(matches!(
+            decoded.position,
+            WalkPosition::Legacy {
+                phase: WalkPhase::R4c,
+                ref version,
+            } if version == &SessionVersion::empty()
+        ));
+    }
+
+    #[test]
+    fn snapshot_rejects_session_position_without_session_identity() {
+        let mut encoded = serde_json::to_value(WalkSessionSnapshot {
+            position: WalkPosition::NoSession,
+            controller_attached: false,
+            authority: WalkAuthority::Active,
+            job: None,
+            blocker: None,
+            actions: Vec::new(),
+        })
+        .expect("serialize no-session snapshot");
+        encoded["position"] = serde_json::json!({
+            "source": "session",
+            "version": SessionVersion::empty(),
+        });
+
+        let error = serde_json::from_value::<WalkSessionSnapshot>(encoded)
+            .expect_err("session without identity must be rejected")
+            .to_string();
+
+        assert!(
+            error.contains("durable session position has no session id"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn snapshot_rejects_session_position_without_committed_cursor() {
+        let snapshot = WalkSessionSnapshot {
+            position: WalkPosition::Session {
+                version: SessionVersion {
+                    session_id: Some(SessionId::for_test(7)),
+                    cursor: None,
+                    journal_revision: 1,
+                },
+            },
+            controller_attached: true,
+            authority: WalkAuthority::Active,
+            job: None,
+            blocker: None,
+            actions: Vec::new(),
+        };
+
+        let error = serde_json::to_value(snapshot)
+            .expect_err("session without cursor must be rejected")
+            .to_string();
+
+        assert!(
+            error.contains("durable session position has no committed cursor"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn snapshot_rejects_session_position_with_empty_cursor_phase() {
+        let snapshot = WalkSessionSnapshot {
+            position: WalkPosition::Session {
+                version: SessionVersion {
+                    session_id: Some(SessionId::for_test(7)),
+                    cursor: Some(Cursor {
+                        phase: WalkPhase::Empty,
+                        evidence: ContentHash::of("empty session cursor"),
+                    }),
+                    journal_revision: 1,
+                },
+            },
+            controller_attached: true,
+            authority: WalkAuthority::Active,
+            job: None,
+            blocker: None,
+            actions: Vec::new(),
+        };
+
+        let error = serde_json::to_value(snapshot)
+            .expect_err("session with an empty cursor phase must be rejected")
+            .to_string();
+
+        assert!(error.contains("empty cursor phase"), "{error}");
+    }
+
+    #[test]
+    fn snapshot_rejects_session_position_with_invalid_cursor_evidence() {
+        let mut encoded = serde_json::to_value(WalkSessionSnapshot {
+            position: WalkPosition::Session {
+                version: SessionVersion {
+                    session_id: Some(SessionId::for_test(7)),
+                    cursor: Some(
+                        Cursor::new(WalkPhase::R3, ContentHash::of("valid session cursor"))
+                            .expect("valid cursor"),
+                    ),
+                    journal_revision: 1,
+                },
+            },
+            controller_attached: true,
+            authority: WalkAuthority::Active,
+            job: None,
+            blocker: None,
+            actions: Vec::new(),
+        })
+        .expect("serialize valid session snapshot");
+        encoded["position"]["version"]["cursor"]["evidence"] = serde_json::json!("not-a-digest");
+
+        let error = serde_json::from_value::<WalkSessionSnapshot>(encoded)
+            .expect_err("session with invalid cursor evidence must be rejected")
+            .to_string();
+
+        assert!(error.contains("invalid cursor evidence"), "{error}");
+    }
+
+    #[test]
+    fn snapshot_round_trip_accepts_unpositioned_session() {
+        let version = SessionVersion {
+            session_id: Some(SessionId::for_test(9)),
+            cursor: None,
+            journal_revision: 2,
+        };
+        let snapshot = WalkSessionSnapshot {
+            position: WalkPosition::Unpositioned {
+                version: version.clone(),
+            },
+            controller_attached: false,
+            authority: WalkAuthority::RecoveryRequired,
+            job: None,
+            blocker: Some(WalkBlocker {
+                code: WalkBlockerCode::ControllerBlocked,
+                detail: "cursorless v1 session".to_string(),
+            }),
+            actions: Vec::new(),
+        };
+
+        let encoded = serde_json::to_value(&snapshot).expect("serialize cursorless session");
+        let decoded: WalkSessionSnapshot =
+            serde_json::from_value(encoded.clone()).expect("deserialize cursorless session");
+
+        assert_eq!(decoded, snapshot);
+        assert_eq!(decoded.phase(), WalkPhase::Empty);
+        assert_eq!(decoded.version(), version);
+        assert_eq!(encoded["position"]["source"], "unpositioned");
+    }
+
+    #[test]
+    fn snapshot_rejects_explicit_legacy_position_on_current_wire() {
+        let snapshot = WalkSessionSnapshot {
+            position: WalkPosition::Legacy {
+                phase: WalkPhase::R4c,
+                version: SessionVersion::empty(),
+            },
+            controller_attached: true,
+            authority: WalkAuthority::Active,
+            job: None,
+            blocker: None,
+            actions: Vec::new(),
+        };
+
+        let error = serde_json::to_value(snapshot)
+            .expect_err("legacy authority must be receive-only")
+            .to_string();
+
+        assert!(error.contains("legacy position is receive-only"), "{error}");
+    }
+
+    #[test]
+    fn snapshot_round_trip_accepts_complete_session_position() {
+        let version = SessionVersion {
+            session_id: Some(SessionId::for_test(8)),
+            cursor: Some(
+                Cursor::new(WalkPhase::R3, ContentHash::of("r3 session position"))
+                    .expect("valid cursor"),
+            ),
+            journal_revision: 1,
+        };
+        let snapshot = WalkSessionSnapshot {
+            position: WalkPosition::Session {
+                version: version.clone(),
+            },
+            controller_attached: true,
+            authority: WalkAuthority::Active,
+            job: None,
+            blocker: None,
+            actions: Vec::new(),
+        };
+
+        let encoded = serde_json::to_value(&snapshot).expect("serialize session snapshot");
+        let decoded: WalkSessionSnapshot =
+            serde_json::from_value(encoded).expect("deserialize session snapshot");
+
+        assert_eq!(decoded, snapshot);
+        assert_eq!(decoded.version(), version);
     }
 }

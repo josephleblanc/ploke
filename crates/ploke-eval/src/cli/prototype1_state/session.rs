@@ -96,7 +96,7 @@ impl Cursor {
         Ok(cursor)
     }
 
-    fn validate(&self) -> Result<(), Error> {
+    pub(crate) fn validate(&self) -> Result<(), Error> {
         validate_hash(&self.evidence).map_err(|detail| Error::InvalidIntent { detail })
     }
 
@@ -1345,6 +1345,41 @@ impl Store {
             journal: root.join(JOURNAL_FILE),
             root,
         }
+    }
+
+    /// Persist the supported cursorless v1 shape through the canonical journal serializer.
+    #[cfg(test)]
+    pub(crate) fn write_v1_active(&self, request: &Claim) -> Result<SessionId, Error> {
+        let session_id = SessionId::new();
+        let path = self.paths(&request.parent).journal;
+        let (_, head) = append_entry(
+            &path,
+            &Entry::Created {
+                schema_version: SCHEMA_VERSION_V1.to_string(),
+                session_id,
+                origin: request.origin.clone(),
+                parent: request.parent.clone(),
+                profile: request.profile.clone(),
+                mode: request.mode,
+                cursor: None,
+                recorded_at: RecordedAt::now(),
+            },
+            &JournalHead::empty(),
+        )?;
+        append_entry(
+            &path,
+            &Entry::Acquired {
+                session_id,
+                fence: Fence(1),
+                epoch: request.epoch.clone(),
+                runtime_id: None,
+                pid: 4242,
+                incarnation: None,
+                recorded_at: RecordedAt::now(),
+            },
+            &head,
+        )?;
+        Ok(session_id)
     }
 
     /// Inspect durable evidence without creating paths, opening the lock file,

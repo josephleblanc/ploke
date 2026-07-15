@@ -3,7 +3,8 @@
 - Date: 2026-07-13
 - Baseline: `de76eaee34e6f4c4c3a19543c4cf91b217aa3bb9`
 - Status: active implementation; Stages 0-3 implemented, verified, and
-  checkpointed; Stage 4 completed-trace observability in final validation
+  checkpointed; Stage 4 authority/trace observability awaiting committed live
+  canary validation
 
 ## Implementation progress
 
@@ -155,6 +156,29 @@
   deferred until the writer provides an atomic or append-only identity-bearing
   source. This slice remains filesystem-authoritative and makes no database or
   executable-replay claim.
+- The Stage 4 foundation and typed configuration/delta/session read model are
+  checkpointed in `ffe3e59c3` (`Build Prototype 1 operator observability
+  foundation`). Canonical evaluation-trace inventory and exact completed-run
+  evidence are checkpointed in `1e03f5e7e` (`Expose canonical evaluation
+  traces through walk`). The latter is the protocol-v8 compatibility boundary.
+- A preserved completed-setup canary then exposed a protocol-v8 authority
+  contradiction: Show strictly reconstructed R4c while Status published Empty
+  with an empty durable version and an invalid bootstrap action. Protocol v9 is
+  the repair boundary. Its typed `WalkPosition` distinguishes no session,
+  pre-session reconstruction, durable session without a cursor, durable
+  session cursor, and receive-only legacy status. Fresh Start and recovery
+  admission are enforced before operation persistence and again at their typed
+  authority boundaries. Session positions reject empty or malformed cursors,
+  and an indeterminate supervised job cannot advertise controller recovery
+  before its own outcome is resolved. The source and focused regressions are
+  green, but this slice is not complete until the exact committed binary proves R4c
+  reconstruction followed by the first durable R3 session claim on the
+  preserved canary.
+- `ploke-walk-ui` now consumes that same position carrier, renders explicit
+  source badges in the phase rail and details panel, and discards stale walk or
+  DB-query replies after run selection. Complete authority snapshots are shown
+  only for Status responses, so same-phase Show, Job, or Error responses cannot
+  combine a newer epoch with stale actions, blockers, or attachment state.
 
 The UI remains inspection-only until the observability read model and later
 control-parity stages are complete. Every live edge still requires a committed

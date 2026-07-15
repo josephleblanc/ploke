@@ -28,12 +28,21 @@ pub(crate) enum WalkRequestKind {
     Show,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct WalkRequestToken {
+    pub(crate) generation: u64,
+    pub(crate) kind: WalkRequestKind,
+}
+
 pub(crate) enum UiEvent {
     Walk {
-        kind: WalkRequestKind,
+        token: WalkRequestToken,
         result: WalkRequestResult,
     },
-    Query(Result<WalkQuerySnapshot, String>),
+    Query {
+        generation: u64,
+        result: Result<WalkQuerySnapshot, String>,
+    },
 }
 
 pub(crate) enum WalkRequestResult {

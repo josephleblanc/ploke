@@ -77,6 +77,10 @@ impl Widget for QueryResultTable<'_> {
     fn ui(self, ui: &mut Ui) -> Response {
         let result: &DbQueryResult = &self.query.result;
         ui.vertical(|ui| {
+            ui.label(format!("campaign: {}", result.campaign_id));
+            ui.label("executed query:");
+            ui.add(egui::Label::new(RichText::new(&result.script).monospace()).wrap());
+            ui.add_space(6.0);
             ui.horizontal(|ui| {
                 ui.label(format!("rows: {}", result.row_count));
                 ui.separator();
@@ -146,4 +150,66 @@ fn format_cell(value: &serde_json::Value) -> String {
 
 fn short_revision(revision: &str) -> &str {
     revision.get(..12).unwrap_or(revision)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn result_table_shows_exact_query_provenance() {
+        use egui_kittest::{Harness, kittest::Queryable};
+
+        let query: WalkQuerySnapshot = serde_json::from_value(serde_json::json!({
+            "phase": "r4c",
+            "result": {
+                "repo_root": "/tmp/ploke-parent",
+                "campaign_id": "provenance-campaign",
+                "db_path": "/tmp/owner.cozo.sqlite",
+                "script": "?[name] := *eval_campaign{name}",
+                "revision": "abcdef0123456789",
+                "headers": ["name"],
+                "row_count": 0,
+                "rows": []
+            },
+            "version": {
+                "session_id": null,
+                "cursor": null,
+                "journal_revision": 0
+            },
+            "epoch": {
+                "protocol_version": 9,
+                "transition_graph_version": "walk-r0-r14a-v2",
+                "repo_root": "/tmp/ploke-parent",
+                "exe_path": "/tmp/ploke-eval",
+                "exe_modified_unix_ms": 17,
+                "git_head": "abc123",
+                "active_branch": "parent/runtime-1",
+                "source_status_hash": "def456"
+            }
+        }))
+        .expect("typed query result");
+        let mut selected = None;
+        let harness = Harness::builder()
+            .with_size(egui::Vec2::new(900.0, 360.0))
+            .build_ui(move |ui| {
+                ui.add(QueryResultTable {
+                    query: &query,
+                    selected_row: &mut selected,
+                });
+            });
+
+        assert_eq!(
+            harness
+                .get_all_by_label("campaign: provenance-campaign")
+                .count(),
+            1
+        );
+        assert_eq!(
+            harness
+                .get_all_by_label("?[name] := *eval_campaign{name}")
+                .count(),
+            1
+        );
+    }
 }

@@ -15,6 +15,7 @@ pub(in crate::app) struct TopBar<'a> {
 pub(in crate::app) struct TopBarAction {
     pub(in crate::app) selected_run: Option<usize>,
     pub(in crate::app) refresh_runs: bool,
+    pub(in crate::app) socket_changed: bool,
 }
 
 impl TopBar<'_> {
@@ -49,8 +50,10 @@ impl TopBar<'_> {
                 action.refresh_runs = true;
             }
             ui.separator();
-            ui.label("socket");
-            ui.add_sized([260.0, 22.0], TextEdit::singleline(self.socket_input));
+            ui.label("socket override");
+            action.socket_changed = ui
+                .add_sized([260.0, 22.0], TextEdit::singleline(self.socket_input))
+                .changed();
             ui.toggle_value(self.debug_panel, "Debug");
         });
         action

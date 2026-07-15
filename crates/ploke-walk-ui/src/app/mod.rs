@@ -4,13 +4,13 @@ use std::{sync::mpsc, thread};
 
 use eframe::egui;
 use ploke_eval::walk_client::{
-    PhaseInventory, WalkClient, WalkQuerySnapshot, WalkResponse, WalkRunEntry,
+    PhaseInventory, WalkClient, WalkQuerySnapshot, WalkResponse, WalkRunEntry, WalkSessionSnapshot,
 };
 
 use crate::client;
 use crate::model::{
     DEFAULT_QUERY, ServiceStatus, UiButtonState, UiEvent, WalkRequestKind, WalkRequestResult,
-    nonempty_path, optional_text,
+    WalkRequestToken, nonempty_path, optional_text,
 };
 use panels::{
     debug::DebugWindow,
@@ -36,8 +36,9 @@ pub(crate) struct WalkUiApp {
     query_result: Option<WalkQuerySnapshot>,
     selected_row: Option<usize>,
     notice: Option<String>,
-    walk_pending: Option<WalkRequestKind>,
-    query_pending: bool,
+    client_generation: u64,
+    walk_pending: Option<WalkRequestToken>,
+    query_pending: Option<u64>,
     debug_panel: bool,
     debug_hover: bool,
     buttons: UiButtonState,
@@ -62,14 +63,17 @@ impl WalkUiApp {
             query_result: None,
             selected_row: None,
             notice: None,
+            client_generation: 0,
             walk_pending: None,
-            query_pending: false,
+            query_pending: None,
             debug_panel: false,
             debug_hover: false,
             buttons: UiButtonState::default(),
         };
         app.refresh_runs();
-        app.refresh_health(None);
+        if app.client.is_some() {
+            app.refresh_health(None);
+        }
         app
     }
 
@@ -92,6 +96,7 @@ impl WalkUiApp {
                 self.resolve_selected_client();
             }
             Err(error) => {
+                self.invalidate_client_state();
                 self.runs.clear();
                 self.selected_run = None;
                 self.run_error = Some(error.to_string());
@@ -104,13 +109,15 @@ impl WalkUiApp {
     fn select_run(&mut self, index: usize) {
         self.selected_run = Some(index);
         self.resolve_selected_client();
-        self.refresh_health(None);
+        if self.client.is_some() {
+            self.refresh_health(None);
+        }
     }
 
     fn resolve_selected_client(&mut self) {
+        self.invalidate_client_state();
         let Some(run) = self.selected_run().cloned() else {
             self.client = None;
-            self.response = None;
             self.status = ServiceStatus::Unresolved;
             self.notice = Some("no Prototype 1 run selected".to_string());
             return;
@@ -119,7 +126,6 @@ impl WalkUiApp {
         self.campaign_input = run.campaign_id.clone();
         if run.worktree_root.is_none() {
             self.client = None;
-            self.response = None;
             self.status = ServiceStatus::Unresolved;
             self.notice = Some(format!(
                 "selected run '{}' has no local worktree; DB queries can still run",
@@ -131,14 +137,27 @@ impl WalkUiApp {
         let socket = nonempty_path(&self.socket_input);
         match WalkClient::resolve_for_run(&run, socket.as_deref()) {
             Ok(client) => {
+                self.status = ServiceStatus::Unresolved;
                 self.notice = Some(format!("socket {}", client.socket().display()));
                 self.client = Some(client);
             }
             Err(error) => {
-                self.status = ServiceStatus::Error(error.to_string());
+                let detail = error.to_string();
+                self.status = ServiceStatus::Error(detail.clone());
+                self.notice = Some(format!("socket resolution failed: {detail}"));
                 self.client = None;
             }
         }
+    }
+
+    fn invalidate_client_state(&mut self) {
+        self.client_generation = self.client_generation.wrapping_add(1);
+        self.walk_pending = None;
+        self.query_pending = None;
+        self.response = None;
+        self.query_result = None;
+        self.selected_row = None;
+        self.notice = None;
     }
 
     fn refresh_health(&mut self, repaint: Option<egui::Context>) {
@@ -159,13 +178,18 @@ impl WalkUiApp {
             return;
         }
 
-        self.walk_pending = Some(kind);
+        let token = WalkRequestToken {
+            generation: self.client_generation,
+            kind,
+        };
+        self.response = None;
+        self.walk_pending = Some(token);
         self.status = ServiceStatus::Busy(format!("{} pending", kind.label()));
         self.notice = Some(format!("{} request pending", kind.label()));
         let tx = self.event_tx.clone();
         thread::spawn(move || {
             let result = client::run_walk_request(kind, client);
-            let _ = tx.send(UiEvent::Walk { kind, result });
+            let _ = tx.send(UiEvent::Walk { token, result });
             if let Some(ctx) = repaint {
                 ctx.request_repaint();
             }
@@ -177,7 +201,7 @@ impl WalkUiApp {
             self.notice = Some("select a run or enter a campaign id".to_string());
             return;
         };
-        if self.query_pending {
+        if self.query_pending.is_some() {
             self.notice = Some("query already pending".to_string());
             return;
         }
@@ -189,13 +213,16 @@ impl WalkUiApp {
             return;
         };
 
-        self.query_pending = true;
+        let generation = self.client_generation;
+        self.query_pending = Some(generation);
+        self.query_result = None;
+        self.selected_row = None;
         self.notice = Some("query pending".to_string());
         let script = self.query_script.clone();
         let tx = self.event_tx.clone();
         thread::spawn(move || {
             let result = client::query_db(client, &campaign, &script);
-            let _ = tx.send(UiEvent::Query(result));
+            let _ = tx.send(UiEvent::Query { generation, result });
             if let Some(ctx) = repaint {
                 ctx.request_repaint();
             }
@@ -205,16 +232,18 @@ impl WalkUiApp {
     fn poll_events(&mut self) {
         while let Ok(event) = self.event_rx.try_recv() {
             match event {
-                UiEvent::Walk { kind, result } => self.finish_walk_request(kind, result),
-                UiEvent::Query(result) => self.finish_query(result),
+                UiEvent::Walk { token, result } => self.finish_walk_request(token, result),
+                UiEvent::Query { generation, result } => self.finish_query(generation, result),
             }
         }
     }
 
-    fn finish_walk_request(&mut self, kind: WalkRequestKind, result: WalkRequestResult) {
-        if self.walk_pending == Some(kind) {
-            self.walk_pending = None;
+    fn finish_walk_request(&mut self, token: WalkRequestToken, result: WalkRequestResult) {
+        if token.generation != self.client_generation || self.walk_pending != Some(token) {
+            return;
         }
+        self.walk_pending = None;
+        let kind = token.kind;
         match result {
             WalkRequestResult::Response(response) => {
                 self.status = match &response {
@@ -230,6 +259,7 @@ impl WalkUiApp {
                 self.notice = Some(format!("walk server is offline at {}", socket.display()));
             }
             WalkRequestResult::TimedOut => {
+                self.response = None;
                 self.status = ServiceStatus::Busy("walk server did not respond".to_string());
                 self.notice = Some(format!(
                     "{} timed out after {}s; the walk server may be busy with a live step",
@@ -238,13 +268,18 @@ impl WalkUiApp {
                 ));
             }
             WalkRequestResult::ClientError(error) => {
-                self.status = ServiceStatus::Error(error);
+                self.response = None;
+                self.status = ServiceStatus::Error(error.clone());
+                self.notice = Some(format!("{} request failed: {error}", kind.label()));
             }
         }
     }
 
-    fn finish_query(&mut self, result: Result<WalkQuerySnapshot, String>) {
-        self.query_pending = false;
+    fn finish_query(&mut self, generation: u64, result: Result<WalkQuerySnapshot, String>) {
+        if generation != self.client_generation || self.query_pending != Some(generation) {
+            return;
+        }
+        self.query_pending = None;
         match result {
             Ok(result) => {
                 self.selected_row = None;
@@ -271,13 +306,25 @@ impl WalkUiApp {
             .or_else(|| self.selected_campaign_id().map(str::to_owned))
     }
 
+    fn status_snapshot(&self) -> Option<&WalkSessionSnapshot> {
+        match self.response.as_ref() {
+            Some(WalkResponse::Status { snapshot, .. }) => Some(snapshot),
+            _ => None,
+        }
+    }
+
     fn handle_top_bar_action(&mut self, action: TopBarAction, ctx: &egui::Context) {
         if let Some(index) = action.selected_run {
             self.select_run(index);
         }
+        if action.socket_changed {
+            self.resolve_selected_client();
+        }
         if action.refresh_runs {
             self.refresh_runs();
-            self.refresh_health(Some(ctx.clone()));
+            if self.client.is_some() {
+                self.refresh_health(Some(ctx.clone()));
+            }
         }
     }
 
@@ -322,6 +369,7 @@ impl eframe::App for WalkUiApp {
             .show_inside(ui, |ui| {
                 PhaseRail {
                     phases: &self.phases,
+                    position: self.status_snapshot().map(|snapshot| &snapshot.position),
                     current: self.response.as_ref().and_then(WalkResponse::phase),
                 }
                 .show(ui);
@@ -336,7 +384,7 @@ impl eframe::App for WalkUiApp {
                     selected_run: self.selected_run,
                     run_error: self.run_error.as_deref(),
                     client_available: self.client.is_some(),
-                    walk_pending: self.walk_pending,
+                    walk_pending: self.walk_pending.map(|token| token.kind),
                     response: self.response.as_ref(),
                     notice: self.notice.as_deref(),
                     query_result: self.query_result.as_ref(),
@@ -352,7 +400,7 @@ impl eframe::App for WalkUiApp {
             let action = QueryPanel {
                 campaign_input: &mut self.campaign_input,
                 query_script: &mut self.query_script,
-                query_pending: self.query_pending,
+                query_pending: self.query_pending.is_some(),
                 query_result: self.query_result.as_ref(),
                 selected_row: &mut self.selected_row,
                 selected_campaign: selected_campaign.as_deref(),
@@ -372,8 +420,8 @@ impl eframe::App for WalkUiApp {
                 status: &self.status,
                 selected_campaign: selected_campaign.as_deref(),
                 client_socket: client_socket.as_deref(),
-                walk_pending: self.walk_pending,
-                query_pending: self.query_pending,
+                walk_pending: self.walk_pending.map(|token| token.kind),
+                query_pending: self.query_pending.is_some(),
                 runs_len: self.runs.len(),
                 row_count: self
                     .query_result
@@ -439,7 +487,8 @@ mod tests {
         .expect("typed error response");
         let mut app = test_app();
 
-        app.finish_walk_request(
+        finish_walk_request(
+            &mut app,
             WalkRequestKind::Health,
             WalkRequestResult::Response(response),
         );
@@ -460,39 +509,259 @@ mod tests {
     }
 
     #[test]
-    fn query_result_retains_phase_session_and_epoch_envelope() {
-        let query: WalkQuerySnapshot = serde_json::from_value(serde_json::json!({
-            "phase": "r6",
-            "result": {
-                "repo_root": "/tmp/ploke-parent",
-                "campaign_id": "campaign-query",
-                "db_path": "/tmp/owner.cozo.sqlite",
-                "script": "::relations",
-                "revision": "abc123",
-                "headers": ["name"],
-                "row_count": 1,
-                "rows": [{"cells": ["eval_campaign"], "object": {"name": "eval_campaign"}}]
+    fn authority_snapshot_is_retained_only_for_status_responses() {
+        let epoch = ploke_eval::walk_client::ServerEpoch {
+            protocol_version: 9,
+            transition_graph_version: "walk-r0-r14a-v2".to_string(),
+            repo_root: PathBuf::from("/tmp/ploke-parent"),
+            exe_path: PathBuf::from("/tmp/ploke-eval"),
+            exe_modified_unix_ms: Some(17),
+            git_head: Some("abc123".to_string()),
+            active_branch: Some("parent/runtime-1".to_string()),
+            source_status_hash: Some("def456".to_string()),
+        };
+        let status = WalkResponse::Status {
+            message: "online".to_string(),
+            snapshot: WalkSessionSnapshot {
+                position: ploke_eval::walk_client::WalkPosition::Reconstruction {
+                    phase: ploke_eval::walk_client::WalkPhase::R4c,
+                },
+                controller_attached: true,
+                authority: ploke_eval::walk_client::WalkAuthority::Active,
+                job: None,
+                blocker: None,
+                actions: Vec::new(),
             },
-            "version": {
-                "session_id": null,
-                "cursor": null,
-                "journal_revision": 12
+            epoch: epoch.clone(),
+        };
+        let mut app = test_app();
+
+        finish_walk_request(
+            &mut app,
+            WalkRequestKind::Health,
+            WalkRequestResult::Response(status.clone()),
+        );
+        assert!(matches!(
+            app.status_snapshot().map(|snapshot| &snapshot.position),
+            Some(ploke_eval::walk_client::WalkPosition::Reconstruction {
+                phase: ploke_eval::walk_client::WalkPhase::R4c
+            })
+        ));
+
+        finish_walk_request(
+            &mut app,
+            WalkRequestKind::Show,
+            WalkRequestResult::Response(WalkResponse::Ok {
+                phase: ploke_eval::walk_client::WalkPhase::R4c,
+                result: ploke_eval::walk_client::WalkOkPayload::Show {
+                    report: "same reconstructed phase".to_string(),
+                },
+                epoch: epoch.clone(),
+            }),
+        );
+        assert!(app.status_snapshot().is_none());
+
+        finish_walk_request(
+            &mut app,
+            WalkRequestKind::Show,
+            WalkRequestResult::Response(WalkResponse::Ok {
+                phase: ploke_eval::walk_client::WalkPhase::R5,
+                result: ploke_eval::walk_client::WalkOkPayload::Show {
+                    report: "new phase".to_string(),
+                },
+                epoch: epoch.clone(),
+            }),
+        );
+        assert!(app.status_snapshot().is_none());
+
+        finish_walk_request(
+            &mut app,
+            WalkRequestKind::Health,
+            WalkRequestResult::Response(status),
+        );
+        finish_walk_request(
+            &mut app,
+            WalkRequestKind::Health,
+            WalkRequestResult::Offline(PathBuf::from("/tmp/walk.sock")),
+        );
+        assert!(app.status_snapshot().is_none());
+    }
+
+    #[test]
+    fn failed_refresh_clears_authority_and_replaces_pending_notice() {
+        let mut app = test_app();
+        let status: WalkResponse = serde_json::from_value(serde_json::json!({
+            "type": "status",
+            "message": "online",
+            "snapshot": {
+                "phase": "r4c",
+                "version": {
+                    "session_id": null,
+                    "cursor": null,
+                    "journal_revision": 0
+                },
+                "position": {"source": "reconstruction", "phase": "r4c"},
+                "controller_attached": true,
+                "authority": "active",
+                "job": null,
+                "blocker": null,
+                "actions": []
             },
             "epoch": {
-                "protocol_version": 6,
+                "protocol_version": 9,
                 "transition_graph_version": "walk-r0-r14a-v2",
                 "repo_root": "/tmp/ploke-parent",
                 "exe_path": "/tmp/ploke-eval",
                 "exe_modified_unix_ms": 17,
                 "git_head": "abc123",
-                "active_branch": "successor/runtime-2",
+                "active_branch": "parent/runtime-1",
                 "source_status_hash": "def456"
             }
         }))
-        .expect("typed query envelope");
+        .expect("typed status response");
+        finish_walk_request(
+            &mut app,
+            WalkRequestKind::Health,
+            WalkRequestResult::Response(status.clone()),
+        );
+        assert!(app.status_snapshot().is_some());
+
+        finish_walk_request(
+            &mut app,
+            WalkRequestKind::Health,
+            WalkRequestResult::TimedOut,
+        );
+        assert!(app.response.is_none());
+        assert!(app.status_snapshot().is_none());
+        assert!(
+            app.notice
+                .as_deref()
+                .is_some_and(|notice| notice.contains("timed out"))
+        );
+
+        finish_walk_request(
+            &mut app,
+            WalkRequestKind::Health,
+            WalkRequestResult::Response(status),
+        );
+        finish_walk_request(
+            &mut app,
+            WalkRequestKind::Health,
+            WalkRequestResult::ClientError("protocol mismatch".to_string()),
+        );
+        assert!(app.response.is_none());
+        assert!(app.status_snapshot().is_none());
+        assert_eq!(
+            app.notice.as_deref(),
+            Some("health request failed: protocol mismatch")
+        );
+    }
+
+    #[test]
+    fn response_from_previous_run_is_discarded_after_selection() {
+        let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let mut app = test_app();
+        app.socket_input = unique_temp_dir("ploke-walk-ui-generation")
+            .join("walk.sock")
+            .display()
+            .to_string();
+        app.runs = vec![test_run("run-a", &repo_root), test_run("run-b", &repo_root)];
+        app.selected_run = Some(0);
+        app.resolve_selected_client();
+        let previous = WalkRequestToken {
+            generation: app.client_generation,
+            kind: WalkRequestKind::Health,
+        };
+        app.walk_pending = Some(previous);
+        app.query_pending = Some(previous.generation);
+
+        app.select_run(1);
+
+        let current = app.walk_pending.expect("new run health request pending");
+        assert_ne!(current.generation, previous.generation);
+        assert_eq!(current.kind, WalkRequestKind::Health);
+        app.finish_walk_request(
+            previous,
+            WalkRequestResult::ClientError("response from run A".to_string()),
+        );
+        app.finish_query(
+            previous.generation,
+            Err("query response from run A".to_string()),
+        );
+        assert_eq!(app.selected_campaign_id(), Some("run-b"));
+        assert_eq!(app.walk_pending, Some(current));
+        assert!(app.query_pending.is_none());
+        assert!(!matches!(app.status, ServiceStatus::Error(_)));
+        assert!(
+            app.notice
+                .as_deref()
+                .is_none_or(|notice| !notice.contains("run A"))
+        );
+    }
+
+    #[test]
+    fn socket_edit_rebinds_client_and_invalidates_pending_evidence() {
+        let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let mut app = test_app();
+        app.runs = vec![test_run("run-a", &repo_root)];
+        app.selected_run = Some(0);
+        let first = unique_temp_dir("ploke-walk-ui-socket-a").join("walk.sock");
+        app.socket_input = first.display().to_string();
+        app.resolve_selected_client();
+        let generation = app.client_generation;
+        app.walk_pending = Some(WalkRequestToken {
+            generation,
+            kind: WalkRequestKind::Health,
+        });
+        let second = unique_temp_dir("ploke-walk-ui-socket-b").join("walk.sock");
+        app.socket_input = second.display().to_string();
+
+        app.handle_top_bar_action(
+            TopBarAction {
+                socket_changed: true,
+                ..TopBarAction::default()
+            },
+            &egui::Context::default(),
+        );
+
+        assert_ne!(app.client_generation, generation);
+        assert!(app.walk_pending.is_none());
+        assert!(app.response.is_none());
+        assert_eq!(
+            app.client.as_ref().map(WalkClient::socket),
+            Some(second.as_path())
+        );
+        assert!(matches!(app.status, ServiceStatus::Unresolved));
+    }
+
+    #[test]
+    fn failed_run_resolution_keeps_the_error_visible() {
+        let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let mut app = test_app();
+        app.runs = vec![test_run("run-a", &repo_root)];
+        app.socket_input = format!("/tmp/{}.sock", "x".repeat(256));
+        app.notice = Some("stale notice".to_string());
+
+        app.select_run(0);
+
+        assert!(app.client.is_none());
+        assert!(app.walk_pending.is_none());
+        assert!(matches!(app.status, ServiceStatus::Error(_)));
+        assert!(
+            app.notice
+                .as_deref()
+                .is_some_and(|notice| notice.starts_with("socket resolution failed:")),
+            "resolution error must replace stale evidence: {:?}",
+            app.notice
+        );
+    }
+
+    #[test]
+    fn query_result_retains_phase_session_and_epoch_envelope() {
+        let query = test_query_snapshot();
         let mut app = test_app();
 
-        app.finish_query(Ok(query));
+        finish_query(&mut app, Ok(query));
 
         let stored = app.query_result.as_ref().expect("stored query envelope");
         assert_eq!(stored.phase, ploke_eval::walk_client::WalkPhase::R6);
@@ -502,6 +771,32 @@ mod tests {
             Some("successor/runtime-2")
         );
         assert_eq!(stored.result.row_count, 1);
+    }
+
+    #[test]
+    fn failed_query_replacement_does_not_retain_old_rows() {
+        let root = unique_temp_dir("ploke-walk-ui-query-failure");
+        fs::create_dir_all(&root).expect("create temp repo root");
+        let socket = root.join("missing.sock");
+        let client = WalkClient::resolve(Some(&root), Some(&socket)).expect("resolve client");
+        let mut app = test_app_with_client(client);
+        app.campaign_input = "replacement-campaign".to_string();
+        app.query_script = "::relations".to_string();
+        app.query_result = Some(test_query_snapshot());
+        app.selected_row = Some(0);
+
+        app.run_query(None);
+
+        assert!(app.query_result.is_none());
+        assert!(app.selected_row.is_none());
+        wait_for_events(&mut app);
+        assert!(app.query_result.is_none());
+        assert!(
+            app.notice
+                .as_deref()
+                .is_some_and(|notice| !notice.contains("1 row"))
+        );
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -587,8 +882,9 @@ mod tests {
             query_result: None,
             selected_row: None,
             notice: None,
+            client_generation: 0,
             walk_pending: None,
-            query_pending: false,
+            query_pending: None,
             debug_panel: false,
             debug_hover: false,
             buttons: UiButtonState::default(),
@@ -599,12 +895,75 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(4);
         while Instant::now() < deadline {
             app.poll_events();
-            if app.walk_pending.is_none() && !app.query_pending {
+            if app.walk_pending.is_none() && app.query_pending.is_none() {
                 return;
             }
             thread::sleep(Duration::from_millis(10));
         }
         app.poll_events();
+    }
+
+    fn finish_walk_request(app: &mut WalkUiApp, kind: WalkRequestKind, result: WalkRequestResult) {
+        let token = WalkRequestToken {
+            generation: app.client_generation,
+            kind,
+        };
+        app.walk_pending = Some(token);
+        app.finish_walk_request(token, result);
+    }
+
+    fn finish_query(app: &mut WalkUiApp, result: Result<WalkQuerySnapshot, String>) {
+        let generation = app.client_generation;
+        app.query_pending = Some(generation);
+        app.finish_query(generation, result);
+    }
+
+    fn test_run(campaign: &str, repo_root: &std::path::Path) -> WalkRunEntry {
+        let campaign_dir = repo_root.join("target").join("walk-ui-test").join(campaign);
+        WalkRunEntry {
+            campaign_id: campaign.to_string(),
+            prototype1_root: campaign_dir.join("prototype1"),
+            owner_db_path: campaign_dir.join("prototype1/owner.cozo.sqlite"),
+            campaign_dir,
+            worktree_root: Some(repo_root.to_path_buf()),
+            modified_unix_ms: None,
+            has_manifest: true,
+            has_closure_state: false,
+            has_owner_db: false,
+            has_parent_identity: true,
+        }
+    }
+
+    fn test_query_snapshot() -> WalkQuerySnapshot {
+        serde_json::from_value(serde_json::json!({
+            "phase": "r6",
+            "result": {
+                "repo_root": "/tmp/ploke-parent",
+                "campaign_id": "campaign-query",
+                "db_path": "/tmp/owner.cozo.sqlite",
+                "script": "::relations",
+                "revision": "abc123",
+                "headers": ["name"],
+                "row_count": 1,
+                "rows": [{"cells": ["eval_campaign"], "object": {"name": "eval_campaign"}}]
+            },
+            "version": {
+                "session_id": null,
+                "cursor": null,
+                "journal_revision": 12
+            },
+            "epoch": {
+                "protocol_version": 6,
+                "transition_graph_version": "walk-r0-r14a-v2",
+                "repo_root": "/tmp/ploke-parent",
+                "exe_path": "/tmp/ploke-eval",
+                "exe_modified_unix_ms": 17,
+                "git_head": "abc123",
+                "active_branch": "successor/runtime-2",
+                "source_status_hash": "def456"
+            }
+        }))
+        .expect("typed query envelope")
     }
 
     fn unique_temp_dir(prefix: &str) -> PathBuf {

@@ -1489,7 +1489,15 @@ impl WalkController {
         allow_live_api: bool,
         expected: Option<&SessionVersion>,
     ) -> Result<WalkAdvanceReport, PrepareError> {
-        if !matches!(self.state, WalkState::Empty | WalkState::Failed { .. }) {
+        let pre_session_reconstruction = self.reconstruction.is_some()
+            && expected.is_some_and(|version| version == &SessionVersion::empty())
+            && matches!(
+                self.phase(),
+                WalkPhase::R3 | WalkPhase::R4a | WalkPhase::R4b | WalkPhase::R4c
+            );
+        if !matches!(self.state, WalkState::Empty | WalkState::Failed { .. })
+            && !pre_session_reconstruction
+        {
             return Err(PrepareError::InvalidBatchSelection {
                 detail: format!(
                     "walk is already started at {}; run reset or stop and restart the server to begin a new walk",
@@ -1522,14 +1530,6 @@ impl WalkController {
             });
         }
         let requested_campaign = config.campaign.clone();
-        self.files.reset(&repo_root);
-        self.steps = 0;
-        self.last_delta = None;
-        self.reconstruction = None;
-        self.replay = None;
-        self.llm_focus = None;
-        self.llm_cursors.clear();
-
         let reconstruct_matches_request = match requested_campaign.as_ref() {
             Some(campaign_id) => load_parent_identity_optional(&repo_root)?
                 .is_some_and(|identity| identity.campaign_id() == campaign_id),
@@ -1548,7 +1548,7 @@ impl WalkController {
             None => claim_controller(&repo_root, RunMode::Step)?,
         };
         let claimed = lease.cursor().phase;
-        self.files.remember_campaign(lease.campaign_id());
+        let campaign = lease.campaign_id().clone();
         if claimed != until
             && (phase_rank(claimed) > phase_rank(until) || phase_rank(claimed) == phase_rank(until))
         {
@@ -1570,6 +1570,13 @@ impl WalkController {
             }
         };
         let version = release_lease_version(lease)?;
+        self.files.reset(&repo_root);
+        self.files.remember_campaign(&campaign);
+        self.steps = 0;
+        self.last_delta = None;
+        self.replay = None;
+        self.llm_focus = None;
+        self.llm_cursors.clear();
         self.state = state;
         self.reconstruction = None;
         let reconstructed = claimed;
@@ -4679,6 +4686,70 @@ mod tests {
         assert_eq!(controller.repo_root, server_root);
         assert_eq!(controller.phase(), WalkPhase::Empty);
         assert_eq!(controller.steps, 7);
+    }
+
+    #[tokio::test]
+    async fn reconstructed_start_failure_preserves_controller_evidence() {
+        let root = tempfile::tempdir().expect("server root");
+        let repo = root.path().join("repo");
+        let campaign = CampaignId::from("active-campaign");
+        write_test_identity(&repo, &campaign);
+        let mut controller = WalkController::new(repo.clone());
+        controller.state = WalkState::Blocked {
+            phase: WalkPhase::R4c,
+            detail: "preserved reconstruction".to_string(),
+        };
+        controller.reconstruction = Some(WalkReconstruction {
+            notes: vec!["preserved note".to_string()],
+            blockers: vec!["preserved blocker".to_string()],
+        });
+        controller
+            .files
+            .push("preserved_file", repo.join("preserved.json"));
+        controller.steps = 9;
+        let tracked: Vec<_> = controller
+            .files
+            .tracked
+            .iter()
+            .map(|file| (file.label, file.path.clone()))
+            .collect();
+
+        let error = controller
+            .start_version(
+                WalkStartConfig {
+                    campaign: Some(CampaignId::from("other-campaign")),
+                    repo_root: None,
+                },
+                WalkPhase::R3,
+                false,
+                &SessionVersion::empty(),
+            )
+            .await
+            .err()
+            .expect("campaign mismatch must reject reconstructed start");
+
+        assert!(
+            error
+                .to_string()
+                .contains("does not match the active checkout parent")
+        );
+        assert_eq!(controller.phase(), WalkPhase::R4c);
+        assert_eq!(controller.steps, 9);
+        let reconstruction = controller
+            .reconstruction
+            .as_ref()
+            .expect("reconstruction must remain attached");
+        assert_eq!(reconstruction.notes, ["preserved note"]);
+        assert_eq!(reconstruction.blockers, ["preserved blocker"]);
+        assert_eq!(
+            controller
+                .files
+                .tracked
+                .iter()
+                .map(|file| (file.label, file.path.clone()))
+                .collect::<Vec<_>>(),
+            tracked
+        );
     }
 
     #[test]

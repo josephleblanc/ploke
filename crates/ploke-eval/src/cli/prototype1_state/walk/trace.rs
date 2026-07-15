@@ -1433,6 +1433,7 @@ mod tests {
         assert!(error.to_string().contains("one normal path component"));
 
         let request = WalkRequest {
+            client_protocol: None,
             client_epoch: None,
             body: WalkRequestBody::EvaluationTrace {
                 coordinate: fixture.coordinate(),

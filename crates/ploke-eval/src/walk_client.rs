@@ -62,11 +62,12 @@ pub use crate::cli::prototype1_state::{
             WalkBlockerCode, WalkCursor, WalkCursorEvidence, WalkDeltaSnapshot, WalkDeltaState,
             WalkEdgeDelta, WalkEndpoint, WalkEpochReceipt, WalkErrorCode, WalkEventProjection,
             WalkHandoffAcceptance, WalkJobKind, WalkJobResolutionKind, WalkJobResolutionReceipt,
-            WalkJobSnapshot, WalkJobStatus, WalkOkKind, WalkOkPayload, WalkPredecessorAttempt,
-            WalkQuerySnapshot, WalkReadyCommit, WalkReadyReceipt, WalkRecoveryResolution,
-            WalkRequest, WalkRequestBody, WalkResponse, WalkRunMode, WalkSessionAbandonment,
-            WalkSessionDamage, WalkSessionEvent, WalkSessionEventKind, WalkSessionHistory,
-            WalkSessionOrigin, WalkSessionSnapshot, WalkStartConfig, WalkTransitionReceipt,
+            WalkJobSnapshot, WalkJobStatus, WalkOkKind, WalkOkPayload, WalkPosition,
+            WalkPredecessorAttempt, WalkQuerySnapshot, WalkReadyCommit, WalkReadyReceipt,
+            WalkRecoveryResolution, WalkRequest, WalkRequestBody, WalkResponse, WalkRunMode,
+            WalkSessionAbandonment, WalkSessionDamage, WalkSessionEvent, WalkSessionEventKind,
+            WalkSessionHistory, WalkSessionOrigin, WalkSessionSnapshot, WalkStartConfig,
+            WalkTransitionReceipt,
         },
         query::{DbQueryResult, DbQueryRow, ReadRevision},
         trace::{
@@ -427,6 +428,9 @@ impl WalkClient {
                 return Ok(None);
             };
             let request = WalkRequest {
+                client_protocol: Some(
+                    crate::cli::prototype1_state::walk::epoch::WALK_PROTOCOL_VERSION,
+                ),
                 client_epoch: None,
                 body: body.clone(),
             };
@@ -435,7 +439,10 @@ impl WalkClient {
                 Err(error) => Err(error),
             };
             match result {
-                Ok(response) => return Ok(Some((socket, response))),
+                Ok(response) => {
+                    validate_response_shape(&response)?;
+                    return Ok(Some((socket, response)));
+                }
                 Err(_)
                     if exchange == 0
                         && self.follow_endpoint
@@ -507,6 +514,25 @@ fn requires_current_protocol(body: &WalkRequestBody) -> bool {
             | WalkRequestBody::EvaluationTraceIndex
             | WalkRequestBody::EvaluationTrace { .. }
     )
+}
+
+fn validate_response_shape(response: &WalkResponse) -> Result<(), PrepareError> {
+    if let WalkResponse::Status {
+        snapshot, epoch, ..
+    } = response
+        && epoch.protocol_version
+            >= crate::cli::prototype1_state::walk::epoch::WALK_PROTOCOL_VERSION
+        && matches!(&snapshot.position, WalkPosition::Legacy { .. })
+    {
+        return Err(PrepareError::DatabaseSetup {
+            phase: "prototype1_state_walk_protocol",
+            detail: format!(
+                "walk protocol {} status omitted its required position authority",
+                epoch.protocol_version
+            ),
+        });
+    }
+    Ok(())
 }
 
 fn ensure_current_protocol(response: &WalkResponse, repo_root: &Path) -> Result<(), PrepareError> {
@@ -688,6 +714,12 @@ mod tests {
         let (mut stream, _) = listener.accept().await.expect("accept protocol probe");
         let request: WalkRequest = ipc::recv(&mut stream).await.expect("read protocol probe");
         assert!(matches!(request.body, WalkRequestBody::Health));
+        assert_eq!(
+            request
+                .client_protocol
+                .expect("public read probe must identify its protocol"),
+            crate::cli::prototype1_state::walk::epoch::WALK_PROTOCOL_VERSION
+        );
         ipc::send(
             &mut stream,
             &WalkResponse::ok(WalkOkKind::Show, WalkPhase::Empty, "healthy", epoch),
@@ -826,6 +858,7 @@ name = "walk-config-fixture"
         let repo = tempfile::tempdir().expect("config repo");
         let epoch = ServerEpoch::capture(repo.path()).expect("capture config epoch");
         let request = WalkRequest {
+            client_protocol: None,
             client_epoch: None,
             body: WalkRequestBody::Config,
         };
@@ -1064,6 +1097,59 @@ name = "walk-config-fixture"
     }
 
     #[test]
+    fn status_without_position_is_accepted_only_from_an_older_protocol() {
+        let legacy_wire = serde_json::json!({
+            "type": "status",
+            "message": "online",
+            "snapshot": {
+                "phase": "r4c",
+                "version": {
+                    "session_id": null,
+                    "cursor": null,
+                    "journal_revision": 0
+                },
+                "controller_attached": true,
+                "authority": "active",
+                "job": null,
+                "blocker": null,
+                "actions": []
+            },
+            "epoch": {
+                "protocol_version": 8,
+                "transition_graph_version": "walk-r0-r14a-v2",
+                "repo_root": "/tmp/ploke-parent",
+                "exe_path": "/tmp/ploke-eval",
+                "exe_modified_unix_ms": 17,
+                "git_head": "abc123",
+                "active_branch": "parent/runtime-1",
+                "source_status_hash": "def456"
+            }
+        });
+        let legacy: WalkResponse =
+            serde_json::from_value(legacy_wire.clone()).expect("decode frozen v8 status");
+        let WalkResponse::Status { snapshot, .. } = &legacy else {
+            panic!("expected legacy status response");
+        };
+        assert!(matches!(&snapshot.position, WalkPosition::Legacy { .. }));
+        validate_response_shape(&legacy).expect("protocol 8 may omit position authority");
+        let rendered = crate::cli::prototype1_state::walk::client::render_response_json(&legacy)
+            .expect("CLI must re-emit an accepted v8 status");
+        let rendered: serde_json::Value =
+            serde_json::from_str(&rendered).expect("rendered v8 status JSON");
+        assert_eq!(rendered, legacy_wire);
+
+        let mut invalid_wire = legacy_wire;
+        invalid_wire["epoch"]["protocol_version"] = serde_json::json!(9);
+        let invalid: WalkResponse =
+            serde_json::from_value(invalid_wire).expect("decode malformed current status");
+        let error = validate_response_shape(&invalid)
+            .expect_err("protocol 9 must identify position authority")
+            .to_string();
+
+        assert!(error.contains("status omitted its required position authority"));
+    }
+
+    #[test]
     fn public_reply_round_trip_preserves_all_protocol_fields() {
         let repo = tempfile::tempdir().expect("audit repo");
         let epoch = ServerEpoch {
@@ -1152,8 +1238,9 @@ name = "walk-config-fixture"
             WalkResponse::Status {
                 message: "online".to_string(),
                 snapshot: WalkSessionSnapshot {
-                    phase: WalkPhase::R6,
-                    version: version.clone(),
+                    position: WalkPosition::Session {
+                        version: version.clone(),
+                    },
                     controller_attached: true,
                     authority: WalkAuthority::JobActive,
                     job: Some(job),
@@ -1228,6 +1315,7 @@ name = "walk-config-fixture"
             source_status_hash: Some("def456".to_string()),
         };
         let request = WalkRequest {
+            client_protocol: Some(epoch.protocol_version),
             client_epoch: Some(epoch),
             body: WalkRequestBody::LlmStep {
                 guard: MutationGuard {
@@ -1255,6 +1343,7 @@ name = "walk-config-fixture"
     #[test]
     fn public_job_resolution_request_round_trip_preserves_target_and_version() {
         let request = WalkRequest {
+            client_protocol: None,
             client_epoch: None,
             body: WalkRequestBody::ResolveJob {
                 guard: MutationGuard {
@@ -1274,6 +1363,7 @@ name = "walk-config-fixture"
     #[test]
     fn public_session_history_request_round_trips() {
         let request = WalkRequest {
+            client_protocol: None,
             client_epoch: None,
             body: WalkRequestBody::SessionHistory,
         };
@@ -1423,7 +1513,7 @@ name = "walk-config-fixture"
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn typed_read_rejects_v6_before_sending_v8_request() {
+    async fn typed_read_rejects_v6_before_sending_v9_request() {
         let tmp = tempfile::tempdir().expect("temp eval home");
         let _env = crate::test_support::env_guard_os(vec![(
             "PLOKE_EVAL_HOME",
@@ -1442,7 +1532,7 @@ name = "walk-config-fixture"
                 tokio::time::timeout(Duration::from_millis(100), listener.accept())
                     .await
                     .is_err(),
-                "client sent a v8-only request after observing a v6 server"
+                "client sent a v9-only request after observing a v6 server"
             );
         });
         let client = WalkClient::resolve(Some(&repo_root), Some(&socket)).expect("resolve client");
@@ -1452,13 +1542,13 @@ name = "walk-config-fixture"
             .await
             .expect_err("v6 server must be rejected before session-history request");
 
-        assert!(error.to_string().contains("client=8 server=6"));
+        assert!(error.to_string().contains("client=9 server=6"));
         server.await.expect("v6 server task");
     }
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn typed_read_rejects_v6_successor_after_v8_probe() {
+    async fn typed_read_rejects_v6_successor_after_v9_probe() {
         let tmp = tempfile::tempdir().expect("temp eval home");
         let _env = crate::test_support::env_guard_os(vec![(
             "PLOKE_EVAL_HOME",
@@ -1467,7 +1557,7 @@ name = "walk-config-fixture"
         let repo_root = tmp.path().join("parent");
         fs::create_dir_all(&repo_root).expect("create repo root");
         let repo_root = paths::resolve_repo_root(Some(&repo_root)).expect("resolve repo root");
-        let old_socket = tmp.path().join("v8-predecessor.sock");
+        let old_socket = tmp.path().join("v9-predecessor.sock");
         let old_listener = tokio::net::UnixListener::bind(&old_socket).expect("bind predecessor");
         let old = endpoint::ServerEndpoint::from_bound(repo_root.clone(), old_socket)
             .expect("predecessor endpoint");
@@ -1478,7 +1568,7 @@ name = "walk-config-fixture"
             .expect("successor endpoint");
         let client = WalkClient::resolve(Some(&repo_root), None).expect("following client");
 
-        let v8_epoch = ServerEpoch::capture(&repo_root).expect("capture v8 epoch");
+        let v9_epoch = ServerEpoch::capture(&repo_root).expect("capture v9 epoch");
         let old_for_task = old.clone();
         let next_for_task = next.clone();
         let predecessor = tokio::spawn(async move {
@@ -1490,10 +1580,10 @@ name = "walk-config-fixture"
                 .expect("publish successor before probe response");
             ipc::send(
                 &mut stream,
-                &WalkResponse::ok(WalkOkKind::Show, WalkPhase::Empty, "healthy", v8_epoch),
+                &WalkResponse::ok(WalkOkKind::Show, WalkPhase::Empty, "healthy", v9_epoch),
             )
             .await
-            .expect("write v8 protocol response");
+            .expect("write v9 protocol response");
         });
 
         let mut v6_epoch = ServerEpoch::capture(&repo_root).expect("capture v6 epoch");
@@ -1506,7 +1596,7 @@ name = "walk-config-fixture"
                 &mut stream,
                 &WalkResponse::error(
                     WalkErrorCode::BadRequest,
-                    "v6 successor received v8 request",
+                    "v6 successor received v9 request",
                     None,
                     v6_epoch,
                 ),
@@ -1520,7 +1610,7 @@ name = "walk-config-fixture"
             .await
             .expect_err("v6 successor response must be rejected");
 
-        assert!(error.to_string().contains("client=8 server=6"));
+        assert!(error.to_string().contains("client=9 server=6"));
         predecessor.await.expect("predecessor task");
         successor.await.expect("successor task");
         next.cleanup().expect("cleanup successor endpoint");

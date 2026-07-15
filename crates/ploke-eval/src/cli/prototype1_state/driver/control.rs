@@ -1700,7 +1700,7 @@ fn same_path(left: &Path, right: &Path) -> bool {
     }
 }
 
-fn validate_fresh_session(repo_root: &Path) -> Result<(), PrepareError> {
+pub(crate) fn validate_fresh_session(repo_root: &Path) -> Result<(), PrepareError> {
     let origin = reconstruct::reconstruct_at(repo_root, WalkPhase::R3)?;
     if origin.blocked.is_some()
         || origin.state.as_ref().map(EarlyState::phase) != Some(WalkPhase::R3)
