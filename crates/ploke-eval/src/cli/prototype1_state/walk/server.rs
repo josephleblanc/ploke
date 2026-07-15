@@ -699,15 +699,15 @@ pub(crate) async fn refresh_ready(
 /// retry treats `job active` as transfer drain rather than as permission to
 /// leave two live mutation endpoints behind.
 pub(crate) async fn retire_predecessor(predecessor: &ServerEndpoint) -> Result<(), PrepareError> {
-    const RETIRE_TIMEOUT: Duration = Duration::from_secs(5);
+    // Match the existing successor transfer scale while preserving bounded
+    // failure when the predecessor service cannot settle cleanly.
+    const RETIRE_TIMEOUT: Duration = Duration::from_secs(30);
     const RETIRE_POLL: Duration = Duration::from_millis(25);
-    const REQUEST_TIMEOUT: Duration = Duration::from_millis(250);
 
     predecessor.validate_persisted()?;
-    let deadline = time::Instant::now() + RETIRE_TIMEOUT;
     let repo_root = predecessor.repo_root().to_path_buf();
-    let client_epoch = match time::timeout_at(
-        deadline,
+    let client_epoch = match time::timeout(
+        RETIRE_TIMEOUT,
         tokio::task::spawn_blocking(move || ServerEpoch::capture(&repo_root)),
     )
     .await
@@ -728,6 +728,7 @@ pub(crate) async fn retire_predecessor(predecessor: &ServerEndpoint) -> Result<(
             });
         }
     };
+    let deadline = time::Instant::now() + RETIRE_TIMEOUT;
     let mut detail = "no stop response".to_string();
     loop {
         if !predecessor.owns_socket() {
@@ -755,8 +756,7 @@ pub(crate) async fn retire_predecessor(predecessor: &ServerEndpoint) -> Result<(
             });
         }
 
-        let request_timeout = REQUEST_TIMEOUT.min(deadline - now);
-        let response = match time::timeout(request_timeout, async {
+        let response = match time::timeout(deadline - now, async {
             let mut stream = ipc::connect(predecessor.socket()).await?;
             ipc::send(
                 &mut stream,
@@ -773,19 +773,56 @@ pub(crate) async fn retire_predecessor(predecessor: &ServerEndpoint) -> Result<(
         {
             Ok(response) => response,
             Err(_) => {
-                detail = "predecessor Stop request timed out".to_string();
-                time::sleep(RETIRE_POLL).await;
+                detail = format!(
+                    "predecessor endpoint '{}' did not answer Stop before the handoff drain deadline",
+                    predecessor.socket().display()
+                );
                 continue;
             }
         };
 
         match response {
             Ok(WalkResponse::Error {
-                detail: response, ..
+                code: WalkErrorCode::JobActive,
+                detail: response,
+                ..
             }) => detail = response,
-            Ok(_) => detail = "predecessor accepted Stop but kept its socket".to_string(),
-            Err(_) if !predecessor.owns_socket() => return Ok(()),
-            Err(error) => detail = error.to_string(),
+            Ok(WalkResponse::Error {
+                code,
+                detail: response,
+                ..
+            }) => {
+                return Err(PrepareError::InvalidBatchSelection {
+                    detail: format!(
+                        "predecessor endpoint '{}' rejected retirement with {code}: {response}",
+                        predecessor.socket().display()
+                    ),
+                });
+            }
+            Ok(WalkResponse::Status { snapshot, .. })
+                if snapshot.authority == WalkAuthority::Stopping =>
+            {
+                detail = "predecessor accepted Stop but kept its socket".to_string();
+            }
+            Ok(response) => {
+                return Err(PrepareError::InvalidBatchSelection {
+                    detail: format!(
+                        "predecessor endpoint '{}' returned an unexpected Stop response: {response:?}",
+                        predecessor.socket().display()
+                    ),
+                });
+            }
+            Err(error @ PrepareError::DatabaseSetup { .. }) => {
+                detail = format!("predecessor Stop transport remained unsettled: {error}");
+            }
+            Err(error) => {
+                return Err(PrepareError::InvalidBatchSelection {
+                    detail: format!(
+                        "predecessor endpoint '{}' returned an invalid Stop response: {error}",
+                        predecessor.socket().display()
+                    ),
+                });
+            }
         }
 
         if time::Instant::now() >= deadline {
@@ -1561,7 +1598,14 @@ impl WalkServer {
             }
         };
         match result {
-            Ok(response) if stop_requested => {
+            Ok(response)
+                if stop_requested
+                    && matches!(
+                        &response,
+                        WalkResponse::Status { snapshot, .. }
+                            if snapshot.authority == WalkAuthority::Stopping
+                    ) =>
+            {
                 debug!(phase = ?response.phase(), stop = true, "handled walk request");
                 (response, true)
             }
@@ -2941,12 +2985,21 @@ impl WalkServer {
                 .as_ref()
                 .filter(|active| active.snapshot.status.blocks_mutation())
             {
-                return Err(PrepareError::InvalidBatchSelection {
-                    detail: format!(
+                let code = if active.snapshot.status.is_active() {
+                    WalkErrorCode::JobActive
+                } else {
+                    WalkErrorCode::RecoveryInProgress
+                };
+                let version = self.durable_version()?;
+                return Ok(WalkResponse::conflict(
+                    code,
+                    format!(
                         "walk stop refused while job {} ({}) is {:?}; wait for the job to finish, or inspect and explicitly recover/abandon any unresolved durable attempt before stopping the server",
                         active.snapshot.job_id, active.snapshot.command, active.snapshot.status
                     ),
-                });
+                    version,
+                    self.epoch.clone(),
+                ));
             }
             jobs.stopping = true;
         }
@@ -4416,11 +4469,12 @@ fn owner_db_path(campaign_id: &str) -> Result<PathBuf, PrepareError> {
 
 #[cfg(all(test, unix))]
 mod tests {
-    use std::{ffi::OsString, str::FromStr};
+    use std::{ffi::OsString, io::Read, str::FromStr};
 
     #[cfg(target_os = "linux")]
     use std::{os::unix::process::CommandExt, process::Command};
 
+    use flate2::read::GzDecoder;
     use ploke_records::{identity::ParentIdentityRecord, ids::CampaignId};
     use tempfile::tempdir;
 
@@ -4428,13 +4482,19 @@ mod tests {
         cli::{
             Prototype1StateWalkAuditScope, Prototype1StateWalkLlmStepSource,
             prototype1_state::{
+                channel::{Envelope, ToParent},
                 driver::control::PredecessorRelease,
                 event::{ContentHash, RecordedAt, RuntimeId},
                 identity::{ParentIdentity, write_parent_identity},
+                invocation::{self, InvocationAuthority},
                 journal::{Streams, SuccessorHandoffEntry},
                 profile::{RunMode, RunProfileCommitment},
-                session::{Claim, Cursor, Outcome, SessionId},
-                walk::{endpoint, epoch::ServerEpoch, protocol::WalkOkPayload},
+                session::{Claim, Cursor, Outcome, SessionId, Store},
+                walk::{
+                    endpoint,
+                    epoch::ServerEpoch,
+                    protocol::{WalkOkPayload, WalkSessionEventKind},
+                },
             },
         },
         replay::tool_loop::{FsToolLoopStore, ToolLoopSession, ToolLoopStore},
@@ -4511,6 +4571,44 @@ mod tests {
                 panic!("expected a newly accepted job")
             }
         }
+    }
+
+    fn decode_hex(path: &Path) -> Vec<u8> {
+        let encoded = fs::read_to_string(path).expect("read hex-encoded historical fixture");
+        let encoded: String = encoded
+            .chars()
+            .filter(|value| !value.is_whitespace())
+            .collect();
+        assert_eq!(encoded.len() % 2, 0, "historical fixture hex is complete");
+        let bytes: Vec<u8> = (0..encoded.len())
+            .step_by(2)
+            .map(|offset| {
+                u8::from_str_radix(&encoded[offset..offset + 2], 16)
+                    .expect("decode historical fixture hex")
+            })
+            .collect();
+        bytes
+    }
+
+    fn inflate_hex(path: &Path) -> Vec<u8> {
+        let compressed = decode_hex(path);
+        let mut decoder = GzDecoder::new(compressed.as_slice());
+        let mut decoded = Vec::new();
+        decoder
+            .read_to_end(&mut decoded)
+            .expect("inflate historical fixture");
+        decoded
+    }
+
+    fn journal_parent(bytes: &[u8]) -> ParentIdentity {
+        let first = bytes
+            .split(|value| *value == b'\n')
+            .next()
+            .expect("historical journal has a Created entry");
+        let value: serde_json::Value =
+            serde_json::from_slice(first).expect("decode historical Created entry");
+        serde_json::from_value(value["parent"].clone())
+            .expect("historical Created entry carries a parent identity")
     }
 
     #[test]
@@ -5983,10 +6081,10 @@ mod tests {
             async move { retire_predecessor(&endpoint).await }
         });
 
-        tokio::time::sleep(Duration::from_millis(75)).await;
+        tokio::time::sleep(Duration::from_millis(5_250)).await;
         assert!(
             !retiring.is_finished(),
-            "predecessor Stop must wait while its handoff job is active"
+            "predecessor retirement must outlive the former five-second deadline while its exact outer handoff job is active"
         );
         finish_job(
             &jobs,
@@ -5996,7 +6094,13 @@ mod tests {
             WalkJobStatus::Succeeded,
             Some(WalkPhase::R13b),
             "handoff receipt published".to_string(),
-            None,
+            Some(WalkTransitionReceipt {
+                phase_before: WalkPhase::R12,
+                phase_after: WalkPhase::R13b,
+                edges: vec![ControlEdge::R12ToR13b],
+                version: test_version(WalkPhase::R13b, 10_002),
+                event_projection: WalkEventProjection::Recorded,
+            }),
         )
         .await;
 
@@ -6011,6 +6115,253 @@ mod tests {
             .expect("predecessor server task")
             .expect("predecessor accept loop");
         assert!(!endpoint.owns_socket());
+    }
+
+    #[tokio::test]
+    async fn successor_retirement_waits_for_stop_response() {
+        let repo = tempdir().expect("repo tempdir");
+        let socket = repo.path().join("predecessor.sock");
+        let listener = UnixListener::bind(&socket).expect("bind predecessor socket");
+        let endpoint = ServerEndpoint::from_bound(repo.path().to_path_buf(), socket)
+            .expect("capture predecessor endpoint");
+        let server = test_server(repo.path(), MutationGate::open());
+        let jobs = Arc::clone(&server.jobs);
+        let jobs_guard = jobs.lock().await;
+        let owned = endpoint.clone();
+        let serving = tokio::spawn(async move {
+            let result = accept_loop(server, listener, None).await;
+            owned.cleanup().expect("cleanup retired predecessor");
+            result
+        });
+        let retiring = tokio::spawn({
+            let endpoint = endpoint.clone();
+            async move { retire_predecessor(&endpoint).await }
+        });
+
+        tokio::time::sleep(Duration::from_millis(350)).await;
+        assert!(
+            !retiring.is_finished(),
+            "predecessor retirement must not fail while an accepted Stop waits for terminal-persistence synchronization"
+        );
+        drop(jobs_guard);
+
+        tokio::time::timeout(Duration::from_secs(1), retiring)
+            .await
+            .expect("predecessor retirement must complete")
+            .expect("retirement task")
+            .expect("retire predecessor");
+        tokio::time::timeout(Duration::from_secs(1), serving)
+            .await
+            .expect("predecessor server must stop")
+            .expect("predecessor server task")
+            .expect("predecessor accept loop");
+        assert!(!endpoint.owns_socket());
+    }
+
+    #[tokio::test]
+    async fn successor_retirement_rejects_indeterminate_predecessor() {
+        let repo = tempdir().expect("repo tempdir");
+        let socket = repo.path().join("predecessor.sock");
+        let listener = UnixListener::bind(&socket).expect("bind predecessor socket");
+        let endpoint = ServerEndpoint::from_bound(repo.path().to_path_buf(), socket)
+            .expect("capture predecessor endpoint");
+        let server = test_server(repo.path(), MutationGate::open());
+        let job = server
+            .register_job(
+                test_guard(10_003),
+                b"step".to_vec(),
+                test_step_intent(WalkPhase::R13b),
+            )
+            .await
+            .map(accepted)
+            .expect("register predecessor handoff job");
+        {
+            let mut jobs = server.jobs.lock().await;
+            let active = jobs.active.as_mut().expect("active predecessor job");
+            assert_eq!(active.snapshot.job_id, job.job_id);
+            active.snapshot.status = WalkJobStatus::Indeterminate;
+        }
+        let owned = endpoint.clone();
+        let serving = tokio::spawn(async move {
+            let result = accept_loop(server, listener, None).await;
+            owned.cleanup().expect("cleanup predecessor endpoint");
+            result
+        });
+
+        let error = tokio::time::timeout(Duration::from_secs(1), retire_predecessor(&endpoint))
+            .await
+            .expect("non-drain retirement error must be immediate")
+            .expect_err("indeterminate predecessor must not be retired");
+        let detail = error.to_string();
+        assert!(detail.contains("recovery_in_progress"), "{detail}");
+        assert!(detail.contains("Indeterminate"), "{detail}");
+        assert!(
+            !serving.is_finished(),
+            "rejected retirement must leave the predecessor service online"
+        );
+
+        serving.abort();
+        let _ = serving.await;
+        endpoint.cleanup().expect("cleanup aborted predecessor");
+    }
+
+    #[test]
+    fn stage7_retirement_replays_outer_receipt_gap() {
+        const FORMER_RETIRE_MS: i64 = 5_000;
+
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("src/tests/fixtures/prototype1-stage7-handoff-retirement-20260715");
+        let predecessor_bytes =
+            inflate_hex(&fixture.join("predecessor-control-journal.jsonl.gz.hex"));
+        let successor_bytes = inflate_hex(&fixture.join("successor-control-journal.jsonl.gz.hex"));
+        let predecessor = journal_parent(&predecessor_bytes);
+        let successor = journal_parent(&successor_bytes);
+        assert_eq!(predecessor.generation(), 0);
+        assert_eq!(successor.generation(), 1);
+        assert_eq!(
+            successor.previous_parent_id(),
+            Some(predecessor.parent_id())
+        );
+
+        let temp = tempdir().expect("historical replay tempdir");
+        let invocation_path = temp.path().join("successor-invocation.json");
+        fs::write(
+            &invocation_path,
+            decode_hex(&fixture.join("successor-invocation.json.hex")),
+        )
+        .expect("install exact historical successor invocation");
+        let InvocationAuthority::Successor(invocation) =
+            invocation::load_authority(&invocation_path)
+                .expect("load historical successor invocation")
+        else {
+            panic!("historical invocation must carry successor authority");
+        };
+        let attempt = invocation
+            .predecessor_attempt()
+            .expect("historical successor preserves predecessor attempt");
+        assert_eq!(attempt.fence().to_string(), "12");
+
+        let store = Store::new(temp.path().join("control"));
+        let predecessor_path = store.paths(&predecessor).journal().to_path_buf();
+        let successor_path = store.paths(&successor).journal().to_path_buf();
+        fs::create_dir_all(
+            predecessor_path
+                .parent()
+                .expect("predecessor journal parent"),
+        )
+        .expect("create predecessor replay directory");
+        fs::create_dir_all(successor_path.parent().expect("successor journal parent"))
+            .expect("create successor replay directory");
+        fs::write(&predecessor_path, predecessor_bytes)
+            .expect("install predecessor historical journal");
+        fs::write(&successor_path, successor_bytes).expect("install successor historical journal");
+
+        let epoch = ServerEpoch::capture(temp.path()).expect("capture replay presentation epoch");
+        let predecessor_history = store
+            .inspect_history(&predecessor, epoch.clone())
+            .expect("replay predecessor history")
+            .expect("predecessor history exists");
+        let successor_history = store
+            .inspect_history(&successor, epoch)
+            .expect("replay successor history")
+            .expect("successor history exists");
+        assert!(predecessor_history.damage.is_none());
+        assert!(successor_history.damage.is_none());
+        assert_eq!(
+            predecessor_history.version.session_id(),
+            Some(attempt.session())
+        );
+
+        let predecessor_release = predecessor_history
+            .events
+            .iter()
+            .find(|event| {
+                matches!(
+                    event.kind,
+                    WalkSessionEventKind::Released {
+                        fence: 12,
+                        ready: None
+                    }
+                )
+            })
+            .expect("replay exact predecessor release");
+        let successor_ready = successor_history
+            .events
+            .iter()
+            .find_map(|event| match &event.kind {
+                WalkSessionEventKind::Released {
+                    fence: 1,
+                    ready: Some(ready),
+                } => Some((event, ready)),
+                _ => None,
+            })
+            .expect("replay atomic successor Ready release");
+        assert_eq!(
+            successor_ready.1.runtime_id.to_string(),
+            invocation.runtime_id().to_string()
+        );
+        assert_eq!(successor_ready.1.commit.cursor.phase, WalkPhase::R4c);
+        assert!(successor_ready.0.recorded_at_ms < predecessor_release.recorded_at_ms);
+
+        let operation: DurableOperation =
+            serde_json::from_slice(&decode_hex(&fixture.join("predecessor-operation.json.hex")))
+                .expect("decode historical predecessor operation");
+        let snapshot = &operation.stored.snapshot;
+        assert_eq!(
+            snapshot.operation_id.to_string(),
+            "50d299f7-ee5c-4c28-91fd-8bd31af9aaf7"
+        );
+        assert_eq!(snapshot.status, WalkJobStatus::Succeeded);
+        let receipt = snapshot
+            .receipt
+            .as_ref()
+            .expect("historical operation has terminal handoff receipt");
+        assert_eq!(receipt.phase_before, WalkPhase::R12);
+        assert_eq!(receipt.phase_after, WalkPhase::R13b);
+        assert!(receipt.edges.contains(&ControlEdge::R12ToR13b));
+        let finished = chrono::DateTime::parse_from_rfc3339(
+            snapshot
+                .finished_at
+                .as_deref()
+                .expect("operation finish time"),
+        )
+        .expect("parse operation finish time")
+        .timestamp_millis();
+        assert!(
+            finished - predecessor_release.recorded_at_ms > FORMER_RETIRE_MS,
+            "historical outer receipt must settle after the former retirement deadline"
+        );
+
+        let channel: Envelope<ToParent> = serde_json::from_str(
+            fs::read_to_string(fixture.join("successor-ready-channel.jsonl"))
+                .expect("read historical Ready channel")
+                .trim(),
+        )
+        .expect("decode historical Ready channel");
+        assert_eq!(channel.runtime_id(), invocation.runtime_id());
+        let ToParent::SuccessorReady {
+            controller: Some(channel_ready),
+            ..
+        } = channel.body()
+        else {
+            panic!("historical channel must carry typed successor Ready");
+        };
+        assert_eq!(
+            channel_ready.commit().session_id().to_string(),
+            successor_ready.1.commit.session_id.to_string()
+        );
+        assert_eq!(
+            channel_ready.commit().transition_id().to_string(),
+            successor_ready.1.commit.transition_id.to_string()
+        );
+        assert_eq!(
+            channel_ready.commit().fence().to_string(),
+            successor_ready.1.commit.fence.to_string()
+        );
+        assert_eq!(
+            channel_ready.commit().cursor().phase(),
+            successor_ready.1.commit.cursor.phase
+        );
     }
 
     #[tokio::test]
@@ -6711,7 +7062,8 @@ mod tests {
             "stop must not abort a task after durable attempt admission"
         );
         match response {
-            WalkResponse::Error { detail, .. } => {
+            WalkResponse::Error { code, detail, .. } => {
+                assert_eq!(code, WalkErrorCode::JobActive);
                 assert!(detail.contains("stop refused while job"), "{detail}")
             }
             other => panic!("active-job stop did not fail closed: {other:?}"),

@@ -173,3 +173,6 @@ file and current code before treating a report as still open.
   Source-repaired typed IPC bug: completed sealed traces containing `ToolArgumentsJson` failed client decoding when buffered inside the internally tagged trace state.
 - [`2026-07-14-walk-llm-inspection-controller-lock.md`](./2026-07-14-walk-llm-inspection-controller-lock.md)
   Source-repaired authority-boundary bug: persisted LLM inspector commands waited behind the mutation controller for an entire live typestate edge.
+- [`2026-07-15-prototype1-successor-retirement-before-walk-receipt.md`](./2026-07-15-prototype1-successor-retirement-before-walk-receipt.md)
+  Successor-handoff lifecycle race where predecessor retirement timed out before
+  the outer R12-to-R13b walk receipt became terminal.
