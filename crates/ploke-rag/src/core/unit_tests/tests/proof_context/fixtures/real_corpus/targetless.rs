@@ -912,6 +912,106 @@ async fn proof_context_collection_preserves_axum_generated_get_service_resolutio
     Ok(())
 }
 
+#[tokio::test]
+async fn proof_context_collection_preserves_axum_assert_eq_macro_blockers() -> Result<(), Error> {
+    init_tracing_once();
+    let db = axum_db()?;
+
+    let cases = [
+        (
+            "axum-core Body test_try_downcast assert_eq",
+            &["crate", "body"][..],
+        ),
+        (
+            "axum util test_try_downcast assert_eq",
+            &["crate", "util"][..],
+        ),
+    ];
+
+    let mut owners = Vec::new();
+    for (label, module_path) in cases {
+        let owner = function_id(&db, module_path, "test_try_downcast")?;
+        let projected = db.project_call_proof_facts_for_owner(owner, AXUM_DOMAIN)?;
+        assert!(
+            projected >= 4,
+            "{label} should project two unsupported macro call-site proof rows"
+        );
+        owners.push((label, owner));
+    }
+
+    let rag = init_test_rag_mock(Arc::clone(&db));
+    assert!(
+        !rag.proof_context_degraded(),
+        "projected axum assert_eq macro facts should enable RAG proof context"
+    );
+
+    for (label, owner) in owners {
+        let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+        let calls = call_context
+            .get(&owner)
+            .unwrap_or_else(|| panic!("{label} should receive outgoing call context"));
+        let sites = targetless_macro_sites(calls, owner, "assert_eq", label);
+
+        let proof_context = rag.collect_proof_context(&[(owner, 1.0)])?;
+        let rows = proof_context
+            .get(&owner)
+            .unwrap_or_else(|| panic!("{label} should receive projected proof rows"));
+
+        // Matrix: macro-bound try_downcast rows.
+        // Source chain:
+        //   docs/active/agents/call-graph/
+        //   2026-06-28_real-corpus-call-site-oracle-matrices.md
+        //   axum-core/src/body.rs:251-252 wraps `try_downcast` calls in
+        //   `assert_eq!`.
+        //   axum/src/util.rs:114-115 wraps `try_downcast` calls in
+        //   `assert_eq!`.
+        // Expected proof traversal: proof context must expose the two macro
+        // call_site rows and blocked call_resolution rows for each owner, with
+        // no flattened path edge to `try_downcast` from macro arguments.
+        for site_id in sites {
+            assert_site_blocker(rows, owner, site_id, "macro_expansion_not_available", label);
+            let site = site_id.to_string();
+            assert!(
+                rows.iter().all(|row| {
+                    row.kind != "call_edge" || row.call_site_id.as_deref() != Some(site.as_str())
+                }),
+                "{label} macro callsite {site_id} must not project a call_edge: {rows:#?}"
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn targetless_macro_sites(
+    calls: &[CallContextInfo],
+    owner: Uuid,
+    name: &str,
+    label: &str,
+) -> Vec<Uuid> {
+    let matching = calls
+        .iter()
+        .filter(|call| {
+            call.owner_id == owner
+                && call.kind == CallSiteKind::Macro
+                && call.callee
+                    == CallCalleeInfo::Macro {
+                        name: name.to_string(),
+                    }
+                && call.status == CallStatusKind::Unsupported
+                && call.resolution.is_none()
+                && call.targets.is_empty()
+        })
+        .map(|call| call.site_id)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching.len(),
+        2,
+        "{label} should expose exactly two targetless {name}! macro rows: {calls:#?}"
+    );
+    matching
+}
+
 fn assert_generated_macro_boundary_rows(
     rows: &[ProofContextInfo],
     site_id: Uuid,

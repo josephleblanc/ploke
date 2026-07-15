@@ -353,6 +353,20 @@ Returned async future proof-context audit, 2026-07-15:
   forwarded returned future producer projects the same evidence plus the
   `dynamic_dispatch_unbounded` poll/resume blocker without a dynamic call edge.
 
+Generated/macro proof-context audit, 2026-07-15:
+
+- Rechecked the generated and macro-expanded source bucket. RAG proof-context
+  already sampled the resolved generated `IntoServiceFuture::new`,
+  `routing::post`, and `routing::get_service` macro-boundary rows with their
+  admitted expansion summaries.
+- The narrow drift found was on the unsupported macro-expansion side: DB and
+  exact TUI covered the axum `assert_eq!`-wrapped `try_downcast` rows, but RAG
+  proof-context did not sample those real-corpus blockers. Added a focused
+  proof-context test for the two `axum-core/src/body.rs` and two
+  `axum/src/util.rs` macro callsites, asserting
+  `macro_expansion_not_available` blockers and no flattened `try_downcast`
+  call edge.
+
 ## Do Not Reselect Without New Evidence
 
 - Public callable parameters and public callable fields that lack complete
