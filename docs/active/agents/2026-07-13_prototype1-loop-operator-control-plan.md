@@ -2,9 +2,10 @@
 
 - Date: 2026-07-13
 - Baseline: `de76eaee34e6f4c4c3a19543c4cf91b217aa3bb9`
-- Status: active implementation; Stages 0-3 implemented, verified, and
-  checkpointed; Stage 4 authority/trace observability awaiting committed live
-  canary validation
+- Status: active implementation; Stages 0-3 are checkpointed; the Stage 4
+  authority and sealed-trace foundation is committed and live-verified through
+  protocol v9; the first Stage 5 native trace-inspection slice is under
+  implementation validation
 
 ## Implementation progress
 
@@ -181,6 +182,33 @@
   DB-query replies after run selection. Complete authority snapshots are shown
   only for Status responses, so same-phase Show, Job, or Error responses cannot
   combine a newer epoch with stale actions, blockers, or attachment state.
+- The first Stage 5 slice keeps the UI read-only and consumes the existing
+  completed-run index and exact trace carriers rather than creating a second
+  trace schema. Evaluation Traces is the default central surface; Database
+  Query remains a sibling expert tab. Index/detail replies are bound to the
+  selected client generation and exact run coordinate, so a delayed response
+  from a prior campaign cannot replace current evidence.
+- The trace inspector labels its scope as sealed completed evidence and does
+  not claim live/in-flight telemetry. It exposes prompts, physical provider
+  response order, turns, tool arguments/results, typed protocol reviews, and
+  the full path and SHA-256 of every included source. Tool-call review linkage
+  uses the producer's run-global focal index. The canonical trace reader now
+  validates the artifact's internal focal target, index, and tool-name identity
+  before the UI may present it as linked; it intentionally does not impose a
+  direct-run-record cross-check that would reject historical records whose
+  tool calls are reconstructed from sealed turn events.
+- Focused review-link validation and the native UI suite pass (22/22 UI tests).
+  A substantial historical completed trace contains 59 calls, 60 provider
+  exchanges, and 73 protocol artifacts; its compact source components total
+  about 7.84 MB, below the 16 MiB frame cap before envelopes. That campaign
+  predates strict setup admission, so it is a sizing fixture only. The loader
+  will not be loosened to make it a current live endpoint; end-to-end UI-only
+  validation remains gated on a completed run from an admitted campaign.
+- The Stage 4 answerability audit still leaves live/in-flight last-event and
+  typed absence-causality views, exact authority-bearing executable digest,
+  child-plan DB/authority-byte comparison, and a combined no-selection /
+  no-handoff / sealed-History view unresolved. The completed-trace UI does not
+  paper over those gaps.
 
 The UI remains inspection-only until the observability read model and later
 control-parity stages are complete. Every live edge still requires a committed

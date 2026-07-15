@@ -13,10 +13,13 @@ use std::{
 use serde::{Deserialize, Serialize};
 use tokio::net::UnixStream;
 
+pub use ploke_protocol::{LocalAnalysisAssessment, LocalAnalysisTargetKind, ToolCallNeighborhood};
 pub use ploke_records::{
     identity::ParentIdentityRecord,
     ids::RuntimeId,
+    protocol::{ArtifactBody, ArtifactFile},
     run_profile::{RunMode, RunProfileCommitmentRecord, RunProfileRecord},
+    run_record::{ToolExecutionRecord, ToolResult},
 };
 
 use crate::{

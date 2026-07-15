@@ -12,6 +12,7 @@ use std::{
 };
 
 use flate2::read::GzDecoder;
+use ploke_protocol::{LocalAnalysisAssessment, LocalAnalysisTargetKind, ToolCallNeighborhood};
 use ploke_records::{
     agent_turn::{AgentTurnSummaryRecord, ObservedTurnEventRecord},
     ids::{CampaignId, InstanceId},
@@ -808,18 +809,21 @@ fn validate_protocol_payload(
                 expected_subject,
             ),
         ],
-        ArtifactBody::ToolCallReview(payload) => vec![
-            (
-                "input.subject_id",
-                payload.input.subject_id.as_str(),
-                expected_subject,
-            ),
-            (
-                "output.packet.subject_id",
-                payload.output.packet.subject_id.as_str(),
-                expected_subject,
-            ),
-        ],
+        ArtifactBody::ToolCallReview(payload) => {
+            validate_call_review(&file.path, &payload.input, &payload.output)?;
+            vec![
+                (
+                    "input.subject_id",
+                    payload.input.subject_id.as_str(),
+                    expected_subject,
+                ),
+                (
+                    "output.packet.subject_id",
+                    payload.output.packet.subject_id.as_str(),
+                    expected_subject,
+                ),
+            ]
+        }
         ArtifactBody::ToolCallSegmentReview(payload) => vec![
             (
                 "input.subject_id",
@@ -856,6 +860,57 @@ fn validate_protocol_payload(
                 expected
             )));
         }
+    }
+    Ok(())
+}
+
+fn validate_call_review(
+    path: &Path,
+    input: &ToolCallNeighborhood,
+    output: &LocalAnalysisAssessment,
+) -> Result<(), PrepareError> {
+    let index = input.focal.index;
+    if output.packet.target_kind != LocalAnalysisTargetKind::FocalCall {
+        return Err(trace_error(format!(
+            "tool-call review artifact '{}' output target is {:?}, not a focal call",
+            path.display(),
+            output.packet.target_kind
+        )));
+    }
+    if output.packet.focal_call_index != Some(index) {
+        return Err(trace_error(format!(
+            "tool-call review artifact '{}' input focal index {} disagrees with output focal index {:?}",
+            path.display(),
+            index,
+            output.packet.focal_call_index
+        )));
+    }
+    let mut calls = output
+        .packet
+        .calls
+        .iter()
+        .filter(|call| call.index == index);
+    let Some(call) = calls.next() else {
+        return Err(trace_error(format!(
+            "tool-call review artifact '{}' output packet has no focal call at index {}",
+            path.display(),
+            index
+        )));
+    };
+    if calls.next().is_some() {
+        return Err(trace_error(format!(
+            "tool-call review artifact '{}' output packet repeats focal call index {}",
+            path.display(),
+            index
+        )));
+    }
+    if call.tool_name != input.focal.tool_name {
+        return Err(trace_error(format!(
+            "tool-call review artifact '{}' input focal tool '{}' disagrees with output focal tool '{}'",
+            path.display(),
+            input.focal.tool_name,
+            call.tool_name
+        )));
     }
     Ok(())
 }
@@ -1333,6 +1388,52 @@ mod tests {
     }
 
     #[test]
+    fn call_review_validation_requires_one_matching_focal_call() {
+        let input = review_neighborhood(4, "read_file");
+        let mut output = review_assessment(4, "read_file");
+        let path = Path::new("/tmp/review.json");
+
+        validate_call_review(path, &input, &output).expect("valid focal-call review");
+
+        output.packet.target_kind = LocalAnalysisTargetKind::IntentSegment;
+        let error =
+            validate_call_review(path, &input, &output).expect_err("non-focal target must fail");
+        assert!(error.to_string().contains("not a focal call"));
+
+        output.packet.target_kind = LocalAnalysisTargetKind::FocalCall;
+        let focal = output.packet.calls.remove(0);
+        let error =
+            validate_call_review(path, &input, &output).expect_err("missing focal call must fail");
+        assert!(error.to_string().contains("has no focal call"));
+        output.packet.calls.push(focal);
+
+        output.packet.focal_call_index = Some(3);
+        let error = validate_call_review(path, &input, &output)
+            .expect_err("mismatched focal index must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("disagrees with output focal index")
+        );
+
+        output.packet.focal_call_index = Some(4);
+        output.packet.calls[0].tool_name = "cargo".to_string();
+        let error = validate_call_review(path, &input, &output)
+            .expect_err("mismatched focal tool must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("disagrees with output focal tool")
+        );
+
+        output.packet.calls[0].tool_name = "read_file".to_string();
+        output.packet.calls.push(output.packet.calls[0].clone());
+        let error = validate_call_review(path, &input, &output)
+            .expect_err("repeated focal index must fail");
+        assert!(error.to_string().contains("repeats focal call index"));
+    }
+
+    #[test]
     fn protocol_trace_rejects_missing_stale_and_outdated_anchors() {
         for anchor_case in ["missing", "stale", "outdated"] {
             let mut fixture = Fixture::new(RegisteredRunRole::Control);
@@ -1726,5 +1827,86 @@ mod tests {
             }
         })
         .to_string()
+    }
+
+    fn review_neighborhood(index: usize, tool: &str) -> ToolCallNeighborhood {
+        serde_json::from_value(json!({
+            "subject_id": INSTANCE,
+            "total_calls_in_run": 5,
+            "total_calls_in_turn": 1,
+            "turn": {
+                "turn": 1,
+                "tool_count": 1,
+                "failed_tool_count": 0,
+                "patch_proposed": false,
+                "patch_applied": false
+            },
+            "before": [],
+            "focal": review_call(index, tool),
+            "after": []
+        }))
+        .expect("review neighborhood")
+    }
+
+    fn review_assessment(index: usize, tool: &str) -> LocalAnalysisAssessment {
+        serde_json::from_value(json!({
+            "packet": {
+                "subject_id": INSTANCE,
+                "target_kind": "focal_call",
+                "target_id": format!("call:{index}"),
+                "scope_summary": "one source read",
+                "total_calls_in_scope": 1,
+                "total_calls_in_run": 5,
+                "turn_span": [1],
+                "focal_call_index": index,
+                "calls": [review_call(index, tool)]
+            },
+            "signals": {
+                "scope_turn_count": 1,
+                "repeated_tool_name_count": 0,
+                "distinct_tool_count": 1,
+                "search_calls_in_scope": 0,
+                "read_calls_in_scope": 1,
+                "browse_calls_in_scope": 0,
+                "edit_calls_in_scope": 0,
+                "execute_calls_in_scope": 0,
+                "failed_calls_in_scope": 0,
+                "similar_search_neighbors": 0,
+                "directory_pivots": 0
+            },
+            "usefulness": {
+                "verdict": "key_progress",
+                "confidence": "high",
+                "rationale": "It found the target."
+            },
+            "redundancy": {
+                "verdict": "distinct",
+                "confidence": "high",
+                "rationale": "It was the first read."
+            },
+            "recoverability": {
+                "verdict": "no_recovery_needed",
+                "confidence": "high",
+                "rationale": "The call succeeded."
+            },
+            "overall": "focused_progress",
+            "overall_confidence": "high",
+            "synthesis_rationale": "The read directly advanced the task."
+        }))
+        .expect("review assessment")
+    }
+
+    fn review_call(index: usize, tool: &str) -> serde_json::Value {
+        json!({
+            "index": index,
+            "turn": 1,
+            "tool_name": tool,
+            "tool_kind": "read",
+            "failed": false,
+            "latency_ms": 7,
+            "summary": "read source",
+            "args_preview": "src/lib.rs",
+            "result_preview": "source"
+        })
     }
 }

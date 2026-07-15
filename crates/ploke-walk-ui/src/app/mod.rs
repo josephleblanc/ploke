@@ -4,13 +4,14 @@ use std::{sync::mpsc, thread};
 
 use eframe::egui;
 use ploke_eval::walk_client::{
+    EvaluationRunCoordinate, EvaluationTraceIndex, EvaluationTraceSnapshot, EvaluationTraceState,
     PhaseInventory, WalkClient, WalkQuerySnapshot, WalkResponse, WalkRunEntry, WalkSessionSnapshot,
 };
 
 use crate::client;
 use crate::model::{
-    DEFAULT_QUERY, ServiceStatus, UiButtonState, UiEvent, WalkRequestKind, WalkRequestResult,
-    WalkRequestToken, nonempty_path, optional_text,
+    CenterView, DEFAULT_QUERY, ServiceStatus, TraceRequestToken, UiButtonState, UiEvent,
+    WalkRequestKind, WalkRequestResult, WalkRequestToken, nonempty_path, optional_text,
 };
 use panels::{
     debug::DebugWindow,
@@ -18,6 +19,7 @@ use panels::{
     phase_rail::PhaseRail,
     query::{QueryAction, QueryPanel},
     top_bar::{TopBar, TopBarAction},
+    trace::{TraceAction, TracePanel},
 };
 
 pub(crate) struct WalkUiApp {
@@ -35,10 +37,17 @@ pub(crate) struct WalkUiApp {
     response: Option<WalkResponse>,
     query_result: Option<WalkQuerySnapshot>,
     selected_row: Option<usize>,
+    trace_index: Option<EvaluationTraceIndex>,
+    selected_trace: Option<usize>,
+    trace_snapshot: Option<EvaluationTraceSnapshot>,
     notice: Option<String>,
     client_generation: u64,
     walk_pending: Option<WalkRequestToken>,
     query_pending: Option<u64>,
+    trace_index_pending: Option<TraceRequestToken>,
+    trace_pending: Option<(TraceRequestToken, EvaluationRunCoordinate)>,
+    trace_serial: u64,
+    center_view: CenterView,
     debug_panel: bool,
     debug_hover: bool,
     buttons: UiButtonState,
@@ -62,10 +71,17 @@ impl WalkUiApp {
             response: None,
             query_result: None,
             selected_row: None,
+            trace_index: None,
+            selected_trace: None,
+            trace_snapshot: None,
             notice: None,
             client_generation: 0,
             walk_pending: None,
             query_pending: None,
+            trace_index_pending: None,
+            trace_pending: None,
+            trace_serial: 0,
+            center_view: CenterView::default(),
             debug_panel: false,
             debug_hover: false,
             buttons: UiButtonState::default(),
@@ -154,9 +170,14 @@ impl WalkUiApp {
         self.client_generation = self.client_generation.wrapping_add(1);
         self.walk_pending = None;
         self.query_pending = None;
+        self.trace_index_pending = None;
+        self.trace_pending = None;
         self.response = None;
         self.query_result = None;
         self.selected_row = None;
+        self.trace_index = None;
+        self.selected_trace = None;
+        self.trace_snapshot = None;
         self.notice = None;
     }
 
@@ -229,11 +250,72 @@ impl WalkUiApp {
         });
     }
 
+    fn refresh_trace_index(&mut self, repaint: Option<egui::Context>) {
+        let Some(client) = self.client.clone() else {
+            self.notice = Some("select a run with an available walk service".to_string());
+            return;
+        };
+        if self.trace_index_pending.is_some() {
+            self.notice = Some("completed-run index request already pending".to_string());
+            return;
+        }
+
+        let token = self.next_trace_token();
+        self.trace_index_pending = Some(token);
+        self.trace_pending = None;
+        self.trace_index = None;
+        self.selected_trace = None;
+        self.trace_snapshot = None;
+        self.notice = Some("completed-run index pending".to_string());
+        let tx = self.event_tx.clone();
+        thread::spawn(move || {
+            let result = client::trace_index(client);
+            let _ = tx.send(UiEvent::TraceIndex { token, result });
+            if let Some(ctx) = repaint {
+                ctx.request_repaint();
+            }
+        });
+    }
+
+    fn load_trace(&mut self, coordinate: EvaluationRunCoordinate, repaint: Option<egui::Context>) {
+        let Some(client) = self.client.clone() else {
+            self.notice = Some("select a run with an available walk service".to_string());
+            return;
+        };
+        if self.trace_pending.is_some() {
+            self.notice = Some("evaluation trace request already pending".to_string());
+            return;
+        }
+
+        let token = self.next_trace_token();
+        self.trace_snapshot = None;
+        self.trace_pending = Some((token, coordinate.clone()));
+        self.notice = Some(format!("loading sealed trace {}", coordinate.run_id));
+        let tx = self.event_tx.clone();
+        thread::spawn(move || {
+            let result = client::trace(client, coordinate.clone());
+            let _ = tx.send(UiEvent::Trace {
+                token,
+                coordinate,
+                result,
+            });
+            if let Some(ctx) = repaint {
+                ctx.request_repaint();
+            }
+        });
+    }
+
     fn poll_events(&mut self) {
         while let Ok(event) = self.event_rx.try_recv() {
             match event {
                 UiEvent::Walk { token, result } => self.finish_walk_request(token, result),
                 UiEvent::Query { generation, result } => self.finish_query(generation, result),
+                UiEvent::TraceIndex { token, result } => self.finish_trace_index(token, result),
+                UiEvent::Trace {
+                    token,
+                    coordinate,
+                    result,
+                } => self.finish_trace(token, coordinate, result),
             }
         }
     }
@@ -292,6 +374,86 @@ impl WalkUiApp {
         }
     }
 
+    fn finish_trace_index(
+        &mut self,
+        token: TraceRequestToken,
+        result: Result<EvaluationTraceIndex, String>,
+    ) {
+        if token.generation != self.client_generation || self.trace_index_pending != Some(token) {
+            return;
+        }
+        self.trace_index_pending = None;
+        match result {
+            Ok(index) => {
+                let selected = self.selected_campaign_id();
+                if selected != Some(index.campaign.as_str()) {
+                    self.notice = Some(format!(
+                        "trace index campaign '{}' disagrees with selected campaign '{}'",
+                        index.campaign,
+                        selected.unwrap_or("-")
+                    ));
+                    return;
+                }
+                self.selected_trace = None;
+                self.trace_snapshot = None;
+                self.notice = Some(format!("{} completed run(s)", index.runs.len()));
+                self.trace_index = Some(index);
+            }
+            Err(error) => {
+                self.trace_index = None;
+                self.selected_trace = None;
+                self.trace_snapshot = None;
+                self.notice = Some(error);
+            }
+        }
+    }
+
+    fn finish_trace(
+        &mut self,
+        token: TraceRequestToken,
+        coordinate: EvaluationRunCoordinate,
+        result: Result<EvaluationTraceSnapshot, String>,
+    ) {
+        if token.generation != self.client_generation
+            || !self
+                .trace_pending
+                .as_ref()
+                .is_some_and(|pending| pending.0 == token && pending.1 == coordinate)
+        {
+            return;
+        }
+        self.trace_pending = None;
+        match result {
+            Ok(snapshot) if snapshot.coordinate == coordinate => {
+                let label = match &snapshot.trace {
+                    EvaluationTraceState::Completed { .. } => "sealed trace",
+                    EvaluationTraceState::NotCompleted { .. } => "lifecycle evidence",
+                };
+                self.notice = Some(format!("{label} {} loaded", coordinate.run_id));
+                self.trace_snapshot = Some(snapshot);
+            }
+            Ok(snapshot) => {
+                self.trace_snapshot = None;
+                self.notice = Some(format!(
+                    "trace response '{}' disagrees with requested run '{}'",
+                    snapshot.coordinate.run_id, coordinate.run_id
+                ));
+            }
+            Err(error) => {
+                self.trace_snapshot = None;
+                self.notice = Some(error);
+            }
+        }
+    }
+
+    fn next_trace_token(&mut self) -> TraceRequestToken {
+        self.trace_serial = self.trace_serial.wrapping_add(1);
+        TraceRequestToken {
+            generation: self.client_generation,
+            serial: self.trace_serial,
+        }
+    }
+
     fn selected_run(&self) -> Option<&WalkRunEntry> {
         self.selected_run.and_then(|index| self.runs.get(index))
     }
@@ -340,6 +502,15 @@ impl WalkUiApp {
         }
         if action.show_state {
             self.show_state(Some(ctx.clone()));
+        }
+    }
+
+    fn handle_trace_action(&mut self, action: TraceAction, ctx: &egui::Context) {
+        if action.refresh {
+            self.refresh_trace_index(Some(ctx.clone()));
+        }
+        if let Some(coordinate) = action.load {
+            self.load_trace(coordinate, Some(ctx.clone()));
         }
     }
 }
@@ -396,17 +567,41 @@ impl eframe::App for WalkUiApp {
             });
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
-            let selected_campaign = self.selected_campaign_id().map(str::to_owned);
-            let action = QueryPanel {
-                campaign_input: &mut self.campaign_input,
-                query_script: &mut self.query_script,
-                query_pending: self.query_pending.is_some(),
-                query_result: self.query_result.as_ref(),
-                selected_row: &mut self.selected_row,
-                selected_campaign: selected_campaign.as_deref(),
+            ui.horizontal(|ui| {
+                ui.selectable_value(
+                    &mut self.center_view,
+                    CenterView::Trace,
+                    "Evaluation Traces",
+                );
+                ui.selectable_value(&mut self.center_view, CenterView::Query, "Database Query");
+            });
+            ui.separator();
+            match self.center_view {
+                CenterView::Trace => {
+                    let action = TracePanel {
+                        index: self.trace_index.as_ref(),
+                        selected: &mut self.selected_trace,
+                        snapshot: self.trace_snapshot.as_ref(),
+                        index_pending: self.trace_index_pending.is_some(),
+                        trace_pending: self.trace_pending.is_some(),
+                    }
+                    .show(ui);
+                    self.handle_trace_action(action, &ctx);
+                }
+                CenterView::Query => {
+                    let selected_campaign = self.selected_campaign_id().map(str::to_owned);
+                    let action = QueryPanel {
+                        campaign_input: &mut self.campaign_input,
+                        query_script: &mut self.query_script,
+                        query_pending: self.query_pending.is_some(),
+                        query_result: self.query_result.as_ref(),
+                        selected_row: &mut self.selected_row,
+                        selected_campaign: selected_campaign.as_deref(),
+                    }
+                    .show(ui);
+                    self.handle_query_action(action, &ctx);
+                }
             }
-            .show(ui);
-            self.handle_query_action(action, &ctx);
         });
 
         if self.debug_panel {
@@ -452,6 +647,8 @@ mod tests {
             .with_size(egui::Vec2::new(1280.0, 820.0))
             .build_eframe(|_cc| test_app());
 
+        harness.get_by_label("Database Query").click();
+        harness.run();
         harness.get_by_label("Run Query").click();
         harness.run();
 
@@ -700,6 +897,65 @@ mod tests {
     }
 
     #[test]
+    fn trace_reply_from_previous_run_is_discarded_after_selection() {
+        let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let mut app = test_app();
+        app.socket_input = unique_temp_dir("ploke-walk-ui-trace-generation")
+            .join("walk.sock")
+            .display()
+            .to_string();
+        app.runs = vec![test_run("run-a", &repo_root), test_run("run-b", &repo_root)];
+        app.selected_run = Some(0);
+        app.resolve_selected_client();
+        let coordinate = test_coordinate("run-a", "evaluation-a");
+        let index_token = app.next_trace_token();
+        let trace_token = app.next_trace_token();
+        app.trace_index_pending = Some(index_token);
+        app.trace_pending = Some((trace_token, coordinate.clone()));
+
+        app.select_run(1);
+
+        app.finish_trace_index(index_token, Err("trace index from run A".to_string()));
+        app.finish_trace(
+            trace_token,
+            coordinate,
+            Err("trace response from run A".to_string()),
+        );
+        assert_eq!(app.selected_campaign_id(), Some("run-b"));
+        assert!(app.trace_index.is_none());
+        assert!(app.trace_snapshot.is_none());
+        assert!(app.trace_index_pending.is_none());
+        assert!(app.trace_pending.is_none());
+        assert!(
+            app.notice
+                .as_deref()
+                .is_none_or(|notice| !notice.contains("run A"))
+        );
+    }
+
+    #[test]
+    fn same_run_trace_reply_requires_current_request_serial() {
+        let mut app = test_app();
+        let coordinate = test_coordinate("run-a", "evaluation-a");
+        let old = app.next_trace_token();
+        app.trace_pending = Some((old, coordinate.clone()));
+
+        app.trace_pending = None;
+        let current = app.next_trace_token();
+        app.trace_pending = Some((current, coordinate.clone()));
+        app.notice = Some("new request pending".to_string());
+
+        app.finish_trace(old, coordinate, Err("stale same-run response".to_string()));
+
+        assert_eq!(
+            app.trace_pending.as_ref().map(|pending| pending.0),
+            Some(current)
+        );
+        assert_eq!(app.notice.as_deref(), Some("new request pending"));
+        assert!(app.trace_snapshot.is_none());
+    }
+
+    #[test]
     fn socket_edit_rebinds_client_and_invalidates_pending_evidence() {
         let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
         let mut app = test_app();
@@ -881,10 +1137,17 @@ mod tests {
             response: None,
             query_result: None,
             selected_row: None,
+            trace_index: None,
+            selected_trace: None,
+            trace_snapshot: None,
             notice: None,
             client_generation: 0,
             walk_pending: None,
             query_pending: None,
+            trace_index_pending: None,
+            trace_pending: None,
+            trace_serial: 0,
+            center_view: CenterView::default(),
             debug_panel: false,
             debug_hover: false,
             buttons: UiButtonState::default(),
@@ -895,7 +1158,11 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(4);
         while Instant::now() < deadline {
             app.poll_events();
-            if app.walk_pending.is_none() && app.query_pending.is_none() {
+            if app.walk_pending.is_none()
+                && app.query_pending.is_none()
+                && app.trace_index_pending.is_none()
+                && app.trace_pending.is_none()
+            {
                 return;
             }
             thread::sleep(Duration::from_millis(10));
@@ -964,6 +1231,15 @@ mod tests {
             }
         }))
         .expect("typed query envelope")
+    }
+
+    fn test_coordinate(campaign: &str, run: &str) -> EvaluationRunCoordinate {
+        serde_json::from_value(serde_json::json!({
+            "campaign": campaign,
+            "instance": "org__repo-1",
+            "run_id": run
+        }))
+        .expect("evaluation run coordinate")
     }
 
     fn unique_temp_dir(prefix: &str) -> PathBuf {

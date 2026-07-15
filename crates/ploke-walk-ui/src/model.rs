@@ -1,12 +1,23 @@
 use std::{path::PathBuf, time::Duration};
 
-use ploke_eval::walk_client::{WalkQuerySnapshot, WalkResponse};
+use ploke_eval::walk_client::{
+    EvaluationRunCoordinate, EvaluationTraceIndex, EvaluationTraceSnapshot, WalkQuerySnapshot,
+    WalkResponse,
+};
 
 pub(crate) const DEFAULT_QUERY: &str = "::relations";
 pub(crate) const MAX_TABLE_ROWS: usize = 200;
 pub(crate) const RUN_LABEL_MAX_CHARS: usize = 48;
 pub(crate) const WALK_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 pub(crate) const DB_QUERY_TIMEOUT: Duration = Duration::from_secs(30);
+pub(crate) const TRACE_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum CenterView {
+    #[default]
+    Trace,
+    Query,
+}
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct UiButtonState {
@@ -34,6 +45,12 @@ pub(crate) struct WalkRequestToken {
     pub(crate) kind: WalkRequestKind,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TraceRequestToken {
+    pub(crate) generation: u64,
+    pub(crate) serial: u64,
+}
+
 pub(crate) enum UiEvent {
     Walk {
         token: WalkRequestToken,
@@ -42,6 +59,15 @@ pub(crate) enum UiEvent {
     Query {
         generation: u64,
         result: Result<WalkQuerySnapshot, String>,
+    },
+    TraceIndex {
+        token: TraceRequestToken,
+        result: Result<EvaluationTraceIndex, String>,
+    },
+    Trace {
+        token: TraceRequestToken,
+        coordinate: EvaluationRunCoordinate,
+        result: Result<EvaluationTraceSnapshot, String>,
     },
 }
 

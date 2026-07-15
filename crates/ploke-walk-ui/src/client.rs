@@ -1,6 +1,51 @@
-use ploke_eval::walk_client::{WalkClient, WalkQuerySnapshot};
+use ploke_eval::walk_client::{
+    EvaluationRunCoordinate, EvaluationTraceIndex, EvaluationTraceSnapshot, WalkClient,
+    WalkQuerySnapshot,
+};
 
-use crate::model::{DB_QUERY_TIMEOUT, WALK_REQUEST_TIMEOUT, WalkRequestKind, WalkRequestResult};
+use crate::model::{
+    DB_QUERY_TIMEOUT, TRACE_REQUEST_TIMEOUT, WALK_REQUEST_TIMEOUT, WalkRequestKind,
+    WalkRequestResult,
+};
+
+pub(crate) fn trace_index(client: WalkClient) -> Result<EvaluationTraceIndex, String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| format!("failed to create tokio runtime: {error}"))?;
+    runtime.block_on(async move {
+        tokio::time::timeout(TRACE_REQUEST_TIMEOUT, client.evaluation_trace_index())
+            .await
+            .map_err(|_| {
+                format!(
+                    "completed-run index timed out after {}s",
+                    TRACE_REQUEST_TIMEOUT.as_secs()
+                )
+            })?
+            .map_err(|error| error.to_string())
+    })
+}
+
+pub(crate) fn trace(
+    client: WalkClient,
+    coordinate: EvaluationRunCoordinate,
+) -> Result<EvaluationTraceSnapshot, String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| format!("failed to create tokio runtime: {error}"))?;
+    runtime.block_on(async move {
+        tokio::time::timeout(TRACE_REQUEST_TIMEOUT, client.evaluation_trace(coordinate))
+            .await
+            .map_err(|_| {
+                format!(
+                    "evaluation trace timed out after {}s",
+                    TRACE_REQUEST_TIMEOUT.as_secs()
+                )
+            })?
+            .map_err(|error| error.to_string())
+    })
+}
 
 pub(crate) fn query_db(
     client: WalkClient,
