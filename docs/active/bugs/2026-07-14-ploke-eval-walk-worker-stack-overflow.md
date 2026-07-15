@@ -1,6 +1,6 @@
 # Ploke Eval Walk Worker Stack Overflow
 
-Status: fixed in source; committed-binary recovery and live transition validation pending.
+Status: fixed, regression-covered, and live verified.
 
 Canary worktree:
 
@@ -111,17 +111,38 @@ a synthetic R3 campaign or replace the production walk-path validation below.
 
 There is not yet a deterministic fixture-backed subprocess regression that
 creates a legitimate R3 session and drives the production server Step request
-through its complete journal lifecycle. The preserved canary provides the
-current production-path validation. The source fix still needs to be committed
-and rebuilt before touching it. Live validation must then:
+through its complete journal lifecycle. The preserved canary supplies the
+production-path proof below, while a hermetic fixture would keep that proof in
+the ordinary test suite.
 
-1. prove process `1130803` and its recorded incarnation are gone;
-2. resolve only the typed lost-owner cause for fence 2;
-3. admit the new committed binary epoch if required;
-4. replay the exact R3-to-R4a step;
-5. verify the server remains online and the journal records
-   `Acquired -> AttemptBegan -> committed AttemptFinished -> Released` with an
-   R4a cursor.
+## Live Validation
+
+Commit `23f6fee14` built binary SHA-256
+`54920d8d77c6b7e4266dc3a99fb3f4f400dc0da522876ef6902f6f385c7b4f5d`
+with epoch mtime `1784088189584`. The canary checkout remained clean at
+`fa2b9149b7932504f3e39169c95d57125a5dad39`.
+
+The restarted server restored the crashed step as `indeterminate` rather than
+guessing its outcome. Recovery then preserved operation
+`8df96ebf-ac84-40ec-bc2a-18f1a89b1701` as abandoned, resolved exact lost owner
+fence 2 under operation `299aa3ff-802f-49a7-bdab-c3bcffc5585f`, and admitted
+only the binary-mtime epoch change under operation
+`65858daa-d8ad-4cba-9a83-fb54c253e390`. Protocol version, graph version,
+checkout HEAD, branch, and source-status hash were unchanged.
+
+Operation `1b7c48a8-c3f7-4d65-8635-3ea86a5b1dd3` then replayed the exact
+`R3 -> R4a` command successfully. Fence 3 records:
+
+```text
+Acquired
+AttemptBegan(expected=R3, target=R4a)
+AttemptFinished(committed=R4a, evidence=44918e6b...116ab)
+Released
+```
+
+The typed receipt committed journal revision 13, the server remained online,
+authority was active with no blocker, and the following R4a-to-R4b transition
+also completed on the same process.
 
 ## Fix Direction
 

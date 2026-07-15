@@ -2241,19 +2241,21 @@ fn phase_rank(phase: WalkPhase) -> u8 {
         WalkPhase::Empty => 0,
         WalkPhase::R0 => 1,
         WalkPhase::R1 => 2,
-        WalkPhase::R2a | WalkPhase::R3 => 3,
-        WalkPhase::R4a => 4,
-        WalkPhase::R4b | WalkPhase::R4c => 5,
-        WalkPhase::R5 => 6,
-        WalkPhase::R6 => 7,
-        WalkPhase::R7 => 8,
-        WalkPhase::R8 => 9,
-        WalkPhase::R9 => 10,
-        WalkPhase::R10 => 11,
-        WalkPhase::R11a | WalkPhase::R11 => 12,
-        WalkPhase::R12 => 13,
-        WalkPhase::R13a | WalkPhase::R13b | WalkPhase::R13c => 14,
-        WalkPhase::R14a | WalkPhase::R14b => 15,
+        WalkPhase::R2a => 3,
+        WalkPhase::R3 => 4,
+        WalkPhase::R4a => 5,
+        WalkPhase::R4b => 6,
+        WalkPhase::R4c => 7,
+        WalkPhase::R5 => 8,
+        WalkPhase::R6 => 9,
+        WalkPhase::R7 => 10,
+        WalkPhase::R8 => 11,
+        WalkPhase::R9 => 12,
+        WalkPhase::R10 => 13,
+        WalkPhase::R11a | WalkPhase::R11 => 14,
+        WalkPhase::R12 => 15,
+        WalkPhase::R13a | WalkPhase::R13b | WalkPhase::R13c => 16,
+        WalkPhase::R14a | WalkPhase::R14b => 17,
     }
 }
 
@@ -4639,6 +4641,34 @@ mod tests {
             session_id: None,
             cursor: Some(Cursor::new(phase, ContentHash::of(phase.as_str())).expect("cursor")),
             journal_revision: 1,
+        }
+    }
+
+    #[test]
+    fn phase_rank_increases_across_every_control_edge() {
+        for edge in ControlEdge::ALL {
+            assert!(
+                phase_rank(edge.from()) < phase_rank(edge.to()),
+                "{edge} does not advance the phase rank: {} -> {}",
+                edge.from(),
+                edge.to()
+            );
+        }
+    }
+
+    #[test]
+    fn phase_rank_groups_alternative_branches() {
+        for (left, right) in [
+            (WalkPhase::R11a, WalkPhase::R11),
+            (WalkPhase::R13a, WalkPhase::R13b),
+            (WalkPhase::R13a, WalkPhase::R13c),
+            (WalkPhase::R14a, WalkPhase::R14b),
+        ] {
+            assert_eq!(
+                phase_rank(left),
+                phase_rank(right),
+                "alternative phases must remain incomparable: {left}, {right}"
+            );
         }
     }
 
