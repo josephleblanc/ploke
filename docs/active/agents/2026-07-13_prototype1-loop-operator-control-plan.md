@@ -2,10 +2,10 @@
 
 - Date: 2026-07-13
 - Baseline: `de76eaee34e6f4c4c3a19543c4cf91b217aa3bb9`
-- Status: active implementation; Stages 0-3 are checkpointed; the Stage 4
-  authority and sealed-trace foundation is committed and live-verified through
-  protocol v9; the first Stage 5 native trace-inspection slice is under
-  implementation validation
+- Status: active implementation; Stages 0-4 and the first Stage 5 sealed-trace
+  slice are checkpointed; a fresh CLI-only stepped run is live-verified through
+  generation-1 R4c handoff; live/in-flight UI inspection and UI/mixed-client
+  control remain unproven
 
 ## Implementation progress
 
@@ -209,6 +209,22 @@
   child-plan DB/authority-byte comparison, and a combined no-selection /
   no-handoff / sealed-History view unresolved. The completed-trace UI does not
   paper over those gaps.
+- Fresh campaign
+  `p1-handoff-drainfix-g35f-orembed-3g1x3-p3-20260715-112133` passed its explicit
+  setup, doctor, embedding, protocol, and headless preflights, then advanced by
+  CLI through live broad generation, three child treatments, evaluation,
+  selection, sealed History, and R12-to-R13b handoff. Branch
+  `branch-be25fae7ba5db2ce` was selected as generation-1 parent
+  `node-1c6b86abba9f76c7`; the predecessor operation reached `Succeeded` at
+  revision 53 and unpinned walk status followed the successor to R4c. This
+  validates stepped authority transfer and outer-receipt draining, but does not
+  claim R14b, continuous mode, UI-only control, or mixed-client control.
+- The same canary exposed two separate follow-ups. Child process ownership and
+  reaping is source-repaired in `7b862e4e9` with production-path and lifecycle
+  regressions, but still needs fresh live validation. Parallel broad sessions
+  still share singleton debug-response sinks that misattribute session
+  provenance. These are lifecycle and observability defects, respectively;
+  neither is part of the now-validated successor receipt-drain incident.
 
 The UI remains inspection-only until the observability read model and later
 control-parity stages are complete. Every live edge still requires a committed
@@ -864,7 +880,7 @@ Every stage should have a committed checkpoint before live advancement. A live
 failure should result in a durable bug/reproducer and a fresh run after repair;
 do not mutate a failed campaign into appearing valid.
 
-## Immediate work packet
+## Initial work packet (completed)
 
 The next implementation effort should be deliberately narrower than this full
 roadmap:
@@ -888,6 +904,17 @@ Expected output:
 - readiness/preflight evidence;
 - bounded phase ledger;
 - blocker report or clean handoff into Stage 1.
+
+## Current work packet
+
+1. Preserve the fresh stepped canary and close its validated handoff bug record.
+2. Preserve the child-process lifecycle reproduction and checkpoint its
+   ownership/reaping repair.
+3. Replace parallel singleton trace sinks with session-owned observability
+   context after the required high-risk impact review.
+4. Resume Stage 5 live/in-flight evidence and UI-only answerability validation.
+5. Keep UI mutation controls out of scope until the shared inspection model is
+   internally consistent.
 
 ## Existing documents to preserve and reuse
 

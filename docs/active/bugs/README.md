@@ -174,5 +174,11 @@ file and current code before treating a report as still open.
 - [`2026-07-14-walk-llm-inspection-controller-lock.md`](./2026-07-14-walk-llm-inspection-controller-lock.md)
   Source-repaired authority-boundary bug: persisted LLM inspector commands waited behind the mutation controller for an entire live typestate edge.
 - [`2026-07-15-prototype1-successor-retirement-before-walk-receipt.md`](./2026-07-15-prototype1-successor-retirement-before-walk-receipt.md)
-  Successor-handoff lifecycle race where predecessor retirement timed out before
-  the outer R12-to-R13b walk receipt became terminal.
+  Fixed and live verified: successor retirement now waits through typed active-job
+  drain until the outer R12-to-R13b receipt is terminal; a fresh canary preserved
+  the successor across a 12.65-second projection gap and transferred unpinned
+  status to its R4c endpoint.
+- [`2026-07-15-prototype1-child-runner-processes-not-reaped.md`](./2026-07-15-prototype1-child-runner-processes-not-reaped.md)
+  Source repaired, live revalidation pending: C3 now retains explicit child
+  process ownership through Ready acknowledgement, reaps normal exits, and
+  kills plus waits pre-ack timeout/error paths.

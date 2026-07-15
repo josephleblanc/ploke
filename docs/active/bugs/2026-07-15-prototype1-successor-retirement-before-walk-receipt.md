@@ -1,12 +1,18 @@
 # Prototype 1 Successor Retirement Precedes Outer Walk Receipt
 
-Status: source repaired and full library suite verified; fresh live revalidation pending
+Status: fixed and live verified on a fresh stepped handoff canary
 Discovered: 2026-07-15
 
-Campaign:
+Incident campaign:
 
 ```text
 p1-stage7-handoff-canary-g35f-orembed-3g1x3-p3-20260715-023614
+```
+
+Fresh validation campaign:
+
+```text
+p1-handoff-drainfix-g35f-orembed-3g1x3-p3-20260715-112133
 ```
 
 ## Broken Contract
@@ -138,6 +144,36 @@ successor_retirement_waits_for_stop_response: passed in 0.38s
 cargo test -p ploke-eval --lib: 1323 passed, 0 failed, 28 ignored
 ```
 
+## Fresh Live Validation
+
+The repaired source lineage was exercised through a fresh CLI-driven step-mode
+run. Successor runtime `f91b8692-982e-49af-9658-1d15ea459a97` published its
+typed R4c Ready receipt at `2026-07-15T12:31:07.411316513Z`. The predecessor's
+outer operation `48113938-affa-4d81-a6e9-bb59fe937bdd` then became durably
+`Succeeded` at `2026-07-15T12:31:20.062050924Z`, revision 53, with an
+R12-to-R13b receipt.
+
+The approximately 12.65-second interval exceeded the former five-second
+retirement deadline and therefore exercised the repaired drain path. During
+that interval the successor remained online. After the outer receipt became
+terminal, predecessor PID `1648138` and socket
+`p1walk-fb6cf8c18c26c391.sock` retired, while successor PID `1802768` and socket
+`p1walk-fb6cf8c18c26c391-f91b8692.sock` remained reachable. Unpinned walk status
+followed the durable endpoint to successor session
+`01742ea6-6f33-4f52-8197-08f5cda3f530` at R4c with active mutation authority.
+
+Primary evidence:
+
+- `/home/brasides/.ploke-eval/walk/operations/fb6cf8c18c26c391/48113938-affa-4d81-a6e9-bb59fe937bdd.json`
+- `prototype1/transition-journal.jsonl`
+- `prototype1/control/sessions/d706b89e2ffd2525d50eaa10961e83df0ed6ef5b7b4eb044f876120075894188/control-journal.jsonl`
+- `prototype1/nodes/node-1c6b86abba9f76c7/invocations/f91b8692-982e-49af-9658-1d15ea459a97.json`
+- `prototype1/nodes/node-1c6b86abba9f76c7/channels/f91b8692-982e-49af-9658-1d15ea459a97/child-to-parent.jsonl`
+
+This closes the fresh-live validation gap for step-mode receipt draining and
+endpoint transfer. It does not yet prove continuous-mode handoff or R14b
+completion.
+
 ## Remaining Design Follow-up
 
 The 30-second drain window is now an explicit handoff policy. Exceeding it
@@ -155,9 +191,9 @@ session durably reached R4c. The predecessor was retired through the supported
 Stop path after receipt reconciliation; no run artifact was rewritten or
 falsely abandoned.
 
-A fresh stepped handoff canary is still required to prove that the repaired
-binary keeps the successor endpoint reachable and active while the live outer
-receipt settles.
+The fresh stepped handoff canary proved that the repaired binary keeps the
+successor endpoint reachable and active while the live outer receipt settles.
+Continuous-mode handoff and R14b completion remain separate validation steps.
 
 ## Related Documents
 
