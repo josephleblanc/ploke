@@ -50,7 +50,21 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Latest completed slice: forwarded callable-field argument proof coverage. A new
+Latest completed slice: durable initialized-path source-function edge. The
+existing `InitializedPath` local-binding row for the fixture oracle
+`call_local_function_item_binding() { let f = local_target; f() }` now has a
+typed `BindingSourceFunction` edge from the `f` binding to the resolved
+`local_target` function endpoint. The edge is derived only when the existing
+path-call relation already proves the initialized binding resolves to that
+function, so it explains an admitted edge without adding new resolver authority
+or broad source-path lookup. Active fixture regeneration and
+`verify-backup-dbs` completed cleanly with no tracked snapshot/checksum drift.
+This is the narrow `BindingSourceFunction ⊆ LocalBindingId × FunctionNodeId`
+carrier for exact initialized path bindings, not general source-path
+resolution, aliases, public parameter proof, callable-field value flow, or a
+new traversal edge.
+
+Recent completed slice: forwarded callable-field argument proof coverage. A new
 `mixed_proof::argument_edges` DB test pins the existing durable
 `ArgumentSuppliesParameter` chain for private forwarded `CallbackHolder`
 helpers. The fixture source oracles are `lib.rs:1982-1993` for the one-hop

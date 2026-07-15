@@ -632,6 +632,39 @@ What remains:
   model. It only proves exact same-block aggregate slots whose producer
   dynamic callsite and poll point are both source-visible in one owner.
 
+## 2026-07-15 Initialized Path Source Function Edge Checkpoint
+
+Implemented slice: durable `BindingSourceFunction` edge for exact initialized
+path callable bindings.
+
+What is complete:
+
+- The fixture-backed source oracle remains
+  `tests/fixture_crates/fixture_call_graph/src/lib.rs:185-187`, where
+  `call_local_function_item_binding()` binds `let f = local_target;` and then
+  calls `f()`.
+- The parser relation family now includes the typed endpoint relation
+  `BindingSourceFunction ⊆ LocalBindingId × FunctionNodeId`, and parsed-graph
+  pruning retains it only when both the binding and function target are live.
+- Transform derives the relation only from existing exact proof: a resolved
+  `CallRelation::Function` path call whose callee is the same
+  `InitializedValueBinding` and whose persisted `InitializedPath` binding is
+  unique for that owner/name/path.
+- DB decoding strictly accepts the edge only as
+  `LocalBinding -> Function`.
+- Fixture-backed DB coverage now asserts the existing `f()` call edge to
+  `local_target`, the durable `InitializedPath` binding row, the
+  `OwnerContainsBinding` edge, and the new `BindingSourceFunction` edge.
+- Active fixture regeneration and registry-backed backup verification passed
+  with no tracked snapshot/checksum drift.
+
+What remains:
+
+- This is not general source-path resolution, public parameter inference,
+  alias propagation, callable-field value flow, trait-object dispatch, or a new
+  call traversal edge. It is an explanatory proof edge for an already-admitted
+  exact initialized-path call.
+
 ## Exit Criteria
 
 For the first carrier slice:

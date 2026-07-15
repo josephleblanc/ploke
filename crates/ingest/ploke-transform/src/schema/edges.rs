@@ -1518,6 +1518,25 @@ impl LocalBindingRelationSchema {
                     cozo::DataValue::from(call_site_kind(*target)),
                 ),
             ]),
+            LocalBindingRelation::BindingSourceFunction { source, target } => {
+                let target_id: cozo::DataValue = (*target).into();
+                BTreeMap::from([
+                    (schema.source_id().to_string(), source.to_cozo_uuid()),
+                    (schema.target_id().to_string(), target_id),
+                    (
+                        schema.relation_kind().to_string(),
+                        cozo::DataValue::from(relation.kind_str()),
+                    ),
+                    (
+                        schema.source_kind().to_string(),
+                        cozo::DataValue::from("LocalBinding"),
+                    ),
+                    (
+                        schema.target_kind().to_string(),
+                        cozo::DataValue::from("Function"),
+                    ),
+                ])
+            }
             LocalBindingRelation::BindingProjectsField { source, target } => BTreeMap::from([
                 (schema.source_id().to_string(), source.to_cozo_uuid()),
                 (schema.target_id().to_string(), target.to_cozo_uuid()),

@@ -392,7 +392,8 @@ fn fixture_projection_stores_initialized_path_let_binding() -> Result<(), DbErro
     // tests/fixture_crates/fixture_call_graph/src/lib.rs:185-187:
     // `let f = local_target; f()` proves a callable value binding sourced by a
     // local item path. The call already resolves through that binding; this
-    // test pins the durable binding row that explains the value flow.
+    // test pins the durable binding row and source-function edge that explain
+    // the value flow.
     let context = db.call_context_for_owner(owner)?;
     let row = row_by_path(&context, &["f"]);
     assert_resolved_target(
@@ -432,8 +433,8 @@ fn fixture_projection_stores_initialized_path_let_binding() -> Result<(), DbErro
         .collect::<Vec<_>>();
     assert_eq!(
         binding_edges.len(),
-        1,
-        "initialized callable binding should expose only owner containment until source-path edges are introduced: {edges:#?}"
+        2,
+        "initialized callable binding should expose owner containment plus source function edge: {edges:#?}"
     );
     assert!(
         binding_edges.iter().any(|edge| edge.relation
@@ -442,6 +443,15 @@ fn fixture_projection_stores_initialized_path_let_binding() -> Result<(), DbErro
             && edge.target_id == binding.id
             && edge.target_kind == "LocalBinding"),
         "missing owner-to-initialized-binding edge: {binding_edges:#?}"
+    );
+    assert!(
+        binding_edges.iter().any(|edge| edge.relation
+            == LocalBindingRelationKind::BindingSourceFunction
+            && edge.source_id == binding.id
+            && edge.source_kind == "LocalBinding"
+            && edge.target_id == target
+            && edge.target_kind == "Function"),
+        "missing initialized-binding to function-source edge: {binding_edges:#?}"
     );
 
     Ok(())

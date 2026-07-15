@@ -150,6 +150,12 @@ impl ParsedCodeGraph {
             .iter()
             .map(|binding| binding.id)
             .collect();
+        let live_functions: HashSet<_> = self
+            .graph
+            .functions
+            .iter()
+            .map(|function| function.id)
+            .collect();
 
         self.call_sites_mut()
             .retain(|call| live_owners.contains(&call.owner()));
@@ -173,6 +179,9 @@ impl ParsedCodeGraph {
                 }
                 LocalBindingRelation::BindingSourceCallResult { source, target } => {
                     live_bindings.contains(source) && live_calls.contains(target)
+                }
+                LocalBindingRelation::BindingSourceFunction { source, target } => {
+                    live_bindings.contains(source) && live_functions.contains(target)
                 }
                 LocalBindingRelation::BindingProjectsField { source, target } => {
                     live_bindings.contains(source) && live_bindings.contains(target)

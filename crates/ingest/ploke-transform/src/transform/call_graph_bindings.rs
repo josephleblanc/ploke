@@ -4,11 +4,17 @@ use syn_parser::parser::{
     graph::CodeGraph,
     nodes::{
         CallArgument, CallBodyOwnerId, CallNode, FunctionNodeId, LocalBindingId, LocalBindingKind,
-        LocalBindingSource,
+        LocalBindingSource, PathCallCallee,
     },
     relations::{CallRelation, LocalBindingRelation},
 };
 use syn_parser::resolve::call_resolution::CallResolutionReport;
+
+#[derive(Clone, Copy)]
+struct InitBinding<'a> {
+    id: LocalBindingId,
+    path: &'a [String],
+}
 
 pub(super) fn derive_argument_parameter_relations(
     graph: &CodeGraph,
@@ -44,6 +50,49 @@ pub(super) fn derive_argument_parameter_relations(
                 target: *binding_id,
             });
         }
+    }
+
+    relations.sort_unstable();
+    relations.dedup();
+    relations
+}
+
+pub(super) fn derive_initialized_path_relations(
+    graph: &CodeGraph,
+    report: &CallResolutionReport,
+) -> Vec<LocalBindingRelation> {
+    let bindings = initialized_bindings_by_owner_name(graph);
+    let calls = path_calls(graph);
+    let mut relations = Vec::new();
+
+    for relation in &report.relations {
+        let CallRelation::Function { source, target } = relation else {
+            continue;
+        };
+        let Some(call) = calls.get(source) else {
+            continue;
+        };
+        let PathCallCallee::InitializedValueBinding { path, init_path } = &call.callee else {
+            continue;
+        };
+        let [name] = path.as_slice() else {
+            continue;
+        };
+        let Some(candidates) = bindings.get(&(call.owner, name.as_str())) else {
+            continue;
+        };
+        let proven = candidates
+            .iter()
+            .filter(|binding| binding.path == init_path.as_slice())
+            .map(|binding| binding.id)
+            .collect::<Vec<_>>();
+        let [binding] = proven.as_slice() else {
+            continue;
+        };
+        relations.push(LocalBindingRelation::BindingSourceFunction {
+            source: *binding,
+            target: *target,
+        });
     }
 
     relations.sort_unstable();
@@ -91,6 +140,25 @@ fn local_bindings_by_owner_name(
             .entry((binding.owner, binding.name.as_str()))
             .or_default()
             .push(binding.id);
+    }
+    bindings
+}
+
+fn initialized_bindings_by_owner_name(
+    graph: &CodeGraph,
+) -> BTreeMap<(CallBodyOwnerId, &str), Vec<InitBinding<'_>>> {
+    let mut bindings = BTreeMap::<(CallBodyOwnerId, &str), Vec<InitBinding<'_>>>::new();
+    for binding in &graph.local_bindings {
+        let LocalBindingSource::InitializedPath { init_path } = &binding.source else {
+            continue;
+        };
+        bindings
+            .entry((binding.owner, binding.name.as_str()))
+            .or_default()
+            .push(InitBinding {
+                id: binding.id,
+                path: init_path.as_slice(),
+            });
     }
     bindings
 }

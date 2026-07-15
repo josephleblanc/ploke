@@ -349,6 +349,9 @@ fn validate_local_binding_edge_shape(edge: &LocalBindingEdgeRow) -> Result<(), D
         LocalBindingRelationKind::BindingSourceCallResult => {
             edge.source_kind == "LocalBinding" && is_call_site_kind(&edge.target_kind)
         }
+        LocalBindingRelationKind::BindingSourceFunction => {
+            edge.source_kind == "LocalBinding" && edge.target_kind == "Function"
+        }
         LocalBindingRelationKind::BindingProjectsField => {
             edge.source_kind == "LocalBinding" && edge.target_kind == "LocalBinding"
         }
