@@ -245,6 +245,20 @@ verified after the projection change. This is proof-carrier plumbing, not
 general binding value flow, method argument flow, tuple projection,
 trait-object dispatch, or a new traversal edge.
 
+Recent completed slice: durable method-call argument-to-parameter proof
+projection. Transform now derives exact `ArgumentSuppliesParameter` rows for
+resolved `CallRelation::Method` callsites by joining persisted
+`MethodCallNode.arguments` to the callee method's `ParameterBinding` rows. The
+fixture oracle is private
+`LocalAssoc::call_function_pointer_param(&self, f) { f() }`, called by
+`call_method_function_pointer_param_with_local_target()` with `local_target`.
+DB proof coverage asserts the existing method traversal, the method-owned
+parameter binding, the new `Method -> LocalBinding` argument edge, and the
+parameter's `BindingSourceFunction` edge. Active fixtures were regenerated and
+verified. This is proof projection for an already-resolved private method
+argument, not public method parameter inference, arbitrary method value-flow,
+trait-object dispatch, or a new traversal edge.
+
 Recent completed slice: durable let-closure binding projection. The parser now
 records exact `LetBinding` rows for local closure bindings such as the fixture
 oracle `call_shadowed_local_target_binding() { let local_target = || 377;

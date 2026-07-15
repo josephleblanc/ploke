@@ -823,6 +823,40 @@ What remains:
   runtime vtable dispatch remain fail-closed unless a later source oracle adds
   a new typed proof carrier.
 
+## 2026-07-15 Method Callable Argument Edge Checkpoint
+
+Implemented slice: durable `ArgumentSuppliesParameter` proof for exact
+method-call arguments.
+
+What is complete:
+
+- Transform projection now handles resolved `CallRelation::Method` rows in the
+  existing argument-to-parameter derivation. It reuses persisted
+  `MethodCallNode.arguments` and the callee method's durable
+  `ParameterBinding` row, parallel to the established function path-call
+  derivation.
+- The fixture-backed source oracle is
+  `tests/fixture_crates/fixture_call_graph/src/lib.rs` EOF, where private
+  `LocalAssoc::call_function_pointer_param(&self, f)` calls `f()` and
+  `call_method_function_pointer_param_with_local_target()` supplies
+  `local_target` through a resolved method call.
+- DB proof coverage asserts the method body's existing `f()` call edge to
+  `local_target`, the caller's resolved method call edge, the method-owned
+  `f` parameter binding, the `Method -> LocalBinding`
+  `ArgumentSuppliesParameter` edge, and the parameter's
+  `BindingSourceFunction` edge.
+- Active fixture regeneration and registry-backed backup verification passed.
+  Focused DB coverage passed for
+  `fixture_projection_stores_method_callable_argument_parameter_edges` and the
+  broader `mixed_proof::argument_edges` module.
+
+What remains:
+
+- This is not public method-parameter inference, arbitrary method argument
+  value-flow, trait-object dispatch, or a new traversal edge. It only projects
+  proof for already-resolved private method calls with exact callable argument
+  evidence.
+
 ## 2026-07-15 Exact Local-Binding Downstream Payload Checkpoint
 
 Implemented slice: exact RAG and exact TUI/tool payload propagation for
