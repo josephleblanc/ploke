@@ -249,3 +249,103 @@ async fn local_bindings_exact_expose_direct_aliased_parameter_source_evidence() 
 
     Ok(())
 }
+
+#[tokio::test]
+async fn local_bindings_exact_expose_method_argument_parameter_evidence() -> Result<(), Error> {
+    init_tracing_once();
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let rag = init_test_rag_mock(Arc::clone(&db));
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:2422-2429:
+    // private `LocalAssoc::call_function_pointer_param(&self, f)` calls
+    // `f()`, while `call_method_function_pointer_param_with_local_target()`
+    // supplies `local_target` through a resolved method call.
+    let owner = one_uuid(
+        &db,
+        &method_by_impl_self_query("LocalAssoc", "call_function_pointer_param"),
+    )?;
+    let caller = one_uuid(
+        &db,
+        &function_in_module_query(
+            &["crate"],
+            "call_method_function_pointer_param_with_local_target",
+        ),
+    )?;
+    let target = one_uuid(&db, &function_in_module_query(&["crate"], "local_target"))?;
+    let receiver = ploke_db::CallReceiver::InitializedLocalBinding {
+        name: "value".to_string(),
+        init_path: vec!["LocalAssoc".to_string()],
+    };
+    let caller_context = db.call_context_for_owner(caller)?;
+    let method_call = caller_context
+        .iter()
+        .find(|row| {
+            row.site.kind == ploke_db::CallSiteKind::Method
+                && row.site.method.as_deref() == Some("call_function_pointer_param")
+                && row.site.receiver.as_ref() == Some(&receiver)
+        })
+        .unwrap_or_else(|| {
+            panic!("expected resolved method callsite in caller context: {caller_context:#?}")
+        });
+
+    let bindings = rag
+        .exact_local_bindings_for_owner(owner)?
+        .expect("call context is enabled");
+    let parameter = bindings
+        .iter()
+        .find(|binding| {
+            binding.owner_id == owner
+                && binding.kind == "ParameterBinding"
+                && binding.name == "f"
+                && binding.source_kind == "Parameter"
+        })
+        .unwrap_or_else(|| panic!("RAG should expose method parameter `f`: {bindings:#?}"));
+
+    let edges = rag
+        .exact_local_binding_edges_for_owner(owner)?
+        .expect("call context is enabled");
+    let has_edge = |source_id, target_id, relation, source_kind: Option<&str>, target_kind| {
+        edges.iter().any(|edge| {
+            edge.source_id == source_id
+                && edge.target_id == target_id
+                && edge.relation == relation
+                && source_kind.is_none_or(|kind| edge.source_kind == kind)
+                && edge.target_kind == target_kind
+        })
+    };
+
+    assert!(
+        has_edge(
+            owner,
+            parameter.id,
+            LocalBindingRelationKind::OwnerContainsBinding,
+            None,
+            "LocalBinding",
+        ),
+        "RAG should expose owner-to-method-parameter containment: {edges:#?}"
+    );
+    assert!(
+        has_edge(
+            method_call.site.id,
+            parameter.id,
+            LocalBindingRelationKind::ArgumentSuppliesParameter,
+            Some("Method"),
+            "LocalBinding",
+        ),
+        "RAG should expose method-call argument to method-parameter proof: {edges:#?}"
+    );
+    assert!(
+        has_edge(
+            parameter.id,
+            target,
+            LocalBindingRelationKind::BindingSourceFunction,
+            Some("LocalBinding"),
+            "Function",
+        ),
+        "RAG should expose method parameter-to-function source proof: {edges:#?}"
+    );
+
+    Ok(())
+}
