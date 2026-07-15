@@ -395,8 +395,9 @@ What remains:
 
 ## 2026-07-15 Argument-to-Parameter Carrier Checkpoint
 
-Committed slice pending: durable one-hop `ArgumentSuppliesParameter`
-`local_binding_edge` projection.
+Committed slice: `a4bc8715e Project argument parameter edges`.
+This added durable one-hop `ArgumentSuppliesParameter` `local_binding_edge`
+projection.
 
 What is complete:
 

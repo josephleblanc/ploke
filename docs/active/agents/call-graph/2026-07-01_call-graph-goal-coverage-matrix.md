@@ -10,7 +10,7 @@ Related planning files:
 - [`2026-06-28_real-corpus-call-site-oracle-matrices.md`](2026-06-28_real-corpus-call-site-oracle-matrices.md)
 - [`2026-07-07_call-graph-usage-question-gap-audit.md`](2026-07-07_call-graph-usage-question-gap-audit.md)
 
-Status date: 2026-07-14
+Status date: 2026-07-15
 Baseline HEAD when created: `19860cc40`
 
 ## Operating Rule
@@ -50,7 +50,21 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Latest completed slice: durable let-closure binding projection. The parser now
+Latest completed slice: durable argument-to-parameter binding edge projection.
+Transform now derives exact one-hop `ArgumentSuppliesParameter`
+`local_binding_edge` rows from existing resolved function path calls, structural
+`CallArgument` facts, and callee `ParameterBinding` rows. The first admitted
+shape is intentionally narrow: fixture oracle
+`call_single_function_pointer_param_with_local_target()` supplies the already
+modeled `local_target` callable to the private helper parameter `f`.
+`ploke-db` strictly decodes the `Path -> LocalBinding` edge shape and
+`local_binding_edges_for_owner` returns incoming argument-to-parameter rows for
+the callee-owned binding. Active call-graph fixtures were regenerated and
+verified after the projection change. This is proof-carrier plumbing, not
+general binding value flow, method argument flow, field projection, trait-object
+dispatch, or a new traversal edge.
+
+Recent completed slice: durable let-closure binding projection. The parser now
 records exact `LetBinding` rows for local closure bindings such as the fixture
 oracle `call_shadowed_local_target_binding() { let local_target = || 377;
 local_target() }`. The existing closure call edge still resolves to the closure
@@ -59,8 +73,8 @@ owner-to-binding plus binding-to-closure proof that the local binding shadows
 the module-level `local_target` function. `ploke-db` strictly decodes
 `LetBinding` rows only when they have a nonempty binding name and a closure or
 async-closure source. This is a projection/proof carrier slice only: it does
-not add general let-binding value flow, path-item binding projection, parameter
-binding projection, field projection, or new traversal edges.
+not add general let-binding value flow, path-item binding projection, field
+projection, or new traversal edges.
 
 Recent completed slice: exact TUI returned-callable binding-flow payload.
 `ConciseContext` now carries the exact RAG
