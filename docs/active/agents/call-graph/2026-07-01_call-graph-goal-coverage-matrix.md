@@ -50,7 +50,23 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Latest completed slice: durable value-alias binding proof projection. The
+Latest completed slice: durable indexed field-projection binding evidence. The
+parser now reuses the existing `FieldProjection` carrier for exact constructed
+indexed callable projections whose resolver proof is already local and exact,
+such as `call_indexed_named_field_function_binding()`'s
+`holder.callbacks[0]()` and `call_indexed_tuple_field_function_binding()`'s
+`holder.0[0]()`. The DB proof is table-driven with the earlier direct
+`holder.callback` case and asserts the constructed base binding, projected
+binding path (`callbacks.0` / `0.0`), projection edge, and existing
+`DynamicFunction` edge to `local_target`. The fail-closed table now also covers
+public parameter field, indexed named-field, and indexed tuple-field calls, so
+unproven parameter projections remain targetless and emit no projection edge.
+Active fixture regeneration and `verify-backup-dbs` completed cleanly with no
+tracked snapshot/checksum drift. This is durable projection evidence for exact
+same-block constructed values, not public parameter-field inference, general
+aggregate value-flow, aliases, trait-object dispatch, or a new traversal edge.
+
+Recent completed slice: durable value-alias binding proof projection. The
 parser now records `LetBinding` rows with `source_kind = "ValueAlias"` for
 exact local alias bindings such as
 `call_single_aliased_function_pointer_param(f) { let g = f; g() }`, where the

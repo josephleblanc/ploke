@@ -89,96 +89,154 @@ fn fixture_projection_stores_parameter_binding_edges() -> Result<(), DbError> {
 #[test]
 fn fixture_projection_stores_named_field_projection_edges() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
-    let owner = function_id_by_name(&db, "call_named_field_function_binding")?;
     let target = function_id_by_name(&db, "local_target")?;
 
-    // tests/fixture_crates/fixture_call_graph/src/lib.rs:870-874:
-    // `let holder = NamedCallbackHolder { callback: local_target };
-    // (holder.callback)()` proves a constructed local binding and a projected
-    // field binding before the dynamic call resolves to `local_target`.
-    let context = db.call_context_for_owner(owner)?;
-    let row = row_by_kind_path(&context, CallSiteKind::Dynamic, &["holder", "callback"]);
-    assert_resolved_target(
-        row,
-        target,
-        CallRelationKind::DynamicFunction,
-        CallSiteKind::Dynamic,
-        CallTargetKind::Function,
-    );
+    struct ProjectionCase {
+        owner: &'static str,
+        source: &'static str,
+        call_path: &'static [&'static str],
+        constructed_path: &'static [&'static str],
+        projection_name: &'static str,
+        projection_path: &'static [&'static str],
+    }
 
-    let bindings = db.local_bindings_for_owner(owner)?;
-    let holder = bindings
-        .iter()
-        .find(|binding| binding.kind == "LetBinding" && binding.name == "holder")
-        .expect("constructed holder binding should be persisted");
-    assert_eq!(holder.source_kind, "Constructed");
-    assert_eq!(holder.source_id, None);
-    assert_eq!(holder.source_call_kind, None);
-    assert_eq!(
-        holder.source_path.as_ref(),
-        Some(&path(&["NamedCallbackHolder"]))
-    );
-    assert_eq!(holder.callee_kind, None);
-    assert_eq!(holder.callee_path, None);
+    let cases = [
+        ProjectionCase {
+            owner: "call_named_field_function_binding",
+            source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:870-874 `holder.callback`",
+            call_path: &["holder", "callback"],
+            constructed_path: &["NamedCallbackHolder"],
+            projection_name: "holder.callback",
+            projection_path: &["callback"],
+        },
+        ProjectionCase {
+            owner: "call_indexed_named_field_function_binding",
+            source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:889-893 `holder.callbacks[0]`",
+            call_path: &["holder", "callbacks", "0"],
+            constructed_path: &["CallbackArrayHolder"],
+            projection_name: "holder.callbacks.0",
+            projection_path: &["callbacks", "0"],
+        },
+        ProjectionCase {
+            owner: "call_indexed_tuple_field_function_binding",
+            source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:914-916 `holder.0[0]`",
+            call_path: &["holder", "0", "0"],
+            constructed_path: &["TupleCallbackArrayHolder"],
+            projection_name: "holder.0.0",
+            projection_path: &["0", "0"],
+        },
+    ];
 
-    let projection = bindings
-        .iter()
-        .find(|binding| binding.kind == "FieldProjection" && binding.name == "holder.callback")
-        .expect("holder.callback projection binding should be persisted");
-    assert_eq!(projection.source_kind, "FieldProjection");
-    assert_eq!(projection.source_id, Some(holder.id));
-    assert_eq!(projection.source_call_kind, None);
-    assert_eq!(projection.source_path.as_ref(), Some(&path(&["callback"])));
-    assert_eq!(projection.callee_kind.as_deref(), Some("Path"));
-    assert_eq!(
-        projection.callee_path.as_ref(),
-        Some(&path(&["local_target"]))
-    );
+    for case in cases {
+        let owner = function_id_by_name(&db, case.owner)?;
 
-    let edges = db.local_binding_edges_for_owner(owner)?;
-    let holder_edges = edges
-        .iter()
-        .filter(|edge| edge.source_id == holder.id || edge.target_id == holder.id)
-        .collect::<Vec<_>>();
-    assert_eq!(
-        holder_edges.len(),
-        2,
-        "constructed holder should expose owner and projection edges: {edges:#?}"
-    );
-    assert!(
-        holder_edges.iter().any(|edge| edge.relation
-            == LocalBindingRelationKind::OwnerContainsBinding
-            && edge.source_id == owner
-            && edge.target_id == holder.id
-            && edge.target_kind == "LocalBinding"),
-        "missing owner-to-holder binding edge: {holder_edges:#?}"
-    );
-    assert!(
-        holder_edges.iter().any(|edge| edge.relation
-            == LocalBindingRelationKind::BindingProjectsField
-            && edge.source_id == projection.id
-            && edge.target_id == holder.id
-            && edge.source_kind == "LocalBinding"
-            && edge.target_kind == "LocalBinding"),
-        "missing projection-to-holder field edge: {holder_edges:#?}"
-    );
+        // Source oracle: each case constructs a local holder with exact
+        // `local_target` field or element evidence, then calls through that
+        // projected callable before the dynamic call resolves to `local_target`.
+        let context = db.call_context_for_owner(owner)?;
+        let row = row_by_kind_path(&context, CallSiteKind::Dynamic, case.call_path);
+        assert_resolved_target(
+            row,
+            target,
+            CallRelationKind::DynamicFunction,
+            CallSiteKind::Dynamic,
+            CallTargetKind::Function,
+        );
 
-    let projection_edges = edges
-        .iter()
-        .filter(|edge| edge.source_id == projection.id || edge.target_id == projection.id)
-        .collect::<Vec<_>>();
-    assert_eq!(
-        projection_edges.len(),
-        2,
-        "field projection should expose owner and base-binding edges: {edges:#?}"
-    );
-    assert!(
-        projection_edges.iter().any(|edge| edge.relation
-            == LocalBindingRelationKind::OwnerContainsBinding
-            && edge.source_id == owner
-            && edge.target_id == projection.id),
-        "missing owner-to-projection binding edge: {projection_edges:#?}"
-    );
+        let bindings = db.local_bindings_for_owner(owner)?;
+        let holder = bindings
+            .iter()
+            .find(|binding| binding.kind == "LetBinding" && binding.name == "holder")
+            .unwrap_or_else(|| {
+                panic!(
+                    "{} constructed holder binding should be persisted: {}",
+                    case.owner, case.source
+                )
+            });
+        assert_eq!(holder.source_kind, "Constructed");
+        assert_eq!(holder.source_id, None);
+        assert_eq!(holder.source_call_kind, None);
+        assert_eq!(
+            holder.source_path.as_ref(),
+            Some(&path(case.constructed_path))
+        );
+        assert_eq!(holder.callee_kind, None);
+        assert_eq!(holder.callee_path, None);
+
+        let projection = bindings
+            .iter()
+            .find(|binding| {
+                binding.kind == "FieldProjection" && binding.name == case.projection_name
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "{} projection binding should be persisted: {}",
+                    case.projection_name, case.source
+                )
+            });
+        assert_eq!(projection.source_kind, "FieldProjection");
+        assert_eq!(projection.source_id, Some(holder.id));
+        assert_eq!(projection.source_call_kind, None);
+        assert_eq!(
+            projection.source_path.as_ref(),
+            Some(&path(case.projection_path))
+        );
+        assert_eq!(projection.callee_kind.as_deref(), Some("Path"));
+        assert_eq!(
+            projection.callee_path.as_ref(),
+            Some(&path(&["local_target"]))
+        );
+
+        let edges = db.local_binding_edges_for_owner(owner)?;
+        let holder_edges = edges
+            .iter()
+            .filter(|edge| edge.source_id == holder.id || edge.target_id == holder.id)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            holder_edges.len(),
+            2,
+            "{} constructed holder should expose owner and projection edges: {edges:#?}",
+            case.owner
+        );
+        assert!(
+            holder_edges.iter().any(|edge| edge.relation
+                == LocalBindingRelationKind::OwnerContainsBinding
+                && edge.source_id == owner
+                && edge.target_id == holder.id
+                && edge.target_kind == "LocalBinding"),
+            "missing owner-to-holder binding edge for {}: {holder_edges:#?}",
+            case.owner
+        );
+        assert!(
+            holder_edges.iter().any(|edge| edge.relation
+                == LocalBindingRelationKind::BindingProjectsField
+                && edge.source_id == projection.id
+                && edge.target_id == holder.id
+                && edge.source_kind == "LocalBinding"
+                && edge.target_kind == "LocalBinding"),
+            "missing projection-to-holder field edge for {}: {holder_edges:#?}",
+            case.owner
+        );
+
+        let projection_edges = edges
+            .iter()
+            .filter(|edge| edge.source_id == projection.id || edge.target_id == projection.id)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            projection_edges.len(),
+            2,
+            "{} projection should expose owner and base-binding edges: {edges:#?}",
+            case.projection_name
+        );
+        assert!(
+            projection_edges.iter().any(|edge| edge.relation
+                == LocalBindingRelationKind::OwnerContainsBinding
+                && edge.source_id == owner
+                && edge.target_id == projection.id),
+            "missing owner-to-projection binding edge for {}: {projection_edges:#?}",
+            case.projection_name
+        );
+    }
 
     Ok(())
 }
@@ -187,41 +245,71 @@ fn fixture_projection_stores_named_field_projection_edges() -> Result<(), DbErro
 fn fixture_projection_keeps_unproven_field_parameter_without_projection_edge() -> Result<(), DbError>
 {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
-    let owner = function_id_by_name(&db, "call_field_function_param")?;
 
-    // tests/fixture_crates/fixture_call_graph/src/lib.rs:709-710:
-    // `(holder.callback)()` reads a public parameter field. There is no local
-    // constructed binding proving which callable value reaches `callback`, so
-    // the durable binding carrier must stay fail-closed.
-    let context = db.call_context_for_owner(owner)?;
-    let row = row_by_kind_path(&context, CallSiteKind::Dynamic, &["holder", "callback"]);
-    assert_eq!(row.status.status, CallStatusKind::Unsupported);
-    assert!(
-        row.targets.is_empty(),
-        "unproven parameter field call must stay targetless: {row:#?}"
-    );
+    struct UnprovenCase {
+        owner: &'static str,
+        source: &'static str,
+        call_path: &'static [&'static str],
+    }
 
-    let bindings = db.local_bindings_for_owner(owner)?;
-    assert!(
-        bindings
-            .iter()
-            .all(|binding| binding.kind != "FieldProjection"),
-        "unproven parameter field call must not emit a field projection binding: {bindings:#?}"
-    );
-    assert!(
-        bindings
-            .iter()
-            .any(|binding| binding.kind == "ParameterBinding" && binding.name == "holder"),
-        "the parameter itself should still be visible as a durable binding: {bindings:#?}"
-    );
+    let cases = [
+        UnprovenCase {
+            owner: "call_field_function_param",
+            source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:709-710 `(holder.callback)()`",
+            call_path: &["holder", "callback"],
+        },
+        UnprovenCase {
+            owner: "call_indexed_field_function_param",
+            source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:885-886 `holder.callbacks[0]()`",
+            call_path: &["holder", "callbacks", "0"],
+        },
+        UnprovenCase {
+            owner: "call_indexed_tuple_field_function_param",
+            source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:910-911 `holder.0[0]()`",
+            call_path: &["holder", "0", "0"],
+        },
+    ];
 
-    let edges = db.local_binding_edges_for_owner(owner)?;
-    assert!(
-        edges
-            .iter()
-            .all(|edge| edge.relation != LocalBindingRelationKind::BindingProjectsField),
-        "unproven parameter field call must not emit projection edges: {edges:#?}"
-    );
+    for case in cases {
+        let owner = function_id_by_name(&db, case.owner)?;
+
+        // Source oracle: these public parameter field/indexed calls have no
+        // local constructed binding proving which callable value reaches the
+        // projected slot, so the durable binding carrier must stay fail-closed.
+        let context = db.call_context_for_owner(owner)?;
+        let row = row_by_kind_path(&context, CallSiteKind::Dynamic, case.call_path);
+        assert_eq!(row.status.status, CallStatusKind::Unsupported);
+        assert!(
+            row.targets.is_empty(),
+            "unproven parameter projection call must stay targetless for {}: {row:#?}",
+            case.source
+        );
+
+        let bindings = db.local_bindings_for_owner(owner)?;
+        assert!(
+            bindings
+                .iter()
+                .all(|binding| binding.kind != "FieldProjection"),
+            "unproven parameter projection must not emit a projection binding for {}: {bindings:#?}",
+            case.source
+        );
+        assert!(
+            bindings
+                .iter()
+                .any(|binding| binding.kind == "ParameterBinding" && binding.name == "holder"),
+            "the parameter itself should still be visible as a durable binding for {}: {bindings:#?}",
+            case.source
+        );
+
+        let edges = db.local_binding_edges_for_owner(owner)?;
+        assert!(
+            edges
+                .iter()
+                .all(|edge| edge.relation != LocalBindingRelationKind::BindingProjectsField),
+            "unproven parameter projection must not emit projection edges for {}: {edges:#?}",
+            case.source
+        );
+    }
 
     Ok(())
 }

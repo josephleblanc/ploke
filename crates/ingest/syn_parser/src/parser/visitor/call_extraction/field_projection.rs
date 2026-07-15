@@ -19,8 +19,12 @@ pub(super) fn field_projection_binding(
     callee: &DynamicCallCallee,
     local_scopes: &[Vec<LocalBindingProof>],
 ) -> Option<FieldProjectionBinding> {
-    let DynamicCallCallee::FieldInitializedLocalBinding { path, init_path } = callee else {
-        return None;
+    let (path, init_path) = match callee {
+        DynamicCallCallee::FieldInitializedLocalBinding { path, init_path }
+        | DynamicCallCallee::IndexedInitializedLocalBinding { path, init_path } => {
+            (path, init_path)
+        }
+        _ => return None,
     };
     let (base, field_path) = path.split_first()?;
     if field_path.is_empty() {

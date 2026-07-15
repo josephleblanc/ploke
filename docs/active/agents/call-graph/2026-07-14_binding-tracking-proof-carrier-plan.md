@@ -559,6 +559,43 @@ What remains:
   edge. Multi-hop/ambiguous aliases should be separate typed carrier slices if
   a reviewed source oracle needs them.
 
+## 2026-07-15 Indexed Field Projection Carrier Checkpoint
+
+Implemented slice: durable field-projection binding evidence for exact
+constructed indexed callable projections.
+
+What is complete:
+
+- Parser extraction now records `FieldProjection` rows for
+  `DynamicCallCallee::IndexedInitializedLocalBinding` when the base endpoint is
+  still an exact same-owner constructed local binding. This reuses the existing
+  `BindingProjectsField` edge family rather than adding a second indexed-edge
+  relation.
+- The fixture-backed DB oracles are
+  `tests/fixture_crates/fixture_call_graph/src/lib.rs:889-893`, where
+  `CallbackArrayHolder { callbacks: [local_target] }` is bound to `holder` and
+  called through `holder.callbacks[0]`, and
+  `tests/fixture_crates/fixture_call_graph/src/lib.rs:914-916`, where
+  `TupleCallbackArrayHolder([local_target])` is bound to `holder` and called
+  through `holder.0[0]`.
+- The DB projection proof is table-driven with the existing direct
+  `holder.callback` case. It asserts the constructed holder binding, the
+  projected binding (`holder.callbacks.0` / `holder.0.0`), the
+  `BindingProjectsField` edge back to the holder binding, and the pre-existing
+  dynamic call edge to `local_target`.
+- The fail-closed table now covers public parameter field, indexed named-field,
+  and indexed tuple-field calls. Those rows remain targetless and do not emit
+  `FieldProjection` or `BindingProjectsField` evidence.
+- Active fixture regeneration and registry-backed backup verification passed;
+  no tracked snapshot/checksum drift was produced by this projection slice.
+
+What remains:
+
+- This does not add public parameter-field inference, general aggregate
+  value-flow, aliases of constructed holders, tuple/index source edge families,
+  trait-object dispatch, or a new call edge. Broader aggregate forwarding needs
+  its own reviewed source oracle and typed carrier slice.
+
 ## Exit Criteria
 
 For the first carrier slice:
