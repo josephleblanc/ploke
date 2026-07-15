@@ -6,7 +6,7 @@ use cozo::{DataValue, ScriptMutability, UuidWrapper};
 
 use crate::{
     Database, DbError,
-    call_graph::{CallContextRow, CallStatusKind},
+    call_graph::{CallContextRow, CallSiteKind, CallStatusKind},
     database::{to_string, to_string_list},
 };
 
@@ -17,7 +17,10 @@ mod facts;
 mod source;
 
 use context::validate_call_context;
-use facts::{binding_evidence_fact, call_edge_facts, call_resolution_fact, call_site_fact};
+use facts::{
+    binding_evidence_fact, call_edge_facts, call_resolution_fact, call_site_fact,
+    self_field_binding_evidence_fact,
+};
 
 fn append_call_proof_facts(
     db: &Database,
@@ -30,6 +33,14 @@ fn append_call_proof_facts(
     values.push(call_site_fact(&row, build_domain_id, source_file));
     values.extend(call_edge_facts(&row));
     values.push(call_resolution_fact(&row));
+    if let Some(path) = self_field_path(&row) {
+        values.push(self_field_binding_evidence_fact(
+            &row,
+            path,
+            build_domain_id,
+            source_file,
+        ));
+    }
     if let Some(evidence) = db.callee_evidence_for_site(row.site.id)? {
         if is_returned_callable_evidence(row.site.id, &evidence)? {
             values.push(binding_evidence_fact(
@@ -45,6 +56,21 @@ fn append_call_proof_facts(
         }
     }
     Ok(())
+}
+
+fn self_field_path(row: &CallContextRow) -> Option<&[String]> {
+    if row.site.kind != CallSiteKind::Dynamic {
+        return None;
+    }
+    if !matches!(
+        row.status.status,
+        CallStatusKind::Ambiguous | CallStatusKind::Unsupported
+    ) {
+        return None;
+    }
+
+    let path = row.site.path.as_deref()?;
+    (path.len() > 1 && path.first().is_some_and(|segment| segment == "self")).then_some(path)
 }
 
 struct CalleeEvidence {

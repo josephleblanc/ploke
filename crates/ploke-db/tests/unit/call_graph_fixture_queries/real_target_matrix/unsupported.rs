@@ -265,6 +265,14 @@ fn axum_dynamic_callable_fields_preserve_supported_and_unsupported_boundaries()
                     .is_some_and(|candidates| candidates.len() == expected_layer_candidates.len()),
             "axum/src/boxed.rs:{source_line} self.layer should project ambiguous proof candidates: {resolution:#?}"
         );
+        assert_self_field_evidence(
+            &db,
+            owner,
+            row.site.id,
+            &["self", "layer"],
+            "ambiguous",
+            &format!("axum/src/boxed.rs:{source_line} self.layer"),
+        )?;
     }
 
     let unsupported_cases = [
@@ -325,6 +333,14 @@ fn axum_dynamic_callable_fields_preserve_supported_and_unsupported_boundaries()
         );
         let label = format!("axum dynamic callable matrix line {}", case.source_line);
         assert_no_traversal_candidates_for_site(&db, owner, row.site.id, &label)?;
+        assert_self_field_evidence(
+            &db,
+            owner,
+            row.site.id,
+            case.expected_path,
+            "blocked",
+            case.source,
+        )?;
 
         let field = case
             .expected_path
@@ -424,6 +440,59 @@ fn axum_dynamic_callable_fields_preserve_supported_and_unsupported_boundaries()
         }],
         "(self.tap_fn)",
     )
+}
+
+fn assert_self_field_evidence(
+    db: &Database,
+    owner: uuid::Uuid,
+    site_id: uuid::Uuid,
+    expected_path: &[&str],
+    expected_state: &str,
+    label: &str,
+) -> Result<(), DbError> {
+    let domain = "bd:corpus-axum-call-graph";
+    let projected = db.project_call_proof_facts_for_owner(owner, domain)?;
+    assert!(
+        projected >= 3,
+        "{label} should project call_site, call_resolution, and self-field binding evidence"
+    );
+
+    let site = site_id.to_string();
+    let owner_text = owner.to_string();
+    let typed_rows = db.proof_binding_evidence_for_call_site(&site)?;
+    let row = typed_rows
+        .iter()
+        .find(|row| {
+            row.binding_evidence_kind == "self_field_callable"
+                && row.callee_kind == "SelfField"
+                && row.callee_path == path(expected_path)
+                && row.resolution_state == expected_state
+        })
+        .unwrap_or_else(|| {
+            panic!("{label} should expose typed self-field binding evidence: {typed_rows:#?}")
+        });
+    assert_eq!(row.build_domain_id, domain);
+    assert_eq!(row.call_site_id, site);
+    assert_eq!(row.caller_def_id.as_str(), owner_text.as_str());
+    assert_eq!(row.evidence_use, "proof_only");
+    assert!(
+        row.detail.contains("callable self-field")
+            && row.detail.contains("field value flow is proven"),
+        "{label} should explain why the self-field call remains proof-only: {row:#?}"
+    );
+
+    let proof_rows = db.proof_graphrag_context("self_field_callable")?;
+    assert!(
+        proof_rows.iter().any(|row| {
+            row.kind == "binding_evidence"
+                && row.call_site_id.as_deref() == Some(site.as_str())
+                && row.caller_def_id.as_deref() == Some(owner_text.as_str())
+                && row.resolution_state.as_deref() == Some(expected_state)
+        }),
+        "{label} should be discoverable through proof_graphrag_context: {proof_rows:#?}"
+    );
+
+    Ok(())
 }
 
 #[test]

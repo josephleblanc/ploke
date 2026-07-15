@@ -97,6 +97,43 @@ pub(super) fn binding_evidence_fact(
     })
 }
 
+pub(super) fn self_field_binding_evidence_fact(
+    row: &CallContextRow,
+    field_path: &[String],
+    build_domain_id: &str,
+    source_file: &str,
+) -> Value {
+    let path = field_path.join(".");
+    serde_json::json!({
+        "fact_kind": "binding_evidence",
+        "schema_version": PROOF_FACT_SCHEMA_VERSION,
+        "binding_evidence_id": format!("binding-evidence:self-field-callable:{}", row.site.id),
+        "build_domain_id": build_domain_id,
+        "call_site_id": row.site.id.to_string(),
+        "caller_def_id": row.site.owner_id.to_string(),
+        "binding_evidence_kind": "self_field_callable",
+        "callee_kind": "SelfField",
+        "callee_path": field_path,
+        "resolution_state": resolution_state(row.status.status),
+        "detail": match row.status.status {
+            CallStatusKind::Ambiguous => format!(
+                "{} calls callable self-field {path}; binding evidence records the finite candidate set without admitting a traversal edge until field value flow is proven",
+                row.site.owner_id
+            ),
+            _ => format!(
+                "{} calls callable self-field {path}; binding evidence records the fail-closed boundary until field value flow is proven",
+                row.site.owner_id
+            ),
+        },
+        "source_span": {
+            "file": source_file,
+            "start_byte": row.site.span.0,
+            "end_byte": row.site.span.1
+        },
+        "evidence_use": "proof_only"
+    })
+}
+
 fn call_edge_fact(row: &CallContextRow, target: &CallTargetRow) -> Value {
     serde_json::json!({
         "fact_kind": "call_edge",

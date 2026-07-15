@@ -1447,6 +1447,14 @@ async fn proof_context_collection_preserves_axum_dynamic_callable_blockers() -> 
             "dynamic_dispatch_unbounded",
             case.label,
         );
+        assert_self_field_evidence(
+            rows,
+            owner,
+            site_id,
+            case.expected_path,
+            "blocked",
+            case.label,
+        );
     }
 
     Ok(())
@@ -1710,9 +1718,48 @@ async fn proof_context_collection_preserves_axum_layer_dynamic_callable_candidat
             "{} proof context should not fabricate a call_edge: {rows:#?}",
             case.label
         );
+        assert_self_field_evidence(
+            rows,
+            owner,
+            call.site_id,
+            case.expected_path,
+            "ambiguous",
+            case.label,
+        );
     }
 
     Ok(())
+}
+
+fn assert_self_field_evidence(
+    rows: &[ProofContextInfo],
+    owner: Uuid,
+    site_id: Uuid,
+    expected_path: &[&str],
+    expected_state: &str,
+    label: &str,
+) {
+    let owner = owner.to_string();
+    let site = site_id.to_string();
+    let path = expected_path.join(".");
+    assert!(
+        rows.iter().any(|row| {
+            row.kind == "binding_evidence"
+                && row
+                    .fact_id
+                    .starts_with("binding-evidence:self-field-callable:")
+                && row.call_site_id.as_deref() == Some(site.as_str())
+                && row.caller_def_id.as_deref() == Some(owner.as_str())
+                && row.resolution_state.as_deref() == Some(expected_state)
+                && row.evidence_use.as_deref() == Some("proof_only")
+                && row.detail.as_deref().is_some_and(|detail| {
+                    detail.contains("callable self-field")
+                        && detail.contains(path.as_str())
+                        && detail.contains("field value flow is proven")
+                })
+        }),
+        "{label} proof context should include self-field binding evidence for site {site}: {rows:#?}"
+    );
 }
 
 fn axum_layer_dynamic_candidate_ids(db: &Database) -> Result<Vec<Uuid>, Error> {
