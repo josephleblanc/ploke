@@ -918,18 +918,28 @@ fn capture_request_for_tap<R: Router>(req: &ChatCompRequest<R>) {
 fn capture_request_for_tap<R: Router>(_req: &ChatCompRequest<R>) {}
 
 #[cfg(feature = "test_harness")]
-fn capture_response_for_tap(response_index: usize, response: &OpenAiResponse) {
+fn active_response_tap() -> Option<std::sync::mpsc::Sender<RecordedResponse>> {
     let lock = RESPONSE_TAP.get_or_init(|| std::sync::Mutex::new(None));
     let guard = lock
         .lock()
         .expect("response tap lock should not be poisoned");
-    if let Some(sender) = guard.as_ref() {
-        let _ = sender.send(RecordedResponse::new(response_index, response.clone()));
-    }
+    guard.clone()
 }
 
 #[cfg(not(feature = "test_harness"))]
-fn capture_response_for_tap(_response_index: usize, _response: &OpenAiResponse) {}
+fn active_response_tap() -> Option<std::sync::mpsc::Sender<RecordedResponse>> {
+    None
+}
+
+fn capture_response_for_tap(
+    sender: Option<&std::sync::mpsc::Sender<RecordedResponse>>,
+    response_index: usize,
+    response: &OpenAiResponse,
+) {
+    if let Some(sender) = sender {
+        let _ = sender.send(RecordedResponse::new(response_index, response.clone()));
+    }
+}
 
 fn is_replay_live_step_limit_error(error: &LlmError) -> bool {
     // This sentinel is not a model failure. It is the intentional breakpoint
@@ -970,6 +980,61 @@ pub(super) fn take_recorded_chat_step_source() -> ChatStepSource {
     ChatStepSource::live()
 }
 
+/// Session-owned destinations for provider envelopes and debug steps.
+///
+/// [`SessionCapture::new`] is explicit: an absent destination stays absent and
+/// never falls back to a process-global test hook. [`Default`] retains the
+/// legacy installed-hook behavior for callers that have not migrated yet.
+#[derive(Clone)]
+pub struct SessionCapture {
+    response_tx: Option<std::sync::mpsc::Sender<RecordedResponse>>,
+    debug_sink: Option<Arc<dyn ChatDebugSink>>,
+    legacy_fallback: bool,
+}
+
+impl Default for SessionCapture {
+    fn default() -> Self {
+        Self {
+            response_tx: None,
+            debug_sink: None,
+            legacy_fallback: true,
+        }
+    }
+}
+
+impl SessionCapture {
+    pub fn new(
+        response_tx: Option<std::sync::mpsc::Sender<RecordedResponse>>,
+        debug_sink: Option<Arc<dyn ChatDebugSink>>,
+    ) -> Self {
+        Self {
+            response_tx,
+            debug_sink,
+            legacy_fallback: false,
+        }
+    }
+
+    pub fn uses_legacy_fallback(&self) -> bool {
+        self.legacy_fallback
+    }
+
+    fn resolve(mut self) -> Self {
+        if self.legacy_fallback {
+            if self.response_tx.is_none() {
+                self.response_tx = active_response_tap();
+            }
+            if self.debug_sink.is_none() {
+                self.debug_sink = active_chat_debug_sink();
+            }
+        }
+        self
+    }
+
+    fn record_response(&self, response_index: usize, response: &OpenAiResponse) {
+        capture_response_for_tap(self.response_tx.as_ref(), response_index, response);
+    }
+}
+
 pub struct ChatSession<R: Router> {
     pub client: Client,
     pub req: ChatCompRequest<R>,
@@ -981,6 +1046,7 @@ pub struct ChatSession<R: Router> {
     pub included_message_ids: Vec<Uuid>,
     pub chat_policy: ChatPolicy,
     pub cancel_rx: watch::Receiver<CancelChatToken>,
+    pub capture: SessionCapture,
 }
 
 #[derive(Debug, Clone)]
@@ -1131,6 +1197,7 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
         included_message_ids,
         chat_policy,
         mut cancel_rx,
+        capture,
     } = session;
     let policy = tool_policy_from_chat(&chat_policy);
     let finish_policy = finish_policy_from_chat(&chat_policy);
@@ -1139,7 +1206,8 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
     let mut loop_state = ChatLoopState::default();
     let model_key = req.model_key.clone();
     let session_id = Uuid::new_v4();
-    let debug_sink = active_chat_debug_sink();
+    let capture = capture.resolve();
+    let debug_sink = capture.debug_sink.clone();
     let mut report = ChatSessionReport::new(
         session_id,
         assistant_message_id,
@@ -1403,7 +1471,7 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
             chain_index,
             &full_response,
         );
-        capture_response_for_tap(chain_index, &full_response);
+        capture.record_response(chain_index, &full_response);
 
         let token_usage = full_response.usage;
         let mut debug_calls = Vec::new();
@@ -2910,6 +2978,12 @@ mod tests {
         assert!(value.get("recorded_response").is_none());
     }
 
+    #[test]
+    fn explicit_empty_capture_disables_legacy_fallback() {
+        assert!(SessionCapture::default().uses_legacy_fallback());
+        assert!(!SessionCapture::new(None, None).uses_legacy_fallback());
+    }
+
     async fn run_calibrated_test_router_session() -> ChatSessionReport {
         let responses = vec![content_response("final answer")];
         let request_count = std::sync::Arc::new(AtomicUsize::new(0));
@@ -2939,6 +3013,7 @@ mod tests {
                 included_message_ids: Vec::new(),
                 chat_policy: ChatPolicy::default(),
                 cancel_rx,
+                capture: SessionCapture::default(),
             },
             90,
         )
@@ -2982,6 +3057,7 @@ mod tests {
                 included_message_ids: Vec::new(),
                 chat_policy: ChatPolicy::default(),
                 cancel_rx,
+                capture: SessionCapture::default(),
             },
             1,
         )
@@ -3005,6 +3081,75 @@ mod tests {
             "recorded replay should not emit provider HTTP attempts"
         );
         assert_eq!(assistant_update.as_deref(), Some("recorded final answer"));
+    }
+
+    async fn run_captured_session(
+        response_id: &str,
+        response_tx: std::sync::mpsc::Sender<RecordedResponse>,
+        debug_sink: StdArc<dyn ChatDebugSink>,
+    ) -> ChatSessionReport {
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let (state_cmd_tx, _state_cmd_rx) = mpsc::channel(128);
+        let (_cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
+        let req = ChatCompRequest::<TestRouter>::default()
+            .with_model_str("moonshotai/kimi-k2")
+            .expect("model id")
+            .with_messages(vec![RequestMessage::new_system(
+                "You are a test assistant.".to_string(),
+            )]);
+        let mut response: OpenAiResponse =
+            serde_json::from_str(&content_response("recorded final answer"))
+                .expect("recorded response parses");
+        response.id = response_id.to_string();
+        let tape = RecordedResponseTape::new(vec![RecordedResponse::new(0, response)]);
+
+        run_chat_session(
+            ChatSession {
+                client: Client::new(),
+                req,
+                chat_step_source: ChatStepSource::recorded(tape),
+                parent_id: Uuid::new_v4(),
+                assistant_message_id: Uuid::new_v4(),
+                event_bus,
+                state_cmd_tx,
+                included_message_ids: Vec::new(),
+                chat_policy: ChatPolicy::default(),
+                cancel_rx,
+                capture: SessionCapture::new(Some(response_tx), Some(debug_sink)),
+            },
+            1,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn concurrent_chat_sessions_keep_capture_provenance() {
+        let (left_tx, left_rx) = std::sync::mpsc::channel();
+        let (right_tx, right_rx) = std::sync::mpsc::channel();
+        let left_steps = DebugSteps::default();
+        let right_steps = DebugSteps::default();
+
+        let (left, right) = tokio::join!(
+            run_captured_session("left-response", left_tx, StdArc::new(left_steps.clone())),
+            run_captured_session("right-response", right_tx, StdArc::new(right_steps.clone())),
+        );
+
+        assert!(matches!(left.outcome, SessionOutcome::Completed));
+        assert!(matches!(right.outcome, SessionOutcome::Completed));
+
+        let left_responses = left_rx.try_iter().collect::<Vec<_>>();
+        let right_responses = right_rx.try_iter().collect::<Vec<_>>();
+        assert_eq!(left_responses.len(), 1);
+        assert_eq!(right_responses.len(), 1);
+        assert_eq!(left_responses[0].response.id, "left-response");
+        assert_eq!(right_responses[0].response.id, "right-response");
+
+        let left_steps = left_steps.snapshot();
+        let right_steps = right_steps.snapshot();
+        assert_eq!(left_steps.len(), 1);
+        assert_eq!(right_steps.len(), 1);
+        assert_eq!(left_steps[0].response.id, "left-response");
+        assert_eq!(right_steps[0].response.id, "right-response");
     }
 
     #[tokio::test]
@@ -3046,6 +3191,7 @@ mod tests {
                 included_message_ids: Vec::new(),
                 chat_policy: ChatPolicy::default(),
                 cancel_rx,
+                capture: SessionCapture::default(),
             },
             2,
         )
@@ -3140,6 +3286,7 @@ mod tests {
                 included_message_ids: Vec::new(),
                 chat_policy: ChatPolicy::default(),
                 cancel_rx,
+                capture: SessionCapture::default(),
             },
             2,
         )
@@ -3222,6 +3369,7 @@ mod tests {
                 included_message_ids: Vec::new(),
                 chat_policy,
                 cancel_rx,
+                capture: SessionCapture::default(),
             },
             2,
         )
@@ -3269,6 +3417,7 @@ mod tests {
                 included_message_ids: Vec::new(),
                 chat_policy: ChatPolicy::default(),
                 cancel_rx,
+                capture: SessionCapture::default(),
             },
             2,
         )
@@ -3401,6 +3550,7 @@ mod tests {
                 included_message_ids: Vec::new(),
                 chat_policy: ChatPolicy::default(),
                 cancel_rx,
+                capture: SessionCapture::default(),
             },
             90,
         )
@@ -3470,6 +3620,7 @@ mod tests {
                 included_message_ids: Vec::new(),
                 chat_policy: ChatPolicy::default(),
                 cancel_rx,
+                capture: SessionCapture::default(),
             },
             2,
         )
@@ -3549,6 +3700,7 @@ mod tests {
                 included_message_ids: Vec::new(),
                 chat_policy: ChatPolicy::default(),
                 cancel_rx,
+                capture: SessionCapture::default(),
             },
             2,
         )
@@ -3680,6 +3832,7 @@ mod tests {
                 included_message_ids: Vec::new(),
                 chat_policy: ChatPolicy::default(),
                 cancel_rx,
+                capture: SessionCapture::default(),
             },
             2,
         )
@@ -3845,6 +3998,7 @@ mod tests {
                 included_message_ids: Vec::new(),
                 chat_policy: ChatPolicy::default(),
                 cancel_rx,
+                capture: SessionCapture::default(),
             },
             90,
         )
@@ -4170,6 +4324,7 @@ mod tests {
                 included_message_ids: Vec::new(),
                 chat_policy: ChatPolicy::default(),
                 cancel_rx,
+                capture: SessionCapture::default(),
             },
             5,
         )
@@ -4256,6 +4411,7 @@ mod tests {
                 included_message_ids: Vec::new(),
                 chat_policy,
                 cancel_rx,
+                capture: SessionCapture::default(),
             },
             1,
         )
@@ -4339,6 +4495,7 @@ mod tests {
                 included_message_ids: Vec::new(),
                 chat_policy: ChatPolicy::default(),
                 cancel_rx,
+                capture: SessionCapture::default(),
             },
             45,
         )
@@ -4422,6 +4579,7 @@ mod tests {
                 included_message_ids: Vec::new(),
                 chat_policy: ChatPolicy::default(),
                 cancel_rx,
+                capture: SessionCapture::default(),
             },
             5,
         )

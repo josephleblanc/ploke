@@ -7,6 +7,7 @@ use std::{
 };
 
 use ploke_llm::manager::RecordedResponse;
+use ploke_tui::llm::SessionCapture;
 
 use super::super::harness_request::contract;
 use super::super::surface_policy::SurfacePolicy;
@@ -14,7 +15,7 @@ use super::harness::Timeouts;
 use super::harness_io::observed_headless_error;
 use super::tui_bridge::{
     AttemptEnd, LiveObserver, attempt_prompt, evidence_read_roots, run_attempt,
-    start_attempt_runtime, timeout_terminal_for_run,
+    start_attempt_runtime, start_captured_runtime, timeout_terminal_for_run,
 };
 use super::{
     AttemptOutcome, Budget, Error, Fail, Feedback, HeadlessRun, HeadlessTerminal, ModelSelection,
@@ -30,12 +31,14 @@ pub(crate) struct AttemptDriver {
     validation: Vec<contract::Command>,
     model: Option<ModelSelection>,
     response_rx: Option<Arc<Mutex<Receiver<RecordedResponse>>>>,
+    session_capture: SessionCapture,
 }
 
 impl AttemptDriver {
     pub(crate) fn new(
         attempt: super::attempt::Attempt,
         response_rx: Option<Arc<Mutex<Receiver<RecordedResponse>>>>,
+        session_capture: SessionCapture,
     ) -> Self {
         Self {
             workspace: attempt.workspace,
@@ -46,6 +49,7 @@ impl AttemptDriver {
             validation: attempt.validation,
             model: attempt.model,
             response_rx,
+            session_capture,
         }
     }
 
@@ -78,15 +82,29 @@ impl AttemptDriver {
         let outcome = tokio::time::timeout(Duration::from_secs(timeouts.attempt_secs), async {
             loop {
                 observer.emit(format!("attempt {turn} start"));
-                let (runtime, parent_id) = start_attempt_runtime(
-                    &self.workspace,
-                    &extra_read_roots,
-                    next_prompt.clone(),
-                    &surface,
-                    self.model.as_ref(),
-                    &timeouts,
-                )
-                .await?;
+                let runtime = if self.session_capture.uses_legacy_fallback() {
+                    start_attempt_runtime(
+                        &self.workspace,
+                        &extra_read_roots,
+                        next_prompt.clone(),
+                        &surface,
+                        self.model.as_ref(),
+                        &timeouts,
+                    )
+                    .await
+                } else {
+                    start_captured_runtime(
+                        &self.workspace,
+                        &extra_read_roots,
+                        next_prompt.clone(),
+                        &surface,
+                        self.model.as_ref(),
+                        &timeouts,
+                        self.session_capture.clone(),
+                    )
+                    .await
+                }?;
+                let (runtime, parent_id) = runtime;
                 let (end, _runtime) = run_attempt(
                     runtime,
                     parent_id,

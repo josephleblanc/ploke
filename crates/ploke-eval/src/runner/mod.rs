@@ -20,6 +20,7 @@ use ploke_tui::app::commands::harness::{TestRuntime, TestRuntimeActorGuard};
 use ploke_tui::app::view::components::model_browser::tool_capable_provider_key;
 use ploke_tui::app_state::AppState;
 use ploke_tui::app_state::core::RuntimeConfig;
+use ploke_tui::llm::SessionCapture;
 use ploke_tui::parser::{resolve_index_target, run_parse_resolved};
 use ploke_tui::user_config::{
     ChatPolicy, ChatTimeoutStrategy, RetrievalStrategyUser, ToolLoopMode,
@@ -521,6 +522,22 @@ pub(crate) async fn setup_workspace_tui_runtime_with_read_roots(
     workspace_root: &Path,
     extra_read_roots: &[PathBuf],
 ) -> Result<WorkspaceTuiRuntime, PrepareError> {
+    setup_runtime(workspace_root, extra_read_roots, SessionCapture::default()).await
+}
+
+pub(crate) async fn setup_captured_runtime(
+    workspace_root: &Path,
+    extra_read_roots: &[PathBuf],
+    capture: SessionCapture,
+) -> Result<WorkspaceTuiRuntime, PrepareError> {
+    setup_runtime(workspace_root, extra_read_roots, capture).await
+}
+
+async fn setup_runtime(
+    workspace_root: &Path,
+    extra_read_roots: &[PathBuf],
+    capture: SessionCapture,
+) -> Result<WorkspaceTuiRuntime, PrepareError> {
     let runtime_db = init_runtime_db()?;
 
     let config_home = tempfile::tempdir().map_err(|source| PrepareError::CreateOutputDir {
@@ -537,9 +554,13 @@ pub(crate) async fn setup_workspace_tui_runtime_with_read_roots(
     )
     .spawn_file_manager()
     .spawn_state_manager()
-    .spawn_event_bus()
-    .spawn_llm_manager()
-    .spawn_observability();
+    .spawn_event_bus();
+    let runtime = if capture.uses_legacy_fallback() {
+        runtime.spawn_llm_manager()
+    } else {
+        runtime.spawn_captured_llm(capture)
+    };
+    let runtime = runtime.spawn_observability();
     let events = runtime.events_builder().build_all();
     let realtime_rx = events.event_bus_events.realtime_tx_rx;
     let background_rx = events.event_bus_events.background_tx_rx;

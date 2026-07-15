@@ -111,7 +111,7 @@ use crate::{
     chat_history::ChatHistory,
     context_plan,
     file_man::FileManager,
-    llm::manager::llm_manager,
+    llm::manager::{SessionCapture, captured_llm_manager, llm_manager},
     observability, run_event_bus,
     user_config::{EmbeddingConfig, UserConfig},
 };
@@ -1375,6 +1375,21 @@ impl<F, S, E, L, O> TestRuntime<F, S, E, L, O> {
             self.inner.cmd_tx.clone(),
             Arc::clone(&self.inner.event_bus),
             cancel_rx,
+        ));
+        self.retain_actor_handle(handle);
+        self._cast()
+    }
+
+    pub fn spawn_captured_llm(self, capture: SessionCapture) -> TestRuntime<F, S, E, Spawned, O> {
+        let cancel_rx = self.inner.cancel_tx.subscribe();
+        let handle = tokio::spawn(captured_llm_manager(
+            self.inner.event_bus.subscribe(EventPriority::Realtime),
+            self.inner.event_bus.subscribe(EventPriority::Background),
+            Arc::clone(&self.inner.state),
+            self.inner.cmd_tx.clone(),
+            Arc::clone(&self.inner.event_bus),
+            cancel_rx,
+            capture,
         ));
         self.retain_actor_handle(handle);
         self._cast()

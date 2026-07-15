@@ -2291,11 +2291,10 @@ async fn applied_batch_waits_for_completed_turn_before_validation() {
     );
 }
 
-// C1 regression: `Attempt::run` with `Capture::Responses` must keep the
-// process-global response-tap guard installed across the whole attempt await.
-// If the guard is dropped early, `clear_response_tap` fires before the session
-// runs and no provider envelopes are captured, leaving `full_response_records`
-// empty even though the model produced responses.
+// C1 regression: `Attempt::run` with `Capture::Responses` must keep its
+// response sender attached to the session across the whole attempt await.
+// The historical test name refers to the former process-global tap; the
+// asserted contract is now satisfied by explicit session-owned capture.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn attempt_capture_responses_keeps_tap_installed_across_run() {
     let _recorded_replay_guard = recorded_replay_test_mutex().lock().await;
@@ -2327,8 +2326,8 @@ async fn attempt_capture_responses_keeps_tap_installed_across_run() {
 
     assert!(
         !outcome.run.full_response_records().is_empty(),
-        "Capture::Responses must drain at least one provider response; the tap \
-         guard was dropped before the run if this is empty. terminal={:?}",
+        "Capture::Responses must drain at least one provider response from its \
+         session-owned channel. terminal={:?}",
         outcome.run.terminal()
     );
 }

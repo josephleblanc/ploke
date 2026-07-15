@@ -14,6 +14,7 @@ use ploke_llm::{
 };
 use ploke_records::llm_response::RawFullResponseRecord;
 use ploke_tui::app::commands::harness::TestAppAccessor;
+use ploke_tui::llm::SessionCapture;
 use serde::Deserialize;
 use tokio::sync::oneshot;
 use uuid::Uuid;
@@ -133,7 +134,7 @@ pub(crate) async fn run_llm_debug_step(
         &timeouts,
     )
     .await?;
-    let _debug_guard = super::tool_loop_debug::install_for_attempt(
+    let debug_sink = super::tool_loop_debug::sink_for_attempt(
         workspace_path,
         model.as_ref(),
         evidence_roots,
@@ -161,6 +162,7 @@ pub(crate) async fn run_llm_debug_step(
         assistant_message_id: Uuid::new_v4(),
         parent_id: Uuid::new_v4(),
         cmd_tx: runtime.app.state_cmd_tx(),
+        capture: SessionCapture::new(None, debug_sink),
     })
     .await;
     runtime.app.pump_pending_events().await;
@@ -240,11 +242,54 @@ pub(super) async fn start_attempt_runtime(
     model: Option<&ModelSelection>,
     timeouts: &harness::Timeouts,
 ) -> Result<(crate::runner::WorkspaceTuiRuntime, Uuid), Error> {
-    let runtime = crate::runner::setup_workspace_tui_runtime_with_read_roots(
+    start_runtime(
         workspace_path,
         extra_read_roots,
+        prompt,
+        surface,
+        model,
+        timeouts,
+        SessionCapture::default(),
     )
     .await
+}
+
+pub(super) async fn start_captured_runtime(
+    workspace_path: &Path,
+    extra_read_roots: &[PathBuf],
+    prompt: String,
+    surface: &SurfacePolicy,
+    model: Option<&ModelSelection>,
+    timeouts: &harness::Timeouts,
+    capture: SessionCapture,
+) -> Result<(crate::runner::WorkspaceTuiRuntime, Uuid), Error> {
+    start_runtime(
+        workspace_path,
+        extra_read_roots,
+        prompt,
+        surface,
+        model,
+        timeouts,
+        capture,
+    )
+    .await
+}
+
+async fn start_runtime(
+    workspace_path: &Path,
+    extra_read_roots: &[PathBuf],
+    prompt: String,
+    surface: &SurfacePolicy,
+    model: Option<&ModelSelection>,
+    timeouts: &harness::Timeouts,
+    capture: SessionCapture,
+) -> Result<(crate::runner::WorkspaceTuiRuntime, Uuid), Error> {
+    let runtime = if capture.uses_legacy_fallback() {
+        crate::runner::setup_workspace_tui_runtime_with_read_roots(workspace_path, extra_read_roots)
+            .await
+    } else {
+        crate::runner::setup_captured_runtime(workspace_path, extra_read_roots, capture).await
+    }
     .map_err(Error::from_headless_start)?;
 
     let write_scope = surface.write_scope();

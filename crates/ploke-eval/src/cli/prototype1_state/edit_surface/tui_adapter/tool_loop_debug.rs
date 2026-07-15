@@ -24,12 +24,25 @@ use crate::{
     spec::PrepareError,
 };
 
+// Legacy installer for serialized replay probes. Parallel headless attempts
+// construct the same typed sink and carry it through `SessionCapture`.
+#[allow(dead_code)]
 pub(super) fn install_for_attempt(
     workspace: &Path,
     model: Option<&ModelSelection>,
     evidence: &[EvidenceRoot],
     outer_attempt: OuterAttemptLink,
 ) -> Option<ploke_tui::llm::ChatDebugSinkGuard> {
+    let sink = sink_for_attempt(workspace, model, evidence, outer_attempt)?;
+    Some(ploke_tui::llm::install_chat_debug_sink(sink))
+}
+
+pub(super) fn sink_for_attempt(
+    workspace: &Path,
+    model: Option<&ModelSelection>,
+    evidence: &[EvidenceRoot],
+    outer_attempt: OuterAttemptLink,
+) -> Option<std::sync::Arc<dyn ChatDebugSink>> {
     let prototype_root = prototype_root_from_evidence(evidence)?;
     let sink = ToolLoopDebugSink::new_with_outer_attempt(
         prototype_root.join("debug/tool-loop"),
@@ -38,9 +51,7 @@ pub(super) fn install_for_attempt(
         campaign_id_from_prototype_root(&prototype_root),
         outer_attempt,
     );
-    Some(ploke_tui::llm::install_chat_debug_sink(
-        std::sync::Arc::new(sink),
-    ))
+    Some(std::sync::Arc::new(sink))
 }
 
 struct ToolLoopDebugSink {
