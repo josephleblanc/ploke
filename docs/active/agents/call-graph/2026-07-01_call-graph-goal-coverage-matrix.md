@@ -59,11 +59,14 @@ coverage proves `(alias.callback)()` resolves to `local_target` and the wrapper
 helper call resolves to the private callee. DB coverage proves the resolved
 dynamic row, the wrapper call, the `holder` parameter binding, the `alias`
 `ValueAlias` binding, the `BindingAliasesBinding` edge, and the
-`ArgumentSuppliesParameter` edge. Active call-graph fixture regeneration and
-`verify-backup-dbs` completed cleanly. This is one-hop owner-local alias
-normalization for exact private parameter-field proof, not broad aggregate
-value flow, public parameter proof, trait-object dispatch, or arbitrary alias
-propagation.
+`ArgumentSuppliesParameter` edge. Focused exact RAG tests preserve the alias
+call context, projected proof rows, and local-binding alias edge; focused exact
+`code_item_lookup` and `code_item_edges` tests preserve the same local-binding
+payload and UI counts without widening the older high-cost dynamic-callable
+batches. Active call-graph fixture regeneration and `verify-backup-dbs`
+completed cleanly. This is one-hop owner-local alias normalization for exact
+private parameter-field proof, not broad aggregate value flow, public parameter
+proof, trait-object dispatch, or arbitrary alias propagation.
 
 Recent completed slice: exact local-binding downstream payload. Existing
 `local_binding` and `local_binding_edge` DB evidence is now exposed through

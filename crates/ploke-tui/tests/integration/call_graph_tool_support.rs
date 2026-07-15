@@ -3343,6 +3343,76 @@ pub(crate) fn assert_initialized_path_local_binding_payload(
     );
 }
 
+pub(crate) fn assert_aliased_parameter_local_binding_payload(
+    bindings: &[serde_json::Value],
+    edges: &[serde_json::Value],
+    owner: Uuid,
+    label: &str,
+    tool: &str,
+) {
+    let rows = bindings
+        .iter()
+        .filter_map(|binding| serde_json::from_value::<LocalBindingInfo>(binding.clone()).ok())
+        .collect::<Vec<_>>();
+    let holder = rows
+        .iter()
+        .find(|binding| {
+            binding.owner_id == owner
+                && binding.kind == "ParameterBinding"
+                && binding.name == "holder"
+                && binding.source_kind == "Parameter"
+        })
+        .unwrap_or_else(|| {
+            panic!("{tool} should expose holder parameter for {label}: {bindings:#?}")
+        });
+    let alias = rows
+        .iter()
+        .find(|binding| {
+            binding.owner_id == owner
+                && binding.kind == "LetBinding"
+                && binding.name == "alias"
+                && binding.source_kind == "ValueAlias"
+                && matches!(
+                    binding.source_path.as_deref(),
+                    Some([segment]) if segment == "holder"
+                )
+        })
+        .unwrap_or_else(|| panic!("{tool} should expose alias binding for {label}: {bindings:#?}"));
+
+    let edge_rows = edges
+        .iter()
+        .filter_map(|edge| serde_json::from_value::<LocalBindingEdgeInfo>(edge.clone()).ok())
+        .collect::<Vec<_>>();
+    assert!(
+        edge_rows.iter().any(|edge| {
+            edge.source_id == owner
+                && edge.target_id == holder.id
+                && edge.relation == LocalBindingRelationKind::OwnerContainsBinding
+                && edge.target_kind == "LocalBinding"
+        }),
+        "{tool} should expose OwnerContainsBinding for holder in {label}: {edges:#?}"
+    );
+    assert!(
+        edge_rows.iter().any(|edge| {
+            edge.source_id == owner
+                && edge.target_id == alias.id
+                && edge.relation == LocalBindingRelationKind::OwnerContainsBinding
+                && edge.target_kind == "LocalBinding"
+        }),
+        "{tool} should expose OwnerContainsBinding for alias in {label}: {edges:#?}"
+    );
+    assert!(
+        edge_rows.iter().any(|edge| {
+            edge.source_id == alias.id
+                && edge.target_id == holder.id
+                && edge.relation == LocalBindingRelationKind::BindingAliasesBinding
+                && edge.source_kind == "LocalBinding"
+                && edge.target_kind == "LocalBinding"
+        }),
+        "{tool} should expose BindingAliasesBinding for {label}: {edges:#?}"
+    );
+}
+
 pub(crate) fn assert_forwarded_async_future_awaited_site(
     sites: &[serde_json::Value],
     owner: Uuid,

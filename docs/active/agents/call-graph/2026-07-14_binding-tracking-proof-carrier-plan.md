@@ -588,6 +588,13 @@ What is complete:
   `ValueAlias` row, the `BindingAliasesBinding` edge from `alias` to `holder`,
   and the `ArgumentSuppliesParameter` edge from the wrapper callsite to
   `holder`.
+- Exact RAG coverage proves the resolved alias call context, the projected
+  field-dynamic proof rows, and the `holder` / `alias` local-binding payload
+  with the `BindingAliasesBinding` edge.
+- Exact `code_item_lookup` and `code_item_edges` tests prove the same alias
+  local-binding payload and UI counts through the established local-binding
+  tool assertion helper. The new owner is covered by focused tests instead of
+  widening the older high-cost dynamic-callable batches.
 - Active call-graph fixture regeneration and registry-backed backup
   verification passed with
   `cargo run -p xtask --features call_graph -- fixtures regenerate --active`

@@ -130,6 +130,38 @@ async fn call_context_collection_reads_real_field_dynamic_rows() -> Result<(), E
 }
 
 #[tokio::test]
+async fn call_context_collection_resolves_aliased_field_parameter() -> Result<(), Error> {
+    init_tracing_once();
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let dynamic_target = one_uuid(&db, &function_in_module_query(&["crate"], "local_target"))?;
+    let case = private_parameter_case(
+        &db,
+        "single-caller aliased named-field function parameter",
+        "call_single_aliased_named_field_function_param",
+        dynamic_target,
+    )?;
+    let rag = init_test_rag_mock(Arc::clone(&db));
+
+    let call_context = rag.collect_call_context(&[(case.owner, 1.0)])?;
+    let context = call_context
+        .get(&case.owner)
+        .unwrap_or_else(|| panic!("{} owner should receive outgoing call context", case.label));
+    assert_eq!(
+        context.len(),
+        case.calls.len(),
+        "{} owner context: {context:#?}",
+        case.label
+    );
+    for expected in &case.calls {
+        assert_expected_call(context, expected, case.label);
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn call_context_collection_resolves_two_hop_forwarded_field_parameter() -> Result<(), Error> {
     init_tracing_once();
     let db = Arc::new(Database::new(setup_db_full_multi_embedding(

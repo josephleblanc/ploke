@@ -57,6 +57,12 @@ async fn proof_context_collection_preserves_projected_field_dynamic_rows() -> Re
         )?,
         dynamic_case(
             &db,
+            "single-caller aliased named-field function parameter",
+            "call_single_aliased_named_field_function_param",
+            dynamic_target,
+        )?,
+        dynamic_case(
+            &db,
             "multi-caller named-field function parameter",
             "call_multi_named_field_function_param",
             dynamic_target,
