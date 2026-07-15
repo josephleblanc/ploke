@@ -7245,6 +7245,7 @@ cat >> "$channel_dir/child-to-parent.jsonl" <<JSON
 {"schema_version":"prototype1-runtime-channel.v1","direction":"child_to_parent","campaign_id":"${PLOKE_PROTOTYPE1_CAMPAIGN_ID:?missing campaign}","node_id":"${PLOKE_PROTOTYPE1_NODE_ID:?missing node}","runtime_id":"$runtime_id","message_id":"00000000-0000-4000-8000-000000000001","recorded_at":0,"body_hash":"40ec7f71ea684c8b976e79e8e425f87779e6de57f4821dcfc8066dbcad2defe0","body":"ready"}
 JSON
 sleep 1
+: > "$node_dir/completed-$runtime_id"
 exit 0
 "#,
     );
@@ -7329,6 +7330,19 @@ exit 0
     let entries = PrototypeJournal::new(journal_path)
         .load_entries()
         .expect("load transition journal");
+    let (child_pid, incarnation) = entries
+        .iter()
+        .find_map(|entry| match entry {
+            JournalEntry::SpawnChild(spawn)
+                if spawn.refs.node_id == node.node_id
+                    && spawn.phase
+                        == crate::cli::prototype1_state::journal::SpawnPhase::Observed =>
+            {
+                spawn.child_pid.zip(spawn.incarnation.clone())
+            }
+            _ => None,
+        })
+        .expect("observed child process identity");
     assert!(entries.iter().any(|entry| {
         matches!(
             entry,
@@ -7338,9 +7352,36 @@ exit 0
                     && matches!(
                         spawn.result,
                         Some(crate::cli::prototype1_state::journal::SpawnObservation::Acknowledged)
-                )
+            )
         )
     }));
+
+    #[cfg(target_os = "linux")]
+    {
+        let completion_path = node.node_dir.join(format!("completed-{runtime}"));
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !completion_path.exists() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "acknowledged child process {child_pid} must reach normal completion"
+            );
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            let observed = crate::cli::prototype1_state::invocation::process_incarnation(child_pid)
+                .expect("inspect acknowledged child process");
+            if observed.as_ref() != Some(&incarnation) {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "acknowledged child process {child_pid} must be reaped after it exits"
+            );
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    }
 
     let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
     let mut params = std::collections::BTreeMap::new();
