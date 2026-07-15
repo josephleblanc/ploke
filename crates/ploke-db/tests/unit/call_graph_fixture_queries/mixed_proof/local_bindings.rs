@@ -62,8 +62,8 @@ fn fixture_projection_stores_parameter_binding_edges() -> Result<(), DbError> {
         .collect::<Vec<_>>();
     assert_eq!(
         binding_edges.len(),
-        2,
-        "parameter binding should expose containment plus one caller argument edge: {edges:#?}"
+        3,
+        "parameter binding should expose containment, caller argument, and source-function edges: {edges:#?}"
     );
     assert!(
         binding_edges.iter().any(|edge| edge.relation
@@ -81,6 +81,15 @@ fn fixture_projection_stores_parameter_binding_edges() -> Result<(), DbError> {
             && edge.target_id == binding.id
             && edge.target_kind == "LocalBinding"),
         "missing caller call-site to parameter-binding edge: {binding_edges:#?}"
+    );
+    assert!(
+        binding_edges.iter().any(|edge| edge.relation
+            == LocalBindingRelationKind::BindingSourceFunction
+            && edge.source_id == binding.id
+            && edge.source_kind == "LocalBinding"
+            && edge.target_id == target
+            && edge.target_kind == "Function"),
+        "missing parameter-binding to source-function edge: {binding_edges:#?}"
     );
 
     Ok(())
@@ -564,8 +573,8 @@ fn fixture_projection_stores_value_alias_binding_edge() -> Result<(), DbError> {
         .collect::<Vec<_>>();
     assert_eq!(
         alias_edges.len(),
-        2,
-        "alias binding should expose owner containment plus alias edge: {edges:#?}"
+        3,
+        "alias binding should expose owner containment, alias, and source-function edges: {edges:#?}"
     );
     assert!(
         alias_edges.iter().any(|edge| edge.relation
@@ -583,6 +592,15 @@ fn fixture_projection_stores_value_alias_binding_edge() -> Result<(), DbError> {
             && edge.source_kind == "LocalBinding"
             && edge.target_kind == "LocalBinding"),
         "missing alias-to-parameter-binding edge: {alias_edges:#?}"
+    );
+    assert!(
+        alias_edges.iter().any(|edge| edge.relation
+            == LocalBindingRelationKind::BindingSourceFunction
+            && edge.source_id == alias.id
+            && edge.source_kind == "LocalBinding"
+            && edge.target_id == target
+            && edge.target_kind == "Function"),
+        "missing alias-to-source-function edge: {alias_edges:#?}"
     );
 
     Ok(())

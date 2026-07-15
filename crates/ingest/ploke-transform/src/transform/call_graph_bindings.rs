@@ -181,6 +181,76 @@ pub(super) fn derive_value_alias_relations(graph: &CodeGraph) -> Vec<LocalBindin
     relations
 }
 
+pub(super) fn derive_value_binding_function_relations(
+    graph: &CodeGraph,
+    report: &CallResolutionReport,
+) -> Vec<LocalBindingRelation> {
+    let bindings_by_name = local_bindings_by_owner_name(graph);
+    let calls = path_calls(graph);
+    let mut relations = Vec::new();
+
+    for relation in &report.relations {
+        let CallRelation::Function { source, target } = relation else {
+            continue;
+        };
+        let Some(call) = calls.get(source) else {
+            continue;
+        };
+        match &call.callee {
+            PathCallCallee::ValueBinding { path } => push_binding_source_function(
+                &mut relations,
+                &bindings_by_name,
+                call.owner,
+                path,
+                *target,
+            ),
+            PathCallCallee::AliasedValueBinding { path, source_path } => {
+                push_binding_source_function(
+                    &mut relations,
+                    &bindings_by_name,
+                    call.owner,
+                    path,
+                    *target,
+                );
+                push_binding_source_function(
+                    &mut relations,
+                    &bindings_by_name,
+                    call.owner,
+                    source_path,
+                    *target,
+                );
+            }
+            _ => {}
+        }
+    }
+
+    relations.sort_unstable();
+    relations.dedup();
+    relations
+}
+
+fn push_binding_source_function(
+    relations: &mut Vec<LocalBindingRelation>,
+    bindings_by_name: &BTreeMap<(CallBodyOwnerId, &str), Vec<LocalBindingId>>,
+    owner: CallBodyOwnerId,
+    path: &[String],
+    target: FunctionNodeId,
+) {
+    let [name] = path else {
+        return;
+    };
+    let Some(candidates) = bindings_by_name.get(&(owner, name.as_str())) else {
+        return;
+    };
+    let [binding] = candidates.as_slice() else {
+        return;
+    };
+    relations.push(LocalBindingRelation::BindingSourceFunction {
+        source: *binding,
+        target,
+    });
+}
+
 fn local_bindings_by_owner_name(
     graph: &CodeGraph,
 ) -> BTreeMap<(CallBodyOwnerId, &str), Vec<LocalBindingId>> {

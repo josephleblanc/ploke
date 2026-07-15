@@ -29,6 +29,7 @@ use crate::error::TransformError;
 use call_graph_bindings::{
     derive_argument_parameter_relations, derive_field_projection_function_relations,
     derive_initialized_path_relations, derive_value_alias_relations,
+    derive_value_binding_function_relations,
 };
 use consts::transform_consts;
 use edges::transform_call_body_owners;
@@ -174,6 +175,8 @@ pub(super) fn transform_parsed_graph_with_call_report(
     let field_projection_relations =
         derive_field_projection_function_relations(&code_graph, &call_resolution_report);
     let value_alias_relations = derive_value_alias_relations(&code_graph);
+    let value_binding_function_relations =
+        derive_value_binding_function_relations(&code_graph, &call_resolution_report);
 
     tracing::trace!("{}: Starting", "type_graph_edges".log_step());
     transform_type_graph_edges(db, &code_graph)?;
@@ -214,6 +217,7 @@ pub(super) fn transform_parsed_graph_with_call_report(
     transform_local_binding_relations(db, &value_alias_relations)?;
     transform_local_binding_relations(db, &init_path_relations)?;
     transform_local_binding_relations(db, &field_projection_relations)?;
+    transform_local_binding_relations(db, &value_binding_function_relations)?;
     transform_local_binding_relations(db, &argument_parameter_relations)?;
     tracing::trace!("{}: Starting", "call_site_relations".log_step());
     transform_call_site_relations(db, &code_graph.call_site_relations)?;
