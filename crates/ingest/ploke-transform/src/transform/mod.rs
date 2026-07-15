@@ -26,7 +26,7 @@ use crate::error::TransformError;
 // use crate::schema::*;
 
 // -- transforms
-use call_graph_bindings::derive_argument_parameter_relations;
+use call_graph_bindings::{derive_argument_parameter_relations, derive_value_alias_relations};
 use consts::transform_consts;
 use edges::transform_call_body_owners;
 use edges::transform_call_resolution_report;
@@ -166,6 +166,7 @@ pub(super) fn transform_parsed_graph_with_call_report(
         .expect("Invariant: All Code Graphs must have a Crate Context");
     let argument_parameter_relations =
         derive_argument_parameter_relations(&code_graph, &call_resolution_report);
+    let value_alias_relations = derive_value_alias_relations(&code_graph);
 
     tracing::trace!("{}: Starting", "type_graph_edges".log_step());
     transform_type_graph_edges(db, &code_graph)?;
@@ -203,6 +204,7 @@ pub(super) fn transform_parsed_graph_with_call_report(
     transform_local_bindings(db, &code_graph.local_bindings)?;
     tracing::trace!("{}: Starting", "local_binding_relations".log_step());
     transform_local_binding_relations(db, &code_graph.local_binding_relations)?;
+    transform_local_binding_relations(db, &value_alias_relations)?;
     transform_local_binding_relations(db, &argument_parameter_relations)?;
     tracing::trace!("{}: Starting", "call_site_relations".log_step());
     transform_call_site_relations(db, &code_graph.call_site_relations)?;

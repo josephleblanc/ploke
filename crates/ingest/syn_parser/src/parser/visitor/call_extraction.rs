@@ -385,6 +385,9 @@ impl BodyCallVisitor<'_> {
                     init_path: init_path.clone(),
                 }
             }
+            LocalBindingProof::ValueAlias { source_path, .. } => LocalBindingSource::ValueAlias {
+                source_path: source_path.clone(),
+            },
             _ => {
                 let Some(init_expr) = init_expr else {
                     return;
@@ -980,6 +983,7 @@ fn local_binding_source_relation(
         LocalBindingSource::Parameter => None,
         LocalBindingSource::Constructed { .. } => None,
         LocalBindingSource::InitializedPath { .. } => None,
+        LocalBindingSource::ValueAlias { .. } => None,
         LocalBindingSource::FieldProjection {
             base_binding_id, ..
         } => Some(LocalBindingRelation::BindingProjectsField {

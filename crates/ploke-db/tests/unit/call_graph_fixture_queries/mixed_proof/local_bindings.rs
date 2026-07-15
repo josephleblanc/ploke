@@ -360,6 +360,96 @@ fn fixture_projection_stores_initialized_path_let_binding() -> Result<(), DbErro
 }
 
 #[test]
+fn fixture_projection_stores_value_alias_binding_edge() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let owner = function_id_by_name(&db, "call_single_aliased_function_pointer_param")?;
+    let caller = function_id_by_name(
+        &db,
+        "call_single_aliased_function_pointer_param_with_local_target",
+    )?;
+    let target = function_id_by_name(&db, "local_target")?;
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:1685-1687:
+    // `let g = f; g()` is already resolved through private caller proof. This
+    // test pins the durable alias carrier: `g` is a let binding sourced by the
+    // callee-owned parameter binding `f`.
+    let context = db.call_context_for_owner(owner)?;
+    let row = row_by_path(&context, &["g"]);
+    assert_resolved_target(
+        row,
+        target,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
+
+    let caller_context = db.call_context_for_owner(caller)?;
+    let helper_call = row_by_path(
+        &caller_context,
+        &["call_single_aliased_function_pointer_param"],
+    );
+    assert_resolved_target(
+        helper_call,
+        owner,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
+
+    let bindings = db.local_bindings_for_owner(owner)?;
+    let parameter = bindings
+        .iter()
+        .find(|binding| binding.kind == "ParameterBinding" && binding.name == "f")
+        .expect("parameter binding f should be persisted");
+    assert_eq!(parameter.source_kind, "Parameter");
+
+    let alias = bindings
+        .iter()
+        .find(|binding| binding.kind == "LetBinding" && binding.name == "g")
+        .expect("alias binding g should be persisted");
+    assert_eq!(alias.source_kind, "ValueAlias");
+    assert_eq!(alias.source_id, None);
+    assert_eq!(alias.source_call_kind, None);
+    assert_eq!(alias.source_path.as_ref(), Some(&path(&["f"])));
+    assert_eq!(alias.callee_kind, None);
+    assert_eq!(alias.callee_path, None);
+    assert!(
+        alias.span.0 < alias.span.1,
+        "alias binding should retain a non-empty source span: {alias:#?}"
+    );
+
+    let edges = db.local_binding_edges_for_owner(owner)?;
+    let alias_edges = edges
+        .iter()
+        .filter(|edge| edge.source_id == alias.id || edge.target_id == alias.id)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        alias_edges.len(),
+        2,
+        "alias binding should expose owner containment plus alias edge: {edges:#?}"
+    );
+    assert!(
+        alias_edges.iter().any(|edge| edge.relation
+            == LocalBindingRelationKind::OwnerContainsBinding
+            && edge.source_id == owner
+            && edge.target_id == alias.id
+            && edge.target_kind == "LocalBinding"),
+        "missing owner-to-alias-binding edge: {alias_edges:#?}"
+    );
+    assert!(
+        alias_edges.iter().any(|edge| edge.relation
+            == LocalBindingRelationKind::BindingAliasesBinding
+            && edge.source_id == alias.id
+            && edge.target_id == parameter.id
+            && edge.source_kind == "LocalBinding"
+            && edge.target_kind == "LocalBinding"),
+        "missing alias-to-parameter-binding edge: {alias_edges:#?}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn fixture_projection_stores_let_closure_binding_edges() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let owner = function_id_by_name(&db, "call_shadowed_local_target_binding")?;

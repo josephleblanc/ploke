@@ -524,6 +524,41 @@ What remains:
   value flow. Those should be separate source-oracle-driven slices with typed
   endpoint families if they need new edges.
 
+## 2026-07-15 Value Alias Binding Carrier Checkpoint
+
+Implemented slice: durable alias source fact plus typed binding-to-binding
+alias edge for exact local value aliases.
+
+What is complete:
+
+- Parser extraction now persists `LocalBindingSource::ValueAlias` for local let
+  bindings whose initializer path is an exact visible parameter or prior local
+  alias according to the existing `LocalBindingProof::ValueAlias` machinery.
+- The fixture-backed DB oracle is
+  `tests/fixture_crates/fixture_call_graph/src/lib.rs:1685-1687`, where
+  `call_single_aliased_function_pointer_param(f)` binds `let g = f;` and then
+  calls `g()`.
+- Transform projection stores the alias source path in
+  `local_binding.source_path` and derives a `BindingAliasesBinding`
+  `local_binding_edge` only when that path names exactly one same-owner
+  binding. This lets parameter bindings participate without pushing parameter
+  span/ID knowledge into the parser body visitor.
+- `ploke-db` strict decoding accepts `ValueAlias` only as a `LetBinding` source
+  shape with a nonempty source path and no callsite/callee endpoint fields, and
+  validates `BindingAliasesBinding` as `LocalBinding -> LocalBinding`.
+- Fixture-backed DB coverage proves the existing `g()` call edge to
+  `local_target`, the durable `g` binding row, and the alias edge from `g` to
+  the callee-owned `f` parameter binding.
+- Active fixture regeneration and registry-backed backup verification passed;
+  no tracked snapshot/checksum drift was produced by this projection slice.
+
+What remains:
+
+- This does not add broad alias propagation, public API caller inference,
+  arbitrary interprocedural value flow, trait-object dispatch, or a new call
+  edge. Multi-hop/ambiguous aliases should be separate typed carrier slices if
+  a reviewed source oracle needs them.
+
 ## Exit Criteria
 
 For the first carrier slice:

@@ -2,7 +2,10 @@ use std::collections::BTreeMap;
 
 use syn_parser::parser::{
     graph::CodeGraph,
-    nodes::{CallArgument, CallBodyOwnerId, CallNode, FunctionNodeId, LocalBindingKind},
+    nodes::{
+        CallArgument, CallBodyOwnerId, CallNode, FunctionNodeId, LocalBindingId, LocalBindingKind,
+        LocalBindingSource,
+    },
     relations::{CallRelation, LocalBindingRelation},
 };
 use syn_parser::resolve::call_resolution::CallResolutionReport;
@@ -46,6 +49,50 @@ pub(super) fn derive_argument_parameter_relations(
     relations.sort_unstable();
     relations.dedup();
     relations
+}
+
+pub(super) fn derive_value_alias_relations(graph: &CodeGraph) -> Vec<LocalBindingRelation> {
+    let bindings_by_name = local_bindings_by_owner_name(graph);
+    let mut relations = Vec::new();
+
+    for binding in &graph.local_bindings {
+        let LocalBindingSource::ValueAlias { source_path } = &binding.source else {
+            continue;
+        };
+        let [source_name] = source_path.as_slice() else {
+            continue;
+        };
+        let Some(targets) = bindings_by_name.get(&(binding.owner, source_name.as_str())) else {
+            continue;
+        };
+        let [target] = targets.as_slice() else {
+            continue;
+        };
+        if binding.id == *target {
+            continue;
+        }
+        relations.push(LocalBindingRelation::BindingAliasesBinding {
+            source: binding.id,
+            target: *target,
+        });
+    }
+
+    relations.sort_unstable();
+    relations.dedup();
+    relations
+}
+
+fn local_bindings_by_owner_name(
+    graph: &CodeGraph,
+) -> BTreeMap<(CallBodyOwnerId, &str), Vec<LocalBindingId>> {
+    let mut bindings = BTreeMap::<(CallBodyOwnerId, &str), Vec<LocalBindingId>>::new();
+    for binding in &graph.local_bindings {
+        bindings
+            .entry((binding.owner, binding.name.as_str()))
+            .or_default()
+            .push(binding.id);
+    }
+    bindings
 }
 
 fn parameter_binding_ids(

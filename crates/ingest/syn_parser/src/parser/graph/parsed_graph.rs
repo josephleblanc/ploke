@@ -177,6 +177,9 @@ impl ParsedCodeGraph {
                 LocalBindingRelation::BindingProjectsField { source, target } => {
                     live_bindings.contains(source) && live_bindings.contains(target)
                 }
+                LocalBindingRelation::BindingAliasesBinding { source, target } => {
+                    live_bindings.contains(source) && live_bindings.contains(target)
+                }
                 LocalBindingRelation::ArgumentSuppliesParameter { source, target } => {
                     live_calls.contains(source) && live_bindings.contains(target)
                 }

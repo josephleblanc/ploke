@@ -1181,7 +1181,7 @@ fn fixture_context_resolves_single_caller_aliased_function_pointer_parameters()
         Case {
             owner: "call_single_aliased_function_pointer_param",
             caller: "call_single_aliased_function_pointer_param_with_local_target",
-            source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:1673-1675 `let g = f; g()`",
+            source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:1685-1687 `let g = f; g()`",
             site_kind: CallSiteKind::Path,
             relation: CallRelationKind::Function,
             target_kind: CallTargetKind::Function,
@@ -1189,7 +1189,7 @@ fn fixture_context_resolves_single_caller_aliased_function_pointer_parameters()
         Case {
             owner: "call_single_parenthesized_aliased_function_pointer_param",
             caller: "call_single_parenthesized_aliased_function_pointer_param_with_local_target",
-            source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:1682-1684 `let g = f; (g)()`",
+            source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:1694-1696 `let g = f; (g)()`",
             site_kind: CallSiteKind::Dynamic,
             relation: CallRelationKind::DynamicFunction,
             target_kind: CallTargetKind::Function,

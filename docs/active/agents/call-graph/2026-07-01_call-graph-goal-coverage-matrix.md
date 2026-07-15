@@ -50,7 +50,23 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Latest completed slice: durable initialized path let-binding proof projection.
+Latest completed slice: durable value-alias binding proof projection. The
+parser now records `LetBinding` rows with `source_kind = "ValueAlias"` for
+exact local alias bindings such as
+`call_single_aliased_function_pointer_param(f) { let g = f; g() }`, where the
+existing resolver already follows `g` back through `f` and the private caller's
+`local_target` argument. Transform derives a typed `BindingAliasesBinding`
+`local_binding_edge` only when the alias source path names exactly one
+same-owner binding; `ploke-db` strictly decodes the row and edge shapes. The
+fixture-backed DB proof asserts the already-resolved `g()` edge to
+`local_target`, the durable `g` binding row with `source_path = ["f"]`, and the
+binding-to-binding alias edge from `g` to the callee-owned parameter binding
+`f`. Active fixture regeneration and `verify-backup-dbs` completed cleanly
+with no tracked snapshot/checksum drift. This is source-fact/edge projection
+for one exact alias carrier, not general alias propagation, public parameter
+proof, or broader dynamic callable dispatch.
+
+Recent completed slice: durable initialized path let-binding proof projection.
 The parser now records `LetBinding` rows with `source_kind =
 "InitializedPath"` for exact local callable value bindings such as
 `call_local_function_item_binding() { let f = local_target; f() }`. Transform

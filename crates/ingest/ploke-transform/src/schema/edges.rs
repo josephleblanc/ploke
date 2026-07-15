@@ -1111,6 +1111,13 @@ fn local_binding_to_params(binding: &LocalBindingNode) -> BTreeMap<String, cozo:
             cozo::DataValue::Null,
             cozo::DataValue::Null,
         ),
+        LocalBindingSource::ValueAlias { source_path } => (
+            cozo::DataValue::Null,
+            cozo::DataValue::Null,
+            string_list(source_path),
+            cozo::DataValue::Null,
+            cozo::DataValue::Null,
+        ),
         LocalBindingSource::FieldProjection {
             base_binding_id,
             field_path,
@@ -1512,6 +1519,22 @@ impl LocalBindingRelationSchema {
                 ),
             ]),
             LocalBindingRelation::BindingProjectsField { source, target } => BTreeMap::from([
+                (schema.source_id().to_string(), source.to_cozo_uuid()),
+                (schema.target_id().to_string(), target.to_cozo_uuid()),
+                (
+                    schema.relation_kind().to_string(),
+                    cozo::DataValue::from(relation.kind_str()),
+                ),
+                (
+                    schema.source_kind().to_string(),
+                    cozo::DataValue::from("LocalBinding"),
+                ),
+                (
+                    schema.target_kind().to_string(),
+                    cozo::DataValue::from("LocalBinding"),
+                ),
+            ]),
+            LocalBindingRelation::BindingAliasesBinding { source, target } => BTreeMap::from([
                 (schema.source_id().to_string(), source.to_cozo_uuid()),
                 (schema.target_id().to_string(), target.to_cozo_uuid()),
                 (

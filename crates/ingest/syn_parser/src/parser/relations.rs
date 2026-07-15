@@ -216,6 +216,18 @@ pub enum LocalBindingRelation {
         source: LocalBindingId,
         target: LocalBindingId,
     },
+    /// A local binding aliases another local binding in the same owner.
+    ///
+    /// The source endpoint is the alias binding. The target endpoint is the
+    /// binding named by the alias initializer.
+    ///
+    /// ```text
+    /// BindingAliasesBinding ⊆ LocalBindingId × LocalBindingId
+    /// ```
+    BindingAliasesBinding {
+        source: LocalBindingId,
+        target: LocalBindingId,
+    },
     /// A resolved call-site argument supplies a private callee parameter.
     ///
     /// ```text
@@ -236,6 +248,7 @@ impl LocalBindingRelation {
             Self::BindingSourceClosure { .. } => "BindingSourceClosure",
             Self::BindingSourceCallResult { .. } => "BindingSourceCallResult",
             Self::BindingProjectsField { .. } => "BindingProjectsField",
+            Self::BindingAliasesBinding { .. } => "BindingAliasesBinding",
             Self::ArgumentSuppliesParameter { .. } => "ArgumentSuppliesParameter",
         }
     }

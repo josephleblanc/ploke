@@ -85,6 +85,9 @@ pub enum LocalBindingSource {
     InitializedPath {
         init_path: Vec<String>,
     },
+    ValueAlias {
+        source_path: Vec<String>,
+    },
     FieldProjection {
         base_binding_id: LocalBindingId,
         field_path: Vec<String>,
@@ -113,6 +116,7 @@ impl LocalBindingSource {
             Self::Parameter => "Parameter",
             Self::Constructed { .. } => "Constructed",
             Self::InitializedPath { .. } => "InitializedPath",
+            Self::ValueAlias { .. } => "ValueAlias",
             Self::FieldProjection { .. } => "FieldProjection",
             Self::Closure { .. } => "Closure",
             Self::AsyncClosure { .. } => "AsyncClosure",
