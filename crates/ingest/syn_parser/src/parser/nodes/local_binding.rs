@@ -61,6 +61,7 @@ pub struct LocalBindingNode {
 pub enum LocalBindingKind {
     ParameterBinding,
     LetBinding,
+    FieldProjection,
     ReturnExpression,
 }
 
@@ -69,6 +70,7 @@ impl LocalBindingKind {
         match self {
             Self::ParameterBinding => "ParameterBinding",
             Self::LetBinding => "LetBinding",
+            Self::FieldProjection => "FieldProjection",
             Self::ReturnExpression => "ReturnExpression",
         }
     }
@@ -77,6 +79,14 @@ impl LocalBindingKind {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub enum LocalBindingSource {
     Parameter,
+    Constructed {
+        type_path: Vec<String>,
+    },
+    FieldProjection {
+        base_binding_id: LocalBindingId,
+        field_path: Vec<String>,
+        init_path: Vec<String>,
+    },
     Closure {
         body_id: ExecutableBodyId,
     },
@@ -98,6 +108,8 @@ impl LocalBindingSource {
     pub fn source_kind(&self) -> &'static str {
         match self {
             Self::Parameter => "Parameter",
+            Self::Constructed { .. } => "Constructed",
+            Self::FieldProjection { .. } => "FieldProjection",
             Self::Closure { .. } => "Closure",
             Self::AsyncClosure { .. } => "AsyncClosure",
             Self::PathCallResult { .. } => "PathCallResult",

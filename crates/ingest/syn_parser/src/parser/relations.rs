@@ -204,6 +204,18 @@ pub enum LocalBindingRelation {
         source: LocalBindingId,
         target: AnyCallSiteId,
     },
+    /// A binding projects a named field from another local binding.
+    ///
+    /// The source endpoint is the projected binding. The target endpoint is the
+    /// base local binding that owns the field expression.
+    ///
+    /// ```text
+    /// BindingProjectsField ⊆ LocalBindingId × LocalBindingId
+    /// ```
+    BindingProjectsField {
+        source: LocalBindingId,
+        target: LocalBindingId,
+    },
     /// A resolved call-site argument supplies a private callee parameter.
     ///
     /// ```text
@@ -223,6 +235,7 @@ impl LocalBindingRelation {
             Self::OwnerContainsBinding { .. } => "OwnerContainsBinding",
             Self::BindingSourceClosure { .. } => "BindingSourceClosure",
             Self::BindingSourceCallResult { .. } => "BindingSourceCallResult",
+            Self::BindingProjectsField { .. } => "BindingProjectsField",
             Self::ArgumentSuppliesParameter { .. } => "ArgumentSuppliesParameter",
         }
     }

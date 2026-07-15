@@ -422,9 +422,42 @@ What is complete:
 What remains:
 
 - This is not public API argument inference, method argument binding flow,
-  field/tuple projection flow, multi-hop parameter forwarding proof, trait
-  object dispatch, or async poll/resume traversal. Those need separate source
-  oracles and typed carrier slices.
+  tuple projection flow, multi-hop parameter forwarding proof, trait object
+  dispatch, or async poll/resume traversal. Those need separate source oracles
+  and typed carrier slices.
+
+## 2026-07-15 Named-Field Projection Carrier Checkpoint
+
+Implemented slice: durable named-field projection `local_binding` evidence.
+
+What is complete:
+
+- Parser extraction now persists a constructed base `LetBinding` only when it
+  is needed as the base endpoint for an exact dynamic field projection. The
+  admitted source oracle is
+  `tests/fixture_crates/fixture_call_graph/src/lib.rs:870-874`, where
+  `NamedCallbackHolder { callback: local_target }` is bound to `holder` and
+  `(holder.callback)()` is already resolved by existing parser-local proof.
+- The projected binding is stored as `FieldProjection` with a typed
+  `BindingProjectsField` edge from `holder.callback` to the base `holder`
+  binding. The row records both the projected field path and the exact
+  initializer path `local_target`.
+- Transform projection and DB decoding follow the existing local-binding
+  relation pattern: no table-shape change, strict row validation, and no
+  permissive fixture fallback.
+- Fixture-backed DB coverage proves the constructed base row, projected field
+  row, owner containment edges, projection edge, and the pre-existing dynamic
+  call edge to `local_target`.
+- Active call-graph fixtures were regenerated and verified after the projection
+  change, then the regenerated shared snapshots were copied into
+  `tests/backup_dbs/`.
+
+What remains:
+
+- This is not general callable-field value flow, tuple/index projection,
+  method argument binding flow, complete private field forwarding, trait-object
+  dispatch, or a new traversal edge. Those need separate source oracles and
+  proof carrier slices.
 
 ## Exit Criteria
 

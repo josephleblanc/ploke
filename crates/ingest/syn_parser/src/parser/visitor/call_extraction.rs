@@ -10,12 +10,14 @@ use syn::spanned::Spanned;
 use syn::visit::{self, Visit};
 
 mod dynamic;
+mod field_projection;
 mod macro_expansion;
 mod model;
 mod parameter_binding;
 mod receiver;
 
 use dynamic::classify_dynamic_callee;
+use field_projection::field_projection_binding;
 use macro_expansion::GeneratedCall;
 pub(super) use macro_expansion::MacroExpansionContext;
 use model::{ConstructedFields, FieldInitProof, LocalBindingProof};
@@ -310,6 +312,15 @@ impl BodyCallVisitor<'_> {
         let id = generate_dynamic_call_site_id(self.owner, span, self.cfgs);
         let target = id.into();
         let is_awaited = self.awaited_call_spans.contains(&span);
+        let callee = classify_dynamic_callee(
+            &call.func,
+            self.owner,
+            self.cfgs,
+            self.param_names,
+            &self.local_scopes,
+            is_awaited,
+        );
+        self.record_field_projection_binding(call.func.as_ref(), &callee);
 
         self.calls.push(CallNode::DynamicCall(DynamicCallNode {
             id,
@@ -318,14 +329,7 @@ impl BodyCallVisitor<'_> {
             cfgs: self.cfgs.to_vec(),
             unsafe_block: self.unsafe_depth > 0,
             arg_count: call.args.len(),
-            callee: classify_dynamic_callee(
-                &call.func,
-                self.owner,
-                self.cfgs,
-                self.param_names,
-                &self.local_scopes,
-                is_awaited,
-            ),
+            callee,
         }));
         self.relations.push(CallSiteRelation::BodyContainsCall {
             source: self.owner,
@@ -410,6 +414,69 @@ impl BodyCallVisitor<'_> {
             LocalBindingKind::LetBinding,
             source,
         );
+    }
+
+    fn record_field_projection_binding(
+        &mut self,
+        callee_expr: &syn::Expr,
+        callee: &DynamicCallCallee,
+    ) {
+        let Some(binding) = field_projection_binding(callee_expr, callee, &self.local_scopes)
+        else {
+            return;
+        };
+
+        let base_binding_id = self.record_constructed_binding(
+            &binding.base_name,
+            binding.base_span,
+            &binding.base_type_path,
+        );
+        self.record_local_binding(
+            &binding.name,
+            binding.span,
+            LocalBindingKind::FieldProjection,
+            LocalBindingSource::FieldProjection {
+                base_binding_id,
+                field_path: binding.field_path,
+                init_path: binding.init_path,
+            },
+        );
+    }
+
+    fn record_constructed_binding(
+        &mut self,
+        name: &str,
+        span: (usize, usize),
+        type_path: &[String],
+    ) -> LocalBindingId {
+        let id = generate_local_binding_id(
+            self.owner,
+            name,
+            span,
+            LocalBindingKind::LetBinding,
+            self.cfgs,
+        );
+        if self.local_bindings.iter().any(|binding| binding.id == id) {
+            return id;
+        }
+
+        self.local_binding_relations
+            .push(LocalBindingRelation::OwnerContainsBinding {
+                source: self.owner,
+                target: id,
+            });
+        self.local_bindings.push(LocalBindingNode {
+            id,
+            owner: self.owner,
+            span,
+            cfgs: self.cfgs.to_vec(),
+            kind: LocalBindingKind::LetBinding,
+            name: name.to_string(),
+            source: LocalBindingSource::Constructed {
+                type_path: type_path.to_vec(),
+            },
+        });
+        id
     }
 
     fn record_local_binding(
@@ -906,6 +973,13 @@ fn local_binding_source_relation(
 ) -> Option<LocalBindingRelation> {
     match binding_source {
         LocalBindingSource::Parameter => None,
+        LocalBindingSource::Constructed { .. } => None,
+        LocalBindingSource::FieldProjection {
+            base_binding_id, ..
+        } => Some(LocalBindingRelation::BindingProjectsField {
+            source,
+            target: *base_binding_id,
+        }),
         LocalBindingSource::Closure { body_id } | LocalBindingSource::AsyncClosure { body_id } => {
             Some(LocalBindingRelation::BindingSourceClosure {
                 source,
@@ -1475,6 +1549,11 @@ fn visible_local_binding<'a>(
         .find(|binding| binding.name() == name)
 }
 
+fn pat_span(pat: &syn::Pat) -> (usize, usize) {
+    let byte_range = pat.span().byte_range();
+    (byte_range.start, byte_range.end)
+}
+
 fn local_binding_proof(
     pat: &syn::Pat,
     init_expr: Option<&syn::Expr>,
@@ -1486,10 +1565,12 @@ fn local_binding_proof(
     match pat {
         syn::Pat::Ident(ident) => {
             let name = ident.ident.to_string();
+            let span = pat_span(pat);
             let proof = constructed_init(init_expr, param_names, local_scopes)
                 .or_else(|| constructed_binding_init(init_expr, local_scopes))
                 .map(|(type_path, fields)| LocalBindingProof::Constructed {
                     name: name.clone(),
+                    span,
                     type_path,
                     fields,
                 })
@@ -1590,6 +1671,7 @@ fn local_binding_proof(
             if let Some((type_path, fields)) = constructed_binding_init(init_expr, local_scopes) {
                 return Some(LocalBindingProof::Constructed {
                     name,
+                    span: pat_span(typed.pat.as_ref()),
                     type_path,
                     fields,
                 });

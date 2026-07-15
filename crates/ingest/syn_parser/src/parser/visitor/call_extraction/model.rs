@@ -61,6 +61,7 @@ pub(super) enum LocalBindingProof {
     },
     Constructed {
         name: String,
+        span: (usize, usize),
         type_path: Vec<String>,
         fields: ConstructedFields,
     },

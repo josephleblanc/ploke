@@ -349,6 +349,9 @@ fn validate_local_binding_edge_shape(edge: &LocalBindingEdgeRow) -> Result<(), D
         LocalBindingRelationKind::BindingSourceCallResult => {
             edge.source_kind == "LocalBinding" && is_call_site_kind(&edge.target_kind)
         }
+        LocalBindingRelationKind::BindingProjectsField => {
+            edge.source_kind == "LocalBinding" && edge.target_kind == "LocalBinding"
+        }
         LocalBindingRelationKind::ArgumentSuppliesParameter => {
             is_call_site_kind(&edge.source_kind) && edge.target_kind == "LocalBinding"
         }
@@ -372,6 +375,20 @@ fn validate_local_binding_shape(binding: &LocalBindingRow) -> Result<(), DbError
                 && binding.source_path.is_none()
                 && binding.callee_kind.is_none()
                 && binding.callee_path.is_none()
+        }
+        "Constructed" => {
+            binding.source_id.is_none()
+                && binding.source_call_kind.is_none()
+                && non_empty_path(binding.source_path.as_deref())
+                && binding.callee_kind.is_none()
+                && binding.callee_path.is_none()
+        }
+        "FieldProjection" => {
+            binding.source_id.is_some()
+                && binding.source_call_kind.is_none()
+                && non_empty_path(binding.source_path.as_deref())
+                && binding.callee_kind.as_deref() == Some("Path")
+                && non_empty_path(binding.callee_path.as_deref())
         }
         "Closure" | "AsyncClosure" => {
             binding.source_id.is_some()
@@ -406,8 +423,16 @@ fn validate_local_binding_shape(binding: &LocalBindingRow) -> Result<(), DbError
             non_empty_string(Some(binding.name.as_str()))
                 && matches!(
                     binding.source_kind.as_str(),
-                    "Closure" | "AsyncClosure" | "PathCallResult" | "DynamicCallResult"
+                    "Constructed"
+                        | "Closure"
+                        | "AsyncClosure"
+                        | "PathCallResult"
+                        | "DynamicCallResult"
                 )
+        }
+        "FieldProjection" => {
+            non_empty_string(Some(binding.name.as_str()))
+                && binding.source_kind == "FieldProjection"
         }
         _ => false,
     };

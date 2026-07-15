@@ -50,7 +50,22 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Latest completed slice: durable argument-to-parameter binding edge projection.
+Latest completed slice: durable named-field projection binding evidence. The
+parser now persists a constructed base `LetBinding` plus a `FieldProjection`
+binding only for dynamic field calls that the existing parser-local proof
+already classifies as an exact `FieldInitializedLocalBinding`. The fixture
+oracle is `call_named_field_function_binding()`, where
+`NamedCallbackHolder { callback: local_target }` is bound as `holder` and
+`(holder.callback)()` resolves to `local_target`. Transform projects the
+`BindingProjectsField` local-binding edge, `ploke-db` strictly decodes the new
+`Constructed` and `FieldProjection` row shapes, and fixture-backed DB coverage
+asserts the constructed base row, the projected field row, and the projection
+edge while preserving the existing dynamic call traversal. Active call-graph
+fixtures were regenerated and verified. This is a proof-carrier slice, not
+general field value flow, tuple projection flow, trait-object dispatch, or a
+new traversal edge.
+
+Recent completed slice: durable argument-to-parameter binding edge projection.
 Transform now derives exact one-hop `ArgumentSuppliesParameter`
 `local_binding_edge` rows from existing resolved function path calls, structural
 `CallArgument` facts, and callee `ParameterBinding` rows. The first admitted
@@ -61,8 +76,8 @@ modeled `local_target` callable to the private helper parameter `f`.
 `local_binding_edges_for_owner` returns incoming argument-to-parameter rows for
 the callee-owned binding. Active call-graph fixtures were regenerated and
 verified after the projection change. This is proof-carrier plumbing, not
-general binding value flow, method argument flow, field projection, trait-object
-dispatch, or a new traversal edge.
+general binding value flow, method argument flow, tuple projection,
+trait-object dispatch, or a new traversal edge.
 
 Recent completed slice: durable let-closure binding projection. The parser now
 records exact `LetBinding` rows for local closure bindings such as the fixture
