@@ -1,9 +1,10 @@
 //! Long-running local typestate walk server.
 //!
-//! The server binds one Unix socket and owns one `WalkController`. Live
-//! `start`/`step` requests are admitted as supervised background jobs so the
-//! socket can keep answering `status`/health and reject duplicate live
-//! mutations while the controller is busy.
+//! The server binds one Unix socket and owns one `WalkController` plus a
+//! separately locked `LlmInspector`. Live `start`/`step` requests are admitted
+//! as supervised background jobs so the socket can keep answering
+//! `status`/health and persisted LLM inspection requests while rejecting
+//! duplicate live mutations.
 //!
 //! The controller remains the only owner of typestate transitions. The server
 //! job registry is intentionally just operational state: it reports what is
@@ -68,7 +69,7 @@ use crate::{
 
 use super::{
     config,
-    controller::{DeltaRenderStyle, WalkController},
+    controller::{DeltaRenderStyle, LlmInspector, WalkController},
     endpoint::{self, ServerEndpoint},
     epoch::ServerEpoch,
     ipc, paths,
@@ -90,6 +91,7 @@ use super::{
 struct WalkServer {
     epoch: ServerEpoch,
     controller: Arc<Mutex<WalkController>>,
+    llm: Arc<Mutex<LlmInspector>>,
     delta: Arc<RwLock<PublishedDelta>>,
     jobs: Arc<Mutex<JobRegistry>>,
     gate: MutationGate,
@@ -618,6 +620,7 @@ pub(crate) async fn serve_prepared(
     let server = WalkServer {
         epoch,
         controller: Arc::new(Mutex::new(controller)),
+        llm: Arc::new(Mutex::new(LlmInspector::new(repo_root))),
         delta: Arc::new(RwLock::new(delta)),
         jobs: Arc::new(Mutex::new(jobs)),
         gate,
@@ -1010,16 +1013,16 @@ impl WalkServer {
                 }
             }
             WalkRequestBody::LlmLanes { verbose } => {
-                let controller = self.controller.lock().await;
-                let phase = controller.phase();
-                controller.llm_lanes_report(verbose).map(|message| {
+                let phase = self.phase_for_response().await;
+                let llm = self.llm.lock().await;
+                llm.llm_lanes_report(verbose).map(|message| {
                     WalkResponse::ok(WalkOkKind::LlmLanes, phase, message, self.epoch.clone())
                 })
             }
             WalkRequestBody::LlmFocus { lane } => {
-                let mut controller = self.controller.lock().await;
-                let phase = controller.phase();
-                controller.llm_focus(lane).map(|message| {
+                let phase = self.phase_for_response().await;
+                let mut llm = self.llm.lock().await;
+                llm.llm_focus(lane).map(|message| {
                     WalkResponse::ok(WalkOkKind::LlmFocus, phase, message, self.epoch.clone())
                 })
             }
@@ -1029,19 +1032,17 @@ impl WalkServer {
                 head,
                 step,
             } => {
-                let controller = self.controller.lock().await;
-                let phase = controller.phase();
-                controller
-                    .llm_report(session_id.as_deref(), lane.as_deref(), head, step)
+                let phase = self.phase_for_response().await;
+                let llm = self.llm.lock().await;
+                llm.llm_report(session_id.as_deref(), lane.as_deref(), head, step)
                     .map(|message| {
                         WalkResponse::ok(WalkOkKind::LlmShow, phase, message, self.epoch.clone())
                     })
             }
             WalkRequestBody::LlmTimeline { session_id, lane } => {
-                let controller = self.controller.lock().await;
-                let phase = controller.phase();
-                controller
-                    .llm_timeline(session_id.as_deref(), lane.as_deref())
+                let phase = self.phase_for_response().await;
+                let llm = self.llm.lock().await;
+                llm.llm_timeline(session_id.as_deref(), lane.as_deref())
                     .map(|message| {
                         WalkResponse::ok(
                             WalkOkKind::LlmTimeline,
@@ -1060,31 +1061,29 @@ impl WalkServer {
                 full,
                 json,
             } => {
-                let controller = self.controller.lock().await;
-                let phase = controller.phase();
-                controller
-                    .llm_prompt_report(
-                        session_id.as_deref(),
-                        lane.as_deref(),
-                        step,
-                        role.as_deref(),
-                        message,
-                        full,
-                        json,
-                    )
-                    .map(|message| {
-                        WalkResponse::ok(WalkOkKind::LlmPrompt, phase, message, self.epoch.clone())
-                    })
+                let phase = self.phase_for_response().await;
+                let llm = self.llm.lock().await;
+                llm.llm_prompt_report(
+                    session_id.as_deref(),
+                    lane.as_deref(),
+                    step,
+                    role.as_deref(),
+                    message,
+                    full,
+                    json,
+                )
+                .map(|message| {
+                    WalkResponse::ok(WalkOkKind::LlmPrompt, phase, message, self.epoch.clone())
+                })
             }
             WalkRequestBody::LlmProtocol {
                 session_id,
                 lane,
                 json,
             } => {
-                let controller = self.controller.lock().await;
-                let phase = controller.phase();
-                controller
-                    .llm_protocol_report(session_id.as_deref(), lane.as_deref(), json)
+                let phase = self.phase_for_response().await;
+                let llm = self.llm.lock().await;
+                llm.llm_protocol_report(session_id.as_deref(), lane.as_deref(), json)
                     .map(|message| {
                         WalkResponse::ok(
                             WalkOkKind::LlmProtocol,
@@ -1103,21 +1102,20 @@ impl WalkServer {
                 name,
                 json,
             } => {
-                let controller = self.controller.lock().await;
-                let phase = controller.phase();
-                controller
-                    .llm_tool_report(
-                        session_id.as_deref(),
-                        lane.as_deref(),
-                        head,
-                        step,
-                        call,
-                        name.as_deref(),
-                        json,
-                    )
-                    .map(|message| {
-                        WalkResponse::ok(WalkOkKind::LlmTool, phase, message, self.epoch.clone())
-                    })
+                let phase = self.phase_for_response().await;
+                let llm = self.llm.lock().await;
+                llm.llm_tool_report(
+                    session_id.as_deref(),
+                    lane.as_deref(),
+                    head,
+                    step,
+                    call,
+                    name.as_deref(),
+                    json,
+                )
+                .map(|message| {
+                    WalkResponse::ok(WalkOkKind::LlmTool, phase, message, self.epoch.clone())
+                })
             }
             WalkRequestBody::LlmStep {
                 guard,
@@ -1178,27 +1176,25 @@ impl WalkServer {
                 .await
             }
             WalkRequestBody::LlmBack { lane, steps } => {
-                let mut controller = self.controller.lock().await;
-                let phase = controller.phase();
-                controller
-                    .llm_move(lane.as_deref(), steps, super::controller::LlmMove::Back)
+                let phase = self.phase_for_response().await;
+                let mut llm = self.llm.lock().await;
+                llm.llm_move(lane.as_deref(), steps, super::controller::LlmMove::Back)
                     .map(|message| {
                         WalkResponse::ok(WalkOkKind::LlmBack, phase, message, self.epoch.clone())
                     })
             }
             WalkRequestBody::LlmForward { lane, steps } => {
-                let mut controller = self.controller.lock().await;
-                let phase = controller.phase();
-                controller
-                    .llm_move(lane.as_deref(), steps, super::controller::LlmMove::Forward)
+                let phase = self.phase_for_response().await;
+                let mut llm = self.llm.lock().await;
+                llm.llm_move(lane.as_deref(), steps, super::controller::LlmMove::Forward)
                     .map(|message| {
                         WalkResponse::ok(WalkOkKind::LlmForward, phase, message, self.epoch.clone())
                     })
             }
             WalkRequestBody::LlmHead { lane } => {
-                let mut controller = self.controller.lock().await;
-                let phase = controller.phase();
-                controller.llm_head(lane.as_deref()).map(|message| {
+                let phase = self.phase_for_response().await;
+                let mut llm = self.llm.lock().await;
+                llm.llm_head(lane.as_deref()).map(|message| {
                     WalkResponse::ok(WalkOkKind::LlmHead, phase, message, self.epoch.clone())
                 })
             }
@@ -1379,6 +1375,7 @@ impl WalkServer {
             JobAdmission::Rejected(response) => return Ok(response),
         };
         let controller = Arc::clone(&self.controller);
+        let llm = Arc::clone(&self.llm);
         let delta = Arc::clone(&self.delta);
         let jobs = Arc::clone(&self.jobs);
         let epoch = self.epoch.clone();
@@ -1388,6 +1385,7 @@ impl WalkServer {
         let expected = job.expected.clone();
         let handle = tokio::spawn(run_start_job(
             controller,
+            llm,
             delta,
             jobs,
             epoch,
@@ -1536,17 +1534,19 @@ impl WalkServer {
             }
             JobAdmission::Rejected(response) => return Ok(response),
         };
-        let controller = Arc::clone(&self.controller);
+        let llm = Arc::clone(&self.llm);
         let jobs = Arc::clone(&self.jobs);
         let epoch = self.epoch.clone();
         let operation_root = self.operation_root.clone();
         let job_id = job.job_id;
+        let phase = job_phase(&job);
         let handle = tokio::spawn(run_llm_step_job(
-            controller,
+            llm,
             jobs,
             epoch,
             operation_root,
             job_id,
+            phase,
             session_id,
             lane,
             step,
@@ -1625,17 +1625,19 @@ impl WalkServer {
             }
             JobAdmission::Rejected(response) => return Ok(response),
         };
-        let controller = Arc::clone(&self.controller);
+        let llm = Arc::clone(&self.llm);
         let jobs = Arc::clone(&self.jobs);
         let epoch = self.epoch.clone();
         let operation_root = self.operation_root.clone();
         let job_id = job.job_id;
+        let phase = job_phase(&job);
         let handle = tokio::spawn(run_llm_finish_job(
-            controller,
+            llm,
             jobs,
             epoch,
             operation_root,
             job_id,
+            phase,
             session_id,
             lane,
             step,
@@ -1774,6 +1776,7 @@ impl WalkServer {
                 .update(ControllerObservation::controller(&controller));
             (phase, format!("reset walk to {phase} - {}", phase.detail()))
         };
+        self.llm.lock().await.reset();
         let published = PublishedDelta::not_recorded(phase, job.expected.clone(), Some(job.job_id));
         finish_job(
             &self.jobs,
@@ -3044,6 +3047,7 @@ fn damage_detail(damage: &Damage) -> String {
 
 async fn run_start_job(
     controller: Arc<Mutex<WalkController>>,
+    llm: Arc<Mutex<LlmInspector>>,
     delta: Arc<RwLock<PublishedDelta>>,
     jobs: Arc<Mutex<JobRegistry>>,
     epoch: ServerEpoch,
@@ -3102,6 +3106,9 @@ async fn run_start_job(
         };
         (result, ControllerObservation::controller(&controller))
     };
+    if result.is_ok() {
+        llm.lock().await.reset();
+    }
     observed.update(observation);
     match result {
         Ok((phase, event, message, phase_before, phase_after, edges, version, published)) => {
@@ -3298,11 +3305,12 @@ async fn run_step_job(
 
 #[allow(clippy::too_many_arguments)]
 async fn run_llm_step_job(
-    controller: Arc<Mutex<WalkController>>,
+    llm: Arc<Mutex<LlmInspector>>,
     jobs: Arc<Mutex<JobRegistry>>,
     epoch: ServerEpoch,
     operation_root: PathBuf,
     job_id: u64,
+    phase: WalkPhase,
     session_id: Option<String>,
     lane: Option<String>,
     step: Option<usize>,
@@ -3314,23 +3322,21 @@ async fn run_llm_step_job(
     max_attempts: u32,
     timeout_secs: u64,
 ) {
-    let (phase, result) = {
-        let mut controller = controller.lock().await;
-        let result = controller
-            .llm_step(
-                session_id.as_deref(),
-                lane.as_deref(),
-                step,
-                source,
-                watch,
-                allow_workspace_mutation,
-                model_id.as_deref(),
-                provider.as_deref(),
-                max_attempts,
-                timeout_secs,
-            )
-            .await;
-        (controller.phase(), result)
+    let result = {
+        let mut llm = llm.lock().await;
+        llm.llm_step(
+            session_id.as_deref(),
+            lane.as_deref(),
+            step,
+            source,
+            watch,
+            allow_workspace_mutation,
+            model_id.as_deref(),
+            provider.as_deref(),
+            max_attempts,
+            timeout_secs,
+        )
+        .await
     };
     let (status, message) = match result {
         Ok(message) => (WalkJobStatus::Succeeded, message),
@@ -3356,11 +3362,12 @@ async fn run_llm_step_job(
 
 #[allow(clippy::too_many_arguments)]
 async fn run_llm_finish_job(
-    controller: Arc<Mutex<WalkController>>,
+    llm: Arc<Mutex<LlmInspector>>,
     jobs: Arc<Mutex<JobRegistry>>,
     epoch: ServerEpoch,
     operation_root: PathBuf,
     job_id: u64,
+    phase: WalkPhase,
     session_id: Option<String>,
     lane: Option<String>,
     step: Option<usize>,
@@ -3372,23 +3379,21 @@ async fn run_llm_finish_job(
     max_attempts: u32,
     timeout_secs: u64,
 ) {
-    let (phase, result) = {
-        let mut controller = controller.lock().await;
-        let result = controller
-            .llm_finish(
-                session_id.as_deref(),
-                lane.as_deref(),
-                step,
-                watch,
-                allow_workspace_mutation,
-                model_id.as_deref(),
-                provider.as_deref(),
-                max_steps,
-                max_attempts,
-                timeout_secs,
-            )
-            .await;
-        (controller.phase(), result)
+    let result = {
+        let mut llm = llm.lock().await;
+        llm.llm_finish(
+            session_id.as_deref(),
+            lane.as_deref(),
+            step,
+            watch,
+            allow_workspace_mutation,
+            model_id.as_deref(),
+            provider.as_deref(),
+            max_steps,
+            max_attempts,
+            timeout_secs,
+        )
+        .await
     };
     let (status, message) = match result {
         Ok(message) => (WalkJobStatus::Succeeded, message),
@@ -4137,9 +4142,10 @@ mod tests {
                 journal::{Streams, SuccessorHandoffEntry},
                 profile::{RunMode, RunProfileCommitment},
                 session::{Claim, Cursor, Outcome, SessionId},
-                walk::{endpoint, epoch::ServerEpoch},
+                walk::{endpoint, epoch::ServerEpoch, protocol::WalkOkPayload},
             },
         },
+        replay::tool_loop::{FsToolLoopStore, ToolLoopSession, ToolLoopStore},
         test_support::env_guard_os,
     };
 
@@ -4157,6 +4163,7 @@ mod tests {
         WalkServer {
             epoch,
             controller: Arc::new(Mutex::new(controller)),
+            llm: Arc::new(Mutex::new(LlmInspector::new(repo_root.to_path_buf()))),
             delta: Arc::new(RwLock::new(delta)),
             jobs: Arc::new(Mutex::new(jobs)),
             gate,
@@ -4553,6 +4560,89 @@ mod tests {
                 || detail.contains("campaign")
                 || detail.contains("run manifest"),
             "unexpected trace setup error: {detail}"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn llm_inspection_does_not_wait_for_an_active_controller_job() {
+        let root = tempdir().expect("test root");
+        let eval_home = root.path().join("eval-home");
+        let _env = env_guard_os(vec![("PLOKE_EVAL_HOME", OsString::from(&eval_home))]);
+        let repo = root.path().join("repo");
+        let campaign = CampaignId::from("walk-live-llm-inspection");
+        let parent = ParentIdentity::root_bootstrap(
+            campaign.clone(),
+            "node-root",
+            "instance-1",
+            "branch-1",
+            None,
+        );
+        write_parent_identity(&repo, &parent).expect("write parent identity");
+        let store = FsToolLoopStore::new(
+            eval_home
+                .join("campaigns")
+                .join(campaign.as_str())
+                .join("prototype1/debug/tool-loop"),
+        );
+        let mut session = ToolLoopSession::new("session-live", "headless-tui", repo.join("lane-a"));
+        session.lane_id = Some("lane-a".to_string());
+        store.write_session(&session).expect("write session");
+
+        let server = test_server(&repo, MutationGate::open());
+        let job = accepted(
+            server
+                .register_job(
+                    test_guard(10_005),
+                    b"step".to_vec(),
+                    test_step_intent(WalkPhase::R6),
+                )
+                .await
+                .expect("register active step"),
+        );
+        assert_eq!(job.status, WalkJobStatus::Running);
+        let _controller = server.controller.lock().await;
+
+        let (response, stop) = tokio::time::timeout(
+            Duration::from_millis(100),
+            server.handle(walk_request(WalkRequestBody::LlmLanes { verbose: true })),
+        )
+        .await
+        .expect("llm lanes must not wait for the controller lock");
+        assert!(!stop);
+        let WalkResponse::Ok {
+            result: WalkOkPayload::LlmLanes { report },
+            ..
+        } = response
+        else {
+            panic!("expected llm-lanes response");
+        };
+        assert!(report.contains("lane-a"));
+        assert!(report.contains("session-live"));
+
+        let (response, stop) = tokio::time::timeout(
+            Duration::from_millis(100),
+            server.handle(walk_request(WalkRequestBody::LlmShow {
+                session_id: Some("session-live".to_string()),
+                lane: None,
+                head: false,
+                step: None,
+            })),
+        )
+        .await
+        .expect("llm show must not wait for the controller lock");
+        assert!(!stop);
+        let WalkResponse::Ok {
+            result: WalkOkPayload::LlmShow { report },
+            ..
+        } = response
+        else {
+            panic!("expected llm-show response");
+        };
+        assert!(report.contains("session: session-live"));
+        assert!(report.contains("head: -"));
+        assert_eq!(
+            server.latest_job().await.map(|job| job.status),
+            Some(WalkJobStatus::Running)
         );
     }
 

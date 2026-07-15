@@ -107,10 +107,19 @@ pub(crate) struct WalkController {
     last_delta: Option<WalkAdvanceReport>,
     reconstruction: Option<WalkReconstruction>,
     replay: Option<ReplayCursor>,
-    llm_focus: Option<String>,
-    llm_cursors: BTreeMap<String, usize>,
 }
 // ANCHOR_END: prototype1_walk_controller
+
+/// In-memory navigation for persisted nested LLM/tool-loop evidence.
+///
+/// This state is deliberately separate from `WalkController`: reading or
+/// positioning durable debugger checkpoints must remain available while the
+/// typestate controller owns a long-running transition.
+pub(crate) struct LlmInspector {
+    repo_root: PathBuf,
+    focus: Option<String>,
+    cursors: BTreeMap<String, usize>,
+}
 
 /// Human-facing summary of one `walk step` request.
 #[derive(Clone)]
@@ -304,8 +313,6 @@ impl WalkController {
             last_delta: None,
             reconstruction: None,
             replay: None,
-            llm_focus: None,
-            llm_cursors: BTreeMap::new(),
         }
     }
 
@@ -374,6 +381,21 @@ impl WalkController {
             }
         }
     }
+}
+
+impl LlmInspector {
+    pub(crate) fn new(repo_root: PathBuf) -> Self {
+        Self {
+            repo_root,
+            focus: None,
+            cursors: BTreeMap::new(),
+        }
+    }
+
+    pub(crate) fn reset(&mut self) {
+        self.focus = None;
+        self.cursors.clear();
+    }
 
     /// Render known nested LLM/tool-loop fanout lanes without mutating the walk.
     pub(crate) fn llm_lanes_report(&self, verbose: bool) -> Result<String, PrepareError> {
@@ -382,10 +404,7 @@ impl WalkController {
         let mut lines = Vec::new();
         lines.push("llm fanout lanes".to_string());
         lines.push(format!("root: {}", store.root().display()));
-        lines.push(format!(
-            "focus: {}",
-            self.llm_focus.as_deref().unwrap_or("-")
-        ));
+        lines.push(format!("focus: {}", self.focus.as_deref().unwrap_or("-")));
         if lanes.is_empty() {
             lines.push("lanes: (none)".to_string());
             lines.push(
@@ -396,8 +415,8 @@ impl WalkController {
         }
         lines.push("lanes:".to_string());
         for lane in lanes {
-            let marker = if self.llm_focus.as_deref() == Some(lane.lane_id.as_str())
-                || self.llm_focus.as_deref() == Some(lane.session.session_id.as_str())
+            let marker = if self.focus.as_deref() == Some(lane.lane_id.as_str())
+                || self.focus.as_deref() == Some(lane.session.session_id.as_str())
             {
                 "*"
             } else {
@@ -407,7 +426,7 @@ impl WalkController {
                 "{marker} {} status={} cursor={} head={} next_step={} model={}",
                 lane.lane_id,
                 status_label(lane.session.status),
-                self.llm_cursors
+                self.cursors
                     .get(cursor_key(&lane))
                     .map(|value| value.to_string())
                     .unwrap_or_else(|| "-".to_string()),
@@ -441,9 +460,9 @@ impl WalkController {
         } else {
             lane_state.lane_id.clone()
         };
-        self.llm_focus = Some(focus_target);
+        self.focus = Some(focus_target);
         if let Some(head) = lane_state.head {
-            self.llm_cursors
+            self.cursors
                 .entry(cursor_key(&lane_state).to_string())
                 .or_insert(head);
         }
@@ -475,7 +494,7 @@ impl WalkController {
             Some(step) => Some(step),
             None if head => lane_state.head,
             None => self
-                .llm_cursors
+                .cursors
                 .get(cursor_key(&lane_state))
                 .copied()
                 .or(lane_state.head),
@@ -562,7 +581,7 @@ impl WalkController {
             Some(step) => Some(step),
             None if head => lane_state.head,
             None => self
-                .llm_cursors
+                .cursors
                 .get(cursor_key(&lane_state))
                 .copied()
                 .or(lane_state.head),
@@ -619,9 +638,9 @@ impl WalkController {
         store: &FsToolLoopStore,
         session_id: &str,
     ) -> Result<(), PrepareError> {
-        self.llm_focus = Some(session_id.to_string());
+        self.focus = Some(session_id.to_string());
         if let Some(head) = store.latest_step_index(session_id)? {
-            self.llm_cursors.insert(session_id.to_string(), head);
+            self.cursors.insert(session_id.to_string(), head);
         }
         Ok(())
     }
@@ -707,7 +726,7 @@ impl WalkController {
                 ),
             })?;
         let current = self
-            .llm_cursors
+            .cursors
             .get(cursor_key(&lane_state))
             .copied()
             .unwrap_or(head);
@@ -715,7 +734,7 @@ impl WalkController {
             LlmMove::Back => current.saturating_sub(steps),
             LlmMove::Forward => current.saturating_add(steps).min(head),
         };
-        self.llm_cursors
+        self.cursors
             .insert(cursor_key(&lane_state).to_string(), next);
         Ok(format!(
             "llm lane {} cursor={} head={}",
@@ -735,7 +754,7 @@ impl WalkController {
                     lane_state.lane_id
                 ),
             })?;
-        self.llm_cursors
+        self.cursors
             .insert(cursor_key(&lane_state).to_string(), head);
         Ok(format!(
             "llm lane {} cursor=head ({head})",
@@ -749,11 +768,7 @@ impl WalkController {
         lane: LlmLane,
     ) -> Result<String, PrepareError> {
         let indices = store.step_indices(&lane.session.session_id)?;
-        let current = self
-            .llm_cursors
-            .get(cursor_key(&lane))
-            .copied()
-            .or(lane.head);
+        let current = self.cursors.get(cursor_key(&lane)).copied().or(lane.head);
         let mut lines = Vec::new();
         lines.push("llm tool-loop timeline".to_string());
         lines.push(format!("store: {}", timeline_store_label(store.root())));
@@ -909,7 +924,7 @@ impl WalkController {
                 detail: format!("llm lane '{}' has no recorded steps", lane.lane_id),
             })?;
         let selected_step = step
-            .or_else(|| self.llm_cursors.get(cursor_key(lane)).copied())
+            .or_else(|| self.cursors.get(cursor_key(lane)).copied())
             .unwrap_or(head);
         match source {
             Prototype1StateWalkLlmStepSource::Historical => {
@@ -1050,7 +1065,7 @@ impl WalkController {
                 ),
             });
         }
-        let target = requested.or(self.llm_focus.as_deref());
+        let target = requested.or(self.focus.as_deref());
         if let Some(target) = target {
             if let Ok(session) = store.read_session(target) {
                 return self.lane_for_session(store, session);
@@ -1132,7 +1147,7 @@ impl WalkController {
         }
         lines.push(format!(
             "cursor: {}",
-            self.llm_cursors
+            self.cursors
                 .get(cursor_key(&lane))
                 .map(|value| value.to_string())
                 .unwrap_or_else(|| "-".to_string())
@@ -1373,7 +1388,9 @@ impl WalkController {
         lines.push("  walk llm tool --json".to_string());
         Ok(lines.join("\n"))
     }
+}
 
+impl WalkController {
     /// Render the last successful step delta, if any.
     pub(crate) fn delta_report(&self, style: DeltaRenderStyle) -> String {
         self.last_delta
@@ -1453,8 +1470,6 @@ impl WalkController {
         self.last_delta = None;
         self.reconstruction = None;
         self.replay = None;
-        self.llm_focus = None;
-        self.llm_cursors.clear();
         self.record(format!("reset: cleared in-memory walk from {previous}"));
         self.phase()
     }
@@ -1575,8 +1590,6 @@ impl WalkController {
         self.steps = 0;
         self.last_delta = None;
         self.replay = None;
-        self.llm_focus = None;
-        self.llm_cursors.clear();
         self.state = state;
         self.reconstruction = None;
         let reconstructed = claimed;
@@ -3702,7 +3715,7 @@ fn push_prompt_message(
 }
 
 fn render_llm_prompt_json(
-    controller: &WalkController,
+    inspector: &LlmInspector,
     lane: &LlmLane,
     step: usize,
     messages: &[ploke_tui::llm::RequestMessage],
@@ -3727,7 +3740,7 @@ fn render_llm_prompt_json(
         "session": lane.session.session_id,
         "step": step,
         "source": "persisted_checkpoint_request_messages",
-        "provenance": provenance_value(&controller.repo_root, &lane.session.workspace),
+        "provenance": provenance_value(&inspector.repo_root, &lane.session.workspace),
         "note": "provider request envelope and tool definitions are not persisted in this checkpoint record",
         "filters": {
             "role": role.map(role_label),
@@ -3876,7 +3889,7 @@ fn short_sha(commit: &str) -> String {
 }
 
 fn render_llm_tool_json(
-    controller: &WalkController,
+    inspector: &LlmInspector,
     lane: &LlmLane,
     step: Option<usize>,
     selected_call: Option<&ToolRequestRecord>,
@@ -3892,7 +3905,7 @@ fn render_llm_tool_json(
         "session": lane.session.session_id,
         "step": step,
         "tool": tool_name,
-        "provenance": provenance_value(&controller.repo_root, &lane.session.workspace),
+        "provenance": provenance_value(&inspector.repo_root, &lane.session.workspace),
         "definition_source": "current_renderer_checkout",
         "tool_definition": definition,
         "call_id": selected_call.map(|request| request.call_id.as_str()),
@@ -4901,10 +4914,10 @@ mod tests {
     #[test]
     fn llm_step_requires_explicit_workspace_mutation_gate() {
         let root = tempfile::tempdir().expect("tempdir");
-        let controller = WalkController::new(root.path().join("repo"));
+        let inspector = LlmInspector::new(root.path().join("repo"));
         let store = FsToolLoopStore::new(root.path().join("tool-loop"));
 
-        let result = controller.prepare_llm_step(
+        let result = inspector.prepare_llm_step(
             &store,
             &dummy_lane(),
             None,
@@ -4930,10 +4943,10 @@ mod tests {
     #[test]
     fn live_llm_step_requires_watch_gate() {
         let root = tempfile::tempdir().expect("tempdir");
-        let controller = WalkController::new(root.path().join("repo"));
+        let inspector = LlmInspector::new(root.path().join("repo"));
         let store = FsToolLoopStore::new(root.path().join("tool-loop"));
 
-        let result = controller.prepare_llm_step(
+        let result = inspector.prepare_llm_step(
             &store,
             &dummy_lane(),
             None,
@@ -5015,13 +5028,13 @@ mod tests {
         .expect("step");
         store.write_step(&step).expect("step file");
 
-        let mut controller = WalkController::new(tmp.path().join("repo"));
-        controller
+        let mut inspector = LlmInspector::new(tmp.path().join("repo"));
+        inspector
             .focus_llm_session_head(&store, "branched-session")
             .expect("focus branched session");
 
-        assert_eq!(controller.llm_focus.as_deref(), Some("branched-session"));
-        assert_eq!(controller.llm_cursors.get("branched-session"), Some(&3));
+        assert_eq!(inspector.focus.as_deref(), Some("branched-session"));
+        assert_eq!(inspector.cursors.get("branched-session"), Some(&3));
     }
 
     #[test]
@@ -5117,12 +5130,10 @@ mod tests {
             resume: None,
             head: Some(2),
         };
-        let mut controller = WalkController::new(tmp.path().join("repo"));
-        controller
-            .llm_cursors
-            .insert("session-timeline".to_string(), 1);
+        let mut inspector = LlmInspector::new(tmp.path().join("repo"));
+        inspector.cursors.insert("session-timeline".to_string(), 1);
 
-        let rendered = controller
+        let rendered = inspector
             .render_llm_timeline(&store, lane)
             .expect("timeline render");
 
@@ -5191,7 +5202,7 @@ mod tests {
             latency_ms: 0,
         }));
 
-        let rendered = WalkController::new(tmp.path().join("repo")).render_llm_checkpoint(
+        let rendered = LlmInspector::new(tmp.path().join("repo")).render_llm_checkpoint(
             &store,
             lane,
             Some((2, step)),
@@ -5236,9 +5247,9 @@ mod tests {
             WorkspaceState::default(),
         )
         .expect("step");
-        let controller = WalkController::new(tmp.path().join("repo"));
+        let inspector = LlmInspector::new(tmp.path().join("repo"));
 
-        let rendered = controller
+        let rendered = inspector
             .render_llm_prompt(lane.clone(), 0, step.clone(), None, None, false, false)
             .expect("human prompt render");
 
@@ -5251,7 +5262,7 @@ mod tests {
         assert!(rendered.contains("user task"));
         assert!(rendered.contains("walk llm prompt --step 0 --json"));
 
-        let json = controller
+        let json = inspector
             .render_llm_prompt(lane, 0, step, Some("user"), None, false, true)
             .expect("json prompt render");
         let value: serde_json::Value = serde_json::from_str(&json).expect("prompt json");
@@ -5356,9 +5367,9 @@ mod tests {
                 call_id: "call-read".to_string(),
             }],
         );
-        let controller = WalkController::new(tmp.path().join("repo"));
+        let inspector = LlmInspector::new(tmp.path().join("repo"));
 
-        let rendered = controller
+        let rendered = inspector
             .render_llm_protocol(&lane, &report, false)
             .expect("protocol render");
 
@@ -5369,7 +5380,7 @@ mod tests {
         assert!(rendered.contains("usefulness=key_progress/high"));
         assert!(rendered.contains("concerns=RecoveryOpportunity"));
 
-        let json = controller
+        let json = inspector
             .render_llm_protocol(&lane, &report, true)
             .expect("protocol json");
         let value: serde_json::Value = serde_json::from_str(&json).expect("protocol json value");
@@ -5430,8 +5441,8 @@ mod tests {
             arguments: ToolArgumentsJson::from(r#"{"dir":"crates/ploke-tree-browser"}"#),
         });
 
-        let controller = WalkController::new(tmp.path().join("repo"));
-        let rendered = controller
+        let inspector = LlmInspector::new(tmp.path().join("repo"));
+        let rendered = inspector
             .render_llm_tool(lane.clone(), Some((2, step.clone())), None, None, false)
             .expect("human tool render");
 
@@ -5445,7 +5456,7 @@ mod tests {
         assert!(rendered.contains("parameters:"));
         assert!(rendered.contains("dir: string required"));
 
-        let json = controller
+        let json = inspector
             .render_llm_tool(lane, Some((2, step)), None, None, true)
             .expect("json tool render");
         let value: serde_json::Value = serde_json::from_str(&json).expect("tool json");
@@ -5495,7 +5506,7 @@ mod tests {
                 latency_ms: 0,
             }));
 
-        let rendered = WalkController::new(tmp.path().join("repo")).render_llm_checkpoint(
+        let rendered = LlmInspector::new(tmp.path().join("repo")).render_llm_checkpoint(
             &store,
             lane,
             Some((11, step)),
@@ -5665,7 +5676,7 @@ mod tests {
         resume.next_step = 1;
         store.write_resume(&resume).expect("write resume");
 
-        let report = WalkController::new(repo)
+        let report = LlmInspector::new(repo)
             .llm_report(None, None, false, None)
             .expect("llm report");
 
@@ -5722,38 +5733,38 @@ mod tests {
         resume.next_step = 3;
         store.write_resume(&resume).expect("write resume");
 
-        let mut controller = WalkController::new(repo);
-        let lanes = controller.llm_lanes_report(false).expect("lanes");
+        let mut inspector = LlmInspector::new(repo);
+        let lanes = inspector.llm_lanes_report(false).expect("lanes");
         assert!(lanes.contains("lane-a status=paused cursor=- head=2 next_step=3"));
 
-        let focus = controller.llm_focus("lane-a".to_string()).expect("focus");
+        let focus = inspector.llm_focus("lane-a".to_string()).expect("focus");
         assert!(focus.contains("focused llm lane lane-a"));
 
-        let moved = controller
+        let moved = inspector
             .llm_move(Some("lane-a"), 1, LlmMove::Back)
             .expect("back");
         assert!(moved.contains("cursor=1 head=2"));
-        let report = controller
+        let report = inspector
             .llm_report(None, None, false, None)
             .expect("cursor report");
         assert!(report.contains("cursor: 1"));
         assert!(report.contains("step: 1"));
 
-        controller
+        inspector
             .llm_move(Some("lane-a"), 1, LlmMove::Forward)
             .expect("forward");
-        let report = controller
+        let report = inspector
             .llm_report(None, Some("lane-a"), false, None)
             .expect("forward report");
         assert!(report.contains("cursor: 2"));
         assert!(report.contains("step: 2"));
 
-        controller
+        inspector
             .llm_move(Some("lane-a"), 1, LlmMove::Back)
             .expect("back again");
-        let head = controller.llm_head(Some("lane-a")).expect("head");
+        let head = inspector.llm_head(Some("lane-a")).expect("head");
         assert!(head.contains("cursor=head (2)"));
-        let report = controller
+        let report = inspector
             .llm_report(None, Some("lane-a"), true, None)
             .expect("head report");
         assert!(report.contains("cursor: 2"));
