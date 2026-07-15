@@ -1473,6 +1473,7 @@ async fn proof_context_collection_preserves_axum_layer_dynamic_callable_candidat
         },
     ];
 
+    let expected_candidates = axum_layer_dynamic_candidate_ids(&db)?;
     let mut owners = Vec::new();
     for case in cases {
         let owner = method_id_by_name_and_body(&db, case.method, case.body)?;
@@ -1520,8 +1521,8 @@ async fn proof_context_collection_preserves_axum_layer_dynamic_callable_candidat
         let call = matching[0];
         assert_eq!(
             call.targets.len(),
-            2,
-            "{} should preserve both reviewed dynamic layer closure candidates: {call:#?}",
+            expected_candidates.len(),
+            "{} should preserve every reviewed dynamic layer closure candidate: {call:#?}",
             case.label
         );
         assert!(
@@ -1529,6 +1530,17 @@ async fn proof_context_collection_preserves_axum_layer_dynamic_callable_candidat
                 .iter()
                 .all(|target| target.relation == CallTargetKind::DynamicClosure),
             "{} should expose only dynamic-closure candidates: {call:#?}",
+            case.label
+        );
+        let mut actual_targets = call
+            .targets
+            .iter()
+            .map(|target| target.target_id)
+            .collect::<Vec<_>>();
+        actual_targets.sort_unstable();
+        assert_eq!(
+            actual_targets, expected_candidates,
+            "{} call context should preserve the reviewed dynamic layer candidates",
             case.label
         );
 
@@ -1543,9 +1555,9 @@ async fn proof_context_collection_preserves_axum_layer_dynamic_callable_candidat
         //   axum/src/boxed.rs:159 calls `(self.layer)(self.inner.into_route(state))`.
         //   axum/src/boxed.rs:163 calls
         //   `(self.layer)(self.inner.into_route(state)).call(request)`.
-        //   The visible closure candidates come from `MethodRouter::layer`
-        //   and `MethodRouter::route_layer`; the `Router::layer` macro-input
-        //   closure remains outside this proof bucket.
+        //   The visible closure candidates come from `MethodRouter::layer`,
+        //   `MethodRouter::route_layer`, and the transparent `Router::layer`
+        //   source expression `|route| route.layer(layer)`.
         // Expected proof traversal: proof context exposes the ambiguous
         // call_resolution row and candidate ids, while preserving zero
         // admitted local traversal edges for the dynamic layer field call.
@@ -1575,8 +1587,20 @@ async fn proof_context_collection_preserves_axum_layer_dynamic_callable_candidat
             });
         assert_eq!(
             resolution.candidate_def_ids.len(),
-            2,
-            "{} ambiguous proof row should preserve both candidates",
+            expected_candidates.len(),
+            "{} ambiguous proof row should preserve every candidate",
+            case.label
+        );
+        let mut actual = resolution.candidate_def_ids.clone();
+        actual.sort();
+        let mut expected = expected_candidates
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        expected.sort();
+        assert_eq!(
+            actual, expected,
+            "{} ambiguous proof row should preserve exact candidate IDs",
             case.label
         );
         assert!(
@@ -1589,4 +1613,31 @@ async fn proof_context_collection_preserves_axum_layer_dynamic_callable_candidat
     }
 
     Ok(())
+}
+
+fn axum_layer_dynamic_candidate_ids(db: &Database) -> Result<Vec<Uuid>, Error> {
+    let method_router_layer = method_id_by_name_and_body(
+        db,
+        "layer",
+        "let layer_fn = move |route: Route<E>| route.layer(layer.clone());",
+    )?;
+    let method_router_route_layer = method_id_by_name_and_body(
+        db,
+        "route_layer",
+        "let layer_fn = move |svc| Route::new(layer.layer(svc));",
+    )?;
+    let router_layer = method_id_by_file(
+        db,
+        "layer",
+        "catch_all_fallback: this.catch_all_fallback.map(|route| route.layer(layer))",
+        "axum/src/routing/mod.rs",
+    )?;
+
+    let mut ids = vec![
+        closure_owner_for_method_parent(db, method_router_layer)?,
+        closure_owner_for_method_parent(db, method_router_route_layer)?,
+        closure_owner_for_method_parent(db, router_layer)?,
+    ];
+    ids.sort_unstable();
+    Ok(ids)
 }

@@ -312,6 +312,21 @@ Forwarded returned-closure checkpoint, updated 2026-07-14:
 | External summary/source-sink policy | External frontiers, effect seeds, effect policies, runtime summaries, and proof blockers exist for current usage questions. | A concrete usage question requires a new summary or source/sink fact that cannot be answered from current frontier/effect data. | Proof-store validation plus one DB/RAG/TUI query that consumes the new fact. |
 | Presentation/prompt policy | RAG prompts and context-plan overlays expose path, proof, and blocker policy for current tools. The shared matrix now distinguishes bounded prompt collection from exact lookup coverage, and the chrono `queue.is_empty` long-owner row has focused exact TUI coverage while bounded RAG remains intentionally capped. | A user-facing tool payload lacks a field already available in DB/RAG, or current copy risks treating blockers as edges. | Exact TUI test over existing DB/RAG data; no parser change. |
 
+Object/field candidate audit, 2026-07-15:
+
+- Rechecked the first remaining object/field bucket before adding more
+  resolver breadth. DB, RAG call-context, and exact TUI coverage already
+  preserve the three reviewed `axum` `self.layer` `DynamicClosure` candidates
+  and keep them candidate-only with zero admitted local traversal edges.
+- The only stale gap found was RAG proof-context still documenting/asserting
+  two `self.layer` candidates. It now derives and asserts the same three
+  source-visible candidates as DB/RAG call-context/TUI:
+  `MethodRouter::layer`, `MethodRouter::route_layer`, and the transparent
+  `Router::layer` source expression `|route| route.layer(layer)`.
+- This is a proof-context alignment only. `self.layer` remains ambiguous,
+  router-side `self.into_route` and `self.tap_fn` remain unsupported/targetless
+  without callable-field value-flow proof, and no traversal edge was promoted.
+
 ## Do Not Reselect Without New Evidence
 
 - Public callable parameters and public callable fields that lack complete
