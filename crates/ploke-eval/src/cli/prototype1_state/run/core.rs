@@ -7,7 +7,8 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use ploke_records::ids::CampaignId;
+use ploke_llm::ModelId;
+use ploke_records::{agent_turn::ModelRouteRecord, ids::CampaignId};
 use serde::{Deserialize, Serialize};
 use tokio::task::JoinSet;
 
@@ -219,6 +220,10 @@ pub(crate) enum EmbeddingFailureClass {
 pub(crate) struct HeadlessTuiSetupPreflight {
     pub(crate) outcome: HeadlessTuiSetupPreflightOutcome,
     pub(crate) workspace: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) model: Option<ModelId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) route: Option<ModelRouteRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) phase: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -472,6 +477,18 @@ fn render_status(
                     headless_tui_setup_preflight_label(preflight.outcome),
                     preflight.workspace.display()
                 );
+                if let Some(model) = preflight.model.as_ref() {
+                    println!("  parent_patcher_model: {model}");
+                }
+                if let Some(route) = preflight.route.as_ref() {
+                    println!(
+                        "  parent_patcher_route: source={} router={} provider={} endpoint={}",
+                        route.route_source,
+                        route.router,
+                        route.provider_slug.as_deref().unwrap_or("<route-default>"),
+                        route.endpoint_host.as_deref().unwrap_or("<unknown>")
+                    );
+                }
                 if let Some(phase) = preflight.phase.as_deref() {
                     println!("  phase: {phase}");
                 }
@@ -891,6 +908,8 @@ async fn run_headless_tui_setup_preflight(context: &RuntimeContext) -> HeadlessT
         return HeadlessTuiSetupPreflight {
             outcome: HeadlessTuiSetupPreflightOutcome::Skipped,
             workspace,
+            model: None,
+            route: None,
             phase: None,
             detail: Some(
                 "run profile does not use broad-harness headless TUI generation".to_string(),
@@ -898,28 +917,52 @@ async fn run_headless_tui_setup_preflight(context: &RuntimeContext) -> HeadlessT
         };
     }
 
+    let selection = match crate::cli::provider::load_parent_patcher_model_selection() {
+        Ok(selection) => selection,
+        Err(error) => {
+            return HeadlessTuiSetupPreflight {
+                outcome: HeadlessTuiSetupPreflightOutcome::Failed,
+                workspace,
+                model: None,
+                route: None,
+                phase: Some("parent_patcher_model".to_string()),
+                detail: Some(error.to_string()),
+            };
+        }
+    };
+    let model = Some(selection.model_id().clone());
+    let route = Some(selection.model_route_record());
+
     match crate::runner::setup_workspace_tui_runtime_with_read_roots(&workspace, &[]).await {
         Ok(_runtime) => HeadlessTuiSetupPreflight {
             outcome: HeadlessTuiSetupPreflightOutcome::Passed,
             workspace,
+            model,
+            route,
             phase: None,
             detail: None,
         },
         Err(PrepareError::DatabaseSetup { phase, detail }) => HeadlessTuiSetupPreflight {
             outcome: HeadlessTuiSetupPreflightOutcome::Failed,
             workspace,
+            model,
+            route,
             phase: Some(phase.to_string()),
             detail: Some(detail),
         },
         Err(PrepareError::Timeout { phase, secs }) => HeadlessTuiSetupPreflight {
             outcome: HeadlessTuiSetupPreflightOutcome::Failed,
             workspace,
+            model,
+            route,
             phase: Some(phase.to_string()),
             detail: Some(format!("timed out after {secs} seconds")),
         },
         Err(error) => HeadlessTuiSetupPreflight {
             outcome: HeadlessTuiSetupPreflightOutcome::Failed,
             workspace,
+            model,
+            route,
             phase: Some("headless_tui_setup".to_string()),
             detail: Some(error.to_string()),
         },
@@ -3199,8 +3242,8 @@ mod tests {
         parent_identity_commit_message, write_parent_identity,
     };
     use crate::cli::prototype1_state::profile::{
-        Control, Execution, Generation, ModelDefaults, Protocol, Prototype1RunProfile, RunMode,
-        Search, Selection, Storage, Target,
+        Control, Execution, Generation, GenerationSource, ModelDefaults, Protocol,
+        Prototype1RunProfile, RunMode, Search, Selection, Storage, Target,
     };
     use crate::intervention::Prototype1ChildScheduleMode;
     use crate::target_registry::RegistryDatasetSource;
@@ -3711,6 +3754,48 @@ mod tests {
         );
     }
 
+    fn seed_parent_patcher() {
+        let registry: crate::model_registry::ModelRegistry =
+            serde_json::from_value(serde_json::json!({
+                "data": [{
+                    "id": "google/gemini-3.5-flash",
+                    "name": "gemini-3.5-flash",
+                    "created": 0,
+                    "description": "Direct Google test row",
+                    "architecture": {
+                        "input_modalities": ["text"],
+                        "modality": "text->text",
+                        "output_modalities": ["text"],
+                        "tokenizer": "Gemini"
+                    },
+                    "top_provider": {
+                        "is_moderated": false,
+                        "context_length": null,
+                        "max_completion_tokens": null
+                    },
+                    "pricing": {
+                        "prompt": 0.0,
+                        "completion": 0.0
+                    },
+                    "canonical_slug": "google/gemini-3.5-flash",
+                    "context_length": 1048576,
+                    "hugging_face_id": null,
+                    "per_request_limits": null,
+                    "supported_parameters": ["tools"],
+                    "route_source": "direct_google"
+                }]
+            }))
+            .expect("deserialize model registry");
+        crate::model_registry::save_model_registry(&registry).expect("save model registry");
+
+        let model: ModelId = "google/gemini-3.5-flash".parse().expect("model id");
+        crate::model_registry::save_parent_patcher_model(&model)
+            .expect("save parent patcher model");
+        let provider = ploke_llm::ProviderKey::new("google-ai-studio").expect("provider key");
+        crate::provider_prefs::set_provider_for_model(&model, provider)
+            .expect("save stale OpenRouter preference");
+    }
+
     #[tokio::test]
     async fn prototype1_doctor_headless_setup_preflight_blocks_on_rag_unavailable() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -3722,6 +3807,7 @@ mod tests {
                 OsString::from("1"),
             ),
         ]);
+        seed_parent_patcher();
         let world = ChildPlanWorld::mint_at_child_plan_phase(&eval_home);
         write_parent_workspace_fixture(&world.repo_root);
         let context = resolve_context(Some(&world.repo_root)).expect("context");
@@ -3742,6 +3828,22 @@ mod tests {
                 .is_some_and(|detail| detail.contains("RAG service is unavailable")),
             "detail should preserve the typed RAG/BM25 setup failure: {preflight:?}"
         );
+        assert_eq!(
+            preflight.model.as_ref().map(ToString::to_string).as_deref(),
+            Some("google/gemini-3.5-flash")
+        );
+        let route = preflight.route.as_ref().expect("resolved model route");
+        assert_eq!(route.route_source, "direct_google");
+        assert_eq!(route.router, "google");
+        assert!(route.provider_slug.is_none());
+        assert_eq!(
+            route.endpoint_host.as_deref(),
+            Some("aiplatform.googleapis.com")
+        );
+        let json = serde_json::to_value(preflight).expect("serialize preflight report");
+        assert_eq!(json["model"], "google/gemini-3.5-flash");
+        assert_eq!(json["route"]["route_source"], "direct_google");
+        assert_eq!(json["route"]["router"], "google");
         assert_eq!(status.phase, DiagnosedPhase::Blocked);
         assert!(
             status.blockers.iter().any(|blocker| {
@@ -3750,6 +3852,77 @@ mod tests {
             }),
             "doctor should surface the setup blocker: {:?}",
             status.blockers
+        );
+    }
+
+    #[tokio::test]
+    async fn headless_preflight_blocks_before_runtime_when_selection_is_missing() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let eval_home = temp.path().join("eval-home");
+        let _env = crate::test_support::env_guard_os(vec![
+            ("PLOKE_EVAL_HOME", eval_home.clone().into_os_string()),
+            (
+                "PLOKE_EVAL_FORCE_HEADLESS_TUI_RAG_UNAVAILABLE",
+                OsString::from("1"),
+            ),
+        ]);
+        let world = ChildPlanWorld::mint_at_child_plan_phase(&eval_home);
+        let context = resolve_context(Some(&world.repo_root)).expect("context");
+        let mut status = into_status(diagnose(&context).expect("diagnosis"));
+
+        attach_headless_tui_setup_preflight(&context, &mut status).await;
+
+        let preflight = status
+            .headless_tui_setup_preflight
+            .as_ref()
+            .expect("preflight report attached");
+        assert_eq!(preflight.outcome, HeadlessTuiSetupPreflightOutcome::Failed);
+        assert_eq!(preflight.phase.as_deref(), Some("parent_patcher_model"));
+        assert!(preflight.model.is_none());
+        assert!(preflight.route.is_none());
+        assert!(
+            preflight
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("active model file")),
+            "missing dedicated and fallback selections should remain explicit: {preflight:?}"
+        );
+        assert_eq!(status.phase, DiagnosedPhase::Blocked);
+        assert!(
+            status.blockers.iter().any(|blocker| {
+                blocker.contains("failed during 'parent_patcher_model'")
+                    && blocker.contains("active model file")
+            }),
+            "doctor should block before headless runtime setup: {:?}",
+            status.blockers
+        );
+    }
+
+    #[tokio::test]
+    async fn headless_preflight_skips_non_broad_without_model_configuration() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let eval_home = temp.path().join("eval-home");
+        let _env = crate::test_support::env_guard_os(vec![(
+            "PLOKE_EVAL_HOME",
+            eval_home.clone().into_os_string(),
+        )]);
+        let world =
+            ChildPlanWorld::mint_at_child_plan_phase_with_profile(&eval_home, 2, 3, |profile| {
+                profile.generation.source = GenerationSource::DeterministicTuiTools
+            });
+        let context = resolve_context(Some(&world.repo_root)).expect("context");
+
+        let preflight = run_headless_tui_setup_preflight(&context).await;
+
+        assert_eq!(preflight.outcome, HeadlessTuiSetupPreflightOutcome::Skipped);
+        assert!(preflight.model.is_none());
+        assert!(preflight.route.is_none());
+        assert_eq!(preflight.phase, None);
+        assert!(
+            preflight
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("does not use broad-harness"))
         );
     }
 
