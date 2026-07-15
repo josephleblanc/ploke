@@ -68,6 +68,10 @@ pub(crate) use real_corpus_remaining::*;
 mod targetless;
 pub(crate) use targetless::*;
 
+#[path = "call_graph_tool_support/ifunc.rs"]
+mod ifunc;
+pub(crate) use ifunc::*;
+
 #[path = "call_graph_tool_support/shared_matrix.rs"]
 mod shared_matrix;
 pub(crate) use shared_matrix::*;
@@ -1618,6 +1622,60 @@ file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_f
 
     TargetInfo {
         id: to_uuid(&row[0]).unwrap_or_else(|err| panic!("{name} uuid: {err}")),
+        file_path: PathBuf::from(data_str(&row[1], "file_path")),
+        module_path: data_path(&row[2], "module path"),
+    }
+}
+
+fn function_target_by_name_in_module(
+    db: &Database,
+    module_path: &[&str],
+    name: &str,
+    label: &str,
+) -> TargetInfo {
+    let mut params = BTreeMap::new();
+    params.insert("name".to_string(), DataValue::from(name));
+    params.insert(
+        "module_path".to_string(),
+        DataValue::List(
+            module_path
+                .iter()
+                .map(|part| DataValue::from(*part))
+                .collect(),
+        ),
+    );
+
+    let script = format!(
+        r#"
+ancestor[desc, desc] := *module{{ id: desc @ 'NOW' }}
+{ANCESTOR_RULES_NOW}
+
+module_has_file[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_id] := module_has_file[mod_id], file_id = mod_id
+file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_file[parent], file_id = parent
+
+?[id, file_path, mod_path] :=
+    *function {{ id, name: $name, module_id @ 'NOW' }},
+    *module{{ id: module_id, path: mod_path @ 'NOW' }},
+    mod_path == $module_path,
+    file_owner_for_module[module_id, file_id],
+    *file_mod{{ owner_id: file_id, file_path @ 'NOW' }}
+"#
+    );
+    let rows = db
+        .raw_query_params(&script, params)
+        .unwrap_or_else(|err| panic!("query function {label}: {err}"));
+    let matching = rows.rows.iter().collect::<Vec<_>>();
+    assert_eq!(
+        matching.len(),
+        1,
+        "expected exactly one function target for {label}; rows: {:#?}",
+        rows.rows
+    );
+    let row = matching[0];
+
+    TargetInfo {
+        id: to_uuid(&row[0]).unwrap_or_else(|err| panic!("{label} uuid: {err}")),
         file_path: PathBuf::from(data_str(&row[1], "file_path")),
         module_path: data_path(&row[2], "module path"),
     }

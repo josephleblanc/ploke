@@ -243,40 +243,7 @@ fn function_by_name_in_module(
     name: &str,
     label: &str,
 ) -> TargetInfo {
-    let mut params = BTreeMap::new();
-    params.insert("name".to_string(), DataValue::from(name));
-    params.insert(
-        "module_path".to_string(),
-        DataValue::List(
-            module_path
-                .iter()
-                .map(|part| DataValue::from(*part))
-                .collect(),
-        ),
-    );
-
-    let script = format!(
-        r#"
-ancestor[desc, desc] := *module{{ id: desc @ 'NOW' }}
-{ANCESTOR_RULES_NOW}
-
-module_has_file[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
-file_owner_for_module[mod_id, file_id] := module_has_file[mod_id], file_id = mod_id
-file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_file[parent], file_id = parent
-
-?[id, file_path, mod_path] :=
-    *function {{ id, name: $name, module_id @ 'NOW' }},
-    *module{{ id: module_id, path: mod_path @ 'NOW' }},
-    mod_path == $module_path,
-    file_owner_for_module[module_id, file_id],
-    *file_mod{{ owner_id: file_id, file_path @ 'NOW' }}
-"#
-    );
-    one_target_info(
-        db.raw_query_params(&script, params)
-            .unwrap_or_else(|err| panic!("query function {label}: {err}")),
-        label,
-    )
+    super::super::function_target_by_name_in_module(db, module_path, name, label)
 }
 
 fn method_by_name_and_body(

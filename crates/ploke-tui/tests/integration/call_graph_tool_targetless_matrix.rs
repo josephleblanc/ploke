@@ -13,13 +13,14 @@ use uuid::Uuid;
 
 use crate::call_graph_tool_support::{
     AmbiguousDynamicToolCase, AmbiguousDynamicToolFixture, DynamicToolCase, DynamicToolFixture,
-    PathToolCase, PathToolFixture, ReceiverToolCase, ReceiverToolFixture,
-    assert_admitted_external_summary_effect, assert_admitted_external_summary_proof,
-    assert_admitted_macro_boundary_summary_proof, assert_ambiguous_candidate_proof,
-    assert_ambiguous_dynamic_candidates_with_relation, assert_dynamic_context,
-    assert_dynamic_proof, assert_method_context, assert_method_proof, assert_path_blocker_proof,
-    assert_path_context, assert_path_context_absent, assert_path_context_count,
-    assert_path_resolution_proof, assert_resolved_method_context, assert_resolved_method_proof,
+    IfuncToolCase, IfuncToolFixture, PathToolCase, PathToolFixture, ReceiverToolCase,
+    ReceiverToolFixture, assert_admitted_external_summary_effect,
+    assert_admitted_external_summary_proof, assert_admitted_macro_boundary_summary_proof,
+    assert_ambiguous_candidate_proof, assert_ambiguous_dynamic_candidates_with_relation,
+    assert_dynamic_context, assert_dynamic_proof, assert_ifunc_context, assert_ifunc_proof,
+    assert_method_context, assert_method_proof, assert_path_blocker_proof, assert_path_context,
+    assert_path_context_absent, assert_path_context_count, assert_path_resolution_proof,
+    assert_resolved_method_context, assert_resolved_method_proof,
     assert_resolved_path_context_count, assert_resolved_path_context_target,
     assert_resolved_path_proof, assert_runtime_dispatch_blocker, request_parts_extract_target,
     ui_field,
@@ -984,6 +985,84 @@ async fn code_item_lookup_returns_memchr_callable_trait_object_path_rows() {
                 .expect("proof count")
                 >= 2,
             "code_item_lookup should surface callable trait-object proof rows for {}",
+            fixture.case.label
+        );
+    }
+}
+
+#[tokio::test]
+async fn code_item_lookup_returns_memchr_ifunc_generated_transmute_frontiers() {
+    for case in IfuncToolCase::MEMCHR {
+        let fixture = IfuncToolFixture::new(case).await;
+        let params = LookupParams {
+            item_name: Cow::Borrowed(case.item),
+            file_path: Cow::Owned(fixture.file_path.display().to_string()),
+            node_kind: Cow::Borrowed("function"),
+            module_path: Cow::Owned(fixture.module_path_arg()),
+            owner_trait: None,
+            owner_type: None,
+            parent_name: None,
+            allowed_effects: Vec::new(),
+        };
+
+        let result = CodeItemLookup::execute(params, fixture.ctx("memchr-ifunc-lookup"))
+            .await
+            .unwrap_or_else(|err| panic!("{} code_item_lookup: {err}", fixture.case.label));
+        let payload: serde_json::Value =
+            serde_json::from_str(&result.content).expect("deserialize ConciseContext");
+        let call_context = payload
+            .get("call_context")
+            .and_then(serde_json::Value::as_array)
+            .expect("call_context array");
+        let proof_context = payload
+            .get("proof_context")
+            .and_then(serde_json::Value::as_array)
+            .expect("proof_context array");
+
+        // Matrix:
+        //   docs/active/agents/call-graph/
+        //   2026-06-28_real-corpus-call-site-oracle-matrices.md
+        //
+        // Source chain:
+        //   memchr/src/arch/x86_64/memchr.rs:153 generates
+        //   `core::mem::transmute::<Fn, RealFn>(fun)(...)`.
+        //   The `unsafe_ifunc!` instantiations at :180, :203, :227, :252,
+        //   :278, :305, and :326 expand that arbitrary-expression callee.
+        // Expected traversal: exact owner lookup exposes both generated
+        // frontiers, the inner external path row and the outer external
+        // returned-path dynamic row, without fabricating a function-pointer
+        // target or local traversal edge.
+        let sites = assert_ifunc_context(
+            call_context,
+            fixture.owner,
+            fixture.case.expected_arg_count,
+            fixture.case.label,
+            "lookup",
+        );
+        assert_ifunc_proof(
+            proof_context,
+            fixture.owner,
+            sites,
+            fixture.case.build_domain(),
+            fixture.case.label,
+            "lookup",
+        );
+
+        let ui = result.ui_payload.as_ref().expect("ui payload");
+        assert!(
+            ui_field(ui, "call_context_outgoing")
+                .parse::<usize>()
+                .expect("outgoing count")
+                >= 2,
+            "code_item_lookup should surface both generated ifunc frontier rows for {}",
+            fixture.case.label
+        );
+        assert!(
+            ui_field(ui, "proof_context")
+                .parse::<usize>()
+                .expect("proof count")
+                >= 4,
+            "code_item_lookup should surface generated ifunc proof rows for {}",
             fixture.case.label
         );
     }
@@ -2122,6 +2201,69 @@ async fn code_item_edges_returns_memchr_callable_trait_object_path_rows() {
                 .expect("outgoing count")
                 >= 1,
             "code_item_edges should surface outgoing callable trait-object path context for {}",
+            fixture.case.label
+        );
+        let proof_count = proof_context.len().to_string();
+        assert_eq!(ui_field(ui, "proof_context"), proof_count.as_str());
+    }
+}
+
+#[tokio::test]
+async fn code_item_edges_returns_memchr_ifunc_generated_transmute_frontiers() {
+    for case in IfuncToolCase::MEMCHR {
+        let fixture = IfuncToolFixture::new(case).await;
+        let params = EdgesParams {
+            item_name: Cow::Borrowed(case.item),
+            file_path: Cow::Owned(fixture.file_path.display().to_string()),
+            node_kind: Cow::Borrowed("function"),
+            module_path: Cow::Owned(fixture.module_path_arg()),
+            owner_trait: None,
+            owner_type: None,
+            parent_name: None,
+            allowed_effects: Vec::new(),
+        };
+
+        let result = CodeItemEdges::execute(params, fixture.ctx("memchr-ifunc-edges"))
+            .await
+            .unwrap_or_else(|err| panic!("{} code_item_edges: {err}", fixture.case.label));
+        let payload: serde_json::Value =
+            serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
+        let call_context = payload
+            .get("node_info")
+            .and_then(|node| node.get("call_context"))
+            .and_then(serde_json::Value::as_array)
+            .expect("node_info.call_context array");
+        let proof_context = payload
+            .get("node_info")
+            .and_then(|node| node.get("proof_context"))
+            .and_then(serde_json::Value::as_array)
+            .expect("node_info.proof_context array");
+
+        // Same generated `unsafe_ifunc!` source oracle as the lookup test
+        // above, exercised through the edge-oriented exact tool payload.
+        let sites = assert_ifunc_context(
+            call_context,
+            fixture.owner,
+            fixture.case.expected_arg_count,
+            fixture.case.label,
+            "edges",
+        );
+        assert_ifunc_proof(
+            proof_context,
+            fixture.owner,
+            sites,
+            fixture.case.build_domain(),
+            fixture.case.label,
+            "edges",
+        );
+
+        let ui = result.ui_payload.as_ref().expect("ui payload");
+        assert!(
+            ui_field(ui, "call_context_outgoing")
+                .parse::<usize>()
+                .expect("outgoing count")
+                >= 2,
+            "code_item_edges should surface both generated ifunc frontier rows for {}",
             fixture.case.label
         );
         let proof_count = proof_context.len().to_string();

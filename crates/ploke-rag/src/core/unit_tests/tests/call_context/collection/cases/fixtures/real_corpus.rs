@@ -13,6 +13,7 @@ use serde_json::json;
 use super::super::super::super::super::*;
 use super::expected::path;
 
+mod ifunc;
 mod remaining;
 mod shared_matrix;
 mod targetless;
