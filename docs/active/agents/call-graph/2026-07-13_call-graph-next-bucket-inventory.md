@@ -59,6 +59,14 @@ Current completed checkpoint:
   earlier dynamic call result is polled. This adds owner/source
   `local_binding_edge` evidence only; it does not model non-local future flow
   or add a new traversal edge.
+- The latest source-function binding slices add typed
+  `BindingSourceFunction ⊆ LocalBindingId × FunctionNodeId` edges for exact
+  initialized path bindings and exact constructed field/index projection
+  bindings. They are derived only from existing resolved `Function` or
+  `DynamicFunction` call relations plus unique persisted binding evidence, so
+  they explain already-admitted edges without adding source-path lookup,
+  general object value-flow, public parameter-field inference, or new traversal
+  semantics.
 - The latest returned-future query slice exposes the forwarded returned async
   future source oracle as `returned_future_flows` through DB, exact RAG, and
   exact TUI tool payloads. It identifies the awaiting caller's producer path
@@ -270,6 +278,9 @@ Forwarded returned-closure checkpoint, updated 2026-07-14:
   same-block tracker.
 - More returned async closure variants unless they introduce stored/forwarded
   future value flow or a new explicit blocker.
+- More same-family `BindingSourceFunction` variants unless they introduce a
+  new typed proof carrier or a real-corpus source oracle that cannot be
+  explained by the existing initialized-path/projection edges.
 - Axum `self.tap_fn` or router-side `self.into_route` as resolved edges unless
   the new implementation proves complete callable field value flow.
 - External frontier rows as traversal edges unless a trusted external summary
