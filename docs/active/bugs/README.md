@@ -182,3 +182,11 @@ file and current code before treating a report as still open.
   Source repaired, live revalidation pending: C3 now retains explicit child
   process ownership through Ready acknowledgement, reaps normal exits, and
   kills plus waits pre-ack timeout/error paths.
+- [`2026-07-15-prototype1-parallel-trace-capture-cross-talk.md`](./2026-07-15-prototype1-parallel-trace-capture-cross-talk.md)
+  Fixed and live verified: three parallel broad attempts now carry exact
+  session-owned response/debug capture with ordered 46/46, 9/9, and 39/39
+  debug-to-tape joins and no cross-lane response-ID overlap.
+- [`2026-07-15-prototype1-timeout-cancellation-drops-trace-evidence.md`](./2026-07-15-prototype1-timeout-cancellation-drops-trace-evidence.md)
+  Source repaired: timeout cancellation preserves the caller's partial
+  headless run and drains response capture to disconnection; live failure-path
+  persistence is verified, while a post-repair outer-timeout canary remains.

@@ -4,8 +4,8 @@
 - Baseline: `de76eaee34e6f4c4c3a19543c4cf91b217aa3bb9`
 - Status: active implementation; Stages 0-4 and the first Stage 5 sealed-trace
   slice are checkpointed; a fresh CLI-only stepped run is live-verified through
-  generation-1 R4c handoff; live/in-flight UI inspection and UI/mixed-client
-  control remain unproven
+  generation-1 R4c handoff; parallel trace capture is live-verified;
+  live/in-flight UI inspection and UI/mixed-client control remain unproven
 
 ## Implementation progress
 
@@ -221,10 +221,31 @@
   claim R14b, continuous mode, UI-only control, or mixed-client control.
 - The same canary exposed two separate follow-ups. Child process ownership and
   reaping is source-repaired in `7b862e4e9` with production-path and lifecycle
-  regressions, but still needs fresh live validation. Parallel broad sessions
-  still share singleton debug-response sinks that misattribute session
-  provenance. These are lifecycle and observability defects, respectively;
-  neither is part of the now-validated successor receipt-drain incident.
+  regressions, but still needs fresh live validation. Parallel broad trace
+  ownership is fixed in `dc5868b66` and live verified with the `24f18e1cd`
+  binary: explicit session capture follows
+  `Attempt -> AttemptDriver -> runtime -> LlmRequestArgs -> ChatSession`, the
+  live lanes retain exact debug/response identity through terminal persistence,
+  and no response crosses a lane. The companion `24f18e1cd` cancellation repair
+  keeps the caller's partial `HeadlessRun` and drains capture to sender
+  disconnection; that path is source/test verified, with a post-repair
+  outer-timeout live canary still pending.
+- The accepted Direct Google r16-r18 sweep joined debug steps to response tapes
+  exactly 46/46, 9/9, and 39/39, with contiguous indexes, matching assistant
+  identities, exact lane/workspace manifests, and no pairwise response-ID
+  intersection. The provider-deserialization and validation failures were
+  correctly rejected without publishing result JSON. An earlier post-fix
+  r13-r15 attempt was stopped and preserved after disk exhaustion corrupted one
+  manifest; it is explicitly abandoned as full-run evidence. The main and
+  stopped-lane build caches were then cleaned while all run/debug artifacts and
+  candidate edits were retained.
+- The r17 failure pins a Stage 4/5 projection requirement: the headless bundle
+  records the aborted provider turn and diagnostic body excerpt, while the
+  lower-level debug session remains `paused` at its last decoded response. The
+  operator view must present both provenance layers without silently converting
+  one into the other. The separate full-loop OpenRouter embedding canary and
+  child-reaping live check remain pending; neither blocks resuming read-only
+  live/in-flight UI answerability work.
 
 The UI remains inspection-only until the observability read model and later
 control-parity stages are complete. Every live edge still requires a committed
@@ -910,9 +931,14 @@ Expected output:
 1. Preserve the fresh stepped canary and close its validated handoff bug record.
 2. Preserve the child-process lifecycle reproduction and checkpoint its
    ownership/reaping repair.
-3. Replace parallel singleton trace sinks with session-owned observability
-   context after the required high-risk impact review.
+3. Parallel singleton trace sinks are replaced with session-owned observability
+   context in `dc5868b66`; `24f18e1cd` preserves timeout evidence and quiesces
+   late responses. Local gates and a fresh three-lane live sweep pass exact
+   provenance and isolation checks.
 4. Resume Stage 5 live/in-flight evidence and UI-only answerability validation.
+   Keep the still-pending child-lifecycle canary as a separate lifecycle gate,
+   not a reason to hide already trustworthy trace evidence from read-only UI
+   work.
 5. Keep UI mutation controls out of scope until the shared inspection model is
    internally consistent.
 
