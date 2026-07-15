@@ -344,6 +344,9 @@ fn proof_context_for_paths(
     for path in paths {
         ids.insert(path.start_id, ());
         ids.insert(path.end_id, ());
+        for edge in &path.edges {
+            ids.insert(edge.call_site_id, ());
+        }
         for node in &path.nodes {
             ids.insert(node.id, ());
         }
