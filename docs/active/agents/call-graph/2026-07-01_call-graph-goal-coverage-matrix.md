@@ -1021,7 +1021,7 @@ incoming source-call paths and no synthetic traversal edge.
 
 Latest completed slice: dynamic self-field callee proof for callable fields.
 Parser, transform, DB, and RAG tests now use regenerated axum fixture
-`corpus_axum_call_graph_2026-07-13`: `axum/src/boxed.rs:85`
+`corpus_axum_call_graph_2026-07-15`: `axum/src/boxed.rs:85`
 `["self", "into_route"]` resolves to the unique
 `BoxedIntoRoute::from_handler` closure initializer; `boxed.rs:159,163`
 `["self", "layer"]` preserve finite ambiguous `DynamicClosure` candidates from
@@ -1033,6 +1033,15 @@ transparent `Router::layer` `map_inner!` source expression
 `dynamic_dispatch_unbounded` proof blockers. Exact TUI lookup/edges tests now
 assert the ambiguous layer candidate rows and only keep the remaining
 targetless dynamic self-field rows in the targetless matrix.
+
+Follow-up proof-carrier slice: DB proof projection now emits strict
+`binding_evidence_kind = "self_field_callable"` rows for ambiguous or
+unsupported dynamic `self.<field>` callsites. DB tests assert typed
+`binding_evidence` query rows and GraphRAG-search visibility for axum
+`self.layer`, router-side `self.into_route`, and `self.tap_fn`; RAG
+proof-context tests assert the linked proof-only rows. This does not promote
+any traversal edge: `self.layer` remains candidate-only and the unsupported
+rows remain targetless until callable-field value flow is proven.
 
 Previous completed bucket: build/test-domain summary surface for generated
 test-entrypoint proof.

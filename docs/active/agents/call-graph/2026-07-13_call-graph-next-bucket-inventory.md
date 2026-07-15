@@ -304,7 +304,7 @@ Forwarded returned-closure checkpoint, updated 2026-07-14:
 
 | Bucket | Current state | Entry criterion for implementation | First proof target |
 | --- | --- | --- | --- |
-| Broader object/field callable value flow | Axum `self.layer`, `self.tap_fn`, and router-side `self.into_route` remain targetless or candidate-only because construction/value flow is not complete. Runtime-dispatch summaries can discharge authoring needs without fabricating edges. | A source-visible construction path proves every callable value reaching a field, or the implementation introduces a typed value-flow carrier with strict incomplete-proof blockers. | DB real-corpus assertion over one field callsite, preserving no edge when proof is incomplete. |
+| Broader object/field callable value flow | Axum `self.layer`, `self.tap_fn`, and router-side `self.into_route` remain targetless or candidate-only because construction/value flow is not complete. Strict `self_field_callable` binding evidence now marks those proof frontiers without admitting traversal edges. Runtime-dispatch summaries can discharge authoring needs without fabricating edges. | A source-visible construction path proves every callable value reaching a field, or the implementation introduces a typed value-flow carrier with strict incomplete-proof blockers. | DB real-corpus assertion over one field callsite, preserving no edge when proof is incomplete. |
 | Callable trait-object dispatch | Fixture-backed exact `&dyn Fn`, `Box<dyn Fn>`, and `FnMut` local-binding cases are covered only when initializer or complete private-caller proof is exact. Memchr boxed `dyn FnMut` field rows remain targetless blockers; admitted runtime-dispatch summaries discharge their proof-authoring needs without creating traversal edges. | A bounded local source oracle proves a callable trait-object target without public API ambiguity or runtime vtable guessing. | Parser/DB proof for one exact trait-object row; otherwise keep `dynamic_dispatch_unbounded` or an admitted summary when the row is intentionally targetless. |
 | Async poll/resume and future value flow | Immediate/same-block async closure calls, aliases, tuple/named/indexed storage, immediate awaited returned async closures, same-block local bindings of returned async-closure futures, direct forwarded returned futures, and one aggregate-stored forwarded returned future path-call producer are covered. Un-awaited returned async closures fail closed. Axum boxed dyn `Future::poll` has blocker and admitted runtime-dispatch summary coverage while remaining targetless. Broader non-local future value flow, async callable trait objects, arbitrary aggregate aliases, and general poll/resume remain future work. | A typed future-flow carrier identifies the future producer and poll point without flattening async state-machine execution into ordinary source calls. | One DB traversal or one explicit blocker/summary over a reviewed source oracle. |
 | Generated or macro-expanded source bodies | Bounded axum and fixture macro models cover reviewed item/local-item/generated-method cases, including the axum middleware `from_fn`, `map_request`, and `map_response` `std::mem::replace` frontiers. Axum `assert_eq!`-wrapped `try_downcast` rows now have DB proof blockers for unsupported macro expansion. Arbitrary macro expansion remains out of scope. | A specific macro template and invocation pair can be modeled narrowly through normal item/call visitors, with proof metadata explaining the boundary. | DB real-corpus traversal for one generated owner or a targetless proof row for unsupported expansion. |
@@ -326,6 +326,22 @@ Object/field candidate audit, 2026-07-15:
 - This is a proof-context alignment only. `self.layer` remains ambiguous,
   router-side `self.into_route` and `self.tap_fn` remain unsupported/targetless
   without callable-field value-flow proof, and no traversal edge was promoted.
+
+Self-field proof-evidence checkpoint, 2026-07-15:
+
+- Added the strict proof-only `binding_evidence_kind = "self_field_callable"`
+  carrier for ambiguous or unsupported dynamic `self.<field>` callable rows.
+  The producer is limited to dynamic callsites whose callee path begins with
+  `self` and whose status is `Ambiguous` or `Unsupported`.
+- DB real-corpus coverage now projects, persists, and queries typed
+  `binding_evidence` rows for axum `self.layer` at `boxed.rs:159,163`,
+  router-side `self.into_route` at `boxed.rs:120`, and `self.tap_fn` at
+  `serve/listener.rs:236`. RAG proof-context coverage asserts the same linked
+  proof rows by callsite, owner, resolution state, and proof-only detail.
+- This is still a blocker/proof-frontier carrier. The ambiguous `self.layer`
+  rows remain candidate-only, the unsupported `self.into_route` and
+  `self.tap_fn` rows remain targetless, and no runtime-dispatch summary or
+  proof-evidence row creates a local traversal edge.
 
 Callable trait-object audit, 2026-07-15:
 
