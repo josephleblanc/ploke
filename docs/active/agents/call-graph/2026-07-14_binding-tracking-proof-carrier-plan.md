@@ -559,6 +559,47 @@ What remains:
   edge. Multi-hop/ambiguous aliases should be separate typed carrier slices if
   a reviewed source oracle needs them.
 
+## 2026-07-15 Aliased Parameter Field Proof Checkpoint
+
+Implemented slice: owner-local one-hop `ValueAlias` normalization for private
+complete-caller callable field proof.
+
+What is complete:
+
+- The fixture-backed source oracle is
+  `tests/fixture_crates/fixture_call_graph/src/lib.rs:2410-2419`, where
+  `call_single_aliased_named_field_function_param(holder)` binds
+  `let alias = holder;` and calls `(alias.callback)()`. Its only local caller
+  supplies `CallbackHolder { callback: local_target }`.
+- Dynamic field call resolution now first tries the exact parameter-field proof
+  path as before. If that fails, it follows exactly one same-owner
+  `LetBinding` whose `LocalBindingSource::ValueAlias` source path names one
+  different local binding, then retries the existing parameter-field proof with
+  the remaining recursion budget.
+- The resolver fails closed for zero-depth recursion, self-cycles,
+  non-single-segment alias source paths, missing aliases, or ambiguous
+  same-owner alias bindings. It does not infer object identity from arbitrary
+  expressions.
+- Parser paranoid coverage proves `(alias.callback)()` resolves to
+  `local_target` and the wrapper call resolves to
+  `call_single_aliased_named_field_function_param`.
+- Fixture-backed DB coverage proves the resolved dynamic call row, the wrapper
+  path call, the persisted `holder` parameter binding, the persisted `alias`
+  `ValueAlias` row, the `BindingAliasesBinding` edge from `alias` to `holder`,
+  and the `ArgumentSuppliesParameter` edge from the wrapper callsite to
+  `holder`.
+- Active call-graph fixture regeneration and registry-backed backup
+  verification passed with
+  `cargo run -p xtask --features call_graph -- fixtures regenerate --active`
+  and `cargo run -p xtask --features call_graph -- verify-backup-dbs`.
+
+What remains:
+
+- This is not broad aggregate value-flow, arbitrary alias propagation,
+  public-API parameter proof, trait-object dispatch, or multi-hop
+  interprocedural callable-field flow. Broader object/field value flow still
+  needs an explicit typed carrier model.
+
 ## 2026-07-15 Indexed Field Projection Carrier Checkpoint
 
 Implemented slice: durable field-projection binding evidence for exact

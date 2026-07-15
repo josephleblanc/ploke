@@ -50,7 +50,22 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Latest completed slice: exact local-binding downstream payload. Existing
+Latest completed slice: owner-local aliased parameter field proof. The fixture
+oracle
+`call_single_aliased_named_field_function_param(holder) { let alias = holder; (alias.callback)() }`
+now resolves through the existing private complete-caller callable-field proof
+when the alias is exactly one same-owner `ValueAlias` of the parameter. Parser
+coverage proves `(alias.callback)()` resolves to `local_target` and the wrapper
+helper call resolves to the private callee. DB coverage proves the resolved
+dynamic row, the wrapper call, the `holder` parameter binding, the `alias`
+`ValueAlias` binding, the `BindingAliasesBinding` edge, and the
+`ArgumentSuppliesParameter` edge. Active call-graph fixture regeneration and
+`verify-backup-dbs` completed cleanly. This is one-hop owner-local alias
+normalization for exact private parameter-field proof, not broad aggregate
+value flow, public parameter proof, trait-object dispatch, or arbitrary alias
+propagation.
+
+Recent completed slice: exact local-binding downstream payload. Existing
 `local_binding` and `local_binding_edge` DB evidence is now exposed through
 exact RAG and exact `code_item_lookup` / `code_item_edges` payloads as typed
 `local_bindings` and `local_binding_edges` arrays with matching UI counts. The

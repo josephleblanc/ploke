@@ -4,8 +4,8 @@ use crate::{
         graph::GraphAccess,
         nodes::{
             AnyCallSiteId, AsAnyNodeId, CallArgument, CallBodyOwnerId, CallNode, ExecutableBodyId,
-            FunctionNodeId, MethodCallNode, MethodCallReceiver, MethodNodeId, PathCallCallee,
-            PathCallNode,
+            FunctionNodeId, LocalBindingKind, LocalBindingSource, MethodCallNode,
+            MethodCallReceiver, MethodNodeId, PathCallCallee, PathCallNode,
         },
         relations::{CallRelation, CallResolutionKind, CallResolutionStatus, TypeRelation},
         types::{TypeNode, VisibilityKind},
@@ -554,13 +554,61 @@ impl CallRelationResolver<'_> {
         type_relations: &[TypeRelation],
         depth: usize,
     ) -> Result<Option<ParameterCallResolution>, SynParserError> {
-        self.resolve_parameter_call(
+        if let Some(resolution) = self.resolve_parameter_call(
             owner,
             name,
             ParameterProof::Field(field_path),
             type_relations,
             depth,
+        )? {
+            return Ok(Some(resolution));
+        }
+
+        if depth == 0 {
+            return Ok(None);
+        }
+
+        let Some(source_path) = self.local_value_alias_source(owner, name) else {
+            return Ok(None);
+        };
+        let [source_name] = source_path.as_slice() else {
+            return Ok(None);
+        };
+        if source_name == name {
+            return Ok(None);
+        }
+
+        self.resolve_parameter_field_name_call_with_depth(
+            owner,
+            source_name,
+            field_path,
+            type_relations,
+            depth - 1,
         )
+    }
+
+    fn local_value_alias_source(&self, owner: CallBodyOwnerId, name: &str) -> Option<Vec<String>> {
+        let matches = self
+            .graph
+            .graph
+            .local_bindings
+            .iter()
+            .filter(|binding| {
+                binding.owner == owner
+                    && binding.kind == LocalBindingKind::LetBinding
+                    && binding.name == name
+            })
+            .filter_map(|binding| match &binding.source {
+                LocalBindingSource::ValueAlias { source_path } if source_path.len() == 1 => {
+                    Some(source_path.clone())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        match matches.as_slice() {
+            [source_path] => Some(source_path.clone()),
+            _ => None,
+        }
     }
 
     fn resolve_parameter_call(

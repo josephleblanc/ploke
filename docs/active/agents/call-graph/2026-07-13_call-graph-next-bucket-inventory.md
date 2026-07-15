@@ -160,6 +160,20 @@ Selection update, 2026-07-15:
   poll/resume future flow, generated/macro-expanded source bodies, callable
   trait-object dispatch, or external/source-sink policy summaries.
 
+Follow-up update, 2026-07-15:
+
+- The selected larger proof-model slice for owner-local aliased parameter field
+  proof is complete for the exact private complete-caller oracle
+  `call_single_aliased_named_field_function_param`. The resolver now normalizes
+  exactly one same-owner `ValueAlias` before reusing the existing
+  parameter-field proof, and DB tests assert the alias, parameter, argument,
+  and dynamic-call facts together.
+- Active call-graph fixture regeneration and `verify-backup-dbs` passed after
+  the new source oracle. This closes the one-hop owner-local alias case for
+  private callable holder parameters, but it does not change the remaining
+  need for broad object/field value-flow, trait-object dispatch, async
+  poll/resume, generated-body modeling, or policy/effect summaries.
+
 Local-binding projection checkpoint, 2026-07-14:
 
 - Source oracles:
