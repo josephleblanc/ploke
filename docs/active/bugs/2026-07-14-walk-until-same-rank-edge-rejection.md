@@ -1,6 +1,6 @@
 # Walk Until Rejects Ordered Same-Rank Edges
 
-Status: fixed in source; committed-binary live replay pending.
+Status: fixed, regression-covered, and live verified.
 
 Canary worktree:
 
@@ -98,14 +98,26 @@ This prevents a future rank edit from making one unreachable sibling appear
 forward-reachable. Rank remains a coarse topological layer; typed edges and
 branch admission remain the reachability authority.
 
-## Missing Repro / Validation
+## Missing Repro Coverage
 
-After committing and rebuilding, the existing server must admit the new binary
-epoch and replay `R4b -> R4c` through the exact `--until r4c --watch` command.
-Validation must prove `AttemptBegan`, committed `AttemptFinished`, `Released`,
-an R4c cursor, no blocker, and a live server. A deterministic fixture-backed
-controller regression for the complete journal lifecycle and a multi-edge
-R4a-to-R4c request remain useful follow-up coverage.
+A deterministic fixture-backed controller regression for the complete journal
+lifecycle and a multi-edge R4a-to-R4c request remain useful follow-up coverage.
+
+## Live Validation
+
+Commit `0ec681ebb` built binary SHA-256
+`c21fe1331653eea5ad566e508bfa1eeee9d12b2531b9fd1533723a749d8d8acc`
+with epoch mtime `1784088726084`. Operation
+`bc97c546-564a-4717-b77b-4078de72b5a9` admitted only that rebuilt binary
+epoch; the canary checkout and source-status hash were unchanged.
+
+Operation `95a5041b-c1de-42a4-86c6-13edabeabf47` then replayed the exact
+`walk step --until r4c --watch` request. The journal recorded
+`AttemptBegan(R4b -> R4c)`, a committed `AttemptFinished`, and `Released`.
+The controller advanced to R4c with evidence
+`b2026c87a3e46bd0ea67993d7a3f62016ddaa28aad3494da27e6d54a049e728a`
+at revision 28, authority remained active with no blocker, and the same server
+subsequently committed R4c to R5.
 
 ## Fix Direction
 

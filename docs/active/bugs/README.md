@@ -164,4 +164,6 @@ file and current code before treating a report as still open.
 - [`2026-07-14-ploke-eval-walk-worker-stack-overflow.md`](./2026-07-14-ploke-eval-walk-worker-stack-overflow.md)
   Fixed and live verified: the debug R3-to-R4a walk task exceeded Tokio's default 2 MiB worker stack after acquiring its durable fence, so the production binary now owns an explicit worker-stack budget and a fail-before/fix-after worker-capacity regression.
 - [`2026-07-14-walk-until-same-rank-edge-rejection.md`](./2026-07-14-walk-until-same-rank-edge-rejection.md)
-  Fixed in source, live replay pending: `walk step --until r4c` rejected the advertised R4b-to-R4c edge because the controller's coarse phase rank grouped two phases connected by a real forward edge.
+  Fixed and live verified: `walk step --until r4c` rejected the advertised R4b-to-R4c edge because the controller's coarse phase rank grouped two phases connected by a real forward edge.
+- [`2026-07-14-direct-openai-embedding-overlong-snippet.md`](./2026-07-14-direct-openai-embedding-overlong-snippet.md)
+  Open backend-policy gap with config recovery selected: direct OpenAI accepted readiness preflight but rejected a 66,807-byte parsed node at production indexing; the failed run is preserved and the fresh run will use OpenRouter's approved truncation policy.
