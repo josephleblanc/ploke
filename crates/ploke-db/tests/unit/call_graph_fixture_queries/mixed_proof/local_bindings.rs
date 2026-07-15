@@ -95,6 +95,7 @@ fn fixture_projection_stores_named_field_projection_edges() -> Result<(), DbErro
         owner: &'static str,
         source: &'static str,
         call_path: &'static [&'static str],
+        base_name: &'static str,
         constructed_path: &'static [&'static str],
         projection_name: &'static str,
         projection_path: &'static [&'static str],
@@ -105,24 +106,54 @@ fn fixture_projection_stores_named_field_projection_edges() -> Result<(), DbErro
             owner: "call_named_field_function_binding",
             source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:870-874 `holder.callback`",
             call_path: &["holder", "callback"],
+            base_name: "holder",
             constructed_path: &["NamedCallbackHolder"],
             projection_name: "holder.callback",
+            projection_path: &["callback"],
+        },
+        ProjectionCase {
+            owner: "call_aliased_named_field_function_binding",
+            source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:877-882 `let alias = holder; (alias.callback)()`",
+            call_path: &["alias", "callback"],
+            base_name: "alias",
+            constructed_path: &["NamedCallbackHolder"],
+            projection_name: "alias.callback",
             projection_path: &["callback"],
         },
         ProjectionCase {
             owner: "call_indexed_named_field_function_binding",
             source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:889-893 `holder.callbacks[0]`",
             call_path: &["holder", "callbacks", "0"],
+            base_name: "holder",
             constructed_path: &["CallbackArrayHolder"],
             projection_name: "holder.callbacks.0",
+            projection_path: &["callbacks", "0"],
+        },
+        ProjectionCase {
+            owner: "call_aliased_indexed_named_field_function_binding",
+            source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:902-907 `let alias = holder; alias.callbacks[0]()`",
+            call_path: &["alias", "callbacks", "0"],
+            base_name: "alias",
+            constructed_path: &["CallbackArrayHolder"],
+            projection_name: "alias.callbacks.0",
             projection_path: &["callbacks", "0"],
         },
         ProjectionCase {
             owner: "call_indexed_tuple_field_function_binding",
             source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:914-916 `holder.0[0]`",
             call_path: &["holder", "0", "0"],
+            base_name: "holder",
             constructed_path: &["TupleCallbackArrayHolder"],
             projection_name: "holder.0.0",
+            projection_path: &["0", "0"],
+        },
+        ProjectionCase {
+            owner: "call_aliased_indexed_tuple_field_function_binding",
+            source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:925-929 `let alias = holder; alias.0[0]()`",
+            call_path: &["alias", "0", "0"],
+            base_name: "alias",
+            constructed_path: &["TupleCallbackArrayHolder"],
+            projection_name: "alias.0.0",
             projection_path: &["0", "0"],
         },
     ];
@@ -146,7 +177,7 @@ fn fixture_projection_stores_named_field_projection_edges() -> Result<(), DbErro
         let bindings = db.local_bindings_for_owner(owner)?;
         let holder = bindings
             .iter()
-            .find(|binding| binding.kind == "LetBinding" && binding.name == "holder")
+            .find(|binding| binding.kind == "LetBinding" && binding.name == case.base_name)
             .unwrap_or_else(|| {
                 panic!(
                     "{} constructed holder binding should be persisted: {}",

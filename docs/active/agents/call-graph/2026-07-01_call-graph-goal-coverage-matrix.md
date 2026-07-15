@@ -84,13 +84,16 @@ Recent completed slice: durable field-projection source-function edges. The
 existing `FieldProjection` local-binding rows for exact constructed callable
 projection oracles now have typed `BindingSourceFunction` edges to the resolved
 `local_target` endpoint. The table-driven fixture cases are the direct named
-field, indexed named field, and indexed tuple field calls through locally
-constructed holders. Transform derives each edge only from an existing resolved
-`DynamicFunction` relation plus the exact projection binding path and
-initializer path, so it explains admitted projection edges without adding
-general object value flow, public parameter-field inference, or new traversal
-semantics. Active fixture regeneration and `verify-backup-dbs` completed
-cleanly with no tracked snapshot/checksum drift.
+field, indexed named field, indexed tuple field, and matching one-hop
+constructed-holder alias calls through locally constructed holders. Transform
+derives each edge only from an existing resolved `DynamicFunction` relation
+plus the exact projection binding path and initializer path, so it explains
+admitted projection edges without adding general object value flow, public
+parameter-field inference, or new traversal semantics. Active fixture
+regeneration and `verify-backup-dbs` completed cleanly with no tracked
+snapshot/checksum drift. The full `regenerate --all` run still cannot complete
+typed OpenRouter embedding fixtures in the current environment because
+OpenRouter returned HTTP 402 for the embedding endpoint.
 
 Recent completed slice: durable initialized-path source-function edge. The
 existing `InitializedPath` local-binding row for the fixture oracle
