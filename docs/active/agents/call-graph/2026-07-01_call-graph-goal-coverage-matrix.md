@@ -50,7 +50,19 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Latest completed slice: stored forwarded returned-future proof carrier. The
+Latest completed slice: exact local-binding downstream payload. Existing
+`local_binding` and `local_binding_edge` DB evidence is now exposed through
+exact RAG and exact `code_item_lookup` / `code_item_edges` payloads as typed
+`local_bindings` and `local_binding_edges` arrays with matching UI counts. The
+fixture oracle is
+`call_local_function_item_binding() { let f = local_target; f() }`, whose
+payload now preserves the `InitializedPath` `LetBinding`, owner containment
+edge, and `BindingSourceFunction` edge to `local_target`. This is downstream
+proof surfacing only: it does not add a parser carrier, resolver rule,
+traversal edge, public parameter proof, callable-field value-flow model, or
+trait-object dispatch model.
+
+Recent completed slice: stored forwarded returned-future proof carrier. The
 fixture source oracle
 `call_stored_forwarded_returned_async_future_tuple_field()` stores
 `make_forwarded_returned_async_future()` in `futures.0` and awaits that exact

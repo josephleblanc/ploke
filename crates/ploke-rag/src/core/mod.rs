@@ -19,6 +19,7 @@ use ploke_core::rag_types::{
     CallSiteKind as RagCallSiteKind, CallStatusKind as RagCallStatusKind, CallTargetInfo,
     CallTargetKind, CallTestEntrypointInfo, CallTestSelectionInfo, CanonPath,
     CrateBoundaryEdgeInfo, CrateBoundaryPolicyViolationInfo, ExternalSummaryNeedInfo,
+    LocalBindingEdgeInfo, LocalBindingInfo,
     LocalBindingRelationKind as RagLocalBindingRelationKind, ModuleBoundaryEdgeInfo,
     ModuleBoundaryPolicyViolationInfo, NodeFilepath, ProofContextInfo, ReturnedCallBindingFlowInfo,
     ReturnedCallBindingInfo, ReturnedCallProducerInfo, ReturnedCallSiteInfo,
@@ -39,7 +40,8 @@ use ploke_db::{
     CallTestSelectionReport as DbCallTestSelectionReport, CrateBoundaryEdge as DbCrateBoundaryEdge,
     CrateBoundaryPolicyRule as DbCrateBoundaryPolicyRule,
     CrateBoundaryPolicyViolation as DbCrateBoundaryPolicyViolation,
-    ExternalSummaryNeed as DbExternalSummaryNeed, LocalBindingRelationKind,
+    ExternalSummaryNeed as DbExternalSummaryNeed, LocalBindingEdgeRow as DbLocalBindingEdgeRow,
+    LocalBindingRelationKind, LocalBindingRow as DbLocalBindingRow,
     ModuleBoundaryEdge as DbModuleBoundaryEdge,
     ModuleBoundaryPolicyRule as DbModuleBoundaryPolicyRule,
     ModuleBoundaryPolicyViolation as DbModuleBoundaryPolicyViolation, ProofGraphContextRow,
@@ -623,6 +625,34 @@ fn runtime_dispatch_need_info(
     })
 }
 
+fn local_binding_info(row: DbLocalBindingRow) -> LocalBindingInfo {
+    LocalBindingInfo {
+        id: row.id,
+        owner_id: row.owner_id,
+        owner_kind: row.owner_kind,
+        kind: row.kind,
+        name: row.name,
+        span: row.span,
+        cfgs: row.cfgs,
+        source_kind: row.source_kind,
+        source_id: row.source_id,
+        source_call_kind: row.source_call_kind,
+        source_path: row.source_path,
+        callee_kind: row.callee_kind,
+        callee_path: row.callee_path,
+    }
+}
+
+fn local_binding_edge_info(row: DbLocalBindingEdgeRow) -> LocalBindingEdgeInfo {
+    LocalBindingEdgeInfo {
+        source_id: row.source_id,
+        target_id: row.target_id,
+        relation: local_binding_relation_kind(row.relation),
+        source_kind: row.source_kind,
+        target_kind: row.target_kind,
+    }
+}
+
 fn awaited_call_site_info(site: CallSiteRow) -> Result<AwaitedCallSiteInfo, RagError> {
     let callee = call_site_callee_info(&site)?;
     Ok(AwaitedCallSiteInfo {
@@ -660,7 +690,7 @@ fn returned_call_binding_flow_info(
             id: row.binding.id,
             source: ReturnedCallSourceInfo {
                 id: row.binding.source.id,
-                relation: local_binding_relation_kind(row.binding.source.relation)?,
+                relation: returned_call_source_relation_kind(row.binding.source.relation)?,
                 kind: returned_call_source_kind(&row.binding.source.kind)?,
             },
         },
@@ -682,7 +712,7 @@ fn returned_future_flow_info(
             id: row.binding.id,
             source: ReturnedCallSourceInfo {
                 id: row.binding.source.id,
-                relation: local_binding_relation_kind(row.binding.source.relation)?,
+                relation: returned_call_source_relation_kind(row.binding.source.relation)?,
                 kind: returned_call_source_kind(&row.binding.source.kind)?,
             },
         },
@@ -711,7 +741,7 @@ fn returned_call_binding_info(
         id: row.id,
         source: ReturnedCallSourceInfo {
             id: row.source.id,
-            relation: local_binding_relation_kind(row.source.relation)?,
+            relation: returned_call_source_relation_kind(row.source.relation)?,
             kind: returned_call_source_kind(&row.source.kind)?,
         },
     })
@@ -1199,15 +1229,38 @@ fn call_target_kind(kind: DbCallTargetKind) -> CallEndpointKind {
         DbCallTargetKind::Variant => CallEndpointKind::Variant,
     }
 }
-fn local_binding_relation_kind(
+fn local_binding_relation_kind(kind: LocalBindingRelationKind) -> RagLocalBindingRelationKind {
+    match kind {
+        LocalBindingRelationKind::OwnerContainsBinding => {
+            RagLocalBindingRelationKind::OwnerContainsBinding
+        }
+        LocalBindingRelationKind::BindingSourceClosure => {
+            RagLocalBindingRelationKind::BindingSourceClosure
+        }
+        LocalBindingRelationKind::BindingSourceCallResult => {
+            RagLocalBindingRelationKind::BindingSourceCallResult
+        }
+        LocalBindingRelationKind::BindingSourceFunction => {
+            RagLocalBindingRelationKind::BindingSourceFunction
+        }
+        LocalBindingRelationKind::BindingProjectsField => {
+            RagLocalBindingRelationKind::BindingProjectsField
+        }
+        LocalBindingRelationKind::BindingAliasesBinding => {
+            RagLocalBindingRelationKind::BindingAliasesBinding
+        }
+        LocalBindingRelationKind::ArgumentSuppliesParameter => {
+            RagLocalBindingRelationKind::ArgumentSuppliesParameter
+        }
+    }
+}
+fn returned_call_source_relation_kind(
     kind: LocalBindingRelationKind,
 ) -> Result<RagLocalBindingRelationKind, RagError> {
     match kind {
-        LocalBindingRelationKind::BindingSourceClosure => {
-            Ok(RagLocalBindingRelationKind::BindingSourceClosure)
-        }
-        LocalBindingRelationKind::BindingSourceCallResult => {
-            Ok(RagLocalBindingRelationKind::BindingSourceCallResult)
+        LocalBindingRelationKind::BindingSourceClosure
+        | LocalBindingRelationKind::BindingSourceCallResult => {
+            Ok(local_binding_relation_kind(kind))
         }
         LocalBindingRelationKind::OwnerContainsBinding
         | LocalBindingRelationKind::BindingSourceFunction
@@ -1544,6 +1597,40 @@ impl RagService {
                 .into_iter()
                 .map(|row| runtime_dispatch_need_info(self.db.as_ref(), row))
                 .collect::<Result<Vec<_>, RagError>>()?,
+        ))
+    }
+
+    pub fn exact_local_bindings_for_owner(
+        &self,
+        owner_id: Uuid,
+    ) -> Result<Option<Vec<LocalBindingInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .local_bindings_for_owner(owner_id)?
+                .into_iter()
+                .map(local_binding_info)
+                .collect(),
+        ))
+    }
+
+    pub fn exact_local_binding_edges_for_owner(
+        &self,
+        owner_id: Uuid,
+    ) -> Result<Option<Vec<LocalBindingEdgeInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .local_binding_edges_for_owner(owner_id)?
+                .into_iter()
+                .map(local_binding_edge_info)
+                .collect(),
         ))
     }
 

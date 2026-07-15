@@ -8,6 +8,7 @@ mod expected;
 mod external;
 mod field_dynamic;
 mod initializers;
+mod local_bindings;
 mod raw_identifiers;
 mod real_corpus;
 mod result_field_receivers;

@@ -4,9 +4,9 @@ use ploke_core::{
         AwaitedCallSiteInfo, CallBuildDomainInfo, CallContextInfo, CallEffectPolicyViolationInfo,
         CallImpactInfo, CallPathInfo, CallProofInvariantFindingInfo, CallReachEffectInfo,
         CallReachInfo, CallTestEntrypointInfo, CallTestSelectionInfo, CrateBoundaryEdgeInfo,
-        ExternalSummaryNeedInfo, ModuleBoundaryEdgeInfo, ProofContextInfo,
-        ReturnedCallBindingFlowInfo, ReturnedFutureExecutionFlowInfo, ReturnedFutureFlowInfo,
-        RuntimeDispatchNeedInfo,
+        ExternalSummaryNeedInfo, LocalBindingEdgeInfo, LocalBindingInfo, ModuleBoundaryEdgeInfo,
+        ProofContextInfo, ReturnedCallBindingFlowInfo, ReturnedFutureExecutionFlowInfo,
+        ReturnedFutureFlowInfo, RuntimeDispatchNeedInfo,
     },
     tool_types::ToolName,
 };
@@ -613,6 +613,44 @@ pub(super) fn runtime_dispatch_needs_for_node(
     }
 }
 
+pub(super) fn local_bindings_for_node(
+    ctx: &super::Ctx,
+    node_id: Uuid,
+) -> Result<Vec<LocalBindingInfo>, ploke_error::Error> {
+    use ploke_error::InternalError;
+
+    match ctx.state.rag.as_ref() {
+        Some(rag) if !rag.call_context_degraded() => Ok(rag
+            .exact_local_bindings_for_owner(node_id)
+            .map_err(|err| {
+                ploke_error::Error::Internal(InternalError::CompilerError(format!(
+                    "failed to collect local bindings for code item {node_id}: {err}"
+                )))
+            })?
+            .unwrap_or_default()),
+        _ => Ok(Vec::new()),
+    }
+}
+
+pub(super) fn local_binding_edges_for_node(
+    ctx: &super::Ctx,
+    node_id: Uuid,
+) -> Result<Vec<LocalBindingEdgeInfo>, ploke_error::Error> {
+    use ploke_error::InternalError;
+
+    match ctx.state.rag.as_ref() {
+        Some(rag) if !rag.call_context_degraded() => Ok(rag
+            .exact_local_binding_edges_for_owner(node_id)
+            .map_err(|err| {
+                ploke_error::Error::Internal(InternalError::CompilerError(format!(
+                    "failed to collect local binding edges for code item {node_id}: {err}"
+                )))
+            })?
+            .unwrap_or_default()),
+        _ => Ok(Vec::new()),
+    }
+}
+
 pub(super) fn returned_call_binding_flows_for_node(
     ctx: &super::Ctx,
     node_id: Uuid,
@@ -851,6 +889,8 @@ pub(super) fn with_call_usage_fields(
     invariant_findings: &[CallProofInvariantFindingInfo],
     summary_needs: &[ExternalSummaryNeedInfo],
     runtime_needs: &[RuntimeDispatchNeedInfo],
+    local_bindings: &[LocalBindingInfo],
+    local_binding_edges: &[LocalBindingEdgeInfo],
     awaited_sites: &[AwaitedCallSiteInfo],
     returned_flows: &[ReturnedCallBindingFlowInfo],
     future_flows: &[ReturnedFutureFlowInfo],
@@ -974,6 +1014,8 @@ pub(super) fn with_call_usage_fields(
         )
         .with_field("external_summary_needs", summary_needs.len().to_string())
         .with_field("runtime_dispatch_needs", runtime_needs.len().to_string())
+        .with_field("local_bindings", local_bindings.len().to_string())
+        .with_field("local_binding_edges", local_binding_edges.len().to_string())
         .with_field("awaited_call_sites", awaited_sites.len().to_string())
         .with_field(
             "returned_call_binding_flows",

@@ -35,16 +35,16 @@ use crate::call_graph_tool_support::{
     assert_from_fn_basic_body_empty_crate_boundary, assert_generated_rejection_outgoing_context,
     assert_handler_call_incoming_context, assert_incoming_context,
     assert_initialized_local_receiver_context, assert_initialized_local_receiver_proof,
-    assert_json_from_bytes_incoming_context, assert_no_external_summary_need_for_site,
-    assert_parse_attrs_incoming_context, assert_path_blocker_proof, assert_path_context,
-    assert_path_resolution_proof, assert_process_invariant_findings,
-    assert_resolved_callable_param_proof, assert_resolved_dynamic_context,
-    assert_resolved_method_target_context, assert_resolved_path_context,
-    assert_run_ui_tests_incoming_context, assert_runtime_dispatch_blocker,
-    assert_self_field_receiver_context, assert_self_field_receiver_proof,
-    assert_serde_json_summary_proof, assert_serde_json_surface_measure_effect, assert_target_proof,
-    assert_task_spawn_effects, assert_task_spawn_policy_violation, assert_two_hop_call_path,
-    ui_field,
+    assert_initialized_path_local_binding_payload, assert_json_from_bytes_incoming_context,
+    assert_no_external_summary_need_for_site, assert_parse_attrs_incoming_context,
+    assert_path_blocker_proof, assert_path_context, assert_path_resolution_proof,
+    assert_process_invariant_findings, assert_resolved_callable_param_proof,
+    assert_resolved_dynamic_context, assert_resolved_method_target_context,
+    assert_resolved_path_context, assert_run_ui_tests_incoming_context,
+    assert_runtime_dispatch_blocker, assert_self_field_receiver_context,
+    assert_self_field_receiver_proof, assert_serde_json_summary_proof,
+    assert_serde_json_surface_measure_effect, assert_target_proof, assert_task_spawn_effects,
+    assert_task_spawn_policy_violation, assert_two_hop_call_path, ui_field,
 };
 
 #[tokio::test]
@@ -371,6 +371,53 @@ async fn code_item_lookup_returns_resolved_dynamic_callable_context() {
     ] {
         assert_resolved_dynamic_callable_lookup(owner_name).await;
     }
+}
+
+#[tokio::test]
+async fn code_item_lookup_returns_local_binding_payload_for_initialized_callable() {
+    let fixture =
+        FixtureDynamicCallableToolFixture::new_for_owner("call_local_function_item_binding").await;
+    let params = LookupParams {
+        item_name: Cow::Borrowed(fixture.owner_name),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("function"),
+        module_path: Cow::Borrowed("crate"),
+        owner_trait: None,
+        owner_type: None,
+        parent_name: None,
+        allowed_effects: Vec::new(),
+    };
+
+    let result = CodeItemLookup::execute(params, fixture.ctx("local-binding-lookup"))
+        .await
+        .expect("initialized callable binding lookup");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize ConciseContext");
+    let bindings = payload
+        .get("local_bindings")
+        .and_then(serde_json::Value::as_array)
+        .expect("local_bindings array");
+    let edges = payload
+        .get("local_binding_edges")
+        .and_then(serde_json::Value::as_array)
+        .expect("local_binding_edges array");
+
+    // Source oracle:
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:185-187
+    //   `let f = local_target; f()` already resolves as a function
+    //   edge; lookup should also expose the durable local-binding evidence.
+    assert_initialized_path_local_binding_payload(
+        bindings,
+        edges,
+        fixture.owner,
+        fixture.target,
+        fixture.owner_name,
+        "code_item_lookup",
+    );
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert_eq!(ui_field(ui, "local_bindings"), bindings.len().to_string());
+    assert_eq!(ui_field(ui, "local_binding_edges"), edges.len().to_string());
 }
 
 #[tokio::test]

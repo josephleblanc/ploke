@@ -10,8 +10,8 @@ use ploke_core::{
     rag_types::{
         AwaitedCallSiteInfo, CallCalleeInfo, CallContextInfo, CallEndpointKind, CallPathInfo,
         CallReachEffectInfo, CallReceiverInfo, CallResolutionKind, CallSiteBucketInfo,
-        CallSiteKind, CallStatusKind, CallTargetKind, CrateBoundaryEdgeInfo,
-        LocalBindingRelationKind, ProofContextInfo, ReturnedCallBindingFlowInfo,
+        CallSiteKind, CallStatusKind, CallTargetKind, CrateBoundaryEdgeInfo, LocalBindingEdgeInfo,
+        LocalBindingInfo, LocalBindingRelationKind, ProofContextInfo, ReturnedCallBindingFlowInfo,
         ReturnedCallSourceKind, ReturnedFutureExecutionFlowInfo, ReturnedFutureFlowInfo,
     },
 };
@@ -3285,6 +3285,61 @@ pub(crate) fn assert_forwarded_returned_closure_binding_flow(
     assert_eq!(
         matches, 1,
         "{tool} should return exactly one returned-call binding flow for {label}: {flows:#?}"
+    );
+}
+
+pub(crate) fn assert_initialized_path_local_binding_payload(
+    bindings: &[serde_json::Value],
+    edges: &[serde_json::Value],
+    owner: Uuid,
+    target: Uuid,
+    label: &str,
+    tool: &str,
+) {
+    let rows = bindings
+        .iter()
+        .filter_map(|binding| serde_json::from_value::<LocalBindingInfo>(binding.clone()).ok())
+        .collect::<Vec<_>>();
+    let binding = rows
+        .iter()
+        .find(|binding| {
+            binding.owner_id == owner
+                && binding.kind == "LetBinding"
+                && binding.name == "f"
+                && binding.source_kind == "InitializedPath"
+                && matches!(
+                    binding.source_path.as_deref(),
+                    Some([segment]) if segment == "local_target"
+                )
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "{tool} should expose initialized local binding `f = local_target` for {label}: {bindings:#?}"
+            )
+        });
+
+    let edge_rows = edges
+        .iter()
+        .filter_map(|edge| serde_json::from_value::<LocalBindingEdgeInfo>(edge.clone()).ok())
+        .collect::<Vec<_>>();
+    assert!(
+        edge_rows.iter().any(|edge| {
+            edge.source_id == owner
+                && edge.target_id == binding.id
+                && edge.relation == LocalBindingRelationKind::OwnerContainsBinding
+                && edge.target_kind == "LocalBinding"
+        }),
+        "{tool} should expose OwnerContainsBinding for {label}: {edges:#?}"
+    );
+    assert!(
+        edge_rows.iter().any(|edge| {
+            edge.source_id == binding.id
+                && edge.target_id == target
+                && edge.relation == LocalBindingRelationKind::BindingSourceFunction
+                && edge.source_kind == "LocalBinding"
+                && edge.target_kind == "Function"
+        }),
+        "{tool} should expose BindingSourceFunction for {label}: {edges:#?}"
     );
 }
 

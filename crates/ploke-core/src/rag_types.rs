@@ -615,8 +615,45 @@ pub struct AwaitedCallSiteInfo {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum LocalBindingRelationKind {
+    OwnerContainsBinding,
     BindingSourceClosure,
     BindingSourceCallResult,
+    BindingSourceFunction,
+    BindingProjectsField,
+    BindingAliasesBinding,
+    ArgumentSuppliesParameter,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct LocalBindingInfo {
+    pub id: Uuid,
+    pub owner_id: Uuid,
+    pub owner_kind: String,
+    pub kind: String,
+    pub name: String,
+    pub span: (u32, u32),
+    #[serde(default)]
+    pub cfgs: Vec<String>,
+    pub source_kind: String,
+    #[serde(default)]
+    pub source_id: Option<Uuid>,
+    #[serde(default)]
+    pub source_call_kind: Option<String>,
+    #[serde(default)]
+    pub source_path: Option<Vec<String>>,
+    #[serde(default)]
+    pub callee_kind: Option<String>,
+    #[serde(default)]
+    pub callee_path: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct LocalBindingEdgeInfo {
+    pub source_id: Uuid,
+    pub target_id: Uuid,
+    pub relation: LocalBindingRelationKind,
+    pub source_kind: String,
+    pub target_kind: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
@@ -942,6 +979,8 @@ impl From<ContextPart> for ConciseContext {
             call_proof_invariant_findings: Vec::new(),
             external_summary_needs: Vec::new(),
             runtime_dispatch_needs: Vec::new(),
+            local_bindings: Vec::new(),
+            local_binding_edges: Vec::new(),
             awaited_call_sites: Vec::new(),
             returned_call_binding_flows: Vec::new(),
             returned_future_flows: Vec::new(),
@@ -1022,6 +1061,10 @@ pub struct ConciseContext {
     pub external_summary_needs: Vec<ExternalSummaryNeedInfo>,
     #[serde(default)]
     pub runtime_dispatch_needs: Vec<RuntimeDispatchNeedInfo>,
+    #[serde(default)]
+    pub local_bindings: Vec<LocalBindingInfo>,
+    #[serde(default)]
+    pub local_binding_edges: Vec<LocalBindingEdgeInfo>,
     #[serde(default)]
     pub awaited_call_sites: Vec<AwaitedCallSiteInfo>,
     #[serde(default)]

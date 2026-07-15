@@ -768,6 +768,37 @@ What remains:
   runtime vtable dispatch remain fail-closed unless a later source oracle adds
   a new typed proof carrier.
 
+## 2026-07-15 Exact Local-Binding Downstream Payload Checkpoint
+
+Implemented slice: exact RAG and exact TUI/tool payload propagation for
+persisted `local_binding` and `local_binding_edge` evidence.
+
+What is complete:
+
+- `ploke_core::rag_types::ConciseContext` now carries `local_bindings` and
+  `local_binding_edges` as typed payloads, including the full current
+  `LocalBindingRelationKind` vocabulary.
+- `ploke-rag` exposes `exact_local_bindings_for_owner` and
+  `exact_local_binding_edges_for_owner` as thin wrappers over the existing
+  `ploke-db` owner-scoped queries. Returned-call/future payload conversion
+  still accepts only `BindingSourceClosure` and `BindingSourceCallResult` as
+  returned-call source relations.
+- `code_item_lookup` and `code_item_edges` populate the new payloads and UI
+  counts through the exact RAG helpers, matching the existing pattern for
+  awaited callsites and returned-future proof rows.
+- Fixture-backed RAG/TUI tests assert the
+  `call_local_function_item_binding()` oracle from
+  `tests/fixture_crates/fixture_call_graph/src/lib.rs:185-187`: the result
+  includes the `LetBinding` named `f`, `source_kind = "InitializedPath"`,
+  `source_path = ["local_target"]`, the owner containment edge, and the
+  `BindingSourceFunction` edge to `local_target`.
+
+What remains:
+
+- This is downstream exposure of already-persisted proof evidence, not a new
+  parser carrier, resolver rule, call traversal edge, public parameter proof,
+  callable-field value-flow model, or trait-object dispatch model.
+
 ## Exit Criteria
 
 For the first carrier slice:
