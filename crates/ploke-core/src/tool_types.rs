@@ -206,6 +206,12 @@ mod tests {
         assert!(description.contains("call_reach"));
         assert!(description.contains("call_reach_effects"));
         assert!(description.contains("external_summary_needs"));
+        assert!(description.contains("runtime_dispatch_needs"));
+        assert!(description.contains("local_bindings"));
+        assert!(description.contains("local_binding_edges"));
+        assert!(description.contains("returned_call_binding_flows"));
+        assert!(description.contains("returned_future_flows"));
+        assert!(description.contains("returned_future_execution_flows"));
         assert!(description.contains("direct_call_sites"));
         assert!(description.contains("callsite_buckets"));
         assert!(description.contains("module_path"));
@@ -221,6 +227,17 @@ mod tests {
         assert!(description.contains("ambiguous_frontier_calls"));
         assert!(description.contains("source_files"));
         assert!(description.contains("source_modules"));
+    }
+
+    #[test]
+    fn code_item_edges_description_mentions_binding_payloads() {
+        let description = tool_description(ToolName::CodeItemEdges).to_lowercase();
+        assert!(description.contains("local_bindings"));
+        assert!(description.contains("local_binding_edges"));
+        assert!(description.contains("returned_call_binding_flows"));
+        assert!(description.contains("returned_future_flows"));
+        assert!(description.contains("returned_future_execution_flows"));
+        assert!(description.contains("runtime_dispatch_needs"));
     }
 
     #[test]
