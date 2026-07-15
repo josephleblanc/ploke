@@ -50,7 +50,19 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Latest completed slice: durable aggregate returned-future binding evidence. The
+Latest completed slice: forwarded callable-field argument proof coverage. A new
+`mixed_proof::argument_edges` DB test pins the existing durable
+`ArgumentSuppliesParameter` chain for private forwarded `CallbackHolder`
+helpers. The fixture source oracles are `lib.rs:1982-1993` for the one-hop
+wrapper and `lib.rs:2052-2066` for the two-hop wrapper/middle chain. The test
+asserts the leaf `(holder.callback)()` still resolves to `local_target`, each
+forwarding callsite has a `Path -> LocalBinding` edge to the next callee's
+`holder` parameter binding, and the existing caller-to-target traversal path is
+preserved. This is DB proof coverage over already-admitted private forwarding
+resolution; it does not add new resolver behavior, public parameter inference,
+general object value flow, or a new traversal edge.
+
+Recent completed slice: durable aggregate returned-future binding evidence. The
 fixture now includes same-block tuple-field, named-field, and indexed-array
 storage of the future returned by `make_returned_async_closure()()`, followed
 by awaiting the exact stored slot. Parser extraction reuses the existing

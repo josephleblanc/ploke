@@ -1,5 +1,6 @@
 use super::*;
 
+mod argument_edges;
 mod chained_returned;
 mod initializers;
 mod local_bindings;
