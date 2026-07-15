@@ -1090,6 +1090,13 @@ fn call_site_to_params(call_site: &CallNode) -> BTreeMap<String, cozo::DataValue
 fn local_binding_to_params(binding: &LocalBindingNode) -> BTreeMap<String, cozo::DataValue> {
     let (source_id, source_call_kind, source_path, callee_kind, callee_path) = match &binding.source
     {
+        LocalBindingSource::Parameter => (
+            cozo::DataValue::Null,
+            cozo::DataValue::Null,
+            cozo::DataValue::Null,
+            cozo::DataValue::Null,
+            cozo::DataValue::Null,
+        ),
         LocalBindingSource::Closure { body_id } | LocalBindingSource::AsyncClosure { body_id } => (
             body_id.to_cozo_uuid(),
             cozo::DataValue::Null,

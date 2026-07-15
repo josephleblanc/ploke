@@ -12,12 +12,14 @@ use syn::visit::{self, Visit};
 mod dynamic;
 mod macro_expansion;
 mod model;
+mod parameter_binding;
 mod receiver;
 
 use dynamic::classify_dynamic_callee;
 use macro_expansion::GeneratedCall;
 pub(super) use macro_expansion::MacroExpansionContext;
 use model::{ConstructedFields, FieldInitProof, LocalBindingProof};
+pub(super) use parameter_binding::{extract_parameter_bindings, parameter_names};
 use receiver::classify_method_receiver;
 
 use crate::parser::nodes::{
@@ -423,8 +425,9 @@ impl BodyCallVisitor<'_> {
                 source: self.owner,
                 target: id,
             });
-        self.local_binding_relations
-            .push(local_binding_source_relation(id, &source));
+        if let Some(relation) = local_binding_source_relation(id, &source) {
+            self.local_binding_relations.push(relation);
+        }
         self.local_bindings.push(LocalBindingNode {
             id,
             owner: self.owner,
@@ -865,6 +868,12 @@ impl BodyCallVisitor<'_> {
             unsafe_depth: 0,
         };
         visitor.visit_block(item_fn.block.as_ref());
+        let (mut parameter_relations, mut parameter_bindings) =
+            extract_parameter_bindings(owner, &item_fn.sig.inputs, self.cfgs);
+        visitor
+            .local_binding_relations
+            .append(&mut parameter_relations);
+        visitor.local_bindings.append(&mut parameter_bindings);
         self.append_child(visitor);
     }
     fn record_local_item_owner(&mut self, span: (usize, usize), label: &str) -> CallBodyOwnerId {
@@ -894,20 +903,21 @@ impl BodyCallVisitor<'_> {
 fn local_binding_source_relation(
     source: LocalBindingId,
     binding_source: &LocalBindingSource,
-) -> LocalBindingRelation {
+) -> Option<LocalBindingRelation> {
     match binding_source {
+        LocalBindingSource::Parameter => None,
         LocalBindingSource::Closure { body_id } | LocalBindingSource::AsyncClosure { body_id } => {
-            LocalBindingRelation::BindingSourceClosure {
+            Some(LocalBindingRelation::BindingSourceClosure {
                 source,
                 target: *body_id,
-            }
+            })
         }
         LocalBindingSource::PathCallResult { call_site_id, .. }
         | LocalBindingSource::DynamicCallResult { call_site_id, .. } => {
-            LocalBindingRelation::BindingSourceCallResult {
+            Some(LocalBindingRelation::BindingSourceCallResult {
                 source,
                 target: *call_site_id,
-            }
+            })
         }
     }
 }

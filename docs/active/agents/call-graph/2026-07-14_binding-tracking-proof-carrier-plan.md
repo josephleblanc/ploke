@@ -206,6 +206,36 @@ What remains:
 - The next durable carrier step should be driven by a DB-first source oracle
   that needs one exact relationship beyond return-expression source facts.
 
+## 2026-07-14 Parameter Binding Carrier Checkpoint
+
+Committed slice: durable function/method parameter `local_binding` projection.
+
+What is complete:
+
+- Parser extraction now records `ParameterBinding` rows for value parameters
+  under function, method, generated-method, trait-default-method, proc-macro,
+  and executable local-item owners.
+- Transform projection persists these rows in the existing `local_binding`
+  relation with `source_kind = "Parameter"` and no source endpoint columns.
+- `local_binding_edge` persists owner-to-parameter containment only. This
+  intentionally does not add argument-to-parameter flow, aliases, field
+  projection, or new traversal edges.
+- `ploke-db` validates the strict parameter row shape and rejects parameter
+  rows with source callsite/path/callee endpoint fields.
+- Fixture-backed DB coverage proves the existing private callable-parameter
+  edge for
+  `call_single_function_pointer_param(f: fn() -> i32) { f() }` remains
+  traversable through complete caller proof, and also proves the callee
+  parameter `f` is queryable as one durable `ParameterBinding` with exactly one
+  `OwnerContainsBinding` edge.
+
+What remains:
+
+- The next carrier step is argument-to-parameter proof, not another
+  parameter-row widening pass. That should add a typed edge/status row only
+  when the source oracle proves the argument binding/path/closure supplied to a
+  private callee parameter.
+
 ## 2026-07-14 Returned-Callable Binding-Flow Query Checkpoint
 
 Committed slice: DB query helper over returned-callable binding evidence.

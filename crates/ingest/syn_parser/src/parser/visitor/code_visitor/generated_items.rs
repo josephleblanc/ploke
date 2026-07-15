@@ -682,6 +682,7 @@ impl<'a> CodeVisitor<'a> {
                     &method.block,
                     effective_cfgs,
                     &receiver_param_names(&parameters),
+                    &method.sig.inputs,
                 );
 
                 MethodNode {

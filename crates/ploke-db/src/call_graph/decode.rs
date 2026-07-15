@@ -363,6 +363,13 @@ fn validate_local_binding_edge_shape(edge: &LocalBindingEdgeRow) -> Result<(), D
 
 fn validate_local_binding_shape(binding: &LocalBindingRow) -> Result<(), DbError> {
     let valid = match binding.source_kind.as_str() {
+        "Parameter" => {
+            binding.source_id.is_none()
+                && binding.source_call_kind.is_none()
+                && binding.source_path.is_none()
+                && binding.callee_kind.is_none()
+                && binding.callee_path.is_none()
+        }
         "Closure" | "AsyncClosure" => {
             binding.source_id.is_some()
                 && binding.source_call_kind.is_none()
@@ -389,6 +396,9 @@ fn validate_local_binding_shape(binding: &LocalBindingRow) -> Result<(), DbError
 
     let valid_kind = match binding.kind.as_str() {
         "ReturnExpression" => binding.name == "return",
+        "ParameterBinding" => {
+            non_empty_string(Some(binding.name.as_str())) && binding.source_kind == "Parameter"
+        }
         "LetBinding" => {
             non_empty_string(Some(binding.name.as_str()))
                 && matches!(

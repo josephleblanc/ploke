@@ -59,6 +59,7 @@ pub struct LocalBindingNode {
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum LocalBindingKind {
+    ParameterBinding,
     LetBinding,
     ReturnExpression,
 }
@@ -66,6 +67,7 @@ pub enum LocalBindingKind {
 impl LocalBindingKind {
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::ParameterBinding => "ParameterBinding",
             Self::LetBinding => "LetBinding",
             Self::ReturnExpression => "ReturnExpression",
         }
@@ -74,6 +76,7 @@ impl LocalBindingKind {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub enum LocalBindingSource {
+    Parameter,
     Closure {
         body_id: ExecutableBodyId,
     },
@@ -94,6 +97,7 @@ pub enum LocalBindingSource {
 impl LocalBindingSource {
     pub fn source_kind(&self) -> &'static str {
         match self {
+            Self::Parameter => "Parameter",
             Self::Closure { .. } => "Closure",
             Self::AsyncClosure { .. } => "AsyncClosure",
             Self::PathCallResult { .. } => "PathCallResult",

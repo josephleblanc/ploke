@@ -11,6 +11,7 @@
 use super::attribute_processing::{extract_attributes, extract_cfg_strings, extract_docstring};
 use super::call_extraction::{
     MacroExpansionContext, extract_body_call_sites, extract_expr_call_sites,
+    extract_parameter_bindings, parameter_names,
 };
 use super::state::VisitorState;
 use super::type_processing::{
@@ -74,16 +75,7 @@ fn receiver_param_names(parameters: &[ParamData]) -> Vec<String> {
 fn typed_fn_arg_names(
     inputs: &syn::punctuated::Punctuated<syn::FnArg, syn::token::Comma>,
 ) -> Vec<String> {
-    inputs
-        .iter()
-        .filter_map(|arg| match arg {
-            syn::FnArg::Typed(typed) => match typed.pat.as_ref() {
-                syn::Pat::Ident(ident) => Some(ident.ident.to_string()),
-                _ => None,
-            },
-            syn::FnArg::Receiver(_) => None,
-        })
-        .collect()
+    parameter_names(inputs)
 }
 
 fn executable_where_predicates(generics: &syn::Generics) -> Vec<ExecutableWherePredicate> {
@@ -253,6 +245,7 @@ impl<'a> CodeVisitor<'a> {
         block: &syn::Block,
         cfgs: &[String],
         receiver_names: &[String],
+        inputs: &syn::punctuated::Punctuated<syn::FnArg, syn::token::Comma>,
     ) {
         let macro_expansions =
             MacroExpansionContext::from_macro_nodes(&self.state.code_graph.macros);
@@ -263,6 +256,10 @@ impl<'a> CodeVisitor<'a> {
             mut executable_bodies,
             mut local_bindings,
         ) = extract_body_call_sites(owner, block, cfgs, receiver_names, &macro_expansions);
+        let (mut parameter_relations, mut parameter_bindings) =
+            extract_parameter_bindings(owner, inputs, cfgs);
+        local_binding_relations.append(&mut parameter_relations);
+        local_bindings.append(&mut parameter_bindings);
         self.annotate_local_impl_method_scopes(owner, block, cfgs, &mut executable_bodies);
         self.state.code_graph.call_sites.append(&mut calls);
         self.state
@@ -1123,6 +1120,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 &func.block,
                 &provisional_effective_cfgs,
                 &parameter_names,
+                &func.sig.inputs,
             );
             // Don't recursively visit the body of the proc macro function itself
             // with visit_item_fn; call extraction above records the body calls.
@@ -1226,6 +1224,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 &func.block,
                 &provisional_effective_cfgs,
                 &receiver_names,
+                &func.sig.inputs,
             );
 
             // NOTE: We are already visiting all the items we are processing within this
@@ -2230,6 +2229,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                         &method.block,
                         &method_provisional_effective_cfgs,
                         &receiver_names,
+                        &method.sig.inputs,
                     );
                     // ANCHOR_END: method_from_impl_node
                 }
@@ -2469,6 +2469,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                             block,
                             &method_provisional_effective_cfgs,
                             &receiver_names,
+                            &method.sig.inputs,
                         );
                     }
                     // ANCHOR_END: method_from_trait_node
