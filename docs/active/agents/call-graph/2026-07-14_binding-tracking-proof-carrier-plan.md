@@ -856,6 +856,13 @@ What is complete:
   `BindingSourceFunction` edge to `local_target`. Focused grouped verification
   passed with
   `cargo test -p ploke-tui --features call_graph local_binding_payload_for_method_callable_argument -- --nocapture`.
+- Exact RAG coverage now samples the same method-owned payload through
+  `exact_local_bindings_for_owner` and
+  `exact_local_binding_edges_for_owner`, asserting the method parameter
+  binding, the incoming `Method -> LocalBinding`
+  `ArgumentSuppliesParameter` edge, and the parameter's
+  `BindingSourceFunction` edge. Focused verification passed with
+  `cargo test -p ploke-rag --features call_graph local_bindings_exact_expose_method_argument_parameter_evidence -- --nocapture`.
 
 What remains:
 
@@ -888,6 +895,11 @@ What is complete:
   includes the `LetBinding` named `f`, `source_kind = "InitializedPath"`,
   `source_path = ["local_target"]`, the owner containment edge, and the
   `BindingSourceFunction` edge to `local_target`.
+- Fixture-backed exact RAG coverage also samples the private method argument
+  oracle at `tests/fixture_crates/fixture_call_graph/src/lib.rs:2422-2429`,
+  preserving the method-owned `f` parameter binding, the incoming method-call
+  `ArgumentSuppliesParameter` edge, and the parameter-to-`local_target`
+  `BindingSourceFunction` edge.
 
 What remains:
 

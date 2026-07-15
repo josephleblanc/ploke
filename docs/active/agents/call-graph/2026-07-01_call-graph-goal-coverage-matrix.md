@@ -257,7 +257,11 @@ parameter binding, the new `Method -> LocalBinding` argument edge, and the
 parameter's `BindingSourceFunction` edge. Exact `code_item_lookup` and
 `code_item_edges` tests now preserve the same method-owned local-binding
 payload and UI counts through the established local-binding tool assertion
-helper. Active fixtures were regenerated and verified. This is proof
+helper. Exact RAG now samples the same method-owned local-binding payload
+through `exact_local_bindings_for_owner` and
+`exact_local_binding_edges_for_owner`, asserting the incoming method-call
+argument edge and parameter source-function edge. Active fixtures were
+regenerated and verified. This is proof
 projection and downstream surfacing for an already-resolved private method
 argument, not public method parameter inference, arbitrary method value-flow,
 trait-object dispatch, or a new traversal edge.
