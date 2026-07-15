@@ -327,6 +327,19 @@ Object/field candidate audit, 2026-07-15:
   router-side `self.into_route` and `self.tap_fn` remain unsupported/targetless
   without callable-field value-flow proof, and no traversal edge was promoted.
 
+Callable trait-object audit, 2026-07-15:
+
+- Rechecked the callable trait-object bucket after the object/field audit.
+  Parser/DB, RAG call-context, and TUI already cover the exact rows for
+  `Box<dyn Fn()>`, `&dyn Fn()`, `&mut dyn FnMut()`, and bounded private-caller
+  forwarding when the source oracle proves one callable target.
+- The narrow drift found was RAG proof-context coverage: blockers and memchr
+  targetless runtime-dispatch summaries were covered, but the exact resolved
+  callable trait-object rows were not sampled at the proof-context boundary.
+  Added a table-driven proof-context fixture that projects and collects the
+  existing exact rows without promoting memchr boxed `dyn FnMut` dispatch or
+  introducing broader trait-object resolution.
+
 ## Do Not Reselect Without New Evidence
 
 - Public callable parameters and public callable fields that lack complete

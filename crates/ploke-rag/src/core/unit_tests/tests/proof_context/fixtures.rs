@@ -1,5 +1,6 @@
 mod ambiguous;
 mod blockers;
+mod callable_trait_objects;
 mod constructors;
 mod executable_owners;
 mod expanded;
