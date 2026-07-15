@@ -60,10 +60,11 @@ oracle is `call_named_field_function_binding()`, where
 `BindingProjectsField` local-binding edge, `ploke-db` strictly decodes the new
 `Constructed` and `FieldProjection` row shapes, and fixture-backed DB coverage
 asserts the constructed base row, the projected field row, and the projection
-edge while preserving the existing dynamic call traversal. Active call-graph
-fixtures were regenerated and verified. This is a proof-carrier slice, not
-general field value flow, tuple projection flow, trait-object dispatch, or a
-new traversal edge.
+edge while preserving the existing dynamic call traversal. The fail-closed
+counterpart proves public parameter-field calls stay targetless and emit no
+field-projection binding evidence. Active call-graph fixtures were regenerated
+and verified. This is a proof-carrier slice, not general field value flow,
+tuple projection flow, trait-object dispatch, or a new traversal edge.
 
 Recent completed slice: durable argument-to-parameter binding edge projection.
 Transform now derives exact one-hop `ArgumentSuppliesParameter`

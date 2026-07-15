@@ -184,6 +184,49 @@ fn fixture_projection_stores_named_field_projection_edges() -> Result<(), DbErro
 }
 
 #[test]
+fn fixture_projection_keeps_unproven_field_parameter_without_projection_edge() -> Result<(), DbError>
+{
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let owner = function_id_by_name(&db, "call_field_function_param")?;
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:709-710:
+    // `(holder.callback)()` reads a public parameter field. There is no local
+    // constructed binding proving which callable value reaches `callback`, so
+    // the durable binding carrier must stay fail-closed.
+    let context = db.call_context_for_owner(owner)?;
+    let row = row_by_kind_path(&context, CallSiteKind::Dynamic, &["holder", "callback"]);
+    assert_eq!(row.status.status, CallStatusKind::Unsupported);
+    assert!(
+        row.targets.is_empty(),
+        "unproven parameter field call must stay targetless: {row:#?}"
+    );
+
+    let bindings = db.local_bindings_for_owner(owner)?;
+    assert!(
+        bindings
+            .iter()
+            .all(|binding| binding.kind != "FieldProjection"),
+        "unproven parameter field call must not emit a field projection binding: {bindings:#?}"
+    );
+    assert!(
+        bindings
+            .iter()
+            .any(|binding| binding.kind == "ParameterBinding" && binding.name == "holder"),
+        "the parameter itself should still be visible as a durable binding: {bindings:#?}"
+    );
+
+    let edges = db.local_binding_edges_for_owner(owner)?;
+    assert!(
+        edges
+            .iter()
+            .all(|edge| edge.relation != LocalBindingRelationKind::BindingProjectsField),
+        "unproven parameter field call must not emit projection edges: {edges:#?}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn fixture_projection_stores_let_closure_binding_edges() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let owner = function_id_by_name(&db, "call_shadowed_local_target_binding")?;

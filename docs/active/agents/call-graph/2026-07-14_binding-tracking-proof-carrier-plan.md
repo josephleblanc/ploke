@@ -448,6 +448,9 @@ What is complete:
 - Fixture-backed DB coverage proves the constructed base row, projected field
   row, owner containment edges, projection edge, and the pre-existing dynamic
   call edge to `local_target`.
+- The fail-closed counterpart proves public parameter-field calls such as
+  `call_field_function_param(holder) { (holder.callback)() }` stay targetless
+  and do not emit `FieldProjection` or `BindingProjectsField` rows.
 - Active call-graph fixtures were regenerated and verified after the projection
   change, then the regenerated shared snapshots were copied into
   `tests/backup_dbs/`.
