@@ -703,6 +703,52 @@ fn assert_test_client_dependency_root_proof(
 }
 
 #[test]
+fn axum_real_target_test_client_new_crate_test_macro_owner_resolves() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Matrix: axum/src/routing/tests/nest.rs:365 calls
+    // `TestClient::new(app)` inside a `#[crate::test]` async function.
+    // Source chain:
+    //   axum/src/routing/tests/mod.rs:8-11 imports `crate::test_helpers::*`.
+    //   axum/src/routing/tests/nest.rs:4 imports `super::*`.
+    //   axum/src/test_helpers/test_client.rs:36 defines `TestClient::new`.
+    // Expected traversal: the attribute macro on the owner should not hide the
+    // function body; inherited parent glob visibility resolves the path in one
+    // local-exact associated-function edge.
+    let owner = function_id_by_name_in_module(
+        &db,
+        &["crate", "routing", "tests", "nest"],
+        "nest_with_and_without_trailing",
+    )?;
+    let target = method_id_by_name_body_and_file_suffix(
+        &db,
+        "new",
+        "spawn_service(svc)",
+        "axum/src/test_helpers/test_client.rs",
+    )?;
+    let context = db.call_context_for_owner(owner)?;
+    let row = row_by_path(&context, &["TestClient", "new"]);
+
+    assert_resolved_target(
+        row,
+        target,
+        CallRelationKind::AssociatedFunction,
+        CallSiteKind::Path,
+        CallTargetKind::Method,
+    );
+    assert_one_edge_traversal(
+        &db,
+        TraversalExpectation {
+            label: "axum/src/routing/tests/nest.rs:365 #[crate::test] TestClient::new",
+            owner,
+            target,
+            site_id: row.site.id,
+            expected_edge_count: 1,
+        },
+    )
+}
+
+#[test]
 fn axum_real_target_test_client_new_direct_grouped_import_resolves() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
