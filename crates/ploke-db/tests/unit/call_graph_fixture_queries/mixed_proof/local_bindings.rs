@@ -765,6 +765,91 @@ fn fixture_projection_stores_aggregate_returned_future_call_result_edges() -> Re
     Ok(())
 }
 
+#[test]
+fn fixture_projection_stores_aggregate_forwarded_future_call_result_edges() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let owner = function_id_by_name(
+        &db,
+        "call_stored_forwarded_returned_async_future_tuple_field",
+    )?;
+    let producer = function_id_by_name(&db, "make_forwarded_returned_async_future")?;
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:2405-2407:
+    // `let futures = (make_forwarded_returned_async_future(),); futures.0.await`
+    // proves the aggregate slot is sourced by the awaited producer path-call
+    // result, without turning the returned future into a direct edge to the
+    // async closure body.
+    let context = db.call_context_for_owner(owner)?;
+    let producer_row = row_by_path(&context, &["make_forwarded_returned_async_future"]);
+    assert_resolved_target(
+        producer_row,
+        producer,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
+
+    let awaited_sites = db.awaited_call_sites_for_owner(owner)?;
+    assert_eq!(
+        awaited_sites.len(),
+        1,
+        "stored forwarded future should record exactly one awaited producer call: {awaited_sites:#?}"
+    );
+    assert_eq!(awaited_sites[0].id, producer_row.site.id);
+    assert_eq!(awaited_sites[0].kind, CallSiteKind::Path);
+
+    let bindings = db.local_bindings_for_owner(owner)?;
+    let matches = bindings
+        .iter()
+        .filter(|binding| binding.kind == "LetBinding" && binding.name == "futures.0")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matches.len(),
+        1,
+        "stored forwarded future should expose one aggregate future binding: {bindings:#?}"
+    );
+    let binding = matches[0];
+    assert_eq!(binding.source_kind, "PathCallResult");
+    assert_eq!(binding.source_id, Some(producer_row.site.id));
+    assert_eq!(binding.source_call_kind.as_deref(), Some("Path"));
+    assert_eq!(
+        binding.source_path.as_ref(),
+        Some(&path(&["make_forwarded_returned_async_future"]))
+    );
+    assert_eq!(binding.callee_kind, None);
+    assert_eq!(binding.callee_path, None);
+
+    let edges = db.local_binding_edges_for_owner(owner)?;
+    let binding_edges = edges
+        .iter()
+        .filter(|edge| edge.source_id == binding.id || edge.target_id == binding.id)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        binding_edges.len(),
+        2,
+        "stored forwarded future binding should expose owner and source edges: {edges:#?}"
+    );
+    assert!(
+        binding_edges.iter().any(|edge| edge.relation
+            == LocalBindingRelationKind::OwnerContainsBinding
+            && edge.source_id == owner
+            && edge.target_id == binding.id
+            && edge.target_kind == "LocalBinding"),
+        "missing owner-to-forwarded-future binding edge: {binding_edges:#?}"
+    );
+    assert!(
+        binding_edges.iter().any(|edge| edge.relation
+            == LocalBindingRelationKind::BindingSourceCallResult
+            && edge.source_id == binding.id
+            && edge.target_id == producer_row.site.id
+            && edge.source_kind == "LocalBinding"
+            && edge.target_kind == "Path"),
+        "missing forwarded-future binding-to-path-call edge: {binding_edges:#?}"
+    );
+
+    Ok(())
+}
+
 fn assert_returned_future_storage_binding(
     db: &ploke_db::Database,
     owner_name: &str,

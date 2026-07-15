@@ -50,7 +50,21 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Latest completed slice: durable field-projection source-function edges. The
+Latest completed slice: stored forwarded returned-future proof carrier. The
+fixture source oracle
+`call_stored_forwarded_returned_async_future_tuple_field()` stores
+`make_forwarded_returned_async_future()` in `futures.0` and awaits that exact
+aggregate slot. Parser extraction now records aggregate future storage from an
+awaited `PathCallResult` in addition to the existing returned-callable
+`DynamicCallResult` case. DB coverage asserts the durable `futures.0`
+`LetBinding`, its `BindingSourceCallResult` edge to the producer path call, the
+existing returned-future proof/execution rows, and the invariant that ordinary
+call-path traversal from the caller to `local_target` remains empty. This
+proves one stored-plus-forwarded future source oracle without adding a new call
+edge, general aggregate alias/value flow, async callable trait-object dispatch,
+or general poll/resume traversal.
+
+Recent completed slice: durable field-projection source-function edges. The
 existing `FieldProjection` local-binding rows for exact constructed callable
 projection oracles now have typed `BindingSourceFunction` edges to the resolved
 `local_target` endpoint. The table-driven fixture cases are the direct named
@@ -3624,6 +3638,20 @@ while `returned_call_binding_flows` remains empty and ordinary paths from the
 caller to `local_target` remain empty. This proves available evidence for
 explanation/RAG without modeling general async poll/resume or cross-function
 future value flow as source-call traversal.
+
+Update 2026-07-15: stored forwarded returned async future flow now has a
+bounded aggregate-slot proof without admitting a traversal edge. The source
+oracle is
+`tests/fixture_crates/fixture_call_graph/src/lib.rs:2405-2407`, where
+`call_stored_forwarded_returned_async_future_tuple_field()` stores
+`make_forwarded_returned_async_future()` in `futures.0` and awaits that exact
+slot. Parser extraction records a `PathCallResult` aggregate binding for the
+awaited producer path call. DB proof tests assert that binding edge, reuse the
+existing returned-future flow/execution queries, and keep ordinary paths from
+the caller to `local_target` empty. This covers one stored-plus-forwarded
+future source oracle; arbitrary aggregate aliases, async callable trait
+objects, general non-local future value flow, and poll/resume traversal remain
+open.
 
 ## Parking Lot
 

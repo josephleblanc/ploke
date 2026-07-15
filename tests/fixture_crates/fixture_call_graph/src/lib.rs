@@ -2401,3 +2401,8 @@ pub fn make_forwarded_returned_async_future() -> impl std::future::Future<Output
 pub async fn call_forwarded_returned_async_future() -> i32 {
     make_forwarded_returned_async_future().await
 }
+
+pub async fn call_stored_forwarded_returned_async_future_tuple_field() -> i32 {
+    let futures = (make_forwarded_returned_async_future(),);
+    futures.0.await
+}

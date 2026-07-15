@@ -632,6 +632,41 @@ What remains:
   model. It only proves exact same-block aggregate slots whose producer
   dynamic callsite and poll point are both source-visible in one owner.
 
+## 2026-07-15 Stored Forwarded Future Carrier Checkpoint
+
+Implemented slice: durable aggregate storage evidence for an awaited path-call
+future producer whose returned future is explained through existing
+returned-future proof queries.
+
+What is complete:
+
+- The fixture-backed source oracle is
+  `tests/fixture_crates/fixture_call_graph/src/lib.rs:2405-2407`, where
+  `call_stored_forwarded_returned_async_future_tuple_field()` stores
+  `make_forwarded_returned_async_future()` in `futures.0` and awaits that exact
+  aggregate slot.
+- Parser extraction now permits aggregate awaited-future storage rows sourced
+  by either `DynamicCallResult` or `PathCallResult`. This reuses the existing
+  `future_call_span`, `return_binding_source`, `local_binding`, and
+  `BindingSourceCallResult` machinery rather than adding a new relation family.
+- The DB local-binding proof asserts a `LetBinding` named `futures.0` with
+  `source_kind = "PathCallResult"`, `source_call_kind = "Path"`, and a
+  `BindingSourceCallResult` edge to the awaited producer callsite.
+- The returned-future proof query for the same caller identifies the awaited
+  producer, the producer return binding, the returned future dynamic row, the
+  returned async-closure maker, and the closure body `local_target()` edge.
+  Ordinary call-path traversal from the caller to `local_target` remains empty.
+- Focused DB tests passed for the new local-binding edge, the new
+  returned-future proof flow, and the broader `mixed_proof::returned` module.
+
+What remains:
+
+- This does not admit a new traversal edge, does not model general
+  cross-function future value flow, and does not handle arbitrary aggregate
+  aliases, async callable trait objects, or general poll/resume. It only records
+  the source-visible poll point for one aggregate slot whose producer is an
+  existing resolved path call.
+
 ## 2026-07-15 Initialized Path Source Function Edge Checkpoint
 
 Implemented slice: durable `BindingSourceFunction` edge for exact initialized

@@ -678,6 +678,113 @@ fn fixture_projection_keeps_forwarded_returned_async_future_fail_closed() -> Res
     Ok(())
 }
 
+#[test]
+fn fixture_projection_tracks_stored_forwarded_returned_async_future_flow() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:2405-2407:
+    // `call_stored_forwarded_returned_async_future_tuple_field()` stores
+    // `make_forwarded_returned_async_future()` in `futures.0` and then awaits
+    // that aggregate slot. The query can identify the producer future and its
+    // async-closure body proof, but must not fabricate an ordinary traversal
+    // edge from the caller to `local_target`.
+    let owner = function_id_by_name(
+        &db,
+        "call_stored_forwarded_returned_async_future_tuple_field",
+    )?;
+    let producer = function_id_by_name(&db, "make_forwarded_returned_async_future")?;
+    let returned_maker = function_id_by_name(&db, "make_returned_async_closure")?;
+    let local_target = function_id_by_name(&db, "local_target")?;
+
+    let owner_context = db.call_context_for_owner(owner)?;
+    assert_eq!(
+        owner_context.len(),
+        1,
+        "stored forwarded future caller should expose only the awaited producer path: {owner_context:#?}"
+    );
+    let producer_row = row_by_path(&owner_context, &["make_forwarded_returned_async_future"]);
+    assert_resolved_target(
+        producer_row,
+        producer,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
+
+    let future_flows = db.returned_future_flows_for_owner(owner)?;
+    assert_eq!(
+        future_flows.len(),
+        1,
+        "stored forwarded future should expose one returned-future proof flow: {future_flows:#?}"
+    );
+    let flow = &future_flows[0];
+    assert_eq!(flow.caller_id, owner);
+    assert_eq!(flow.producer.id, producer);
+    assert_eq!(flow.producer.site_id, producer_row.site.id);
+    assert_eq!(
+        flow.producer.path,
+        path(&["make_forwarded_returned_async_future"])
+    );
+    assert_eq!(
+        flow.binding.source.relation,
+        LocalBindingRelationKind::BindingSourceCallResult
+    );
+    assert_eq!(flow.binding.source.kind, "Dynamic");
+    assert_eq!(flow.future.path, path(&["make_returned_async_closure"]));
+
+    let execution_flows = db.returned_future_execution_flows_for_owner(owner)?;
+    assert_eq!(
+        execution_flows.len(),
+        1,
+        "stored forwarded future should expose one contextual returned-future execution proof: {execution_flows:#?}"
+    );
+    let execution = &execution_flows[0];
+    assert_eq!(execution.caller_id, owner);
+    assert_eq!(execution.producer.id, producer);
+    assert_eq!(execution.producer.site_id, producer_row.site.id);
+    assert_eq!(execution.maker.id, returned_maker);
+    assert_eq!(execution.maker.path, path(&["make_returned_async_closure"]));
+    assert_eq!(
+        execution.body_edge.caller_id,
+        execution.callable_binding.source.id
+    );
+    assert_eq!(execution.body_edge.callee_id, local_target);
+    assert_eq!(execution.body_edge.relation, CallRelationKind::Function);
+    assert_eq!(execution.body_edge.source_kind, CallSiteKind::Path);
+    assert_eq!(execution.body_edge.target_kind, CallTargetKind::Function);
+
+    let producer_paths = db.call_paths_between(
+        owner,
+        producer,
+        ploke_db::CallPathOptions {
+            max_depth: 1,
+            max_paths: 8,
+        },
+    )?;
+    assert_eq!(
+        producer_paths.len(),
+        1,
+        "stored forwarded future caller should traverse exactly one edge to the producer: {producer_paths:#?}"
+    );
+    assert_eq!(producer_paths[0].edges[0].caller_id, owner);
+    assert_eq!(producer_paths[0].edges[0].callee_id, producer);
+
+    let local_target_paths = db.call_paths_between(
+        owner,
+        local_target,
+        ploke_db::CallPathOptions {
+            max_depth: 4,
+            max_paths: 16,
+        },
+    )?;
+    assert!(
+        local_target_paths.is_empty(),
+        "stored forwarded future proof flow must not create a normal traversal path to local_target: {local_target_paths:#?}"
+    );
+
+    Ok(())
+}
+
 fn assert_returned_path_poll_resume_blocker(
     db: &ploke_db::Database,
     row: &CallContextRow,

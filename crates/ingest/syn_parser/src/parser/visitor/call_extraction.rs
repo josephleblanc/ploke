@@ -2376,7 +2376,10 @@ fn future_storage_binding(
 ) -> Option<FutureStorageBinding> {
     let span = future_call_span(expr)?;
     let source = return_binding_source(expr, owner, cfgs, param_names, local_scopes, true)?;
-    if !matches!(source, LocalBindingSource::DynamicCallResult { .. }) {
+    if !matches!(
+        source,
+        LocalBindingSource::DynamicCallResult { .. } | LocalBindingSource::PathCallResult { .. }
+    ) {
         return None;
     }
     Some(FutureStorageBinding {
