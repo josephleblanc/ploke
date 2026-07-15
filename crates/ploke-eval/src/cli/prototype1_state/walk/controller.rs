@@ -1985,12 +1985,16 @@ impl WalkController {
                 return Err(attach_release(session_error(source), release));
             }
         };
-        let (lease, receipt) = match advance_controlled(lease, intent).await {
-            Ok(ControlAdvance::Existing { lease, receipt }) => (lease, receipt),
-            Ok(ControlAdvance::Finished(Finished::Terminal { lease, receipt, .. })) => {
-                (lease, receipt)
-            }
-            Ok(ControlAdvance::Finished(Finished::Uncertain { receipt, .. })) => {
+        let (lease, receipt, committed_state) = match advance_controlled(lease, intent).await {
+            Ok(ControlAdvance::Existing { lease, receipt }) => (lease, receipt, None),
+            Ok(ControlAdvance::Finished {
+                finished: Finished::Terminal { lease, receipt, .. },
+                state,
+            }) => (lease, receipt, Some(state)),
+            Ok(ControlAdvance::Finished {
+                finished: Finished::Uncertain { receipt, .. },
+                ..
+            }) => {
                 let phase = receipt.intent.expected;
                 let detail = result_detail(&receipt.result).to_string();
                 self.state = WalkState::Blocked {
@@ -2006,22 +2010,22 @@ impl WalkController {
         let from = receipt.intent.expected;
         let result = receipt.result.clone();
         let phase = lease.cursor().phase;
-        let state = match reconstruct_state(&self.repo_root, phase, lease.handoff_path()) {
-            Ok(state) => state,
-            Err(source) => {
-                let detail = source.to_string();
+        if let Some(state) = committed_state {
+            self.state = state;
+            self.reconstruction = None;
+        } else {
+            if self.state.phase() != phase {
+                let detail = format!(
+                    "replayed terminal receipt at {phase} without resident post-edge typestate; durable receipt remains committed"
+                );
                 self.state = WalkState::Blocked {
                     phase,
                     detail: detail.clone(),
                 };
-                self.record(format!("reconstruction blocked at {phase}: {detail}"));
-                let release = release_lease(lease).err();
-                return Err(attach_release(source, release));
+                self.record(detail);
             }
-        };
+        }
         let version = release_lease_version(lease)?;
-        self.state = state;
-        self.reconstruction = None;
 
         match result {
             AttemptResult::Committed { phase: to, .. } => {

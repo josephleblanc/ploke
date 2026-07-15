@@ -58,7 +58,7 @@ use crate::{
             identity,
             invocation::{ProcessIncarnation, process_incarnation},
             journal::{JournalEntry, PrototypeJournal, prototype1_transition_journal_path},
-            session::{Attempt, AttemptResult, Damage, Store},
+            session::{Attempt, AttemptResult, Damage, SessionId, Store},
             successor,
         },
     },
@@ -71,15 +71,15 @@ use super::{
     config,
     controller::{DeltaRenderStyle, LlmInspector, WalkController},
     endpoint::{self, ServerEndpoint},
-    epoch::ServerEpoch,
+    epoch::{ServerEpoch, WALK_PROTOCOL_VERSION},
     ipc, paths,
     phase::WalkPhase,
     protocol::{
         MutationGuard, OperationId, SessionVersion, WalkAction, WalkActionKind, WalkAuthority,
         WalkBlocker, WalkBlockerCode, WalkDeltaSnapshot, WalkDeltaState, WalkErrorCode,
         WalkEventProjection, WalkJobKind, WalkJobResolutionKind, WalkJobResolutionReceipt,
-        WalkJobSnapshot, WalkJobStatus, WalkOkKind, WalkPosition, WalkRequest, WalkRequestBody,
-        WalkResponse, WalkSessionHistory, WalkSessionSnapshot, WalkStartConfig,
+        WalkJobSnapshot, WalkJobStatus, WalkOkKind, WalkOkPayload, WalkPosition, WalkRequest,
+        WalkRequestBody, WalkResponse, WalkSessionHistory, WalkSessionSnapshot, WalkStartConfig,
         WalkTransitionReceipt,
     },
     query::run_snapshot_query,
@@ -305,12 +305,19 @@ pub(crate) struct PreparedServer {
     epoch: ServerEpoch,
     idle_ttl: Option<Duration>,
     publish: bool,
+    restore: JobRestoreScope,
 }
 
 impl PreparedServer {
     pub(crate) fn endpoint(&self) -> &ServerEndpoint {
         &self.endpoint
     }
+}
+
+#[derive(Clone, Copy)]
+enum JobRestoreScope {
+    Repository,
+    Successor { predecessor: SessionId },
 }
 
 #[derive(Default)]
@@ -346,7 +353,18 @@ struct DurableOperation {
 fn restore_job_registry(
     operation_root: &Path,
     epoch: &ServerEpoch,
+    scope: JobRestoreScope,
+    session: Option<SessionId>,
 ) -> Result<JobRegistry, PrepareError> {
+    let (current, predecessor) = match scope {
+        JobRestoreScope::Repository => (None, None),
+        JobRestoreScope::Successor { predecessor } => {
+            let current = session.ok_or_else(|| PrepareError::InvalidBatchSelection {
+                detail: "successor walk service has no durable controller session".to_string(),
+            })?;
+            (Some(current), Some(predecessor))
+        }
+    };
     let mut jobs = JobRegistry::default();
     for entry in fs::read_dir(operation_root)
         .map_err(|source| operation_error("scan", operation_root, source))?
@@ -379,6 +397,27 @@ fn restore_job_registry(
             })?;
         let record = read_operation_record(&path, operation, epoch)?;
         jobs.next_id = jobs.next_id.max(record.stored.snapshot.job_id);
+        let from_predecessor = predecessor
+            .is_some_and(|session| record.stored.snapshot.expected.session_id() == Some(session));
+        if from_predecessor {
+            // A closed-gate successor may inspect its durable session while
+            // the exact predecessor still publishes its terminal job receipt.
+            // Retain only that exact predecessor operation for lookup without
+            // converting it into the successor controller's recovery blocker.
+            // Any unrelated unresolved session still follows the repository
+            // fail-closed path below.
+            jobs.completed.insert(operation, record.stored);
+            continue;
+        }
+        let unrelated = current
+            .is_some_and(|session| record.stored.snapshot.expected.session_id() != Some(session));
+        if unrelated && record.stored.snapshot.status.blocks_mutation() {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "successor walk service found unresolved operation {operation} from an unrelated controller session"
+                ),
+            });
+        }
         if record.stored.snapshot.status.blocks_mutation() {
             if let Some(active) = jobs.active.as_ref() {
                 return Err(PrepareError::InvalidBatchSelection {
@@ -524,8 +563,9 @@ pub(crate) async fn serve(command: Prototype1StateWalkServeCommand) -> Result<()
 pub(crate) fn prepare_successor(
     repo_root: &Path,
     runtime_id: crate::cli::prototype1_state::event::RuntimeId,
+    predecessor: SessionId,
 ) -> Result<PreparedServer, PrepareError> {
-    prepare(
+    let mut prepared = prepare(
         Prototype1StateWalkServeCommand {
             repo_root: Some(repo_root.to_path_buf()),
             socket: Some(paths::successor_socket(repo_root, runtime_id)?),
@@ -533,7 +573,9 @@ pub(crate) fn prepare_successor(
             no_ttl: true,
         },
         false,
-    )
+    )?;
+    prepared.restore = JobRestoreScope::Successor { predecessor };
+    Ok(prepared)
 }
 
 /// Probe whether the deterministic socket slot named by persisted Ready
@@ -542,6 +584,220 @@ pub(crate) fn prepare_successor(
 pub(crate) fn endpoint_reachable(endpoint: &ServerEndpoint) -> Result<bool, PrepareError> {
     endpoint.validate_persisted()?;
     socket_reachable(endpoint.socket())
+}
+
+/// Wait until an already-bound successor endpoint answers a protocol Health
+/// request, rather than treating a successful Unix connect as service Ready.
+pub(crate) async fn await_responsive(
+    endpoint: &ServerEndpoint,
+    timeout: Duration,
+) -> Result<(), PrepareError> {
+    const POLL: Duration = Duration::from_millis(10);
+    const REQUEST: Duration = Duration::from_millis(250);
+
+    endpoint.validate_persisted()?;
+    let deadline = time::Instant::now() + timeout;
+    let mut detail = "successor Health has not responded".to_string();
+    loop {
+        if !endpoint.owns_socket() {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "successor endpoint '{}' stopped before service Ready: {detail}",
+                    endpoint.socket().display()
+                ),
+            });
+        }
+        let now = time::Instant::now();
+        if now >= deadline {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "successor endpoint '{}' did not answer Health before service Ready: {detail}",
+                    endpoint.socket().display()
+                ),
+            });
+        }
+        let request = REQUEST.min(deadline - now);
+        let response = time::timeout(request, async {
+            let mut stream = ipc::connect(endpoint.socket()).await?;
+            ipc::send(
+                &mut stream,
+                &WalkRequest {
+                    client_protocol: Some(WALK_PROTOCOL_VERSION),
+                    client_epoch: None,
+                    body: WalkRequestBody::Health,
+                },
+            )
+            .await?;
+            ipc::recv(&mut stream).await
+        })
+        .await;
+        match response {
+            Ok(Ok(WalkResponse::Status { .. })) => return Ok(()),
+            Ok(Ok(WalkResponse::Error {
+                detail: response, ..
+            })) => detail = response,
+            Ok(Ok(response)) => detail = format!("unexpected Health response: {response:?}"),
+            Ok(Err(error)) => detail = error.to_string(),
+            Err(_) => detail = "successor Health request timed out".to_string(),
+        }
+        time::sleep(POLL).await;
+    }
+}
+
+/// Refresh the closed-gate successor after its bootstrap lease atomically
+/// releases Ready, and require the service to expose the exact R4c boundary.
+pub(crate) async fn refresh_ready(
+    endpoint: &ServerEndpoint,
+    timeout: Duration,
+) -> Result<(), PrepareError> {
+    endpoint.validate_persisted()?;
+    let response = time::timeout(timeout, async {
+        let mut stream = ipc::connect(endpoint.socket()).await?;
+        ipc::send(
+            &mut stream,
+            &WalkRequest {
+                client_protocol: Some(WALK_PROTOCOL_VERSION),
+                client_epoch: None,
+                body: WalkRequestBody::Show,
+            },
+        )
+        .await?;
+        ipc::recv(&mut stream).await
+    })
+    .await
+    .map_err(|_| PrepareError::InvalidBatchSelection {
+        detail: format!(
+            "successor endpoint '{}' did not refresh released Ready before publication",
+            endpoint.socket().display()
+        ),
+    })??;
+    match response {
+        WalkResponse::Ok {
+            phase: WalkPhase::R4c,
+            result: WalkOkPayload::Show { .. },
+            ..
+        } => Ok(()),
+        WalkResponse::Error { detail, .. } => Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "successor endpoint '{}' rejected its released Ready refresh: {detail}",
+                endpoint.socket().display()
+            ),
+        }),
+        response => Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "successor endpoint '{}' did not expose released R4c Ready: {response:?}",
+                endpoint.socket().display()
+            ),
+        }),
+    }
+}
+
+/// Stop the exact predecessor listener after its fenced handoff release.
+///
+/// The predecessor may still be publishing the terminal walk-operation receipt
+/// for the R12->R13b job when controller authority is released, so a bounded
+/// retry treats `job active` as transfer drain rather than as permission to
+/// leave two live mutation endpoints behind.
+pub(crate) async fn retire_predecessor(predecessor: &ServerEndpoint) -> Result<(), PrepareError> {
+    const RETIRE_TIMEOUT: Duration = Duration::from_secs(5);
+    const RETIRE_POLL: Duration = Duration::from_millis(25);
+    const REQUEST_TIMEOUT: Duration = Duration::from_millis(250);
+
+    predecessor.validate_persisted()?;
+    let deadline = time::Instant::now() + RETIRE_TIMEOUT;
+    let repo_root = predecessor.repo_root().to_path_buf();
+    let client_epoch = match time::timeout_at(
+        deadline,
+        tokio::task::spawn_blocking(move || ServerEpoch::capture(&repo_root)),
+    )
+    .await
+    {
+        Ok(Ok(epoch)) => epoch?,
+        Ok(Err(source)) => {
+            return Err(PrepareError::DatabaseSetup {
+                phase: "prototype1_successor_stop_epoch_join",
+                detail: source.to_string(),
+            });
+        }
+        Err(_) => {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "predecessor endpoint '{}' did not retire after handoff release: repository epoch capture timed out",
+                    predecessor.socket().display()
+                ),
+            });
+        }
+    };
+    let mut detail = "no stop response".to_string();
+    loop {
+        if !predecessor.owns_socket() {
+            if socket_reachable(predecessor.socket())? {
+                return Err(PrepareError::InvalidBatchSelection {
+                    detail: format!(
+                        "predecessor endpoint '{}' changed ownership before retirement",
+                        predecessor.socket().display()
+                    ),
+                });
+            }
+            return Ok(());
+        }
+        if !socket_reachable(predecessor.socket())? {
+            predecessor.cleanup()?;
+            return Ok(());
+        }
+        let now = time::Instant::now();
+        if now >= deadline {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "predecessor endpoint '{}' did not retire after handoff release: {detail}",
+                    predecessor.socket().display()
+                ),
+            });
+        }
+
+        let request_timeout = REQUEST_TIMEOUT.min(deadline - now);
+        let response = match time::timeout(request_timeout, async {
+            let mut stream = ipc::connect(predecessor.socket()).await?;
+            ipc::send(
+                &mut stream,
+                &WalkRequest {
+                    client_protocol: Some(WALK_PROTOCOL_VERSION),
+                    client_epoch: Some(client_epoch.clone()),
+                    body: WalkRequestBody::Stop,
+                },
+            )
+            .await?;
+            ipc::recv(&mut stream).await
+        })
+        .await
+        {
+            Ok(response) => response,
+            Err(_) => {
+                detail = "predecessor Stop request timed out".to_string();
+                time::sleep(RETIRE_POLL).await;
+                continue;
+            }
+        };
+
+        match response {
+            Ok(WalkResponse::Error {
+                detail: response, ..
+            }) => detail = response,
+            Ok(_) => detail = "predecessor accepted Stop but kept its socket".to_string(),
+            Err(_) if !predecessor.owns_socket() => return Ok(()),
+            Err(error) => detail = error.to_string(),
+        }
+
+        if time::Instant::now() >= deadline {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "predecessor endpoint '{}' did not retire after handoff release: {detail}",
+                    predecessor.socket().display(),
+                ),
+            });
+        }
+        time::sleep(RETIRE_POLL).await;
+    }
 }
 
 /// Publish the successor endpoint and open its mutation gate using the same
@@ -588,6 +844,7 @@ fn prepare(
         epoch,
         idle_ttl,
         publish,
+        restore: JobRestoreScope::Repository,
     })
 }
 
@@ -602,32 +859,36 @@ pub(crate) async fn serve_prepared(
         epoch,
         idle_ttl,
         publish,
+        restore,
     } = prepared;
-    if publish {
-        endpoint.activate()?;
+    let result = async {
+        if publish {
+            endpoint.activate()?;
+        }
+        let repo_root = endpoint.repo_root().to_path_buf();
+        let mut controller = WalkController::new(repo_root.clone());
+        controller.refresh_from_disk()?;
+        let version = durable_version_for(endpoint.repo_root())?;
+        let delta = PublishedDelta::capture(&controller, version.clone(), None)?;
+        let operation_root = paths::operation_dir(endpoint.repo_root())?;
+        paths::ensure_operation_dir(&operation_root)?;
+        let observation =
+            ControllerObservation::capture(&controller, &repo_root, version.session_id().is_some());
+        let observed = Arc::new(ControllerCache::new(observation));
+        let jobs = restore_job_registry(&operation_root, &epoch, restore, version.session_id())?;
+        let server = WalkServer {
+            epoch,
+            controller: Arc::new(Mutex::new(controller)),
+            llm: Arc::new(Mutex::new(LlmInspector::new(repo_root))),
+            delta: Arc::new(RwLock::new(delta)),
+            jobs: Arc::new(Mutex::new(jobs)),
+            gate,
+            operation_root,
+            observed,
+        };
+        accept_loop(server, listener, idle_ttl).await
     }
-    let repo_root = endpoint.repo_root().to_path_buf();
-    let mut controller = WalkController::new(repo_root.clone());
-    controller.refresh_from_disk()?;
-    let version = durable_version_for(endpoint.repo_root())?;
-    let delta = PublishedDelta::capture(&controller, version.clone(), None)?;
-    let operation_root = paths::operation_dir(endpoint.repo_root())?;
-    paths::ensure_operation_dir(&operation_root)?;
-    let observation =
-        ControllerObservation::capture(&controller, &repo_root, version.session_id().is_some());
-    let observed = Arc::new(ControllerCache::new(observation));
-    let jobs = restore_job_registry(&operation_root, &epoch)?;
-    let server = WalkServer {
-        epoch,
-        controller: Arc::new(Mutex::new(controller)),
-        llm: Arc::new(Mutex::new(LlmInspector::new(repo_root))),
-        delta: Arc::new(RwLock::new(delta)),
-        jobs: Arc::new(Mutex::new(jobs)),
-        gate,
-        operation_root,
-        observed,
-    };
-    let result = accept_loop(server, listener, idle_ttl).await;
+    .await;
     if let Err(error) = endpoint.cleanup() {
         warn!(error = ?error, socket = %endpoint.socket().display(), "failed to clean owned walk endpoint after server exit");
     }
@@ -2131,6 +2392,15 @@ impl WalkServer {
     ) -> Result<JobAdmission, PrepareError> {
         let command = intent.command;
         let mut jobs = self.jobs.lock().await;
+        if jobs
+            .completed
+            .get(&guard.operation)
+            .is_some_and(|stored| stored.snapshot.status.blocks_mutation())
+            && let Some(record) = self.load_operation(guard.operation)?
+            && !record.stored.snapshot.status.blocks_mutation()
+        {
+            jobs.completed.insert(guard.operation, record.stored);
+        }
         let restored = jobs.active.as_ref().is_some_and(|active| {
             active.snapshot.operation_id == guard.operation && active.restored
         });
@@ -2417,7 +2687,7 @@ impl WalkServer {
         let Some(record) = self.load_operation(operation)? else {
             return Ok(None);
         };
-        let snapshot = record.stored.snapshot;
+        let snapshot = record.stored.snapshot.clone();
         if !snapshot.status.blocks_mutation() {
             let mut jobs = self.jobs.lock().await;
             if let Some(active) = jobs
@@ -2427,8 +2697,11 @@ impl WalkServer {
                 .filter(|active| active.snapshot.status.blocks_mutation())
             {
                 active.snapshot = snapshot.clone();
-                active.fingerprint = record.stored.fingerprint;
+                active.fingerprint = record.stored.fingerprint.clone();
                 active.handle = None;
+            }
+            if let Some(completed) = jobs.completed.get_mut(&operation) {
+                *completed = record.stored;
             }
         }
         Ok(Some(snapshot))
@@ -3497,9 +3770,13 @@ async fn finish_job(
         if let Ok(winner) = read_operation_record(&path, terminal.operation_id, epoch)
             && !winner.stored.snapshot.status.blocks_mutation()
         {
+            let transferred = completed_handoff(&winner.stored.snapshot);
             active.snapshot = winner.stored.snapshot;
             active.fingerprint = winner.stored.fingerprint;
             active.handle = None;
+            if transferred {
+                jobs.stopping = true;
+            }
             return;
         }
         terminal.status = WalkJobStatus::Indeterminate;
@@ -3509,8 +3786,23 @@ async fn finish_job(
             "walk job reached intended terminal state {status:?}, but its durable operational receipt could not be published: {error}; effects may have occurred, so inspect durable state and explicitly abandon this job before further mutation"
         ));
     }
+    let transferred = completed_handoff(&terminal);
     active.snapshot = terminal;
     active.handle = None;
+    if transferred {
+        // Terminal operation publication and predecessor admission fencing
+        // share this mutex. Once the R12->R13b receipt is observable, no
+        // stale client can win a final mutation before successor retirement.
+        jobs.stopping = true;
+    }
+}
+
+fn completed_handoff(snapshot: &WalkJobSnapshot) -> bool {
+    snapshot.status == WalkJobStatus::Succeeded
+        && snapshot.receipt.as_ref().is_some_and(|receipt| {
+            receipt.edges.contains(&ControlEdge::R12ToR13b)
+                && receipt.version.phase() == WalkPhase::R13b
+        })
 }
 
 async fn publish_delta(
@@ -4155,7 +4447,8 @@ mod tests {
         let epoch = ServerEpoch::capture(repo_root).expect("capture server epoch");
         let operation_root = repo_root.join("walk-operations");
         fs::create_dir_all(&operation_root).expect("create operation directory");
-        let jobs = restore_job_registry(&operation_root, &epoch).expect("restore job registry");
+        let jobs = restore_job_registry(&operation_root, &epoch, JobRestoreScope::Repository, None)
+            .expect("restore job registry");
         let controller = WalkController::new(repo_root.to_path_buf());
         let delta = PublishedDelta::capture(&controller, SessionVersion::empty(), None)
             .expect("capture initial delta");
@@ -4507,6 +4800,75 @@ mod tests {
             }
             other => panic!("closed endpoint did not return local shutdown status: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn prepared_service_answers_health_before_transfer() {
+        let repo = tempdir().expect("repo tempdir");
+        let socket = repo.path().join("successor.sock");
+        let listener = UnixListener::bind(&socket).expect("bind successor socket");
+        let endpoint = ServerEndpoint::from_bound(repo.path().to_path_buf(), socket)
+            .expect("capture successor endpoint");
+        let prepared = PreparedServer {
+            listener,
+            endpoint: endpoint.clone(),
+            epoch: ServerEpoch::capture(repo.path()).expect("capture successor epoch"),
+            idle_ttl: None,
+            publish: false,
+            restore: JobRestoreScope::Repository,
+        };
+        let serving = tokio::spawn(serve_prepared(prepared, MutationGate::closed()));
+
+        await_responsive(&endpoint, Duration::from_secs(1))
+            .await
+            .expect("closed-gate successor must answer Health");
+        let blocked = request_over_socket(
+            endpoint.socket(),
+            WalkRequestBody::Step {
+                guard: test_guard(9_001),
+                until: None,
+                watch: false,
+                allow_live_api: false,
+                allow_git_changes: false,
+            },
+        )
+        .await
+        .expect("query closed successor gate");
+        assert!(matches!(
+            blocked,
+            WalkResponse::Error {
+                code: WalkErrorCode::TransferPending,
+                ..
+            }
+        ));
+
+        let health = health_over_socket(endpoint.socket())
+            .await
+            .expect("observe successor epoch");
+        let WalkResponse::Status { epoch, .. } = health else {
+            panic!("Health must return successor epoch");
+        };
+        let mut stream = ipc::connect(endpoint.socket())
+            .await
+            .expect("connect successor Stop");
+        ipc::send(
+            &mut stream,
+            &WalkRequest {
+                client_protocol: Some(WALK_PROTOCOL_VERSION),
+                client_epoch: Some(epoch),
+                body: WalkRequestBody::Stop,
+            },
+        )
+        .await
+        .expect("send successor Stop");
+        let _: WalkResponse = ipc::recv(&mut stream)
+            .await
+            .expect("receive successor Stop");
+        serving
+            .await
+            .expect("join successor service")
+            .expect("serve successor");
+        assert!(!endpoint.owns_socket());
     }
 
     #[tokio::test]
@@ -5591,6 +5953,165 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn successor_retirement_waits_for_predecessor_job_receipt() {
+        let repo = tempdir().expect("repo tempdir");
+        let socket = repo.path().join("predecessor.sock");
+        let listener = UnixListener::bind(&socket).expect("bind predecessor socket");
+        let endpoint = ServerEndpoint::from_bound(repo.path().to_path_buf(), socket)
+            .expect("capture predecessor endpoint");
+        let server = test_server(repo.path(), MutationGate::open());
+        let job = server
+            .register_job(
+                test_guard(10_002),
+                b"step".to_vec(),
+                test_step_intent(WalkPhase::R13b),
+            )
+            .await
+            .map(accepted)
+            .expect("register predecessor handoff job");
+        let jobs = Arc::clone(&server.jobs);
+        let operation_root = server.operation_root.clone();
+        let epoch = server.epoch.clone();
+        let owned = endpoint.clone();
+        let serving = tokio::spawn(async move {
+            let result = accept_loop(server, listener, None).await;
+            owned.cleanup().expect("cleanup retired predecessor");
+            result
+        });
+        let retiring = tokio::spawn({
+            let endpoint = endpoint.clone();
+            async move { retire_predecessor(&endpoint).await }
+        });
+
+        tokio::time::sleep(Duration::from_millis(75)).await;
+        assert!(
+            !retiring.is_finished(),
+            "predecessor Stop must wait while its handoff job is active"
+        );
+        finish_job(
+            &jobs,
+            &operation_root,
+            &epoch,
+            job.job_id,
+            WalkJobStatus::Succeeded,
+            Some(WalkPhase::R13b),
+            "handoff receipt published".to_string(),
+            None,
+        )
+        .await;
+
+        tokio::time::timeout(Duration::from_secs(1), retiring)
+            .await
+            .expect("predecessor retirement must complete")
+            .expect("retirement task")
+            .expect("retire predecessor");
+        tokio::time::timeout(Duration::from_secs(1), serving)
+            .await
+            .expect("predecessor server must stop")
+            .expect("predecessor server task")
+            .expect("predecessor accept loop");
+        assert!(!endpoint.owns_socket());
+    }
+
+    #[tokio::test]
+    async fn handoff_terminal_fences_predecessor_admission() {
+        let repo = tempdir().expect("repo tempdir");
+        let server = test_server(repo.path(), MutationGate::open());
+        let handoff = server
+            .register_job(
+                test_guard(10_010),
+                b"handoff-step".to_vec(),
+                test_step_intent(WalkPhase::R13b),
+            )
+            .await
+            .map(accepted)
+            .expect("admit predecessor handoff job");
+        finish_job(
+            &server.jobs,
+            &server.operation_root,
+            &server.epoch,
+            handoff.job_id,
+            WalkJobStatus::Succeeded,
+            Some(WalkPhase::R13b),
+            "handoff committed".to_string(),
+            Some(WalkTransitionReceipt {
+                phase_before: WalkPhase::R12,
+                phase_after: WalkPhase::R13b,
+                edges: vec![ControlEdge::R12ToR13b],
+                version: test_version(WalkPhase::R13b, 10_010),
+                event_projection: WalkEventProjection::Recorded,
+            }),
+        )
+        .await;
+
+        let admission = server
+            .register_job(
+                test_guard(10_011),
+                b"stale-predecessor-step".to_vec(),
+                test_step_intent(WalkPhase::R14b),
+            )
+            .await
+            .expect("post-transfer admission is a typed response");
+        match admission {
+            JobAdmission::Rejected(WalkResponse::Error { code, .. }) => {
+                assert_eq!(code, WalkErrorCode::ServerStopping);
+            }
+            JobAdmission::Accepted(_) | JobAdmission::Duplicate(_) => {
+                panic!("a transferred predecessor admitted another mutation")
+            }
+            JobAdmission::Rejected(other) => panic!("wrong fencing response: {other:?}"),
+        }
+        assert!(server.jobs.lock().await.stopping);
+    }
+
+    #[tokio::test]
+    async fn successor_retirement_cleans_stale_predecessor_socket() {
+        let repo = tempdir().expect("repo tempdir");
+        let socket = repo.path().join("stale-predecessor.sock");
+        let listener = UnixListener::bind(&socket).expect("bind predecessor socket");
+        let endpoint = ServerEndpoint::from_bound(repo.path().to_path_buf(), socket)
+            .expect("capture predecessor endpoint");
+        drop(listener);
+
+        assert!(
+            endpoint.owns_socket(),
+            "the stale inode must still be owned"
+        );
+        assert!(
+            !socket_reachable(endpoint.socket()).expect("probe stale predecessor"),
+            "a dropped listener must not remain reachable"
+        );
+        retire_predecessor(&endpoint)
+            .await
+            .expect("retire exact stale predecessor");
+        assert!(!endpoint.owns_socket());
+    }
+
+    #[tokio::test]
+    async fn successor_retirement_preserves_rebound_socket() {
+        let repo = tempdir().expect("repo tempdir");
+        let socket = repo.path().join("rebound-predecessor.sock");
+        let listener = UnixListener::bind(&socket).expect("bind predecessor socket");
+        let endpoint = ServerEndpoint::from_bound(repo.path().to_path_buf(), socket.clone())
+            .expect("capture predecessor endpoint");
+        drop(listener);
+        fs::remove_file(&socket).expect("unlink stale predecessor socket");
+        let replacement = UnixListener::bind(&socket).expect("bind replacement socket");
+
+        assert!(!endpoint.owns_socket(), "replacement must have a new inode");
+        let error = retire_predecessor(&endpoint)
+            .await
+            .expect_err("retirement must reject replacement ownership");
+        assert!(error.to_string().contains("changed ownership"), "{error}");
+        assert!(
+            socket_reachable(&socket).expect("probe replacement socket"),
+            "replacement listener must remain reachable"
+        );
+        drop(replacement);
+        fs::remove_file(&socket).expect("remove replacement socket");
+    }
+
+    #[tokio::test]
     async fn socket_status_requires_the_current_protocol() {
         let repo = tempdir().expect("repo tempdir");
         let socket = repo.path().join("walk.sock");
@@ -5989,6 +6510,138 @@ mod tests {
                 .expect("admit after durable abandonment"),
             JobAdmission::Accepted(_)
         ));
+    }
+
+    #[tokio::test]
+    async fn successor_restore_keeps_predecessor_job_non_authoritative() {
+        let repo = tempdir().expect("repo tempdir");
+        let predecessor = test_server(repo.path(), MutationGate::open());
+        let template = predecessor
+            .register_job(
+                test_guard(10_020),
+                b"template-step".to_vec(),
+                test_step_intent(WalkPhase::R13b),
+            )
+            .await
+            .map(accepted)
+            .expect("admit operation template");
+        finish_job(
+            &predecessor.jobs,
+            &predecessor.operation_root,
+            &predecessor.epoch,
+            template.job_id,
+            WalkJobStatus::Succeeded,
+            Some(WalkPhase::R13b),
+            "template completed".to_string(),
+            None,
+        )
+        .await;
+        let operation = OperationId::for_test(10_021);
+        let stored = StoredOperation {
+            snapshot: WalkJobSnapshot {
+                job_id: template.job_id + 1,
+                operation_id: operation,
+                expected: test_version(WalkPhase::R12, 1),
+                ..template.clone()
+            },
+            fingerprint: b"predecessor-step".to_vec(),
+        };
+        assert!(
+            predecessor
+                .persist_operation(&stored)
+                .expect("persist predecessor operation")
+                .is_none(),
+            "predecessor operation must be newly persisted"
+        );
+
+        let epoch = ServerEpoch::capture(repo.path()).expect("capture successor epoch");
+        let operation_root = repo.path().join("walk-operations");
+        let jobs = restore_job_registry(
+            &operation_root,
+            &epoch,
+            JobRestoreScope::Successor {
+                predecessor: SessionId::for_test(1),
+            },
+            Some(SessionId::for_test(2)),
+        )
+        .expect("restore successor session jobs");
+
+        assert!(
+            jobs.active.is_none(),
+            "a predecessor-session job cannot become the successor recovery blocker"
+        );
+        assert_eq!(
+            jobs.completed
+                .get(&operation)
+                .expect("foreign operation remains inspectable")
+                .snapshot
+                .status,
+            WalkJobStatus::Running,
+            "successor inspection must not rewrite predecessor evidence"
+        );
+
+        let mut terminal = stored.clone();
+        terminal.snapshot.status = WalkJobStatus::Succeeded;
+        terminal.snapshot.phase_after = Some(WalkPhase::R13b);
+        terminal.snapshot.updated_at = now_rfc3339();
+        terminal.snapshot.finished_at = Some(now_rfc3339());
+        terminal.snapshot.message = Some("predecessor receipt published".to_string());
+        persist_terminal_operation(&operation_root, &epoch, &terminal)
+            .expect("publish predecessor terminal receipt");
+        let successor = test_server(repo.path(), MutationGate::closed());
+        *successor.jobs.lock().await = jobs;
+        let replay = successor
+            .register_job(
+                MutationGuard {
+                    operation,
+                    expected: stored.snapshot.expected.clone(),
+                },
+                stored.fingerprint.clone(),
+                test_step_intent(WalkPhase::R13b),
+            )
+            .await
+            .expect("retry predecessor operation through successor");
+        let JobAdmission::Duplicate(replayed) = replay else {
+            panic!("terminal predecessor retry must replay its durable winner");
+        };
+        assert_eq!(replayed.status, WalkJobStatus::Succeeded);
+        drop(successor);
+
+        let unrelated = OperationId::for_test(10_022);
+        let stored = StoredOperation {
+            snapshot: WalkJobSnapshot {
+                job_id: template.job_id + 2,
+                operation_id: unrelated,
+                expected: test_version(WalkPhase::R12, 3),
+                ..template
+            },
+            fingerprint: b"unrelated-step".to_vec(),
+        };
+        assert!(
+            predecessor
+                .persist_operation(&stored)
+                .expect("persist unrelated operation")
+                .is_none(),
+            "unrelated operation must be newly persisted"
+        );
+        drop(predecessor);
+
+        let error = match restore_job_registry(
+            &operation_root,
+            &epoch,
+            JobRestoreScope::Successor {
+                predecessor: SessionId::for_test(1),
+            },
+            Some(SessionId::for_test(2)),
+        ) {
+            Ok(_) => panic!("unrelated unresolved operation must fail closed"),
+            Err(error) => error,
+        };
+        assert!(
+            error.to_string().contains(&unrelated.to_string()),
+            "{error}"
+        );
+        assert!(error.to_string().contains("unrelated controller session"));
     }
 
     #[tokio::test]
@@ -6550,8 +7203,11 @@ mod tests {
             RuntimeId::from_str("11111111-1111-4111-8111-111111111111").expect("first runtime id");
         let next_id =
             RuntimeId::from_str("22222222-2222-4222-8222-222222222222").expect("next runtime id");
-        let first = prepare_successor(repo.path(), first_id).expect("prepare first successor");
-        let next = prepare_successor(repo.path(), next_id).expect("prepare next successor");
+        let predecessor = SessionId::for_test(1);
+        let first =
+            prepare_successor(repo.path(), first_id, predecessor).expect("prepare first successor");
+        let next =
+            prepare_successor(repo.path(), next_id, predecessor).expect("prepare next successor");
 
         assert_ne!(first.endpoint().socket(), next.endpoint().socket());
         assert_ne!(first.endpoint().socket(), active.socket());
@@ -6580,10 +7236,12 @@ mod tests {
         ]);
         let runtime_id =
             RuntimeId::from_str("33333333-3333-4333-8333-333333333333").expect("runtime id");
-        let live = prepare_successor(repo.path(), runtime_id).expect("prepare live successor");
+        let predecessor = SessionId::for_test(1);
+        let live = prepare_successor(repo.path(), runtime_id, predecessor)
+            .expect("prepare live successor");
         let stale = live.endpoint().clone();
 
-        let error = match prepare_successor(repo.path(), runtime_id) {
+        let error = match prepare_successor(repo.path(), runtime_id, predecessor) {
             Ok(_) => panic!("reachable successor socket was stolen"),
             Err(error) => error,
         };
@@ -6598,8 +7256,8 @@ mod tests {
 
         drop(live);
         assert!(stale.owns_socket(), "dropped listener must leave its inode");
-        let rebound =
-            prepare_successor(repo.path(), runtime_id).expect("rebind stale successor socket");
+        let rebound = prepare_successor(repo.path(), runtime_id, predecessor)
+            .expect("rebind stale successor socket");
         assert!(rebound.endpoint().owns_socket());
         assert_ne!(rebound.endpoint(), &stale);
         assert!(

@@ -1765,6 +1765,17 @@ impl<S> Lease<S> {
 }
 
 impl Lease<Idle> {
+    /// Return an exact terminal receipt without consulting consumed filesystem
+    /// authority. This is the read-only idempotency check used before source
+    /// reconstruction after an effect has already committed.
+    pub(crate) fn existing_receipt(&self, intent: &AttemptIntent) -> Option<AttemptReceipt> {
+        self.attempts
+            .get(&intent.transition_id)
+            .and_then(Attempt::terminal)
+            .filter(|receipt| receipt.intent == *intent)
+            .cloned()
+    }
+
     /// Prepare the exact R4c commitment this live fence may atomically release
     /// as successor Ready authority.
     pub(crate) fn prepare_ready(&self, runtime_id: RuntimeId) -> Result<ReadyCommit, Error> {
@@ -10176,6 +10187,67 @@ mode = "continuous"
             }
             Begin::Started { .. } => panic!("idempotent transition must not restart"),
         }
+    }
+
+    #[tokio::test]
+    async fn completed_receipt_replays_before_source_reconstruction() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = Store::new(temp.path().join("control"));
+        let owner = acquired(
+            store
+                .claim(claim(temp.path(), RunMode::Step))
+                .expect("first claim"),
+        );
+        let original = owner
+            .intent_with_live_api(true, false)
+            .expect("valid live transition intent");
+        let pending = match owner.begin(original.clone()).expect("begin") {
+            Begin::Started { lease, .. } => lease,
+            Begin::Existing { .. } => panic!("new transition should start"),
+        };
+        let finished = pending
+            .finish(AttemptResult::Committed {
+                phase: WalkPhase::R8,
+                evidence: ContentHash::of("committed-r8"),
+            })
+            .expect("finish");
+        let Finished::Terminal { lease, receipt, .. } = finished else {
+            panic!("committed attempt must restore idle authority");
+        };
+        let expected = receipt.clone();
+        let committed = receipt
+            .evidence
+            .as_ref()
+            .expect("committed cursor certificate")
+            .cursor()
+            .expect("hash committed certificate");
+        lease.release().expect("first release");
+
+        let owner = acquired(
+            store
+                .claim(claim_at(temp.path(), RunMode::Step, committed))
+                .expect("retry claim"),
+        );
+        let replayed =
+            crate::cli::prototype1_state::driver::control::advance_controlled(owner, original)
+                .await
+                .expect("terminal receipt replays without reconstructing consumed R7 authority");
+        match replayed {
+            crate::cli::prototype1_state::driver::control::ControlAdvance::Existing {
+                lease,
+                receipt,
+            } => {
+                assert_eq!(receipt, expected);
+                lease.release().expect("retry release");
+            }
+            other => panic!("terminal receipt must not restart: {other:?}"),
+        }
+
+        let snapshot = store
+            .inspect(&parent())
+            .expect("inspect replayed session")
+            .expect("session snapshot");
+        assert_eq!(snapshot.attempts.len(), 1);
     }
 
     #[test]

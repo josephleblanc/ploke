@@ -366,13 +366,32 @@ pub(crate) struct StepFailure {
 }
 
 /// Idempotent or newly finished result from the sole session mutation path.
-#[derive(Debug)]
 pub(crate) enum ControlAdvance {
     Existing {
         lease: Lease<Idle>,
         receipt: AttemptReceipt,
     },
-    Finished(Finished),
+    Finished {
+        finished: Finished,
+        state: ControlState,
+    },
+}
+
+impl std::fmt::Debug for ControlAdvance {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Existing { lease, receipt } => formatter
+                .debug_struct("Existing")
+                .field("lease", lease)
+                .field("receipt", receipt)
+                .finish(),
+            Self::Finished { finished, state } => formatter
+                .debug_struct("Finished")
+                .field("finished", finished)
+                .field("phase", &state.phase())
+                .finish(),
+        }
+    }
 }
 
 /// Opaque proof that the exact predecessor attempt accepted Ready and cleanly
@@ -1764,6 +1783,9 @@ pub(crate) async fn advance_controlled(
     lease: Lease<Idle>,
     intent: AttemptIntent,
 ) -> Result<ControlAdvance, ControlFailure> {
+    if let Some(receipt) = lease.existing_receipt(&intent) {
+        return Ok(ControlAdvance::Existing { lease, receipt });
+    }
     let repo_root = lease.epoch().repo_root.clone();
     let handoff = lease.handoff_path().map(Path::to_path_buf);
     let snapshot = match handoff.as_deref() {
@@ -1805,22 +1827,27 @@ pub(crate) async fn advance_controlled(
         Err(failure) => return Err(ControlFailure::Admission(failure)),
     };
 
-    let finished = match advance_admitted(&repo_root, state, &permit).await {
+    let (finished, state) = match advance_admitted(&repo_root, state, &permit).await {
         Ok(step) => {
-            let (_, effect) = step.into_parts();
-            pending.commit(effect)
+            let (state, effect) = step.into_parts();
+            pending.commit(effect).map(|finished| (finished, state))
         }
         Err(failure) => {
-            let detail = failure.error.to_string();
-            if matches!(failure.state, ControlState::Failed { .. }) {
-                pending.mark_indeterminate(&permit, detail)
+            let StepFailure { state, error } = failure;
+            let detail = error.to_string();
+            if matches!(state, ControlState::Failed { .. }) {
+                pending
+                    .mark_indeterminate(&permit, detail)
+                    .map(|finished| (finished, state))
             } else {
-                pending.reject(&permit, detail)
+                pending
+                    .reject(&permit, detail)
+                    .map(|finished| (finished, state))
             }
         }
     }
     .map_err(ControlFailure::Persist)?;
-    Ok(ControlAdvance::Finished(finished))
+    Ok(ControlAdvance::Finished { finished, state })
 }
 
 fn session_error(source: impl std::fmt::Display) -> PrepareError {

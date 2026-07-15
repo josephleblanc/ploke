@@ -115,8 +115,14 @@ pub(crate) async fn step_session(
     };
     let (lease, receipt) = match advance_controlled(lease, intent).await {
         Ok(ControlAdvance::Existing { lease, receipt }) => (lease, receipt),
-        Ok(ControlAdvance::Finished(Finished::Terminal { lease, receipt, .. })) => (lease, receipt),
-        Ok(ControlAdvance::Finished(Finished::Uncertain { receipt, .. })) => {
+        Ok(ControlAdvance::Finished {
+            finished: Finished::Terminal { lease, receipt, .. },
+            ..
+        }) => (lease, receipt),
+        Ok(ControlAdvance::Finished {
+            finished: Finished::Uncertain { receipt, .. },
+            ..
+        }) => {
             return Err(PrepareError::InvalidBatchSelection {
                 detail: format!(
                     "controlled transition became indeterminate: {}",
@@ -229,8 +235,14 @@ async fn run_continuous(
         };
         lease = match advance_controlled(lease, intent).await {
             Ok(ControlAdvance::Existing { lease, .. }) => lease,
-            Ok(ControlAdvance::Finished(Finished::Terminal { lease, .. })) => lease,
-            Ok(ControlAdvance::Finished(Finished::Uncertain { receipt, .. })) => {
+            Ok(ControlAdvance::Finished {
+                finished: Finished::Terminal { lease, .. },
+                ..
+            }) => lease,
+            Ok(ControlAdvance::Finished {
+                finished: Finished::Uncertain { receipt, .. },
+                ..
+            }) => {
                 return Err(PrepareError::InvalidBatchSelection {
                     detail: format!(
                         "controlled transition became indeterminate: {}",
@@ -247,6 +259,12 @@ async fn run_continuous(
 /// to the predecessor-ready boundary, then expose the shared walk service.
 async fn serve_successor(repo_root: &Path, handoff: &Path) -> Result<(), PrepareError> {
     let invocation = load_successor(handoff)?;
+    let prior_session = invocation
+        .predecessor_attempt()
+        .ok_or_else(|| PrepareError::InvalidBatchSelection {
+            detail: "successor invocation has no exact predecessor session".to_string(),
+        })?
+        .session();
     let persisted = persisted_successor_ready(repo_root, handoff)?;
     if let Some(receipt) = persisted.as_ref() {
         let endpoint = receipt
@@ -288,18 +306,75 @@ async fn serve_successor(repo_root: &Path, handoff: &Path) -> Result<(), Prepare
         },
         None => None,
     };
-    let prepared = server::prepare_successor(repo_root, invocation.runtime_id())?;
+    let prepared = server::prepare_successor(repo_root, invocation.runtime_id(), prior_session)?;
     let endpoint = prepared.endpoint().clone();
     let gate = server::MutationGate::closed();
+
+    let mut lease = if persisted.is_some() {
+        None
+    } else {
+        let lease = match claim_successor(repo_root, RunMode::Step, handoff) {
+            Ok(lease) => lease,
+            Err(error) => return Err(attach_endpoint(error, &endpoint)),
+        };
+        Some(lease)
+    };
+
     let server_gate = gate.clone();
-    let handle = tokio::spawn(async move { server::serve_prepared(prepared, server_gate).await });
+    let mut handle =
+        tokio::spawn(async move { server::serve_prepared(prepared, server_gate).await });
+    if let Err(error) = server::await_responsive(&endpoint, PUBLICATION_TIMEOUT).await {
+        let release = lease.take().and_then(|lease| release(lease).err());
+        let error = attach_release(error, release);
+        return Err(stop_server(handle, &endpoint, error).await);
+    }
+    if let Some(lease) = lease {
+        let lease = match bootstrap_successor(lease).await {
+            Ok(lease) => lease,
+            Err(error) => return Err(stop_server(handle, &endpoint, error).await),
+        };
+        let commit = match lease.prepare_ready(invocation.runtime_id()) {
+            Ok(commit) => commit,
+            Err(error) => {
+                let error = session_error(error);
+                let release = release(lease).err();
+                let error = attach_release(error, release);
+                return Err(stop_server(handle, &endpoint, error).await);
+            }
+        };
+        let receipt = match build_ready_receipt(
+            &invocation,
+            commit,
+            Some(endpoint.clone()),
+            predecessor.clone(),
+        ) {
+            Ok(receipt) => receipt,
+            Err(error) => {
+                let release = release(lease).err();
+                let error = attach_release(error, release);
+                return Err(stop_server(handle, &endpoint, error).await);
+            }
+        };
+        if let Err(error) = release_ready(lease, &receipt) {
+            return Err(stop_server(handle, &endpoint, error).await);
+        }
+        if let Err(error) = server::refresh_ready(&endpoint, PUBLICATION_TIMEOUT).await {
+            return Err(stop_server(handle, &endpoint, error).await);
+        }
+        if let Err(error) = record_prototype1_successor_ready(&invocation, receipt) {
+            return Err(stop_server(handle, &endpoint, error).await);
+        }
+    }
 
     let transfer = if persisted.is_some() {
         let transfer = match prior {
             Some(transfer) => transfer,
-            None => match wait_for_predecessor(repo_root, RunMode::Step, handoff).await {
-                Ok(transfer) => transfer,
-                Err(error) => return Err(stop_server(handle, &endpoint, error).await),
+            None => match wait_with_server(repo_root, handoff, &mut handle).await {
+                TransferWait::Released(transfer) => transfer,
+                TransferWait::Failed(error) => {
+                    return Err(stop_server(handle, &endpoint, error).await);
+                }
+                TransferWait::Server(error) => return Err(attach_endpoint(error, &endpoint)),
             },
         };
         let lease = match claim_successor(repo_root, RunMode::Step, handoff) {
@@ -311,41 +386,19 @@ async fn serve_successor(repo_root: &Path, handoff: &Path) -> Result<(), Prepare
         }
         transfer
     } else {
-        let mut lease = match claim_successor(repo_root, RunMode::Step, handoff) {
-            Ok(lease) => lease,
-            Err(error) => return Err(stop_server(handle, &endpoint, error).await),
-        };
-        lease = match bootstrap_successor(lease).await {
-            Ok(lease) => lease,
-            Err(error) => return Err(stop_server(handle, &endpoint, error).await),
-        };
-        let commit = match lease.prepare_ready(invocation.runtime_id()) {
-            Ok(commit) => commit,
-            Err(error) => {
-                let error = session_error(error);
+        match wait_with_server(repo_root, handoff, &mut handle).await {
+            TransferWait::Released(transfer) => transfer,
+            TransferWait::Failed(error) => {
                 return Err(stop_server(handle, &endpoint, error).await);
             }
-        };
-        let receipt = match build_ready_receipt(
-            &invocation,
-            commit,
-            Some(endpoint.clone()),
-            predecessor.clone(),
-        ) {
-            Ok(receipt) => receipt,
-            Err(error) => return Err(stop_server(handle, &endpoint, error).await),
-        };
-        if let Err(error) = release_ready(lease, &receipt) {
-            return Err(stop_server(handle, &endpoint, error).await);
-        }
-        if let Err(error) = record_prototype1_successor_ready(&invocation, receipt) {
-            return Err(stop_server(handle, &endpoint, error).await);
-        }
-        match wait_for_predecessor(repo_root, RunMode::Step, handoff).await {
-            Ok(transfer) => transfer,
-            Err(error) => return Err(stop_server(handle, &endpoint, error).await),
+            TransferWait::Server(error) => return Err(attach_endpoint(error, &endpoint)),
         }
     };
+    if let Some(predecessor) = predecessor.as_ref()
+        && let Err(error) = server::retire_predecessor(predecessor).await
+    {
+        return Err(stop_server(handle, &endpoint, error).await);
+    }
     if let Err(error) = server::activate_successor(&endpoint, predecessor.as_ref(), &gate, transfer)
     {
         return Err(stop_server(handle, &endpoint, error).await);
@@ -356,6 +409,35 @@ async fn serve_successor(repo_root: &Path, handoff: &Path) -> Result<(), Prepare
             phase: "prototype1_successor_walk_join",
             detail: source.to_string(),
         }),
+    }
+}
+
+enum TransferWait {
+    Released(super::control::PredecessorRelease),
+    Failed(PrepareError),
+    Server(PrepareError),
+}
+
+async fn wait_with_server(
+    repo_root: &Path,
+    handoff: &Path,
+    server: &mut tokio::task::JoinHandle<Result<(), PrepareError>>,
+) -> TransferWait {
+    tokio::select! {
+        transfer = wait_for_predecessor(repo_root, RunMode::Step, handoff) => match transfer {
+            Ok(transfer) => TransferWait::Released(transfer),
+            Err(error) => TransferWait::Failed(error),
+        },
+        joined = server => match joined {
+            Ok(Ok(())) => TransferWait::Server(PrepareError::InvalidBatchSelection {
+                detail: "successor walk service stopped before predecessor transfer".to_string(),
+            }),
+            Ok(Err(error)) => TransferWait::Server(error),
+            Err(source) => TransferWait::Server(PrepareError::DatabaseSetup {
+                phase: "prototype1_successor_walk_join",
+                detail: source.to_string(),
+            }),
+        },
     }
 }
 
@@ -387,8 +469,14 @@ async fn bootstrap_successor(mut lease: Lease<Idle>) -> Result<Lease<Idle>, Prep
         };
         lease = match advance_controlled(lease, intent).await {
             Ok(ControlAdvance::Existing { lease, .. }) => lease,
-            Ok(ControlAdvance::Finished(Finished::Terminal { lease, .. })) => lease,
-            Ok(ControlAdvance::Finished(Finished::Uncertain { receipt, .. })) => {
+            Ok(ControlAdvance::Finished {
+                finished: Finished::Terminal { lease, .. },
+                ..
+            }) => lease,
+            Ok(ControlAdvance::Finished {
+                finished: Finished::Uncertain { receipt, .. },
+                ..
+            }) => {
                 return Err(PrepareError::InvalidBatchSelection {
                     detail: format!(
                         "successor bootstrap became indeterminate: {}",
@@ -671,9 +759,22 @@ async fn stop_server(
     source: PrepareError,
 ) -> PrepareError {
     handle.abort();
-    let _ = handle.await;
+    let source = match handle.await {
+        Ok(Err(server)) => PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "successor walk service failed before cleanup: {server}; cleanup was triggered by: {source}"
+            ),
+        },
+        Err(join) if !join.is_cancelled() => PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "successor walk service task failed before cleanup: {join}; cleanup was triggered by: {source}"
+            ),
+        },
+        Ok(Ok(())) | Err(_) => source,
+    };
     attach_endpoint(source, endpoint)
 }
+
 // ANCHOR_END: prototype1_run_to_terminal
 
 fn validate_command(
@@ -868,6 +969,42 @@ mod tests {
         },
         intervention::RecordStore,
     };
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stop_server_preserves_service_failure() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let socket = repo.path().join("successor.sock");
+        let listener = tokio::net::UnixListener::bind(&socket).expect("bind successor socket");
+        let endpoint = ServerEndpoint::from_bound(repo.path().to_path_buf(), socket)
+            .expect("capture successor endpoint");
+        let handle = tokio::spawn(async {
+            Err(PrepareError::InvalidBatchSelection {
+                detail: "restore scope sentinel".to_string(),
+            })
+        });
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !handle.is_finished() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("service failure task completes");
+
+        let error = stop_server(
+            handle,
+            &endpoint,
+            PrepareError::InvalidBatchSelection {
+                detail: "health probe stopped".to_string(),
+            },
+        )
+        .await;
+        let detail = error.to_string();
+        assert!(detail.contains("restore scope sentinel"), "{detail}");
+        assert!(detail.contains("health probe stopped"), "{detail}");
+        assert!(!endpoint.owns_socket());
+        drop(listener);
+    }
 
     #[tokio::test(flavor = "current_thread")]
     async fn successor_waits_for_synced_spawn_publication() {

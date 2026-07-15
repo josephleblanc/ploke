@@ -1470,18 +1470,23 @@ async fn prototype1_setup_recovers_and_completed_retry_is_read_only() {
     let intent = lease
         .intent_with_live_api(false, false)
         .expect("R3 edge intent");
-    let (lease, receipt) =
+    let (lease, receipt, state) =
         match crate::cli::prototype1_state::driver::control::advance_controlled(lease, intent)
             .await
             .expect("R3 edge is controlled")
         {
-            crate::cli::prototype1_state::driver::control::ControlAdvance::Finished(
-                crate::cli::prototype1_state::session::Finished::Terminal {
-                    lease, receipt, ..
-                },
-            ) => (lease, receipt),
+            crate::cli::prototype1_state::driver::control::ControlAdvance::Finished {
+                finished:
+                    crate::cli::prototype1_state::session::Finished::Terminal { lease, receipt, .. },
+                state,
+            } => (lease, receipt, state),
             other => panic!("unexpected R3 controller result: {other:?}"),
         };
+    assert_eq!(
+        state.phase(),
+        crate::cli::prototype1_state::walk::phase::WalkPhase::R4a,
+        "a newly committed edge must return its canonical typed post-state"
+    );
     assert_eq!(
         lease.cursor().phase,
         crate::cli::prototype1_state::walk::phase::WalkPhase::R4a
@@ -10077,4 +10082,253 @@ fn history_handoff_selection_carries_resolved_artifact() {
             "primary_runtime_id=Some(\"runtime:node-historical\")",
         ],
     ));
+}
+
+#[test]
+fn stage6_handoff_race_replays_through_production_readers() {
+    use crate::cli::prototype1_state::{
+        channel::{Envelope, ToParent},
+        invocation::{self, InvocationAuthority},
+        journal::{JournalEntry, PrototypeJournal},
+        session::Store,
+        successor::State as SuccessorState,
+        walk::{
+            epoch::ServerEpoch,
+            protocol::{WalkAttemptResult, WalkSessionEventKind},
+        },
+    };
+    use flate2::read::GzDecoder;
+    use std::{fs::File, io};
+
+    fn inflate(source: &Path, target: &Path) {
+        std::fs::create_dir_all(target.parent().expect("fixture target parent"))
+            .expect("create fixture target directory");
+        let source = File::open(source).expect("open compressed historical fixture");
+        let mut decoder = GzDecoder::new(source);
+        let mut target = File::create(target).expect("create inflated historical fixture");
+        io::copy(&mut decoder, &mut target).expect("inflate historical fixture");
+    }
+
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("src/tests/fixtures/prototype1-stage6-handoff-race-20260715");
+    let predecessor: ParentIdentity = json_fixture(
+        &std::fs::read_to_string(fixture.join("predecessor-parent-identity.json"))
+            .expect("read predecessor identity"),
+    );
+    let successor: ParentIdentity = json_fixture(
+        &std::fs::read_to_string(fixture.join("successor-parent-identity.json"))
+            .expect("read successor identity"),
+    );
+    assert_eq!(predecessor.generation(), 0);
+    assert_eq!(successor.generation(), 1);
+    assert_eq!(
+        successor.previous_parent_id(),
+        Some(predecessor.parent_id())
+    );
+
+    let invocation_path = fixture.join("successor-invocation.json");
+    let InvocationAuthority::Successor(invocation) =
+        invocation::load_authority(&invocation_path).expect("load historical successor invocation")
+    else {
+        panic!("historical invocation must carry successor authority");
+    };
+    let attempt = invocation
+        .predecessor_attempt()
+        .expect("successor invocation preserves predecessor attempt");
+    assert_eq!(
+        attempt.session().to_string(),
+        "a3e007a6-07a5-4fc5-aff6-238d522d053f"
+    );
+    assert_eq!(
+        attempt.transition().to_string(),
+        "d1d31434-2b01-5b88-be8b-de19c60b0b56"
+    );
+    assert_eq!(attempt.fence().to_string(), "13");
+    assert!(!attempt.allow_live_api());
+    assert!(attempt.allow_git_changes());
+
+    let temp = tempfile::tempdir().expect("historical replay tempdir");
+    let store = Store::new(temp.path().join("control"));
+    inflate(
+        &fixture.join("predecessor-control-journal.jsonl.gz"),
+        store.paths(&predecessor).journal(),
+    );
+    inflate(
+        &fixture.join("successor-control-journal.jsonl.gz"),
+        store.paths(&successor).journal(),
+    );
+    let epoch = ServerEpoch::capture(temp.path()).expect("capture replay presentation epoch");
+    let predecessor_history = store
+        .inspect_history(&predecessor, epoch.clone())
+        .expect("replay predecessor history")
+        .expect("predecessor history exists");
+    let successor_history = store
+        .inspect_history(&successor, epoch)
+        .expect("replay successor history")
+        .expect("successor history exists");
+    assert!(predecessor_history.damage.is_none());
+    assert!(successor_history.damage.is_none());
+    assert_eq!(predecessor_history.events.len(), 51);
+    assert_eq!(successor_history.events.len(), 43);
+    assert_eq!(
+        predecessor_history.version.session_id(),
+        Some(attempt.session())
+    );
+    let predecessor_snapshot = store
+        .inspect(&predecessor)
+        .expect("inspect predecessor session")
+        .expect("predecessor session exists");
+    let committed = predecessor_snapshot
+        .committed_handoff(attempt.session(), attempt.fence())
+        .expect("production replay identifies the exact committed handoff");
+    assert_eq!(committed.intent().transition_id(), attempt.transition());
+    assert!(matches!(
+        committed.result(),
+        crate::cli::prototype1_state::session::AttemptResult::Committed {
+            phase: WalkPhase::R13b,
+            ..
+        }
+    ));
+
+    let began = predecessor_history
+        .events
+        .iter()
+        .find(|event| {
+            matches!(
+                &event.kind,
+                WalkSessionEventKind::AttemptBegan { fence: 13, intent }
+                    if intent.transition_id == attempt.transition()
+            )
+        })
+        .expect("replay exact predecessor handoff admission");
+    let WalkSessionEventKind::AttemptBegan { intent, .. } = &began.kind else {
+        unreachable!("filtered predecessor admission")
+    };
+    assert_eq!(intent.expected, WalkPhase::R12);
+    assert!(intent.targets.contains(&WalkPhase::R13b));
+    assert!(!intent.allow_live_api);
+    assert!(intent.allow_git_changes);
+
+    let finished = predecessor_history
+        .events
+        .iter()
+        .find(|event| {
+            matches!(
+                &event.kind,
+                WalkSessionEventKind::AttemptFinished { receipt }
+                    if receipt.transition_id == attempt.transition()
+                        && receipt.fence == 13
+                        && matches!(
+                            receipt.result,
+                            WalkAttemptResult::Committed {
+                                phase: WalkPhase::R13b,
+                                ..
+                            }
+                        )
+            )
+        })
+        .expect("replay committed predecessor handoff receipt");
+    let released = predecessor_history
+        .events
+        .iter()
+        .find(|event| {
+            matches!(
+                event.kind,
+                WalkSessionEventKind::Released {
+                    fence: 13,
+                    ready: None
+                }
+            )
+        })
+        .expect("replay clean predecessor release");
+    let successor_ready = successor_history
+        .events
+        .iter()
+        .find_map(|event| match &event.kind {
+            WalkSessionEventKind::Released {
+                fence: 1,
+                ready: Some(ready),
+            } => Some((event, ready)),
+            _ => None,
+        })
+        .expect("replay atomic successor Ready release");
+    assert_eq!(
+        successor_history.version.session_id(),
+        Some(successor_ready.1.commit.session_id)
+    );
+    assert_eq!(successor_ready.1.commit.cursor.phase, WalkPhase::R4c);
+    assert_eq!(
+        successor_ready.1.runtime_id.to_string(),
+        invocation.runtime_id().to_string()
+    );
+    assert!(
+        successor_ready.0.recorded_at_ms < finished.recorded_at_ms,
+        "historical successor Ready preceded predecessor terminal publication"
+    );
+    assert!(
+        finished.recorded_at_ms < released.recorded_at_ms,
+        "historical predecessor terminal receipt preceded its clean release"
+    );
+
+    let transition_path = temp.path().join("transition-journal.jsonl");
+    inflate(
+        &fixture.join("transition-journal.jsonl.gz"),
+        &transition_path,
+    );
+    let entries = PrototypeJournal::new(&transition_path)
+        .load_entries()
+        .expect("replay transition journal");
+    let journal_ready = entries
+        .iter()
+        .find_map(|entry| match entry {
+            JournalEntry::Successor(record)
+                if record.runtime_id == Some(invocation.runtime_id()) =>
+            {
+                match &record.state {
+                    SuccessorState::Ready {
+                        controller: Some(ready),
+                        ..
+                    } => Some(ready),
+                    _ => None,
+                }
+            }
+            _ => None,
+        })
+        .expect("replay typed successor Ready projection");
+    journal_ready
+        .validate_persisted()
+        .expect("historical Ready receipt remains structurally valid");
+    assert_eq!(
+        journal_ready.commit().session_id(),
+        successor_ready.1.commit.session_id
+    );
+    let acceptance = entries
+        .iter()
+        .find_map(|entry| match entry {
+            JournalEntry::SuccessorHandoff(handoff)
+                if handoff.runtime_id == invocation.runtime_id() =>
+            {
+                handoff.acceptance.as_ref()
+            }
+            _ => None,
+        })
+        .expect("replay typed successor handoff acceptance");
+    assert_eq!(acceptance.ready(), journal_ready);
+    assert_eq!(acceptance.attempt(), attempt);
+
+    let channel: Envelope<ToParent> = serde_json::from_str(
+        std::fs::read_to_string(fixture.join("successor-ready-channel.jsonl"))
+            .expect("read historical Ready channel")
+            .trim(),
+    )
+    .expect("decode typed historical Ready channel envelope");
+    assert_eq!(channel.runtime_id(), invocation.runtime_id());
+    let ToParent::SuccessorReady {
+        controller: Some(channel_ready),
+        ..
+    } = channel.body()
+    else {
+        panic!("historical channel must carry typed successor Ready");
+    };
+    assert_eq!(channel_ready, journal_ready);
 }
