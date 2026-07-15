@@ -230,6 +230,80 @@ fn fixture_projection_stores_forwarded_callable_argument_parameter_edges() -> Re
     Ok(())
 }
 
+#[test]
+fn fixture_projection_stores_method_callable_argument_parameter_edges() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let caller = function_id_by_name(&db, "call_method_function_pointer_param_with_local_target")?;
+    let method =
+        method_id_by_impl_self_type_name(&db, "LocalAssoc", "call_function_pointer_param")?;
+    let target = function_id_by_name(&db, "local_target")?;
+
+    // Source oracle:
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs EOF:
+    // private `LocalAssoc::call_function_pointer_param(&self, f)` calls `f()`, and
+    // `call_method_function_pointer_param_with_local_target()` supplies
+    // `local_target` through a resolved method call. The durable proof should
+    // be the method callsite's `ArgumentSuppliesParameter` edge to the method
+    // parameter binding, not a new traversal relation.
+    let method_context = db.call_context_for_owner(method)?;
+    let param_call = row_by_path(&method_context, &["f"]);
+    assert_resolved_target(
+        param_call,
+        target,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
+
+    let caller_context = db.call_context_for_owner(caller)?;
+    let receiver = CallReceiver::InitializedLocalBinding {
+        name: "value".to_string(),
+        init_path: path(&["LocalAssoc"]),
+    };
+    let method_call =
+        row_by_method_receiver(&caller_context, "call_function_pointer_param", &receiver);
+    assert_resolved_target(
+        method_call,
+        method,
+        CallRelationKind::Method,
+        CallSiteKind::Method,
+        CallTargetKind::Method,
+    );
+
+    let bindings = db.local_bindings_for_owner(method)?;
+    let parameter = bindings
+        .iter()
+        .find(|binding| binding.kind == "ParameterBinding" && binding.name == "f")
+        .unwrap_or_else(|| {
+            panic!(
+                "method callable argument oracle should persist method parameter binding: {bindings:#?}"
+            )
+        });
+    assert_eq!(parameter.source_kind, "Parameter");
+
+    let edges = db.local_binding_edges_for_owner(method)?;
+    assert!(
+        edges.iter().any(|edge| edge.relation
+            == LocalBindingRelationKind::ArgumentSuppliesParameter
+            && edge.source_id == method_call.site.id
+            && edge.source_kind == "Method"
+            && edge.target_id == parameter.id
+            && edge.target_kind == "LocalBinding"),
+        "missing method callsite to method parameter edge: {edges:#?}"
+    );
+    assert!(
+        edges.iter().any(
+            |edge| edge.relation == LocalBindingRelationKind::BindingSourceFunction
+                && edge.source_id == parameter.id
+                && edge.target_id == target
+                && edge.target_kind == "Function"
+        ),
+        "missing method parameter binding source function edge: {edges:#?}"
+    );
+
+    Ok(())
+}
+
 fn assert_parameter_argument_edge(
     db: &ploke_db::Database,
     caller_name: &str,

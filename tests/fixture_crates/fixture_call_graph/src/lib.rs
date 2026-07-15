@@ -2417,3 +2417,14 @@ pub fn call_single_aliased_named_field_function_param_with_local_target() -> i32
         callback: local_target,
     })
 }
+
+impl LocalAssoc {
+    fn call_function_pointer_param(&self, f: fn() -> i32) -> i32 {
+        f()
+    }
+}
+
+pub fn call_method_function_pointer_param_with_local_target() -> i32 {
+    let value = LocalAssoc;
+    value.call_function_pointer_param(local_target)
+}

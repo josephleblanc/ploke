@@ -3,8 +3,9 @@ use std::collections::BTreeMap;
 use syn_parser::parser::{
     graph::CodeGraph,
     nodes::{
-        CallArgument, CallBodyOwnerId, CallNode, DynamicCallCallee, FunctionNodeId, LocalBindingId,
-        LocalBindingKind, LocalBindingSource, PathCallCallee,
+        AnyCallSiteId, CallArgument, CallBodyOwnerId, CallNode, DynamicCallCallee, FunctionNodeId,
+        LocalBindingId, LocalBindingKind, LocalBindingSource, MethodCallNode, MethodCallSiteId,
+        MethodNodeId, PathCallCallee,
     },
     relations::{CallRelation, LocalBindingRelation},
 };
@@ -28,39 +29,75 @@ pub(super) fn derive_argument_parameter_relations(
 ) -> Vec<LocalBindingRelation> {
     let parameter_bindings = parameter_binding_ids(graph);
     let calls = path_calls(graph);
+    let method_calls = method_calls(graph);
     let mut relations = Vec::new();
 
     for relation in &report.relations {
-        let CallRelation::Function { source, target } = relation else {
-            continue;
-        };
-        let Some(call) = calls.get(source) else {
-            continue;
-        };
-        let Some(parameter_names) = function_parameter_names(graph, *target) else {
-            continue;
-        };
-
-        for (idx, argument) in call.arguments.iter().enumerate() {
-            if !argument_has_exact_callable_source(argument) {
-                continue;
+        match relation {
+            CallRelation::Function { source, target } => {
+                let Some(call) = calls.get(source) else {
+                    continue;
+                };
+                let Some(names) = function_parameter_names(graph, *target) else {
+                    continue;
+                };
+                push_argument_edges(
+                    &mut relations,
+                    &parameter_bindings,
+                    (*source).into(),
+                    CallBodyOwnerId::Function(*target),
+                    &names,
+                    &call.arguments,
+                );
             }
-            let Some(name) = parameter_names.get(idx) else {
-                continue;
-            };
-            let Some(binding_id) = parameter_bindings.get(&(*target, *name)) else {
-                continue;
-            };
-            relations.push(LocalBindingRelation::ArgumentSuppliesParameter {
-                source: (*source).into(),
-                target: *binding_id,
-            });
+            CallRelation::Method { source, target } => {
+                let Some(call) = method_calls.get(source) else {
+                    continue;
+                };
+                let Some(names) = method_parameter_names(graph, *target) else {
+                    continue;
+                };
+                push_argument_edges(
+                    &mut relations,
+                    &parameter_bindings,
+                    (*source).into(),
+                    CallBodyOwnerId::Method(*target),
+                    &names,
+                    &call.arguments,
+                );
+            }
+            _ => {}
         }
     }
 
     relations.sort_unstable();
     relations.dedup();
     relations
+}
+
+fn push_argument_edges(
+    relations: &mut Vec<LocalBindingRelation>,
+    bindings: &BTreeMap<(CallBodyOwnerId, &str), LocalBindingId>,
+    source: AnyCallSiteId,
+    target_owner: CallBodyOwnerId,
+    parameter_names: &[&str],
+    arguments: &[CallArgument],
+) {
+    for (idx, argument) in arguments.iter().enumerate() {
+        if !argument_has_exact_callable_source(argument) {
+            continue;
+        }
+        let Some(name) = parameter_names.get(idx) else {
+            continue;
+        };
+        let Some(binding_id) = bindings.get(&(target_owner, *name)) else {
+            continue;
+        };
+        relations.push(LocalBindingRelation::ArgumentSuppliesParameter {
+            source,
+            target: *binding_id,
+        });
+    }
 }
 
 pub(super) fn derive_initialized_path_relations(
@@ -320,18 +357,15 @@ fn initialized_bindings_by_owner_name(
     bindings
 }
 
-fn parameter_binding_ids(
-    graph: &CodeGraph,
-) -> BTreeMap<(FunctionNodeId, &str), syn_parser::parser::nodes::LocalBindingId> {
+fn parameter_binding_ids(graph: &CodeGraph) -> BTreeMap<(CallBodyOwnerId, &str), LocalBindingId> {
     graph
         .local_bindings
         .iter()
         .filter_map(|binding| {
-            let CallBodyOwnerId::Function(function_id) = binding.owner else {
+            if binding.kind != LocalBindingKind::ParameterBinding {
                 return None;
-            };
-            (binding.kind == LocalBindingKind::ParameterBinding)
-                .then_some(((function_id, binding.name.as_str()), binding.id))
+            }
+            Some(((binding.owner, binding.name.as_str()), binding.id))
         })
         .collect()
 }
@@ -365,6 +399,17 @@ fn dynamic_calls(
         .collect()
 }
 
+fn method_calls(graph: &CodeGraph) -> BTreeMap<MethodCallSiteId, &MethodCallNode> {
+    graph
+        .call_sites
+        .iter()
+        .filter_map(|site| match site {
+            CallNode::MethodCall(call) => Some((call.id, call)),
+            _ => None,
+        })
+        .collect()
+}
+
 fn function_parameter_names(graph: &CodeGraph, id: FunctionNodeId) -> Option<Vec<&str>> {
     graph
         .functions
@@ -372,6 +417,23 @@ fn function_parameter_names(graph: &CodeGraph, id: FunctionNodeId) -> Option<Vec
         .find(|function| function.id == id)
         .map(|function| {
             function
+                .parameters
+                .iter()
+                .filter(|param| !param.is_self)
+                .filter_map(|param| param.name.as_deref())
+                .collect()
+        })
+}
+
+fn method_parameter_names(graph: &CodeGraph, id: MethodNodeId) -> Option<Vec<&str>> {
+    graph
+        .impls
+        .iter()
+        .flat_map(|node| node.methods.iter())
+        .chain(graph.traits.iter().flat_map(|node| node.methods.iter()))
+        .find(|method| method.id == id)
+        .map(|method| {
+            method
                 .parameters
                 .iter()
                 .filter(|param| !param.is_self)
