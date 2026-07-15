@@ -849,6 +849,13 @@ What is complete:
   Focused DB coverage passed for
   `fixture_projection_stores_method_callable_argument_parameter_edges` and the
   broader `mixed_proof::argument_edges` module.
+- Exact `code_item_lookup` and `code_item_edges` tests now expose the same
+  method-owned `local_bindings` and `local_binding_edges` payload. The shared
+  assertion checks the method parameter binding, the incoming method-call
+  `ArgumentSuppliesParameter` edge, and the parameter's
+  `BindingSourceFunction` edge to `local_target`. Focused grouped verification
+  passed with
+  `cargo test -p ploke-tui --features call_graph local_binding_payload_for_method_callable_argument -- --nocapture`.
 
 What remains:
 

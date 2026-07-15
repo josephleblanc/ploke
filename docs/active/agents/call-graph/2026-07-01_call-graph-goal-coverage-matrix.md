@@ -254,8 +254,11 @@ fixture oracle is private
 `call_method_function_pointer_param_with_local_target()` with `local_target`.
 DB proof coverage asserts the existing method traversal, the method-owned
 parameter binding, the new `Method -> LocalBinding` argument edge, and the
-parameter's `BindingSourceFunction` edge. Active fixtures were regenerated and
-verified. This is proof projection for an already-resolved private method
+parameter's `BindingSourceFunction` edge. Exact `code_item_lookup` and
+`code_item_edges` tests now preserve the same method-owned local-binding
+payload and UI counts through the established local-binding tool assertion
+helper. Active fixtures were regenerated and verified. This is proof
+projection and downstream surfacing for an already-resolved private method
 argument, not public method parameter inference, arbitrary method value-flow,
 trait-object dispatch, or a new traversal edge.
 
