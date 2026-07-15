@@ -140,18 +140,42 @@ Once the coverage matrix is complete enough that every current representative bu
 The current larger implementation phase is:
 
 ```text
-binding/type-aware semantic resolution
+binding/type-aware semantic resolution, with the persistent local-binding
+proof carrier now established for exact source oracles
 ```
 
 This phase should connect existing syntax-body ownership, local binding evidence, and typed type graph facts so the resolver can prove more receiver and callable-value cases without weakening fail-closed semantics. Completed slices include exact local external-trait impl receiver methods such as axum `Router::clone`, axum-core `parts.extract_with_state(state)` where `parts: &mut http::request::Parts`, fixture-backed borrowed initialized local receivers such as `(&value).instance_value()` where `value` is initialized from a local type path, borrowed value-parameter receivers where `(&value).instance_value()` reuses exact parameter receiver proof, borrowed value-parameter method-result chains where `(&value).clone_assoc().instance_value()` reuses exact parameter proof plus return-type proof, and private complete-single-caller callable parameter proofs including direct array parameters such as `call_single_indexed_function_pointer_param(funcs: [fn() -> i32; 1]) { funcs[0]() }`. Broader dispatch remains out of scope until the required binding/type evidence is explicit.
 
+2026-07-15 checkpoint:
+
+- The local-binding proof carrier has moved from planned to implemented for
+  the current exact source-oracle set. Parser, transform, DB, exact RAG, and
+  exact TUI/tool payloads now preserve typed `local_binding` and
+  `local_binding_edge` evidence for returned-callable bindings, returned future
+  proof rows, same-block future let/aggregate storage, parameter bindings,
+  argument-to-parameter edges, initialized callable path bindings, value
+  aliases, constructed field/index projections, field-projection source
+  function edges, and exact private method callable arguments.
+- The implemented carrier remains explanatory proof over already-admitted
+  traversal. It deliberately does not infer public API caller values, arbitrary
+  aggregate value flow, broad callable-field construction flow, trait-object
+  vtable dispatch, or general async poll/resume traversal.
+- Active call-graph fixtures were regenerated and verified after the latest
+  carrier slices. The current restart rule is to select the next larger proof
+  model only when a reviewed source oracle can name the missing typed input and
+  a DB-first assertion can prove either a new exact edge or a stricter
+  fail-closed blocker.
+
 ## Next Larger Phase
 
-Recommended first semantic-expansion bucket:
+The original recommended first semantic-expansion bucket was:
 
 ```text
 local binding tracking for callable values and typed receivers
 ```
+
+That bucket is now the foundation for the current implementation, not the next
+unstarted phase.
 
 Why this bucket first:
 
@@ -162,18 +186,31 @@ Why this bucket first:
 
 Do not start with broad trait dispatch or arbitrary dynamic callable execution. Those should follow after the binding/type evidence model is explicit and tested.
 
+Remaining larger proof models:
+
+| Bucket | Entry criterion | Current boundary |
+| --- | --- | --- |
+| Broader object/field callable value flow | A source-visible construction path proves every callable value reaching a field, or a typed value-flow carrier records the incomplete proof. | Axum `self.layer`, router-side `self.into_route`, and `self.tap_fn` stay ambiguous or targetless; existing runtime-dispatch summaries do not create local edges. |
+| Callable trait-object dispatch | A bounded local source oracle proves a concrete callable target without public caller ambiguity or vtable guessing. | Exact initializer and private complete-caller `dyn Fn` cases are covered; unbounded trait-object dispatch stays fail-closed. |
+| Async future value flow / poll-resume | A typed future-flow carrier identifies both producer future and poll point without flattening async state-machine execution into ordinary source calls. | Returned-future proof/execution rows explain reviewed cases; ordinary traversal to the async closure body remains blocked unless polling is source-visible and bounded. |
+| Generated or macro-expanded source bodies | A specific macro template and invocation pair can be modeled narrowly through normal item/call visitors. | Bounded axum generated-item templates are covered; arbitrary macro expansion stays out of scope and projects blockers. |
+| External/source-sink policy summaries | A concrete usage question needs a new closed-vocabulary effect/summary fact that current `effect_seed`, `effect_policy`, guard, boundary, or summary helpers cannot express. | Existing effect, guard, boundary, build/test, and external-summary surfaces are strong; do not add policy vocabulary speculatively. |
+
 ## Practical Next Steps After Matrix Completion
 
-1. Create a binding/type-aware resolver plan that follows the same nearby patterns as typed type graph and existing call-resolution code.
-2. Inventory existing data already available for this plan:
+1. Select exactly one remaining larger proof model and source oracle from the
+   table above.
+2. Inventory existing data already available for that oracle:
    - owner body text and callsite spans;
    - local binding syntax;
    - existing type graph edges and alias facts;
    - import/re-export bindings;
    - existing callsite relation/status storage.
-3. Define conservative proof carriers for local binding evidence.
-4. Add DB/RAG/TUI tests only after parser/transform facts exist.
-5. Keep unsupported rows explicit until exact proof exists.
+3. Add the DB assertion first, naming whether the expected result is an exact
+   traversal edge, candidate-only row, external frontier, or explicit blocker.
+4. Add parser/transform/proof carriers only when that assertion names missing
+   typed input; otherwise keep unsupported rows explicit.
+5. Propagate to RAG/TUI only after the DB proof surface is stable.
 
 ## Workflow Guardrail
 
@@ -192,7 +229,7 @@ For the current state, that should be:
 ```text
 Root plan: .hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md
 Current phase: binding/type-aware semantic resolution
-Current completed checkpoint: binding/type-aware fixture slices through struct-pattern receiver bindings, async-closure future alias proof, private callable-parameter proof, and parameter-field receiver proof have parser/DB/RAG/TUI coverage where exposed; 2026-07-08 fixture regeneration plus DB/RAG/TUI real-corpus checkpoints passed
-Completed proof: the current representative buckets are either exact local edges with typed proof or explicit fail-closed frontier rows with blocker/proof payloads; no remaining audited real-corpus candidate is safe to promote without broader macro/cfg, interprocedural value-flow, external-return-summary, or async poll/resume evidence
-Next phase if this bucket is done: choose the next unresolved coverage-matrix bucket from the binding/type-aware semantic expansion plan; do not add more import breadth unless there is an explicit workspace proof carrier and source oracle
+Current completed checkpoint: persistent local-binding proof carrier slices now cover returned-callable evidence, returned-future proof rows, exact let/parameter/alias/field-projection rows, argument-to-parameter edges, method callable arguments, and exact DB/RAG/TUI payload propagation; active call-graph fixtures have been regenerated and verified
+Completed proof: the current representative buckets are either exact local edges with typed proof or explicit fail-closed frontier rows with blocker/proof payloads; no remaining audited real-corpus candidate is safe to promote without broader macro/generated-body, interprocedural value-flow, callable-field construction, trait-object dispatch, external-summary/source-sink, or async poll/resume evidence
+Next phase if this bucket is done: choose one remaining larger proof model with a source oracle and DB-first assertion; do not add more same-family binding, import, receiver, or targetless breadth unless the source oracle introduces a new typed proof input
 ```
