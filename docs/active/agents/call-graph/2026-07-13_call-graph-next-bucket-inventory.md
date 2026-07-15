@@ -144,6 +144,22 @@ Selection update, 2026-07-14:
   needed by a reviewed source oracle, or choose a reviewed async/value-flow
   blocker that uses the carrier before any new traversal edge is admitted.
 
+Selection update, 2026-07-15:
+
+- The one-hop constructed-holder alias projection cases are now covered by the
+  existing local-binding projection table. This closes the stale
+  "aliases of constructed holders" note for exact copied constructed-holder
+  proof, but it does not add general aggregate alias/value-flow semantics.
+- Active call-graph fixture regeneration and `verify-backup-dbs` passed. The
+  full `fixtures regenerate --all` command still cannot complete typed
+  OpenRouter embedding fixtures in this environment because OpenRouter returned
+  HTTP 402 for the embedding endpoint.
+- Rechecking the candidate buckets still leaves no safe small promotion from
+  the nearby projection family. The next code slice should choose one larger
+  proof model explicitly: broader object/field callable value flow, async
+  poll/resume future flow, generated/macro-expanded source bodies, callable
+  trait-object dispatch, or external/source-sink policy summaries.
+
 Local-binding projection checkpoint, 2026-07-14:
 
 - Source oracles:

@@ -583,6 +583,11 @@ What is complete:
   projected binding (`holder.callbacks.0` / `holder.0.0`), the
   `BindingProjectsField` edge back to the holder binding, and the pre-existing
   dynamic call edge to `local_target`.
+- Follow-up DB coverage also proves the same row/edge shape for one-hop aliases
+  of exact constructed holders:
+  `call_aliased_named_field_function_binding`,
+  `call_aliased_indexed_named_field_function_binding`, and
+  `call_aliased_indexed_tuple_field_function_binding`.
 - The fail-closed table now covers public parameter field, indexed named-field,
   and indexed tuple-field calls. Those rows remain targetless and do not emit
   `FieldProjection` or `BindingProjectsField` evidence.
@@ -592,9 +597,10 @@ What is complete:
 What remains:
 
 - This does not add public parameter-field inference, general aggregate
-  value-flow, aliases of constructed holders, tuple/index source edge families,
-  trait-object dispatch, or a new call edge. Broader aggregate forwarding needs
-  its own reviewed source oracle and typed carrier slice.
+  value-flow, arbitrary aliases beyond exact constructed-holder copies,
+  tuple/index source edge families, trait-object dispatch, or a new call edge.
+  Broader aggregate forwarding needs its own reviewed source oracle and typed
+  carrier slice.
 
 ## 2026-07-15 Aggregate Returned Future Carrier Checkpoint
 
@@ -719,7 +725,8 @@ What is complete:
 - The fixture-backed source oracles are the existing projection table:
   `tests/fixture_crates/fixture_call_graph/src/lib.rs:870-874` for
   `holder.callback`, `:889-893` for `holder.callbacks[0]`, and `:914-916` for
-  `holder.0[0]`.
+  `holder.0[0]`, plus the matching one-hop alias cases at `:877-882`,
+  `:902-907`, and `:925-929`.
 - Transform derives a `BindingSourceFunction` edge only from existing exact
   proof: a resolved `CallRelation::DynamicFunction` whose dynamic callee is a
   `FieldInitializedLocalBinding` or `IndexedInitializedLocalBinding`, matched
@@ -734,9 +741,9 @@ What is complete:
 
 What remains:
 
-- This is not general object value-flow, aliases of constructed holders, public
-  parameter-field inference, trait-object dispatch, or a new traversal edge.
-  It explains already-admitted exact projection calls through typed binding
+- This is not general object value-flow, arbitrary aggregate alias flow, public
+  parameter-field inference, trait-object dispatch, or a new traversal edge. It
+  explains already-admitted exact projection calls through typed binding
   evidence only.
 
 ## 2026-07-15 Forwarded Callable Argument Edge Coverage Checkpoint
