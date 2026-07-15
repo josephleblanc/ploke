@@ -492,6 +492,38 @@ What remains:
   Broader field forwarding still needs separate exact source oracles and typed
   carrier slices.
 
+## 2026-07-15 Initialized Path Binding Carrier Checkpoint
+
+Implemented slice: durable `LetBinding` source fact for exact initialized path
+callable bindings.
+
+What is complete:
+
+- Parser extraction now persists `LocalBindingSource::InitializedPath` for
+  local let bindings whose initializer path is already proven exact by the
+  existing parser-local `LocalBindingProof::Initialized` machinery.
+- The fixture-backed DB oracle is
+  `tests/fixture_crates/fixture_call_graph/src/lib.rs:185-187`, where
+  `call_local_function_item_binding()` binds `let f = local_target;` and then
+  calls `f()`.
+- Transform projection stores the initializer path in `local_binding.source_path`
+  with no source ID, source call kind, callee kind, or callee path. This mirrors
+  the established row-level source-fact pattern for source-visible evidence
+  without inventing a new edge family.
+- `ploke-db` strict decoding accepts `InitializedPath` only for nonempty source
+  paths and only as a `LetBinding` source shape.
+- Fixture-backed DB coverage proves the existing `f()` call edge to
+  `local_target`, the durable `f` binding row, and its owner containment edge.
+- Active fixture regeneration and registry-backed backup verification passed;
+  no tracked snapshot/checksum drift was produced by this projection slice.
+
+What remains:
+
+- This does not add a `BindingSourcePath` edge, general alias propagation,
+  public parameter proof, trait-object dispatch, or broad dynamic callable
+  value flow. Those should be separate source-oracle-driven slices with typed
+  endpoint families if they need new edges.
+
 ## Exit Criteria
 
 For the first carrier slice:

@@ -296,6 +296,70 @@ fn fixture_projection_stores_constructed_field_argument_parameter_edge() -> Resu
 }
 
 #[test]
+fn fixture_projection_stores_initialized_path_let_binding() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let owner = function_id_by_name(&db, "call_local_function_item_binding")?;
+    let target = function_id_by_name(&db, "local_target")?;
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:185-187:
+    // `let f = local_target; f()` proves a callable value binding sourced by a
+    // local item path. The call already resolves through that binding; this
+    // test pins the durable binding row that explains the value flow.
+    let context = db.call_context_for_owner(owner)?;
+    let row = row_by_path(&context, &["f"]);
+    assert_resolved_target(
+        row,
+        target,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
+
+    let bindings = db.local_bindings_for_owner(owner)?;
+    let bindings = bindings
+        .into_iter()
+        .filter(|binding| binding.kind == "LetBinding" && binding.name == "f")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        bindings.len(),
+        1,
+        "initialized callable binding should expose one let binding: {bindings:#?}"
+    );
+    let binding = &bindings[0];
+    assert_eq!(binding.source_kind, "InitializedPath");
+    assert_eq!(binding.source_id, None);
+    assert_eq!(binding.source_call_kind, None);
+    assert_eq!(binding.source_path.as_ref(), Some(&path(&["local_target"])));
+    assert_eq!(binding.callee_kind, None);
+    assert_eq!(binding.callee_path, None);
+    assert!(
+        binding.span.0 < binding.span.1,
+        "initialized callable binding should retain a non-empty source span: {binding:#?}"
+    );
+
+    let edges = db.local_binding_edges_for_owner(owner)?;
+    let binding_edges = edges
+        .iter()
+        .filter(|edge| edge.source_id == binding.id || edge.target_id == binding.id)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        binding_edges.len(),
+        1,
+        "initialized callable binding should expose only owner containment until source-path edges are introduced: {edges:#?}"
+    );
+    assert!(
+        binding_edges.iter().any(|edge| edge.relation
+            == LocalBindingRelationKind::OwnerContainsBinding
+            && edge.source_id == owner
+            && edge.target_id == binding.id
+            && edge.target_kind == "LocalBinding"),
+        "missing owner-to-initialized-binding edge: {binding_edges:#?}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn fixture_projection_stores_let_closure_binding_edges() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let owner = function_id_by_name(&db, "call_shadowed_local_target_binding")?;

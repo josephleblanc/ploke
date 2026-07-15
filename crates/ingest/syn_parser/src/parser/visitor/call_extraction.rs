@@ -380,6 +380,11 @@ impl BodyCallVisitor<'_> {
                     }
                 }
             }
+            LocalBindingProof::Initialized { init_path, .. } => {
+                LocalBindingSource::InitializedPath {
+                    init_path: init_path.clone(),
+                }
+            }
             _ => {
                 let Some(init_expr) = init_expr else {
                     return;
@@ -974,6 +979,7 @@ fn local_binding_source_relation(
     match binding_source {
         LocalBindingSource::Parameter => None,
         LocalBindingSource::Constructed { .. } => None,
+        LocalBindingSource::InitializedPath { .. } => None,
         LocalBindingSource::FieldProjection {
             base_binding_id, ..
         } => Some(LocalBindingRelation::BindingProjectsField {

@@ -1104,6 +1104,13 @@ fn local_binding_to_params(binding: &LocalBindingNode) -> BTreeMap<String, cozo:
             cozo::DataValue::Null,
             cozo::DataValue::Null,
         ),
+        LocalBindingSource::InitializedPath { init_path } => (
+            cozo::DataValue::Null,
+            cozo::DataValue::Null,
+            string_list(init_path),
+            cozo::DataValue::Null,
+            cozo::DataValue::Null,
+        ),
         LocalBindingSource::FieldProjection {
             base_binding_id,
             field_path,

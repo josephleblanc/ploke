@@ -50,7 +50,22 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Latest completed slice: durable constructed callable-field
+Latest completed slice: durable initialized path let-binding proof projection.
+The parser now records `LetBinding` rows with `source_kind =
+"InitializedPath"` for exact local callable value bindings such as
+`call_local_function_item_binding() { let f = local_target; f() }`. Transform
+projects the row by storing the initializer path in `source_path`, and
+`ploke-db` strictly decodes the row only when it has no source ID, no callsite
+kind, no callee endpoint fields, and a nonempty source path. The fixture-backed
+DB proof asserts both the already-resolved `f()` edge to `local_target` and the
+durable local binding row plus owner containment edge that explains the
+callable value flow. Active fixture regeneration and `verify-backup-dbs`
+completed cleanly with no tracked snapshot/checksum drift. This is source-fact
+projection for an exact initialized path binding, not a new item-path source
+edge, not general local aliasing, not public parameter proof, and not broader
+dynamic callable dispatch.
+
+Recent completed slice: durable constructed callable-field
 argument-to-parameter proof projection. Transform now projects
 `ArgumentSuppliesParameter` `local_binding_edge` rows when a resolved private
 callee parameter is supplied by a constructed argument with exact path-valued
