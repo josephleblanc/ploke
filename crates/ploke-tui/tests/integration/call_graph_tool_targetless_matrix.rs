@@ -22,8 +22,8 @@ use crate::call_graph_tool_support::{
     assert_path_context_absent, assert_path_context_count, assert_path_resolution_proof,
     assert_resolved_method_context, assert_resolved_method_proof,
     assert_resolved_path_context_count, assert_resolved_path_context_target,
-    assert_resolved_path_proof, assert_runtime_dispatch_blocker, request_parts_extract_target,
-    ui_field,
+    assert_resolved_path_proof, assert_runtime_dispatch_blocker,
+    assert_self_field_binding_evidence, request_parts_extract_target, ui_field,
 };
 
 #[tokio::test]
@@ -85,6 +85,18 @@ async fn code_item_lookup_returns_dynamic_targetless_real_corpus_rows() {
             fixture.case.label,
             "lookup",
         );
+        if let Some(expected_path) = fixture.case.expected_path {
+            assert_self_field_binding_evidence(
+                proof_context,
+                fixture.owner,
+                site_id,
+                fixture.case.build_domain(),
+                expected_path,
+                "blocked",
+                fixture.case.label,
+                "lookup",
+            );
+        }
         if fixture.case.expects_runtime_dispatch_blocker() {
             assert_runtime_dispatch_blocker(proof_context, site_id, fixture.case.label, "lookup");
             assert_runtime_dispatch_need(runtime_needs, site_id, fixture.case.label, "lookup");
@@ -264,6 +276,18 @@ async fn code_item_lookup_returns_real_corpus_dynamic_candidate_rows() {
             fixture.case.label,
             "lookup",
         );
+        if fixture.case.expects_self_field_binding_evidence() {
+            assert_self_field_binding_evidence(
+                proof_context,
+                fixture.owner,
+                site_id,
+                fixture.case.build_domain(),
+                fixture.case.expected_path,
+                "ambiguous",
+                fixture.case.label,
+                "lookup",
+            );
+        }
 
         let ui = result.ui_payload.as_ref().expect("ui payload");
         assert!(
@@ -1363,6 +1387,18 @@ async fn code_item_edges_returns_dynamic_targetless_real_corpus_rows() {
             fixture.case.label,
             "edges",
         );
+        if let Some(expected_path) = fixture.case.expected_path {
+            assert_self_field_binding_evidence(
+                proof_context,
+                fixture.owner,
+                site_id,
+                fixture.case.build_domain(),
+                expected_path,
+                "blocked",
+                fixture.case.label,
+                "edges",
+            );
+        }
         if fixture.case.expects_runtime_dispatch_blocker() {
             assert_runtime_dispatch_blocker(proof_context, site_id, fixture.case.label, "edges");
             assert_runtime_dispatch_need(runtime_needs, site_id, fixture.case.label, "edges");
@@ -1436,6 +1472,18 @@ async fn code_item_edges_returns_real_corpus_dynamic_candidate_rows() {
             fixture.case.label,
             "edges",
         );
+        if fixture.case.expects_self_field_binding_evidence() {
+            assert_self_field_binding_evidence(
+                proof_context,
+                fixture.owner,
+                site_id,
+                fixture.case.build_domain(),
+                fixture.case.expected_path,
+                "ambiguous",
+                fixture.case.label,
+                "edges",
+            );
+        }
 
         let ui = result.ui_payload.as_ref().expect("ui payload");
         assert!(

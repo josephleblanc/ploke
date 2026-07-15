@@ -228,6 +228,11 @@ impl AmbiguousDynamicToolCase {
     pub(crate) fn build_domain(&self) -> &'static str {
         self.corpus.build_domain()
     }
+
+    pub(crate) fn expects_self_field_binding_evidence(&self) -> bool {
+        matches!(self.corpus, DynamicToolCorpus::Axum)
+            && matches!(self.expected_path, ["self", "layer"])
+    }
 }
 
 impl DynamicToolCorpus {
@@ -1612,6 +1617,44 @@ pub(crate) fn assert_dynamic_proof(
                 && proof.blocker_reason.as_deref() == Some("dynamic_dispatch_unbounded")
         }),
         "{tool} should return the dynamic blocked resolution proof row for {label}: {proofs:#?}"
+    );
+}
+
+pub(crate) fn assert_self_field_binding_evidence(
+    proofs: &[serde_json::Value],
+    owner: Uuid,
+    site_id: Uuid,
+    build_domain: &str,
+    expected_path: &[&str],
+    expected_state: &str,
+    label: &str,
+    tool: &str,
+) {
+    let owner = owner.to_string();
+    let site_id = site_id.to_string();
+    let path = expected_path.join(".");
+    let rows = proofs
+        .iter()
+        .filter_map(|proof| serde_json::from_value::<ProofContextInfo>(proof.clone()).ok())
+        .collect::<Vec<_>>();
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "binding_evidence"
+                && proof
+                    .fact_id
+                    .starts_with("binding-evidence:self-field-callable:")
+                && proof.build_domain_id.as_deref() == Some(build_domain)
+                && proof.call_site_id.as_deref() == Some(site_id.as_str())
+                && proof.caller_def_id.as_deref() == Some(owner.as_str())
+                && proof.resolution_state.as_deref() == Some(expected_state)
+                && proof.evidence_use.as_deref() == Some("proof_only")
+                && proof.detail.as_deref().is_some_and(|detail| {
+                    detail.contains("callable self-field")
+                        && detail.contains(path.as_str())
+                        && detail.contains("field value flow is proven")
+                })
+        }),
+        "{tool} should return the self-field binding evidence row for {label}: {proofs:#?}"
     );
 }
 
