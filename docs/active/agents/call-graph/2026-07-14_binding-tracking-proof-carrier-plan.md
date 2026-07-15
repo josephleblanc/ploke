@@ -739,6 +739,35 @@ What remains:
   It explains already-admitted exact projection calls through typed binding
   evidence only.
 
+## 2026-07-15 Forwarded Callable Argument Edge Coverage Checkpoint
+
+Implemented slice: consolidated DB proof coverage for existing durable
+`ArgumentSuppliesParameter` edges over forwarded callable chains.
+
+What is complete:
+
+- The table-driven DB proof test now covers the already-supported forwarding
+  families whose traversal was previously asserted elsewhere:
+  `fn() -> i32` parameters, `&dyn Fn() -> i32` parameters, `Box<dyn Fn() ->
+  i32>` parameters, and constructed callable-field holder parameters.
+- The source oracles are
+  `tests/fixture_crates/fixture_call_graph/src/lib.rs:1982-1993`,
+  `:2016-2029`, `:2052-2066`, `:2192-2217`, and `:2237-2262`.
+- For each forwarding callsite, the test asserts the existing resolved helper
+  call, the callee-owned `ParameterBinding`, and the durable
+  `ArgumentSuppliesParameter` edge from the callsite to that parameter.
+- Existing traversal to `local_target` is preserved, but no new resolver edge
+  or new relation family is introduced by this slice.
+- Verification passed:
+  `cargo test -p ploke-db --features call_graph fixture_projection_stores_forwarded_callable_argument_parameter_edges -- --nocapture`.
+
+What remains:
+
+- This is not a new callable trait-object dispatch model. Public callers,
+  conflicting complete caller sets, arbitrary interprocedural value flow, and
+  runtime vtable dispatch remain fail-closed unless a later source oracle adds
+  a new typed proof carrier.
+
 ## Exit Criteria
 
 For the first carrier slice:

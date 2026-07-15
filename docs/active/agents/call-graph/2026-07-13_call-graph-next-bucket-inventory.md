@@ -187,6 +187,12 @@ Local-binding projection checkpoint, 2026-07-14:
   producer-side dynamic row remains targetless. Exact RAG and exact
   `code_item_lookup` / `code_item_edges` payloads expose the sync flow and
   preserve the same fail-closed boundary.
+- The latest argument-edge coverage slice table-drives durable
+  `ArgumentSuppliesParameter` proof assertions across the already-supported
+  forwarded callable chains: constructed holder parameters, function-pointer
+  parameters, referenced `&dyn Fn` parameters, and boxed `dyn Fn` parameters.
+  This consolidates DB proof coverage for existing traversal and does not add
+  a new resolver edge or a new relation family.
 - Fixtures: active call-graph fixtures regenerated and verified; shared corpus
   snapshots now report 66 relations.
 - Boundary: this is not general let-binding flow, callable-field value flow,
