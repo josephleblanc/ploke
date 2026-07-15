@@ -26,6 +26,17 @@ pub(crate) struct FixtureSelfFieldReceiverToolFixture {
     pub(crate) target: Uuid,
 }
 
+pub(crate) struct FixtureMethodCallableArgumentToolFixture {
+    pub(crate) state: Arc<AppState>,
+    pub(crate) file_path: PathBuf,
+    pub(crate) owner_type: &'static str,
+    pub(crate) owner_name: &'static str,
+    pub(crate) owner: Uuid,
+    pub(crate) target: Uuid,
+    pub(crate) parameter: Uuid,
+    pub(crate) method_call_site: Uuid,
+}
+
 impl FixtureDynamicCallableToolFixture {
     pub(crate) async fn new_for_owner(owner_name: &'static str) -> Self {
         let db = Arc::new(Database::new(
@@ -71,6 +82,107 @@ impl FixtureDynamicCallableToolFixture {
             owner_name,
             owner,
             target,
+        }
+    }
+
+    pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
+        ctx_for_state(&self.state, call_id)
+    }
+}
+
+impl FixtureMethodCallableArgumentToolFixture {
+    pub(crate) async fn new() -> Self {
+        let db = Arc::new(Database::new(
+            setup_db_full_multi_embedding("fixture_call_graph").expect("fixture_call_graph db"),
+        ));
+        let crate_root = workspace_root().join("tests/fixture_crates/fixture_call_graph");
+        let module_path = vec!["crate".to_string()];
+        let file_path = crate_root.join("src/lib.rs");
+        let owner_type = "LocalAssoc";
+        let owner_name = "call_function_pointer_param";
+        let owner = graph_resolve_exact(
+            db.as_ref(),
+            "method",
+            file_path.as_path(),
+            &module_path,
+            owner_name,
+        )
+        .expect("resolve LocalAssoc::call_function_pointer_param")
+        .pop()
+        .expect("LocalAssoc::call_function_pointer_param row")
+        .id;
+        let caller = graph_resolve_exact(
+            db.as_ref(),
+            "function",
+            file_path.as_path(),
+            &module_path,
+            "call_method_function_pointer_param_with_local_target",
+        )
+        .expect("resolve call_method_function_pointer_param_with_local_target")
+        .pop()
+        .expect("call_method_function_pointer_param_with_local_target row")
+        .id;
+        let target = graph_resolve_exact(
+            db.as_ref(),
+            "function",
+            file_path.as_path(),
+            &module_path,
+            "local_target",
+        )
+        .expect("resolve local_target")
+        .pop()
+        .expect("local_target row")
+        .id;
+        let parameter = db
+            .local_bindings_for_owner(owner)
+            .expect("LocalAssoc::call_function_pointer_param bindings")
+            .into_iter()
+            .find(|binding| binding.kind == "ParameterBinding" && binding.name == "f")
+            .expect("LocalAssoc::call_function_pointer_param should persist parameter f")
+            .id;
+        let receiver = CallReceiver::InitializedLocalBinding {
+            name: "value".to_string(),
+            init_path: vec!["LocalAssoc".to_string()],
+        };
+        let caller_context = db
+            .call_context_for_owner(caller)
+            .expect("call_method_function_pointer_param_with_local_target context");
+        let matches = caller_context
+            .iter()
+            .filter(|row| {
+                row.site.kind == DbCallSiteKind::Method
+                    && row.site.method.as_deref() == Some(owner_name)
+                    && row.site.receiver.as_ref() == Some(&receiver)
+                    && row.targets.iter().any(|target| {
+                        target.target_id == owner
+                            && target.relation == DbCallRelationKind::Method
+                            && target.target_kind == DbCallTargetKind::Method
+                    })
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            matches.len(),
+            1,
+            "expected one method callsite supplying LocalAssoc::call_function_pointer_param: {caller_context:#?}"
+        );
+        let method_call_site = matches[0].site.id;
+        assert!(
+            db.project_call_proof_facts_for_node(owner, "bd:fixture-call-graph")
+                .expect("project LocalAssoc::call_function_pointer_param proof facts")
+                >= 1,
+            "LocalAssoc::call_function_pointer_param should project proof rows"
+        );
+        let state = app_state_with_rag(db, crate_root).await;
+
+        Self {
+            state,
+            file_path,
+            owner_type,
+            owner_name,
+            owner,
+            target,
+            parameter,
+            method_call_site,
         }
     }
 
