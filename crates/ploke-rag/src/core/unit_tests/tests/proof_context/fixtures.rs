@@ -11,5 +11,6 @@ mod projected;
 mod raw_identifiers;
 mod real_corpus;
 mod result_field_receivers;
+mod returned_async_futures;
 mod special_forms;
 mod targetless_special_forms;

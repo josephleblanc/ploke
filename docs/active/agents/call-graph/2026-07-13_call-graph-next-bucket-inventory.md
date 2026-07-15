@@ -340,6 +340,19 @@ Callable trait-object audit, 2026-07-15:
   existing exact rows without promoting memchr boxed `dyn FnMut` dispatch or
   introducing broader trait-object resolution.
 
+Returned async future proof-context audit, 2026-07-15:
+
+- Rechecked the async poll/resume bucket after the returned-future query and
+  tool slices. DB, exact RAG call-context, and exact TUI lookup/edges already
+  expose the reviewed returned-future flow and execution-proof payloads.
+- The narrow drift found was again at the proof-context boundary: sync
+  returned-callable binding evidence was sampled, but the returned async
+  closure rows and fail-closed forwarded returned future producer were not.
+  Added a proof-context fixture that asserts resolved awaited/stored returned
+  async closures project `returned_callable` binding evidence, and the
+  forwarded returned future producer projects the same evidence plus the
+  `dynamic_dispatch_unbounded` poll/resume blocker without a dynamic call edge.
+
 ## Do Not Reselect Without New Evidence
 
 - Public callable parameters and public callable fields that lack complete
