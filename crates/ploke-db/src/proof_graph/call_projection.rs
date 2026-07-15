@@ -64,7 +64,7 @@ fn self_field_path(row: &CallContextRow) -> Option<&[String]> {
     }
     if !matches!(
         row.status.status,
-        CallStatusKind::Ambiguous | CallStatusKind::Unsupported
+        CallStatusKind::Resolved | CallStatusKind::Ambiguous | CallStatusKind::Unsupported
     ) {
         return None;
     }

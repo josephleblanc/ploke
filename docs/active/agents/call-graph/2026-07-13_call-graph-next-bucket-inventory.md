@@ -330,17 +330,20 @@ Object/field candidate audit, 2026-07-15:
 Self-field proof-evidence checkpoint, 2026-07-15:
 
 - Added the strict proof-only `binding_evidence_kind = "self_field_callable"`
-  carrier for ambiguous or unsupported dynamic `self.<field>` callable rows.
-  The producer is limited to dynamic callsites whose callee path begins with
-  `self` and whose status is `Ambiguous` or `Unsupported`.
+  carrier for dynamic `self.<field>` callable rows. The producer is limited to
+  dynamic callsites whose callee path begins with `self` and whose status is
+  `Resolved`, `Ambiguous`, or `Unsupported`.
 - DB real-corpus coverage now projects, persists, and queries typed
-  `binding_evidence` rows for axum `self.layer` at `boxed.rs:159,163`,
-  router-side `self.into_route` at `boxed.rs:120`, and `self.tap_fn` at
-  `serve/listener.rs:236`. RAG proof-context coverage asserts the same linked
-  proof rows by callsite, owner, resolution state, and proof-only detail.
-- This is still a blocker/proof-frontier carrier. The ambiguous `self.layer`
-  rows remain candidate-only, the unsupported `self.into_route` and
-  `self.tap_fn` rows remain targetless, and no runtime-dispatch summary or
+  `binding_evidence` rows for the resolved axum handler-side
+  `self.into_route` row at `boxed.rs:85`, ambiguous `self.layer` at
+  `boxed.rs:159,163`, router-side unsupported `self.into_route` at
+  `boxed.rs:120`, and unsupported `self.tap_fn` at `serve/listener.rs:236`.
+  RAG proof-context coverage asserts the same linked proof rows by callsite,
+  owner, resolution state, and proof-only detail.
+- This remains proof evidence over already-derived call resolution. The
+  resolved handler-side row explains the admitted traversal edge, the ambiguous
+  `self.layer` rows remain candidate-only, the unsupported `self.into_route`
+  and `self.tap_fn` rows remain targetless, and no runtime-dispatch summary or
   proof-evidence row creates a local traversal edge.
 
 Callable trait-object audit, 2026-07-15:

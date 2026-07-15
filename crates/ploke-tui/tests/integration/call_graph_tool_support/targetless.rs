@@ -1651,7 +1651,10 @@ pub(crate) fn assert_self_field_binding_evidence(
                 && proof.detail.as_deref().is_some_and(|detail| {
                     detail.contains("callable self-field")
                         && detail.contains(path.as_str())
-                        && detail.contains("field value flow is proven")
+                        && match expected_state {
+                            "resolved" => detail.contains("supports the admitted traversal edge"),
+                            _ => detail.contains("field value flow is proven"),
+                        }
                 })
         }),
         "{tool} should return the self-field binding evidence row for {label}: {proofs:#?}"

@@ -160,6 +160,14 @@ fn axum_dynamic_callable_fields_preserve_supported_and_unsupported_boundaries()
             expected_edge_count: 1,
         },
     )?;
+    assert_self_field_evidence(
+        &db,
+        supported_owner,
+        supported.site.id,
+        &["self", "into_route"],
+        "resolved",
+        "axum/src/boxed.rs:85 self.into_route closure field",
+    )?;
 
     let method_router_layer = method_id_by_name_and_body_substring(
         &db,
@@ -477,7 +485,10 @@ fn assert_self_field_evidence(
     assert_eq!(row.evidence_use, "proof_only");
     assert!(
         row.detail.contains("callable self-field")
-            && row.detail.contains("field value flow is proven"),
+            && match expected_state {
+                "resolved" => row.detail.contains("supports the admitted traversal edge"),
+                _ => row.detail.contains("field value flow is proven"),
+            },
         "{label} should explain why the self-field call remains proof-only: {row:#?}"
     );
 

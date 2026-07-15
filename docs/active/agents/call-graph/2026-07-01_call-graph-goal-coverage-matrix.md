@@ -3717,6 +3717,19 @@ stored-plus-forwarded future source oracle; arbitrary aggregate aliases, async
 callable trait objects, general non-local future value flow, and poll/resume
 traversal remain open.
 
+Update 2026-07-15: resolved self-field callable proof context now includes the
+already-admitted axum handler-side callable field row. The source oracle is
+`axum/src/boxed.rs:85`, where `MakeErasedHandler::into_route` calls
+`(self.into_route)(self.handler, state)` and
+`BoxedIntoRoute::from_handler` initializes that function-pointer field from a
+unique local closure. DB proof projection now emits
+`binding_evidence_kind = "self_field_callable"` with
+`resolution_state = "resolved"` for that row, and exact RAG proof-context
+coverage asserts the evidence beside the existing resolved call edge and
+resolution fact. This does not add a new traversal relation; ambiguous
+`self.layer` rows remain candidate-only and router-side `self.into_route` plus
+`self.tap_fn` remain targetless blockers.
+
 ## Parking Lot
 
 - Add binding tracking plan that ties syntax body ownership, local bindings, and type graph edges before attempting receiver/dynamic traversal.

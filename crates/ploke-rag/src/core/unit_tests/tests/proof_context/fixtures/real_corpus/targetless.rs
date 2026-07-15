@@ -1556,6 +1556,14 @@ async fn proof_context_collection_preserves_axum_handler_dynamic_callable_resolu
         }),
         "MakeErasedHandler::into_route proof context should include the resolved call_resolution fact: {rows:#?}"
     );
+    assert_self_field_evidence(
+        rows,
+        owner,
+        dynamic.site_id,
+        &["self", "into_route"],
+        "resolved",
+        "MakeErasedHandler::into_route",
+    );
 
     Ok(())
 }
@@ -1755,7 +1763,10 @@ fn assert_self_field_evidence(
                 && row.detail.as_deref().is_some_and(|detail| {
                     detail.contains("callable self-field")
                         && detail.contains(path.as_str())
-                        && detail.contains("field value flow is proven")
+                        && match expected_state {
+                            "resolved" => detail.contains("supports the admitted traversal edge"),
+                            _ => detail.contains("field value flow is proven"),
+                        }
                 })
         }),
         "{label} proof context should include self-field binding evidence for site {site}: {rows:#?}"

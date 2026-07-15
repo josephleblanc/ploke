@@ -116,6 +116,10 @@ pub(super) fn self_field_binding_evidence_fact(
         "callee_path": field_path,
         "resolution_state": resolution_state(row.status.status),
         "detail": match row.status.status {
+            CallStatusKind::Resolved => format!(
+                "{} calls callable self-field {path}; binding evidence records the exact field value flow that supports the admitted traversal edge",
+                row.site.owner_id
+            ),
             CallStatusKind::Ambiguous => format!(
                 "{} calls callable self-field {path}; binding evidence records the finite candidate set without admitting a traversal edge until field value flow is proven",
                 row.site.owner_id
