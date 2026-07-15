@@ -161,3 +161,5 @@ file and current code before treating a report as still open.
   Fixed and live verified: shared Prototype 1 control context canonicalizes `--repo-root .` before absolute-path headless indexing and other driver work.
 - [`2026-07-14-walk-pre-session-phase-and-start.md`](./2026-07-14-walk-pre-session-phase-and-start.md)
   Fixed and live verified: walk protocol v9 separates strict pre-session reconstruction, cursorless durable sessions, and the committed controller cursor, restores the first guarded Start at R3, and rejects reuse of the old empty guard before persistence.
+- [`2026-07-14-ploke-eval-walk-worker-stack-overflow.md`](./2026-07-14-ploke-eval-walk-worker-stack-overflow.md)
+  Fixed in source, live validation pending: the debug R3-to-R4a walk task exceeded Tokio's default 2 MiB worker stack after acquiring its durable fence, so the production binary now owns an explicit worker-stack budget and a fail-before/fix-after worker-capacity regression.
