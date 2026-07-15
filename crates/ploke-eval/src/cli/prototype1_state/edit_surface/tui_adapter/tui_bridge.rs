@@ -14,7 +14,7 @@ use ploke_llm::{
 };
 use ploke_records::llm_response::RawFullResponseRecord;
 use ploke_tui::app::commands::harness::TestAppAccessor;
-use ploke_tui::llm::SessionCapture;
+use ploke_tui::llm::{FullResponseTraceRecord, SessionCapture};
 use serde::Deserialize;
 use tokio::sync::oneshot;
 use uuid::Uuid;
@@ -440,17 +440,16 @@ pub(super) async fn run_attempt(
     run: &mut HeadlessRun,
     observer: &LiveObserver,
     validation_commands: &[contract::Command],
-    response_rx: Option<Arc<Mutex<Receiver<RecordedResponse>>>>,
+    response_rx: Option<Arc<Mutex<Receiver<FullResponseTraceRecord>>>>,
     timeouts: harness::Timeouts,
 ) -> Result<(AttemptEnd, crate::runner::WorkspaceTuiRuntime), Error> {
     let spec = harness::SessionSpec {
         workspace_path: workspace_path.to_path_buf(),
         timeouts,
     };
-    let owned_run = std::mem::replace(run, HeadlessRun::new());
     let mut harness = harness::TuiHarness::attach(
         runtime,
-        owned_run,
+        run,
         spec,
         active_parent_id,
         turn,
@@ -460,8 +459,7 @@ pub(super) async fn run_attempt(
     );
     let end = harness.drive_to_attempt_end(surface).await;
     harness.finalize().await;
-    let (restored_run, runtime) = harness.into_parts();
-    *run = restored_run;
+    let runtime = harness.into_runtime();
     end.map(|end| (end, runtime))
 }
 
@@ -833,21 +831,25 @@ fn record_validation_failure(run: &mut HeadlessRun, call_id: &str, command: &con
 
 pub(super) fn drain_response_records(
     run: &mut HeadlessRun,
-    assistant_message_id: Uuid,
-    response_rx: Option<&Mutex<Receiver<RecordedResponse>>>,
-) {
+    response_rx: Option<&Mutex<Receiver<FullResponseTraceRecord>>>,
+) -> bool {
     let Some(response_rx) = response_rx else {
-        return;
+        return true;
     };
     let Ok(response_rx) = response_rx.lock() else {
-        return;
+        return false;
     };
-    for recorded_response in response_rx.try_iter() {
-        let response_index = run.next_response_index;
+    loop {
+        let trace = match response_rx.try_recv() {
+            Ok(trace) => trace,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return false,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => return true,
+        };
+        let index = run.next_response_index;
         run.next_response_index = run.next_response_index.saturating_add(1);
         run.full_response_records.push(RawFullResponseRecord {
-            assistant_message_id,
-            recorded_response: RecordedResponse::new(response_index, recorded_response.response),
+            assistant_message_id: trace.assistant_message_id,
+            recorded_response: RecordedResponse::new(index, trace.recorded_response.response),
         });
     }
 }

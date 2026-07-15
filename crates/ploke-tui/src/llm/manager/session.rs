@@ -57,10 +57,10 @@ const REPLAY_LIVE_STEP_LIMIT_REACHED: &str = "replay live step limit reached";
 /// that calibrate a larger retry budget keep it; others are floored here.
 const MIN_CHAT_HTTP_ATTEMPTS: u32 = 2;
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct FullResponseTraceRecord {
-    assistant_message_id: Uuid,
+pub struct FullResponseTraceRecord {
+    pub assistant_message_id: Uuid,
     #[serde(flatten)]
-    recorded_response: RecordedResponse,
+    pub recorded_response: RecordedResponse,
 }
 
 fn compact_tool_content_for_llm_replay(content: &str, max_file_lines: usize) -> String {
@@ -987,7 +987,8 @@ pub(super) fn take_recorded_chat_step_source() -> ChatStepSource {
 /// legacy installed-hook behavior for callers that have not migrated yet.
 #[derive(Clone)]
 pub struct SessionCapture {
-    response_tx: Option<std::sync::mpsc::Sender<RecordedResponse>>,
+    response_tx: Option<std::sync::mpsc::Sender<FullResponseTraceRecord>>,
+    legacy_tx: Option<std::sync::mpsc::Sender<RecordedResponse>>,
     debug_sink: Option<Arc<dyn ChatDebugSink>>,
     legacy_fallback: bool,
 }
@@ -996,6 +997,7 @@ impl Default for SessionCapture {
     fn default() -> Self {
         Self {
             response_tx: None,
+            legacy_tx: None,
             debug_sink: None,
             legacy_fallback: true,
         }
@@ -1004,11 +1006,12 @@ impl Default for SessionCapture {
 
 impl SessionCapture {
     pub fn new(
-        response_tx: Option<std::sync::mpsc::Sender<RecordedResponse>>,
+        response_tx: Option<std::sync::mpsc::Sender<FullResponseTraceRecord>>,
         debug_sink: Option<Arc<dyn ChatDebugSink>>,
     ) -> Self {
         Self {
             response_tx,
+            legacy_tx: None,
             debug_sink,
             legacy_fallback: false,
         }
@@ -1020,8 +1023,8 @@ impl SessionCapture {
 
     fn resolve(mut self) -> Self {
         if self.legacy_fallback {
-            if self.response_tx.is_none() {
-                self.response_tx = active_response_tap();
+            if self.response_tx.is_none() && self.legacy_tx.is_none() {
+                self.legacy_tx = active_response_tap();
             }
             if self.debug_sink.is_none() {
                 self.debug_sink = active_chat_debug_sink();
@@ -1030,8 +1033,20 @@ impl SessionCapture {
         self
     }
 
-    fn record_response(&self, response_index: usize, response: &OpenAiResponse) {
-        capture_response_for_tap(self.response_tx.as_ref(), response_index, response);
+    fn record_response(
+        &self,
+        assistant_message_id: Uuid,
+        response_index: usize,
+        response: &OpenAiResponse,
+    ) {
+        if let Some(response_tx) = self.response_tx.as_ref() {
+            let _ = response_tx.send(FullResponseTraceRecord {
+                assistant_message_id,
+                recorded_response: RecordedResponse::new(response_index, response.clone()),
+            });
+        } else {
+            capture_response_for_tap(self.legacy_tx.as_ref(), response_index, response);
+        }
     }
 }
 
@@ -1471,7 +1486,7 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
             chain_index,
             &full_response,
         );
-        capture.record_response(chain_index, &full_response);
+        capture.record_response(assistant_message_id, chain_index, &full_response);
 
         let token_usage = full_response.usage;
         let mut debug_calls = Vec::new();
@@ -3085,7 +3100,7 @@ mod tests {
 
     async fn run_captured_session(
         response_id: &str,
-        response_tx: std::sync::mpsc::Sender<RecordedResponse>,
+        response_tx: std::sync::mpsc::Sender<FullResponseTraceRecord>,
         debug_sink: StdArc<dyn ChatDebugSink>,
     ) -> ChatSessionReport {
         let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
@@ -3141,8 +3156,22 @@ mod tests {
         let right_responses = right_rx.try_iter().collect::<Vec<_>>();
         assert_eq!(left_responses.len(), 1);
         assert_eq!(right_responses.len(), 1);
-        assert_eq!(left_responses[0].response.id, "left-response");
-        assert_eq!(right_responses[0].response.id, "right-response");
+        assert_eq!(
+            left_responses[0].recorded_response.response.id,
+            "left-response"
+        );
+        assert_eq!(
+            right_responses[0].recorded_response.response.id,
+            "right-response"
+        );
+        assert_eq!(
+            left_responses[0].assistant_message_id,
+            left.assistant_message_id
+        );
+        assert_eq!(
+            right_responses[0].assistant_message_id,
+            right.assistant_message_id
+        );
 
         let left_steps = left_steps.snapshot();
         let right_steps = right_steps.snapshot();

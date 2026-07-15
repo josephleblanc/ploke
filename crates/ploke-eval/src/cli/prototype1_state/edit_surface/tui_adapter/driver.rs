@@ -3,24 +3,25 @@ use std::{
     path::{Component, Path, PathBuf},
     process::Command,
     sync::{Arc, Mutex, mpsc::Receiver},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
-use ploke_llm::manager::RecordedResponse;
-use ploke_tui::llm::SessionCapture;
+use ploke_tui::llm::{FullResponseTraceRecord, SessionCapture};
 
 use super::super::harness_request::contract;
 use super::super::surface_policy::SurfacePolicy;
 use super::harness::Timeouts;
 use super::harness_io::observed_headless_error;
 use super::tui_bridge::{
-    AttemptEnd, LiveObserver, attempt_prompt, evidence_read_roots, run_attempt,
-    start_attempt_runtime, start_captured_runtime, timeout_terminal_for_run,
+    AttemptEnd, LiveObserver, attempt_prompt, drain_response_records, evidence_read_roots,
+    run_attempt, start_attempt_runtime, start_captured_runtime, timeout_terminal_for_run,
 };
 use super::{
     AttemptOutcome, Budget, Error, Fail, Feedback, HeadlessRun, HeadlessTerminal, ModelSelection,
     NoEdit, Outcome, Reject, Step, Terminal,
 };
+
+const CAPTURE_GRACE: Duration = Duration::from_secs(2);
 
 pub(crate) struct AttemptDriver {
     workspace: std::path::PathBuf,
@@ -30,14 +31,14 @@ pub(crate) struct AttemptDriver {
     evidence: Vec<super::super::harness_request::EvidenceRoot>,
     validation: Vec<contract::Command>,
     model: Option<ModelSelection>,
-    response_rx: Option<Arc<Mutex<Receiver<RecordedResponse>>>>,
+    response_rx: Option<Arc<Mutex<Receiver<FullResponseTraceRecord>>>>,
     session_capture: SessionCapture,
 }
 
 impl AttemptDriver {
     pub(crate) fn new(
         attempt: super::attempt::Attempt,
-        response_rx: Option<Arc<Mutex<Receiver<RecordedResponse>>>>,
+        response_rx: Option<Arc<Mutex<Receiver<FullResponseTraceRecord>>>>,
         session_capture: SessionCapture,
     ) -> Self {
         Self {
@@ -195,22 +196,52 @@ impl AttemptDriver {
         })
         .await;
 
-        let terminal = match outcome {
-            Ok(Ok(terminal)) => terminal,
-            Ok(Err(source)) => {
-                if !run.has_observed_activity() {
-                    return Err(source);
-                }
-                HeadlessTerminal::ToolFailed {
-                    error: observed_headless_error(source),
-                }
+        drop(self.session_capture);
+        let capture_closed = quiesce_responses(&mut run, self.response_rx.as_deref()).await;
+
+        let terminal = if !capture_closed {
+            HeadlessTerminal::ToolFailed {
+                error: observed_headless_error(Error::HeadlessEvent(
+                    "response capture did not quiesce after runtime cancellation".to_string(),
+                )),
             }
-            Err(_) => timeout_terminal_for_run(&run, self.budget.timeout_secs()),
+        } else {
+            match outcome {
+                Ok(Ok(terminal)) => terminal,
+                Ok(Err(source)) => {
+                    if !run.has_observed_activity() {
+                        return Err(source);
+                    }
+                    HeadlessTerminal::ToolFailed {
+                        error: observed_headless_error(source),
+                    }
+                }
+                Err(_) => timeout_terminal_for_run(&run, self.budget.timeout_secs()),
+            }
         };
         observer.emit(format!("done {}", terminal.live_summary()));
         observer.emit_workspace_size("workspace_done", &self.workspace);
         run.terminal = Some(terminal.clone());
         Ok(AttemptOutcome { run, terminal })
+    }
+}
+
+async fn quiesce_responses(
+    run: &mut HeadlessRun,
+    response_rx: Option<&Mutex<Receiver<FullResponseTraceRecord>>>,
+) -> bool {
+    let Some(response_rx) = response_rx else {
+        return true;
+    };
+    let deadline = Instant::now() + CAPTURE_GRACE;
+    loop {
+        if drain_response_records(run, Some(response_rx)) {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
     }
 }
 
@@ -429,6 +460,38 @@ mod tests {
                 .pop_front()
                 .unwrap_or_else(|| AttemptEnd::Terminal(HeadlessTerminal::NoEdit))
         }
+    }
+
+    #[tokio::test]
+    async fn late_response_is_drained() {
+        let assistant_id = uuid::Uuid::new_v4();
+        let response = serde_json::from_value(serde_json::json!({
+            "id": "late-response",
+            "choices": [],
+            "created": 1,
+            "model": "test/model",
+            "object": "chat.completion"
+        }))
+        .expect("response json");
+        let (response_tx, response_rx) = std::sync::mpsc::channel();
+        let response_rx = Mutex::new(response_rx);
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            response_tx
+                .send(FullResponseTraceRecord {
+                    assistant_message_id: assistant_id,
+                    recorded_response: ploke_llm::manager::RecordedResponse::new(0, response),
+                })
+                .expect("send late response");
+        });
+        let mut run = HeadlessRun::new();
+
+        assert!(quiesce_responses(&mut run, Some(&response_rx)).await);
+        let [record] = run.full_response_records() else {
+            panic!("expected late response to be drained before channel closure");
+        };
+        assert_eq!(record.assistant_message_id, assistant_id);
+        assert_eq!(record.response().id, "late-response");
     }
 
     #[test]

@@ -2332,20 +2332,74 @@ async fn attempt_capture_responses_keeps_tap_installed_across_run() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancelling_run_attempt_preserves_caller_run_evidence() {
+    let fixture = prepare_live_canary(
+        "run-attempt-cancellation-preserves-evidence",
+        "Do not submit this prompt.",
+    )
+    .expect("prepare cancellation fixture");
+    let runtime = crate::runner::setup_workspace_tui_prompt_runtime(&fixture.workspace)
+        .await
+        .expect("start prompt-only runtime");
+    let sentinel = Event::Tool {
+        call_id: "preexisting-sentinel".to_string(),
+        result: Tool::Completed {
+            content: "caller-owned evidence".to_string(),
+        },
+    };
+    let mut run = HeadlessRun::new();
+    run.events.push(sentinel.clone());
+
+    let cancelled = tokio::time::timeout(
+        Duration::from_millis(50),
+        run_attempt(
+            runtime,
+            Uuid::new_v4(),
+            &fixture.workspace,
+            &SurfacePolicy::workspace_except_core(),
+            1,
+            &mut run,
+            &LiveObserver::disabled(),
+            &[],
+            None,
+            Timeouts::default(),
+        ),
+    )
+    .await;
+
+    assert!(
+        cancelled.is_err(),
+        "prompt-only runtime must remain pending until the test cancels it"
+    );
+    assert!(
+        run.events().contains(&sentinel),
+        "cancelling run_attempt must not discard evidence already owned by the caller"
+    );
+}
+
 #[test]
 fn response_tap_drain_rebases_session_local_indices_to_run_tape() {
-    let assistant_id = Uuid::from_u128(0xaaaaaaaa_aaaa_aaaa_aaaa_aaaaaaaaaaaa);
+    let first_id = Uuid::from_u128(0xaaaaaaaa_aaaa_aaaa_aaaa_aaaaaaaaaaaa);
+    let second_id = Uuid::from_u128(0xbbbbbbbb_bbbb_bbbb_bbbb_bbbbbbbbbbbb);
     let (tx, rx) = std::sync::mpsc::channel();
     let rx = Mutex::new(rx);
     let mut run = HeadlessRun::new();
 
-    tx.send(stop_response_record(assistant_id, 0, "first-local-zero").recorded_response)
-        .expect("send first local response");
-    drain_response_records(&mut run, assistant_id, Some(&rx));
+    tx.send(ploke_tui::llm::FullResponseTraceRecord {
+        assistant_message_id: first_id,
+        recorded_response: stop_response_record(first_id, 0, "first-local-zero").recorded_response,
+    })
+    .expect("send first local response");
+    drain_response_records(&mut run, Some(&rx));
 
-    tx.send(stop_response_record(assistant_id, 0, "second-local-zero").recorded_response)
-        .expect("send second local response");
-    drain_response_records(&mut run, assistant_id, Some(&rx));
+    tx.send(ploke_tui::llm::FullResponseTraceRecord {
+        assistant_message_id: second_id,
+        recorded_response: stop_response_record(second_id, 0, "second-local-zero")
+            .recorded_response,
+    })
+    .expect("send second local response");
+    drain_response_records(&mut run, Some(&rx));
 
     let indices = run
         .full_response_records()
@@ -2357,6 +2411,12 @@ fn response_tap_drain_rebases_session_local_indices_to_run_tape() {
         vec![0, 1],
         "turn-live sidecars need monotonic replay indices even when each chat session reports local chain_index=0"
     );
+    let assistants = run
+        .full_response_records()
+        .iter()
+        .map(|record| record.assistant_message_id)
+        .collect::<Vec<_>>();
+    assert_eq!(assistants, vec![first_id, second_id]);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

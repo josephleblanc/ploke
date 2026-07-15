@@ -7,7 +7,7 @@ use std::{
     time::Instant,
 };
 
-use ploke_llm::manager::RecordedResponse;
+use ploke_tui::llm::FullResponseTraceRecord;
 use uuid::Uuid;
 
 use super::super::super::harness_request::contract;
@@ -30,14 +30,14 @@ use super::{
     StagedKind, ToolTrace, TurnStop,
 };
 
-pub(crate) struct TuiHarness {
+pub(crate) struct TuiHarness<'run> {
     runtime: crate::runner::WorkspaceTuiRuntime,
-    run: HeadlessRun,
+    run: &'run mut HeadlessRun,
     spec: SessionSpec,
     active_parent_id: Uuid,
     turn: u32,
     validation_commands: Vec<contract::Command>,
-    response_rx: Option<Arc<Mutex<Receiver<RecordedResponse>>>>,
+    response_rx: Option<Arc<Mutex<Receiver<FullResponseTraceRecord>>>>,
     observer: LiveObserver,
     pending_retry: Option<String>,
     provider_failure: Option<String>,
@@ -50,15 +50,15 @@ pub(crate) struct TuiHarness {
     awaiting_decision: bool,
 }
 
-impl TuiHarness {
+impl<'run> TuiHarness<'run> {
     pub(crate) fn attach(
         runtime: crate::runner::WorkspaceTuiRuntime,
-        run: HeadlessRun,
+        run: &'run mut HeadlessRun,
         spec: SessionSpec,
         active_parent_id: Uuid,
         turn: u32,
         validation_commands: Vec<contract::Command>,
-        response_rx: Option<Arc<Mutex<Receiver<RecordedResponse>>>>,
+        response_rx: Option<Arc<Mutex<Receiver<FullResponseTraceRecord>>>>,
         observer: LiveObserver,
     ) -> Self {
         Self {
@@ -184,12 +184,12 @@ impl TuiHarness {
         );
     }
 
-    pub(crate) fn into_parts(self) -> (HeadlessRun, crate::runner::WorkspaceTuiRuntime) {
-        (self.run, self.runtime)
+    pub(crate) fn into_runtime(self) -> crate::runner::WorkspaceTuiRuntime {
+        self.runtime
     }
 }
 
-impl Harness for TuiHarness {
+impl Harness for TuiHarness<'_> {
     async fn next(&mut self, deadline: Instant) -> Result<Progress, Error> {
         if self.awaiting_decision {
             return Err(Error::HeadlessEvent(
@@ -465,11 +465,7 @@ impl Harness for TuiHarness {
                         summary: summary.clone(),
                     });
                     if let Some(response_rx) = self.response_rx.as_ref() {
-                        drain_response_records(
-                            &mut self.run,
-                            assistant_message_id,
-                            Some(response_rx),
-                        );
+                        drain_response_records(&mut self.run, Some(response_rx));
                     }
                     self.observer.emit(format!(
                         "attempt {} turn_finished outcome={} attempts={} summary={}",
@@ -703,7 +699,7 @@ impl Harness for TuiHarness {
     }
 }
 
-impl TuiHarness {
+impl TuiHarness<'_> {
     async fn build_batch(&self, request_id: Uuid, items: Vec<StagedItem>) -> Result<Batch, Error> {
         let mut staged = Vec::new();
         for item in items {
@@ -783,7 +779,10 @@ async fn reject_item_with_reason(
     reject_item(runtime, item, turn, run, observer, reason).await
 }
 
-async fn classify_turn_stop(harness: &mut TuiHarness, stop: TurnStop) -> Result<AttemptEnd, Error> {
+async fn classify_turn_stop(
+    harness: &mut TuiHarness<'_>,
+    stop: TurnStop,
+) -> Result<AttemptEnd, Error> {
     let TurnStop {
         outcome,
         summary,
