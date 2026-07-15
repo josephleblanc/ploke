@@ -1019,9 +1019,10 @@ mod tests {
     use ploke_records::{
         agent_turn::{
             AgentTurnArtifactRecord, ObservedTurnEventRecord, PatchArtifactRecord,
-            TurnFinishedRecord,
+            ToolRequestRecord, TurnFinishedRecord,
         },
         run_record::{TurnOutcome, TurnRecord},
+        tool_contracts::ToolArgumentsJson,
     };
     use serde_json::json;
     use tempfile::TempDir;
@@ -1029,6 +1030,7 @@ mod tests {
     use crate::{
         cli::prototype1_state::walk::{
             epoch::{TRANSITION_GRAPH_VERSION, WALK_PROTOCOL_VERSION},
+            ipc,
             protocol::{WalkRequest, WalkRequestBody, WalkResponse},
         },
         inner::{RunIntent, RunStorageRoots, core::RegisteredRunRole, registry::RunRegistration},
@@ -1117,6 +1119,74 @@ mod tests {
             let bytes = fs::read(&source.path).expect("source remains readable");
             assert_eq!(source.content_sha256, hex_sha256(&bytes));
         }
+    }
+
+    #[tokio::test]
+    async fn completed_trace_roundtrips_through_walk_ipc() {
+        let mut fixture = Fixture::new(RegisteredRunRole::Treatment);
+        let artifact = turn_artifact();
+        fixture.seal(Some(artifact.clone()));
+        let summary_path = fixture
+            .registration
+            .artifacts
+            .turn_summary
+            .clone()
+            .expect("summary path");
+        fs::write(
+            summary_path,
+            serde_json::to_vec(&AgentTurnSummaryRecord(artifact.clone())).expect("summary json"),
+        )
+        .expect("write summary");
+        write_run_record(&fixture.registration.artifacts.record_path, Some(artifact));
+        let response_path = fixture
+            .registration
+            .artifacts
+            .full_response_trace
+            .clone()
+            .expect("response path");
+        fs::write(response_path, format!("{}\n", response_json(1))).expect("write responses");
+        fixture
+            .registration
+            .persist()
+            .expect("persist completed run");
+
+        let snapshot = load_run_for(
+            fixture.scope.clone(),
+            fixture.coordinate(),
+            SessionVersion::empty(),
+            fixture.epoch(),
+        )
+        .expect("load completed trace");
+        let response = WalkResponse::evaluation_trace(snapshot);
+        let (mut sender, mut receiver) =
+            tokio::net::UnixStream::pair().expect("create IPC stream pair");
+        let send = tokio::spawn(async move { ipc::send(&mut sender, &response).await });
+        let decoded: WalkResponse = ipc::recv(&mut receiver)
+            .await
+            .expect("receive completed trace response");
+        send.await.expect("join IPC sender").expect("send response");
+
+        let WalkResponse::EvaluationTrace { snapshot } = decoded else {
+            panic!("expected evaluation trace response");
+        };
+        let EvaluationTraceState::Completed { trace } = snapshot.trace else {
+            panic!("expected completed evaluation trace");
+        };
+        let turn = &trace.turn.expect("sealed turn summary").value.0;
+        let request = turn.events.iter().find_map(|event| match event {
+            ObservedTurnEventRecord::ToolRequested(request) => Some(request),
+            _ => None,
+        });
+        let request = request.expect("persisted tool request");
+        assert_eq!(
+            request.call_id,
+            "function-call-4ab08ea8-ecc1-4fe9-81dc-243b586654d1"
+        );
+        assert_eq!(request.tool, "request_code_context");
+        assert_eq!(
+            request.arguments.as_str(),
+            r#"{  "search_term" : "replacement multiline printer pcre2"  }"#
+        );
     }
 
     #[test]
@@ -1704,7 +1774,18 @@ mod tests {
             model_route: None,
             issue_prompt: "Fix the fixture.".to_string(),
             user_message_id: "user-1".to_string(),
-            events: vec![ObservedTurnEventRecord::TurnFinished(terminal.clone())],
+            events: vec![
+                ObservedTurnEventRecord::ToolRequested(ToolRequestRecord {
+                    request_id: "request-1".to_string(),
+                    parent_id: "parent-1".to_string(),
+                    call_id: "function-call-4ab08ea8-ecc1-4fe9-81dc-243b586654d1".to_string(),
+                    tool: "request_code_context".to_string(),
+                    arguments: ToolArgumentsJson::from(
+                        r#"{  "search_term" : "replacement multiline printer pcre2"  }"#,
+                    ),
+                }),
+                ObservedTurnEventRecord::TurnFinished(terminal.clone()),
+            ],
             prompt_debug: None,
             terminal_record: Some(terminal),
             final_assistant_message: None,

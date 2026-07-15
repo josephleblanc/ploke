@@ -53,10 +53,10 @@ impl<'de> Deserialize<'de> for ToolArgumentsJson {
     where
         D: Deserializer<'de>,
     {
-        let captured = Box::<serde_json::value::RawValue>::deserialize(deserializer)?;
-        let raw = match serde_json::from_str::<String>(captured.get()) {
-            Ok(raw) => raw,
-            Err(_) => captured.get().to_string(),
+        let value = serde_json::Value::deserialize(deserializer)?;
+        let raw = match value {
+            serde_json::Value::String(raw) => raw,
+            other => other.to_string(),
         };
         Ok(Self { raw })
     }
@@ -589,6 +589,28 @@ mod tests {
                 .expect("deserialize legacy object arguments");
 
         assert_eq!(captured.as_str(), r#"{"file":"src/lib.rs","start_line":1}"#);
+    }
+
+    #[test]
+    fn tool_call_arguments_json_roundtrips_inside_internally_tagged_carrier() {
+        #[derive(Debug, PartialEq, Serialize, Deserialize)]
+        #[serde(tag = "state", rename_all = "snake_case")]
+        enum TraceState {
+            Completed { arguments: ToolArgumentsJson },
+        }
+
+        let raw = r#"{"state":"completed","arguments":"{  \"search_term\" : \"replacement multiline printer pcre2\"  }"}"#;
+        let decoded: TraceState =
+            serde_json::from_str(raw).expect("decode internally tagged trace state");
+        let TraceState::Completed { arguments } = &decoded;
+        assert_eq!(
+            arguments.as_str(),
+            r#"{  "search_term" : "replacement multiline printer pcre2"  }"#
+        );
+
+        let encoded = serde_json::to_string(&decoded).expect("encode trace state");
+        let roundtrip: TraceState = serde_json::from_str(&encoded).expect("roundtrip trace state");
+        assert_eq!(roundtrip, decoded);
     }
 
     #[test]

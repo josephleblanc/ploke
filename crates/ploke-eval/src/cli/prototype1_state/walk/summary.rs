@@ -29,7 +29,7 @@ use crate::{
             event::RuntimeId,
             identity::{load_parent_identity, parent_identity_path},
             journal::{self, JournalEntry, prototype1_transition_journal_path},
-            successor,
+            session, successor,
         },
     },
     spec::PrepareError,
@@ -111,6 +111,8 @@ struct JournalCursor {
     meaning: String,
     node_id: Option<String>,
     generation: Option<u32>,
+    #[serde(skip)]
+    phase: WalkPhase,
 }
 
 type AttemptKey = (CampaignId, String, RuntimeId);
@@ -372,10 +374,33 @@ impl WalkSummary {
         let profile = root.join("run-profile.toml");
         let policy = load_policy(&profile)?;
         let reports = load_reports(&root)?;
-        let generations = load_generations(&root, &reports)?;
         let journal_path = prototype1_transition_journal_path(&manifest);
         let journal = load_journal(&journal_path)?;
         let node_count = count_dirs(&root.join("nodes"))?;
+        let sessions = session::Store::for_manifest(&manifest);
+        let session_path = sessions.paths(&identity).journal().to_path_buf();
+        let control = sessions
+            .inspect(&identity)
+            .map_err(|error| PrepareError::ReadManifest {
+                path: session_path,
+                source: io::Error::other(error),
+            })?;
+        let plan_required = identity.generation() > 0
+            || node_count > 1
+            || !reports.is_empty()
+            || has_json_file(&root.join("messages").join("edit-harness-result"))?
+            || control.as_ref().is_some_and(|snapshot| {
+                snapshot.damage.is_some()
+                    || snapshot
+                        .cursor
+                        .as_ref()
+                        .is_some_and(|cursor| phase_requires_child_plan(cursor.phase()))
+            })
+            || journal
+                .latest_cursor
+                .as_ref()
+                .is_some_and(|cursor| phase_requires_child_plan(cursor.phase));
+        let generations = load_generations(&root, &reports, plan_required)?;
         let state_reports = reports.len();
         let child_plan_count = generations.len();
         let parent_nodes = parent_node_count(&reports, &generations);
@@ -832,10 +857,29 @@ fn load_reports(root: &Path) -> Result<BTreeMap<String, ReportSummary>, PrepareE
 fn load_generations(
     root: &Path,
     reports: &BTreeMap<String, ReportSummary>,
+    plan_required: bool,
 ) -> Result<Vec<GenerationSummary>, PrepareError> {
     let dir = root.join("messages").join("child-plan");
     let mut generations = Vec::new();
-    for entry in read_dir_optional(&dir)? {
+    let entries = match fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound && !plan_required => {
+            return Ok(generations);
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Err(PrepareError::ReadManifest {
+                path: dir,
+                source: io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "missing child-plan authority required by downstream evidence",
+                ),
+            });
+        }
+        Err(source) => {
+            return Err(PrepareError::ReadManifest { path: dir, source });
+        }
+    };
+    for entry in entries {
         let entry = entry.map_err(|source| PrepareError::ReadManifest {
             path: dir.clone(),
             source,
@@ -889,6 +933,54 @@ fn load_generations(
         generation.selection_row_hint = Some(index);
     }
     Ok(generations)
+}
+
+fn phase_requires_child_plan(phase: WalkPhase) -> bool {
+    matches!(
+        phase,
+        WalkPhase::R8
+            | WalkPhase::R9
+            | WalkPhase::R10
+            | WalkPhase::R11a
+            | WalkPhase::R11
+            | WalkPhase::R12
+            | WalkPhase::R13a
+            | WalkPhase::R13b
+            | WalkPhase::R13c
+            | WalkPhase::R14a
+            | WalkPhase::R14b
+    )
+}
+
+fn has_json_file(path: &Path) -> Result<bool, PrepareError> {
+    let entries = match fs::read_dir(path) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(source) => {
+            return Err(PrepareError::ReadManifest {
+                path: path.to_path_buf(),
+                source,
+            });
+        }
+    };
+    for entry in entries {
+        let entry = entry.map_err(|source| PrepareError::ReadManifest {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        let file_type = entry
+            .file_type()
+            .map_err(|source| PrepareError::ReadManifest {
+                path: entry.path(),
+                source,
+            })?;
+        if file_type.is_file()
+            && entry.path().extension().and_then(|ext| ext.to_str()) == Some("json")
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn child_summary(value: &JsonValue) -> ChildSummary {
@@ -1026,6 +1118,7 @@ fn cursor_from_entry(
             .or_else(|| nested_string(value, &["refs", "node_id"])),
         generation: u32_field(value, "generation")
             .or_else(|| nested_u32(value, &["refs", "generation"])),
+        phase,
     }
 }
 
@@ -1365,6 +1458,43 @@ mod tests {
                 .meaning
                 .contains("campaign may still be non-terminal")
         );
+    }
+
+    #[test]
+    fn missing_child_plan_is_empty_before_authority() {
+        let root = tempfile::tempdir().expect("tempdir");
+
+        let generations = load_generations(root.path(), &BTreeMap::new(), false)
+            .expect("pre-plan summary should accept absent authority");
+
+        assert!(generations.is_empty());
+    }
+
+    #[test]
+    fn missing_child_plan_fails_when_downstream_evidence_requires_authority() {
+        let root = tempfile::tempdir().expect("tempdir");
+
+        let error = load_generations(root.path(), &BTreeMap::new(), true)
+            .expect_err("downstream evidence must require child-plan authority");
+
+        assert!(
+            error
+                .to_string()
+                .contains("missing child-plan authority required by downstream evidence")
+        );
+    }
+
+    #[test]
+    fn malformed_existing_child_plan_still_fails_closed() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let plans = root.path().join("messages").join("child-plan");
+        fs::create_dir_all(&plans).expect("create child-plan directory");
+        fs::write(plans.join("node-parent.json"), "{").expect("write malformed plan");
+
+        let error = load_generations(root.path(), &BTreeMap::new(), false)
+            .expect_err("malformed existing child plan must fail");
+
+        assert!(error.to_string().contains("failed to parse run manifest"));
     }
 
     fn identity(node_id: &str) -> ParentIdentity {
