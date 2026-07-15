@@ -88,6 +88,7 @@ pub enum LocalBindingRelationKind {
     OwnerContainsBinding,
     BindingSourceClosure,
     BindingSourceCallResult,
+    ArgumentSuppliesParameter,
 }
 
 impl LocalBindingRelationKind {
@@ -96,6 +97,7 @@ impl LocalBindingRelationKind {
             "OwnerContainsBinding" => Ok(Self::OwnerContainsBinding),
             "BindingSourceClosure" => Ok(Self::BindingSourceClosure),
             "BindingSourceCallResult" => Ok(Self::BindingSourceCallResult),
+            "ArgumentSuppliesParameter" => Ok(Self::ArgumentSuppliesParameter),
             other => Err(DbError::Cozo(format!(
                 "unknown local binding relation kind {other:?}"
             ))),

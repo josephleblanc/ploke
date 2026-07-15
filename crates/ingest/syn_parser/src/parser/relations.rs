@@ -204,6 +204,15 @@ pub enum LocalBindingRelation {
         source: LocalBindingId,
         target: AnyCallSiteId,
     },
+    /// A resolved call-site argument supplies a private callee parameter.
+    ///
+    /// ```text
+    /// ArgumentSuppliesParameter ⊆ AnyCallSiteId × LocalBindingId
+    /// ```
+    ArgumentSuppliesParameter {
+        source: AnyCallSiteId,
+        target: LocalBindingId,
+    },
 }
 
 impl LocalBindingRelation {
@@ -214,6 +223,7 @@ impl LocalBindingRelation {
             Self::OwnerContainsBinding { .. } => "OwnerContainsBinding",
             Self::BindingSourceClosure { .. } => "BindingSourceClosure",
             Self::BindingSourceCallResult { .. } => "BindingSourceCallResult",
+            Self::ArgumentSuppliesParameter { .. } => "ArgumentSuppliesParameter",
         }
     }
 }

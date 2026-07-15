@@ -26,6 +26,7 @@ use crate::error::TransformError;
 // use crate::schema::*;
 
 // -- transforms
+use call_graph_bindings::derive_argument_parameter_relations;
 use consts::transform_consts;
 use edges::transform_call_body_owners;
 use edges::transform_call_resolution_report;
@@ -57,6 +58,7 @@ pub mod compilation_unit;
 pub mod union_crate_masks;
 pub use compilation_unit::insert_structural_compilation_unit_slice;
 pub use union_crate_masks::transform_union_crate_and_structural_masks;
+mod call_graph_bindings;
 mod crate_context;
 mod workspace;
 // -- primary nodes --
@@ -162,6 +164,8 @@ pub(super) fn transform_parsed_graph_with_call_report(
     let crate_context = parsed_graph
         .crate_context
         .expect("Invariant: All Code Graphs must have a Crate Context");
+    let argument_parameter_relations =
+        derive_argument_parameter_relations(&code_graph, &call_resolution_report);
 
     tracing::trace!("{}: Starting", "type_graph_edges".log_step());
     transform_type_graph_edges(db, &code_graph)?;
@@ -199,6 +203,7 @@ pub(super) fn transform_parsed_graph_with_call_report(
     transform_local_bindings(db, &code_graph.local_bindings)?;
     tracing::trace!("{}: Starting", "local_binding_relations".log_step());
     transform_local_binding_relations(db, &code_graph.local_binding_relations)?;
+    transform_local_binding_relations(db, &argument_parameter_relations)?;
     tracing::trace!("{}: Starting", "call_site_relations".log_step());
     transform_call_site_relations(db, &code_graph.call_site_relations)?;
     tracing::trace!("{}: Starting", "call_resolution".log_step());

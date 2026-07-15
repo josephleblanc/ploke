@@ -393,6 +393,38 @@ What remains:
   traversal, async callable trait-object dispatch, and arbitrary stored/forwarded
   future aggregates still need separate proof carriers.
 
+## 2026-07-15 Argument-to-Parameter Carrier Checkpoint
+
+Committed slice pending: durable one-hop `ArgumentSuppliesParameter`
+`local_binding_edge` projection.
+
+What is complete:
+
+- Transform projection now derives `ArgumentSuppliesParameter` edges from
+  existing typed facts: resolved `CallRelation::Function` path calls,
+  structural `CallArgument` evidence, and the callee's durable
+  `ParameterBinding` row.
+- The first admitted shape is intentionally narrow: one-hop resolved private
+  function path calls whose argument is an already-modeled exact callable
+  source. The source oracle is
+  `tests/fixture_crates/fixture_call_graph/src/lib.rs:1523-1528`, where
+  `call_single_function_pointer_param_with_local_target()` supplies
+  `local_target` to the private helper parameter `f`.
+- `ploke-db` accepts the strict `Path -> LocalBinding` edge shape and
+  `local_binding_edges_for_owner` returns incoming argument-to-parameter edges
+  for bindings owned by the requested callee.
+- Fixture-backed DB coverage proves the helper callsite is linked to the
+  callee parameter binding while preserving the existing resolved call edges.
+- Active call-graph fixtures were regenerated after the projection change and
+  copied into the committed seed snapshot paths.
+
+What remains:
+
+- This is not public API argument inference, method argument binding flow,
+  field/tuple projection flow, multi-hop parameter forwarding proof, trait
+  object dispatch, or async poll/resume traversal. Those need separate source
+  oracles and typed carrier slices.
+
 ## Exit Criteria
 
 For the first carrier slice:

@@ -11,7 +11,8 @@ fn fixture_projection_stores_parameter_binding_edges() -> Result<(), DbError> {
     // tests/fixture_crates/fixture_call_graph/src/lib.rs:1523-1528:
     // `call_single_function_pointer_param(f: fn() -> i32) { f() }` is resolved
     // from the private caller that supplies `local_target`; this test proves the
-    // callee parameter itself is also queryable as a durable local binding.
+    // callee parameter itself is also queryable as a durable local binding, and
+    // the caller's helper-call site is linked to the parameter it supplies.
     let context = db.call_context_for_owner(owner)?;
     let row = row_by_path(&context, &["f"]);
     assert_resolved_target(
@@ -61,8 +62,8 @@ fn fixture_projection_stores_parameter_binding_edges() -> Result<(), DbError> {
         .collect::<Vec<_>>();
     assert_eq!(
         binding_edges.len(),
-        1,
-        "parameter binding should expose containment only until argument-flow edges are modeled: {edges:#?}"
+        2,
+        "parameter binding should expose containment plus one caller argument edge: {edges:#?}"
     );
     assert!(
         binding_edges.iter().any(|edge| edge.relation
@@ -71,6 +72,15 @@ fn fixture_projection_stores_parameter_binding_edges() -> Result<(), DbError> {
             && edge.target_id == binding.id
             && edge.target_kind == "LocalBinding"),
         "missing owner-to-parameter-binding edge: {binding_edges:#?}"
+    );
+    assert!(
+        binding_edges.iter().any(|edge| edge.relation
+            == LocalBindingRelationKind::ArgumentSuppliesParameter
+            && edge.source_id == helper_call.site.id
+            && edge.source_kind == "Path"
+            && edge.target_id == binding.id
+            && edge.target_kind == "LocalBinding"),
+        "missing caller call-site to parameter-binding edge: {binding_edges:#?}"
     );
 
     Ok(())

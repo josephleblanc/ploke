@@ -1,7 +1,7 @@
 # Backup DB Fixtures
 
 Last reviewed: 2026-07-10
-Last updated: 2026-07-14
+Last updated: 2026-07-15
 
 This document is the current inventory for backup database fixtures under
 the shared DB snapshot fixture directory. It records which source targets
@@ -216,6 +216,29 @@ impl Drop for FixtureRestoreGuard {
 | `corpus_axum_call_graph_2026-07-13.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | plain workspace-member corpus backup for real-target call graph query contracts | 2026-07-13 |
 | `corpus_axum_openrouter_embeddings_2026-05-17.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | OpenRouter-searchable workspace-member corpus backup for type-context matrix tests | 2026-05-17 |
 | `ploke-db_af8e3a20-728d-5967-8523-da8a5ccdae45` | `crates/ploke-db` | currently orphaned snapshot | 2026-03-20 |
+
+## 2026-07-15 Active Call-Graph Fixture Refresh
+
+The active call-graph fixture set was refreshed with
+`cargo run -p xtask --features call_graph -- fixtures regenerate --active`
+after adding durable `ArgumentSuppliesParameter` local-binding edges for
+resolved private function-call arguments.
+The regenerated shared call-graph corpus snapshots were copied into
+`tests/backup_dbs/` as committed seed artifacts.
+
+Post-regeneration verification:
+
+- `cargo run -p xtask --features call_graph -- fixtures regenerate --active`
+  completed with all registered active fixtures roundtripping successfully.
+- Current committed seed checksums:
+  - `corpus_memchr_call_graph_2026-07-13.sqlite`:
+    `5d03f3fb0ac5699cc00618ad44aedd8e58593204dfa8fb0f88ea7b104863742c`
+  - `corpus_generic_array_call_graph_2026-07-11.sqlite`:
+    `bf4e6d7ed79e8cc7a2109c1b99dcf2f0cf7e4f2784d52ebdd2ca926aa2ebcc47`
+  - `corpus_chrono_call_graph_2026-07-11.sqlite`:
+    `cb17ec3dbdbda03c285227f1966289786112e099619fe51eeae1326af59f509c`
+  - `corpus_axum_call_graph_2026-07-13.sqlite`:
+    `72a0f5ef7ea8fdbcad7594e1eeb37a708e199393704eb09f9c832dc217475be7`
 
 ## 2026-07-14 Active Call-Graph Fixture Refresh
 

@@ -250,6 +250,19 @@ impl Database {
                     source_kind,
                     target_kind @ 'NOW'
                 }
+
+            ?[source_id, target_id, relation_kind, source_kind, target_kind] :=
+                binding_for_owner[binding_id],
+                target_id = binding_id,
+                relation_kind = "ArgumentSuppliesParameter",
+                target_kind = "LocalBinding",
+                *local_binding_edge {
+                    source_id,
+                    target_id,
+                    relation_kind,
+                    source_kind,
+                    target_kind @ 'NOW'
+                }
             :sort relation_kind, target_kind, target_id"#,
         );
         let rows = self.run_script(&script, params, ScriptMutability::Immutable)?;

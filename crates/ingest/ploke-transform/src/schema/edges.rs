@@ -1486,6 +1486,25 @@ impl LocalBindingRelationSchema {
                     cozo::DataValue::from(call_site_kind(*target)),
                 ),
             ]),
+            LocalBindingRelation::ArgumentSuppliesParameter { source, target } => BTreeMap::from([
+                (
+                    schema.source_id().to_string(),
+                    call_site_id_to_cozo(*source),
+                ),
+                (schema.target_id().to_string(), target.to_cozo_uuid()),
+                (
+                    schema.relation_kind().to_string(),
+                    cozo::DataValue::from(relation.kind_str()),
+                ),
+                (
+                    schema.source_kind().to_string(),
+                    cozo::DataValue::from(call_site_kind(*source)),
+                ),
+                (
+                    schema.target_kind().to_string(),
+                    cozo::DataValue::from("LocalBinding"),
+                ),
+            ]),
         };
 
         let script = schema.script_put(&params);
