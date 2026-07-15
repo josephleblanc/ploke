@@ -140,3 +140,112 @@ async fn local_bindings_exact_expose_aliased_parameter_field_evidence() -> Resul
 
     Ok(())
 }
+
+#[tokio::test]
+async fn local_bindings_exact_expose_direct_aliased_parameter_source_evidence() -> Result<(), Error>
+{
+    init_tracing_once();
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let rag = init_test_rag_mock(Arc::clone(&db));
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:1685-1691:
+    // `call_single_aliased_function_pointer_param(f) { let g = f; g() }`
+    // has one local caller that supplies `local_target`. Exact RAG should
+    // expose both the alias carrier and the derived source-function proof for
+    // the parameter and its alias.
+    let owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_single_aliased_function_pointer_param"),
+    )?;
+    let target = one_uuid(&db, &function_in_module_query(&["crate"], "local_target"))?;
+    let bindings = rag
+        .exact_local_bindings_for_owner(owner)?
+        .expect("call context is enabled");
+    let parameter = bindings
+        .iter()
+        .find(|binding| {
+            binding.owner_id == owner
+                && binding.kind == "ParameterBinding"
+                && binding.name == "f"
+                && binding.source_kind == "Parameter"
+        })
+        .unwrap_or_else(|| panic!("RAG should expose parameter `f`: {bindings:#?}"));
+    let alias = bindings
+        .iter()
+        .find(|binding| {
+            binding.owner_id == owner
+                && binding.kind == "LetBinding"
+                && binding.name == "g"
+                && binding.source_kind == "ValueAlias"
+                && matches!(binding.source_path.as_deref(), Some([segment]) if segment == "f")
+        })
+        .unwrap_or_else(|| panic!("RAG should expose alias `g = f`: {bindings:#?}"));
+
+    let edges = rag
+        .exact_local_binding_edges_for_owner(owner)?
+        .expect("call context is enabled");
+    let has_edge = |source_id, target_id, relation, source_kind: Option<&str>, target_kind| {
+        edges.iter().any(|edge| {
+            edge.source_id == source_id
+                && edge.target_id == target_id
+                && edge.relation == relation
+                && source_kind.is_none_or(|kind| edge.source_kind == kind)
+                && edge.target_kind == target_kind
+        })
+    };
+
+    assert!(
+        has_edge(
+            owner,
+            parameter.id,
+            LocalBindingRelationKind::OwnerContainsBinding,
+            None,
+            "LocalBinding",
+        ),
+        "RAG should expose owner-to-parameter containment: {edges:#?}"
+    );
+    assert!(
+        has_edge(
+            owner,
+            alias.id,
+            LocalBindingRelationKind::OwnerContainsBinding,
+            None,
+            "LocalBinding",
+        ),
+        "RAG should expose owner-to-alias containment: {edges:#?}"
+    );
+    assert!(
+        has_edge(
+            alias.id,
+            parameter.id,
+            LocalBindingRelationKind::BindingAliasesBinding,
+            Some("LocalBinding"),
+            "LocalBinding",
+        ),
+        "RAG should expose alias-to-parameter proof: {edges:#?}"
+    );
+    assert!(
+        has_edge(
+            parameter.id,
+            target,
+            LocalBindingRelationKind::BindingSourceFunction,
+            Some("LocalBinding"),
+            "Function",
+        ),
+        "RAG should expose parameter-to-function source proof: {edges:#?}"
+    );
+    assert!(
+        has_edge(
+            alias.id,
+            target,
+            LocalBindingRelationKind::BindingSourceFunction,
+            Some("LocalBinding"),
+            "Function",
+        ),
+        "RAG should expose alias-to-function source proof: {edges:#?}"
+    );
+
+    Ok(())
+}
