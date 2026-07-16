@@ -1570,6 +1570,9 @@ pub(crate) fn load_parent_baseline(
         }
         let closure = load_closure_state(campaign_id)?;
         mirror_closure_state_if_owner_db_exists(manifest_path, &path, &closure)?;
+        if closure_is_pre_baseline_missing(&closure) {
+            return Ok(None);
+        }
         complete_baseline_from_closure(parent, &closure, &config.eval)?
     } else {
         let report_path = prototype1_branch_evaluation_path(manifest_path, parent.branch_id());
@@ -1580,6 +1583,21 @@ pub(crate) fn load_parent_baseline(
     };
     baseline.validate_for_parent(campaign_id, parent.node_id(), parent.branch_id())?;
     Ok(Some(baseline))
+}
+
+fn closure_is_pre_baseline_missing(closure: &crate::closure::ClosureState) -> bool {
+    let expected = closure.eval.expected_total;
+    0 < expected
+        && closure.eval.status == ClosureClass::Missing
+        && closure.eval.complete_total == 0
+        && closure.eval.failed_total == 0
+        && closure.eval.partial_total == 0
+        && closure.eval.missing_total == expected
+        && closure.instances.len() == expected
+        && closure
+            .instances
+            .iter()
+            .all(|row| row.eval_status == ClosureClass::Missing)
 }
 
 fn mirror_closure_state_if_owner_db_exists(
@@ -8535,7 +8553,7 @@ pub(crate) fn live_successor_continuation_decision(
                 .is_some_and(|value| value == "keep")
         {
             Prototype1ContinuationDisposition::StopOnFirstKeepSatisfied
-        } else if selected_node.generation > policy.max_generations {
+        } else if selected_node.generation >= policy.max_generations {
             Prototype1ContinuationDisposition::StopMaxGenerations
         } else if total_nodes_after_continue >= policy.max_total_nodes {
             Prototype1ContinuationDisposition::StopMaxTotalNodes
@@ -8554,7 +8572,7 @@ pub(crate) fn live_successor_continuation_decision(
             .is_some_and(|value| value == "keep")
     {
         Prototype1ContinuationDisposition::StopOnFirstKeepSatisfied
-    } else if selected_node.generation > policy.max_generations {
+    } else if selected_node.generation >= policy.max_generations {
         Prototype1ContinuationDisposition::StopMaxGenerations
     } else if total_nodes_after_continue >= policy.max_total_nodes {
         Prototype1ContinuationDisposition::StopMaxTotalNodes

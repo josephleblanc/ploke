@@ -149,6 +149,10 @@ file and current code before treating a report as still open.
   Direct Google Gemini can return `finish_reason: malformed_function_call` with Python-style refusal text; Ploke now deserializes and classifies it as model behavior instead of entering `UNKNOWN_TOOL_NAME` repair. Recurs on `2.5-pro`/`non_semantic_patch` (state6); captured-payload + live eval-shape repro tests added; provider-side multi-line-patch malformation under `tool_choice=auto` remains the open item (ranked fixes A patch-arg shaping / B `tool_choice` required/validated).
 - [`2026-06-12-prototype1-direct-google-gemini-15-flash-404.md`](./2026-06-12-prototype1-direct-google-gemini-15-flash-404.md)
   External provider/config blocker: fresh Prototype 1 setup admitted `google/gemini-1.5-flash` as the direct-Google protocol model, but doctor live preflight blocked with Vertex HTTP 404 before loop advance.
+- [`2026-07-08-prototype1-max-generation-handoff.md`](./2026-07-08-prototype1-max-generation-handoff.md)
+  Source repair restored after rollback: a child at `max_generations` now produces a stopped continuation instead of a successor that immediately fails its parent-turn budget.
+- [`2026-07-08-prototype1-walk-reconstruct-missing-baseline.md`](./2026-07-08-prototype1-walk-reconstruct-missing-baseline.md)
+  Source repair restored after rollback: wholly missing pre-baseline closure evidence reconstructs only through R5 while failed, partial, and inconsistent closure evidence remains strict.
 - [`2026-07-13-prototype1-doctor-headless-preflight-rebuild-hang.md`](./2026-07-13-prototype1-doctor-headless-preflight-rebuild-hang.md)
   Resolved shared-library contract: BM25 rebuild admission now rejects full/closed mailboxes explicitly, status deadlines cover enqueue plus response, and the apparent live hang was corrected to a roughly two-minute workspace-ingestion run that passed.
 - [`2026-07-13-prototype1-embedding-preflight-after-admission.md`](./2026-07-13-prototype1-embedding-preflight-after-admission.md)

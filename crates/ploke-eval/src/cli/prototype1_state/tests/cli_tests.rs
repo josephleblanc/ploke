@@ -340,6 +340,13 @@ fn selection_material_from_history() -> SelectionSealMaterial {
     }
 }
 
+fn selection_material_from_current_generation() -> SelectionSealMaterial {
+    SelectionSealMaterial {
+        selected_from_generation_outcomes: true,
+        ..selection_material_from_history()
+    }
+}
+
 fn selection_metrics_for(
     considered: &[EvaluationPayload],
     sources: &[TraversalCandidateSource],
@@ -637,6 +644,39 @@ fn historical_selection_rejects_exhausted_parent_turn_budget() {
     assert_eq!(
         decision.disposition,
         Prototype1ContinuationDisposition::StopHistoricalTraversalBudget
+    );
+    assert!(!decision.disposition.allows_successor());
+}
+
+#[test]
+fn generation_cap_stops_direct_child_handoff_at_max_generation() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = test_manifest_path(tmp.path());
+    let parent = parent_identity_for("node-current", 2);
+    append_parent_started(&manifest_path, parent.clone());
+    let mut node = test_node(tmp.path(), "node-child", "branch-child", "candidate-1");
+    node.generation = 3;
+    node.parent_node_id = Some(parent.node_id().to_string());
+    write_test_node(&manifest_path, &node);
+    let policy = Prototype1SearchPolicy {
+        max_generations: 3,
+        max_total_nodes: 96,
+        ..Prototype1SearchPolicy::default()
+    };
+
+    let decision = live_successor_continuation_decision(
+        &manifest_path,
+        &parent,
+        &policy,
+        &successor_decision_for(&node),
+        &selection_material_from_current_generation(),
+        &node,
+    )
+    .expect("continuation decision");
+
+    assert_eq!(
+        decision.disposition,
+        Prototype1ContinuationDisposition::StopMaxGenerations
     );
     assert!(!decision.disposition.allows_successor());
 }
@@ -2542,6 +2582,7 @@ fn ready_parent_for_test(manifest_path: &Path, repo_root: &Path) -> Parent<Ready
 
 struct R4cFixture {
     r4c: typestate::R4cReady<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    config: ResolvedCampaignConfig,
     manifest_path: PathBuf,
     repo_root: PathBuf,
     journal_path: PathBuf,
@@ -2581,7 +2622,7 @@ fn r4c_fixture(root: &Path, backend: profile::EvalStorageBackend) -> R4cFixture 
         parent.campaign_id().clone(),
         manifest_path.clone(),
         shape,
-        config,
+        config.clone(),
         journal_path.clone(),
         journal,
     );
@@ -2589,6 +2630,7 @@ fn r4c_fixture(root: &Path, backend: profile::EvalStorageBackend) -> R4cFixture 
 
     R4cFixture {
         r4c,
+        config,
         manifest_path,
         repo_root,
         journal_path,
@@ -8593,6 +8635,56 @@ fn initial_parent_baseline_rejects_complete_projection_without_record() {
     assert!(
         err.to_string().contains("has no record_path"),
         "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn load_parent_baseline_treats_fresh_missing_closure_as_not_ready() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let _env =
+        crate::test_support::env_guard_os(vec![("PLOKE_EVAL_HOME", tmp.path().as_os_str().into())]);
+    let fixture = r4c_fixture(tmp.path(), profile::EvalStorageBackend::Fs);
+    let campaign_dir = tmp
+        .path()
+        .join("campaigns")
+        .join(fixture.parent.campaign_id());
+    fs::create_dir_all(&campaign_dir).expect("campaign dir");
+
+    let mut closure = test_closure_state_without_record("clap-rs__clap-3670");
+    closure.campaign_id = fixture.parent.campaign_id().clone();
+    closure.eval.complete_total = 0;
+    closure.eval.missing_total = 1;
+    closure.eval.status = ClosureClass::Missing;
+    closure.instances[0].eval_status = ClosureClass::Missing;
+    write_json_file_pretty(&campaign_dir.join("closure-state.json"), &closure)
+        .expect("write missing closure");
+
+    let baseline = load_parent_baseline(
+        fixture.parent.campaign_id(),
+        &fixture.config,
+        &fixture.manifest_path,
+        &fixture.parent,
+    )
+    .expect("missing pre-baseline closure is not a reconstruction blocker");
+
+    assert!(
+        baseline.is_none(),
+        "fresh missing closure must reconstruct only through R5"
+    );
+
+    closure.eval.missing_total = 0;
+    write_json_file_pretty(&campaign_dir.join("closure-state.json"), &closure)
+        .expect("write inconsistent closure");
+    let error = load_parent_baseline(
+        fixture.parent.campaign_id(),
+        &fixture.config,
+        &fixture.manifest_path,
+        &fixture.parent,
+    )
+    .expect_err("inconsistent missing counts must remain a reconstruction blocker");
+    assert!(
+        error.to_string().contains("Missing"),
+        "unexpected inconsistent closure error: {error}"
     );
 }
 
