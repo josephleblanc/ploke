@@ -11,7 +11,7 @@ use super::{
     CallResolutionRow, CallSiteKind, CallSiteRow, CallStatusKind, CallTargetKind, CallTargetRow,
     LocalBindingEdgeRow, LocalBindingRelationKind, LocalBindingRow, ReturnedCallBinding,
     ReturnedCallBindingFlow, ReturnedCallProducer, ReturnedCallSite, ReturnedCallSource,
-    ReturnedFutureExecutionFlow, ReturnedFutureFlow, ReturnedFutureSite,
+    ReturnedFutureExecutionFlow, ReturnedFutureFlow, ReturnedFutureSite, SelfFieldParameterFlow,
 };
 
 pub(super) fn decode_site(row: &[DataValue]) -> Result<CallSiteRow, DbError> {
@@ -334,6 +334,66 @@ fn validate_returned_future_execution_flow(
         Err(DbError::Cozo(format!(
             "malformed returned future execution flow for producer call {}",
             flow.producer.site_id
+        )))
+    }
+}
+
+pub(super) fn decode_self_field_parameter_flow(
+    row: &[DataValue],
+) -> Result<SelfFieldParameterFlow, DbError> {
+    let flow = SelfFieldParameterFlow {
+        site: decode_site(&row[0..13])?,
+        status: decode_resolution(&row[13..17])?,
+        constructor_id: to_uuid(&row[17])?,
+        return_binding: decode_local_binding(&row[18..31])?,
+        field_binding: decode_local_binding(&row[31..44])?,
+        parameter_binding: decode_local_binding(&row[44..57])?,
+    };
+    validate_self_field_parameter_flow(&flow)?;
+    Ok(flow)
+}
+
+fn validate_self_field_parameter_flow(flow: &SelfFieldParameterFlow) -> Result<(), DbError> {
+    let site_path = flow.site.path.as_deref().unwrap_or_default();
+    let field_path = flow
+        .field_binding
+        .source_path
+        .as_deref()
+        .unwrap_or_default();
+    let parameter_path = flow
+        .field_binding
+        .callee_path
+        .as_deref()
+        .unwrap_or_default();
+
+    let valid = flow.site.kind == CallSiteKind::Dynamic
+        && site_path.len() == 2
+        && site_path.first().is_some_and(|segment| segment == "self")
+        && field_path == &site_path[1..]
+        && flow.status.site_id == flow.site.id
+        && flow.status.site_kind == CallSiteKind::Dynamic
+        && flow.status.status != CallStatusKind::Resolved
+        && flow.status.resolution.is_none()
+        && flow.return_binding.owner_id == flow.constructor_id
+        && flow.return_binding.kind == "ReturnExpression"
+        && flow.return_binding.source_kind == "Constructed"
+        && flow.field_binding.owner_id == flow.constructor_id
+        && flow.field_binding.kind == "FieldProjection"
+        && flow.field_binding.source_kind == "FieldProjection"
+        && flow.field_binding.source_id == Some(flow.return_binding.id)
+        && flow.field_binding.callee_kind.as_deref() == Some("Path")
+        && flow.parameter_binding.owner_id == flow.constructor_id
+        && flow.parameter_binding.kind == "ParameterBinding"
+        && flow.parameter_binding.source_kind == "Parameter"
+        && parameter_path.len() == 1
+        && parameter_path[0] == flow.parameter_binding.name;
+
+    if valid {
+        Ok(())
+    } else {
+        Err(DbError::Cozo(format!(
+            "malformed self-field parameter flow for call site {}",
+            flow.site.id
         )))
     }
 }

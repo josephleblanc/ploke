@@ -6,7 +6,7 @@ use uuid::Uuid;
 use crate::{Database, DbError, database::to_string};
 
 use super::super::{
-    CallContextRow, CallResolutionRow, CallSiteKind, CallSiteRow, CallStatusKind, CallTargetRow,
+    CallContextRow, CallResolutionRow, CallSiteKind, CallSiteRow, CallTargetRow,
     LocalBindingEdgeRow, LocalBindingRow, ReturnedCallBindingFlow, ReturnedFutureExecutionFlow,
     ReturnedFutureFlow,
     decode::{

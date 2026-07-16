@@ -139,6 +139,16 @@ pub struct ReturnedFutureExecutionFlow {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SelfFieldParameterFlow {
+    pub site: CallSiteRow,
+    pub status: CallResolutionRow,
+    pub constructor_id: Uuid,
+    pub return_binding: LocalBindingRow,
+    pub field_binding: LocalBindingRow,
+    pub parameter_binding: LocalBindingRow,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CallSiteBucket {
     pub kind: CallSiteKind,
     pub relation: CallRelationKind,

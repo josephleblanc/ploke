@@ -554,6 +554,76 @@ fn axum_tap_io_constructor_records_field_parameter_frontier() -> Result<(), DbEr
     Ok(())
 }
 
+#[test]
+fn axum_tap_io_accept_exposes_self_field_parameter_flow() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Ground truth:
+    //   axum/src/serve/listener.rs:116-123
+    //     `tap_io<F>(self, tap_fn: F) -> TapIo<Self, F>` returns
+    //     `TapIo { listener: self, tap_fn }`.
+    //   axum/src/serve/listener.rs:236
+    //     `TapIo::accept` later calls `(self.tap_fn)(&mut io)`.
+    //
+    // Contract: this owner-scoped query explains the source-visible field
+    // carrier for the targetless `self.tap_fn` call, but because the source is
+    // the public constructor parameter `tap_fn`, it still must not create a
+    // local traversal edge to a concrete closure/function.
+    let tap_io = method_id_by_name_and_body_substring(&db, "tap_io", "TapIo")?;
+    let accept = method_id_by_name_and_body_substring(&db, "accept", "(self.tap_fn)(&mut io)")?;
+
+    let flows = db.self_field_parameter_flows_for_owner(accept)?;
+    assert_eq!(
+        flows.len(),
+        1,
+        "TapIo::accept should expose one constructor-parameter source flow: {flows:#?}"
+    );
+    let flow = &flows[0];
+    assert_eq!(flow.site.owner_id, accept);
+    assert_eq!(flow.site.kind, CallSiteKind::Dynamic);
+    assert_eq!(flow.site.path.as_ref(), Some(&path(&["self", "tap_fn"])));
+    assert_eq!(flow.status.status, CallStatusKind::Unsupported);
+    assert!(flow.status.resolution.is_none());
+    assert!(relations_for_site(&db, flow.site.id)?.rows.is_empty());
+
+    assert_eq!(flow.constructor_id, tap_io);
+    assert_eq!(flow.return_binding.owner_id, tap_io);
+    assert_eq!(flow.return_binding.kind, "ReturnExpression");
+    assert_eq!(flow.return_binding.source_kind, "Constructed");
+    assert_eq!(
+        flow.return_binding.source_path.as_ref(),
+        Some(&path(&["TapIo"]))
+    );
+    assert_eq!(flow.field_binding.owner_id, tap_io);
+    assert_eq!(flow.field_binding.kind, "FieldProjection");
+    assert_eq!(flow.field_binding.source_id, Some(flow.return_binding.id));
+    assert_eq!(
+        flow.field_binding.source_path.as_ref(),
+        Some(&path(&["tap_fn"]))
+    );
+    assert_eq!(
+        flow.field_binding.callee_path.as_ref(),
+        Some(&path(&["tap_fn"]))
+    );
+    assert_eq!(flow.parameter_binding.owner_id, tap_io);
+    assert_eq!(flow.parameter_binding.kind, "ParameterBinding");
+    assert_eq!(flow.parameter_binding.name, "tap_fn");
+    assert_eq!(flow.parameter_binding.source_kind, "Parameter");
+
+    let router_into_route = method_id_by_name_and_body_substring(
+        &db,
+        "into_route",
+        "(self.into_route)(self.router, state)",
+    )?;
+    let router_flows = db.self_field_parameter_flows_for_owner(router_into_route)?;
+    assert!(
+        router_flows.is_empty(),
+        "MakeErasedRouter::into_route has no selected-source constructor parameter proof and should remain unexplained by this narrow query: {router_flows:#?}"
+    );
+
+    Ok(())
+}
+
 fn assert_self_field_evidence(
     db: &Database,
     owner: uuid::Uuid,
