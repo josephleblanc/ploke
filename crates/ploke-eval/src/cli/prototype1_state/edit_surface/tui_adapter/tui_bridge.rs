@@ -307,6 +307,7 @@ async fn start_runtime(
     {
         let mut cfg = runtime.state.config.write().await;
         cfg.context_management.mode = ploke_tui::user_config::CtxMode::Off;
+        cfg.chat_policy.tool_streak_limit = Some(harness::TOOL_STREAK_LIMIT);
         cfg.tooling.cargo_check_timeout_secs = timeouts.validation_cargo_check_secs;
         cfg.tooling.cargo_test_timeout_secs = timeouts.validation_cargo_test_secs;
         if let Some(model) = model {

@@ -7,6 +7,10 @@ mod tui;
 pub(crate) use timeouts::Timeouts;
 pub(crate) use tui::TuiHarness;
 
+/// Broad-only no-progress bound. The shared 500-step session budget remains
+/// available when the model alternates tools and continues making progress.
+pub(crate) const TOOL_STREAK_LIMIT: usize = 15;
+
 use std::{path::PathBuf, time::Instant};
 
 use uuid::Uuid;

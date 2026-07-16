@@ -37,12 +37,12 @@ use super::{format_tokens_payload, tokens_logging_enabled};
 use crate::llm::manager::loop_error::{
     ChatSessionReport, CommitPhase, ErrorAudience, ErrorContext, LoopError, RetryAdvice,
     RetryStrategy, SessionOutcome, Verbosity, build_loop_error_from_semantic_spec,
-    classify_finish_reason, classify_llm_error, mark_repair_budget_exhausted, recovery_from_retry,
-    render_error_view,
+    build_streak_error, classify_finish_reason, classify_llm_error, mark_repair_budget_exhausted,
+    recovery_from_retry, render_error_view,
 };
 use crate::llm::manager::semantics::{self, RecoveryDecision};
 use crate::tools::{
-    ToolCallPreflightError, ToolError, ToolErrorCode, ToolErrorWire, ToolUiPayload,
+    ToolCallPreflightError, ToolError, ToolErrorCode, ToolErrorWire, ToolName, ToolUiPayload,
     allowed_tool_names, validate_and_sanitize_tool_calls,
 };
 use ploke_llm::LlmError;
@@ -139,6 +139,7 @@ where
 pub struct TuiToolPolicy {
     pub tool_call_timeout: ToolCallTimeout,
     pub tool_call_chain_limit: usize,
+    pub tool_streak_limit: Option<usize>,
     pub tool_loop_mode: ToolLoopMode,
     pub retry_without_tools_on_404: bool,
 }
@@ -152,6 +153,7 @@ impl Default for TuiToolPolicy {
             // TODO:ploke-llm 2025-12-14
             // Set to 15 as initial default, experiment to determine the right default to set
             tool_call_chain_limit: 100,
+            tool_streak_limit: None,
             tool_loop_mode: ToolLoopMode::Auto,
             retry_without_tools_on_404: false,
         }
@@ -296,9 +298,36 @@ pub(crate) fn tool_policy_from_chat(cfg: &ChatPolicy) -> TuiToolPolicy {
     TuiToolPolicy {
         tool_call_timeout: Duration::from_secs(cfg.tool_call_timeout_secs),
         tool_call_chain_limit: cfg.tool_call_chain_limit,
+        tool_streak_limit: cfg.tool_streak_limit,
         tool_loop_mode: cfg.tool_loop_mode,
         retry_without_tools_on_404: cfg.retry_without_tools_on_404,
     }
+}
+
+fn tool_streak_stop(
+    streak: &mut Option<(ToolName, usize)>,
+    calls: &[ToolCall],
+    limit: Option<usize>,
+) -> Option<(ToolName, usize, usize)> {
+    let limit = limit?;
+    for call in calls {
+        let tool = call.function.name;
+        match streak {
+            Some((previous, count)) if *previous == tool => {
+                *count = count.saturating_add(1);
+            }
+            _ => {
+                *streak = Some((tool, 1));
+            }
+        }
+        let Some((tool, count)) = streak.as_ref() else {
+            continue;
+        };
+        if *count >= limit {
+            return Some((*tool, *count, limit));
+        }
+    }
+    None
 }
 
 pub(crate) fn finish_policy_from_chat(cfg: &ChatPolicy) -> FinishPolicy {
@@ -1231,6 +1260,7 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
     );
     let mut commit_phase = CommitPhase::PreCommit;
     let mut attempts = 0_u32;
+    let mut tool_streak = None;
 
     let mut initial_message_updated = false;
     for chain_index in 0..policy.tool_call_chain_limit {
@@ -1491,6 +1521,7 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
         let token_usage = full_response.usage;
         let mut debug_calls = Vec::new();
         let mut debug_results = Vec::new();
+        let mut streak_stop = None;
         if let Some(resp_tokens) = token_usage {
             state_cmd_tx
                 .send(StateCommand::UpdateContextTokens {
@@ -1566,6 +1597,7 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
                     None
                 };
                 debug_calls = calls.clone();
+                streak_stop = tool_streak_stop(&mut tool_streak, &calls, policy.tool_streak_limit);
                 req.core
                     .messages
                     .push(RequestMessage::new_assistant_with_tool_calls(
@@ -1772,6 +1804,48 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
                 commit_phase = CommitPhase::MessageCommitted;
             }
         };
+
+        if let Some((tool, count, limit)) = streak_stop {
+            let context = base_error_context(
+                attempts,
+                chain_index,
+                "tool_streak_limit",
+                &model_key,
+                assistant_message_id,
+            );
+            let loop_error =
+                build_streak_error(tool.as_str(), count, limit, context, commit_phase.clone());
+            emit_loop_error(
+                &state_cmd_tx,
+                assistant_message_id,
+                &mut initial_message_updated,
+                &loop_error,
+            )
+            .await;
+            record_chat_debug_step(
+                &debug_sink,
+                ChatDebugStep {
+                    session_id,
+                    parent_id,
+                    assistant_message_id,
+                    step_index: chain_index,
+                    request_messages: request_snapshot,
+                    response: full_response,
+                    tool_calls: debug_calls,
+                    tool_results: debug_results,
+                    final_messages: req.core.messages.clone(),
+                    terminal: true,
+                },
+            );
+            report.record_error(loop_error.clone());
+            report.outcome = SessionOutcome::Exhausted {
+                error_id: loop_error.error_id,
+            };
+            report.commit_phase = commit_phase;
+            report.attempts = attempts;
+            report.final_messages = req.core.messages.clone();
+            return report;
+        }
 
         let mut ctx = ChatLoopContext {
             cfg: &mut cfg,
@@ -2570,6 +2644,66 @@ mod tests {
     const TEST_ROUTER_URL: &str = "http://127.0.0.1:39181/v1/chat/completions";
     const TEST_ROUTER_URL_ALT: &str = "http://127.0.0.1:39182/v1/chat/completions";
 
+    fn test_tool_call(name: ToolName) -> ToolCall {
+        ToolCall {
+            call_id: ploke_core::ArcStr::from(format!("call_{}", name.as_str())),
+            call_type: FunctionMarker,
+            function: FunctionCall {
+                name,
+                arguments: "{}".to_string(),
+            },
+            extra_content: None,
+        }
+    }
+
+    #[test]
+    fn tool_streak_stop_resets_when_tool_changes() {
+        let mut streak = None;
+        let repeated = vec![
+            test_tool_call(ToolName::RequestCodeContext),
+            test_tool_call(ToolName::RequestCodeContext),
+        ];
+        assert_eq!(tool_streak_stop(&mut streak, &repeated, Some(3)), None);
+        assert_eq!(
+            tool_streak_stop(&mut streak, &[test_tool_call(ToolName::ListDir)], Some(3)),
+            None
+        );
+        assert_eq!(tool_streak_stop(&mut streak, &repeated, Some(3)), None);
+
+        let (tool, count, limit) = tool_streak_stop(
+            &mut streak,
+            &[test_tool_call(ToolName::RequestCodeContext)],
+            Some(3),
+        )
+        .expect("third repeated call should stop the session");
+        assert_eq!(tool, ToolName::RequestCodeContext);
+        assert_eq!(count, 3);
+        assert_eq!(limit, 3);
+    }
+
+    #[test]
+    fn tool_streak_stop_is_disabled_without_limit() {
+        let mut streak = None;
+        let repeated = (0..20)
+            .map(|_| test_tool_call(ToolName::RequestCodeContext))
+            .collect::<Vec<_>>();
+        assert_eq!(tool_streak_stop(&mut streak, &repeated, None), None);
+        assert_eq!(streak, None);
+    }
+
+    #[test]
+    fn tool_streak_stop_latches_before_later_tool() {
+        let mut streak = Some((ToolName::RequestCodeContext, 2));
+        let mixed = vec![
+            test_tool_call(ToolName::RequestCodeContext),
+            test_tool_call(ToolName::ListDir),
+        ];
+        assert_eq!(
+            tool_streak_stop(&mut streak, &mixed, Some(3)),
+            Some((ToolName::RequestCodeContext, 3, 3))
+        );
+    }
+
     #[derive(Clone, Default)]
     struct DebugSteps(StdArc<StdMutex<Vec<ChatDebugStep>>>);
 
@@ -2954,6 +3088,36 @@ mod tests {
         .to_string()
     }
 
+    fn list_dir_batch_response(index: usize, count: usize) -> String {
+        let tool_calls = (0..count)
+            .map(|call| {
+                json!({
+                    "id": format!("call_{index}_{call}"),
+                    "type": "function",
+                    "function": {
+                        "name": "list_dir",
+                        "arguments": "{\"dir\":\".\",\"max_entries\":3}"
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        json!({
+            "id": format!("tool-batch-{index}"),
+            "choices": [{
+                "index": 0,
+                "finish_reason": "tool_calls",
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": tool_calls
+                }
+            }],
+            "created": 0,
+            "model": "test/model",
+            "object": "chat.completion"
+        })
+        .to_string()
+    }
+
     fn content_response(content: &str) -> String {
         json!({
             "id": "final",
@@ -3096,6 +3260,120 @@ mod tests {
             "recorded replay should not emit provider HTTP attempts"
         );
         assert_eq!(assistant_update.as_deref(), Some("recorded final answer"));
+    }
+
+    #[tokio::test]
+    async fn tool_streak_limit_settles_threshold_batch_before_exhaustion() {
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let mut tool_rx = event_bus.subscribe(crate::EventPriority::Realtime);
+        let requested = Arc::new(AtomicUsize::new(0));
+        let completed = Arc::new(AtomicUsize::new(0));
+        let tool_bus = Arc::clone(&event_bus);
+        let requested_a = Arc::clone(&requested);
+        let completed_a = Arc::clone(&completed);
+        let tool_task = tokio::spawn(async move {
+            while let Ok(event) = tool_rx.recv().await {
+                if let AppEvent::System(SystemEvent::ToolCallRequested {
+                    tool_call,
+                    request_id,
+                    parent_id,
+                }) = event
+                {
+                    requested_a.fetch_add(1, Ordering::SeqCst);
+                    tool_bus.send(AppEvent::System(SystemEvent::ToolCallCompleted {
+                        request_id,
+                        parent_id,
+                        call_id: tool_call.call_id,
+                        content: r#"{"ok":true,"entries":[]}"#.to_string(),
+                        ui_payload: None,
+                    }));
+                    completed_a.fetch_add(1, Ordering::SeqCst);
+                }
+            }
+        });
+
+        let responses = vec![
+            list_dir_batch_response(0, 1),
+            list_dir_batch_response(1, 1),
+            list_dir_batch_response(2, 2),
+            content_response("sentinel response must remain unconsumed"),
+        ];
+        let tape = RecordedResponseTape::new(
+            responses
+                .into_iter()
+                .enumerate()
+                .map(|(index, response)| {
+                    RecordedResponse::new(
+                        index,
+                        serde_json::from_str(&response).expect("recorded response parses"),
+                    )
+                })
+                .collect(),
+        );
+        let (state_cmd_tx, mut state_cmd_rx) = mpsc::channel(128);
+        let drain = tokio::spawn(async move { while state_cmd_rx.recv().await.is_some() {} });
+        let (_cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
+        let req = ChatCompRequest::<TestRouter>::default()
+            .with_model_str("moonshotai/kimi-k2")
+            .expect("model id")
+            .with_message(RequestMessage::new_user(
+                "Inspect the current directory.".to_string(),
+            ))
+            .with_tools(Some(vec![crate::tools::list_dir::ListDir::tool_def()]))
+            .with_tool_choice(Some(ToolChoice::Auto));
+        let debug_steps = DebugSteps::default();
+        let chat_policy = ChatPolicy {
+            tool_streak_limit: Some(3),
+            ..ChatPolicy::default()
+        };
+
+        let report = run_chat_session(
+            ChatSession {
+                client: Client::new(),
+                req,
+                chat_step_source: ChatStepSource::recorded(tape),
+                parent_id: Uuid::new_v4(),
+                assistant_message_id: Uuid::new_v4(),
+                event_bus,
+                state_cmd_tx,
+                included_message_ids: Vec::new(),
+                chat_policy,
+                cancel_rx,
+                capture: SessionCapture::new(None, Some(StdArc::new(debug_steps.clone()))),
+            },
+            1,
+        )
+        .await;
+
+        tool_task.abort();
+        drain.abort();
+        assert!(matches!(report.outcome, SessionOutcome::Exhausted { .. }));
+        assert_eq!(report.attempts, 3, "sentinel response must not be consumed");
+        let error = report.last_error().expect("typed streak error");
+        assert_eq!(error.code.as_ref(), "TOOL_STREAK_LIMIT");
+        assert_eq!(
+            error.context.tool_name.as_ref().map(AsRef::as_ref),
+            Some("list_dir")
+        );
+        assert_eq!(requested.load(Ordering::SeqCst), 4);
+        assert_eq!(completed.load(Ordering::SeqCst), 4);
+
+        let steps = debug_steps.snapshot();
+        assert_eq!(steps.len(), 3);
+        assert!(!steps[0].terminal);
+        assert!(!steps[1].terminal);
+        assert!(steps[2].terminal);
+        assert_eq!(steps[2].response.id, "tool-batch-2");
+        assert_eq!(steps[2].tool_calls.len(), 2);
+        assert_eq!(steps[2].tool_results.len(), 2);
+        assert_eq!(
+            report
+                .final_messages
+                .iter()
+                .filter(|message| message.role == Role::Tool)
+                .count(),
+            4
+        );
     }
 
     async fn run_captured_session(

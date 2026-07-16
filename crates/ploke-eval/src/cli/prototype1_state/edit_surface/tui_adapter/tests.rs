@@ -23,7 +23,10 @@ use crate::cli::prototype1_state::{
         harness_result::SubmittedBroadHarnessResult,
         surface,
         surface_policy::SurfacePolicy,
-        tui_adapter::{harness::Timeouts, tui_bridge::run_headless_with_model},
+        tui_adapter::{
+            harness::{TOOL_STREAK_LIMIT, Timeouts},
+            tui_bridge::run_headless_with_model,
+        },
     },
 };
 use crate::loop_graph::{ArtifactId, Coordinate, OperationTarget, RuntimeId};
@@ -2618,12 +2621,41 @@ async fn historical_r10_near_tail_turn_live_tape_applies_ns_patch_through_tool_l
     );
 }
 
-// RED regression for the 2026-06-02 direct-Google broad-headless run:
+fn assert_streak_settled(run: &HeadlessRun, expected: usize) {
+    let requested = run
+        .events()
+        .iter()
+        .filter(|event| matches!(event, Event::ToolRequest { .. }))
+        .count();
+    let settled = run
+        .events()
+        .iter()
+        .filter(|event| matches!(event, Event::Tool { .. }))
+        .count();
+    assert_eq!(requested, expected, "unexpected tool request count");
+    assert_eq!(settled, expected, "every requested tool must settle");
+
+    let last_tool = run
+        .events()
+        .iter()
+        .rposition(|event| matches!(event, Event::Tool { .. }))
+        .expect("guarded run should contain a settled tool");
+    let turn = run
+        .events()
+        .iter()
+        .rposition(|event| matches!(event, Event::Turn { .. }))
+        .expect("guarded run should contain a terminal turn");
+    assert!(
+        last_tool < turn,
+        "terminal turn must follow tool settlement"
+    );
+}
+
+// Regression for the 2026-06-02 direct-Google broad-headless run, confirmed
+// again by the 2026-07-16 r2 no-progress context-retrieval loop:
 // `Budget::max_attempts == 1` bounded only the outer harness turn while the
-// inner TUI tool loop could keep making provider-step requests. Run with
-// `--ignored` until a provider-step cap is wired into this adapter path.
+// inner TUI tool loop could repeat one tool without making progress.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "RED until broad headless TUI enforces a provider-step cap"]
 async fn xfail_broad_headless_caps_provider_steps() {
     let _recorded_replay_guard = recorded_replay_test_mutex().lock().await;
     let fixture = prepare_live_canary(
@@ -2632,7 +2664,7 @@ async fn xfail_broad_headless_caps_provider_steps() {
     )
     .expect("prepare provider-step budget fixture");
 
-    let expected_cap = 15_usize;
+    let expected_cap = TOOL_STREAK_LIMIT;
     let replay_steps = expected_cap + 5;
     let tape = repeated_protected_ns_patch_tape(&fixture.artifact_root, replay_steps);
     ploke_tui::llm::install_recorded_response_tape(tape);
@@ -2667,9 +2699,79 @@ async fn xfail_broad_headless_caps_provider_steps() {
         snapshots.len(),
         run.terminal()
     );
+    assert_streak_settled(&run, expected_cap);
     assert!(
-        matches!(run.terminal(), Some(HeadlessTerminal::Exhausted { last, .. }) if last.contains("tool call chain limit")),
-        "provider-step cap should surface as a budget/chain-limit terminal, got {:?}",
+        matches!(run.terminal(), Some(HeadlessTerminal::Exhausted { last, .. }) if last.contains("TOOL_STREAK_LIMIT") && last.contains("no-progress guard") && last.contains("non_semantic_patch")),
+        "repeated-tool cap should surface as an explicit no-progress terminal, got {:?}",
+        run.terminal()
+    );
+}
+
+// Real persisted replay for the 2026-07-16 R2 lane that issued 54 consecutive
+// request_code_context calls while searching variants of sanitize_tool_args.
+// Source: campaign p1-v10-multigen-g35f-oropenai-3g1x3-p3-20260716-011330,
+// session 30dff829-27f6-45fe-b88c-a9e60f29818d, steps 29 through 48.
+// The preserved typed response envelopes are replayed through the production
+// headless session and tool path.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn historical_r2_context_loop_hits_tool_streak_guard() {
+    const ASSISTANT_ID: &str = "883b2031-da58-4ae9-a8fb-be6ea1e5c719";
+    let tape_dir = ploke_workspace_root_for_test()
+        .join("tests/fixtures/prototype1/r2-context-streak-20260716");
+    let _recorded_replay_guard = recorded_replay_test_mutex().lock().await;
+    let loaded = crate::replay::llm::install_tui_recorded_response_tape(&tape_dir, ASSISTANT_ID)
+        .expect("load checked-in historical R2 response tape");
+    assert_eq!(loaded.record_count(), TOOL_STREAK_LIMIT + 5);
+    for (response_index, record) in loaded.records().iter().enumerate() {
+        assert_eq!(record.response_index().get(), response_index);
+        let step_index = 29 + response_index;
+        let body = serde_json::to_string(record.response())
+            .expect("serialize historical R2 provider response");
+        let step = ploke_llm::manager::parse_chat_outcome(&body)
+            .expect("parse historical R2 provider response");
+        let ploke_llm::manager::ChatStepOutcome::ToolCalls { calls, .. } = step.outcome else {
+            panic!("historical R2 step {step_index} must be a tool-call response");
+        };
+        assert!(
+            !calls.is_empty()
+                && calls
+                    .iter()
+                    .all(|call| call.function.name.as_str() == "request_code_context"),
+            "historical R2 streak step {step_index} must contain only request_code_context calls"
+        );
+    }
+    let _clear_tape = ClearRecordedTapeOnDrop;
+
+    let fixture = prepare_live_canary(
+        "historical-r2-context-streak",
+        "Replay the preserved R2 no-progress context-retrieval streak.",
+    )
+    .expect("prepare historical R2 replay fixture");
+
+    let (request_tx, request_rx) = std::sync::mpsc::channel();
+    let _tap_guard = ploke_tui::llm::install_request_tap(request_tx);
+    let run = run_headless_with_model(
+        &fixture.workspace,
+        &fixture.prompt,
+        Budget::new(1, 120).expect("valid one-attempt budget"),
+        &SurfacePolicy::workspace_except_core(),
+        &[],
+        None,
+    )
+    .await
+    .expect("historical R2 replay should return typed evidence");
+
+    let mut snapshots = Vec::new();
+    collect_request_snapshots(&request_rx, &mut snapshots);
+    assert_eq!(
+        snapshots.len(),
+        TOOL_STREAK_LIMIT,
+        "real R2 responses must stop at the broad-harness repeated-tool bound"
+    );
+    assert_streak_settled(&run, TOOL_STREAK_LIMIT);
+    assert!(
+        matches!(run.terminal(), Some(HeadlessTerminal::Exhausted { last, .. }) if last.contains("TOOL_STREAK_LIMIT") && last.contains("no-progress guard") && last.contains("request_code_context")),
+        "historical R2 replay should expose the no-progress reason, got {:?}",
         run.terminal()
     );
 }

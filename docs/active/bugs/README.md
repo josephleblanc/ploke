@@ -198,3 +198,11 @@ file and current code before treating a report as still open.
   Fixed and live verified: protocol-v10 typed LLM inventory reports a zero-byte
   session manifest independently while retaining every healthy lane/session for
   exact CLI and UI inspection.
+- [`2026-07-16-prototype1-headless-unpersisted-workspace-mutation.md`](./2026-07-16-prototype1-headless-unpersisted-workspace-mutation.md)
+  Open crash-consistency gap: an effectful headless tool can mutate its isolated
+  workspace after the last settled debug step, leaving recovery without durable
+  provider intent for the mutation.
+- [`2026-07-16-prototype1-request-code-context-no-progress-loop.md`](./2026-07-16-prototype1-request-code-context-no-progress-loop.md)
+  Source repaired: a broad-only session guard now stops one-tool no-progress
+  loops after 15 calls, but only after the threshold batch and terminal trace
+  settle; checked-in R2 replay coverage is active in the normal test suite.

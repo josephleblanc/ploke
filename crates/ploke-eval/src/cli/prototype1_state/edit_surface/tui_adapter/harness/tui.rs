@@ -800,7 +800,9 @@ async fn classify_turn_stop(
                 summary,
             )));
         }
-        let feedback = if let Some(feedback) = repaired_failure {
+        let feedback = if outcome == "exhausted" && summary.contains("code=TOOL_STREAK_LIMIT") {
+            summary.clone()
+        } else if let Some(feedback) = repaired_failure {
             feedback
         } else if summary.trim().is_empty() {
             format!(

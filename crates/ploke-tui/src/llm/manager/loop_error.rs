@@ -364,6 +364,44 @@ pub fn build_loop_error_from_semantic_spec(
     }
 }
 
+pub fn build_streak_error(
+    tool: &str,
+    count: usize,
+    limit: usize,
+    mut context: ErrorContext,
+    commit_phase: CommitPhase,
+) -> LoopError {
+    context.tool_name = Some(ArcStr::from(tool.to_string()));
+    let kind = LoopErrorKind::ModelBehavior;
+    let code = ArcStr::from("TOOL_STREAK_LIMIT");
+    let summary = ArcStr::from(format!(
+        "Tool no-progress guard stopped the session after {count} consecutive `{tool}` calls (limit {limit})"
+    ));
+    let retry = RetryAdvice::No {
+        reason: ArcStr::from("The configured tool streak limit was reached"),
+    };
+    let recovery = RecoveryDecision::Abort {
+        reason: ArcStr::from("Return control to the outer attempt driver"),
+    };
+    LoopError {
+        error_id: Uuid::new_v4(),
+        fingerprint: fingerprint_for(&kind, &code, &context),
+        kind,
+        code,
+        severity: ErrorSeverity::Error,
+        recovery,
+        retry,
+        commit_phase,
+        summary,
+        user_action: Some(ArcStr::from(
+            "Review the repeated tool trace before retrying the attempt.",
+        )),
+        llm_action: None,
+        context,
+        diagnostics: None,
+    }
+}
+
 pub fn classify_llm_error(
     err: &LlmError,
     mut context: ErrorContext,
