@@ -12,6 +12,7 @@ pub(crate) mod controller;
 pub(crate) mod endpoint;
 pub(crate) mod epoch;
 pub(crate) mod ipc;
+pub(crate) mod llm_trace;
 pub(crate) mod paths;
 pub(crate) mod phase;
 pub(crate) mod protocol;

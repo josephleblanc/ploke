@@ -2382,6 +2382,73 @@ fn loop_walk_llm_timeline_command_parses() {
 }
 
 #[test]
+fn loop_walk_llm_sessions_command_parses() {
+    let parsed = Cli::try_parse_from([
+        "ploke-eval",
+        "loop",
+        "walk",
+        "llm",
+        "--repo-root",
+        "/tmp/parent",
+        "sessions",
+    ])
+    .expect("loop walk llm sessions should parse");
+
+    match parsed.command {
+        Command::Loop(LoopCommand {
+            command: LoopSubcommand::Prototype1StateWalk(cmd),
+        }) => match cmd.command {
+            Prototype1StateWalkSubcommand::Llm(cmd) => {
+                assert_eq!(cmd.control.repo_root, Some(PathBuf::from("/tmp/parent")));
+                assert!(matches!(
+                    cmd.command,
+                    Prototype1StateWalkLlmSubcommand::Sessions
+                ));
+            }
+            other => panic!("unexpected walk subcommand: {other:?}"),
+        },
+        other => panic!("unexpected command shape: {other:?}"),
+    }
+}
+
+#[test]
+fn loop_walk_llm_observe_command_parses() {
+    let parsed = Cli::try_parse_from([
+        "ploke-eval",
+        "loop",
+        "walk",
+        "llm",
+        "--format",
+        "json",
+        "observe",
+        "--session-id",
+        "session-1",
+        "--step",
+        "3",
+    ])
+    .expect("loop walk llm observe should parse");
+
+    match parsed.command {
+        Command::Loop(LoopCommand {
+            command: LoopSubcommand::Prototype1StateWalk(cmd),
+        }) => match cmd.command {
+            Prototype1StateWalkSubcommand::Llm(cmd) => {
+                assert_eq!(cmd.control.format, InspectOutputFormat::Json);
+                match cmd.command {
+                    Prototype1StateWalkLlmSubcommand::Observe(observe) => {
+                        assert_eq!(observe.session_id, "session-1");
+                        assert_eq!(observe.step, Some(3));
+                    }
+                    other => panic!("unexpected llm subcommand: {other:?}"),
+                }
+            }
+            other => panic!("unexpected walk subcommand: {other:?}"),
+        },
+        other => panic!("unexpected command shape: {other:?}"),
+    }
+}
+
+#[test]
 fn loop_walk_llm_prompt_command_parses() {
     let parsed = Cli::try_parse_from([
         "ploke-eval",

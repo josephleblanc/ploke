@@ -425,7 +425,7 @@ pub struct Prototype1StateWalkShowDeltaCommand {
 #[derive(Debug, Clone, Parser)]
 #[command(
     about = "Inspect nested LLM/tool-loop debugger checkpoints",
-    after_help = "Examples:\n  ploke-eval loop walk llm lanes\n  ploke-eval loop walk llm focus node-...-r2\n  ploke-eval loop walk llm timeline\n  ploke-eval loop walk llm prompt\n  ploke-eval loop walk llm protocol\n  ploke-eval loop walk llm show --lane node-...-r2 --head\n  ploke-eval loop walk llm tool --step 11 --json\n  ploke-eval loop walk llm back --lane node-...-r2 --steps 3\n\nThis surface is read-only unless step/finish says otherwise. Current lane/cursor/timeline/show/prompt/protocol/tool commands do not call providers, execute tools, mutate the checkout, or advance the outer typestate walk."
+    after_help = "Examples:\n  ploke-eval loop walk llm sessions\n  ploke-eval loop walk llm observe --session-id SESSION\n  ploke-eval loop walk llm --format json observe --session-id SESSION --step 2\n  ploke-eval loop walk llm lanes\n  ploke-eval loop walk llm focus node-...-r2\n  ploke-eval loop walk llm timeline\n  ploke-eval loop walk llm prompt\n  ploke-eval loop walk llm protocol\n  ploke-eval loop walk llm show --lane node-...-r2 --head\n  ploke-eval loop walk llm tool --step 11 --json\n  ploke-eval loop walk llm back --lane node-...-r2 --steps 3\n\n`sessions` and `observe` use the typed exact-session read model shared with ploke-walk-ui; malformed siblings remain visible instead of aborting the inventory. This surface is read-only unless step/finish says otherwise. Current sessions/observe/lane/cursor/timeline/show/prompt/protocol/tool commands do not call providers, execute tools, mutate the checkout, or advance the outer typestate walk."
 )]
 pub struct Prototype1StateWalkLlmCommand {
     #[command(flatten)]
@@ -437,6 +437,10 @@ pub struct Prototype1StateWalkLlmCommand {
 
 #[derive(Debug, Clone, Subcommand)]
 pub enum Prototype1StateWalkLlmSubcommand {
+    /// List every exact debugger session and any unreadable or invalid manifests.
+    Sessions,
+    /// Observe one exact debugger session and optional published response step.
+    Observe(Prototype1StateWalkLlmObserveCommand),
     /// List known fanout lanes and their latest checkpoint heads.
     Lanes(Prototype1StateWalkLlmLanesCommand),
     /// Set the default lane for subsequent LLM checkpoint commands on this server.
@@ -461,6 +465,17 @@ pub enum Prototype1StateWalkLlmSubcommand {
     Forward(Prototype1StateWalkLlmMoveCommand),
     /// Jump the focused/read-only lane cursor to the latest checkpoint head.
     Head(Prototype1StateWalkLlmLaneCommand),
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1StateWalkLlmObserveCommand {
+    /// Exact tool-loop session id from `llm sessions`.
+    #[arg(long)]
+    pub session_id: String,
+
+    /// Exact published provider-response checkpoint. Defaults to the resume head.
+    #[arg(long)]
+    pub step: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]

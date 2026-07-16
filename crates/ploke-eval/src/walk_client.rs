@@ -58,6 +58,12 @@ pub use crate::cli::prototype1_state::{
             ValueSource, WalkConfigSnapshot,
         },
         epoch::ServerEpoch,
+        llm_trace::{
+            LlmArtifact, LlmHeadlessTerminal, LlmLane, LlmOuterEvidence, LlmResume, LlmSession,
+            LlmSessionStatus, LlmSessionSummary, LlmStepDetail, LlmStepEntry, LlmStepOutcome,
+            LlmStepSummary, LlmToolResult, LlmTraceAuthority, LlmTraceCoordinate, LlmTraceIndex,
+            LlmTraceIssue, LlmTraceSnapshot, LlmWorkspaceState,
+        },
         phase::WalkPhase,
         protocol::{
             MutationGuard, OperationId, SessionVersion, WalkAction, WalkActionKind,
@@ -355,6 +361,64 @@ impl WalkClient {
         }
     }
 
+    /// List every persisted LLM debugger session without collapsing retries.
+    pub async fn llm_trace_index(&self) -> Result<LlmTraceIndex, PrepareError> {
+        match self.send_read_only(WalkRequestBody::LlmTraceIndex).await? {
+            WalkResponse::LlmTraceIndex { index } => Ok(index),
+            WalkResponse::Error { code, detail, .. } => Err(PrepareError::DatabaseSetup {
+                phase: "prototype1_state_walk_llm_trace_index",
+                detail: format!("{code}: {detail}"),
+            }),
+            response => Err(PrepareError::DatabaseSetup {
+                phase: "prototype1_state_walk_llm_trace_index",
+                detail: format!(
+                    "walk server returned {:?} instead of an LLM trace index",
+                    response.phase()
+                ),
+            }),
+        }
+    }
+
+    /// Load one exact LLM debugger session and optional published response step.
+    pub async fn llm_trace(
+        &self,
+        coordinate: LlmTraceCoordinate,
+    ) -> Result<LlmTraceSnapshot, PrepareError> {
+        let requested = coordinate.clone();
+        match self
+            .send_read_only(WalkRequestBody::LlmTrace { coordinate })
+            .await?
+        {
+            WalkResponse::LlmTrace { snapshot }
+                if snapshot.coordinate == requested
+                    && snapshot.session.value.session_id == requested.session_id =>
+            {
+                Ok(snapshot)
+            }
+            WalkResponse::LlmTrace { snapshot } => Err(PrepareError::DatabaseSetup {
+                phase: "prototype1_state_walk_llm_trace",
+                detail: format!(
+                    "walk LLM trace response for session '{}' step {:?} disagrees with requested session '{}' step {:?}",
+                    snapshot.coordinate.session_id,
+                    snapshot.coordinate.step,
+                    requested.session_id,
+                    requested.step
+                ),
+            }),
+            WalkResponse::Error { code, detail, .. } => Err(PrepareError::DatabaseSetup {
+                phase: "prototype1_state_walk_llm_trace",
+                detail: format!("{code}: {detail}"),
+            }),
+            response => Err(PrepareError::DatabaseSetup {
+                phase: "prototype1_state_walk_llm_trace",
+                detail: format!(
+                    "walk server returned {:?} instead of an LLM trace observation",
+                    response.phase()
+                ),
+            }),
+        }
+    }
+
     /// Run an immutable query through the walk service against one exact owner snapshot.
     pub async fn query_db(
         &self,
@@ -516,6 +580,8 @@ fn requires_current_protocol(body: &WalkRequestBody) -> bool {
             | WalkRequestBody::ShowDelta { .. }
             | WalkRequestBody::EvaluationTraceIndex
             | WalkRequestBody::EvaluationTrace { .. }
+            | WalkRequestBody::LlmTraceIndex
+            | WalkRequestBody::LlmTrace { .. }
     )
 }
 
@@ -1142,11 +1208,12 @@ name = "walk-config-fixture"
         assert_eq!(rendered, legacy_wire);
 
         let mut invalid_wire = legacy_wire;
-        invalid_wire["epoch"]["protocol_version"] = serde_json::json!(9);
+        invalid_wire["epoch"]["protocol_version"] =
+            serde_json::json!(crate::cli::prototype1_state::walk::epoch::WALK_PROTOCOL_VERSION);
         let invalid: WalkResponse =
             serde_json::from_value(invalid_wire).expect("decode malformed current status");
         let error = validate_response_shape(&invalid)
-            .expect_err("protocol 9 must identify position authority")
+            .expect_err("current protocol must identify position authority")
             .to_string();
 
         assert!(error.contains("status omitted its required position authority"));
@@ -1458,6 +1525,193 @@ name = "walk-config-fixture"
 
     #[cfg(unix)]
     #[tokio::test]
+    async fn typed_llm_index() {
+        let tmp = tempfile::tempdir().expect("temp eval home");
+        let _env = crate::test_support::env_guard_os(vec![(
+            "PLOKE_EVAL_HOME",
+            OsString::from(tmp.path()),
+        )]);
+        let repo_root = tmp.path().join("parent");
+        fs::create_dir_all(&repo_root).expect("create repo root");
+        let repo_root = paths::resolve_repo_root(Some(&repo_root)).expect("resolve repo root");
+        let socket = tmp.path().join("llm-index.sock");
+        let listener = tokio::net::UnixListener::bind(&socket).expect("bind walk endpoint");
+        let epoch = ServerEpoch::capture(&repo_root).expect("capture response epoch");
+        let expected = LlmTraceIndex {
+            version: SessionVersion::empty(),
+            epoch: epoch.clone(),
+            campaign: CampaignId::from("campaign-llm-index"),
+            root: tmp.path().join("tool-loop"),
+            authority: LlmTraceAuthority::ToolLoopCheckpoint,
+            lanes: Vec::new(),
+            issues: Vec::new(),
+        };
+        let response = expected.clone();
+        let server = tokio::spawn(async move {
+            answer_protocol_probe(&listener, epoch).await;
+            let (mut stream, _) = listener.accept().await.expect("accept LLM index request");
+            let request: WalkRequest = ipc::recv(&mut stream)
+                .await
+                .expect("read LLM index request");
+            assert!(matches!(request.body, WalkRequestBody::LlmTraceIndex));
+            ipc::send(&mut stream, &WalkResponse::llm_trace_index(response))
+                .await
+                .expect("write LLM index response");
+        });
+        let client = WalkClient::resolve(Some(&repo_root), Some(&socket)).expect("resolve client");
+
+        let actual = client
+            .llm_trace_index()
+            .await
+            .expect("read typed LLM index");
+
+        assert_eq!(
+            serde_json::to_value(actual).expect("serialize actual index"),
+            serde_json::to_value(expected).expect("serialize expected index")
+        );
+        server.await.expect("LLM index server task");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn typed_llm_trace() {
+        let tmp = tempfile::tempdir().expect("temp eval home");
+        let _env = crate::test_support::env_guard_os(vec![(
+            "PLOKE_EVAL_HOME",
+            OsString::from(tmp.path()),
+        )]);
+        let repo_root = tmp.path().join("parent");
+        fs::create_dir_all(&repo_root).expect("create repo root");
+        let repo_root = paths::resolve_repo_root(Some(&repo_root)).expect("resolve repo root");
+        let socket = tmp.path().join("llm-trace.sock");
+        let listener = tokio::net::UnixListener::bind(&socket).expect("bind walk endpoint");
+        let epoch = ServerEpoch::capture(&repo_root).expect("capture response epoch");
+        let coordinate = LlmTraceCoordinate {
+            session_id: "session-exact".to_string(),
+            step: None,
+        };
+        let expected = test_llm_snapshot(tmp.path(), epoch.clone(), coordinate.clone());
+        let response = expected.clone();
+        let server = tokio::spawn(async move {
+            answer_protocol_probe(&listener, epoch).await;
+            let (mut stream, _) = listener.accept().await.expect("accept LLM trace request");
+            let request: WalkRequest = ipc::recv(&mut stream)
+                .await
+                .expect("read LLM trace request");
+            assert_eq!(
+                request.body,
+                WalkRequestBody::LlmTrace {
+                    coordinate: coordinate.clone()
+                }
+            );
+            ipc::send(&mut stream, &WalkResponse::llm_trace(response))
+                .await
+                .expect("write LLM trace response");
+        });
+        let client = WalkClient::resolve(Some(&repo_root), Some(&socket)).expect("resolve client");
+
+        let actual = client
+            .llm_trace(expected.coordinate.clone())
+            .await
+            .expect("read typed LLM trace");
+
+        assert_eq!(
+            serde_json::to_value(actual).expect("serialize actual trace"),
+            serde_json::to_value(expected).expect("serialize expected trace")
+        );
+        server.await.expect("LLM trace server task");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn typed_llm_trace_rejects_mismatch() {
+        let tmp = tempfile::tempdir().expect("temp eval home");
+        let _env = crate::test_support::env_guard_os(vec![(
+            "PLOKE_EVAL_HOME",
+            OsString::from(tmp.path()),
+        )]);
+        let repo_root = tmp.path().join("parent");
+        fs::create_dir_all(&repo_root).expect("create repo root");
+        let repo_root = paths::resolve_repo_root(Some(&repo_root)).expect("resolve repo root");
+        let socket = tmp.path().join("llm-trace-mismatch.sock");
+        let listener = tokio::net::UnixListener::bind(&socket).expect("bind walk endpoint");
+        let epoch = ServerEpoch::capture(&repo_root).expect("capture response epoch");
+        let requested = LlmTraceCoordinate {
+            session_id: "session-requested".to_string(),
+            step: Some(2),
+        };
+        let returned = LlmTraceCoordinate {
+            session_id: "session-returned".to_string(),
+            step: Some(2),
+        };
+        let response = test_llm_snapshot(tmp.path(), epoch.clone(), returned);
+        let server = tokio::spawn(async move {
+            answer_protocol_probe(&listener, epoch).await;
+            let (mut stream, _) = listener.accept().await.expect("accept LLM trace request");
+            let request: WalkRequest = ipc::recv(&mut stream)
+                .await
+                .expect("read LLM trace request");
+            assert_eq!(
+                request.body,
+                WalkRequestBody::LlmTrace {
+                    coordinate: requested.clone()
+                }
+            );
+            ipc::send(&mut stream, &WalkResponse::llm_trace(response))
+                .await
+                .expect("write mismatched LLM trace response");
+        });
+        let client = WalkClient::resolve(Some(&repo_root), Some(&socket)).expect("resolve client");
+
+        let error = client
+            .llm_trace(LlmTraceCoordinate {
+                session_id: "session-requested".to_string(),
+                step: Some(2),
+            })
+            .await
+            .expect_err("mismatched exact-session response must fail")
+            .to_string();
+
+        assert!(error.contains("disagrees with requested"), "{error}");
+        server.await.expect("LLM trace mismatch server task");
+    }
+
+    fn test_llm_snapshot(
+        root: &Path,
+        epoch: ServerEpoch,
+        coordinate: LlmTraceCoordinate,
+    ) -> LlmTraceSnapshot {
+        let missing_path = root.join("resume.json");
+        LlmTraceSnapshot {
+            coordinate: coordinate.clone(),
+            version: SessionVersion::empty(),
+            epoch,
+            authority: LlmTraceAuthority::ToolLoopCheckpoint,
+            session: TraceEvidence {
+                value: LlmSession {
+                    session_id: coordinate.session_id,
+                    lane_id: "lane-a".to_string(),
+                    workspace: root.join("lane-a"),
+                    model: Some("google/test".to_string()),
+                    status: LlmSessionStatus::Paused,
+                },
+                source: TraceSource {
+                    kind: TraceSourceKind::ToolLoopSession,
+                    path: root.join("session.json"),
+                    content_sha256: "a".repeat(64),
+                },
+            },
+            resume: LlmArtifact::Missing {
+                path: missing_path.clone(),
+            },
+            timeline: Vec::new(),
+            selected: None,
+            outer: LlmArtifact::Missing { path: missing_path },
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
     async fn transition_delta_returns_the_typed_server_projection() {
         let tmp = tempfile::tempdir().expect("temp eval home");
         let _env = crate::test_support::env_guard_os(vec![(
@@ -1545,7 +1799,10 @@ name = "walk-config-fixture"
             .await
             .expect_err("v6 server must be rejected before session-history request");
 
-        assert!(error.to_string().contains("client=9 server=6"));
+        assert!(error.to_string().contains(&format!(
+            "client={} server=6",
+            crate::cli::prototype1_state::walk::epoch::WALK_PROTOCOL_VERSION
+        )));
         server.await.expect("v6 server task");
     }
 
@@ -1613,7 +1870,10 @@ name = "walk-config-fixture"
             .await
             .expect_err("v6 successor response must be rejected");
 
-        assert!(error.to_string().contains("client=9 server=6"));
+        assert!(error.to_string().contains(&format!(
+            "client={} server=6",
+            crate::cli::prototype1_state::walk::epoch::WALK_PROTOCOL_VERSION
+        )));
         predecessor.await.expect("predecessor task");
         successor.await.expect("successor task");
         next.cleanup().expect("cleanup successor endpoint");

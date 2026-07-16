@@ -1,6 +1,6 @@
 use ploke_eval::walk_client::{
-    EvaluationRunCoordinate, EvaluationTraceIndex, EvaluationTraceSnapshot, WalkClient,
-    WalkQuerySnapshot,
+    EvaluationRunCoordinate, EvaluationTraceIndex, EvaluationTraceSnapshot, LlmTraceCoordinate,
+    LlmTraceIndex, LlmTraceSnapshot, WalkClient, WalkQuerySnapshot,
 };
 
 use crate::model::{
@@ -40,6 +40,45 @@ pub(crate) fn trace(
             .map_err(|_| {
                 format!(
                     "evaluation trace timed out after {}s",
+                    TRACE_REQUEST_TIMEOUT.as_secs()
+                )
+            })?
+            .map_err(|error| error.to_string())
+    })
+}
+
+pub(crate) fn llm_index(client: WalkClient) -> Result<LlmTraceIndex, String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| format!("failed to create tokio runtime: {error}"))?;
+    runtime.block_on(async move {
+        tokio::time::timeout(TRACE_REQUEST_TIMEOUT, client.llm_trace_index())
+            .await
+            .map_err(|_| {
+                format!(
+                    "live LLM index timed out after {}s",
+                    TRACE_REQUEST_TIMEOUT.as_secs()
+                )
+            })?
+            .map_err(|error| error.to_string())
+    })
+}
+
+pub(crate) fn llm_trace(
+    client: WalkClient,
+    coordinate: LlmTraceCoordinate,
+) -> Result<LlmTraceSnapshot, String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| format!("failed to create tokio runtime: {error}"))?;
+    runtime.block_on(async move {
+        tokio::time::timeout(TRACE_REQUEST_TIMEOUT, client.llm_trace(coordinate))
+            .await
+            .map_err(|_| {
+                format!(
+                    "live LLM observation timed out after {}s",
                     TRACE_REQUEST_TIMEOUT.as_secs()
                 )
             })?
@@ -87,7 +126,7 @@ pub(crate) fn run_walk_request(kind: WalkRequestKind, client: WalkClient) -> Wal
         match kind {
             WalkRequestKind::Health => {
                 match tokio::time::timeout(WALK_REQUEST_TIMEOUT, client.health()).await {
-                    Ok(Ok(Some(response))) => WalkRequestResult::Response(response),
+                    Ok(Ok(Some(response))) => WalkRequestResult::Response(Box::new(response)),
                     Ok(Ok(None)) => WalkRequestResult::Offline(socket),
                     Ok(Err(error)) => WalkRequestResult::ClientError(error.to_string()),
                     Err(_) => WalkRequestResult::TimedOut,
@@ -101,7 +140,7 @@ pub(crate) fn run_walk_request(kind: WalkRequestKind, client: WalkClient) -> Wal
                     Err(_) => return WalkRequestResult::TimedOut,
                 }
                 match tokio::time::timeout(WALK_REQUEST_TIMEOUT, client.show()).await {
-                    Ok(Ok(response)) => WalkRequestResult::Response(response),
+                    Ok(Ok(response)) => WalkRequestResult::Response(Box::new(response)),
                     Ok(Err(error)) => WalkRequestResult::ClientError(error.to_string()),
                     Err(_) => WalkRequestResult::TimedOut,
                 }

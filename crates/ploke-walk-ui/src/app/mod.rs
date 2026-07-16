@@ -5,7 +5,8 @@ use std::{sync::mpsc, thread};
 use eframe::egui;
 use ploke_eval::walk_client::{
     EvaluationRunCoordinate, EvaluationTraceIndex, EvaluationTraceSnapshot, EvaluationTraceState,
-    PhaseInventory, WalkClient, WalkQuerySnapshot, WalkResponse, WalkRunEntry, WalkSessionSnapshot,
+    LlmTraceCoordinate, LlmTraceIndex, LlmTraceSnapshot, PhaseInventory, WalkClient,
+    WalkQuerySnapshot, WalkResponse, WalkRunEntry, WalkSessionSnapshot,
 };
 
 use crate::client;
@@ -16,6 +17,7 @@ use crate::model::{
 use panels::{
     debug::DebugWindow,
     details::{DetailsAction, DetailsPanel},
+    llm_trace::{LlmTraceAction, LlmTracePanel},
     phase_rail::PhaseRail,
     query::{QueryAction, QueryPanel},
     top_bar::{TopBar, TopBarAction},
@@ -40,12 +42,17 @@ pub(crate) struct WalkUiApp {
     trace_index: Option<EvaluationTraceIndex>,
     selected_trace: Option<usize>,
     trace_snapshot: Option<EvaluationTraceSnapshot>,
+    llm_index: Option<LlmTraceIndex>,
+    selected_llm: Option<String>,
+    llm_snapshot: Option<LlmTraceSnapshot>,
     notice: Option<String>,
     client_generation: u64,
     walk_pending: Option<WalkRequestToken>,
     query_pending: Option<u64>,
     trace_index_pending: Option<TraceRequestToken>,
     trace_pending: Option<(TraceRequestToken, EvaluationRunCoordinate)>,
+    llm_index_pending: Option<TraceRequestToken>,
+    llm_pending: Option<(TraceRequestToken, LlmTraceCoordinate)>,
     trace_serial: u64,
     center_view: CenterView,
     debug_panel: bool,
@@ -74,12 +81,17 @@ impl WalkUiApp {
             trace_index: None,
             selected_trace: None,
             trace_snapshot: None,
+            llm_index: None,
+            selected_llm: None,
+            llm_snapshot: None,
             notice: None,
             client_generation: 0,
             walk_pending: None,
             query_pending: None,
             trace_index_pending: None,
             trace_pending: None,
+            llm_index_pending: None,
+            llm_pending: None,
             trace_serial: 0,
             center_view: CenterView::default(),
             debug_panel: false,
@@ -172,12 +184,17 @@ impl WalkUiApp {
         self.query_pending = None;
         self.trace_index_pending = None;
         self.trace_pending = None;
+        self.llm_index_pending = None;
+        self.llm_pending = None;
         self.response = None;
         self.query_result = None;
         self.selected_row = None;
         self.trace_index = None;
         self.selected_trace = None;
         self.trace_snapshot = None;
+        self.llm_index = None;
+        self.selected_llm = None;
+        self.llm_snapshot = None;
         self.notice = None;
     }
 
@@ -297,7 +314,62 @@ impl WalkUiApp {
             let _ = tx.send(UiEvent::Trace {
                 token,
                 coordinate,
-                result,
+                result: result.map(Box::new),
+            });
+            if let Some(ctx) = repaint {
+                ctx.request_repaint();
+            }
+        });
+    }
+
+    fn refresh_llm_index(&mut self, repaint: Option<egui::Context>) {
+        let Some(client) = self.client.clone() else {
+            self.notice = Some("select a run with an available walk service".to_string());
+            return;
+        };
+        if self.llm_index_pending.is_some() {
+            self.notice = Some("live LLM index request already pending".to_string());
+            return;
+        }
+
+        let token = self.next_trace_token();
+        self.llm_index_pending = Some(token);
+        self.llm_pending = None;
+        self.llm_index = None;
+        self.selected_llm = None;
+        self.llm_snapshot = None;
+        self.notice = Some("live LLM index pending".to_string());
+        let tx = self.event_tx.clone();
+        thread::spawn(move || {
+            let result = client::llm_index(client);
+            let _ = tx.send(UiEvent::LlmIndex { token, result });
+            if let Some(ctx) = repaint {
+                ctx.request_repaint();
+            }
+        });
+    }
+
+    fn load_llm_trace(&mut self, coordinate: LlmTraceCoordinate, repaint: Option<egui::Context>) {
+        let Some(client) = self.client.clone() else {
+            self.notice = Some("select a run with an available walk service".to_string());
+            return;
+        };
+        if self.llm_pending.is_some() {
+            self.notice = Some("live LLM observation already pending".to_string());
+            return;
+        }
+
+        let token = self.next_trace_token();
+        self.llm_snapshot = None;
+        self.llm_pending = Some((token, coordinate.clone()));
+        self.notice = Some(format!("loading LLM session {}", coordinate.session_id));
+        let tx = self.event_tx.clone();
+        thread::spawn(move || {
+            let result = client::llm_trace(client, coordinate.clone());
+            let _ = tx.send(UiEvent::LlmTrace {
+                token,
+                coordinate,
+                result: result.map(Box::new),
             });
             if let Some(ctx) = repaint {
                 ctx.request_repaint();
@@ -315,7 +387,13 @@ impl WalkUiApp {
                     token,
                     coordinate,
                     result,
-                } => self.finish_trace(token, coordinate, result),
+                } => self.finish_trace(token, coordinate, result.map(|snapshot| *snapshot)),
+                UiEvent::LlmIndex { token, result } => self.finish_llm_index(token, result),
+                UiEvent::LlmTrace {
+                    token,
+                    coordinate,
+                    result,
+                } => self.finish_llm_trace(token, coordinate, result.map(|snapshot| *snapshot)),
             }
         }
     }
@@ -328,12 +406,12 @@ impl WalkUiApp {
         let kind = token.kind;
         match result {
             WalkRequestResult::Response(response) => {
-                self.status = match &response {
+                self.status = match response.as_ref() {
                     WalkResponse::Error { detail, .. } => ServiceStatus::Error(detail.clone()),
                     _ => ServiceStatus::Online,
                 };
                 self.notice = Some(format!("{} response received", kind.label()));
-                self.response = Some(response);
+                self.response = Some(*response);
             }
             WalkRequestResult::Offline(socket) => {
                 self.status = ServiceStatus::Offline;
@@ -446,6 +524,90 @@ impl WalkUiApp {
         }
     }
 
+    fn finish_llm_index(
+        &mut self,
+        token: TraceRequestToken,
+        result: Result<LlmTraceIndex, String>,
+    ) {
+        if token.generation != self.client_generation || self.llm_index_pending != Some(token) {
+            return;
+        }
+        self.llm_index_pending = None;
+        match result {
+            Ok(index) => {
+                let selected = self.selected_campaign_id();
+                if selected != Some(index.campaign.as_str()) {
+                    self.notice = Some(format!(
+                        "LLM trace campaign '{}' disagrees with selected campaign '{}'",
+                        index.campaign,
+                        selected.unwrap_or("-")
+                    ));
+                    return;
+                }
+                let sessions = index
+                    .lanes
+                    .iter()
+                    .map(|lane| lane.sessions.len())
+                    .sum::<usize>();
+                self.selected_llm = None;
+                self.llm_snapshot = None;
+                self.notice = Some(format!(
+                    "{} LLM session(s), {} issue(s)",
+                    sessions,
+                    index.issues.len()
+                ));
+                self.llm_index = Some(index);
+            }
+            Err(error) => {
+                self.llm_index = None;
+                self.selected_llm = None;
+                self.llm_snapshot = None;
+                self.notice = Some(error);
+            }
+        }
+    }
+
+    fn finish_llm_trace(
+        &mut self,
+        token: TraceRequestToken,
+        coordinate: LlmTraceCoordinate,
+        result: Result<LlmTraceSnapshot, String>,
+    ) {
+        if token.generation != self.client_generation
+            || !self
+                .llm_pending
+                .as_ref()
+                .is_some_and(|pending| pending.0 == token && pending.1 == coordinate)
+        {
+            return;
+        }
+        self.llm_pending = None;
+        match result {
+            Ok(snapshot)
+                if snapshot.coordinate == coordinate
+                    && snapshot.session.value.session_id == coordinate.session_id =>
+            {
+                self.selected_llm = Some(coordinate.session_id.clone());
+                self.notice = Some(format!(
+                    "LLM session {} observation loaded",
+                    coordinate.session_id
+                ));
+                self.llm_snapshot = Some(snapshot);
+            }
+            Ok(snapshot) => {
+                self.llm_snapshot = None;
+                self.notice = Some(format!(
+                    "LLM trace response '{}' disagrees with requested session '{}'",
+                    snapshot.coordinate.session_id, coordinate.session_id
+                ));
+            }
+            Err(error) => {
+                self.llm_snapshot = None;
+                self.notice = Some(error);
+            }
+        }
+    }
+
     fn next_trace_token(&mut self) -> TraceRequestToken {
         self.trace_serial = self.trace_serial.wrapping_add(1);
         TraceRequestToken {
@@ -513,6 +675,15 @@ impl WalkUiApp {
             self.load_trace(coordinate, Some(ctx.clone()));
         }
     }
+
+    fn handle_llm_action(&mut self, action: LlmTraceAction, ctx: &egui::Context) {
+        if action.refresh {
+            self.refresh_llm_index(Some(ctx.clone()));
+        }
+        if let Some(coordinate) = action.load {
+            self.load_llm_trace(coordinate, Some(ctx.clone()));
+        }
+    }
 }
 
 impl eframe::App for WalkUiApp {
@@ -573,6 +744,7 @@ impl eframe::App for WalkUiApp {
                     CenterView::Trace,
                     "Evaluation Traces",
                 );
+                ui.selectable_value(&mut self.center_view, CenterView::LiveLlm, "Live LLM");
                 ui.selectable_value(&mut self.center_view, CenterView::Query, "Database Query");
             });
             ui.separator();
@@ -587,6 +759,17 @@ impl eframe::App for WalkUiApp {
                     }
                     .show(ui);
                     self.handle_trace_action(action, &ctx);
+                }
+                CenterView::LiveLlm => {
+                    let action = LlmTracePanel {
+                        index: self.llm_index.as_ref(),
+                        selected: &mut self.selected_llm,
+                        snapshot: self.llm_snapshot.as_ref(),
+                        index_pending: self.llm_index_pending.is_some(),
+                        trace_pending: self.llm_pending.is_some(),
+                    }
+                    .show(ui);
+                    self.handle_llm_action(action, &ctx);
                 }
                 CenterView::Query => {
                     let selected_campaign = self.selected_campaign_id().map(str::to_owned);
@@ -687,7 +870,7 @@ mod tests {
         finish_walk_request(
             &mut app,
             WalkRequestKind::Health,
-            WalkRequestResult::Response(response),
+            WalkRequestResult::Response(Box::new(response)),
         );
 
         assert!(matches!(app.status, ServiceStatus::Error(_)));
@@ -736,7 +919,7 @@ mod tests {
         finish_walk_request(
             &mut app,
             WalkRequestKind::Health,
-            WalkRequestResult::Response(status.clone()),
+            WalkRequestResult::Response(Box::new(status.clone())),
         );
         assert!(matches!(
             app.status_snapshot().map(|snapshot| &snapshot.position),
@@ -748,33 +931,33 @@ mod tests {
         finish_walk_request(
             &mut app,
             WalkRequestKind::Show,
-            WalkRequestResult::Response(WalkResponse::Ok {
+            WalkRequestResult::Response(Box::new(WalkResponse::Ok {
                 phase: ploke_eval::walk_client::WalkPhase::R4c,
                 result: ploke_eval::walk_client::WalkOkPayload::Show {
                     report: "same reconstructed phase".to_string(),
                 },
                 epoch: epoch.clone(),
-            }),
+            })),
         );
         assert!(app.status_snapshot().is_none());
 
         finish_walk_request(
             &mut app,
             WalkRequestKind::Show,
-            WalkRequestResult::Response(WalkResponse::Ok {
+            WalkRequestResult::Response(Box::new(WalkResponse::Ok {
                 phase: ploke_eval::walk_client::WalkPhase::R5,
                 result: ploke_eval::walk_client::WalkOkPayload::Show {
                     report: "new phase".to_string(),
                 },
                 epoch: epoch.clone(),
-            }),
+            })),
         );
         assert!(app.status_snapshot().is_none());
 
         finish_walk_request(
             &mut app,
             WalkRequestKind::Health,
-            WalkRequestResult::Response(status),
+            WalkRequestResult::Response(Box::new(status)),
         );
         finish_walk_request(
             &mut app,
@@ -819,7 +1002,7 @@ mod tests {
         finish_walk_request(
             &mut app,
             WalkRequestKind::Health,
-            WalkRequestResult::Response(status.clone()),
+            WalkRequestResult::Response(Box::new(status.clone())),
         );
         assert!(app.status_snapshot().is_some());
 
@@ -839,7 +1022,7 @@ mod tests {
         finish_walk_request(
             &mut app,
             WalkRequestKind::Health,
-            WalkRequestResult::Response(status),
+            WalkRequestResult::Response(Box::new(status)),
         );
         finish_walk_request(
             &mut app,
@@ -953,6 +1136,74 @@ mod tests {
         );
         assert_eq!(app.notice.as_deref(), Some("new request pending"));
         assert!(app.trace_snapshot.is_none());
+    }
+
+    #[test]
+    fn llm_reply_from_previous_run_is_discarded_after_selection() {
+        let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let mut app = test_app();
+        app.socket_input = unique_temp_dir("ploke-walk-ui-llm-generation")
+            .join("walk.sock")
+            .display()
+            .to_string();
+        app.runs = vec![test_run("run-a", &repo_root), test_run("run-b", &repo_root)];
+        app.selected_run = Some(0);
+        app.resolve_selected_client();
+        let coordinate = test_llm_coordinate("session-a", None);
+        let index_token = app.next_trace_token();
+        let trace_token = app.next_trace_token();
+        app.llm_index_pending = Some(index_token);
+        app.llm_pending = Some((trace_token, coordinate.clone()));
+
+        app.select_run(1);
+
+        app.finish_llm_index(index_token, Err("LLM index from run A".to_string()));
+        app.finish_llm_trace(
+            trace_token,
+            coordinate,
+            Err("LLM response from run A".to_string()),
+        );
+        assert_eq!(app.selected_campaign_id(), Some("run-b"));
+        assert!(app.llm_index.is_none());
+        assert!(app.llm_snapshot.is_none());
+        assert!(app.llm_index_pending.is_none());
+        assert!(app.llm_pending.is_none());
+        assert!(
+            app.notice
+                .as_deref()
+                .is_none_or(|notice| !notice.contains("run A"))
+        );
+    }
+
+    #[test]
+    fn same_run_llm_reply_requires_current_serial_and_coordinate() {
+        let mut app = test_app();
+        let coordinate = test_llm_coordinate("session-a", Some(2));
+        let old = app.next_trace_token();
+        app.llm_pending = Some((old, coordinate.clone()));
+
+        app.llm_pending = None;
+        let current = app.next_trace_token();
+        app.llm_pending = Some((current, coordinate.clone()));
+        app.notice = Some("new LLM request pending".to_string());
+
+        app.finish_llm_trace(
+            old,
+            coordinate.clone(),
+            Err("stale same-run response".to_string()),
+        );
+        app.finish_llm_trace(
+            current,
+            test_llm_coordinate("session-b", Some(2)),
+            Err("wrong session response".to_string()),
+        );
+
+        assert_eq!(
+            app.llm_pending.as_ref().map(|pending| pending.0),
+            Some(current)
+        );
+        assert_eq!(app.notice.as_deref(), Some("new LLM request pending"));
+        assert!(app.llm_snapshot.is_none());
     }
 
     #[test]
@@ -1140,12 +1391,17 @@ mod tests {
             trace_index: None,
             selected_trace: None,
             trace_snapshot: None,
+            llm_index: None,
+            selected_llm: None,
+            llm_snapshot: None,
             notice: None,
             client_generation: 0,
             walk_pending: None,
             query_pending: None,
             trace_index_pending: None,
             trace_pending: None,
+            llm_index_pending: None,
+            llm_pending: None,
             trace_serial: 0,
             center_view: CenterView::default(),
             debug_panel: false,
@@ -1162,6 +1418,8 @@ mod tests {
                 && app.query_pending.is_none()
                 && app.trace_index_pending.is_none()
                 && app.trace_pending.is_none()
+                && app.llm_index_pending.is_none()
+                && app.llm_pending.is_none()
             {
                 return;
             }
@@ -1240,6 +1498,13 @@ mod tests {
             "run_id": run
         }))
         .expect("evaluation run coordinate")
+    }
+
+    fn test_llm_coordinate(session: &str, step: Option<usize>) -> LlmTraceCoordinate {
+        LlmTraceCoordinate {
+            session_id: session.to_string(),
+            step,
+        }
     }
 
     fn unique_temp_dir(prefix: &str) -> PathBuf {

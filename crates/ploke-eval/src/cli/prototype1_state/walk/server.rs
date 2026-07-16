@@ -72,7 +72,7 @@ use super::{
     controller::{DeltaRenderStyle, LlmInspector, WalkController},
     endpoint::{self, ServerEndpoint},
     epoch::{ServerEpoch, WALK_PROTOCOL_VERSION},
-    ipc, paths,
+    ipc, llm_trace, paths,
     phase::WalkPhase,
     protocol::{
         MutationGuard, OperationId, SessionVersion, WalkAction, WalkActionKind, WalkAuthority,
@@ -1134,7 +1134,10 @@ async fn handle_stream(server: &WalkServer, mut stream: UnixStream) -> Result<bo
     };
     if matches!(
         &request.body,
-        WalkRequestBody::Health | WalkRequestBody::Show
+        WalkRequestBody::Health
+            | WalkRequestBody::Show
+            | WalkRequestBody::LlmTraceIndex
+            | WalkRequestBody::LlmTrace { .. }
     ) && request.client_protocol != Some(server.epoch.protocol_version)
     {
         let phase = server
@@ -1235,6 +1238,57 @@ impl WalkServer {
                             )
                         },
                         WalkResponse::evaluation_trace,
+                    )
+                }
+                Err(error) => WalkResponse::error(
+                    request_error_code(&error),
+                    error.to_string(),
+                    None,
+                    self.epoch.clone(),
+                ),
+            }),
+            WalkRequestBody::LlmTraceIndex => Ok(match self.durable_version() {
+                Ok(version) => {
+                    let phase = version.phase();
+                    llm_trace::load_index(&self.epoch.repo_root, version, self.epoch.clone())
+                        .map_or_else(
+                            |error| {
+                                WalkResponse::error(
+                                    request_error_code(&error),
+                                    error.to_string(),
+                                    Some(phase),
+                                    self.epoch.clone(),
+                                )
+                            },
+                            WalkResponse::llm_trace_index,
+                        )
+                }
+                Err(error) => WalkResponse::error(
+                    request_error_code(&error),
+                    error.to_string(),
+                    None,
+                    self.epoch.clone(),
+                ),
+            }),
+            WalkRequestBody::LlmTrace { coordinate } => Ok(match self.durable_version() {
+                Ok(version) => {
+                    let phase = version.phase();
+                    llm_trace::load_trace(
+                        &self.epoch.repo_root,
+                        coordinate,
+                        version,
+                        self.epoch.clone(),
+                    )
+                    .map_or_else(
+                        |error| {
+                            WalkResponse::error(
+                                request_error_code(&error),
+                                error.to_string(),
+                                Some(phase),
+                                self.epoch.clone(),
+                            )
+                        },
+                        WalkResponse::llm_trace,
                     )
                 }
                 Err(error) => WalkResponse::error(
@@ -5081,6 +5135,43 @@ mod tests {
 
         let (response, stop) = tokio::time::timeout(
             Duration::from_millis(100),
+            server.handle(walk_request(WalkRequestBody::LlmTraceIndex)),
+        )
+        .await
+        .expect("typed LLM index must not wait for the controller lock");
+        assert!(!stop);
+        let WalkResponse::LlmTraceIndex { index } = response else {
+            panic!("expected typed LLM trace index");
+        };
+        assert_eq!(index.campaign, campaign);
+        assert_eq!(index.lanes.len(), 1);
+        assert_eq!(index.lanes[0].lane_id, "lane-a");
+        assert_eq!(index.lanes[0].sessions.len(), 1);
+        assert!(index.issues.is_empty());
+
+        let coordinate = llm_trace::LlmTraceCoordinate {
+            session_id: "session-live".to_string(),
+            step: None,
+        };
+        let (response, stop) = tokio::time::timeout(
+            Duration::from_millis(100),
+            server.handle(walk_request(WalkRequestBody::LlmTrace { coordinate })),
+        )
+        .await
+        .expect("typed LLM detail must not wait for the controller lock");
+        assert!(!stop);
+        let WalkResponse::LlmTrace { snapshot } = response else {
+            panic!("expected typed LLM trace detail");
+        };
+        assert_eq!(snapshot.session.value.session_id, "session-live");
+        assert!(matches!(
+            snapshot.resume,
+            llm_trace::LlmArtifact::Missing { .. }
+        ));
+        assert!(snapshot.timeline.is_empty());
+
+        let (response, stop) = tokio::time::timeout(
+            Duration::from_millis(100),
             server.handle(walk_request(WalkRequestBody::LlmShow {
                 session_id: Some("session-live".to_string()),
                 lane: None,
@@ -6479,7 +6570,19 @@ mod tests {
                 code: WalkErrorCode::BadRequest,
                 ref detail,
                 ..
-            } if detail.contains("client=missing server=9")
+            } if detail.contains(&format!("client=missing server={WALK_PROTOCOL_VERSION}"))
+        ));
+
+        let missing = request_over_socket(&socket, WalkRequestBody::LlmTraceIndex)
+            .await
+            .expect("missing-protocol typed LLM response");
+        assert!(matches!(
+            missing,
+            WalkResponse::Error {
+                code: WalkErrorCode::BadRequest,
+                ref detail,
+                ..
+            } if detail.contains(&format!("client=missing server={WALK_PROTOCOL_VERSION}"))
         ));
 
         let mut old_epoch = ServerEpoch::capture(repo.path()).expect("capture old client epoch");
@@ -6504,7 +6607,10 @@ mod tests {
                 code: WalkErrorCode::BadRequest,
                 ref detail,
                 ..
-            } if detail.contains("client=8 server=9")
+            } if detail.contains(&format!(
+                "client={} server={WALK_PROTOCOL_VERSION}",
+                WALK_PROTOCOL_VERSION - 1
+            ))
         ));
 
         let current = health_over_socket(&socket)

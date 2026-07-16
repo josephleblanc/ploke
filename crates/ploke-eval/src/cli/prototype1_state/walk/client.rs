@@ -26,7 +26,9 @@ use crate::{
 use super::{
     args,
     epoch::{ServerEpoch, WALK_PROTOCOL_VERSION},
-    ipc, paths,
+    ipc,
+    llm_trace::{LlmArtifact, LlmStepEntry, LlmTraceCoordinate, LlmTraceIssue},
+    paths,
     protocol::{
         MutationGuard, OperationId, SessionVersion, WalkDeltaState, WalkJobResolutionKind,
         WalkJobSnapshot, WalkJobStatus, WalkPosition, WalkRequest, WalkRequestBody, WalkResponse,
@@ -314,6 +316,13 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
                 None => (client.resolved_socket()?, None, None),
             };
             let body = match command.command {
+                Prototype1StateWalkLlmSubcommand::Sessions => WalkRequestBody::LlmTraceIndex,
+                Prototype1StateWalkLlmSubcommand::Observe(observe) => WalkRequestBody::LlmTrace {
+                    coordinate: LlmTraceCoordinate {
+                        session_id: observe.session_id,
+                        step: observe.step,
+                    },
+                },
                 Prototype1StateWalkLlmSubcommand::Lanes(lanes) => WalkRequestBody::LlmLanes {
                     verbose: lanes.verbose,
                 },
@@ -819,6 +828,8 @@ fn retry_safe_read(body: &WalkRequestBody) -> bool {
             | WalkRequestBody::Config
             | WalkRequestBody::EvaluationTraceIndex
             | WalkRequestBody::EvaluationTrace { .. }
+            | WalkRequestBody::LlmTraceIndex
+            | WalkRequestBody::LlmTrace { .. }
             | WalkRequestBody::Show
             | WalkRequestBody::SessionHistory
             | WalkRequestBody::OperationStatus { .. }
@@ -1061,6 +1072,165 @@ fn print_response(
                     println!(
                         "transition_graph_version: {}",
                         query.epoch.transition_graph_version
+                    );
+                }
+            }
+            WalkResponse::LlmTraceIndex { index } => {
+                let sessions = index
+                    .lanes
+                    .iter()
+                    .map(|lane| lane.sessions.len())
+                    .sum::<usize>();
+                println!("walk llm trace index");
+                println!("{}", "-".repeat(40));
+                println!("status: ok");
+                println!("campaign_id: {}", index.campaign);
+                println!("root: {}", index.root.display());
+                println!("lanes: {}", index.lanes.len());
+                println!("sessions: {sessions}");
+                println!("issues: {}", index.issues.len());
+                for (lane_index, lane) in index.lanes.iter().enumerate() {
+                    println!("lane[{lane_index}]: {}", lane.lane_id);
+                    for (session_index, summary) in lane.sessions.iter().enumerate() {
+                        let session = &summary.session.value;
+                        println!(
+                            "  session[{session_index}]: {} | debug={:?} | model={} | workspace={}",
+                            session.session_id,
+                            session.status,
+                            session.model.as_deref().unwrap_or("not recorded"),
+                            session.workspace.display()
+                        );
+                        println!(
+                            "    session_source: {} | sha256={}",
+                            summary.session.source.path.display(),
+                            summary.session.source.content_sha256
+                        );
+                        match &summary.resume {
+                            LlmArtifact::Present { evidence } => println!(
+                                "    resume: present | next_step={} | terminal={} | source={} | sha256={}",
+                                evidence.value.next_step,
+                                evidence.value.terminal,
+                                evidence.source.path.display(),
+                                evidence.source.content_sha256
+                            ),
+                            artifact => print_llm_artifact("    resume", artifact),
+                        }
+                    }
+                }
+                for (issue_index, issue) in index.issues.iter().enumerate() {
+                    match issue {
+                        LlmTraceIssue::Missing { session_id, path } => println!(
+                            "issue[{issue_index}]: session={session_id} | missing | path={}",
+                            path.display()
+                        ),
+                        LlmTraceIssue::Invalid {
+                            session_id,
+                            source,
+                            detail,
+                        } => println!(
+                            "issue[{issue_index}]: session={session_id} | invalid | path={} | sha256={} | detail={detail}",
+                            source.path.display(),
+                            source.content_sha256
+                        ),
+                        LlmTraceIssue::Unreadable {
+                            session_id,
+                            path,
+                            detail,
+                        } => println!(
+                            "issue[{issue_index}]: session={session_id} | unreadable | path={} | detail={detail}",
+                            path.display()
+                        ),
+                    }
+                }
+                if with_version {
+                    println!("protocol_version: {}", index.epoch.protocol_version);
+                    println!(
+                        "transition_graph_version: {}",
+                        index.epoch.transition_graph_version
+                    );
+                }
+            }
+            WalkResponse::LlmTrace { snapshot } => {
+                println!("walk llm trace");
+                println!("{}", "-".repeat(40));
+                println!("status: ok");
+                println!("session: {}", snapshot.coordinate.session_id);
+                println!("lane: {}", snapshot.session.value.lane_id);
+                println!("debug_status: {:?}", snapshot.session.value.status);
+                println!(
+                    "session_source: {} | sha256={}",
+                    snapshot.session.source.path.display(),
+                    snapshot.session.source.content_sha256
+                );
+                match &snapshot.resume {
+                    LlmArtifact::Present { evidence } => println!(
+                        "resume: present | next_step={} | terminal={} | source={} | sha256={}",
+                        evidence.value.next_step,
+                        evidence.value.terminal,
+                        evidence.source.path.display(),
+                        evidence.source.content_sha256
+                    ),
+                    artifact => print_llm_artifact("resume", artifact),
+                }
+                println!("published_steps: {}", snapshot.timeline.len());
+                println!(
+                    "selected_step: {}",
+                    snapshot
+                        .coordinate
+                        .step
+                        .map(|step| step.to_string())
+                        .unwrap_or_else(|| "head".to_string())
+                );
+                for entry in &snapshot.timeline {
+                    match entry {
+                        LlmStepEntry::Present { summary } => println!(
+                            "step[{}]: present | terminal={} | tools={}/{} | source={} | sha256={}",
+                            summary.value.step,
+                            summary.value.terminal,
+                            summary.value.tool_requests,
+                            summary.value.tool_results,
+                            summary.source.path.display(),
+                            summary.source.content_sha256
+                        ),
+                        LlmStepEntry::Invalid {
+                            step,
+                            source,
+                            detail,
+                        } => println!(
+                            "step[{step}]: invalid | source={} | sha256={} | detail={detail}",
+                            source.path.display(),
+                            source.content_sha256
+                        ),
+                        LlmStepEntry::Missing { step, path } => {
+                            println!("step[{step}]: missing | path={}", path.display())
+                        }
+                        LlmStepEntry::Unreadable { step, path, detail } => println!(
+                            "step[{step}]: unreadable | path={} | detail={detail}",
+                            path.display()
+                        ),
+                    }
+                }
+                match &snapshot.selected {
+                    Some(selected) => print_llm_artifact("selected", selected),
+                    None => println!("selected: unavailable | no published checkpoint available"),
+                }
+                match &snapshot.outer {
+                    LlmArtifact::Present { evidence } => {
+                        println!(
+                            "outer: present | source={} | sha256={}",
+                            evidence.source.path.display(),
+                            evidence.source.content_sha256
+                        );
+                        print_llm_artifact("headless", &evidence.value.headless);
+                        print_llm_artifact("agent_turn", &evidence.value.turn);
+                    }
+                    artifact => print_llm_artifact("outer", artifact),
+                }
+                if with_version {
+                    println!("protocol_version: {}", snapshot.epoch.protocol_version);
+                    println!(
+                        "transition_graph_version: {}",
+                        snapshot.epoch.transition_graph_version
                     );
                 }
             }
@@ -1520,6 +1690,30 @@ fn print_multiline(label: &str, value: &str) {
         }
     } else {
         println!("{label}: {value}");
+    }
+}
+
+fn print_llm_artifact<T>(label: &str, artifact: &LlmArtifact<T>) {
+    match artifact {
+        LlmArtifact::Present { evidence } => println!(
+            "{label}: present | source={} | sha256={}",
+            evidence.source.path.display(),
+            evidence.source.content_sha256
+        ),
+        LlmArtifact::Missing { path } => {
+            println!("{label}: missing | path={}", path.display())
+        }
+        LlmArtifact::Unreadable { path, detail } => {
+            println!(
+                "{label}: unreadable | path={} | detail={detail}",
+                path.display()
+            )
+        }
+        LlmArtifact::Invalid { source, detail } => println!(
+            "{label}: invalid | source={} | sha256={} | detail={detail}",
+            source.path.display(),
+            source.content_sha256
+        ),
     }
 }
 

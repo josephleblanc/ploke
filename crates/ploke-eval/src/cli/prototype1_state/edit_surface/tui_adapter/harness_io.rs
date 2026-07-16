@@ -1186,7 +1186,7 @@ pub(crate) mod evidence {
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
     #[serde(tag = "terminal", rename_all = "snake_case")]
-    pub(crate) enum Terminal {
+    pub enum Terminal {
         Applied {
             proposal_id: String,
             #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1248,6 +1248,12 @@ pub(crate) mod evidence {
         TimedOut {
             secs: u64,
         },
+    }
+
+    impl Summary {
+        pub(crate) fn terminal(&self) -> Option<&Terminal> {
+            self.terminal.as_ref()
+        }
     }
 
     impl From<&HeadlessRun> for Summary {

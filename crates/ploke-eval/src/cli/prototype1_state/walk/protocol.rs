@@ -36,6 +36,7 @@ use super::{
     audit::WalkAuditReport,
     config::WalkConfigSnapshot,
     epoch::ServerEpoch,
+    llm_trace::{LlmTraceCoordinate, LlmTraceIndex, LlmTraceSnapshot},
     phase::WalkPhase,
     query::DbQueryResult,
     trace::{EvaluationRunCoordinate, EvaluationTraceIndex, EvaluationTraceSnapshot},
@@ -206,6 +207,10 @@ pub enum WalkRequestBody {
     EvaluationTraceIndex,
     /// Inspect one exact registered evaluation run without reading mutable trace files.
     EvaluationTrace { coordinate: EvaluationRunCoordinate },
+    /// List every persisted LLM debugger session without collapsing retries.
+    LlmTraceIndex,
+    /// Inspect one exact LLM debugger session and optional published step.
+    LlmTrace { coordinate: LlmTraceCoordinate },
     /// Run an immutable expert query against one exact owner-DB snapshot.
     DbQuery {
         /// Campaign id. Defaults to the selected parent identity.
@@ -2064,6 +2069,10 @@ pub enum WalkResponse {
     EvaluationTraceIndex { index: EvaluationTraceIndex },
     /// Lifecycle-sensitive exact evaluation trace observation.
     EvaluationTrace { snapshot: EvaluationTraceSnapshot },
+    /// Typed inventory of mutable LLM debugger evidence.
+    LlmTraceIndex { index: LlmTraceIndex },
+    /// Exact mutable LLM debugger observation.
+    LlmTrace { snapshot: LlmTraceSnapshot },
     /// Structured audit result.
     Audit {
         /// Current phase after the request.
@@ -2193,6 +2202,14 @@ impl WalkResponse {
         Self::EvaluationTrace { snapshot }
     }
 
+    pub(crate) fn llm_trace_index(index: LlmTraceIndex) -> Self {
+        Self::LlmTraceIndex { index }
+    }
+
+    pub(crate) fn llm_trace(snapshot: LlmTraceSnapshot) -> Self {
+        Self::LlmTrace { snapshot }
+    }
+
     /// Build a job response at the job's best known phase.
     pub(crate) fn job(
         phase: WalkPhase,
@@ -2271,6 +2288,8 @@ impl WalkResponse {
             WalkResponse::History { history } => Some(history.version.phase()),
             WalkResponse::EvaluationTraceIndex { index } => Some(index.version.phase()),
             WalkResponse::EvaluationTrace { snapshot } => Some(snapshot.version.phase()),
+            WalkResponse::LlmTraceIndex { index } => Some(index.version.phase()),
+            WalkResponse::LlmTrace { snapshot } => Some(snapshot.version.phase()),
             WalkResponse::Error { phase, .. } => *phase,
         }
     }
@@ -2289,6 +2308,8 @@ impl WalkResponse {
             WalkResponse::History { history } => &history.epoch,
             WalkResponse::EvaluationTraceIndex { index } => &index.epoch,
             WalkResponse::EvaluationTrace { snapshot } => &snapshot.epoch,
+            WalkResponse::LlmTraceIndex { index } => &index.epoch,
+            WalkResponse::LlmTrace { snapshot } => &snapshot.epoch,
         }
     }
 
@@ -2306,6 +2327,8 @@ impl WalkResponse {
                 | WalkResponse::Delta { .. }
                 | WalkResponse::EvaluationTraceIndex { .. }
                 | WalkResponse::EvaluationTrace { .. }
+                | WalkResponse::LlmTraceIndex { .. }
+                | WalkResponse::LlmTrace { .. }
         )
     }
 }

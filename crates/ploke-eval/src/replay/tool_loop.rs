@@ -204,7 +204,7 @@ impl ToolLoopSession {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum ToolLoopStatus {
+pub enum ToolLoopStatus {
     Active,
     Paused,
     Terminal,
@@ -269,7 +269,7 @@ impl ToolLoopStep {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub(crate) enum ToolLoopOutcome {
+pub enum ToolLoopOutcome {
     ToolCalls {
         count: usize,
         finish_reason: String,
@@ -315,18 +315,18 @@ impl ToolLoopOutcome {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
-pub(crate) enum ToolLoopResult {
+pub enum ToolLoopResult {
     Completed(ToolCompletedRecord),
     Failed(ToolFailedRecord),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct WorkspaceState {
+pub struct WorkspaceState {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(crate) dirty_paths: Vec<PathBuf>,
+    pub dirty_paths: Vec<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) error: Option<String>,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -521,6 +521,36 @@ impl ToolLoopStore for FsToolLoopStore {
     }
 }
 
+pub(crate) fn decode_session(path: &Path, body: &[u8]) -> Result<ToolLoopSession, PrepareError> {
+    let mut session: ToolLoopSession =
+        serde_json::from_slice(body).map_err(|source| PrepareError::DatabaseSetup {
+            phase: "read_tool_loop_json",
+            detail: format!("failed to parse '{}': {source}", path.display()),
+        })?;
+    session.validate_read_schema()?;
+    Ok(session)
+}
+
+pub(crate) fn decode_step(path: &Path, body: &[u8]) -> Result<ToolLoopStep, PrepareError> {
+    let step: ToolLoopStep =
+        serde_json::from_slice(body).map_err(|source| PrepareError::DatabaseSetup {
+            phase: "read_tool_loop_json",
+            detail: format!("failed to parse '{}': {source}", path.display()),
+        })?;
+    step.validate_schema()?;
+    Ok(step)
+}
+
+pub(crate) fn decode_resume(path: &Path, body: &[u8]) -> Result<ToolLoopResume, PrepareError> {
+    let resume: ToolLoopResume =
+        serde_json::from_slice(body).map_err(|source| PrepareError::DatabaseSetup {
+            phase: "read_tool_loop_json",
+            detail: format!("failed to parse '{}': {source}", path.display()),
+        })?;
+    resume.validate_schema()?;
+    Ok(resume)
+}
+
 fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), PrepareError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|source| PrepareError::CreateOutputDir {
@@ -529,7 +559,7 @@ fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), PrepareError> 
         })?;
     }
     let body = serde_json::to_vec_pretty(value).map_err(PrepareError::Serialize)?;
-    fs::write(path, body).map_err(|source| PrepareError::WriteManifest {
+    crate::durable_io::write_atomic(path, &body).map_err(|source| PrepareError::WriteManifest {
         path: path.to_path_buf(),
         source,
     })

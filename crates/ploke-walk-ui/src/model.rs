@@ -1,8 +1,8 @@
 use std::{path::PathBuf, time::Duration};
 
 use ploke_eval::walk_client::{
-    EvaluationRunCoordinate, EvaluationTraceIndex, EvaluationTraceSnapshot, WalkQuerySnapshot,
-    WalkResponse,
+    EvaluationRunCoordinate, EvaluationTraceIndex, EvaluationTraceSnapshot, LlmTraceCoordinate,
+    LlmTraceIndex, LlmTraceSnapshot, WalkQuerySnapshot, WalkResponse,
 };
 
 pub(crate) const DEFAULT_QUERY: &str = "::relations";
@@ -16,6 +16,7 @@ pub(crate) const TRACE_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 pub(crate) enum CenterView {
     #[default]
     Trace,
+    LiveLlm,
     Query,
 }
 
@@ -67,12 +68,21 @@ pub(crate) enum UiEvent {
     Trace {
         token: TraceRequestToken,
         coordinate: EvaluationRunCoordinate,
-        result: Result<EvaluationTraceSnapshot, String>,
+        result: Result<Box<EvaluationTraceSnapshot>, String>,
+    },
+    LlmIndex {
+        token: TraceRequestToken,
+        result: Result<LlmTraceIndex, String>,
+    },
+    LlmTrace {
+        token: TraceRequestToken,
+        coordinate: LlmTraceCoordinate,
+        result: Result<Box<LlmTraceSnapshot>, String>,
     },
 }
 
 pub(crate) enum WalkRequestResult {
-    Response(WalkResponse),
+    Response(Box<WalkResponse>),
     Offline(PathBuf),
     TimedOut,
     ClientError(String),

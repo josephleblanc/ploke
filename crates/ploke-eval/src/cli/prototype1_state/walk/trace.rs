@@ -77,6 +77,12 @@ pub enum TraceSourceKind {
     RunRecord,
     ModelResponses,
     ProtocolArtifact,
+    ToolLoopSession,
+    ToolLoopResume,
+    ToolLoopStep,
+    HarnessRequest,
+    HeadlessSummary,
+    LiveTurnSummary,
 }
 
 /// One provider response in physical JSONL order.

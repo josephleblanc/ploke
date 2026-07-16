@@ -572,7 +572,7 @@ mod tests {
 
         assert_eq!(
             certificate.cursor().expect("golden cursor").evidence.0,
-            "b330335294f431f98dbcf9016cdec34334457094b72c7c94416098730ab101a4"
+            "48874bb5a2a5f5a6dd5af28dd3ed1fa24e0eedeb37612957fe224b3bacd7d57a"
         );
     }
 }

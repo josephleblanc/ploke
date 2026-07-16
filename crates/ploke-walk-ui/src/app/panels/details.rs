@@ -286,6 +286,22 @@ fn response_message(response: &WalkResponse) -> String {
                 trace.protocol.len()
             ),
         },
+        WalkResponse::LlmTraceIndex { index } => {
+            let sessions = index
+                .lanes
+                .iter()
+                .map(|lane| lane.sessions.len())
+                .sum::<usize>();
+            format!(
+                "{sessions} live LLM session(s), {} manifest issue(s)",
+                index.issues.len()
+            )
+        }
+        WalkResponse::LlmTrace { snapshot } => format!(
+            "LLM session {}: {} published checkpoint(s)",
+            snapshot.coordinate.session_id,
+            snapshot.timeline.len()
+        ),
         WalkResponse::Error { detail, .. } => detail.clone(),
     }
 }
