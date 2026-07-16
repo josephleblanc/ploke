@@ -1708,7 +1708,11 @@ pub(crate) fn assert_self_field_binding_evidence(
                         && detail.contains(path.as_str())
                         && match expected_state {
                             "resolved" => detail.contains("supports the admitted traversal edge"),
-                            _ => detail.contains("field value flow is proven"),
+                            _ => {
+                                detail.contains("field value flow is proven")
+                                    || (detail.contains("storing parameter")
+                                        && detail.contains("traversal remains targetless"))
+                            }
                         }
                 })
         }),

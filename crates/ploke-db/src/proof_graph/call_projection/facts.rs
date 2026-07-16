@@ -4,6 +4,11 @@ use crate::call_graph::{CallContextRow, CallSiteKind, CallStatusKind, CallTarget
 
 use super::PROOF_FACT_SCHEMA_VERSION;
 
+pub(super) struct SelfFieldSource {
+    pub(super) constructor: uuid::Uuid,
+    pub(super) parameter: String,
+}
+
 pub(super) fn call_site_fact(
     row: &CallContextRow,
     build_domain_id: &str,
@@ -100,10 +105,25 @@ pub(super) fn binding_evidence_fact(
 pub(super) fn self_field_binding_evidence_fact(
     row: &CallContextRow,
     field_path: &[String],
+    source: Option<SelfFieldSource>,
     build_domain_id: &str,
     source_file: &str,
 ) -> Value {
     let path = field_path.join(".");
+    let blocked_detail = source.map_or_else(
+        || {
+            format!(
+                "{} calls callable self-field {path}; binding evidence records the fail-closed boundary until field value flow is proven",
+                row.site.owner_id
+            )
+        },
+        |source| {
+            format!(
+                "{} calls callable self-field {path}; binding evidence records constructor {} storing parameter {} into the field, but traversal remains targetless until callable value flow from callers is proven",
+                row.site.owner_id, source.constructor, source.parameter
+            )
+        },
+    );
     serde_json::json!({
         "fact_kind": "binding_evidence",
         "schema_version": PROOF_FACT_SCHEMA_VERSION,
@@ -124,10 +144,7 @@ pub(super) fn self_field_binding_evidence_fact(
                 "{} calls callable self-field {path}; binding evidence records the finite candidate set without admitting a traversal edge until field value flow is proven",
                 row.site.owner_id
             ),
-            _ => format!(
-                "{} calls callable self-field {path}; binding evidence records the fail-closed boundary until field value flow is proven",
-                row.site.owner_id
-            ),
+            _ => blocked_detail,
         },
         "source_span": {
             "file": source_file,

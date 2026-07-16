@@ -609,6 +609,27 @@ fn axum_tap_io_accept_exposes_self_field_parameter_flow() -> Result<(), DbError>
     assert_eq!(flow.parameter_binding.kind, "ParameterBinding");
     assert_eq!(flow.parameter_binding.name, "tap_fn");
     assert_eq!(flow.parameter_binding.source_kind, "Parameter");
+    assert_self_field_evidence(
+        &db,
+        accept,
+        flow.site.id,
+        &["self", "tap_fn"],
+        "blocked",
+        "axum/src/serve/listener.rs:236 self.tap_fn constructor-parameter frontier",
+    )?;
+    let proof_rows = db.proof_binding_evidence_for_call_site(&flow.site.id.to_string())?;
+    let proof = proof_rows
+        .iter()
+        .find(|row| row.binding_evidence_kind == "self_field_callable")
+        .unwrap_or_else(|| {
+            panic!("TapIo::accept should project self-field binding evidence: {proof_rows:#?}")
+        });
+    assert!(
+        proof.detail.contains("storing parameter tap_fn")
+            && proof.detail.contains(&tap_io.to_string())
+            && proof.detail.contains("traversal remains targetless"),
+        "TapIo::accept proof detail should name the constructor-parameter frontier without admitting traversal: {proof:#?}"
+    );
 
     let router_into_route = method_id_by_name_and_body_substring(
         &db,
@@ -661,7 +682,11 @@ fn assert_self_field_evidence(
         row.detail.contains("callable self-field")
             && match expected_state {
                 "resolved" => row.detail.contains("supports the admitted traversal edge"),
-                _ => row.detail.contains("field value flow is proven"),
+                _ => {
+                    row.detail.contains("field value flow is proven")
+                        || (row.detail.contains("storing parameter")
+                            && row.detail.contains("traversal remains targetless"))
+                }
             },
         "{label} should explain why the self-field call remains proof-only: {row:#?}"
     );

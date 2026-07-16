@@ -18,7 +18,7 @@ mod source;
 
 use context::validate_call_context;
 use facts::{
-    binding_evidence_fact, call_edge_facts, call_resolution_fact, call_site_fact,
+    SelfFieldSource, binding_evidence_fact, call_edge_facts, call_resolution_fact, call_site_fact,
     self_field_binding_evidence_fact,
 };
 
@@ -34,9 +34,11 @@ fn append_call_proof_facts(
     values.extend(call_edge_facts(&row));
     values.push(call_resolution_fact(&row));
     if let Some(path) = self_field_path(&row) {
+        let source = self_field_source(db, &row)?;
         values.push(self_field_binding_evidence_fact(
             &row,
             path,
+            source,
             build_domain_id,
             source_file,
         ));
@@ -71,6 +73,20 @@ fn self_field_path(row: &CallContextRow) -> Option<&[String]> {
 
     let path = row.site.path.as_deref()?;
     (path.len() > 1 && path.first().is_some_and(|segment| segment == "self")).then_some(path)
+}
+
+fn self_field_source(
+    db: &Database,
+    row: &CallContextRow,
+) -> Result<Option<SelfFieldSource>, DbError> {
+    Ok(db
+        .self_field_parameter_flows_for_owner(row.site.owner_id)?
+        .into_iter()
+        .find(|flow| flow.site.id == row.site.id)
+        .map(|flow| SelfFieldSource {
+            constructor: flow.constructor_id,
+            parameter: flow.parameter_binding.name,
+        }))
 }
 
 struct CalleeEvidence {
