@@ -3547,6 +3547,64 @@ pub(crate) fn assert_method_argument_parameter_local_binding_payload(
     );
 }
 
+pub(crate) fn assert_result_callback_binding_payload(
+    bindings: &[serde_json::Value],
+    edges: &[serde_json::Value],
+    owner: Uuid,
+    target: Uuid,
+    label: &str,
+    tool: &str,
+) {
+    let rows = bindings
+        .iter()
+        .filter_map(|binding| serde_json::from_value::<LocalBindingInfo>(binding.clone()).ok())
+        .collect::<Vec<_>>();
+    let parameter = rows
+        .iter()
+        .find(|binding| {
+            binding.owner_id == owner
+                && binding.kind == "ParameterBinding"
+                && binding.name == "f"
+                && binding.source_kind == "Parameter"
+        })
+        .unwrap_or_else(|| {
+            panic!("{tool} should expose result callback parameter `f` for {label}: {bindings:#?}")
+        });
+
+    let edge_rows = edges
+        .iter()
+        .filter_map(|edge| serde_json::from_value::<LocalBindingEdgeInfo>(edge.clone()).ok())
+        .collect::<Vec<_>>();
+    assert!(
+        edge_rows.iter().any(|edge| {
+            edge.source_id == owner
+                && edge.target_id == parameter.id
+                && edge.relation == LocalBindingRelationKind::OwnerContainsBinding
+                && edge.target_kind == "LocalBinding"
+        }),
+        "{tool} should expose OwnerContainsBinding for {label}: {edges:#?}"
+    );
+    assert!(
+        edge_rows.iter().any(|edge| {
+            edge.target_id == parameter.id
+                && edge.relation == LocalBindingRelationKind::ArgumentSuppliesParameter
+                && edge.source_kind == "Path"
+                && edge.target_kind == "LocalBinding"
+        }),
+        "{tool} should expose path ArgumentSuppliesParameter for {label}: {edges:#?}"
+    );
+    assert!(
+        edge_rows.iter().any(|edge| {
+            edge.source_id == parameter.id
+                && edge.target_id == target
+                && edge.relation == LocalBindingRelationKind::BindingSourceFunction
+                && edge.source_kind == "LocalBinding"
+                && edge.target_kind == "Function"
+        }),
+        "{tool} should expose result callback BindingSourceFunction for {label}: {edges:#?}"
+    );
+}
+
 pub(crate) fn assert_aliased_parameter_local_binding_payload(
     bindings: &[serde_json::Value],
     edges: &[serde_json::Value],

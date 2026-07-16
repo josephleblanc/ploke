@@ -898,6 +898,17 @@ What remains:
   It explains an already-admitted exact callback edge through the existing
   local-binding carrier.
 
+Downstream payload follow-up, 2026-07-16:
+
+- Exact RAG now asserts the same result-callback parameter carrier through
+  `exact_local_bindings_for_owner` and `exact_local_binding_edges_for_owner`,
+  including the caller path-call `ArgumentSuppliesParameter` source and the
+  parameter-to-`local_result_target` `BindingSourceFunction` edge.
+- Exact `code_item_lookup` and `code_item_edges` now assert that the serialized
+  TUI/tool payloads expose the callback parameter binding, the path argument
+  supply edge, and the source-function edge alongside the already-checked
+  resolved `MethodCallbackFunction` call row and proof context.
+
 ## 2026-07-15 Exact Local-Binding Downstream Payload Checkpoint
 
 Implemented slice: exact RAG and exact TUI/tool payload propagation for

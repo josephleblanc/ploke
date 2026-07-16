@@ -349,3 +349,105 @@ async fn local_bindings_exact_expose_method_argument_parameter_evidence() -> Res
 
     Ok(())
 }
+
+#[tokio::test]
+async fn local_bindings_exact_expose_result_callback_source() -> Result<(), Error> {
+    init_tracing_once();
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let rag = init_test_rag_mock(Arc::clone(&db));
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:2301-2310:
+    // private `call_single_result_callback(f)` calls
+    // `Ok::<i32, ()>(1).and_then(f)`, and its only local caller supplies
+    // `local_result_target`. Exact RAG should expose the durable parameter
+    // binding proof behind that resolved callback edge.
+    let owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_single_result_callback"),
+    )?;
+    let caller = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_single_result_callback_with_local_target"),
+    )?;
+    let target = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "local_result_target"),
+    )?;
+    let caller_context = db.call_context_for_owner(caller)?;
+    let helper_call = caller_context
+        .iter()
+        .find(|row| {
+            row.site.kind == ploke_db::CallSiteKind::Path
+                && row.site.path.as_deref().is_some_and(|path| {
+                    path.iter()
+                        .map(String::as_str)
+                        .eq(["call_single_result_callback"])
+                })
+        })
+        .unwrap_or_else(|| {
+            panic!("expected caller path callsite supplying callback: {caller_context:#?}")
+        });
+
+    let bindings = rag
+        .exact_local_bindings_for_owner(owner)?
+        .expect("call context is enabled");
+    let parameter = bindings
+        .iter()
+        .find(|binding| {
+            binding.owner_id == owner
+                && binding.kind == "ParameterBinding"
+                && binding.name == "f"
+                && binding.source_kind == "Parameter"
+        })
+        .unwrap_or_else(|| {
+            panic!("RAG should expose result callback parameter `f`: {bindings:#?}")
+        });
+
+    let edges = rag
+        .exact_local_binding_edges_for_owner(owner)?
+        .expect("call context is enabled");
+    let has_edge = |source_id, target_id, relation, source_kind: Option<&str>, target_kind| {
+        edges.iter().any(|edge| {
+            edge.source_id == source_id
+                && edge.target_id == target_id
+                && edge.relation == relation
+                && source_kind.is_none_or(|kind| edge.source_kind == kind)
+                && edge.target_kind == target_kind
+        })
+    };
+
+    assert!(
+        has_edge(
+            owner,
+            parameter.id,
+            LocalBindingRelationKind::OwnerContainsBinding,
+            None,
+            "LocalBinding",
+        ),
+        "RAG should expose result callback parameter containment: {edges:#?}"
+    );
+    assert!(
+        has_edge(
+            helper_call.site.id,
+            parameter.id,
+            LocalBindingRelationKind::ArgumentSuppliesParameter,
+            Some("Path"),
+            "LocalBinding",
+        ),
+        "RAG should expose caller path argument to callback parameter proof: {edges:#?}"
+    );
+    assert!(
+        has_edge(
+            parameter.id,
+            target,
+            LocalBindingRelationKind::BindingSourceFunction,
+            Some("LocalBinding"),
+            "Function",
+        ),
+        "RAG should expose callback parameter-to-function source proof: {edges:#?}"
+    );
+
+    Ok(())
+}

@@ -44,12 +44,13 @@ use crate::call_graph_tool_support::{
     assert_path_blocker_proof, assert_path_context, assert_path_resolution_proof,
     assert_process_invariant_findings, assert_resolved_callable_param_proof,
     assert_resolved_dynamic_context, assert_resolved_method_target_context,
-    assert_resolved_path_context, assert_run_ui_tests_incoming_context,
-    assert_runtime_dispatch_blocker, assert_self_field_receiver_context,
-    assert_self_field_receiver_proof, assert_serde_json_summary_proof,
-    assert_serde_json_surface_measure_effect, assert_tap_io_constructor_local_binding_payload,
-    assert_target_proof, assert_task_spawn_effects, assert_task_spawn_policy_violation,
-    assert_two_hop_call_path, ui_field,
+    assert_resolved_path_context, assert_result_callback_binding_payload,
+    assert_run_ui_tests_incoming_context, assert_runtime_dispatch_blocker,
+    assert_self_field_receiver_context, assert_self_field_receiver_proof,
+    assert_serde_json_summary_proof, assert_serde_json_surface_measure_effect,
+    assert_tap_io_constructor_local_binding_payload, assert_target_proof,
+    assert_task_spawn_effects, assert_task_spawn_policy_violation, assert_two_hop_call_path,
+    ui_field,
 };
 
 #[tokio::test]
@@ -1652,6 +1653,14 @@ async fn code_item_lookup_returns_result_method_callback_function_target() {
         .get("proof_context")
         .and_then(serde_json::Value::as_array)
         .expect("proof_context array");
+    let bindings = payload
+        .get("local_bindings")
+        .and_then(serde_json::Value::as_array)
+        .expect("local_bindings array");
+    let edges = payload
+        .get("local_binding_edges")
+        .and_then(serde_json::Value::as_array)
+        .expect("local_binding_edges array");
 
     let site_id = assert_resolved_method_target_context(
         call_context,
@@ -1671,6 +1680,14 @@ async fn code_item_lookup_returns_result_method_callback_function_target() {
         fixture.build_domain,
         "code_item_lookup",
     );
+    assert_result_callback_binding_payload(
+        bindings,
+        edges,
+        fixture.owner,
+        fixture.target,
+        "call_single_result_callback",
+        "code_item_lookup",
+    );
 
     let ui = result.ui_payload.as_ref().expect("ui payload");
     assert!(
@@ -1684,6 +1701,8 @@ async fn code_item_lookup_returns_result_method_callback_function_target() {
         ui_field(ui, "proof_context"),
         proof_context.len().to_string()
     );
+    assert_eq!(ui_field(ui, "local_bindings"), bindings.len().to_string());
+    assert_eq!(ui_field(ui, "local_binding_edges"), edges.len().to_string());
 }
 
 async fn assert_callable_param_lookup(fixture: CallableParamResolvedFixture, label: &str) {
