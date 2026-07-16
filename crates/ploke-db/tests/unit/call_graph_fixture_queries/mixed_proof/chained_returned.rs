@@ -37,7 +37,18 @@ fn fixture_projection_stores_real_chained_returned_function_proof_facts() -> Res
     );
 
     let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
-    assert_eq!(count, 6);
+    assert_eq!(count, 7);
+    let binding_evidence = db.proof_binding_evidence_for_call_site(&dynamic_site.to_string())?;
+    assert_eq!(
+        binding_evidence.len(),
+        1,
+        "chained returned-function dynamic row should project returned-callable binding evidence: {binding_evidence:#?}"
+    );
+    assert_eq!(
+        binding_evidence[0].binding_evidence_kind,
+        "returned_callable"
+    );
+    assert_eq!(binding_evidence[0].resolution_state, "resolved");
 
     assert_owner_proof_edges(
         &db,

@@ -1,6 +1,6 @@
 use super::super::*;
 
-const METHOD_TUPLE_RETURN_PATTERN_LOCAL_INIT_CALL_SPAN: (usize, usize) = (40981, 40999);
+const METHOD_TUPLE_RETURN_PATTERN_LOCAL_INIT_CALL_SPAN: (usize, usize) = (41242, 41260);
 
 #[test]
 fn fixture_projection_stores_real_local_receiver_method_call_proof_facts() -> Result<(), DbError> {

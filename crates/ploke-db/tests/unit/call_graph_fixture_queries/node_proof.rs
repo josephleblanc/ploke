@@ -20,7 +20,7 @@ fn fixture_node_proof_projection_projects_owner_node_rows() -> Result<(), DbErro
     let count = db.project_call_proof_facts_for_node(owner, "bd:fixture-call-graph")?;
     assert_eq!(
         count,
-        expected_node_proof_count(&context),
+        expected_node_proof_count(&db, &context)?,
         "owner-node proof count"
     );
 
@@ -50,7 +50,7 @@ fn fixture_node_proof_projection_projects_function_target_rows() -> Result<(), D
     let count = db.project_call_proof_facts_for_node(target, "bd:fixture-call-graph")?;
     assert_eq!(
         count,
-        expected_node_proof_count(&context),
+        expected_node_proof_count(&db, &context)?,
         "function target-node proof count"
     );
 
@@ -84,7 +84,7 @@ fn fixture_node_proof_projection_projects_constructor_target_rows() -> Result<()
         let count = db.project_call_proof_facts_for_node(resolved.target, case.domain)?;
         assert_eq!(
             count,
-            expected_node_proof_count(&context),
+            expected_node_proof_count(&db, &context)?,
             "{} constructor target-node proof count",
             case.label
         );
@@ -106,19 +106,47 @@ fn fixture_node_proof_projection_projects_constructor_target_rows() -> Result<()
     Ok(())
 }
 
-fn expected_node_proof_count(context: &CallNodeContext) -> usize {
+fn expected_node_proof_count(db: &Database, context: &CallNodeContext) -> Result<usize, DbError> {
     let mut seen = HashSet::new();
-    context
+    let mut count = 0;
+    for row in context
         .outgoing
         .iter()
         .chain(context.incoming.iter())
         .filter(|row| seen.insert(row.site.id))
-        .map(|row| {
-            if row.status.status == CallStatusKind::Resolved {
-                2 + row.targets.len()
-            } else {
-                2
-            }
-        })
-        .sum()
+    {
+        if row.status.status == CallStatusKind::Resolved {
+            count += 2 + row.targets.len();
+        } else {
+            count += 2;
+        }
+
+        let site = row.site.id.to_string();
+        let owner = row.site.owner_id.to_string();
+        let state = expected_resolution_state(row.status.status);
+        let binding_evidence = db.proof_binding_evidence_for_call_site(&site)?;
+        for evidence in &binding_evidence {
+            assert!(
+                matches!(
+                    evidence.binding_evidence_kind.as_str(),
+                    "returned_callable" | "self_field_callable"
+                ),
+                "node proof count helper should only account for supported binding evidence kinds: {evidence:#?}"
+            );
+            assert_eq!(evidence.call_site_id, site);
+            assert_eq!(evidence.caller_def_id, owner);
+            assert_eq!(evidence.resolution_state, state);
+        }
+        count += binding_evidence.len();
+    }
+    Ok(count)
+}
+
+fn expected_resolution_state(status: CallStatusKind) -> &'static str {
+    match status {
+        CallStatusKind::Resolved => "resolved",
+        CallStatusKind::Unresolved => "unresolved",
+        CallStatusKind::Ambiguous => "ambiguous",
+        CallStatusKind::External | CallStatusKind::Unsupported => "blocked",
+    }
 }
