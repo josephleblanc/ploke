@@ -1,5 +1,5 @@
 use super::*;
-use ploke_core::rag_types::LocalBindingRelationKind;
+use ploke_core::rag_types::{CallSiteKind, LocalBindingRelationKind};
 
 #[tokio::test]
 async fn local_bindings_exact_expose_axum_tap_io_constructor_frontier() -> Result<(), Error> {
@@ -85,6 +85,120 @@ async fn local_bindings_exact_expose_axum_tap_io_constructor_frontier() -> Resul
                 && edge.target_kind == "LocalBinding"
         }),
         "RAG should expose return.tap_fn projection-to-return proof: {edges:#?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn local_bindings_exact_expose_axum_handle_error_returned_future_producer()
+-> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    // Source oracle:
+    //   axum/src/error_handling/mod.rs:140 creates
+    //   `let future = Box::pin(async move { ... })`.
+    //   axum/src/error_handling/mod.rs:147 returns
+    //   `future::HandleErrorFuture { future }`.
+    //   axum/src/error_handling/mod.rs:251 later calls
+    //   `self.project().future.poll(cx)`.
+    //
+    // Contract: exact RAG exposes the producer-side returned-field binding
+    // without promoting the later dyn Future::poll dispatch into a local edge.
+    let owner = method_id_by_name_and_body_substring(
+        &db,
+        "call",
+        "Err(err) => Ok(f(err).await.into_response())",
+    )?;
+    let context = rag.exact_call_context(owner)?;
+    let box_pin = context
+        .iter()
+        .find(|row| {
+            row.owner_id == owner
+                && row.kind == CallSiteKind::Path
+                && row
+                    .path
+                    .as_deref()
+                    .is_some_and(|path| path.iter().map(String::as_str).eq(["Box", "pin"]))
+        })
+        .unwrap_or_else(|| {
+            panic!("RAG should expose HandleError::call Box::pin site: {context:#?}")
+        });
+
+    let bindings = rag
+        .exact_local_bindings_for_owner(owner)?
+        .expect("call context is enabled");
+    let return_binding = bindings
+        .iter()
+        .find(|binding| {
+            binding.owner_id == owner
+                && binding.kind == "ReturnExpression"
+                && binding.name == "return"
+                && binding.source_kind == "Constructed"
+                && binding.source_path.as_deref().is_some_and(|path| {
+                    path.iter()
+                        .map(String::as_str)
+                        .eq(["future", "HandleErrorFuture"])
+                })
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "RAG should expose HandleError::call constructed returned future binding: {bindings:#?}"
+            )
+        });
+    let future_field = bindings
+        .iter()
+        .find(|binding| {
+            binding.owner_id == owner
+                && binding.kind == "LetBinding"
+                && binding.name == "return.future"
+                && binding.source_kind == "PathCallResult"
+                && binding.source_id == Some(box_pin.site_id)
+                && binding.source_call_kind.as_deref() == Some("Path")
+                && binding
+                    .source_path
+                    .as_deref()
+                    .is_some_and(|path| path.iter().map(String::as_str).eq(["Box", "pin"]))
+                && binding.callee_kind.is_none()
+                && binding.callee_path.is_none()
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "RAG should expose HandleError::call return.future sourced by Box::pin: {bindings:#?}"
+            )
+        });
+
+    let edges = rag
+        .exact_local_binding_edges_for_owner(owner)?
+        .expect("call context is enabled");
+    assert!(
+        edges.iter().any(|edge| {
+            edge.source_id == owner
+                && edge.target_id == return_binding.id
+                && edge.relation == LocalBindingRelationKind::OwnerContainsBinding
+                && edge.target_kind == "LocalBinding"
+        }),
+        "RAG should expose owner-to-return binding containment: {edges:#?}"
+    );
+    assert!(
+        edges.iter().any(|edge| {
+            edge.source_id == owner
+                && edge.target_id == future_field.id
+                && edge.relation == LocalBindingRelationKind::OwnerContainsBinding
+                && edge.target_kind == "LocalBinding"
+        }),
+        "RAG should expose owner-to-return.future binding containment: {edges:#?}"
+    );
+    assert!(
+        edges.iter().any(|edge| {
+            edge.source_id == future_field.id
+                && edge.target_id == box_pin.site_id
+                && edge.relation == LocalBindingRelationKind::BindingSourceCallResult
+                && edge.source_kind == "LocalBinding"
+                && edge.target_kind == "Path"
+        }),
+        "RAG should expose return.future-to-Box::pin source proof: {edges:#?}"
     );
 
     Ok(())
