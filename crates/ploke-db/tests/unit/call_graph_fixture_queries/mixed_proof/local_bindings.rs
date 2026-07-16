@@ -711,6 +711,77 @@ fn fixture_projection_stores_aliased_field_parameter_edges() -> Result<(), DbErr
 }
 
 #[test]
+fn fixture_projection_stores_result_callback_parameter_source_edge() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let owner = function_id_by_name(&db, "call_single_result_callback")?;
+    let caller = function_id_by_name(&db, "call_single_result_callback_with_local_target")?;
+    let target = function_id_by_name(&db, "local_result_target")?;
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:2301-2310:
+    // private `call_single_result_callback(f)` calls
+    // `Ok::<i32, ()>(1).and_then(f)`, and its only local caller supplies
+    // `local_result_target`. The method-callback call edge is already exact;
+    // this test pins the durable parameter binding proof behind that edge.
+    let context = db.call_context_for_owner(owner)?;
+    let row = row_by_method_receiver(
+        &context,
+        "and_then",
+        &CallReceiver::PathCallResult {
+            path: path(&["Ok"]),
+        },
+    );
+    assert_resolved_target(
+        row,
+        target,
+        CallRelationKind::MethodCallbackFunction,
+        CallSiteKind::Method,
+        CallTargetKind::Function,
+    );
+
+    let caller_context = db.call_context_for_owner(caller)?;
+    let helper_call = row_by_path(&caller_context, &["call_single_result_callback"]);
+    assert_resolved_target(
+        helper_call,
+        owner,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
+
+    let bindings = db.local_bindings_for_owner(owner)?;
+    let parameter = bindings
+        .iter()
+        .find(|binding| binding.kind == "ParameterBinding" && binding.name == "f")
+        .unwrap_or_else(|| {
+            panic!("result callback should persist parameter binding f: {bindings:#?}")
+        });
+    assert_eq!(parameter.source_kind, "Parameter");
+
+    let edges = db.local_binding_edges_for_owner(owner)?;
+    assert!(
+        edges.iter().any(|edge| edge.relation
+            == LocalBindingRelationKind::ArgumentSuppliesParameter
+            && edge.source_id == helper_call.site.id
+            && edge.source_kind == "Path"
+            && edge.target_id == parameter.id
+            && edge.target_kind == "LocalBinding"),
+        "missing helper callsite to callback parameter edge: {edges:#?}"
+    );
+    assert!(
+        edges.iter().any(
+            |edge| edge.relation == LocalBindingRelationKind::BindingSourceFunction
+                && edge.source_id == parameter.id
+                && edge.source_kind == "LocalBinding"
+                && edge.target_id == target
+                && edge.target_kind == "Function"
+        ),
+        "missing callback parameter to source-function edge: {edges:#?}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn fixture_projection_stores_let_closure_binding_edges() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let owner = function_id_by_name(&db, "call_shadowed_local_target_binding")?;

@@ -224,36 +224,54 @@ pub(super) fn derive_value_binding_function_relations(
 ) -> Vec<LocalBindingRelation> {
     let bindings_by_name = local_bindings_by_owner_name(graph);
     let calls = path_calls(graph);
+    let method_calls = method_calls(graph);
     let mut relations = Vec::new();
 
     for relation in &report.relations {
-        let CallRelation::Function { source, target } = relation else {
-            continue;
-        };
-        let Some(call) = calls.get(source) else {
-            continue;
-        };
-        match &call.callee {
-            PathCallCallee::ValueBinding { path } => push_binding_source_function(
-                &mut relations,
-                &bindings_by_name,
-                call.owner,
-                path,
-                *target,
-            ),
-            PathCallCallee::AliasedValueBinding { path, source_path } => {
+        match relation {
+            CallRelation::Function { source, target } => {
+                let Some(call) = calls.get(source) else {
+                    continue;
+                };
+                match &call.callee {
+                    PathCallCallee::ValueBinding { path } => push_binding_source_function(
+                        &mut relations,
+                        &bindings_by_name,
+                        call.owner,
+                        path,
+                        *target,
+                    ),
+                    PathCallCallee::AliasedValueBinding { path, source_path } => {
+                        push_binding_source_function(
+                            &mut relations,
+                            &bindings_by_name,
+                            call.owner,
+                            path,
+                            *target,
+                        );
+                        push_binding_source_function(
+                            &mut relations,
+                            &bindings_by_name,
+                            call.owner,
+                            source_path,
+                            *target,
+                        );
+                    }
+                    _ => {}
+                }
+            }
+            CallRelation::MethodCallbackFunction { source, target } => {
+                let Some(call) = method_calls.get(source) else {
+                    continue;
+                };
+                let [CallArgument::Path { path }] = call.arguments.as_slice() else {
+                    continue;
+                };
                 push_binding_source_function(
                     &mut relations,
                     &bindings_by_name,
                     call.owner,
                     path,
-                    *target,
-                );
-                push_binding_source_function(
-                    &mut relations,
-                    &bindings_by_name,
-                    call.owner,
-                    source_path,
                     *target,
                 );
             }

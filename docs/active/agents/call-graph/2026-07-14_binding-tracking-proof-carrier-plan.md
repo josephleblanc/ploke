@@ -871,6 +871,33 @@ What remains:
   proof for already-resolved private method calls with exact callable argument
   evidence.
 
+## 2026-07-16 Method Callback Parameter Source Checkpoint
+
+Implemented slice: durable `BindingSourceFunction` proof for exact method
+callback arguments.
+
+What is complete:
+
+- The fixture-backed source oracle is
+  `tests/fixture_crates/fixture_call_graph/src/lib.rs:2301-2310`, where
+  private `call_single_result_callback(f)` calls
+  `Ok::<i32, ()>(1).and_then(f)` and its only local caller supplies
+  `local_result_target`.
+- Transform projection now derives a `BindingSourceFunction` edge from an
+  existing resolved `MethodCallbackFunction` relation when the method call has
+  exactly one path argument naming a unique owner-local parameter binding.
+- DB coverage asserts the existing method-callback call edge, the caller's
+  `ArgumentSuppliesParameter` edge to parameter `f`, and the new
+  parameter-to-`local_result_target` `BindingSourceFunction` edge.
+- Active fixture regeneration and registry-backed backup verification passed.
+
+What remains:
+
+- This is not a general method-callback model, not arbitrary callback
+  argument value-flow, not trait-object dispatch, and not a new traversal edge.
+  It explains an already-admitted exact callback edge through the existing
+  local-binding carrier.
+
 ## 2026-07-15 Exact Local-Binding Downstream Payload Checkpoint
 
 Implemented slice: exact RAG and exact TUI/tool payload propagation for

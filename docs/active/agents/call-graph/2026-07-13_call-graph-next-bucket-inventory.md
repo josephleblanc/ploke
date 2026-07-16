@@ -130,6 +130,12 @@ Current completed checkpoint:
   The exact TUI tools now accept an optional `body_contains` filter so
   owner_trait + owner_type can select the hand-written `HandleError::call`
   owner among generated same-name impls without weakening ambiguity handling.
+- The latest method-callback binding slice adds durable
+  `BindingSourceFunction` proof for the fixture oracle
+  `call_single_result_callback(f) { Ok::<i32, ()>(1).and_then(f) }` with the
+  single local caller supplying `local_result_target`. This is an explanatory
+  local-binding edge over an already-resolved `MethodCallbackFunction` row; it
+  does not add callback traversal breadth or trait-object dispatch.
 
 Next bucket rule: pick one row below only when there is a fresh proof input and
 a DB-first assertion. Do not add another fixture-only breadth slice for shapes
