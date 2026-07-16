@@ -386,6 +386,27 @@ Generated/macro proof-context audit, 2026-07-15:
   `macro_expansion_not_available` blockers and no flattened `try_downcast`
   call edge.
 
+Fixture regeneration and selection checkpoint, 2026-07-16:
+
+- Active call-graph fixtures were regenerated with
+  `cargo run -p xtask --features call_graph -- fixtures regenerate --active`
+  and verified with
+  `cargo run -p xtask --features call_graph -- verify-backup-dbs`. The
+  regeneration refreshed checkout-local/shared snapshot state but produced no
+  tracked fixture diff.
+- The remaining buckets were rechecked after regeneration. Object/field
+  callable rows, callable trait-object dispatch rows, async poll/resume rows,
+  generated/macro rows, workspace import rows, and runtime/effect summary rows
+  already have DB/RAG/TUI coverage for the currently reviewed source oracles.
+  Remaining unresolved rows are intentionally blocked, ambiguous, external, or
+  summary-driven until a new proof input satisfies the entry criterion in the
+  table above.
+- Next implementation should therefore not reselect another same-family
+  blocker or surface-only proof-context sample. It should begin with a DB-first
+  assertion over a new source oracle that either proves a new typed carrier or
+  names an explicit missing proof input; otherwise the correct action is
+  verification and handoff, not speculative resolver breadth.
+
 ## Do Not Reselect Without New Evidence
 
 - Public callable parameters and public callable fields that lack complete
