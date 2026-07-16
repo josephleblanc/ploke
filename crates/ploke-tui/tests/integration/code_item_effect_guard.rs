@@ -26,6 +26,7 @@ async fn code_item_effect_guard_classifies_real_corpus_task_spawn_paths() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
     };
     let test_client_new = CodeItemEndpoint {
         item_name: Cow::Borrowed("new"),
@@ -40,6 +41,7 @@ async fn code_item_effect_guard_classifies_real_corpus_task_spawn_paths() {
         owner_trait: None,
         owner_type: Some(Cow::Borrowed("TestClient")),
         parent_name: None,
+        body_contains: None,
     };
 
     let guarded = CodeItemEffectGuard::execute(
@@ -127,6 +129,7 @@ async fn code_item_effect_guard_classifies_real_corpus_task_spawn_paths() {
         owner_trait: None,
         owner_type: Some(Cow::Borrowed("Router")),
         parent_name: None,
+        body_contains: None,
     };
     let unguarded = CodeItemEffectGuard::execute(
         CodeItemEffectGuardParams {

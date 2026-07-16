@@ -125,6 +125,13 @@ pub(crate) struct AxumHandlerCallToolFixture {
     pub(crate) caller: ExpectedCallSite,
 }
 
+pub(crate) struct AxumHandleErrorCallToolFixture {
+    pub(crate) state: Arc<AppState>,
+    pub(crate) file_path: PathBuf,
+    pub(crate) module_path: Vec<String>,
+    pub(crate) owner: Uuid,
+}
+
 impl AxumBodyEmptyToolFixture {
     pub(crate) async fn new() -> Self {
         let db = axum_call_graph_db();
@@ -1004,6 +1011,44 @@ impl AxumHandlerCallToolFixture {
             module_path: target.module_path,
             target: target.id,
             caller: callers.pop().expect("one Handler::call caller"),
+        }
+    }
+
+    pub(crate) fn module_path_arg(&self) -> String {
+        self.module_path.join("::")
+    }
+
+    pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
+        ctx_for_state(&self.state, call_id)
+    }
+}
+
+impl AxumHandleErrorCallToolFixture {
+    pub(crate) const BODY_MARKER: &'static str = "Err(err) => Ok(f(err).await.into_response())";
+
+    pub(crate) async fn new() -> Self {
+        let db = axum_call_graph_db();
+        let target = axum_method_target_by_body_and_file(
+            &db,
+            "call",
+            Self::BODY_MARKER,
+            "axum/src/error_handling/mod.rs",
+        );
+        let mut rag_config = RagConfig::default();
+        rag_config.proof_context.enabled = false;
+        let state = axum_state_for_target_with_rag_config(
+            Arc::clone(&db),
+            &target,
+            "HandleError::call",
+            rag_config,
+        )
+        .await;
+
+        Self {
+            state,
+            file_path: target.file_path,
+            module_path: target.module_path,
+            owner: target.id,
         }
     }
 

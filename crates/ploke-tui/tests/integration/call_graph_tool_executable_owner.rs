@@ -31,6 +31,7 @@ async fn code_item_lookup_accepts_local_item_body_owner() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -87,6 +88,7 @@ async fn code_item_lookup_rejects_ambiguous_local_item_body_owner_without_parent
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -117,6 +119,7 @@ async fn code_item_lookup_parent_qualifies_repeated_local_item_body_owner() {
         owner_trait: None,
         owner_type: None,
         parent_name: Some(Cow::Borrowed("test_from_extractor")),
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -173,6 +176,7 @@ async fn code_item_edges_accepts_local_item_body_owner() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -255,6 +259,7 @@ async fn code_item_lookup_returns_macro_generated_expr_path_call() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -300,6 +305,7 @@ async fn assert_macro_local_lookup(
         owner_trait: None,
         owner_type: None,
         parent_name: Some(Cow::Borrowed(parent_name)),
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -363,6 +369,7 @@ async fn code_item_edges_returns_macro_generated_expr_path_call() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -426,6 +433,7 @@ async fn assert_macro_local_edges(
         owner_trait: None,
         owner_type: None,
         parent_name: Some(Cow::Borrowed(parent_name)),
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -488,6 +496,7 @@ async fn code_item_edges_parent_qualifies_repeated_local_item_body_owner() {
         owner_trait: None,
         owner_type: None,
         parent_name: Some(Cow::Borrowed("test_from_extractor")),
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -543,6 +552,7 @@ async fn code_item_lookup_accepts_real_corpus_async_block_body_owner() {
         owner_trait: None,
         owner_type: None,
         parent_name: Some(Cow::Borrowed("call")),
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -608,6 +618,7 @@ async fn code_item_edges_accepts_real_corpus_async_block_body_owner() {
         owner_trait: None,
         owner_type: None,
         parent_name: Some(Cow::Borrowed("call")),
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -678,6 +689,7 @@ async fn code_item_lookup_accepts_axum_callback_closure_owner() {
         owner_trait: None,
         owner_type: None,
         parent_name: Some(Cow::Borrowed("expand_attr_with")),
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -737,6 +749,7 @@ async fn code_item_edges_accepts_axum_callback_closure_owner() {
         owner_trait: None,
         owner_type: None,
         parent_name: Some(Cow::Borrowed("expand_attr_with")),
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -798,6 +811,7 @@ async fn code_item_call_path_accepts_local_item_body_owner_endpoint() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
     };
     let params = CodeItemCallPathParams {
         source: endpoint.clone(),

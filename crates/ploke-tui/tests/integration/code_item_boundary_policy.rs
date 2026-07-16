@@ -24,6 +24,7 @@ async fn code_item_boundary_policy_flags_real_corpus_request_extract_boundary() 
         owner_trait: None,
         owner_type: Some(Cow::Borrowed("Request")),
         parent_name: None,
+        body_contains: None,
     };
 
     let result = CodeItemBoundaryPolicy::execute(
@@ -126,6 +127,7 @@ async fn code_item_boundary_policy_flags_real_corpus_crate_boundary() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
     };
 
     let result = CodeItemBoundaryPolicy::execute(

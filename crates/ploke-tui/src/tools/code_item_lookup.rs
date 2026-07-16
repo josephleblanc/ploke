@@ -44,6 +44,10 @@ lazy_static::lazy_static! {
                 "type": "string",
                 "description": lookup_support::PARENT_NAME_DESC
             },
+            "body_contains": {
+                "type": "string",
+                "description": lookup_support::BODY_CONTAINS_DESC
+            },
             "allowed_effects": {
                 "type": "array",
                 "items": { "type": "string" },
@@ -71,6 +75,8 @@ pub struct LookupParams<'a> {
     pub owner_type: Option<std::borrow::Cow<'a, str>>,
     #[serde(default, borrow)]
     pub parent_name: Option<std::borrow::Cow<'a, str>>,
+    #[serde(default, borrow)]
+    pub body_contains: Option<std::borrow::Cow<'a, str>>,
     #[serde(default)]
     pub allowed_effects: Vec<std::borrow::Cow<'a, str>>,
 }
@@ -91,6 +97,7 @@ pub struct LookupParamsOwned {
     pub owner_trait: Option<String>,
     pub owner_type: Option<String>,
     pub parent_name: Option<String>,
+    pub body_contains: Option<String>,
     pub allowed_effects: Vec<String>,
 }
 
@@ -152,6 +159,7 @@ impl Tool for CodeItemLookup {
             owner_trait: params.owner_trait.as_ref().map(|value| value.to_string()),
             owner_type: params.owner_type.as_ref().map(|value| value.to_string()),
             parent_name: params.parent_name.as_ref().map(|value| value.to_string()),
+            body_contains: params.body_contains.as_ref().map(|value| value.to_string()),
             allowed_effects: params
                 .allowed_effects
                 .iter()
@@ -208,6 +216,8 @@ impl Tool for CodeItemLookup {
         )?;
         let parent =
             lookup_support::normalize_parent_name(params.parent_name.as_deref(), node_kind)?;
+        let marker =
+            lookup_support::normalize_body_contains(params.body_contains.as_deref(), node_kind)?;
 
         let (primary_root, policy) = ctx
             .state
@@ -262,6 +272,7 @@ for a more fuzzy search."#
             params.item_name.as_ref(),
             owner.as_ref(),
             parent.as_deref(),
+            marker.as_deref(),
         ) {
             Ok(t) if t.len() == 1 => t,
             Ok(t) if t.is_empty() => {
@@ -271,13 +282,14 @@ for a more fuzzy search."#
                     .unwrap_or_default();
                 return Err(ploke_error::Error::Domain(DomainError::Ui {
                     message: format!(
-                        "No code item named `{}` found in {} with module_path {} and node_kind {}{}{}.{}",
+                        "No code item named `{}` found in {} with module_path {} and node_kind {}{}{}{}.{}",
                         params.item_name,
                         rel_path.display(),
                         params.module_path,
                         node_kind.as_str(),
                         lookup_support::owner_message(owner.as_ref()),
                         lookup_support::parent_message(parent.as_deref()),
+                        lookup_support::body_message(marker.as_deref()),
                         hint
                     ),
                 }));
@@ -288,13 +300,14 @@ for a more fuzzy search."#
                 ));
                 return Err(ploke_error::Error::Domain(DomainError::Ui {
                     message: format!(
-                        "Multiple items matched `{}` in {} with module_path {} and node_kind {}{}{}; expected a single match. This is an internal error: {}",
+                        "Multiple items matched `{}` in {} with module_path {} and node_kind {}{}{}{}; expected a single match. This is an internal error: {}",
                         params.item_name,
                         rel_path.display(),
                         params.module_path,
                         node_kind.as_str(),
                         lookup_support::owner_message(owner.as_ref()),
                         lookup_support::parent_message(parent.as_deref()),
+                        lookup_support::body_message(marker.as_deref()),
                         err
                     ),
                 }));

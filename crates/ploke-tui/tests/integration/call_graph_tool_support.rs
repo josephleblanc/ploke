@@ -3698,6 +3698,107 @@ pub(crate) fn assert_tap_io_constructor_local_binding_payload(
     );
 }
 
+pub(crate) fn assert_handle_error_returned_future_local_binding_payload(
+    calls: &[serde_json::Value],
+    bindings: &[serde_json::Value],
+    edges: &[serde_json::Value],
+    owner: Uuid,
+    tool: &str,
+) {
+    let call_rows = calls
+        .iter()
+        .filter_map(|call| serde_json::from_value::<CallContextInfo>(call.clone()).ok())
+        .collect::<Vec<_>>();
+    let box_pin = call_rows
+        .iter()
+        .find(|call| {
+            call.owner_id == owner
+                && call.kind == CallSiteKind::Path
+                && call
+                    .path
+                    .as_deref()
+                    .is_some_and(|path| path.iter().map(String::as_str).eq(["Box", "pin"]))
+        })
+        .unwrap_or_else(|| panic!("{tool} should expose HandleError::call Box::pin: {calls:#?}"));
+
+    let rows = bindings
+        .iter()
+        .filter_map(|binding| serde_json::from_value::<LocalBindingInfo>(binding.clone()).ok())
+        .collect::<Vec<_>>();
+    let return_binding = rows
+        .iter()
+        .find(|binding| {
+            binding.owner_id == owner
+                && binding.kind == "ReturnExpression"
+                && binding.name == "return"
+                && binding.source_kind == "Constructed"
+                && binding.source_path.as_deref().is_some_and(|path| {
+                    path.iter()
+                        .map(String::as_str)
+                        .eq(["future", "HandleErrorFuture"])
+                })
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "{tool} should expose HandleError::call constructed returned future binding: {bindings:#?}"
+            )
+        });
+    let future_field = rows
+        .iter()
+        .find(|binding| {
+            binding.owner_id == owner
+                && binding.kind == "LetBinding"
+                && binding.name == "return.future"
+                && binding.source_kind == "PathCallResult"
+                && binding.source_id == Some(box_pin.site_id)
+                && binding.source_call_kind.as_deref() == Some("Path")
+                && binding
+                    .source_path
+                    .as_deref()
+                    .is_some_and(|path| path.iter().map(String::as_str).eq(["Box", "pin"]))
+                && binding.callee_kind.is_none()
+                && binding.callee_path.is_none()
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "{tool} should expose HandleError::call return.future sourced by Box::pin: {bindings:#?}"
+            )
+        });
+
+    let edge_rows = edges
+        .iter()
+        .filter_map(|edge| serde_json::from_value::<LocalBindingEdgeInfo>(edge.clone()).ok())
+        .collect::<Vec<_>>();
+    assert!(
+        edge_rows.iter().any(|edge| {
+            edge.source_id == owner
+                && edge.target_id == return_binding.id
+                && edge.relation == LocalBindingRelationKind::OwnerContainsBinding
+                && edge.target_kind == "LocalBinding"
+        }),
+        "{tool} should expose OwnerContainsBinding for HandleError::call return binding: {edges:#?}"
+    );
+    assert!(
+        edge_rows.iter().any(|edge| {
+            edge.source_id == owner
+                && edge.target_id == future_field.id
+                && edge.relation == LocalBindingRelationKind::OwnerContainsBinding
+                && edge.target_kind == "LocalBinding"
+        }),
+        "{tool} should expose OwnerContainsBinding for HandleError::call return.future: {edges:#?}"
+    );
+    assert!(
+        edge_rows.iter().any(|edge| {
+            edge.source_id == future_field.id
+                && edge.target_id == box_pin.site_id
+                && edge.relation == LocalBindingRelationKind::BindingSourceCallResult
+                && edge.source_kind == "LocalBinding"
+                && edge.target_kind == "Path"
+        }),
+        "{tool} should expose BindingSourceCallResult for HandleError::call return.future: {edges:#?}"
+    );
+}
+
 pub(crate) fn assert_forwarded_async_future_awaited_site(
     sites: &[serde_json::Value],
     owner: Uuid,

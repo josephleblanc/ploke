@@ -120,6 +120,7 @@ async fn assert_lookup_case(case: AxumRemainingTarget, call_id: &'static str) {
         owner_trait: fixture.owner_trait.map(Cow::Borrowed),
         owner_type: fixture.owner_type.map(Cow::Borrowed),
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -185,6 +186,7 @@ async fn assert_edges_case(case: AxumRemainingTarget, call_id: &'static str) {
         owner_trait: fixture.owner_trait.map(Cow::Borrowed),
         owner_type: fixture.owner_type.map(Cow::Borrowed),
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 

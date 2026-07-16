@@ -36,6 +36,7 @@ async fn code_item_lookup_returns_dynamic_targetless_real_corpus_rows() {
             owner_trait: None,
             owner_type: Some(Cow::Borrowed(case.owner_type)),
             parent_name: None,
+            body_contains: None,
             allowed_effects: Vec::new(),
         };
 
@@ -130,6 +131,7 @@ async fn code_item_lookup_omits_admitted_runtime_dispatch_summary_needs() {
             owner_trait: None,
             owner_type: Some(Cow::Borrowed(case.owner_type)),
             parent_name: None,
+            body_contains: None,
             allowed_effects: Vec::new(),
         };
 
@@ -230,6 +232,7 @@ async fn code_item_lookup_returns_real_corpus_dynamic_candidate_rows() {
             owner_trait: None,
             owner_type: Some(Cow::Borrowed(fixture.case.owner_type)),
             parent_name: None,
+            body_contains: None,
             allowed_effects: Vec::new(),
         };
 
@@ -314,6 +317,7 @@ async fn code_item_lookup_returns_route_oneshot_targetless_real_corpus_rows() {
             owner_trait: None,
             owner_type: case.owner_type().map(Cow::Borrowed),
             parent_name: None,
+            body_contains: None,
             allowed_effects: Vec::new(),
         };
 
@@ -425,6 +429,7 @@ async fn code_item_lookup_returns_size_hint_external_real_corpus_row() {
             owner_trait: None,
             owner_type: case.owner_type().map(Cow::Borrowed),
             parent_name: None,
+            body_contains: None,
             allowed_effects: Vec::new(),
         };
 
@@ -531,6 +536,7 @@ async fn code_item_lookup_returns_unsupported_receiver_targetless_real_corpus_ro
             owner_trait: None,
             owner_type: case.owner_type().map(Cow::Borrowed),
             parent_name: None,
+            body_contains: None,
             allowed_effects: Vec::new(),
         };
 
@@ -701,6 +707,7 @@ async fn code_item_lookup_returns_from_ref_dependency_root_path_rows() {
             owner_trait: case.owner_trait().map(Cow::Borrowed),
             owner_type: case.owner_type().map(Cow::Borrowed),
             parent_name: None,
+            body_contains: None,
             allowed_effects: Vec::new(),
         };
 
@@ -757,6 +764,7 @@ async fn code_item_lookup_preserves_shadowed_get_resolved_setup_boundary() {
             owner_trait: case.owner_trait().map(Cow::Borrowed),
             owner_type: case.owner_type().map(Cow::Borrowed),
             parent_name: None,
+            body_contains: None,
             allowed_effects: Vec::new(),
         };
 
@@ -834,6 +842,7 @@ async fn code_item_lookup_returns_request_builder_alias_external_path_rows() {
             owner_trait: case.owner_trait().map(Cow::Borrowed),
             owner_type: case.owner_type().map(Cow::Borrowed),
             parent_name: None,
+            body_contains: None,
             allowed_effects: Vec::new(),
         };
 
@@ -950,6 +959,7 @@ async fn code_item_lookup_returns_memchr_callable_trait_object_path_rows() {
             owner_trait: case.owner_trait().map(Cow::Borrowed),
             owner_type: case.owner_type().map(Cow::Borrowed),
             parent_name: None,
+            body_contains: None,
             allowed_effects: Vec::new(),
         };
 
@@ -1034,6 +1044,7 @@ async fn code_item_lookup_returns_memchr_ifunc_generated_transmute_frontiers() {
             owner_trait: None,
             owner_type: None,
             parent_name: None,
+            body_contains: None,
             allowed_effects: Vec::new(),
         };
 
@@ -1125,6 +1136,7 @@ async fn code_item_lookup_omits_admitted_memchr_runtime_dispatch_summary_needs()
             owner_trait: case.owner_trait().map(Cow::Borrowed),
             owner_type: case.owner_type().map(Cow::Borrowed),
             parent_name: None,
+            body_contains: None,
             allowed_effects: Vec::new(),
         };
 
@@ -1219,6 +1231,7 @@ async fn code_item_lookup_returns_generated_macro_boundary_path_rows() {
             owner_trait: case.owner_trait().map(Cow::Borrowed),
             owner_type: case.owner_type().map(Cow::Borrowed),
             parent_name: None,
+            body_contains: None,
             allowed_effects: Vec::new(),
         };
 
@@ -1366,6 +1379,7 @@ async fn code_item_edges_returns_dynamic_targetless_real_corpus_rows() {
             owner_trait: None,
             owner_type: Some(Cow::Borrowed(case.owner_type)),
             parent_name: None,
+            body_contains: None,
             allowed_effects: Vec::new(),
         };
 
@@ -1453,6 +1467,7 @@ async fn code_item_edges_returns_real_corpus_dynamic_candidate_rows() {
             owner_trait: None,
             owner_type: Some(Cow::Borrowed(fixture.case.owner_type)),
             parent_name: None,
+            body_contains: None,
             allowed_effects: Vec::new(),
         };
 
@@ -1533,6 +1548,7 @@ async fn code_item_edges_returns_size_hint_external_real_corpus_row() {
             owner_trait: None,
             owner_type: case.owner_type().map(Cow::Borrowed),
             parent_name: None,
+            body_contains: None,
             allowed_effects: Vec::new(),
         };
 
@@ -1748,6 +1764,7 @@ async fn code_item_edges_returns_unsupported_receiver_targetless_real_corpus_row
             owner_trait: None,
             owner_type: case.owner_type().map(Cow::Borrowed),
             parent_name: None,
+            body_contains: None,
             allowed_effects: Vec::new(),
         };
 
@@ -2012,6 +2029,7 @@ async fn code_item_edges_returns_from_ref_dependency_root_path_rows() {
             owner_trait: case.owner_trait().map(Cow::Borrowed),
             owner_type: case.owner_type().map(Cow::Borrowed),
             parent_name: None,
+            body_contains: None,
             allowed_effects: Vec::new(),
         };
 
@@ -2058,6 +2076,7 @@ async fn code_item_edges_preserves_shadowed_get_resolved_setup_boundary() {
             owner_trait: case.owner_trait().map(Cow::Borrowed),
             owner_type: case.owner_type().map(Cow::Borrowed),
             parent_name: None,
+            body_contains: None,
             allowed_effects: Vec::new(),
         };
 
@@ -2186,6 +2205,7 @@ async fn code_item_edges_returns_request_builder_alias_external_path_rows() {
             owner_trait: case.owner_trait().map(Cow::Borrowed),
             owner_type: case.owner_type().map(Cow::Borrowed),
             parent_name: None,
+            body_contains: None,
             allowed_effects: Vec::new(),
         };
 
@@ -2290,6 +2310,7 @@ async fn code_item_edges_returns_memchr_callable_trait_object_path_rows() {
             owner_trait: case.owner_trait().map(Cow::Borrowed),
             owner_type: case.owner_type().map(Cow::Borrowed),
             parent_name: None,
+            body_contains: None,
             allowed_effects: Vec::new(),
         };
 
@@ -2357,6 +2378,7 @@ async fn code_item_edges_returns_memchr_ifunc_generated_transmute_frontiers() {
             owner_trait: None,
             owner_type: None,
             parent_name: None,
+            body_contains: None,
             allowed_effects: Vec::new(),
         };
 
@@ -2434,6 +2456,7 @@ async fn code_item_edges_omits_admitted_memchr_runtime_dispatch_summary_needs() 
             owner_trait: case.owner_trait().map(Cow::Borrowed),
             owner_type: case.owner_type().map(Cow::Borrowed),
             parent_name: None,
+            body_contains: None,
             allowed_effects: Vec::new(),
         };
 
@@ -2534,6 +2557,7 @@ async fn code_item_edges_returns_generated_macro_boundary_path_rows() {
             owner_trait: case.owner_trait().map(Cow::Borrowed),
             owner_type: case.owner_type().map(Cow::Borrowed),
             parent_name: None,
+            body_contains: None,
             allowed_effects: Vec::new(),
         };
 
@@ -2664,6 +2688,7 @@ async fn code_item_edges_returns_route_oneshot_targetless_real_corpus_rows() {
             owner_trait: None,
             owner_type: case.owner_type().map(Cow::Borrowed),
             parent_name: None,
+            body_contains: None,
             allowed_effects: Vec::new(),
         };
 

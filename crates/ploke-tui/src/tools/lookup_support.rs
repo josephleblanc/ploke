@@ -1,3 +1,4 @@
+use cozo::{DataValue, UuidWrapper};
 use ploke_core::{
     io_types::EmbeddingData,
     rag_types::{
@@ -49,6 +50,9 @@ Examples: owner_type="HandleError" for HandleError::new; owner_type="HandlerServ
 pub(super) const PARENT_NAME_DESC: &str = r#"Optional parent item name for executable body-owner nodes.
 Use only with node_kind=closure, node_kind=async_block, or node_kind=local_item when file_path, module_path, item_name, and node_kind would otherwise match multiple nested executable owners.
 Example: parent_name="test_from_extractor" for a function-local impl method such as local_impl_method:from_request_parts."#;
+
+pub(super) const BODY_CONTAINS_DESC: &str = r#"Optional body substring used only to narrow exact executable item lookup.
+Use only with node_kind=function, method, macro, const, or static when file_path, module_path, item_name, owner_trait, owner_type, and parent_name still match multiple items. Whitespace is ignored for matching."#;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum OwnerQualifier {
@@ -194,6 +198,33 @@ pub(super) fn normalize_parent_name(
     Ok(parent)
 }
 
+pub(super) fn normalize_body_contains(
+    body_contains: Option<&str>,
+    node_kind: NodeKind,
+) -> Result<Option<String>, ploke_error::Error> {
+    let marker = body_contains
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
+    if marker.is_some()
+        && !matches!(
+            node_kind,
+            NodeKind::Function
+                | NodeKind::Method
+                | NodeKind::Macro
+                | NodeKind::Const
+                | NodeKind::Static
+        )
+    {
+        return Err(ploke_error::Error::Domain(ploke_error::DomainError::Ui {
+            message: "body_contains can only be used with node_kind `function`, `method`, `macro`, `const`, or `static`.".to_string(),
+        }));
+    }
+
+    Ok(marker)
+}
+
 fn parse_owner_trait_qualifier(
     owner_trait: &str,
 ) -> Result<(String, Option<String>), ploke_error::Error> {
@@ -232,8 +263,9 @@ pub(super) fn resolve_exact_item(
     item_name: &str,
     owner: Option<&OwnerQualifier>,
     parent_name: Option<&str>,
+    body_contains: Option<&str>,
 ) -> Result<Vec<EmbeddingData>, DbError> {
-    match owner {
+    let resolved = match owner {
         Some(OwnerQualifier::Trait(owner)) => {
             graph_resolve_exact_trait_method(db, abs_path, mod_path, item_name, owner)
         }
@@ -266,7 +298,54 @@ pub(super) fn resolve_exact_item(
             }
         }
         None => graph_resolve_exact(db, node_kind.as_relation(), abs_path, mod_path, item_name),
+    }?;
+
+    if let Some(marker) = body_contains {
+        filter_items_by_body(db, node_kind, resolved, marker)
+    } else {
+        Ok(resolved)
     }
+}
+
+fn filter_items_by_body(
+    db: &Database,
+    node_kind: NodeKind,
+    candidates: Vec<EmbeddingData>,
+    marker: &str,
+) -> Result<Vec<EmbeddingData>, DbError> {
+    let marker = body_key(marker);
+    candidates
+        .into_iter()
+        .filter_map(
+            |candidate| match item_body_contains(db, node_kind, candidate.id, &marker) {
+                Ok(true) => Some(Ok(candidate)),
+                Ok(false) => None,
+                Err(err) => Some(Err(err)),
+            },
+        )
+        .collect()
+}
+
+fn item_body_contains(
+    db: &Database,
+    node_kind: NodeKind,
+    id: Uuid,
+    marker: &str,
+) -> Result<bool, DbError> {
+    let mut params = std::collections::BTreeMap::new();
+    params.insert("id".to_string(), DataValue::Uuid(UuidWrapper(id)));
+
+    let script = format!(
+        r#"?[body] :=
+            *{} {{ id: $id, body @ 'NOW' }}"#,
+        node_kind.as_relation()
+    );
+    let rows = db.raw_query_params(&script, params)?;
+    Ok(rows.rows.iter().any(|row| {
+        row.first()
+            .and_then(DataValue::get_str)
+            .is_some_and(|body| body_key(body).contains(marker))
+    }))
 }
 
 pub(super) struct ResolvedToolItem {
@@ -282,6 +361,7 @@ pub(super) struct ExactItemRequest<'a> {
     pub(super) owner_trait: Option<&'a str>,
     pub(super) owner_type: Option<&'a str>,
     pub(super) parent_name: Option<&'a str>,
+    pub(super) body_contains: Option<&'a str>,
 }
 
 impl<'a> ValidatesAbolutePath for ExactItemRequest<'a> {
@@ -309,6 +389,7 @@ pub(super) fn resolve_exact_tool_item(
     })?;
     let owner = normalize_owner_qualifier(request.owner_trait, request.owner_type, node_kind)?;
     let parent = normalize_parent_name(request.parent_name, node_kind)?;
+    let marker = normalize_body_contains(request.body_contains, node_kind)?;
     let abs_path = request
         .validate_to_abs_path(primary_root, policy)
         .map_err(|err| {
@@ -345,6 +426,7 @@ for a more fuzzy search."#
         request.item_name,
         owner.as_ref(),
         parent.as_deref(),
+        marker.as_deref(),
     ) {
         Ok(items) if items.len() == 1 => items,
         Ok(items) if items.is_empty() => {
@@ -354,13 +436,14 @@ for a more fuzzy search."#
                 .unwrap_or_default();
             return Err(ploke_error::Error::Domain(DomainError::Ui {
                 message: format!(
-                    "No code item named `{}` found in {} with module_path {} and node_kind {}{}{}.{}",
+                    "No code item named `{}` found in {} with module_path {} and node_kind {}{}{}{}.{}",
                     request.item_name,
                     rel_path.display(),
                     request.module_path,
                     node_kind.as_str(),
                     owner_message(owner.as_ref()),
                     parent_message(parent.as_deref()),
+                    body_message(marker.as_deref()),
                     hint
                 ),
             }));
@@ -368,13 +451,14 @@ for a more fuzzy search."#
         Ok(_) => {
             return Err(ploke_error::Error::Domain(DomainError::Ui {
                 message: format!(
-                    "Multiple items matched `{}` in {} with module_path {} and node_kind {}{}{}; expected a single match.",
+                    "Multiple items matched `{}` in {} with module_path {} and node_kind {}{}{}{}; expected a single match.",
                     request.item_name,
                     rel_path.display(),
                     request.module_path,
                     node_kind.as_str(),
                     owner_message(owner.as_ref()),
-                    parent_message(parent.as_deref())
+                    parent_message(parent.as_deref()),
+                    body_message(marker.as_deref())
                 ),
             }));
         }
@@ -401,6 +485,16 @@ pub(super) fn parent_message(parent_name: Option<&str>) -> String {
     parent_name
         .map(|parent| format!(" and parent_name {parent}"))
         .unwrap_or_default()
+}
+
+pub(super) fn body_message(body_contains: Option<&str>) -> String {
+    body_contains
+        .map(|marker| format!(" and body_contains {marker:?}"))
+        .unwrap_or_default()
+}
+
+fn body_key(value: &str) -> String {
+    value.split_whitespace().collect()
 }
 
 pub(super) struct ContextCarriers {

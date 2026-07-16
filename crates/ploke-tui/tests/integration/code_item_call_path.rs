@@ -22,6 +22,7 @@ async fn code_item_call_path_returns_real_corpus_two_hop_reachability() {
             owner_trait: None,
             owner_type: Some(Cow::Borrowed("Request")),
             parent_name: None,
+            body_contains: None,
         },
         target: CodeItemCallPathEndpoint {
             item_name: Cow::Borrowed("from_request"),
@@ -31,6 +32,7 @@ async fn code_item_call_path_returns_real_corpus_two_hop_reachability() {
             owner_trait: Some(Cow::Borrowed("FromRequest")),
             owner_type: None,
             parent_name: None,
+            body_contains: None,
         },
         guard: None,
         max_depth: Some(2),
@@ -173,6 +175,7 @@ async fn code_item_call_path_classifies_required_guard_paths() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
     };
     let base_target = CodeItemCallPathEndpoint {
         item_name: Cow::Borrowed("extract_fields"),
@@ -182,6 +185,7 @@ async fn code_item_call_path_classifies_required_guard_paths() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
     };
     let guarded_params = CodeItemCallPathParams {
         source: base_source.clone(),
@@ -194,6 +198,7 @@ async fn code_item_call_path_classifies_required_guard_paths() {
             owner_trait: None,
             owner_type: None,
             parent_name: None,
+            body_contains: None,
         }),
         max_depth: Some(2),
         max_paths: Some(128),
@@ -254,6 +259,7 @@ async fn code_item_call_path_classifies_required_guard_paths() {
             owner_trait: None,
             owner_type: None,
             parent_name: None,
+            body_contains: None,
         }),
         max_depth: Some(2),
         max_paths: Some(128),
@@ -301,6 +307,7 @@ async fn code_item_call_path_returns_real_corpus_free_function_two_hop_reachabil
             owner_trait: None,
             owner_type: None,
             parent_name: None,
+            body_contains: None,
         },
         target: CodeItemCallPathEndpoint {
             item_name: Cow::Borrowed("extract_fields"),
@@ -310,6 +317,7 @@ async fn code_item_call_path_returns_real_corpus_free_function_two_hop_reachabil
             owner_trait: None,
             owner_type: None,
             parent_name: None,
+            body_contains: None,
         },
         guard: None,
         max_depth: Some(2),
@@ -418,6 +426,7 @@ async fn code_item_call_path_explains_unreachable_dynamic_source_frontier() {
             owner_trait: None,
             owner_type: Some(Cow::Borrowed(case.owner_type)),
             parent_name: None,
+            body_contains: None,
         },
         target: CodeItemCallPathEndpoint {
             item_name: Cow::Borrowed("handle_accept_error"),
@@ -427,6 +436,7 @@ async fn code_item_call_path_explains_unreachable_dynamic_source_frontier() {
             owner_trait: None,
             owner_type: None,
             parent_name: None,
+            body_contains: None,
         },
         guard: None,
         max_depth: Some(2),

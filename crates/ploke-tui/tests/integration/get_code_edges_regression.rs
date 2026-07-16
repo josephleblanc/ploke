@@ -33,14 +33,14 @@ use crate::call_graph_tool_support::{
     AsyncFutureToolFixture, AxumAwaitReceiverToolFixture, AxumBodyEmptyToolFixture,
     AxumBodyNewToolFixture, AxumBoxedIntoRouteToolFixture, AxumCompositeRejectionToolFixture,
     AxumErrorHandlingTraitsToolFixture, AxumExpandWithToolFixture, AxumFromFnBasicToolFixture,
-    AxumGeneratedRejectionToolFixture, AxumHandlerCallToolFixture, AxumJsonFromBytesToolFixture,
-    AxumParseAttrsToolFixture, AxumRequestExtractPathToolFixture, AxumRunUiTestsToolFixture,
-    AxumTapIoConstructorToolFixture, AxumTaskSpawnEffectToolFixture, CallGraphToolFixture,
-    CallableBlockerFixture, CallableBlockerShape, CallableParamResolvedFixture,
-    ChronoAliasConstructorToolFixture, ChronoNaiveUtcToolFixture, DirectSelfFieldDispatchFixture,
-    FixtureBranchReceiverToolFixture, FixtureDynamicCallableToolFixture,
-    FixtureMethodCallableArgumentToolFixture, FixtureSelfFieldReceiverToolFixture,
-    ResultCallbackFixture, ReturnedClosureToolFixture,
+    AxumGeneratedRejectionToolFixture, AxumHandleErrorCallToolFixture, AxumHandlerCallToolFixture,
+    AxumJsonFromBytesToolFixture, AxumParseAttrsToolFixture, AxumRequestExtractPathToolFixture,
+    AxumRunUiTestsToolFixture, AxumTapIoConstructorToolFixture, AxumTaskSpawnEffectToolFixture,
+    CallGraphToolFixture, CallableBlockerFixture, CallableBlockerShape,
+    CallableParamResolvedFixture, ChronoAliasConstructorToolFixture, ChronoNaiveUtcToolFixture,
+    DirectSelfFieldDispatchFixture, FixtureBranchReceiverToolFixture,
+    FixtureDynamicCallableToolFixture, FixtureMethodCallableArgumentToolFixture,
+    FixtureSelfFieldReceiverToolFixture, ResultCallbackFixture, ReturnedClosureToolFixture,
     assert_aliased_parameter_local_binding_payload, assert_ambiguous_candidate_proof,
     assert_ambiguous_dynamic_candidates, assert_ambiguous_dynamic_candidates_with_relation,
     assert_ambiguous_path_candidates, assert_await_result_unwrap_context,
@@ -54,6 +54,7 @@ use crate::call_graph_tool_support::{
     assert_forwarded_async_future_awaited_site, assert_forwarded_async_future_execution_flow,
     assert_forwarded_async_future_flow, assert_forwarded_returned_closure_binding_flow,
     assert_from_fn_basic_body_empty_crate_boundary, assert_generated_rejection_outgoing_context,
+    assert_handle_error_returned_future_local_binding_payload,
     assert_handler_call_incoming_context, assert_incoming_context,
     assert_initialized_local_receiver_context, assert_initialized_local_receiver_proof,
     assert_initialized_path_local_binding_payload, assert_json_from_bytes_incoming_context,
@@ -168,6 +169,7 @@ async fn code_item_edges_handles_trailing_module_separators() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -288,6 +290,7 @@ async fn code_item_edges_returns_edges_for_ploke_db_primary_node() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
     let result = CodeItemEdges::execute(params, ctx)
@@ -323,6 +326,7 @@ async fn code_item_edges_returns_recursive_cycle_paths() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -469,6 +473,7 @@ async fn code_item_edges_returns_edges_for_database_struct_in_ploke_db() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -501,6 +506,7 @@ async fn code_item_edges_returns_call_context_for_call_graph_item() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -567,6 +573,7 @@ async fn code_item_edges_marks_unsafe_targets_in_call_impact() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -632,6 +639,7 @@ async fn code_item_edges_marks_async_targets_in_call_impact() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -695,6 +703,7 @@ async fn code_item_edges_surfaces_extern_c_calls_as_external_frontier() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -836,6 +845,7 @@ async fn code_item_edges_returns_local_binding_payload_for_initialized_callable(
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -881,6 +891,7 @@ async fn code_item_edges_returns_local_binding_payload_for_method_callable_argum
         owner_trait: None,
         owner_type: Some(Cow::Borrowed(fixture.owner_type)),
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -931,6 +942,7 @@ async fn code_item_edges_returns_local_binding_payload_for_aliased_field_paramet
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -975,6 +987,7 @@ async fn code_item_edges_returns_axum_tap_io_constructor_frontier_payload() {
         owner_trait: Some(Cow::Borrowed("ListenerExt")),
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -996,6 +1009,56 @@ async fn code_item_edges_returns_axum_tap_io_constructor_frontier_payload() {
     // Same oracle as lookup: `TapIo { listener: self, tap_fn }` should expose
     // the constructor-side frontier without creating a `TapIo::accept` edge.
     assert_tap_io_constructor_local_binding_payload(
+        bindings,
+        edges,
+        fixture.owner,
+        "code_item_edges",
+    );
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert_eq!(ui_field(ui, "local_bindings"), bindings.len().to_string());
+    assert_eq!(ui_field(ui, "local_binding_edges"), edges.len().to_string());
+}
+
+#[tokio::test]
+async fn code_item_edges_body_filter_returns_axum_handle_error_future_producer_payload() {
+    let fixture = AxumHandleErrorCallToolFixture::new().await;
+    let params = EdgesParams {
+        item_name: Cow::Borrowed("call"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("method"),
+        module_path: Cow::Owned(fixture.module_path_arg()),
+        owner_trait: Some(Cow::Borrowed("Service<Request>")),
+        owner_type: Some(Cow::Borrowed("HandleError")),
+        parent_name: None,
+        body_contains: Some(Cow::Borrowed(AxumHandleErrorCallToolFixture::BODY_MARKER)),
+        allowed_effects: Vec::new(),
+    };
+
+    let result = CodeItemEdges::execute(params, fixture.ctx("handle-error-binding-edges"))
+        .await
+        .expect("body-filtered HandleError::call binding edges");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
+    let node_info = payload.get("node_info").expect("node_info");
+    let call_context = node_info
+        .get("call_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.call_context array");
+    let bindings = node_info
+        .get("local_bindings")
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.local_bindings array");
+    let edges = node_info
+        .get("local_binding_edges")
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.local_binding_edges array");
+
+    // Same oracle as lookup: `future::HandleErrorFuture { future }` should
+    // expose the returned-field producer without creating a dyn Future::poll
+    // traversal edge.
+    assert_handle_error_returned_future_local_binding_payload(
+        call_context,
         bindings,
         edges,
         fixture.owner,
@@ -1094,6 +1157,7 @@ async fn assert_resolved_dynamic_callable_edges(owner_name: &'static str) {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -1211,6 +1275,7 @@ async fn code_item_edges_returns_branch_receiver_method_context() {
             owner_trait: None,
             owner_type: None,
             parent_name: None,
+            body_contains: None,
             allowed_effects: Vec::new(),
         };
 
@@ -1266,6 +1331,7 @@ async fn code_item_edges_returns_branch_initialized_receiver_method_context() {
             owner_trait: None,
             owner_type: None,
             parent_name: None,
+            body_contains: None,
             allowed_effects: Vec::new(),
         };
 
@@ -1322,6 +1388,7 @@ async fn code_item_edges_returns_nested_self_field_method_context() {
         owner_trait: None,
         owner_type: Some(Cow::Borrowed(fixture.owner_type)),
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -1451,6 +1518,7 @@ async fn code_item_edges_returns_direct_self_field_dispatch_candidates() {
         owner_trait: None,
         owner_type: Some(Cow::Borrowed(fixture.owner_type)),
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -1520,6 +1588,7 @@ async fn assert_callable_blocker_edges(fixture: CallableBlockerFixture) {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -1661,6 +1730,7 @@ async fn code_item_edges_returns_non_awaited_async_closure_poll_resume_blockers(
             owner_trait: None,
             owner_type: None,
             parent_name: None,
+            body_contains: None,
             allowed_effects: Vec::new(),
         };
 
@@ -1820,6 +1890,7 @@ async fn code_item_edges_returns_forwarded_async_future_awaited_site() {
             owner_trait: None,
             owner_type: None,
             parent_name: None,
+            body_contains: None,
             allowed_effects: Vec::new(),
         };
 
@@ -1891,6 +1962,7 @@ async fn assert_awaited_async_closure_future_edges(
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -1952,6 +2024,7 @@ async fn assert_awaited_returned_async_closure_edges(
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -2008,6 +2081,7 @@ async fn assert_forwarded_returned_closure_edges(
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -2137,6 +2211,7 @@ async fn code_item_edges_returns_result_method_callback_function_target() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -2198,6 +2273,7 @@ async fn assert_callable_param_edges(fixture: CallableParamResolvedFixture, labe
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -2263,6 +2339,7 @@ async fn code_item_edges_returns_real_corpus_reachable_effects() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: vec![Cow::Borrowed("ffi_boundary")],
     };
 
@@ -2330,6 +2407,7 @@ async fn code_item_edges_uses_stored_effect_policy_when_allowlist_omitted() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -2373,6 +2451,7 @@ async fn code_item_edges_returns_fixture_process_invariant_findings() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -2428,6 +2507,7 @@ async fn code_item_edges_reports_private_target_without_incoming_callers() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -2686,6 +2766,7 @@ async fn code_item_edges_surfaces_proc_macro_impact_callers() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -2820,6 +2901,7 @@ async fn code_item_edges_returns_real_corpus_await_receiver_targetless_row() {
         owner_trait: None,
         owner_type: Some(Cow::Borrowed("ConnLimiter")),
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -2920,6 +3002,7 @@ async fn code_item_edges_returns_real_corpus_two_hop_call_paths() {
         owner_trait: None,
         owner_type: Some(Cow::Borrowed("Request")),
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -3208,6 +3291,7 @@ async fn code_item_edges_returns_real_corpus_two_hop_call_paths() {
         owner_trait: Some(Cow::Borrowed("FromRequest")),
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
     let target_result = CodeItemEdges::execute(
@@ -3409,6 +3493,7 @@ async fn code_item_edges_returns_incoming_callers_for_call_graph_target() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -3468,6 +3553,7 @@ async fn code_item_edges_returns_real_corpus_crate_boundary_edges() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -3530,6 +3616,7 @@ async fn code_item_edges_returns_real_corpus_body_empty_callers() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -3620,6 +3707,7 @@ async fn code_item_edges_returns_real_corpus_body_new_generated_callers() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -3708,6 +3796,7 @@ async fn code_item_edges_returns_real_corpus_generated_rejection_self_methods() 
         owner_trait: Some(Cow::Borrowed("IntoResponse")),
         owner_type: Some(Cow::Borrowed("MissingExtension")),
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -3775,6 +3864,7 @@ async fn code_item_edges_returns_real_corpus_composite_rejection_delegate() {
         owner_trait: Some(Cow::Borrowed("IntoResponse")),
         owner_type: Some(Cow::Borrowed("QueryRejection")),
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -3853,6 +3943,7 @@ async fn code_item_edges_returns_real_corpus_parse_attrs_callers() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -3924,6 +4015,7 @@ async fn code_item_edges_returns_real_corpus_json_from_bytes_callers() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -4087,6 +4179,7 @@ async fn code_item_edges_returns_real_corpus_boxed_into_route_constructor_caller
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -4154,6 +4247,7 @@ async fn code_item_edges_returns_real_corpus_chrono_alias_constructor_callers() 
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -4222,6 +4316,7 @@ async fn code_item_edges_returns_real_corpus_chrono_option_ok_or_try_receiver_ca
         owner_trait: None,
         owner_type: Some(Cow::Borrowed("DateTime")),
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -4289,6 +4384,7 @@ async fn code_item_edges_returns_real_corpus_run_ui_tests_callers() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -4353,6 +4449,7 @@ async fn code_item_edges_disambiguates_real_corpus_handler_call_by_owner_trait()
         owner_trait: Some(Cow::Borrowed("Handler")),
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 

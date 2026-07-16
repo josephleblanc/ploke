@@ -14,14 +14,14 @@ use crate::call_graph_tool_support::{
     AsyncFutureToolFixture, AxumAwaitReceiverToolFixture, AxumBodyEmptyToolFixture,
     AxumBodyNewToolFixture, AxumBoxedIntoRouteToolFixture, AxumCompositeRejectionToolFixture,
     AxumErrorHandlingTraitsToolFixture, AxumExpandWithToolFixture, AxumFromFnBasicToolFixture,
-    AxumGeneratedRejectionToolFixture, AxumHandlerCallToolFixture, AxumJsonFromBytesToolFixture,
-    AxumParseAttrsToolFixture, AxumRequestExtractPathToolFixture, AxumRunUiTestsToolFixture,
-    AxumTapIoConstructorToolFixture, AxumTaskSpawnEffectToolFixture, CallGraphToolFixture,
-    CallableBlockerFixture, CallableBlockerShape, CallableParamResolvedFixture,
-    ChronoAliasConstructorToolFixture, ChronoNaiveUtcToolFixture, DirectSelfFieldDispatchFixture,
-    FixtureBranchReceiverToolFixture, FixtureDynamicCallableToolFixture,
-    FixtureMethodCallableArgumentToolFixture, FixtureSelfFieldReceiverToolFixture,
-    ResultCallbackFixture, ReturnedClosureToolFixture,
+    AxumGeneratedRejectionToolFixture, AxumHandleErrorCallToolFixture, AxumHandlerCallToolFixture,
+    AxumJsonFromBytesToolFixture, AxumParseAttrsToolFixture, AxumRequestExtractPathToolFixture,
+    AxumRunUiTestsToolFixture, AxumTapIoConstructorToolFixture, AxumTaskSpawnEffectToolFixture,
+    CallGraphToolFixture, CallableBlockerFixture, CallableBlockerShape,
+    CallableParamResolvedFixture, ChronoAliasConstructorToolFixture, ChronoNaiveUtcToolFixture,
+    DirectSelfFieldDispatchFixture, FixtureBranchReceiverToolFixture,
+    FixtureDynamicCallableToolFixture, FixtureMethodCallableArgumentToolFixture,
+    FixtureSelfFieldReceiverToolFixture, ResultCallbackFixture, ReturnedClosureToolFixture,
     assert_aliased_parameter_local_binding_payload, assert_ambiguous_candidate_proof,
     assert_ambiguous_dynamic_candidates, assert_ambiguous_dynamic_candidates_with_relation,
     assert_ambiguous_path_candidates, assert_await_result_unwrap_context,
@@ -35,6 +35,7 @@ use crate::call_graph_tool_support::{
     assert_forwarded_async_future_awaited_site, assert_forwarded_async_future_execution_flow,
     assert_forwarded_async_future_flow, assert_forwarded_returned_closure_binding_flow,
     assert_from_fn_basic_body_empty_crate_boundary, assert_generated_rejection_outgoing_context,
+    assert_handle_error_returned_future_local_binding_payload,
     assert_handler_call_incoming_context, assert_incoming_context,
     assert_initialized_local_receiver_context, assert_initialized_local_receiver_proof,
     assert_initialized_path_local_binding_payload, assert_json_from_bytes_incoming_context,
@@ -62,6 +63,7 @@ async fn code_item_lookup_returns_call_and_proof_context_for_call_graph_item() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -127,6 +129,7 @@ async fn code_item_lookup_marks_unsafe_function_targets_in_call_impact() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -185,6 +188,7 @@ async fn code_item_lookup_marks_async_function_targets_in_call_impact() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -244,6 +248,7 @@ async fn code_item_lookup_surfaces_extern_c_effect_seed() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -283,6 +288,7 @@ async fn code_item_lookup_returns_recursive_cycle_paths() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -389,6 +395,7 @@ async fn code_item_lookup_returns_local_binding_payload_for_initialized_callable
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -435,6 +442,7 @@ async fn code_item_lookup_returns_local_binding_payload_for_method_callable_argu
         owner_trait: None,
         owner_type: Some(Cow::Borrowed(fixture.owner_type)),
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -487,6 +495,7 @@ async fn code_item_lookup_returns_local_binding_payload_for_aliased_field_parame
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -532,6 +541,7 @@ async fn code_item_lookup_returns_axum_tap_io_constructor_frontier_payload() {
         owner_trait: Some(Cow::Borrowed("ListenerExt")),
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -554,6 +564,60 @@ async fn code_item_lookup_returns_axum_tap_io_constructor_frontier_payload() {
     //   `TapIo { listener: self, tap_fn }` records constructor-side frontier
     //   evidence for the later targetless `(self.tap_fn)(&mut io)` call.
     assert_tap_io_constructor_local_binding_payload(
+        bindings,
+        edges,
+        fixture.owner,
+        "code_item_lookup",
+    );
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert_eq!(ui_field(ui, "local_bindings"), bindings.len().to_string());
+    assert_eq!(ui_field(ui, "local_binding_edges"), edges.len().to_string());
+}
+
+#[tokio::test]
+async fn code_item_lookup_body_filter_returns_axum_handle_error_future_producer_payload() {
+    let fixture = AxumHandleErrorCallToolFixture::new().await;
+    let params = LookupParams {
+        item_name: Cow::Borrowed("call"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("method"),
+        module_path: Cow::Owned(fixture.module_path_arg()),
+        owner_trait: Some(Cow::Borrowed("Service<Request>")),
+        owner_type: Some(Cow::Borrowed("HandleError")),
+        parent_name: None,
+        body_contains: Some(Cow::Borrowed(AxumHandleErrorCallToolFixture::BODY_MARKER)),
+        allowed_effects: Vec::new(),
+    };
+
+    let result = CodeItemLookup::execute(params, fixture.ctx("handle-error-binding-lookup"))
+        .await
+        .expect("body-filtered HandleError::call binding lookup");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize ConciseContext");
+    let call_context = payload
+        .get("call_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_context array");
+    let bindings = payload
+        .get("local_bindings")
+        .and_then(serde_json::Value::as_array)
+        .expect("local_bindings array");
+    let edges = payload
+        .get("local_binding_edges")
+        .and_then(serde_json::Value::as_array)
+        .expect("local_binding_edges array");
+
+    // Source oracle:
+    //   axum/src/error_handling/mod.rs:140 creates
+    //   `let future = Box::pin(async move { ... })`.
+    //   axum/src/error_handling/mod.rs:147 returns
+    //   `future::HandleErrorFuture { future }`.
+    // Expected exact-tool behavior: owner_trait + owner_type match the
+    // Service<Request> impl family, and body_contains selects the hand-written
+    // arity-zero owner among generated same-name `HandleError::call` impls.
+    assert_handle_error_returned_future_local_binding_payload(
+        call_context,
         bindings,
         edges,
         fixture.owner,
@@ -663,6 +727,7 @@ async fn code_item_lookup_returns_branch_receiver_method_context() {
             owner_trait: None,
             owner_type: None,
             parent_name: None,
+            body_contains: None,
             allowed_effects: Vec::new(),
         };
 
@@ -721,6 +786,7 @@ async fn code_item_lookup_returns_branch_initialized_receiver_method_context() {
             owner_trait: None,
             owner_type: None,
             parent_name: None,
+            body_contains: None,
             allowed_effects: Vec::new(),
         };
 
@@ -779,6 +845,7 @@ async fn code_item_lookup_returns_nested_self_field_method_context() {
         owner_trait: None,
         owner_type: Some(Cow::Borrowed(fixture.owner_type)),
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -906,6 +973,7 @@ async fn code_item_lookup_returns_direct_self_field_dispatch_candidates() {
         owner_trait: None,
         owner_type: Some(Cow::Borrowed(fixture.owner_type)),
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -968,6 +1036,7 @@ async fn assert_callable_blocker_lookup(fixture: CallableBlockerFixture) {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -1092,6 +1161,7 @@ async fn code_item_lookup_returns_non_awaited_async_closure_poll_resume_blockers
             owner_trait: None,
             owner_type: None,
             parent_name: None,
+            body_contains: None,
             allowed_effects: Vec::new(),
         };
 
@@ -1245,6 +1315,7 @@ async fn code_item_lookup_returns_forwarded_async_future_awaited_site() {
             owner_trait: None,
             owner_type: None,
             parent_name: None,
+            body_contains: None,
             allowed_effects: Vec::new(),
         };
 
@@ -1315,6 +1386,7 @@ async fn assert_awaited_async_closure_future_lookup(
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -1378,6 +1450,7 @@ async fn assert_awaited_returned_async_closure_lookup(
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -1433,6 +1506,7 @@ async fn assert_forwarded_returned_closure_lookup(
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -1561,6 +1635,7 @@ async fn code_item_lookup_returns_result_method_callback_function_target() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -1620,6 +1695,7 @@ async fn assert_callable_param_lookup(fixture: CallableParamResolvedFixture, lab
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -1682,6 +1758,7 @@ async fn assert_resolved_dynamic_callable_lookup(owner_name: &'static str) {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -1784,6 +1861,7 @@ async fn code_item_lookup_returns_real_corpus_reachable_effects() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: vec![Cow::Borrowed("ffi_boundary")],
     };
 
@@ -1847,6 +1925,7 @@ async fn code_item_lookup_uses_stored_effect_policy_when_allowlist_omitted() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -1887,6 +1966,7 @@ async fn code_item_lookup_returns_fixture_process_invariant_findings() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -1939,6 +2019,7 @@ async fn code_item_lookup_returns_real_corpus_await_receiver_targetless_row() {
         owner_trait: None,
         owner_type: Some(Cow::Borrowed("ConnLimiter")),
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -2030,6 +2111,7 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
         owner_trait: None,
         owner_type: Some(Cow::Borrowed("Request")),
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -2380,6 +2462,7 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
         owner_trait: None,
         owner_type: Some(Cow::Borrowed("Request")),
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
     let boundary_result = CodeItemLookup::execute(
@@ -2443,6 +2526,7 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
         owner_trait: Some(Cow::Borrowed("FromRequest")),
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
     let target_result =
@@ -2664,6 +2748,7 @@ async fn code_item_lookup_surfaces_proc_macro_impact_callers() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -2795,6 +2880,7 @@ async fn code_item_lookup_reports_private_target_without_incoming_callers() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -3067,6 +3153,7 @@ async fn code_item_lookup_returns_incoming_callers_for_call_graph_target() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -3122,6 +3209,7 @@ async fn code_item_lookup_returns_real_corpus_crate_boundary_edges() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -3182,6 +3270,7 @@ async fn code_item_lookup_returns_real_corpus_body_empty_callers() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -3296,6 +3385,7 @@ async fn code_item_lookup_returns_real_corpus_body_new_generated_callers() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -3367,6 +3457,7 @@ async fn code_item_lookup_returns_real_corpus_generated_rejection_self_methods()
         owner_trait: Some(Cow::Borrowed("IntoResponse")),
         owner_type: Some(Cow::Borrowed("MissingExtension")),
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -3432,6 +3523,7 @@ async fn code_item_lookup_returns_real_corpus_composite_rejection_delegate() {
         owner_trait: Some(Cow::Borrowed("IntoResponse")),
         owner_type: Some(Cow::Borrowed("QueryRejection")),
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -3508,6 +3600,7 @@ async fn code_item_lookup_returns_real_corpus_parse_attrs_callers() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -3570,6 +3663,7 @@ async fn code_item_lookup_returns_real_corpus_parse_attrs_callers() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
     let turbofish_result = CodeItemLookup::execute(
@@ -3637,6 +3731,7 @@ async fn code_item_lookup_returns_real_corpus_json_from_bytes_callers() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -3853,6 +3948,7 @@ async fn code_item_lookup_returns_real_corpus_boxed_into_route_constructor_calle
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -3918,6 +4014,7 @@ async fn code_item_lookup_returns_real_corpus_chrono_alias_constructor_callers()
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -3984,6 +4081,7 @@ async fn code_item_lookup_returns_real_corpus_chrono_option_ok_or_try_receiver_c
         owner_trait: None,
         owner_type: Some(Cow::Borrowed("DateTime")),
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -4048,6 +4146,7 @@ async fn code_item_lookup_returns_real_corpus_run_ui_tests_callers() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -4120,6 +4219,7 @@ async fn code_item_lookup_disambiguates_real_corpus_handler_call_by_owner_trait(
             owner_trait: None,
             owner_type: None,
             parent_name: None,
+            body_contains: None,
             allowed_effects: Vec::new(),
         },
         fixture.ctx("axum-handler-call-ambiguous-lookup"),
@@ -4141,6 +4241,7 @@ async fn code_item_lookup_disambiguates_real_corpus_handler_call_by_owner_trait(
             owner_trait: Some(Cow::Borrowed("Handler")),
             owner_type: None,
             parent_name: None,
+            body_contains: None,
             allowed_effects: Vec::new(),
         },
         fixture.ctx("axum-handler-call-lookup"),

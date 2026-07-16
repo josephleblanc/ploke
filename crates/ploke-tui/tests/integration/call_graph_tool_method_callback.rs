@@ -22,6 +22,7 @@ async fn code_item_lookup_exposes_axum_method_callback_candidates() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -52,6 +53,7 @@ async fn code_item_edges_exposes_axum_method_callback_candidates() {
         owner_trait: None,
         owner_type: None,
         parent_name: None,
+        body_contains: None,
         allowed_effects: Vec::new(),
     };
 
@@ -143,6 +145,7 @@ async fn code_item_lookup_exposes_axum_generated_route_method_edges() {
             owner_trait: None,
             owner_type: Some(Cow::Borrowed("MethodRouter")),
             parent_name: None,
+            body_contains: None,
             allowed_effects: Vec::new(),
         };
 
@@ -173,6 +176,7 @@ async fn code_item_edges_exposes_axum_generated_route_method_edges() {
             owner_trait: None,
             owner_type: Some(Cow::Borrowed("MethodRouter")),
             parent_name: None,
+            body_contains: None,
             allowed_effects: Vec::new(),
         };
 
