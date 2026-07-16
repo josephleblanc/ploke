@@ -37,7 +37,7 @@ pub(in crate::unit) fn assert_target_proof_projection_source_counts(
         .iter()
         .filter(|caller| caller.status.status == CallStatusKind::Resolved)
         .count();
-    let expected_count = expected_target_proof_count(callers);
+    let expected_count = expected_target_proof_count_with_binding_evidence(db, callers)?;
     assert_eq!(count, expected_count, "{label} target-centered proof count");
 
     let target_str = target.to_string();

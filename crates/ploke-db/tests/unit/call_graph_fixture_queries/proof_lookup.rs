@@ -50,16 +50,16 @@ fn fixture_proof_symbol_lookup_links_target_centered_local_target_facts() -> Res
     .id;
 
     let count = db.project_call_proof_facts_for_target(target, "bd:fixture-call-graph")?;
+    let expected_count = expected_target_proof_count_with_binding_evidence(&db, &callers)?;
     assert_eq!(
-        count,
-        expected_target_proof_count(&callers),
+        count, expected_count,
         "target-centered symbol lookup setup proof count"
     );
 
     let rows = db.proof_symbol_lookup(&target.to_string())?;
     assert_eq!(
         rows.len(),
-        expected_target_proof_count(&callers),
+        expected_count,
         "target-centered symbol lookup should return linked resolved facts and candidate-only ambiguous facts: {rows:#?}"
     );
 
@@ -151,8 +151,7 @@ fn fixture_proof_symbol_lookup_matches_ambiguous_dynamic_candidate_payloads() ->
     }
 
     let count = db.project_call_proof_facts_for_target(target, "bd:fixture-call-graph")?;
-    let expected_count =
-        expected_target_proof_count(&callers) + RETURNED_CONFLICTING_FUNCTION_POINTER_OWNERS.len();
+    let expected_count = expected_target_proof_count_with_binding_evidence(&db, &callers)?;
     assert_eq!(
         count, expected_count,
         "ambiguous target-centered proof count"
