@@ -76,10 +76,10 @@ fn fixture_projection_marks_returned_callable_parameter_ambiguity_with_candidate
                 fact.get("call_site_id").and_then(serde_json::Value::as_str) == Some(site.as_str())
             })
             .collect::<Vec<_>>();
-        assert_candidate_proof(&site_facts, &site, &expected_names, owner_name);
+        assert_returned_callable_candidate_proof(&site_facts, &site, &expected_names, owner_name);
 
         let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
-        assert_eq!(count, 5, "{owner_name} projected proof fact count");
+        assert_eq!(count, 6, "{owner_name} projected proof fact count");
         assert_candidate_blocker(&db, &site, owner_name)?;
         assert!(
             db.proof_checker_edges()?
@@ -95,7 +95,7 @@ fn fixture_projection_marks_returned_callable_parameter_ambiguity_with_candidate
                 fact.get("call_site_id").and_then(serde_json::Value::as_str) == Some(site.as_str())
             })
             .collect::<Vec<_>>();
-        assert_candidate_proof(
+        assert_returned_callable_candidate_proof(
             &target_facts,
             &site,
             &expected_names,
