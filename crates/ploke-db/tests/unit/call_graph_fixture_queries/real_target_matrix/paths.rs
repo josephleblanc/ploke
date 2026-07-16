@@ -1978,10 +1978,19 @@ fn axum_real_target_shadowed_get_closure_is_documented_gap() -> Result<(), DbErr
             row.site.kind == CallSiteKind::Path && row.site.path == Some(get_path.clone())
         })
         .collect::<Vec<_>>();
+    let macro_rows = context
+        .iter()
+        .filter(|row| row.site.kind == CallSiteKind::Macro)
+        .collect::<Vec<_>>();
     assert_eq!(
         get_rows.len(),
         2,
         "what_matches_wildcard should only project the two setup routing::get rows until macro/closure body calls are modeled: {context:#?}"
+    );
+    assert_eq!(
+        macro_rows.len(),
+        11,
+        "what_matches_wildcard should preserve the eleven assert_eq! macro boundaries that contain shadowed local closure calls: {context:#?}"
     );
     for row in get_rows {
         assert_eq!(row.site.arg_count, Some(1));
@@ -1996,6 +2005,47 @@ fn axum_real_target_shadowed_get_closure_is_documented_gap() -> Result<(), DbErr
             relations_for_site(&db, row.site.id)?.rows.len(),
             1,
             "each setup routing::get source callsite should preserve one raw edge"
+        );
+    }
+    for row in &macro_rows {
+        assert_targetless_status(row, CallStatusKind::Unsupported);
+        assert!(
+            relations_for_site(&db, row.site.id)?.rows.is_empty(),
+            "shadowed get assert_eq! macro rows should not fabricate local targets"
+        );
+        assert_no_traversal_candidates_for_site(
+            &db,
+            owner,
+            row.site.id,
+            "shadowed get assert_eq! macro boundary",
+        )?;
+    }
+
+    let domain_id = "bd:corpus-axum-call-graph";
+    let projected = db.project_call_proof_facts_for_owner(owner, domain_id)?;
+    assert!(
+        projected >= macro_rows.len() * 2,
+        "shadowed get owner should project call-site and blocked resolution facts for the assert_eq! macro rows: {projected}"
+    );
+    let blockers = db.proof_blockers()?;
+    let proof_rows = db.proof_graphrag_context("macro_expansion_not_available")?;
+    for row in macro_rows {
+        let site = row.site.id.to_string();
+        assert!(
+            blockers.iter().any(|proof| {
+                proof.call_site_id.as_deref() == Some(site.as_str())
+                    && proof.reason == "macro_expansion_not_available"
+                    && proof.status == "blocked"
+            }),
+            "shadowed get assert_eq! row should expose a macro-expansion blocker for {site}: {blockers:#?}"
+        );
+        assert!(
+            proof_rows.iter().any(|proof| {
+                proof.kind == "call_resolution"
+                    && proof.call_site_id.as_deref() == Some(site.as_str())
+                    && proof.blocker_reason.as_deref() == Some("macro_expansion_not_available")
+            }),
+            "shadowed get assert_eq! row should be retrievable as macro-expansion proof context for {site}: {proof_rows:#?}"
         );
     }
 

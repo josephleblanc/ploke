@@ -3734,6 +3734,20 @@ resolution fact. This does not add a new traversal relation; ambiguous
 `self.layer` rows remain candidate-only and router-side `self.into_route` plus
 `self.tap_fn` remain targetless blockers.
 
+Update 2026-07-16: the real-corpus shadowed local callable boundary now has
+exact macro-blocker proof coverage. The source oracle is
+`axum/src/routing/tests/mod.rs:412-434`: the owner first calls imported
+`routing::get(...)` twice while building a router, then binds a local closure
+named `get` and calls that closure inside eleven `assert_eq!` macro arguments.
+DB now asserts the two setup path rows still resolve to
+`routing::method_routing::get`, the eleven assertion macro rows stay
+targetless and edge-free, and each macro row projects a
+`macro_expansion_not_available` blocker. Exact RAG proof context and exact
+`code_item_lookup` / `code_item_edges` payloads preserve the same blocker rows.
+This is proof coverage for a fail-closed macro boundary, not `assert_eq!`
+expansion, closure-call extraction inside macro arguments, or a new traversal
+edge from the shadowed closure to routing `get`.
+
 ## Parking Lot
 
 - Add binding tracking plan that ties syntax body ownership, local bindings, and type graph edges before attempting receiver/dynamic traversal.

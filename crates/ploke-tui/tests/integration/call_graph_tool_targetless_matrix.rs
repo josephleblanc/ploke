@@ -19,11 +19,11 @@ use crate::call_graph_tool_support::{
     assert_ambiguous_candidate_proof, assert_ambiguous_dynamic_candidates_with_relation,
     assert_dynamic_context, assert_dynamic_proof, assert_ifunc_context, assert_ifunc_proof,
     assert_method_context, assert_method_proof, assert_path_blocker_proof, assert_path_context,
-    assert_path_context_absent, assert_path_context_count, assert_path_resolution_proof,
-    assert_resolved_method_context, assert_resolved_method_proof,
-    assert_resolved_path_context_count, assert_resolved_path_context_target,
-    assert_resolved_path_proof, assert_runtime_dispatch_blocker,
-    assert_self_field_binding_evidence, request_parts_extract_target, ui_field,
+    assert_path_context_absent, assert_path_resolution_proof, assert_resolved_method_context,
+    assert_resolved_method_proof, assert_resolved_path_context_count,
+    assert_resolved_path_context_target, assert_resolved_path_proof,
+    assert_runtime_dispatch_blocker, assert_self_field_binding_evidence,
+    request_parts_extract_target, ui_field,
 };
 
 #[tokio::test]
@@ -799,6 +799,14 @@ async fn code_item_lookup_preserves_shadowed_get_resolved_setup_boundary() {
             fixture.case.label,
             "lookup",
         );
+        assert_macro_blocker_count(
+            proof_context,
+            fixture.owner,
+            "macro_expansion_not_available",
+            11,
+            fixture.case.label,
+            "lookup",
+        );
 
         let ui = result.ui_payload.as_ref().expect("ui payload");
         assert!(
@@ -808,6 +816,8 @@ async fn code_item_lookup_preserves_shadowed_get_resolved_setup_boundary() {
                 >= 2,
             "code_item_lookup should surface both shadowed get setup rows"
         );
+        let proof_count = proof_context.len().to_string();
+        assert_eq!(ui_field(ui, "proof_context"), proof_count.as_str());
     }
 }
 
@@ -2068,6 +2078,14 @@ async fn code_item_edges_preserves_shadowed_get_resolved_setup_boundary() {
             fixture.case.label,
             "edges",
         );
+        assert_macro_blocker_count(
+            proof_context,
+            fixture.owner,
+            "macro_expansion_not_available",
+            11,
+            fixture.case.label,
+            "edges",
+        );
 
         let ui = result.ui_payload.as_ref().expect("ui payload");
         assert!(
@@ -2079,6 +2097,66 @@ async fn code_item_edges_preserves_shadowed_get_resolved_setup_boundary() {
         );
         let proof_count = proof_context.len().to_string();
         assert_eq!(ui_field(ui, "proof_context"), proof_count.as_str());
+    }
+}
+
+fn assert_macro_blocker_count(
+    proofs: &[serde_json::Value],
+    owner: Uuid,
+    reason: &str,
+    expected: usize,
+    label: &str,
+    tool: &str,
+) {
+    let owner = owner.to_string();
+    let rows = proofs
+        .iter()
+        .filter_map(|proof| {
+            serde_json::from_value::<ploke_core::rag_types::ProofContextInfo>(proof.clone()).ok()
+        })
+        .collect::<Vec<_>>();
+    let owner_site_ids = rows
+        .iter()
+        .filter(|proof| {
+            proof.kind == "call_site" && proof.caller_def_id.as_deref() == Some(owner.as_str())
+        })
+        .filter_map(|proof| proof.call_site_id.as_deref())
+        .collect::<Vec<_>>();
+    let matching = rows
+        .iter()
+        .filter(|proof| {
+            proof.kind == "call_resolution"
+                && proof.resolution_state.as_deref() == Some("blocked")
+                && proof.blocker_reason.as_deref() == Some(reason)
+                && proof
+                    .call_site_id
+                    .as_deref()
+                    .is_some_and(|site| owner_site_ids.contains(&site))
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        matching.len() >= expected,
+        "{tool} should expose at least {expected} {reason} macro blocker rows for {label}: {rows:#?}"
+    );
+    for proof in matching {
+        let site = proof
+            .call_site_id
+            .as_deref()
+            .unwrap_or_else(|| panic!("{tool} {reason} proof row should carry call_site_id"));
+        assert!(
+            rows.iter().any(|row| {
+                row.kind == "call_site"
+                    && row.caller_def_id.as_deref() == Some(owner.as_str())
+                    && row.call_site_id.as_deref() == Some(site)
+            }),
+            "{tool} should expose the call_site row for {reason} blocker {site} in {label}: {rows:#?}"
+        );
+        assert!(
+            rows.iter().all(|row| {
+                row.kind != "call_edge" || row.call_site_id.as_deref() != Some(site)
+            }),
+            "{tool} must not fabricate call_edge proof rows for {reason} blocker {site} in {label}: {rows:#?}"
+        );
     }
 }
 
