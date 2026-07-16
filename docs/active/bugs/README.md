@@ -156,7 +156,7 @@ file and current code before treating a report as still open.
 - [`2026-07-13-prototype1-doctor-headless-preflight-rebuild-hang.md`](./2026-07-13-prototype1-doctor-headless-preflight-rebuild-hang.md)
   Resolved shared-library contract: BM25 rebuild admission now rejects full/closed mailboxes explicitly, status deadlines cover enqueue plus response, and the apparent live hang was corrected to a roughly two-minute workspace-ingestion run that passed.
 - [`2026-07-13-prototype1-embedding-preflight-after-admission.md`](./2026-07-13-prototype1-embedding-preflight-after-admission.md)
-  Repaired readiness gap plus external blocker: doctor now exercises the production embedding path without run-evidence writes; a key-specific OpenRouter monthly limit still prevents a fresh live loop.
+  Repaired readiness gap plus active external blocker: protocol-v10 doctor now proves direct-Google and headless readiness, but all exported OpenRouter credentials fail and the default key's monthly limit still prevents the multi-generation live walk.
 - [`2026-07-13-walk-summary-pre-child-plan.md`](./2026-07-13-walk-summary-pre-child-plan.md)
   Open read-model bug: `walk summary` treats a legitimately absent pre-child-plan directory as a malformed run instead of rendering the baseline/pre-plan phase, while later missing authority must still fail closed.
 - [`2026-07-13-prototype1-setup-receipt-recovery.md`](./2026-07-13-prototype1-setup-receipt-recovery.md)

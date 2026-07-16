@@ -1,6 +1,7 @@
 # Prototype 1 proves embedding execution only after baseline evidence starts
 
-Status: readiness gap repaired; external quota blocker; Stage 0 campaign abandoned
+Status: readiness gap repaired; external quota blocker still active; original
+Stage 0 campaign abandoned; 2026-07-16 preflight-only campaign resumable
 
 Discovered: 2026-07-13
 
@@ -66,17 +67,42 @@ limit_remaining: 0
 
 Account credits do not override this key-specific monthly limit.
 
+## Protocol-v10 Live Proof, 2026-07-16
+
+The fresh multi-generation proof campaign
+`p1-v10-multigen-g35f-oropenai-3g1x3-p3-20260716-011330` was admitted from
+source checkpoint `e1bc583f9` with parent `node-c2f27ef5530dedd6`. Ordinary
+doctor, the headless-TUI setup preflight, and the direct-Google Gemini 3.5
+Flash protocol preflight all passed. No walk server or typestate edge was
+started.
+
+The production embedding preflight failed against each exported OpenRouter
+credential without exposing credential values:
+
+```text
+OPENROUTER_API_KEY:           HTTP 403, monthly key limit exceeded
+AGENT_EVO_OPENROUTER_API_KEY: HTTP 401, user not found
+CODEX_OPENROUTER_API_KEY:     HTTP 402, insufficient credits
+```
+
+The default key's provider response identifies the same exhausted key-specific
+limit recorded above. This isolates the OpenRouter embedding credential as the
+only live readiness blocker for the admitted campaign.
+
 ## Source Boundary
 
-The eval runner builds an `EmbeddingRequest<OpenRouter>` and invokes the sole
-`HasEmbeddings` implementation, the OpenRouter backend. The setup
-`embedding_provider_slug` controls OpenRouter provider ordering; it does not
-select a different embedding transport.
+For the current setup schema, the eval runner supports OpenRouter and direct
+OpenAI embedding transports. The setup `embedding_provider_slug` controls
+provider ordering within the selected transport; choosing a different
+OpenRouter model or provider slug still uses the same OpenRouter endpoint and
+key.
 
-Direct Google/ADC is implemented for chat completions only. Current eval
-embeddings have no direct-Google, local, Hugging Face, or OpenAI adapter exposed
-through Prototype 1 setup. Google-named, Perplexity, Qwen, Nvidia, and free
-embedding catalog entries all still use the same OpenRouter endpoint and key.
+Direct Google/ADC is implemented for chat completions only. Prototype 1 does
+not expose a direct-Google, local, or Hugging Face eval embedding route.
+Direct OpenAI is now exposed, but it is not a valid recovery for the current
+`BurntSushi__ripgrep-2209` target: production indexing contains a 66,807-byte
+node that exceeds OpenAI's input limit, as recorded in
+[`2026-07-14-direct-openai-embedding-overlong-snippet.md`](2026-07-14-direct-openai-embedding-overlong-snippet.md).
 
 Therefore changing only the embedding model or provider slug cannot bypass this
 key-level limit.
@@ -111,11 +137,25 @@ Implemented in the Stage 1 readiness slice:
 5. Console diagnostics now use stderr, so provider warnings no longer corrupt
    `--format json` stdout during a failed live preflight.
 
-Remaining external recovery:
+Remaining external recovery for the original Stage 0 campaign:
 
 6. After an OpenRouter key limit increase/reset or replacement key is available,
    create a fresh `...-20260713-2` campaign with the same explicit profile and
    embedding selection; do not repair the failed campaign in place.
+
+For the 2026-07-16 campaign, the failure occurred only in the idempotent doctor
+preflight. It did not write closure, eval, protocol, or typestate evidence, so
+the blocker disposition is repair-and-resume. After raising or removing the
+monthly limit on `OPENROUTER_API_KEY`, rerun:
+
+```text
+ploke-eval loop prototype1-doctor \
+  --repo-root ~/.ploke-eval/worktrees/p1-v10-multigen-g35f-oropenai-3g1x3-p3-20260716-011330 \
+  --live-embedding-preflight --format json
+```
+
+Start the walk server only if that report has
+`embedding_preflight.outcome = "passed"` and no blockers.
 
 Adding a direct-Google or other non-OpenRouter eval embedding adapter is a
 separate source change, not a current config remedy.
