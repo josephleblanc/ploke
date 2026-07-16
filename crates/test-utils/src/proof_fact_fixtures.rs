@@ -594,6 +594,13 @@ pub fn axum_call_graph_domain_records(domain_id: &str) -> Vec<serde_json::Value>
 }
 
 pub fn axum_dyn_future_poll_blocker(call_site_id: Uuid) -> serde_json::Value {
+    axum_future_poll_blocker(
+        call_site_id,
+        "axum/src/error_handling/mod.rs:251 dyn Future::poll",
+    )
+}
+
+pub fn axum_future_poll_blocker(call_site_id: Uuid, source: &str) -> serde_json::Value {
     serde_json::json!({
         "fact_kind": "proof_blocker",
         "schema_version": "ploke-proof-facts.v1",
@@ -601,12 +608,22 @@ pub fn axum_dyn_future_poll_blocker(call_site_id: Uuid) -> serde_json::Value {
         "reason": "dynamic_dispatch_unbounded",
         "status": "blocked",
         "call_site_id": call_site_id.to_string(),
-        "detail": "axum/src/error_handling/mod.rs:251 dyn Future::poll concrete runtime future unresolved",
+        "detail": format!("{source} concrete runtime future unresolved"),
         "evidence_use": "proof_only"
     })
 }
 
 pub fn axum_dyn_future_poll_runtime_dispatch_summary(call_site_id: Uuid) -> serde_json::Value {
+    axum_future_poll_runtime_dispatch_summary(
+        call_site_id,
+        "axum/src/error_handling/mod.rs:251 dyn Future::poll",
+    )
+}
+
+pub fn axum_future_poll_runtime_dispatch_summary(
+    call_site_id: Uuid,
+    source: &str,
+) -> serde_json::Value {
     serde_json::json!({
         "fact_kind": "runtime_dispatch_summary",
         "schema_version": "ploke-proof-facts.v1",
@@ -617,7 +634,7 @@ pub fn axum_dyn_future_poll_runtime_dispatch_summary(call_site_id: Uuid) -> serd
         "artifact_hash": "sha256:axum-dyn-future-poll-runtime-dispatch",
         "version": "axum-dyn-future-poll-runtime-dispatch-summary-v1",
         "review_method": "source-oracle-review",
-        "scope_of_validity": "axum/src/error_handling/mod.rs:251 dyn Future::poll targetless runtime dispatch frontier in corpus_axum_call_graph",
+        "scope_of_validity": format!("{source} targetless runtime dispatch frontier in corpus_axum_call_graph"),
         "required_containment": "runtime-dispatch summary does not create local traversal edges",
         "invalidation_conditions": "source oracle, fixture hash, async poll/resume modeling, or proof policy changes",
         "status": "admitted",

@@ -217,6 +217,30 @@ impl Drop for FixtureRestoreGuard {
 | `corpus_axum_openrouter_embeddings_2026-05-17.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | OpenRouter-searchable workspace-member corpus backup for type-context matrix tests | 2026-05-17 |
 | `ploke-db_af8e3a20-728d-5967-8523-da8a5ccdae45` | `crates/ploke-db` | currently orphaned snapshot | 2026-03-20 |
 
+## 2026-07-16 Active Call-Graph Fixture Refresh
+
+The active fixture set was regenerated with
+`cargo run -p xtask --features call_graph -- fixtures regenerate --active`.
+The regenerated shared call-graph corpus snapshots were copied into
+`tests/backup_dbs/` as committed seed artifacts.
+
+Post-regeneration verification:
+
+- `cargo run -p xtask --features call_graph -- fixtures regenerate --active`
+  completed for all active registered fixtures.
+- `cargo run -p xtask --features call_graph -- verify-backup-dbs` passed for
+  all registered active fixtures after copying the regenerated shared snapshots
+  into `tests/backup_dbs/`.
+- Current committed seed checksums:
+  - `corpus_memchr_call_graph_2026-07-15.sqlite`:
+    `4cbe8fb2b19d693e4a52c4e5aeffb5df63772e9e9f2632f2b5a1a69af6d23f0c`
+  - `corpus_generic_array_call_graph_2026-07-15.sqlite`:
+    `f3ba6aa6a22cdb6e783007e3f97028754c66ae3ce0a5d4c739733b5d625c676c`
+  - `corpus_chrono_call_graph_2026-07-15.sqlite`:
+    `d3f905af425282a7d202590882992a1d0a06cfce07a38f77bbf61ca9ccd76f63`
+  - `corpus_axum_call_graph_2026-07-16.sqlite`:
+    `eddbb6d7a51ca004f0ab573b119062e9b4161a86d80cf7662e388f326dc0edca`
+
 ## 2026-07-15 Active Call-Graph Fixture Refresh
 
 The real-corpus active call-graph fixture set was refreshed with per-fixture
@@ -234,7 +258,7 @@ Post-regeneration verification:
 - `cargo run -p xtask --features call_graph -- verify-backup-dbs` passed for
   all registered active fixtures after copying the regenerated shared snapshots
   into `tests/backup_dbs/`.
-- Current committed seed checksums:
+- Committed seed checksums at that refresh:
   - `corpus_memchr_call_graph_2026-07-15.sqlite`:
     `491a19eb509c310774b041a72d18c382f82405a44603e67ec30cead29a1a9ccb`
   - `corpus_generic_array_call_graph_2026-07-15.sqlite`:

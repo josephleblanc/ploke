@@ -2590,8 +2590,63 @@ fn axum_usage_questions_report_stored_effect_policy_violation() -> Result<(), Db
     Ok(())
 }
 
+#[derive(Clone, Copy)]
+struct FuturePollCase {
+    label: &'static str,
+    file_suffix: &'static str,
+    body: &'static str,
+    source: &'static str,
+    query: &'static str,
+    receiver: FuturePollReceiver,
+}
+
+#[derive(Clone, Copy)]
+enum FuturePollReceiver {
+    MethodResult(&'static str),
+    Unsupported,
+}
+
+impl FuturePollCase {
+    const AXUM: [Self; 2] = [
+        Self {
+            label: "axum/src/error_handling/mod.rs:251 boxed dyn Future poll",
+            file_suffix: "axum/src/error_handling/mod.rs",
+            body: "self.project().future.poll(cx)",
+            source: "axum/src/error_handling/mod.rs:251 dyn Future::poll",
+            query: "dyn Future::poll",
+            receiver: FuturePollReceiver::Unsupported,
+        },
+        Self {
+            label: "axum/src/middleware/from_fn.rs:375 BoxFuture as_mut poll",
+            file_suffix: "axum/src/middleware/from_fn.rs",
+            body: "self.inner.as_mut().poll(cx).map(Ok)",
+            source: "axum/src/middleware/from_fn.rs:375 BoxFuture::as_mut().poll",
+            query: "BoxFuture::as_mut().poll",
+            receiver: FuturePollReceiver::MethodResult("as_mut"),
+        },
+    ];
+
+    fn call_receiver(self) -> CallReceiver {
+        match self.receiver {
+            FuturePollReceiver::MethodResult(method) => CallReceiver::MethodCallResult {
+                method_name: method.to_string(),
+            },
+            FuturePollReceiver::Unsupported => CallReceiver::Unsupported,
+        }
+    }
+
+    fn owner(self, db: &Database) -> Result<Uuid, DbError> {
+        method_id_by_name_body_and_file_suffix(db, "poll", self.body, self.file_suffix)
+    }
+
+    fn poll_row<'a>(self, context: &'a [CallContextRow]) -> &'a CallContextRow {
+        let receiver = self.call_receiver();
+        row_by_method_receiver(context, "poll", &receiver)
+    }
+}
+
 #[test]
-fn axum_usage_questions_report_dyn_future_poll_runtime_dispatch_blocker() -> Result<(), DbError> {
+fn axum_usage_questions_report_future_poll_runtime_dispatch_blockers() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
     // Usage questions:
@@ -2602,84 +2657,88 @@ fn axum_usage_questions_report_dyn_future_poll_runtime_dispatch_blocker() -> Res
     //   "Can the call graph distinguish an unsupported frontier from a
     //   fabricated local edge?"
     //
-    // Source oracle:
+    // Source oracles:
     //   axum/src/error_handling/mod.rs:240 stores
     //     `Pin<Box<dyn Future<Output = Result<Response, Infallible>>>>`.
-    //   axum/src/error_handling/mod.rs:251
-    //     `HandleErrorFuture::poll` calls `self.project().future.poll(cx)`.
-    // Expected contract: the dyn `Future::poll` callsite remains unsupported
-    // and targetless, while proof facts can attach the runtime dispatch blocker
-    // to the same callsite identity for fail-closed traversal consumers.
-    let owner = method_id_by_name_body_and_file_suffix(
-        &db,
-        "poll",
-        "self.project().future.poll(cx)",
-        "axum/src/error_handling/mod.rs",
-    )?;
-    let context = db.call_context_for_owner(owner)?;
-    let poll = row_by_method_receiver(&context, "poll", &CallReceiver::Unsupported);
-    assert_targetless_status(poll, CallStatusKind::Unsupported);
-    assert!(
-        relations_for_site(&db, poll.site.id)?.rows.is_empty(),
-        "axum/src/error_handling/mod.rs:251 dyn Future::poll must not fabricate a local edge"
-    );
-    assert_no_traversal_candidates_for_site(
-        &db,
-        owner,
-        poll.site.id,
-        "axum/src/error_handling/mod.rs:251 dyn Future::poll receiver dispatch",
-    )?;
+    //   axum/src/error_handling/mod.rs:251 calls
+    //     `self.project().future.poll(cx)`.
+    //   axum/src/middleware/from_fn.rs:368 stores
+    //     `BoxFuture<'static, Response>`.
+    //   axum/src/middleware/from_fn.rs:375 calls
+    //     `self.inner.as_mut().poll(cx).map(Ok)`.
+    // Expected contract: each future poll callsite remains unsupported and
+    // targetless, while proof facts can attach the runtime-dispatch blocker to
+    // the same callsite identity for fail-closed traversal consumers.
+    for case in FuturePollCase::AXUM {
+        let owner = case.owner(&db)?;
+        let context = db.call_context_for_owner(owner)?;
+        let poll = case.poll_row(&context);
+        assert_targetless_status(poll, CallStatusKind::Unsupported);
+        assert!(
+            relations_for_site(&db, poll.site.id)?.rows.is_empty(),
+            "{} must not fabricate a local edge",
+            case.label
+        );
+        assert_no_traversal_candidates_for_site(&db, owner, poll.site.id, case.label)?;
 
-    let report = db.call_reach_for_owner(
-        owner,
-        CallPathOptions {
-            max_depth: 1,
-            max_paths: 16,
-        },
-    )?;
-    let frontier = report
-        .unsupported_frontier_calls
-        .iter()
-        .find(|row| row.site.id == poll.site.id)
-        .unwrap_or_else(|| {
-            panic!(
-                "reach report should expose dyn Future::poll as an unsupported frontier: {report:#?}"
-            )
-        });
-    assert_eq!(frontier.site.owner_id, owner);
-    assert!(
-        frontier.targets.is_empty(),
-        "unsupported dyn Future::poll frontier should remain targetless: {frontier:#?}"
-    );
+        let report = db.call_reach_for_owner(
+            owner,
+            CallPathOptions {
+                max_depth: 1,
+                max_paths: 16,
+            },
+        )?;
+        let frontier = report
+            .unsupported_frontier_calls
+            .iter()
+            .find(|row| row.site.id == poll.site.id)
+            .unwrap_or_else(|| {
+                panic!(
+                    "reach report should expose {} as unsupported: {report:#?}",
+                    case.label
+                )
+            });
+        assert_eq!(frontier.site.owner_id, owner);
+        assert!(
+            frontier.targets.is_empty(),
+            "{} unsupported frontier should remain targetless: {frontier:#?}",
+            case.label
+        );
 
-    let site = poll.site.id.to_string();
-    db.upsert_proof_fact_values(&[ploke_test_utils::axum_dyn_future_poll_blocker(poll.site.id)])?;
+        let site = poll.site.id.to_string();
+        db.upsert_proof_fact_values(&[ploke_test_utils::axum_future_poll_blocker(
+            poll.site.id,
+            case.source,
+        )])?;
 
-    let blockers = db.proof_blockers()?;
-    assert!(
-        blockers.iter().any(|proof| {
-            proof.call_site_id.as_deref() == Some(site.as_str())
-                && proof.reason == "dynamic_dispatch_unbounded"
-                && proof.status == "blocked"
-        }),
-        "dyn Future::poll callsite should expose a runtime dispatch proof blocker: {blockers:#?}"
-    );
+        let blockers = db.proof_blockers()?;
+        assert!(
+            blockers.iter().any(|proof| {
+                proof.call_site_id.as_deref() == Some(site.as_str())
+                    && proof.reason == "dynamic_dispatch_unbounded"
+                    && proof.status == "blocked"
+            }),
+            "{} should expose a runtime-dispatch proof blocker: {blockers:#?}",
+            case.label
+        );
 
-    let proof_rows = db.proof_graphrag_context("dyn Future::poll")?;
-    assert!(
-        proof_rows.iter().any(|proof| {
-            proof.kind == "proof_blocker"
-                && proof.call_site_id.as_deref() == Some(site.as_str())
-                && proof.blocker_reason.as_deref() == Some("dynamic_dispatch_unbounded")
-        }),
-        "RAG proof context lookup should retrieve the dyn Future::poll blocker: {proof_rows:#?}"
-    );
+        let proof_rows = db.proof_graphrag_context(case.query)?;
+        assert!(
+            proof_rows.iter().any(|proof| {
+                proof.kind == "proof_blocker"
+                    && proof.call_site_id.as_deref() == Some(site.as_str())
+                    && proof.blocker_reason.as_deref() == Some("dynamic_dispatch_unbounded")
+            }),
+            "RAG proof context lookup should retrieve the {} blocker: {proof_rows:#?}",
+            case.label
+        );
+    }
 
     Ok(())
 }
 
 #[test]
-fn axum_usage_questions_list_runtime_dispatch_needs_for_owner() -> Result<(), DbError> {
+fn axum_usage_questions_list_future_poll_runtime_dispatch_needs() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
     let domain_id = "bd:corpus-axum-call-graph";
 
@@ -2691,82 +2750,85 @@ fn axum_usage_questions_list_runtime_dispatch_needs_for_owner() -> Result<(), Db
     //   traversal from this owner?"
     //   "What proof input is missing for an async poll/resume boundary?"
     //
-    // Source oracle:
-    //   axum/src/error_handling/mod.rs:240 stores
-    //     `Pin<Box<dyn Future<Output = Result<Response, Infallible>>>>`.
-    //   axum/src/error_handling/mod.rs:251
-    //     `HandleErrorFuture::poll` calls `self.project().future.poll(cx)`.
-    // Expected contract: once the proof layer records the runtime-dispatch
-    // blocker for that targetless callsite, the owner-scoped proof queue lists
-    // it as a dynamic-dispatch need without adding a traversal edge.
-    let owner = method_id_by_name_body_and_file_suffix(
-        &db,
-        "poll",
-        "self.project().future.poll(cx)",
-        "axum/src/error_handling/mod.rs",
-    )?;
-    let context = db.call_context_for_owner(owner)?;
-    let poll = row_by_method_receiver(&context, "poll", &CallReceiver::Unsupported);
-    assert_targetless_status(poll, CallStatusKind::Unsupported);
-    assert!(
-        relations_for_site(&db, poll.site.id)?.rows.is_empty(),
-        "axum/src/error_handling/mod.rs:251 dyn Future::poll must not start with a local edge"
-    );
+    // Expected contract: once the proof layer records runtime-dispatch blockers
+    // for reviewed targetless future-poll callsites, the owner-scoped proof
+    // queue lists them as dynamic-dispatch needs without adding traversal
+    // edges. An admitted runtime summary discharges the authoring need only.
+    for case in FuturePollCase::AXUM {
+        let owner = case.owner(&db)?;
+        let context = db.call_context_for_owner(owner)?;
+        let poll = case.poll_row(&context);
+        assert_targetless_status(poll, CallStatusKind::Unsupported);
+        assert!(
+            relations_for_site(&db, poll.site.id)?.rows.is_empty(),
+            "{} must not start with a local edge",
+            case.label
+        );
 
-    db.project_call_proof_facts_for_owner(owner, domain_id)?;
-    db.upsert_proof_fact_values(&[ploke_test_utils::axum_dyn_future_poll_blocker(poll.site.id)])?;
+        db.project_call_proof_facts_for_owner(owner, domain_id)?;
+        db.upsert_proof_fact_values(&[ploke_test_utils::axum_future_poll_blocker(
+            poll.site.id,
+            case.source,
+        )])?;
 
-    let needs = db.runtime_dispatch_needs_for_owner(
-        owner,
-        CallPathOptions {
-            max_depth: 1,
-            max_paths: 16,
-        },
-    )?;
-    let need = needs
-        .iter()
-        .find(|need| need.call_site.site.id == poll.site.id)
-        .unwrap_or_else(|| {
-            panic!(
-                "dyn Future::poll should be listed as an owner-scoped runtime-dispatch need: {needs:#?}"
-            )
-        });
-    assert_targetless_status(&need.call_site, CallStatusKind::Unsupported);
-    assert!(
-        need.paths_to_owner.is_empty(),
-        "direct dyn Future::poll frontier should not need an intermediate path: {need:#?}"
-    );
-    assert!(
-        need.blocker_reasons
+        let needs = db.runtime_dispatch_needs_for_owner(
+            owner,
+            CallPathOptions {
+                max_depth: 1,
+                max_paths: 16,
+            },
+        )?;
+        let need = needs
             .iter()
-            .any(|reason| reason == "dynamic_dispatch_unbounded"),
-        "runtime dispatch need should retain the dynamic-dispatch blocker: {need:#?}"
-    );
-    assert!(
-        relations_for_site(&db, poll.site.id)?.rows.is_empty(),
-        "runtime-dispatch proof queue must not fabricate a dyn Future::poll edge"
-    );
+            .find(|need| need.call_site.site.id == poll.site.id)
+            .unwrap_or_else(|| {
+                panic!(
+                    "{} should be listed as an owner-scoped runtime-dispatch need: {needs:#?}",
+                    case.label
+                )
+            });
+        assert_targetless_status(&need.call_site, CallStatusKind::Unsupported);
+        assert!(
+            need.paths_to_owner.is_empty(),
+            "{} direct frontier should not need an intermediate path: {need:#?}",
+            case.label
+        );
+        assert!(
+            need.blocker_reasons
+                .iter()
+                .any(|reason| reason == "dynamic_dispatch_unbounded"),
+            "{} should retain the dynamic-dispatch blocker: {need:#?}",
+            case.label
+        );
+        assert!(
+            relations_for_site(&db, poll.site.id)?.rows.is_empty(),
+            "{} runtime-dispatch proof queue must not fabricate an edge",
+            case.label
+        );
 
-    db.upsert_proof_fact_values(&[
-        ploke_test_utils::axum_dyn_future_poll_runtime_dispatch_summary(poll.site.id),
-    ])?;
-    let after = db.runtime_dispatch_needs_for_owner(
-        owner,
-        CallPathOptions {
-            max_depth: 1,
-            max_paths: 16,
-        },
-    )?;
-    assert!(
-        after
-            .iter()
-            .all(|need| need.call_site.site.id != poll.site.id),
-        "admitted dyn Future::poll runtime-dispatch summary should discharge the proof-authoring need: {after:#?}"
-    );
-    assert!(
-        relations_for_site(&db, poll.site.id)?.rows.is_empty(),
-        "admitted dyn Future::poll runtime-dispatch summary must not fabricate a local edge"
-    );
+        db.upsert_proof_fact_values(&[
+            ploke_test_utils::axum_future_poll_runtime_dispatch_summary(poll.site.id, case.source),
+        ])?;
+        let after = db.runtime_dispatch_needs_for_owner(
+            owner,
+            CallPathOptions {
+                max_depth: 1,
+                max_paths: 16,
+            },
+        )?;
+        assert!(
+            after
+                .iter()
+                .all(|need| need.call_site.site.id != poll.site.id),
+            "{} admitted summary should discharge the proof-authoring need: {after:#?}",
+            case.label
+        );
+        assert!(
+            relations_for_site(&db, poll.site.id)?.rows.is_empty(),
+            "{} admitted summary must not fabricate a local edge",
+            case.label
+        );
+    }
 
     Ok(())
 }
