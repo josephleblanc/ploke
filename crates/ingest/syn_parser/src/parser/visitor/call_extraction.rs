@@ -342,6 +342,13 @@ impl BodyCallVisitor<'_> {
         let Some(syn::Stmt::Expr(expr, None)) = block.stmts.last() else {
             return;
         };
+        let call_result_field_bindings = returned_call_result_field_bindings(
+            block,
+            self.owner,
+            self.cfgs,
+            self.param_names,
+            &self.local_scopes,
+        );
         if let Some((type_path, field_inits)) =
             constructed_parameter_field_inits(Some(expr), self.param_names)
         {
@@ -359,6 +366,35 @@ impl BodyCallVisitor<'_> {
                 span,
                 field_inits,
             );
+            for binding in call_result_field_bindings {
+                self.record_local_binding(
+                    &binding.name,
+                    binding.span,
+                    LocalBindingKind::LetBinding,
+                    binding.source,
+                );
+            }
+            return;
+        }
+        if let Some((type_path, field_bindings)) = constructed_return_type_path(expr)
+            .zip((!call_result_field_bindings.is_empty()).then_some(call_result_field_bindings))
+        {
+            let byte_range = expr.span().byte_range();
+            let span = (byte_range.start, byte_range.end);
+            self.record_local_binding(
+                "return",
+                span,
+                LocalBindingKind::ReturnExpression,
+                LocalBindingSource::Constructed { type_path },
+            );
+            for binding in field_bindings {
+                self.record_local_binding(
+                    &binding.name,
+                    binding.span,
+                    LocalBindingKind::LetBinding,
+                    binding.source,
+                );
+            }
             return;
         }
         let Some(source) = return_binding_source(
@@ -2623,13 +2659,7 @@ fn constructed_parameter_field_inits(
     expr: Option<&syn::Expr>,
     param_names: &[String],
 ) -> Option<(Vec<String>, Vec<ArgumentFieldInit>)> {
-    let syn::Expr::Struct(expr) = unparen_expr(expr?) else {
-        return None;
-    };
-    if expr.qself.is_some() || expr.rest.is_some() {
-        return None;
-    }
-
+    let expr = constructed_return_struct(expr?)?;
     let type_path = path_segments(&expr.path);
     if type_path.len() != 1 {
         return None;
@@ -2648,6 +2678,115 @@ fn constructed_parameter_field_inits(
         .collect::<Vec<_>>();
 
     (!fields.is_empty()).then_some((type_path, fields))
+}
+
+fn constructed_return_type_path(expr: &syn::Expr) -> Option<Vec<String>> {
+    let expr = constructed_return_struct(expr)?;
+    let type_path = path_segments(&expr.path);
+    (!type_path.is_empty()).then_some(type_path)
+}
+
+fn constructed_return_struct(expr: &syn::Expr) -> Option<&syn::ExprStruct> {
+    let syn::Expr::Struct(expr) = unparen_expr(expr) else {
+        return None;
+    };
+    if expr.qself.is_some() || expr.rest.is_some() {
+        return None;
+    }
+
+    let type_path = path_segments(&expr.path);
+    (!type_path.is_empty()).then_some(expr)
+}
+
+fn returned_call_result_field_bindings(
+    block: &syn::Block,
+    owner: CallBodyOwnerId,
+    cfgs: &[String],
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Vec<FutureStorageBinding> {
+    let Some(syn::Stmt::Expr(expr, None)) = block.stmts.last() else {
+        return Vec::new();
+    };
+    let Some(expr) = constructed_return_struct(expr) else {
+        return Vec::new();
+    };
+
+    expr.fields
+        .iter()
+        .filter_map(|field| {
+            let name = format!("return.{}", member_name(&field.member));
+            call_result_binding_source(&field.expr, owner, cfgs, param_names, local_scopes)
+                .or_else(|| {
+                    returned_field_alias_source(
+                        block,
+                        &field.expr,
+                        owner,
+                        cfgs,
+                        param_names,
+                        local_scopes,
+                    )
+                })
+                .map(|(span, source)| FutureStorageBinding { name, span, source })
+        })
+        .collect()
+}
+
+fn returned_field_alias_source(
+    block: &syn::Block,
+    expr: &syn::Expr,
+    owner: CallBodyOwnerId,
+    cfgs: &[String],
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<((usize, usize), LocalBindingSource)> {
+    let syn::Expr::Path(path) = unparen_expr(expr) else {
+        return None;
+    };
+    if path.qself.is_some() {
+        return None;
+    }
+    let path = path_segments(&path.path);
+    let [name] = path.as_slice() else {
+        return None;
+    };
+
+    block
+        .stmts
+        .iter()
+        .rev()
+        .skip(1)
+        .filter_map(|stmt| match stmt {
+            syn::Stmt::Local(local) if pat_ident_name(&local.pat).as_deref() == Some(name) => {
+                local.init.as_ref().map(|init| init.expr.as_ref())
+            }
+            _ => None,
+        })
+        .find_map(|init| call_result_binding_source(init, owner, cfgs, param_names, local_scopes))
+}
+
+fn call_result_binding_source(
+    expr: &syn::Expr,
+    owner: CallBodyOwnerId,
+    cfgs: &[String],
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<((usize, usize), LocalBindingSource)> {
+    let span = match unparen_expr(expr) {
+        syn::Expr::Call(call) => {
+            let byte_range = call.span().byte_range();
+            (byte_range.start, byte_range.end)
+        }
+        _ => return None,
+    };
+    let source = return_binding_source(expr, owner, cfgs, param_names, local_scopes, false)?;
+    if !matches!(
+        source,
+        LocalBindingSource::DynamicCallResult { .. } | LocalBindingSource::PathCallResult { .. }
+    ) {
+        return None;
+    }
+    Some((span, source))
 }
 
 fn parameter_expr_path(expr: &syn::Expr, param_names: &[String]) -> Option<Vec<String>> {

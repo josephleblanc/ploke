@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use ploke_db::{
     CallContextRelation, CallContextSeed, CallNodeKind, CallPathOptions, CallRelationKind,
-    CrateBoundaryPolicyRule, ModuleBoundaryPolicyRule, ProofGraphStore,
+    CrateBoundaryPolicyRule, LocalBindingRelationKind, ModuleBoundaryPolicyRule, ProofGraphStore,
 };
 use ploke_test_utils::CORPUS_MEMCHR_CALL_GRAPH;
 use serde_json::json;
@@ -2585,6 +2585,111 @@ fn axum_usage_questions_report_stored_effect_policy_violation() -> Result<(), Db
         ambiguous
             .to_string()
             .contains("multiple admitted effect_policy")
+    );
+
+    Ok(())
+}
+
+#[test]
+fn axum_usage_questions_record_returned_future_field_producer() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Debugging / RAG:
+    //   "Which source expression produced the future later polled through this
+    //   runtime-dispatch frontier?"
+    //
+    // Source oracle:
+    //   axum/src/error_handling/mod.rs:140 creates
+    //     `let future = Box::pin(async move { ... })`.
+    //   axum/src/error_handling/mod.rs:147 returns
+    //     `future::HandleErrorFuture { future }`.
+    //   axum/src/error_handling/mod.rs:251 later calls
+    //     `self.project().future.poll(cx)`.
+    // Expected contract: the producer owner exposes a durable returned-field
+    // binding `return.future` sourced by the `Box::pin(...)` path-call result,
+    // without turning the later `Future::poll` runtime dispatch into a local
+    // traversal edge.
+    let owner = method_id_by_name_body_and_file_suffix(
+        &db,
+        "call",
+        "Err(err) => Ok(f(err).await.into_response())",
+        "axum/src/error_handling/mod.rs",
+    )?;
+    let context = db.call_context_for_owner(owner)?;
+    let box_pin = row_by_path(&context, &["Box", "pin"]);
+
+    let bindings = db.local_bindings_for_owner(owner)?;
+    let return_binding = bindings
+        .iter()
+        .find(|binding| {
+            binding.kind == "ReturnExpression"
+                && binding.name == "return"
+                && binding.source_kind == "Constructed"
+                && binding.source_path.as_ref() == Some(&path(&["future", "HandleErrorFuture"]))
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "HandleError::call should persist the constructed return binding from axum/src/error_handling/mod.rs:147: {bindings:#?}"
+            )
+        });
+    let future_field = bindings
+        .iter()
+        .find(|binding| {
+            binding.kind == "LetBinding"
+                && binding.name == "return.future"
+                && binding.source_kind == "PathCallResult"
+                && binding.source_id == Some(box_pin.site.id)
+                && binding.source_call_kind.as_deref() == Some("Path")
+                && binding.source_path.as_ref() == Some(&path(&["Box", "pin"]))
+                && binding.callee_kind.is_none()
+                && binding.callee_path.is_none()
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "HandleError::call should persist return.future as the field that stores the Box::pin call result: {bindings:#?}"
+            )
+        });
+
+    let edges = db.local_binding_edges_for_owner(owner)?;
+    assert!(
+        edges.iter().any(
+            |edge| edge.relation == LocalBindingRelationKind::OwnerContainsBinding
+                && edge.source_id == owner
+                && edge.target_id == return_binding.id
+                && edge.target_kind == "LocalBinding"
+        ),
+        "missing owner-to-return binding edge: {edges:#?}"
+    );
+    assert!(
+        edges.iter().any(
+            |edge| edge.relation == LocalBindingRelationKind::OwnerContainsBinding
+                && edge.source_id == owner
+                && edge.target_id == future_field.id
+                && edge.target_kind == "LocalBinding"
+        ),
+        "missing owner-to-return.future binding edge: {edges:#?}"
+    );
+    assert!(
+        edges.iter().any(
+            |edge| edge.relation == LocalBindingRelationKind::BindingSourceCallResult
+                && edge.source_id == future_field.id
+                && edge.source_kind == "LocalBinding"
+                && edge.target_id == box_pin.site.id
+                && edge.target_kind == "Path"
+        ),
+        "missing return.future-to-Box::pin source edge: {edges:#?}"
+    );
+
+    let poll_owner = FuturePollCase::AXUM[0].owner(&db)?;
+    let poll_context = db.call_context_for_owner(poll_owner)?;
+    let poll = FuturePollCase::AXUM[0].poll_row(&poll_context);
+    assert_targetless_status(poll, CallStatusKind::Unsupported);
+    assert!(
+        relations_for_site(&db, poll.site.id)?.rows.is_empty(),
+        "producer binding evidence must not fabricate a local Future::poll edge"
     );
 
     Ok(())
