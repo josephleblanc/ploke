@@ -16,11 +16,12 @@ use crate::call_graph_tool_support::{
     AxumErrorHandlingTraitsToolFixture, AxumExpandWithToolFixture, AxumFromFnBasicToolFixture,
     AxumGeneratedRejectionToolFixture, AxumHandlerCallToolFixture, AxumJsonFromBytesToolFixture,
     AxumParseAttrsToolFixture, AxumRequestExtractPathToolFixture, AxumRunUiTestsToolFixture,
-    AxumTaskSpawnEffectToolFixture, CallGraphToolFixture, CallableBlockerFixture,
-    CallableBlockerShape, CallableParamResolvedFixture, ChronoAliasConstructorToolFixture,
-    ChronoNaiveUtcToolFixture, DirectSelfFieldDispatchFixture, FixtureBranchReceiverToolFixture,
-    FixtureDynamicCallableToolFixture, FixtureMethodCallableArgumentToolFixture,
-    FixtureSelfFieldReceiverToolFixture, ResultCallbackFixture, ReturnedClosureToolFixture,
+    AxumTapIoConstructorToolFixture, AxumTaskSpawnEffectToolFixture, CallGraphToolFixture,
+    CallableBlockerFixture, CallableBlockerShape, CallableParamResolvedFixture,
+    ChronoAliasConstructorToolFixture, ChronoNaiveUtcToolFixture, DirectSelfFieldDispatchFixture,
+    FixtureBranchReceiverToolFixture, FixtureDynamicCallableToolFixture,
+    FixtureMethodCallableArgumentToolFixture, FixtureSelfFieldReceiverToolFixture,
+    ResultCallbackFixture, ReturnedClosureToolFixture,
     assert_aliased_parameter_local_binding_payload, assert_ambiguous_candidate_proof,
     assert_ambiguous_dynamic_candidates, assert_ambiguous_dynamic_candidates_with_relation,
     assert_ambiguous_path_candidates, assert_await_result_unwrap_context,
@@ -45,8 +46,9 @@ use crate::call_graph_tool_support::{
     assert_resolved_path_context, assert_run_ui_tests_incoming_context,
     assert_runtime_dispatch_blocker, assert_self_field_receiver_context,
     assert_self_field_receiver_proof, assert_serde_json_summary_proof,
-    assert_serde_json_surface_measure_effect, assert_target_proof, assert_task_spawn_effects,
-    assert_task_spawn_policy_violation, assert_two_hop_call_path, ui_field,
+    assert_serde_json_surface_measure_effect, assert_tap_io_constructor_local_binding_payload,
+    assert_target_proof, assert_task_spawn_effects, assert_task_spawn_policy_violation,
+    assert_two_hop_call_path, ui_field,
 };
 
 #[tokio::test]
@@ -511,6 +513,50 @@ async fn code_item_lookup_returns_local_binding_payload_for_aliased_field_parame
         edges,
         fixture.owner,
         fixture.owner_name,
+        "code_item_lookup",
+    );
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert_eq!(ui_field(ui, "local_bindings"), bindings.len().to_string());
+    assert_eq!(ui_field(ui, "local_binding_edges"), edges.len().to_string());
+}
+
+#[tokio::test]
+async fn code_item_lookup_returns_axum_tap_io_constructor_frontier_payload() {
+    let fixture = AxumTapIoConstructorToolFixture::new().await;
+    let params = LookupParams {
+        item_name: Cow::Borrowed("tap_io"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("method"),
+        module_path: Cow::Owned(fixture.module_path_arg()),
+        owner_trait: Some(Cow::Borrowed("ListenerExt")),
+        owner_type: None,
+        parent_name: None,
+        allowed_effects: Vec::new(),
+    };
+
+    let result = CodeItemLookup::execute(params, fixture.ctx("tap-io-binding-lookup"))
+        .await
+        .expect("tap_io constructor binding lookup");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize ConciseContext");
+    let bindings = payload
+        .get("local_bindings")
+        .and_then(serde_json::Value::as_array)
+        .expect("local_bindings array");
+    let edges = payload
+        .get("local_binding_edges")
+        .and_then(serde_json::Value::as_array)
+        .expect("local_binding_edges array");
+
+    // Source oracle:
+    //   axum/src/serve/listener.rs:116-123
+    //   `TapIo { listener: self, tap_fn }` records constructor-side frontier
+    //   evidence for the later targetless `(self.tap_fn)(&mut io)` call.
+    assert_tap_io_constructor_local_binding_payload(
+        bindings,
+        edges,
+        fixture.owner,
         "code_item_lookup",
     );
 

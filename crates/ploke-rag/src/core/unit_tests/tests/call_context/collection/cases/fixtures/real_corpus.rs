@@ -14,6 +14,7 @@ use super::super::super::super::super::*;
 use super::expected::path;
 
 mod ifunc;
+mod local_bindings;
 mod remaining;
 mod shared_matrix;
 mod targetless;

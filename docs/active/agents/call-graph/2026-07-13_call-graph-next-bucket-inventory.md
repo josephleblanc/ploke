@@ -422,6 +422,10 @@ Constructor field frontier checkpoint, 2026-07-16:
   `axum_tap_io_constructor_records_field_parameter_frontier`, while separately
   asserting `TapIo::accept` at `axum/src/serve/listener.rs:236` still keeps
   `(self.tap_fn)(&mut io)` unsupported, targetless, and edge-free.
+- Exact RAG and exact `code_item_lookup` / `code_item_edges` tests now expose
+  the same constructor-side `return`, `tap_fn`, and `return.tap_fn`
+  local-binding payloads without enabling proof-context or traversal for
+  `tap_io` itself.
 - The registered `corpus_axum_call_graph` fixture was refreshed to
   `corpus_axum_call_graph_2026-07-16.sqlite` for this proof carrier.
   Verification passed for `verify-backup-dbs --fixture corpus_axum_call_graph`

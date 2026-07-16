@@ -187,6 +187,13 @@ pub(crate) struct AxumAwaitReceiverToolFixture {
     pub(crate) owner: Uuid,
 }
 
+pub(crate) struct AxumTapIoConstructorToolFixture {
+    pub(crate) state: Arc<AppState>,
+    pub(crate) file_path: PathBuf,
+    pub(crate) module_path: Vec<String>,
+    pub(crate) owner: Uuid,
+}
+
 #[derive(Debug)]
 pub(crate) struct ExpectedCallSite {
     pub(crate) owner: Uuid,
@@ -1020,6 +1027,33 @@ impl AxumHandlerAsyncBlockToolFixture {
     }
 }
 
+impl AxumTapIoConstructorToolFixture {
+    pub(crate) async fn new() -> Self {
+        let db = axum_call_graph_db();
+        let target = axum_tap_io_constructor_target(db.as_ref());
+        let mut rag_config = RagConfig::default();
+        rag_config.proof_context.enabled = false;
+        let state =
+            axum_state_for_target_with_rag_config(Arc::clone(&db), &target, "tap_io", rag_config)
+                .await;
+
+        Self {
+            state,
+            file_path: target.file_path,
+            module_path: target.module_path,
+            owner: target.id,
+        }
+    }
+
+    pub(crate) fn module_path_arg(&self) -> String {
+        self.module_path.join("::")
+    }
+
+    pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
+        ctx_for_state(&self.state, call_id)
+    }
+}
+
 impl AxumCallbackClosureToolFixture {
     pub(crate) async fn new() -> Self {
         let db = axum_call_graph_db();
@@ -1488,6 +1522,55 @@ file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_f
 
     TargetInfo {
         id: to_uuid(&row[0]).expect("Json::from_bytes uuid"),
+        file_path: PathBuf::from(data_str(&row[2], "file_path")),
+        module_path: data_path(&row[3], "module path"),
+    }
+}
+
+fn axum_tap_io_constructor_target(db: &Database) -> TargetInfo {
+    let mut params = BTreeMap::new();
+    params.insert("name".to_string(), DataValue::from("tap_io"));
+
+    let script = format!(
+        r#"
+ancestor[desc, desc] := *module{{ id: desc @ 'NOW' }}
+{ANCESTOR_RULES_NOW}
+{METHOD_NODE_ANCESTOR_RULE}
+
+module_has_file[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_id] := module_has_file[mod_id], file_id = mod_id
+file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_file[parent], file_id = parent
+
+?[id, body, file_path, mod_path] :=
+    *method {{ id, name: $name, body @ 'NOW' }},
+    ancestor[id, mod_id],
+    *module{{ id: mod_id, path: mod_path @ 'NOW' }},
+    file_owner_for_module[mod_id, file_id],
+    *file_mod{{ owner_id: file_id, file_path @ 'NOW' }}
+"#
+    );
+    let rows = db
+        .raw_query_params(&script, params)
+        .expect("query axum tap_io target");
+    let matching = rows
+        .rows
+        .iter()
+        .filter(|row| {
+            body_key(data_str(&row[1], "method body"))
+                .contains(&body_key("TapIo { listener: self, tap_fn, }"))
+                && data_str(&row[2], "file_path").ends_with("axum/src/serve/listener.rs")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching.len(),
+        1,
+        "expected exactly one axum ListenerExt::tap_io target; rows: {:#?}",
+        rows.rows
+    );
+    let row = matching[0];
+
+    TargetInfo {
+        id: to_uuid(&row[0]).expect("tap_io uuid"),
         file_path: PathBuf::from(data_str(&row[2], "file_path")),
         module_path: data_path(&row[3], "module path"),
     }
@@ -3531,6 +3614,87 @@ pub(crate) fn assert_aliased_parameter_local_binding_payload(
                 && edge.target_kind == "LocalBinding"
         }),
         "{tool} should expose BindingAliasesBinding for {label}: {edges:#?}"
+    );
+}
+
+pub(crate) fn assert_tap_io_constructor_local_binding_payload(
+    bindings: &[serde_json::Value],
+    edges: &[serde_json::Value],
+    owner: Uuid,
+    tool: &str,
+) {
+    let rows = bindings
+        .iter()
+        .filter_map(|binding| serde_json::from_value::<LocalBindingInfo>(binding.clone()).ok())
+        .collect::<Vec<_>>();
+    let return_binding = rows
+        .iter()
+        .find(|binding| {
+            binding.owner_id == owner
+                && binding.kind == "ReturnExpression"
+                && binding.name == "return"
+                && binding.source_kind == "Constructed"
+                && matches!(binding.source_path.as_deref(), Some([segment]) if segment == "TapIo")
+        })
+        .unwrap_or_else(|| {
+            panic!("{tool} should expose tap_io constructed return binding: {bindings:#?}")
+        });
+    let parameter = rows
+        .iter()
+        .find(|binding| {
+            binding.owner_id == owner
+                && binding.kind == "ParameterBinding"
+                && binding.name == "tap_fn"
+                && binding.source_kind == "Parameter"
+        })
+        .unwrap_or_else(|| panic!("{tool} should expose tap_io tap_fn parameter: {bindings:#?}"));
+    let projection = rows
+        .iter()
+        .find(|binding| {
+            binding.owner_id == owner
+                && binding.kind == "FieldProjection"
+                && binding.name == "return.tap_fn"
+                && binding.source_kind == "FieldProjection"
+                && binding.source_id == Some(return_binding.id)
+                && matches!(binding.source_path.as_deref(), Some([segment]) if segment == "tap_fn")
+                && binding.callee_kind.as_deref() == Some("Path")
+                && matches!(binding.callee_path.as_deref(), Some([segment]) if segment == "tap_fn")
+        })
+        .unwrap_or_else(|| {
+            panic!("{tool} should expose tap_io return.tap_fn projection: {bindings:#?}")
+        });
+
+    let edge_rows = edges
+        .iter()
+        .filter_map(|edge| serde_json::from_value::<LocalBindingEdgeInfo>(edge.clone()).ok())
+        .collect::<Vec<_>>();
+    assert!(
+        edge_rows.iter().any(|edge| {
+            edge.source_id == owner
+                && edge.target_id == return_binding.id
+                && edge.relation == LocalBindingRelationKind::OwnerContainsBinding
+                && edge.target_kind == "LocalBinding"
+        }),
+        "{tool} should expose OwnerContainsBinding for tap_io return binding: {edges:#?}"
+    );
+    assert!(
+        edge_rows.iter().any(|edge| {
+            edge.source_id == owner
+                && edge.target_id == parameter.id
+                && edge.relation == LocalBindingRelationKind::OwnerContainsBinding
+                && edge.target_kind == "LocalBinding"
+        }),
+        "{tool} should expose OwnerContainsBinding for tap_io tap_fn parameter: {edges:#?}"
+    );
+    assert!(
+        edge_rows.iter().any(|edge| {
+            edge.source_id == projection.id
+                && edge.target_id == return_binding.id
+                && edge.relation == LocalBindingRelationKind::BindingProjectsField
+                && edge.source_kind == "LocalBinding"
+                && edge.target_kind == "LocalBinding"
+        }),
+        "{tool} should expose BindingProjectsField for tap_io return.tap_fn: {edges:#?}"
     );
 }
 
