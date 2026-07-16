@@ -342,6 +342,25 @@ impl BodyCallVisitor<'_> {
         let Some(syn::Stmt::Expr(expr, None)) = block.stmts.last() else {
             return;
         };
+        if let Some((type_path, field_inits)) =
+            constructed_parameter_field_inits(Some(expr), self.param_names)
+        {
+            let byte_range = expr.span().byte_range();
+            let span = (byte_range.start, byte_range.end);
+            let binding_id = self.record_local_binding(
+                "return",
+                span,
+                LocalBindingKind::ReturnExpression,
+                LocalBindingSource::Constructed { type_path },
+            );
+            self.record_constructed_field_projection_bindings(
+                "return",
+                binding_id,
+                span,
+                field_inits,
+            );
+            return;
+        }
         let Some(source) = return_binding_source(
             expr,
             self.owner,
@@ -507,13 +526,37 @@ impl BodyCallVisitor<'_> {
         id
     }
 
+    fn record_constructed_field_projection_bindings(
+        &mut self,
+        base_name: &str,
+        base_binding_id: LocalBindingId,
+        span: (usize, usize),
+        field_inits: Vec<ArgumentFieldInit>,
+    ) {
+        for field in field_inits {
+            let mut name = Vec::with_capacity(field.field_path.len() + 1);
+            name.push(base_name.to_string());
+            name.extend(field.field_path.iter().cloned());
+            self.record_local_binding(
+                &name.join("."),
+                span,
+                LocalBindingKind::FieldProjection,
+                LocalBindingSource::FieldProjection {
+                    base_binding_id,
+                    field_path: field.field_path,
+                    init_path: field.init_path,
+                },
+            );
+        }
+    }
+
     fn record_local_binding(
         &mut self,
         name: &str,
         span: (usize, usize),
         kind: LocalBindingKind,
         source: LocalBindingSource,
-    ) {
+    ) -> LocalBindingId {
         let id = generate_local_binding_id(self.owner, name, span, kind, self.cfgs);
         self.local_binding_relations
             .push(LocalBindingRelation::OwnerContainsBinding {
@@ -532,6 +575,7 @@ impl BodyCallVisitor<'_> {
             name: name.to_string(),
             source,
         });
+        id
     }
 
     fn record_method_call(&mut self, call: &syn::ExprMethodCall) {
@@ -2573,6 +2617,55 @@ fn constructed_init(
 ) -> Option<(Vec<String>, ConstructedFields)> {
     constructed_call_init(expr, param_names, local_scopes)
         .or_else(|| constructed_struct_init(expr, param_names, local_scopes))
+}
+
+fn constructed_parameter_field_inits(
+    expr: Option<&syn::Expr>,
+    param_names: &[String],
+) -> Option<(Vec<String>, Vec<ArgumentFieldInit>)> {
+    let syn::Expr::Struct(expr) = unparen_expr(expr?) else {
+        return None;
+    };
+    if expr.qself.is_some() || expr.rest.is_some() {
+        return None;
+    }
+
+    let type_path = path_segments(&expr.path);
+    if type_path.len() != 1 {
+        return None;
+    }
+
+    let fields = expr
+        .fields
+        .iter()
+        .filter_map(|field| {
+            let path = parameter_expr_path(&field.expr, param_names)?;
+            Some(ArgumentFieldInit {
+                field_path: vec![member_name(&field.member)],
+                init_path: path,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    (!fields.is_empty()).then_some((type_path, fields))
+}
+
+fn parameter_expr_path(expr: &syn::Expr, param_names: &[String]) -> Option<Vec<String>> {
+    let syn::Expr::Path(path) = unparen_expr(expr) else {
+        return None;
+    };
+    if path.qself.is_some() {
+        return None;
+    }
+
+    let path = path_segments(&path.path);
+    let [name] = path.as_slice() else {
+        return None;
+    };
+    param_names
+        .iter()
+        .any(|candidate| candidate == name)
+        .then_some(path)
 }
 
 fn constructed_binding_init(

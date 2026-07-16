@@ -407,6 +407,27 @@ Fixture regeneration and selection checkpoint, 2026-07-16:
   names an explicit missing proof input; otherwise the correct action is
   verification and handoff, not speculative resolver breadth.
 
+Constructor field frontier checkpoint, 2026-07-16:
+
+- Implemented the narrow object/field source-frontier proof for axum
+  `ListenerExt::tap_io`. The source oracle is
+  `axum/src/serve/listener.rs:116-123`, where public generic
+  `tap_io<F>(self, tap_fn: F)` returns `TapIo { listener: self, tap_fn }`.
+- Parser extraction now records a constructed `return` local binding plus a
+  `return.tap_fn` `FieldProjection` binding only for tail-return struct fields
+  initialized directly from a visible parameter. This reuses the existing
+  `LocalBinding` / `BindingProjectsField` carrier and does not widen exact
+  constructed-argument target proof.
+- DB real-corpus coverage asserts that constructor-side frontier in
+  `axum_tap_io_constructor_records_field_parameter_frontier`, while separately
+  asserting `TapIo::accept` at `axum/src/serve/listener.rs:236` still keeps
+  `(self.tap_fn)(&mut io)` unsupported, targetless, and edge-free.
+- The registered `corpus_axum_call_graph` fixture was refreshed to
+  `corpus_axum_call_graph_2026-07-16.sqlite` for this proof carrier.
+  Verification passed for `verify-backup-dbs --fixture corpus_axum_call_graph`
+  and the broader `ploke-db --features call_graph real_target_matrix::unsupported`
+  suite.
+
 ## Do Not Reselect Without New Evidence
 
 - Public callable parameters and public callable fields that lack complete

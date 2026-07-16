@@ -450,6 +450,110 @@ fn axum_dynamic_callable_fields_preserve_supported_and_unsupported_boundaries()
     )
 }
 
+#[test]
+fn axum_tap_io_constructor_records_field_parameter_frontier() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Ground truth:
+    //   axum/src/serve/listener.rs:116-123
+    //     `tap_io<F>(self, tap_fn: F) -> TapIo<Self, F>` returns
+    //     `TapIo { listener: self, tap_fn }`.
+    //   axum/src/serve/listener.rs:236
+    //     `TapIo::accept` later calls `(self.tap_fn)(&mut io)`.
+    //
+    // Contract: the constructor-side source frontier is queryable through the
+    // existing local-binding carrier, but the public generic field call remains
+    // targetless until general callable-field value flow is proven.
+    let tap_io = method_id_by_name_and_body_substring(&db, "tap_io", "TapIo")?;
+    let bindings = db.local_bindings_for_owner(tap_io)?;
+    let return_binding = bindings
+        .iter()
+        .find(|binding| {
+            binding.kind == "ReturnExpression"
+                && binding.name == "return"
+                && binding.source_kind == "Constructed"
+                && binding.source_path.as_ref() == Some(&path(&["TapIo"]))
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "tap_io should persist the constructed return binding from axum/src/serve/listener.rs:116-123: {bindings:#?}"
+            )
+        });
+
+    let tap_fn_param = bindings
+        .iter()
+        .find(|binding| {
+            binding.kind == "ParameterBinding"
+                && binding.name == "tap_fn"
+                && binding.source_kind == "Parameter"
+        })
+        .unwrap_or_else(|| {
+            panic!("tap_io should persist its tap_fn parameter binding: {bindings:#?}")
+        });
+
+    let projection = bindings
+        .iter()
+        .find(|binding| {
+            binding.kind == "FieldProjection"
+                && binding.name == "return.tap_fn"
+                && binding.source_kind == "FieldProjection"
+                && binding.source_id == Some(return_binding.id)
+                && binding.source_path.as_ref() == Some(&path(&["tap_fn"]))
+                && binding.callee_kind.as_deref() == Some("Path")
+                && binding.callee_path.as_ref() == Some(&path(&["tap_fn"]))
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "tap_io should persist a return.tap_fn projection sourced by the tap_fn parameter: {bindings:#?}"
+            )
+        });
+
+    let edges = db.local_binding_edges_for_owner(tap_io)?;
+    assert!(
+        edges.iter().any(
+            |edge| edge.relation == LocalBindingRelationKind::OwnerContainsBinding
+                && edge.source_id == tap_io
+                && edge.target_id == return_binding.id
+                && edge.target_kind == "LocalBinding"
+        ),
+        "tap_io should expose owner-to-return binding edge: {edges:#?}"
+    );
+    assert!(
+        edges.iter().any(
+            |edge| edge.relation == LocalBindingRelationKind::OwnerContainsBinding
+                && edge.source_id == tap_io
+                && edge.target_id == tap_fn_param.id
+                && edge.target_kind == "LocalBinding"
+        ),
+        "tap_io should expose owner-to-parameter binding edge: {edges:#?}"
+    );
+    assert!(
+        edges.iter().any(
+            |edge| edge.relation == LocalBindingRelationKind::BindingProjectsField
+                && edge.source_id == projection.id
+                && edge.target_id == return_binding.id
+                && edge.source_kind == "LocalBinding"
+                && edge.target_kind == "LocalBinding"
+        ),
+        "tap_io should expose return.tap_fn projection-to-return edge: {edges:#?}"
+    );
+
+    let accept = method_id_by_name_and_body_substring(&db, "accept", "(self.tap_fn)(&mut io)")?;
+    let accept_context = db.call_context_for_owner(accept)?;
+    let call = row_by_kind_path(&accept_context, CallSiteKind::Dynamic, &["self", "tap_fn"]);
+    assert_eq!(call.status.status, CallStatusKind::Unsupported);
+    assert!(
+        call.targets.is_empty(),
+        "constructor-side proof must not fabricate a TapIo::accept target: {call:#?}"
+    );
+    assert!(
+        relations_for_site(&db, call.site.id)?.rows.is_empty(),
+        "constructor-side proof must not create a call_relation edge for self.tap_fn"
+    );
+
+    Ok(())
+}
+
 fn assert_self_field_evidence(
     db: &Database,
     owner: uuid::Uuid,

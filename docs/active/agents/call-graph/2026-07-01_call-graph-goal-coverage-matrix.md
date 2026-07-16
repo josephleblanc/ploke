@@ -3763,6 +3763,21 @@ function-pointer dispatch target is fabricated. This answers the current
 context. It is not a broader source/sink taxonomy, FFI safety model, macro
 body expansion model, or runtime dispatch promotion.
 
+Update 2026-07-16: the object/field callable frontier bucket now includes
+constructor-side source evidence for axum `ListenerExt::tap_io`. The source
+oracle is `axum/src/serve/listener.rs:116-123`, where public generic
+`tap_io<F>(self, tap_fn: F)` returns `TapIo { listener: self, tap_fn }`.
+Parser extraction records a constructed `return` local binding and
+`return.tap_fn` field projection only for tail-return struct fields initialized
+directly from visible parameters. The DB real-corpus test
+`axum_tap_io_constructor_records_field_parameter_frontier` asserts that
+frontier and separately asserts `TapIo::accept` at `serve/listener.rs:236`
+keeps `(self.tap_fn)(&mut io)` unsupported, targetless, and edge-free. The
+registered axum call-graph fixture was refreshed to
+`corpus_axum_call_graph_2026-07-16.sqlite`. This is not complete callable-field
+value-flow, does not prove all public callers of `tap_io`, and does not admit a
+local traversal edge from `TapIo::accept` to arbitrary caller closures.
+
 ## Parking Lot
 
 - Add binding tracking plan that ties syntax body ownership, local bindings, and type graph edges before attempting receiver/dynamic traversal.
