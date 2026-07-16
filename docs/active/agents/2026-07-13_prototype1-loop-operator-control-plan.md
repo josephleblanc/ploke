@@ -2,10 +2,11 @@
 
 - Date: 2026-07-13
 - Baseline: `de76eaee34e6f4c4c3a19543c4cf91b217aa3bb9`
-- Status: active implementation; Stages 0-4 and the first Stage 5 sealed-trace
-  slice are checkpointed; a fresh CLI-only stepped run is live-verified through
-  generation-1 R4c handoff; parallel trace capture is live-verified;
-  live/in-flight UI inspection and UI/mixed-client control remain unproven
+- Status: active implementation; Stages 0-4 and the sealed/live-observation
+  portions of Stage 5 are checkpointed; a fresh CLI-only stepped run is
+  live-verified through generation-1 R4c handoff; parallel trace capture and
+  typed live/in-flight CLI inspection are live-verified; native UI-to-live-server
+  and UI/mixed-client control remain unproven
 
 ## Implementation progress
 
@@ -243,9 +244,45 @@
   records the aborted provider turn and diagnostic body excerpt, while the
   lower-level debug session remains `paused` at its last decoded response. The
   operator view must present both provenance layers without silently converting
-  one into the other. The separate full-loop OpenRouter embedding canary and
-  child-reaping live check remain pending; neither blocks resuming read-only
-  live/in-flight UI answerability work.
+  one into the other.
+- Protocol v10 and the second Stage 5 slice are checkpointed in `bbb468116`
+  (`Expose typed live LLM traces through walk`). `llm sessions` and exact
+  `llm observe --session-id ... [--step ...]` now use the same public typed
+  index/detail carriers as the new `Live LLM` UI tab. The read path stays
+  outside the mutation-controller lock, retains every session in a lane, binds
+  replies to the requested session/step, and pairs every present artifact with
+  its exact path and SHA-256.
+- Debugger session status, resume publication frontier, selected provider
+  checkpoint, outer headless terminal, and agent-turn terminal remain separate
+  evidence layers. Missing, unreadable, invalid, and not-selected states remain
+  distinct; absence is not relabeled as in flight. Full growing prompt/response
+  detail is returned only for the selected checkpoint, while the timeline stays
+  compact. Resume frontiers above 1,024 steps fail before filesystem iteration.
+- Primary session/resume/checkpoint files and derived request/headless/turn
+  sources are bounded to their admitted evidence roots before reads. Parent or
+  symlink escape, request-path/workspace mismatch, cross-session identifiers,
+  and source drift fail closed. Tool-loop JSON publication now uses atomic
+  replacement so a failed rewrite cannot truncate an already published file;
+  per-session read errors still remain visible without hiding healthy siblings.
+- Final live read-only validation used the rebuilt v10 binary against the
+  preserved Direct Google campaign
+  `p1-gemini35-flash-direct-15g2x3-fixed-20260525-123824`. The index returned five
+  healthy lanes/sessions plus the zero-byte r15 manifest as one independent
+  invalid issue with SHA-256
+  `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+  Exact r17 observation returned debugger `paused`, resume `next_step=9` and
+  `terminal=false`, nine checkpoints, selected response index 8, headless
+  `exhausted`, and agent-turn `aborted` after 10 attempts. Exact r16 remained
+  debugger/resume terminal with 46 checkpoints, headless
+  `applied_validation_failed`, and agent-turn `completed`.
+- The final source gate passes 1,348/1,348 `ploke-eval` library tests with 28
+  ignored tests; focused typed trace coverage passes 18/18; the UI suite passes
+  25/25; and UI-only Clippy passes with warnings denied after large trace
+  responses were boxed at thread boundaries. Independent review reports no
+  remaining correctness, security, or authority blocker. The separate
+  full-loop OpenRouter embedding canary, child-reaping live check, durable
+  imported r15-r18 historical replay fixture, and native UI-to-live-server
+  interaction remain pending.
 
 The UI remains inspection-only until the observability read model and later
 control-parity stages are complete. Every live edge still requires a committed
@@ -935,10 +972,11 @@ Expected output:
    context in `dc5868b66`; `24f18e1cd` preserves timeout evidence and quiesces
    late responses. Local gates and a fresh three-lane live sweep pass exact
    provenance and isolation checks.
-4. Resume Stage 5 live/in-flight evidence and UI-only answerability validation.
-   Keep the still-pending child-lifecycle canary as a separate lifecycle gate,
-   not a reason to hide already trustworthy trace evidence from read-only UI
-   work.
+4. The typed Stage 5 live/in-flight service, CLI, and `egui_kittest` interaction
+   slice is checkpointed in `bbb468116`. Next, exercise the native UI against a
+   live server, capture the UI-only evidence, and import a bounded real r15-r18
+   incident fixture for durable historical replay coverage. Keep the pending
+   child-lifecycle canary as a separate lifecycle gate.
 5. Keep UI mutation controls out of scope until the shared inspection model is
    internally consistent.
 

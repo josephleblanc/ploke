@@ -190,3 +190,7 @@ file and current code before treating a report as still open.
   Source repaired: timeout cancellation preserves the caller's partial
   headless run and drains response capture to disconnection; live failure-path
   persistence is verified, while a post-repair outer-timeout canary remains.
+- [`2026-07-15-walk-llm-corrupt-neighbor-hides-sessions.md`](./2026-07-15-walk-llm-corrupt-neighbor-hides-sessions.md)
+  Fixed and live verified: protocol-v10 typed LLM inventory reports a zero-byte
+  session manifest independently while retaining every healthy lane/session for
+  exact CLI and UI inspection.
