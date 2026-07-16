@@ -3748,6 +3748,21 @@ This is proof coverage for a fail-closed macro boundary, not `assert_eq!`
 expansion, closure-call extraction inside macro arguments, or a new traversal
 edge from the shadowed closure to routing `get`.
 
+Update 2026-07-16: the security usage-summary bucket now includes exact
+unsafe-block call reporting. The source oracle is
+`memchr/src/arch/x86_64/memchr.rs:153`, whose `unsafe_ifunc!` template
+generates `core::mem::transmute::<Fn, RealFn>(fun)(...)` inside an unsafe
+block, with `memchr_raw` at `:180` expanding to a targetless external path row
+and a targetless returned-path dynamic row. DB
+`unsafe_block_calls_reachable_from_owner`, RAG
+`exact_unsafe_block_calls_reachable_from_owner`, and exact
+`code_item_lookup` / `code_item_edges` payloads now expose those two rows
+through `unsafe_block_calls` while asserting that no local traversal edge or
+function-pointer dispatch target is fabricated. This answers the current
+"which call paths can reach unsafe blocks?" usage question for stored call
+context. It is not a broader source/sink taxonomy, FFI safety model, macro
+body expansion model, or runtime dispatch promotion.
+
 ## Parking Lot
 
 - Add binding tracking plan that ties syntax body ownership, local bindings, and type graph edges before attempting receiver/dynamic traversal.
