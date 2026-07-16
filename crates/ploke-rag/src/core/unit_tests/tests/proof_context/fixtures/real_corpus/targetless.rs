@@ -215,7 +215,11 @@ async fn proof_context_collection_preserves_axum_future_poll_trait_object_blocke
         body: "self.project().future.poll(cx)",
         callee: CallCalleeInfo::Method {
             name: "poll".to_string(),
-            receiver: Some(CallReceiverInfo::Unsupported),
+            receiver: Some(CallReceiverInfo::MethodResultField {
+                method_name: "project".to_string(),
+                method_span: (0, 0),
+                field_path: vec!["future".to_string()],
+            }),
         },
         status: CallStatusKind::Unsupported,
     };
@@ -243,8 +247,32 @@ async fn proof_context_collection_preserves_axum_future_poll_trait_object_blocke
     let calls = call_context
         .get(&owner)
         .unwrap_or_else(|| panic!("{} should receive outgoing call context", case.label));
-    let site_id =
-        targetless_method_site_with_status(calls, owner, &case.callee, case.status, case.label);
+    let poll = calls
+        .iter()
+        .find(|call| {
+            call.owner_id == owner
+                && call.status == case.status
+                && matches!(
+                    &call.callee,
+                    CallCalleeInfo::Method {
+                        name,
+                        receiver: Some(CallReceiverInfo::MethodResultField {
+                            method_name,
+                            field_path,
+                            ..
+                        }),
+                    } if name == "poll"
+                        && method_name == "project"
+                        && field_path == &vec!["future".to_string()]
+                )
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "{} should preserve project().future receiver evidence: {calls:#?}",
+                case.label
+            )
+        });
+    let site_id = poll.site_id;
     db.upsert_proof_fact_values(&[ploke_test_utils::axum_dyn_future_poll_blocker(site_id)])?;
 
     let proof_context = rag.collect_proof_context(&[(owner, 1.0)])?;

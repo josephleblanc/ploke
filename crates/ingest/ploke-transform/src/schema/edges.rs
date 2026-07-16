@@ -862,6 +862,21 @@ fn method_receiver_to_cozo(receiver: &MethodCallReceiver) -> (cozo::DataValue, c
                 string_list(&encoded),
             )
         }
+        MethodCallReceiver::MethodResultField {
+            method_name,
+            method_span,
+            field_path,
+        } => {
+            let mut encoded = Vec::with_capacity(field_path.len() + 3);
+            encoded.push(method_name.clone());
+            encoded.push(method_span.0.to_string());
+            encoded.push(method_span.1.to_string());
+            encoded.extend(field_path.iter().cloned());
+            (
+                cozo::DataValue::from("MethodResultField"),
+                string_list(&encoded),
+            )
+        }
         MethodCallReceiver::EnumVariantBinding {
             name,
             enum_path,

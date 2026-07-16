@@ -720,6 +720,11 @@ fn format_receiver(receiver: &CallReceiverInfo) -> String {
         } => {
             format!("{name} = {method_name}()")
         }
+        CallReceiverInfo::MethodResultField {
+            method_name,
+            field_path,
+            ..
+        } => format!("{}().{}", method_name, field_path.join(".")),
         CallReceiverInfo::EnumVariantBinding {
             name,
             enum_path,

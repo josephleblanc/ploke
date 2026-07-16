@@ -2708,7 +2708,10 @@ struct FuturePollCase {
 #[derive(Clone, Copy)]
 enum FuturePollReceiver {
     MethodResult(&'static str),
-    Unsupported,
+    MethodResultField {
+        method_name: &'static str,
+        field_path: &'static [&'static str],
+    },
 }
 
 impl FuturePollCase {
@@ -2719,7 +2722,10 @@ impl FuturePollCase {
             body: "self.project().future.poll(cx)",
             source: "axum/src/error_handling/mod.rs:251 dyn Future::poll",
             query: "dyn Future::poll",
-            receiver: FuturePollReceiver::Unsupported,
+            receiver: FuturePollReceiver::MethodResultField {
+                method_name: "project",
+                field_path: &["future"],
+            },
         },
         Self {
             label: "axum/src/middleware/from_fn.rs:375 BoxFuture as_mut poll",
@@ -2736,7 +2742,14 @@ impl FuturePollCase {
             FuturePollReceiver::MethodResult(method) => CallReceiver::MethodCallResult {
                 method_name: method.to_string(),
             },
-            FuturePollReceiver::Unsupported => CallReceiver::Unsupported,
+            FuturePollReceiver::MethodResultField {
+                method_name,
+                field_path,
+            } => CallReceiver::MethodResultField {
+                method_name: method_name.to_string(),
+                method_span: (0, 0),
+                field_path: path(field_path),
+            },
         }
     }
 
@@ -2745,8 +2758,32 @@ impl FuturePollCase {
     }
 
     fn poll_row<'a>(self, context: &'a [CallContextRow]) -> &'a CallContextRow {
-        let receiver = self.call_receiver();
-        row_by_method_receiver(context, "poll", &receiver)
+        match self.call_receiver() {
+            CallReceiver::MethodResultField {
+                method_name,
+                field_path,
+                ..
+            } => context
+                .iter()
+                .find(|row| {
+                    row.site.method.as_deref() == Some("poll")
+                        && matches!(
+                            row.site.receiver.as_ref(),
+                            Some(CallReceiver::MethodResultField {
+                                method_name: actual_method,
+                                field_path: actual_path,
+                                ..
+                            }) if actual_method == &method_name && actual_path == &field_path
+                        )
+                })
+                .unwrap_or_else(|| {
+                    panic!(
+                        "expected poll row with method-result field receiver {method_name}().{}: {context:#?}",
+                        field_path.join(".")
+                    )
+                }),
+            receiver => row_by_method_receiver(context, "poll", &receiver),
+        }
     }
 }
 

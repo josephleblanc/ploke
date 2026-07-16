@@ -4307,7 +4307,14 @@ async fn runtime_dispatch_needs_exact_reads_axum_dyn_future_poll_queue() -> Resu
         .iter()
         .find(|row| {
             row.site.method.as_deref() == Some("poll")
-                && row.site.receiver == Some(CallReceiver::Unsupported)
+                && matches!(
+                    row.site.receiver.as_ref(),
+                    Some(CallReceiver::MethodResultField {
+                        method_name,
+                        field_path,
+                        ..
+                    }) if method_name == "project" && field_path == &vec!["future".to_string()]
+                )
                 && row.status.status == DbCallStatusKind::Unsupported
         })
         .unwrap_or_else(|| {
@@ -4353,10 +4360,14 @@ async fn runtime_dispatch_needs_exact_reads_axum_dyn_future_poll_queue() -> Resu
             &need.call_site.callee,
             CallCalleeInfo::Method {
                 name,
-                receiver: Some(CallReceiverInfo::Unsupported),
-            } if name == "poll"
+                receiver: Some(CallReceiverInfo::MethodResultField {
+                    method_name,
+                    field_path,
+                    ..
+                }),
+            } if name == "poll" && method_name == "project" && field_path == &vec!["future".to_string()]
         ),
-        "RAG need should preserve the unsupported dyn Future::poll receiver payload: {need:#?}"
+        "RAG need should preserve the dyn Future::poll method-result field receiver payload: {need:#?}"
     );
 
     db.upsert_proof_fact_values(&[

@@ -191,6 +191,33 @@ Follow-up update, 2026-07-15:
   need for broad object/field value-flow, trait-object dispatch, async
   poll/resume, generated-body modeling, or policy/effect summaries.
 
+Post-regeneration checkpoint, 2026-07-16:
+
+- `cargo run -p xtask --features call_graph -- fixtures regenerate --active`
+  completed for all registered active checkout-local and shared call-graph
+  corpus fixtures. The regenerated shared corpus snapshots still report 66
+  relations. The regenerated shared corpus snapshots were copied into
+  `tests/backup_dbs/` so fixture-backed tests consume the refreshed receiver
+  payloads.
+- `cargo run -p xtask --features call_graph -- verify-backup-dbs` passed for
+  all registered active fixtures after regeneration and seed promotion.
+- Axum `HandleErrorFuture::poll` now preserves the source-visible
+  method-result field receiver as `project().future` for
+  `self.project().future.poll(cx)`. This is proof evidence only: the dyn
+  `Future::poll` frontier remains targetless/unsupported and no local
+  traversal edge is admitted.
+- Rechecking the usage-question and larger-plan surfaces shows the remaining
+  blocker is still proof input, not a missing generic traversal/query helper:
+  impact, reach, target context, policy, frontier, runtime-dispatch need,
+  external-summary need, test-selection, unsafe-block, RAG exact, and TUI
+  exact payload surfaces are already represented by current real-corpus tests.
+- The next implementation slice should pick one larger proof model and a fresh
+  DB-first source oracle. Do not promote axum `self.tap_fn`, router-side
+  `self.into_route`, dyn future `poll`, or other targetless receiver rows into
+  traversal edges until a typed proof carrier records the missing
+  source-visible receiver/value-flow evidence. Targetless receiver rows
+  deliberately preserve the fail-closed frontier when proof is insufficient.
+
 Local-binding projection checkpoint, 2026-07-14:
 
 - Source oracles:

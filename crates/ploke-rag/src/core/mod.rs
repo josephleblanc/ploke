@@ -1152,6 +1152,15 @@ fn receiver_info(receiver: CallReceiver) -> CallReceiverInfo {
             method_name,
             method_span,
         },
+        CallReceiver::MethodResultField {
+            method_name,
+            method_span,
+            field_path,
+        } => CallReceiverInfo::MethodResultField {
+            method_name,
+            method_span,
+            field_path,
+        },
         CallReceiver::EnumVariantBinding {
             name,
             enum_path,

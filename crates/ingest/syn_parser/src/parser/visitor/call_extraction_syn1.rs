@@ -251,7 +251,8 @@ fn classify_method_receiver(
             .map(|name| MethodCallReceiver::LocalBinding { name }),
         syn1::Expr::Field(_) => self_field_path(receiver)
             .filter(|field_path| !field_path.is_empty())
-            .map(|field_path| MethodCallReceiver::SelfField { field_path }),
+            .map(|field_path| MethodCallReceiver::SelfField { field_path })
+            .or_else(|| method_result_field_receiver(receiver)),
         _ => None,
     }
 }
@@ -309,6 +310,16 @@ fn type_path_segments(ty: &syn1::Type) -> Option<Vec<String>> {
     }
 }
 
+fn literal_usize(expr: &syn1::Expr) -> Option<usize> {
+    let syn1::Expr::Lit(lit) = unparen_expr(expr) else {
+        return None;
+    };
+    let syn1::Lit::Int(int) = &lit.lit else {
+        return None;
+    };
+    int.base10_parse().ok()
+}
+
 fn self_field_path(expr: &syn1::Expr) -> Option<Vec<String>> {
     match expr {
         syn1::Expr::Path(path) if path.qself.is_none() && path.path.is_ident("self") => {
@@ -318,6 +329,37 @@ fn self_field_path(expr: &syn1::Expr) -> Option<Vec<String>> {
             let mut field_path = self_field_path(field.base.as_ref())?;
             field_path.push(member_name(&field.member));
             Some(field_path)
+        }
+        _ => None,
+    }
+}
+
+fn method_result_field_receiver(receiver: &syn1::Expr) -> Option<MethodCallReceiver> {
+    let (call, field_path) = method_result_field_path(receiver)?;
+    if field_path.is_empty() {
+        return None;
+    }
+    let byte_range = call.span().byte_range();
+    Some(MethodCallReceiver::MethodResultField {
+        method_name: call.method.to_string(),
+        method_span: (byte_range.start, byte_range.end),
+        field_path,
+    })
+}
+
+fn method_result_field_path(receiver: &syn1::Expr) -> Option<(&syn1::ExprMethodCall, Vec<String>)> {
+    match unparen_expr(receiver) {
+        syn1::Expr::MethodCall(call) => Some((call, Vec::new())),
+        syn1::Expr::Field(field) => {
+            let (call, mut field_path) = method_result_field_path(field.base.as_ref())?;
+            field_path.push(member_name(&field.member));
+            Some((call, field_path))
+        }
+        syn1::Expr::Index(index) => {
+            let index_value = literal_usize(index.index.as_ref())?;
+            let (call, mut field_path) = method_result_field_path(index.expr.as_ref())?;
+            field_path.push(index_value.to_string());
+            Some((call, field_path))
         }
         _ => None,
     }

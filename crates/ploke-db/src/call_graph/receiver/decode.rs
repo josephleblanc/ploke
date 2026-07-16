@@ -153,6 +153,31 @@ impl CallReceiver {
                     ))),
                 }
             }
+            "MethodResultField" => {
+                let path = to_string_list(path)?;
+                match path.as_slice() {
+                    [method_name, start, end, field_path @ ..] if !field_path.is_empty() => {
+                        let start = start.parse::<usize>().map_err(|err| {
+                            DbError::Cozo(format!(
+                                "method-result field receiver should store a usize span start, got {start:?}: {err}"
+                            ))
+                        })?;
+                        let end = end.parse::<usize>().map_err(|err| {
+                            DbError::Cozo(format!(
+                                "method-result field receiver should store a usize span end, got {end:?}: {err}"
+                            ))
+                        })?;
+                        Ok(Some(Self::MethodResultField {
+                            method_name: method_name.clone(),
+                            method_span: (start, end),
+                            field_path: field_path.to_vec(),
+                        }))
+                    }
+                    other => Err(DbError::Cozo(format!(
+                        "method-result field receiver should store a method name, method span, and non-empty field path, got {other:?}"
+                    ))),
+                }
+            }
             "EnumVariantBinding" => {
                 let path = to_string_list(path)?;
                 match path.as_slice() {

@@ -863,7 +863,11 @@ async fn call_context_collection_reads_axum_future_poll_trait_object_gap() -> Re
         body: "self.project().future.poll(cx)",
         callee: CallCalleeInfo::Method {
             name: "poll".to_string(),
-            receiver: Some(CallReceiverInfo::Unsupported),
+            receiver: Some(CallReceiverInfo::MethodResultField {
+                method_name: "project".to_string(),
+                method_span: (0, 0),
+                field_path: vec!["future".to_string()],
+            }),
         },
         status: CallStatusKind::Unsupported,
     };
@@ -880,7 +884,22 @@ async fn call_context_collection_reads_axum_future_poll_trait_object_gap() -> Re
         .unwrap_or_else(|| panic!("{} should receive outgoing call context", case.label));
     let matching = context
         .iter()
-        .filter(|call| call.kind == CallSiteKind::Method && call.callee == case.callee)
+        .filter(|call| {
+            call.kind == CallSiteKind::Method
+                && matches!(
+                    &call.callee,
+                    CallCalleeInfo::Method {
+                        name,
+                        receiver: Some(CallReceiverInfo::MethodResultField {
+                            method_name,
+                            field_path,
+                            ..
+                        }),
+                    } if name == "poll"
+                        && method_name == "project"
+                        && field_path == &vec!["future".to_string()]
+                )
+        })
         .collect::<Vec<_>>();
     assert_eq!(
         matching.len(),

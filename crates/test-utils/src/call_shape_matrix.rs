@@ -83,8 +83,16 @@ pub enum CallSiteSelector {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CallReceiverSelector {
-    SelfField { path: &'static [&'static str] },
-    MethodResultLocalBinding { method_name: &'static str },
+    SelfField {
+        path: &'static [&'static str],
+    },
+    MethodResultLocalBinding {
+        method_name: &'static str,
+    },
+    MethodResultField {
+        method_name: &'static str,
+        field_path: &'static [&'static str],
+    },
     Unsupported,
 }
 

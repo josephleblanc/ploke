@@ -151,6 +151,7 @@ impl CallRelationResolver<'_> {
             MethodCallReceiver::AwaitResult
             | MethodCallReceiver::TryResult
             | MethodCallReceiver::Literal
+            | MethodCallReceiver::MethodResultField { .. }
             | MethodCallReceiver::Unsupported => AssocPathResolution::Unsupported,
         };
 
@@ -253,6 +254,7 @@ impl CallRelationResolver<'_> {
             | MethodCallReceiver::TryMethodCallResult { .. }
             | MethodCallReceiver::IfBranchPaths { .. }
             | MethodCallReceiver::EnumVariantBinding { .. }
+            | MethodCallReceiver::MethodResultField { .. }
             | MethodCallReceiver::FieldTypedLocalBinding { .. }
             | MethodCallReceiver::FieldInitializedLocalBinding { .. }
             | MethodCallReceiver::DereferencedLocalBinding { .. }
@@ -2020,6 +2022,7 @@ impl CallRelationResolver<'_> {
             MethodCallReceiver::AwaitResult
             | MethodCallReceiver::TryResult
             | MethodCallReceiver::Literal
+            | MethodCallReceiver::MethodResultField { .. }
             | MethodCallReceiver::Unsupported => Ok(AssocPathResolution::Unsupported),
         }
     }

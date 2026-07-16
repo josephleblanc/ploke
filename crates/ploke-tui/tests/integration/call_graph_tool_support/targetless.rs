@@ -68,6 +68,10 @@ enum ReceiverShape {
     MethodResult {
         method: &'static str,
     },
+    MethodResultField {
+        method_name: &'static str,
+        field_path: &'static [&'static str],
+    },
     SelfField {
         path: &'static [&'static str],
     },
@@ -77,7 +81,6 @@ enum ReceiverShape {
         method_span: (usize, usize),
         index: usize,
     },
-    Unsupported,
 }
 
 pub(crate) struct ReceiverToolFixture {
@@ -320,13 +323,27 @@ impl ReceiverToolCase {
         file_suffix: "axum/src/error_handling/mod.rs",
         body: "self.project().future.poll(cx)",
         generic_arg_count: None,
-        receiver: ReceiverShape::Unsupported,
+        receiver: ReceiverShape::MethodResultField {
+            method_name: "project",
+            field_path: &["future"],
+        },
     }];
 
     pub(crate) fn callee(&self) -> CallCalleeInfo {
         let receiver = match self.receiver {
             ReceiverShape::MethodResult { method } => Some(CallReceiverInfo::MethodCallResult {
                 method_name: method.to_string(),
+            }),
+            ReceiverShape::MethodResultField {
+                method_name,
+                field_path,
+            } => Some(CallReceiverInfo::MethodResultField {
+                method_name: method_name.to_string(),
+                method_span: (0, 0),
+                field_path: field_path
+                    .iter()
+                    .map(|segment| (*segment).to_string())
+                    .collect(),
             }),
             ReceiverShape::SelfField { path } => Some(CallReceiverInfo::SelfField {
                 path: path.iter().map(|segment| (*segment).to_string()).collect(),
@@ -342,7 +359,6 @@ impl ReceiverToolCase {
                 method_span,
                 index,
             }),
-            ReceiverShape::Unsupported => Some(CallReceiverInfo::Unsupported),
         };
         CallCalleeInfo::Method {
             name: self.callee.to_string(),
@@ -1166,7 +1182,9 @@ pub(crate) fn assert_method_context(
         .iter()
         .filter_map(|call| serde_json::from_value::<CallContextInfo>(call.clone()).ok())
         .filter(|call| {
-            call.owner_id == owner && call.kind == CallSiteKind::Method && &call.callee == callee
+            call.owner_id == owner
+                && call.kind == CallSiteKind::Method
+                && method_callee_matches(&call.callee, callee)
         })
         .collect::<Vec<_>>();
     assert_eq!(
@@ -1189,6 +1207,43 @@ pub(crate) fn assert_method_context(
         "{tool} should not fabricate traversal targets for {label}: {call:#?}"
     );
     call.site_id
+}
+
+fn method_callee_matches(actual: &CallCalleeInfo, expected: &CallCalleeInfo) -> bool {
+    match (actual, expected) {
+        (
+            CallCalleeInfo::Method {
+                name: actual_name,
+                receiver: actual_receiver,
+            },
+            CallCalleeInfo::Method {
+                name: expected_name,
+                receiver: expected_receiver,
+            },
+        ) => actual_name == expected_name && receiver_matches(actual_receiver, expected_receiver),
+        _ => actual == expected,
+    }
+}
+
+fn receiver_matches(
+    actual: &Option<CallReceiverInfo>,
+    expected: &Option<CallReceiverInfo>,
+) -> bool {
+    match (actual, expected) {
+        (
+            Some(CallReceiverInfo::MethodResultField {
+                method_name: actual_method,
+                field_path: actual_path,
+                ..
+            }),
+            Some(CallReceiverInfo::MethodResultField {
+                method_name: expected_method,
+                field_path: expected_path,
+                ..
+            }),
+        ) => actual_method == expected_method && actual_path == expected_path,
+        _ => actual == expected,
+    }
 }
 
 pub(crate) fn assert_resolved_method_context(

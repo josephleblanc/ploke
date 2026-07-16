@@ -209,6 +209,11 @@ pub enum CallReceiverInfo {
         method_name: String,
         method_span: (usize, usize),
     },
+    MethodResultField {
+        method_name: String,
+        method_span: (usize, usize),
+        field_path: Vec<String>,
+    },
     EnumVariantBinding {
         name: String,
         enum_path: Vec<String>,

@@ -506,6 +506,16 @@ pub enum MethodCallReceiver {
         /// Byte span of the initializer method call.
         method_span: (usize, usize),
     },
+    /// The receiver is a field projection rooted at a method-call result, such
+    /// as `self.project().future`.
+    MethodResultField {
+        /// Method name used by the receiver call.
+        method_name: String,
+        /// Byte span of the receiver method call.
+        method_span: (usize, usize),
+        /// Field/member projection path after the receiver method call.
+        field_path: Vec<String>,
+    },
     /// The receiver is a local binding destructured from a tuple enum variant
     /// field, such as `Self::Variant(value) => value.method()`.
     EnumVariantBinding {

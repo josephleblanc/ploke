@@ -5,6 +5,7 @@ use super::{
     if_branch_paths, literal_usize, match_arm_paths, member_name, path_call_segments,
     self_field_path, unparen_expr, visible_local_binding,
 };
+use syn::spanned::Spanned;
 
 pub(super) fn classify_method_receiver(
     receiver: &syn::Expr,
@@ -124,6 +125,7 @@ pub(super) fn classify_method_receiver(
         syn::Expr::Field(_) => self_field_path(receiver)
             .filter(|field_path| !field_path.is_empty())
             .map(|field_path| MethodCallReceiver::SelfField { field_path })
+            .or_else(|| method_result_field_receiver(receiver))
             .or_else(|| local_field_receiver(receiver, param_names, local_scopes))
             .unwrap_or(MethodCallReceiver::Unsupported),
         syn::Expr::Reference(reference) => {
@@ -193,6 +195,37 @@ fn receiver_try_call(try_expr: &syn::ExprTry) -> Option<MethodCallReceiver> {
         syn::Expr::MethodCall(call) => Some(MethodCallReceiver::TryMethodCallResult {
             method_name: call.method.to_string(),
         }),
+        _ => None,
+    }
+}
+
+fn method_result_field_receiver(receiver: &syn::Expr) -> Option<MethodCallReceiver> {
+    let (call, field_path) = method_result_field_path(receiver)?;
+    if field_path.is_empty() {
+        return None;
+    }
+    let byte_range = call.span().byte_range();
+    Some(MethodCallReceiver::MethodResultField {
+        method_name: call.method.to_string(),
+        method_span: (byte_range.start, byte_range.end),
+        field_path,
+    })
+}
+
+fn method_result_field_path(receiver: &syn::Expr) -> Option<(&syn::ExprMethodCall, Vec<String>)> {
+    match unparen_expr(receiver) {
+        syn::Expr::MethodCall(call) => Some((call, Vec::new())),
+        syn::Expr::Field(field) => {
+            let (call, mut field_path) = method_result_field_path(field.base.as_ref())?;
+            field_path.push(member_name(&field.member));
+            Some((call, field_path))
+        }
+        syn::Expr::Index(index) => {
+            let index_value = literal_usize(index.index.as_ref())?;
+            let (call, mut field_path) = method_result_field_path(index.expr.as_ref())?;
+            field_path.push(index_value.to_string());
+            Some((call, field_path))
+        }
         _ => None,
     }
 }

@@ -848,7 +848,24 @@ fn axum_real_target_trait_object_dispatch_rows_are_documented_gaps() -> Result<(
         project.site.id,
         "axum/src/error_handling/mod.rs:251 self.project() receiver setup",
     )?;
-    let poll = row_by_method_receiver(&context, "poll", &CallReceiver::Unsupported);
+    let poll = context
+        .iter()
+        .find(|row| {
+            row.site.method.as_deref() == Some("poll")
+                && matches!(
+                    row.site.receiver.as_ref(),
+                    Some(CallReceiver::MethodResultField {
+                        method_name,
+                        field_path,
+                        ..
+                    }) if method_name == "project" && field_path == &path(&["future"])
+                )
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "axum/src/error_handling/mod.rs:251 dyn Future::poll should preserve project().future receiver evidence: {context:#?}"
+            )
+        });
     assert_targetless_status(poll, CallStatusKind::Unsupported);
     assert!(
         relations_for_site(&db, poll.site.id)?.rows.is_empty(),

@@ -227,23 +227,21 @@ The regenerated shared call-graph corpus snapshots were copied into
 Post-regeneration verification:
 
 - `cargo run -p xtask --features call_graph -- fixtures regenerate --active`
-  wrote the shared call-graph corpus snapshots; the long-running final
-  validation phase was interrupted after the snapshot files were emitted.
-- `cargo run -p xtask --features call_graph -- recreate-backup-db --fixture corpus_axum_call_graph`
-  recreated the axum shared snapshot after the returned-field producer carrier
-  was narrowed and verified.
+  wrote and roundtripped the active call-graph corpus snapshots after
+  `MethodResultField` receiver evidence was added for field projections rooted
+  at method-call results such as `self.project().future.poll(cx)`.
 - `cargo run -p xtask --features call_graph -- verify-backup-dbs` passed for
   all registered active fixtures after copying the regenerated shared snapshots
   into `tests/backup_dbs/`.
 - Current committed seed checksums:
   - `corpus_memchr_call_graph_2026-07-15.sqlite`:
-    `087b17aadce20b019f58c438fed97b836b633fa4059af71e1903148c5710164f`
+    `5515b777e2521a43e04f56fd2bbb46814a031c09c3735c97784a11defe6cec81`
   - `corpus_generic_array_call_graph_2026-07-15.sqlite`:
-    `3081cc910b033e92fbb43769577444d4867abfd47daabcba49ee6c42ca56b0ae`
+    `07c8719aa3dd74ee7e2079fda673f96d0d658df1c19b8e9f9de886d34ec7cf71`
   - `corpus_chrono_call_graph_2026-07-15.sqlite`:
-    `93dee97354a9652112ad439d1cd3c4feff31e206b5a09edaed48f87a6c252b6c`
+    `232244d2940769a95d7496451063f91a9fb24c1f4722459d39754a48bf403563`
   - `corpus_axum_call_graph_2026-07-16.sqlite`:
-    `ea59deb82b4e390ca2b9af617e0958e7d18f86cb869104ce0d562e11592aebed`
+    `a7b658f63b2680b445fa4607cbb10b007d00122a24a9b7973acf078fba9f5e17`
 
 ## 2026-07-15 Active Call-Graph Fixture Refresh
 

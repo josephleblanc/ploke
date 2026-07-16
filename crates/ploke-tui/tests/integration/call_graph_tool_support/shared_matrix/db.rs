@@ -231,6 +231,18 @@ fn db_receiver_matches(
             Some(ploke_db::CallReceiver::MethodResultLocalBinding { method_name: actual, .. })
                 if actual == method_name
         ),
+        Some(CallReceiverSelector::MethodResultField {
+            method_name,
+            field_path,
+        }) => matches!(
+            actual,
+            Some(ploke_db::CallReceiver::MethodResultField {
+                method_name: actual_method,
+                field_path: actual_path,
+                ..
+            }) if actual_method == method_name
+                && actual_path.iter().map(String::as_str).eq(field_path.iter().copied())
+        ),
         Some(CallReceiverSelector::Unsupported) => {
             matches!(actual, Some(ploke_db::CallReceiver::Unsupported))
         }
