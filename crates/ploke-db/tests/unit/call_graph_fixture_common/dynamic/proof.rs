@@ -106,6 +106,33 @@ pub(in crate::unit) fn assert_returned_callable_candidate_proof(
     );
 }
 
+pub(in crate::unit) fn assert_self_field_callable_candidate_proof(
+    facts: &[serde_json::Value],
+    site: &str,
+    expected: &[String],
+    label: &str,
+) {
+    assert_eq!(facts.len(), 3, "{label} proof facts: {facts:#?}");
+    assert_candidate_resolution(facts, site, expected, label);
+    assert!(
+        facts.iter().any(|fact| {
+            fact.get("fact_kind").and_then(serde_json::Value::as_str) == Some("binding_evidence")
+                && fact.get("call_site_id").and_then(serde_json::Value::as_str) == Some(site)
+                && fact
+                    .get("binding_evidence_kind")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("self_field_callable")
+                && fact
+                    .get("resolution_state")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("ambiguous")
+                && fact.get("evidence_use").and_then(serde_json::Value::as_str)
+                    == Some("proof_only")
+        }),
+        "{label} should include self-field callable binding evidence: {facts:#?}"
+    );
+}
+
 fn assert_candidate_resolution(
     facts: &[serde_json::Value],
     site: &str,

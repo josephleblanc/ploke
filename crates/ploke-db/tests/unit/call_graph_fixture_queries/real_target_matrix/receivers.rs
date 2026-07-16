@@ -907,11 +907,15 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
     //   serve/mod.rs calls `router.clone...` in the router examples and
     //   local-address tests. `boxed.rs:134` and `routing/mod.rs:673` call
     //   `self.router.clone()` from local wrapper clone impls.
+    //   routing/tests/mod.rs also contributes method-result local-binding
+    //   clone rows from chained router builders such as `one.route(...).clone()`
+    //   and `bar_or_baz.merge(...).clone()`.
     // Expected traversal: the current caller API exposes 308 resolved
     // `Router::new` rows, one explicit `crate::Router::new` row, and one
     // `Self::new` row, while target expansion traverses 204 incoming candidates
-    // for the same target. Typed router clone receiver rows now reach the
-    // local `impl<S> Clone for Router<S>` method at routing/mod.rs:90.
+    // for the same target. Typed, self-field, and method-result router clone
+    // receiver rows now reach the local `impl<S> Clone for Router<S>` method
+    // at routing/mod.rs:90.
     let target = method_id_by_name_and_body_substring(&db, "new", "default_fallback: true")?;
     let callers = db.callers_for_target(target)?;
     assert_eq!(
@@ -1190,6 +1194,68 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
         clone_owners.insert(owner);
     }
 
+    let method_result_clone_cases = [
+        (
+            // axum/src/routing/tests/merge.rs:38-56
+            // `multiple_ors_balanced_differently` clones intermediate router
+            // results from `one.route(...)`, `two.route(...)`,
+            // `three.route(...)`, and `four.route(...)`.
+            "axum/src/routing/tests/merge.rs:38-56",
+            function_id_by_name_in_module(
+                &db,
+                &["crate", "routing", "tests", "merge"],
+                "multiple_ors_balanced_differently",
+            )?,
+            12,
+        ),
+        (
+            // axum/src/routing/tests/merge.rs:81
+            // `nested_or` clones `bar_or_baz` after `bar.merge(baz)`.
+            "axum/src/routing/tests/merge.rs:81",
+            function_id_by_name_in_module(
+                &db,
+                &["crate", "routing", "tests", "merge"],
+                "nested_or",
+            )?,
+            1,
+        ),
+    ];
+    for (label, owner, count) in method_result_clone_cases {
+        let context = db.call_context_for_owner(owner)?;
+        let rows = context
+            .iter()
+            .filter(|row| {
+                row.site.kind == CallSiteKind::Method
+                    && row.site.method.as_deref() == Some("clone")
+                    && matches!(
+                        row.site.receiver,
+                        Some(CallReceiver::MethodResultLocalBinding { .. })
+                    )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            rows.len(),
+            count,
+            "{label} should expose exactly {count} resolved Router::clone method-result row(s): {context:#?}"
+        );
+        for row in rows {
+            assert_resolved_target(
+                row,
+                clone_target,
+                CallRelationKind::Method,
+                CallSiteKind::Method,
+                CallTargetKind::Method,
+            );
+            assert_eq!(
+                relations_for_site(&db, row.site.id)?.rows.len(),
+                1,
+                "{label} should preserve exactly one raw call_relation edge per method-result Router::clone site"
+            );
+            clone_sites.insert(row.site.id);
+            clone_owners.insert(owner);
+        }
+    }
+
     let incoming = db.expand_call_context(
         CallContextSeed::Target(target),
         CallContextOptions {
@@ -1220,8 +1286,38 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
     let clone_callers = db.callers_for_target(clone_target)?;
     assert_eq!(
         clone_callers.len(),
+        26,
+        "Router::clone should expose the projected typed-local, self-field, and method-result caller rows: {clone_callers:#?}"
+    );
+    assert_eq!(
+        clone_callers
+            .iter()
+            .filter(|caller| matches!(
+                caller.site.receiver,
+                Some(CallReceiver::TypedLocalBinding { .. })
+            ))
+            .count(),
+        11,
+        "Router::clone should expose the typed-local caller rows: {clone_callers:#?}"
+    );
+    assert_eq!(
+        clone_callers
+            .iter()
+            .filter(|caller| matches!(caller.site.receiver, Some(CallReceiver::SelfField { .. })))
+            .count(),
+        2,
+        "Router::clone should expose the self-field caller rows: {clone_callers:#?}"
+    );
+    assert_eq!(
+        clone_callers
+            .iter()
+            .filter(|caller| matches!(
+                caller.site.receiver,
+                Some(CallReceiver::MethodResultLocalBinding { .. })
+            ))
+            .count(),
         13,
-        "Router::clone should expose the projected typed-local and self-field caller rows: {clone_callers:#?}"
+        "Router::clone should expose the method-result local-binding caller rows: {clone_callers:#?}"
     );
     assert_sites_match_callers(
         &db,

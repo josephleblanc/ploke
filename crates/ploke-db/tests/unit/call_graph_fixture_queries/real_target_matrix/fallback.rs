@@ -193,10 +193,17 @@ fn chrono_try_receiver_method_rows_resolve_option_ok_or_oracles() -> Result<(), 
     //   `DateTime::from_timestamp(...).ok_or(...)?.naive_utc()`.
     //   chrono also exposes two cfg(test, feature = "clock") initialized
     //   `Local::now()` receiver rows to the same target.
+    //   chrono/src/offset/mod.rs:520 calls
+    //   `DateTime::from_timestamp_nanos(nanos).naive_utc()`.
+    //   chrono/src/offset/mod.rs:468 and :502 call `dt.naive_utc()` from
+    //   `Some(dt)` match arms.
     //
     // Expected traversal: the receiver is a `?` applied after `Option::ok_or`
     // on a local `DateTime::from_timestamp*` associated function returning
     // `Option<Self>`, so the outer method call reaches `DateTime::naive_utc`.
+    // The same target-centered query also includes the initialized-local,
+    // path-call-result, and self-value receiver rows that resolve to the same
+    // method in the regenerated chrono corpus.
     let target = method_id_by_name_body_and_file_suffix(
         &db,
         "naive_utc",
@@ -229,8 +236,8 @@ fn chrono_try_receiver_method_rows_resolve_option_ok_or_oracles() -> Result<(), 
     let callers = db.callers_for_target(target)?;
     assert_eq!(
         callers.len(),
-        4,
-        "DateTime::naive_utc should expose the two parsed.rs try-receiver callers plus two cfg(test) Local::now initialized-local callers: {callers:#?}"
+        7,
+        "DateTime::naive_utc should expose the current resolved chrono caller fanout: {callers:#?}"
     );
     assert_sites_match_callers(
         &db,
@@ -259,6 +266,27 @@ fn chrono_try_receiver_method_rows_resolve_option_ok_or_oracles() -> Result<(), 
             .count(),
         2,
         "DateTime::naive_utc should retain exactly the two cfg(test) Local::now initialized-local rows: {callers:#?}"
+    );
+    assert_eq!(
+        callers
+            .iter()
+            .filter(|caller| {
+                caller.site.receiver.as_ref()
+                    == Some(&CallReceiver::PathCallResult {
+                        path: path(&["DateTime", "from_timestamp_nanos"]),
+                    })
+            })
+            .count(),
+        1,
+        "DateTime::naive_utc should retain the DateTime::from_timestamp_nanos path-call-result row: {callers:#?}"
+    );
+    assert_eq!(
+        callers
+            .iter()
+            .filter(|caller| caller.site.receiver.as_ref() == Some(&CallReceiver::SelfValue))
+            .count(),
+        2,
+        "DateTime::naive_utc should retain the two Some(dt) self-value rows: {callers:#?}"
     );
 
     for case in cases {
@@ -580,7 +608,7 @@ fn memchr_function_pointer_field_calls_preserve_ambiguous_candidates() -> Result
                 fact.get("call_site_id").and_then(serde_json::Value::as_str) == Some(site.as_str())
             })
             .collect::<Vec<_>>();
-        assert_candidate_proof(&site_facts, &site, &expected_names, label);
+        assert_self_field_callable_candidate_proof(&site_facts, &site, &expected_names, label);
 
         let projected =
             db.project_call_proof_facts_for_owner(owner, "bd:corpus-memchr-call-graph")?;
