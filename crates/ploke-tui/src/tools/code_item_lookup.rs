@@ -314,6 +314,8 @@ for a more fuzzy search."#
         let call_reach = lookup_support::call_reach_for_node(&ctx, resolved_item_id)?;
         let call_reach_effects =
             lookup_support::call_reach_effects_for_node(&ctx, resolved_item_id)?;
+        let unsafe_block_calls =
+            lookup_support::unsafe_block_calls_for_node(&ctx, resolved_item_id)?;
         let allowed_effects = params
             .allowed_effects
             .iter()
@@ -389,6 +391,7 @@ for a more fuzzy search."#
             call_impact,
             call_reach,
             call_reach_effects,
+            unsafe_block_calls,
             call_effect_policy_violations,
             call_proof_invariant_findings,
             external_summary_needs,
@@ -433,6 +436,7 @@ for a more fuzzy search."#
             concise_context.call_impact.as_ref(),
             concise_context.call_reach.as_ref(),
             &concise_context.call_reach_effects,
+            &concise_context.unsafe_block_calls,
             &concise_context.call_effect_policy_violations,
             &concise_context.call_proof_invariant_findings,
             &concise_context.external_summary_needs,

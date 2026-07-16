@@ -24,7 +24,7 @@ use ploke_core::rag_types::{
     ModuleBoundaryPolicyViolationInfo, NodeFilepath, ProofContextInfo, ReturnedCallBindingFlowInfo,
     ReturnedCallBindingInfo, ReturnedCallProducerInfo, ReturnedCallSiteInfo,
     ReturnedCallSourceInfo, ReturnedCallSourceKind, ReturnedFutureExecutionFlowInfo,
-    ReturnedFutureFlowInfo, ReturnedFutureSiteInfo, RuntimeDispatchNeedInfo,
+    ReturnedFutureFlowInfo, ReturnedFutureSiteInfo, RuntimeDispatchNeedInfo, UnsafeBlockCallInfo,
 };
 use ploke_db::{
     CallBuildDomain as DbCallBuildDomain, CallContextCandidate, CallContextOptions,
@@ -48,6 +48,7 @@ use ploke_db::{
     ProofGraphStore, ReturnedCallBindingFlow as DbReturnedCallBindingFlow,
     ReturnedFutureExecutionFlow as DbReturnedFutureExecutionFlow,
     ReturnedFutureFlow as DbReturnedFutureFlow, RuntimeDispatchNeed as DbRuntimeDispatchNeed,
+    UnsafeBlockCall as DbUnsafeBlockCall,
 };
 use ploke_embed::indexer::EmbeddingProcessor;
 use ploke_embed::runtime::EmbeddingRuntime;
@@ -583,6 +584,21 @@ fn reach_effect_info(
         paths_to_owner,
         call_site: row_to_call_context(row.call_site, usize::MAX)?,
         blocker_reasons: row.blocker_reasons,
+    })
+}
+
+fn unsafe_block_call_info(
+    db: &Database,
+    row: DbUnsafeBlockCall,
+) -> Result<UnsafeBlockCallInfo, RagError> {
+    let paths_to_owner = row
+        .paths_to_owner
+        .into_iter()
+        .map(|path| path_info(db, path))
+        .collect::<Result<Vec<_>, RagError>>()?;
+    Ok(UnsafeBlockCallInfo {
+        paths_to_owner,
+        call_site: row_to_call_context(row.call_site, usize::MAX)?,
     })
 }
 
@@ -1485,6 +1501,24 @@ impl RagService {
                 .call_effects_reachable_from_owner(owner_id, options)?
                 .into_iter()
                 .map(|row| reach_effect_info(self.db.as_ref(), row))
+                .collect::<Result<Vec<_>, RagError>>()?,
+        ))
+    }
+
+    pub fn exact_unsafe_block_calls_reachable_from_owner(
+        &self,
+        owner_id: Uuid,
+        options: CallPathOptions,
+    ) -> Result<Option<Vec<UnsafeBlockCallInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .unsafe_block_calls_reachable_from_owner(owner_id, options)?
+                .into_iter()
+                .map(|row| unsafe_block_call_info(self.db.as_ref(), row))
                 .collect::<Result<Vec<_>, RagError>>()?,
         ))
     }

@@ -6,7 +6,7 @@ use ploke_core::{
         CallReachInfo, CallTestEntrypointInfo, CallTestSelectionInfo, CrateBoundaryEdgeInfo,
         ExternalSummaryNeedInfo, LocalBindingEdgeInfo, LocalBindingInfo, ModuleBoundaryEdgeInfo,
         ProofContextInfo, ReturnedCallBindingFlowInfo, ReturnedFutureExecutionFlowInfo,
-        ReturnedFutureFlowInfo, RuntimeDispatchNeedInfo,
+        ReturnedFutureFlowInfo, RuntimeDispatchNeedInfo, UnsafeBlockCallInfo,
     },
     tool_types::ToolName,
 };
@@ -575,6 +575,25 @@ pub(super) fn call_reach_effects_for_node(
     }
 }
 
+pub(super) fn unsafe_block_calls_for_node(
+    ctx: &super::Ctx,
+    node_id: Uuid,
+) -> Result<Vec<UnsafeBlockCallInfo>, ploke_error::Error> {
+    use ploke_error::InternalError;
+
+    match ctx.state.rag.as_ref() {
+        Some(rag) if !rag.call_context_degraded() => Ok(rag
+            .exact_unsafe_block_calls_reachable_from_owner(node_id, TOOL_CALL_PATH_OPTIONS)
+            .map_err(|err| {
+                ploke_error::Error::Internal(InternalError::CompilerError(format!(
+                    "failed to collect reachable unsafe-block callsites for code item {node_id}: {err}"
+                )))
+            })?
+            .unwrap_or_default()),
+        _ => Ok(Vec::new()),
+    }
+}
+
 pub(super) fn external_summary_needs_for_node(
     ctx: &super::Ctx,
     node_id: Uuid,
@@ -885,6 +904,7 @@ pub(super) fn with_call_usage_fields(
     impact: Option<&CallImpactInfo>,
     reach: Option<&CallReachInfo>,
     reach_effects: &[CallReachEffectInfo],
+    unsafe_calls: &[UnsafeBlockCallInfo],
     policy_violations: &[CallEffectPolicyViolationInfo],
     invariant_findings: &[CallProofInvariantFindingInfo],
     summary_needs: &[ExternalSummaryNeedInfo],
@@ -1004,6 +1024,7 @@ pub(super) fn with_call_usage_fields(
             count(reach.map(|info| info.source_modules.len())),
         )
         .with_field("reach_effects", reach_effects.len().to_string())
+        .with_field("unsafe_block_calls", unsafe_calls.len().to_string())
         .with_field(
             "effect_policy_violations",
             policy_violations.len().to_string(),

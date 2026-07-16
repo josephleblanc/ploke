@@ -13,6 +13,7 @@ use ploke_core::{
         CallSiteKind, CallStatusKind, CallTargetKind, CrateBoundaryEdgeInfo, LocalBindingEdgeInfo,
         LocalBindingInfo, LocalBindingRelationKind, ProofContextInfo, ReturnedCallBindingFlowInfo,
         ReturnedCallSourceKind, ReturnedFutureExecutionFlowInfo, ReturnedFutureFlowInfo,
+        UnsafeBlockCallInfo,
     },
 };
 use ploke_db::{

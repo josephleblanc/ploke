@@ -563,6 +563,13 @@ pub struct CallReachEffectInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct UnsafeBlockCallInfo {
+    #[serde(default)]
+    pub paths_to_owner: Vec<CallPathInfo>,
+    pub call_site: CallContextInfo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct CallEffectPolicyViolationInfo {
     pub allowed_effects: Vec<String>,
     pub effect: CallReachEffectInfo,
@@ -975,6 +982,7 @@ impl From<ContextPart> for ConciseContext {
             call_impact: None,
             call_reach: None,
             call_reach_effects: Vec::new(),
+            unsafe_block_calls: Vec::new(),
             call_effect_policy_violations: Vec::new(),
             call_proof_invariant_findings: Vec::new(),
             external_summary_needs: Vec::new(),
@@ -1053,6 +1061,8 @@ pub struct ConciseContext {
     pub call_reach: Option<CallReachInfo>,
     #[serde(default)]
     pub call_reach_effects: Vec<CallReachEffectInfo>,
+    #[serde(default)]
+    pub unsafe_block_calls: Vec<UnsafeBlockCallInfo>,
     #[serde(default)]
     pub call_effect_policy_violations: Vec<CallEffectPolicyViolationInfo>,
     #[serde(default)]

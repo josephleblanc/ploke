@@ -204,6 +204,85 @@ pub(crate) fn assert_ifunc_proof(
     }
 }
 
+pub(crate) fn assert_ifunc_unsafe_calls(
+    calls: &[serde_json::Value],
+    owner: Uuid,
+    sites: (Uuid, Uuid),
+    expected_arg_count: u32,
+    label: &str,
+    tool: &str,
+) {
+    let rows = calls
+        .iter()
+        .filter_map(|call| serde_json::from_value::<UnsafeBlockCallInfo>(call.clone()).ok())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        rows.len(),
+        2,
+        "{tool} should return the generated unsafe transmute path and returned-path dynamic rows for {label}: {calls:#?}"
+    );
+    assert!(
+        rows.iter().all(|row| row.paths_to_owner.is_empty()),
+        "{tool} should not invent intermediate paths for direct generated unsafe rows in {label}: {rows:#?}"
+    );
+
+    let callee = CallCalleeInfo::Path {
+        path: transmute_path(),
+    };
+    let path_rows = rows
+        .iter()
+        .filter(|row| {
+            row.call_site.owner_id == owner
+                && row.call_site.site_id == sites.0
+                && row.call_site.kind == CallSiteKind::Path
+                && row.call_site.callee == callee
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        path_rows.len(),
+        1,
+        "{tool} unsafe-block calls should include the generated transmute path row for {label}: {calls:#?}"
+    );
+    let path = &path_rows[0].call_site;
+    assert_eq!(path.status, CallStatusKind::External);
+    assert_eq!(path.resolution, None);
+    assert_eq!(path.arg_count, Some(1));
+    assert_eq!(path.generic_arg_count, Some(2));
+    assert!(
+        path.targets.is_empty(),
+        "{tool} should keep generated unsafe transmute path targetless for {label}: {path:#?}"
+    );
+
+    let dynamic_rows = rows
+        .iter()
+        .filter(|row| {
+            row.call_site.owner_id == owner
+                && row.call_site.site_id == sites.1
+                && row.call_site.kind == CallSiteKind::Dynamic
+                && row.call_site.callee == CallCalleeInfo::Dynamic
+                && row.call_site.arg_count == Some(expected_arg_count)
+                && row.call_site.path.as_ref().is_some_and(|path| {
+                    path.iter()
+                        .map(String::as_str)
+                        .eq(["core", "mem", "transmute"])
+                })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        dynamic_rows.len(),
+        1,
+        "{tool} unsafe-block calls should include the generated returned-path dynamic row for {label}: {calls:#?}"
+    );
+    let dynamic = &dynamic_rows[0].call_site;
+    assert_eq!(dynamic.status, CallStatusKind::External);
+    assert_eq!(dynamic.resolution, None);
+    assert_eq!(dynamic.generic_arg_count, None);
+    assert!(
+        dynamic.targets.is_empty(),
+        "{tool} should keep generated unsafe returned-path dynamic row targetless for {label}: {dynamic:#?}"
+    );
+}
+
 fn transmute_path() -> Vec<String> {
     ["core", "mem", "transmute"]
         .into_iter()

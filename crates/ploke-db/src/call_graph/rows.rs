@@ -370,6 +370,14 @@ pub struct CallReachEffect {
     pub blocker_reasons: Vec<String>,
 }
 
+/// Callsite that occurs inside an unsafe block and is reachable from an owner.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct UnsafeBlockCall {
+    #[serde(default)]
+    pub paths_to_owner: Vec<CallPath>,
+    pub call_site: CallContextRow,
+}
+
 /// Reachable effect that is outside a caller-supplied policy allowlist.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CallEffectPolicyViolation {

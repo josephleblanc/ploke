@@ -33,8 +33,8 @@ pub use call_graph::{
     LocalBindingRelationKind, LocalBindingRow, ModuleBoundaryEdge, ModuleBoundaryPolicyRule,
     ModuleBoundaryPolicyViolation, ReturnedCallBinding, ReturnedCallBindingFlow,
     ReturnedCallProducer, ReturnedCallSite, ReturnedCallSource, ReturnedFutureExecutionFlow,
-    ReturnedFutureFlow, ReturnedFutureSite, RuntimeDispatchNeed, call_target_endpoint_relation,
-    valid_call_target_family,
+    ReturnedFutureFlow, ReturnedFutureSite, RuntimeDispatchNeed, UnsafeBlockCall,
+    call_target_endpoint_relation, valid_call_target_family,
 };
 pub use database::RestoredEmbeddingSet;
 pub use database::{

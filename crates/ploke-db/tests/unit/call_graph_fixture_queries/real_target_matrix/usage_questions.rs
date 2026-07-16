@@ -4,6 +4,7 @@ use ploke_db::{
     CallContextRelation, CallContextSeed, CallNodeKind, CallPathOptions, CallRelationKind,
     CrateBoundaryPolicyRule, ModuleBoundaryPolicyRule, ProofGraphStore,
 };
+use ploke_test_utils::CORPUS_MEMCHR_CALL_GRAPH;
 use serde_json::json;
 
 use super::super::*;
@@ -2206,6 +2207,80 @@ fn axum_usage_questions_report_reachable_performance_seed_for_json_parse() -> Re
         assert_eq!(path.edges[0].source_kind, CallSiteKind::Path);
         assert_eq!(path.edges[0].relation, CallRelationKind::AssociatedFunction);
     }
+
+    Ok(())
+}
+
+#[test]
+fn memchr_usage_questions_report_reachable_unsafe_block_calls() -> Result<(), DbError> {
+    let db = setup_call_graph_db(&CORPUS_MEMCHR_CALL_GRAPH)?;
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Security analysis:
+    //   "Which call paths can reach `unsafe` blocks or FFI boundaries?"
+    // Debugging:
+    //   "What source callsite corresponds to this persisted call edge or proof
+    //   blocker?"
+    //
+    // Source oracle:
+    //   memchr/src/arch/x86_64/memchr.rs:153 generates
+    //   `core::mem::transmute::<Fn, RealFn>(fun)(...)` inside an unsafe
+    //   block. The `memchr_raw` invocation at :180 expands to a targetless
+    //   external path row plus a targetless returned-path dynamic row.
+    //
+    // Expected contract: the usage helper reports unsafe-block callsites
+    // reachable from `memchr_raw` by reusing existing call context. It must
+    // not turn either generated transmute row into a local traversal edge.
+    let owner =
+        function_id_by_name_in_module(&db, &["crate", "arch", "x86_64", "memchr"], "memchr_raw")?;
+    let calls = db.unsafe_block_calls_reachable_from_owner(
+        owner,
+        CallPathOptions {
+            max_depth: 1,
+            max_paths: 16,
+        },
+    )?;
+
+    assert_eq!(
+        calls.len(),
+        2,
+        "memchr_raw should expose the generated unsafe transmute path and returned-path dynamic rows: {calls:#?}"
+    );
+    assert!(
+        calls.iter().all(|call| call.paths_to_owner.is_empty()),
+        "direct unsafe callsites in the seed owner should not invent intermediate paths: {calls:#?}"
+    );
+    for call in &calls {
+        assert!(
+            call.call_site.site.unsafe_block,
+            "unsafe helper should only return unsafe-block callsites: {call:#?}"
+        );
+        assert_external_targetless(&call.call_site);
+        assert!(
+            relations_for_site(&db, call.call_site.site.id)?
+                .rows
+                .is_empty(),
+            "unsafe-block reporting must not fabricate local edges: {call:#?}"
+        );
+    }
+    assert!(
+        calls.iter().any(|call| {
+            call.call_site.site.kind == CallSiteKind::Path
+                && call.call_site.site.path.as_ref() == Some(&path(&["core", "mem", "transmute"]))
+                && call.call_site.site.generic_arg_count == Some(2)
+        }),
+        "unsafe report should include generated core::mem::transmute path call: {calls:#?}"
+    );
+    assert!(
+        calls.iter().any(|call| {
+            call.call_site.site.kind == CallSiteKind::Dynamic
+                && call.call_site.site.path.as_ref() == Some(&path(&["core", "mem", "transmute"]))
+                && call.call_site.site.arg_count == Some(3)
+        }),
+        "unsafe report should include generated returned-path dynamic call: {calls:#?}"
+    );
 
     Ok(())
 }

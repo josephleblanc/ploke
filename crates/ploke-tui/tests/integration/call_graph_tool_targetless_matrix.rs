@@ -1,8 +1,6 @@
 use std::borrow::Cow;
 
-use ploke_core::rag_types::{
-    CallCalleeInfo, CallContextInfo, CallResolutionKind, CallStatusKind, CallTargetKind,
-};
+use ploke_core::rag_types::{CallCalleeInfo, CallContextInfo, CallStatusKind, CallTargetKind};
 use ploke_db::ProofGraphStore;
 use ploke_tui::tools::{
     Tool,
@@ -18,12 +16,12 @@ use crate::call_graph_tool_support::{
     assert_admitted_external_summary_proof, assert_admitted_macro_boundary_summary_proof,
     assert_ambiguous_candidate_proof, assert_ambiguous_dynamic_candidates_with_relation,
     assert_dynamic_context, assert_dynamic_proof, assert_ifunc_context, assert_ifunc_proof,
-    assert_method_context, assert_method_proof, assert_path_blocker_proof, assert_path_context,
-    assert_path_context_absent, assert_path_resolution_proof, assert_resolved_method_context,
-    assert_resolved_method_proof, assert_resolved_path_context_count,
-    assert_resolved_path_context_target, assert_resolved_path_proof,
-    assert_runtime_dispatch_blocker, assert_self_field_binding_evidence,
-    request_parts_extract_target, ui_field,
+    assert_ifunc_unsafe_calls, assert_method_context, assert_method_proof,
+    assert_path_blocker_proof, assert_path_context, assert_path_context_absent,
+    assert_path_resolution_proof, assert_resolved_method_context, assert_resolved_method_proof,
+    assert_resolved_path_context_count, assert_resolved_path_context_target,
+    assert_resolved_path_proof, assert_runtime_dispatch_blocker,
+    assert_self_field_binding_evidence, request_parts_extract_target, ui_field,
 };
 
 #[tokio::test]
@@ -1052,6 +1050,10 @@ async fn code_item_lookup_returns_memchr_ifunc_generated_transmute_frontiers() {
             .get("proof_context")
             .and_then(serde_json::Value::as_array)
             .expect("proof_context array");
+        let unsafe_calls = payload
+            .get("unsafe_block_calls")
+            .and_then(serde_json::Value::as_array)
+            .expect("unsafe_block_calls array");
 
         // Matrix:
         //   docs/active/agents/call-graph/
@@ -1081,6 +1083,14 @@ async fn code_item_lookup_returns_memchr_ifunc_generated_transmute_frontiers() {
             fixture.case.label,
             "lookup",
         );
+        assert_ifunc_unsafe_calls(
+            unsafe_calls,
+            fixture.owner,
+            sites,
+            fixture.case.expected_arg_count,
+            fixture.case.label,
+            "lookup",
+        );
 
         let ui = result.ui_payload.as_ref().expect("ui payload");
         assert!(
@@ -1099,6 +1109,7 @@ async fn code_item_lookup_returns_memchr_ifunc_generated_transmute_frontiers() {
             "code_item_lookup should surface generated ifunc proof rows for {}",
             fixture.case.label
         );
+        assert_eq!(ui_field(ui, "unsafe_block_calls"), "2");
     }
 }
 
@@ -2364,6 +2375,11 @@ async fn code_item_edges_returns_memchr_ifunc_generated_transmute_frontiers() {
             .and_then(|node| node.get("proof_context"))
             .and_then(serde_json::Value::as_array)
             .expect("node_info.proof_context array");
+        let unsafe_calls = payload
+            .get("node_info")
+            .and_then(|node| node.get("unsafe_block_calls"))
+            .and_then(serde_json::Value::as_array)
+            .expect("node_info.unsafe_block_calls array");
 
         // Same generated `unsafe_ifunc!` source oracle as the lookup test
         // above, exercised through the edge-oriented exact tool payload.
@@ -2382,6 +2398,14 @@ async fn code_item_edges_returns_memchr_ifunc_generated_transmute_frontiers() {
             fixture.case.label,
             "edges",
         );
+        assert_ifunc_unsafe_calls(
+            unsafe_calls,
+            fixture.owner,
+            sites,
+            fixture.case.expected_arg_count,
+            fixture.case.label,
+            "edges",
+        );
 
         let ui = result.ui_payload.as_ref().expect("ui payload");
         assert!(
@@ -2394,6 +2418,7 @@ async fn code_item_edges_returns_memchr_ifunc_generated_transmute_frontiers() {
         );
         let proof_count = proof_context.len().to_string();
         assert_eq!(ui_field(ui, "proof_context"), proof_count.as_str());
+        assert_eq!(ui_field(ui, "unsafe_block_calls"), "2");
     }
 }
 

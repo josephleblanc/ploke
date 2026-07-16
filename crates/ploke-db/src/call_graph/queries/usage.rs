@@ -17,7 +17,7 @@ use super::super::{
     CallSiteKind, CallSiteRow, CallStatusKind, CallTestEntrypoint, CallTestSelectionReport,
     CrateBoundaryEdge, CrateBoundaryPolicyRule, CrateBoundaryPolicyViolation, ExternalSummaryNeed,
     ModuleBoundaryEdge, ModuleBoundaryPolicyRule, ModuleBoundaryPolicyViolation,
-    RuntimeDispatchNeed,
+    RuntimeDispatchNeed, UnsafeBlockCall,
 };
 use super::metadata::{call_node_info_rank, call_node_infos, decode_call_node_info};
 
@@ -304,6 +304,49 @@ impl Database {
             )
         });
         Ok(effects)
+    }
+
+    /// Lists callsites inside unsafe blocks that are reachable from `owner_id`.
+    ///
+    /// Resolved path edges are included by call-site id. Targetless frontier
+    /// rows on the owner and all resolved path participants are included so
+    /// security queries can report unsafe external, unsupported, unresolved,
+    /// or ambiguous boundaries without promoting them into traversal edges.
+    pub fn unsafe_block_calls_reachable_from_owner(
+        &self,
+        owner_id: Uuid,
+        options: CallPathOptions,
+    ) -> Result<Vec<UnsafeBlockCall>, DbError> {
+        let paths = self.call_paths_from_owner(owner_id, options)?;
+        let context_by_site = reachable_callsite_context_rows(self, owner_id, &paths)?;
+        let mut paths_by_owner = BTreeMap::<Uuid, Vec<CallPath>>::new();
+        for path in &paths {
+            paths_by_owner
+                .entry(path.end_id)
+                .or_default()
+                .push(path.clone());
+        }
+
+        let mut calls = context_by_site
+            .into_values()
+            .filter(|row| row.site.unsafe_block)
+            .map(|call_site| UnsafeBlockCall {
+                paths_to_owner: paths_by_owner
+                    .get(&call_site.site.owner_id)
+                    .cloned()
+                    .unwrap_or_default(),
+                call_site,
+            })
+            .collect::<Vec<_>>();
+
+        calls.sort_by_key(|call| {
+            (
+                call.call_site.site.owner_id.as_u128(),
+                call.call_site.site.span,
+                call.call_site.site.id.as_u128(),
+            )
+        });
+        Ok(calls)
     }
 
     /// Lists reachable effect annotations outside the supplied allowlist.
