@@ -171,7 +171,7 @@ async fn call_context_collection_reads_real_fixture_external_rows() -> Result<()
                         receiver: Some(CallReceiverInfo::MethodResultLocalBinding {
                             name: "iter".to_string(),
                             method_name: "into_iter".to_string(),
-                            method_span: (44177, 44193),
+                            method_span: (44438, 44454),
                         }),
                     }
         })

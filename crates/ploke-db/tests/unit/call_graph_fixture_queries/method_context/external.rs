@@ -1,6 +1,6 @@
 use super::*;
 
-const ITER_RESULT_INTO_ITER_CALL_SPAN: (usize, usize) = (44177, 44193);
+const ITER_RESULT_INTO_ITER_CALL_SPAN: (usize, usize) = (44438, 44454);
 
 #[test]
 fn fixture_context_reads_projected_external_and_shadowed_method_calls() -> Result<(), DbError> {
@@ -103,7 +103,7 @@ fn fixture_context_reads_projected_external_and_shadowed_method_calls() -> Resul
         "method-result local binding external context rows: {context:#?}"
     );
 
-    // tests/fixture_crates/fixture_call_graph/src/lib.rs:1925-1926:
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:1937-1938:
     // `let iter = iter.into_iter(); iter.size_hint()` should preserve the
     // initializer method proof and classify the iterator frontier as external.
     let init_receiver = CallReceiver::LocalBinding {
