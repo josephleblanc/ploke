@@ -669,6 +669,15 @@ pub struct LocalBindingEdgeInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct SelfFieldParameterFlowInfo {
+    pub site: CallContextInfo,
+    pub constructor_id: Uuid,
+    pub return_binding: LocalBindingInfo,
+    pub field_binding: LocalBindingInfo,
+    pub parameter_binding: LocalBindingInfo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum ReturnedCallSourceKind {
     Closure,
@@ -994,6 +1003,7 @@ impl From<ContextPart> for ConciseContext {
             runtime_dispatch_needs: Vec::new(),
             local_bindings: Vec::new(),
             local_binding_edges: Vec::new(),
+            self_field_parameter_flows: Vec::new(),
             awaited_call_sites: Vec::new(),
             returned_call_binding_flows: Vec::new(),
             returned_future_flows: Vec::new(),
@@ -1080,6 +1090,8 @@ pub struct ConciseContext {
     pub local_bindings: Vec<LocalBindingInfo>,
     #[serde(default)]
     pub local_binding_edges: Vec<LocalBindingEdgeInfo>,
+    #[serde(default)]
+    pub self_field_parameter_flows: Vec<SelfFieldParameterFlowInfo>,
     #[serde(default)]
     pub awaited_call_sites: Vec<AwaitedCallSiteInfo>,
     #[serde(default)]

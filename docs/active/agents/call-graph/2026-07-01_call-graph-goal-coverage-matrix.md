@@ -10,7 +10,7 @@ Related planning files:
 - [`2026-06-28_real-corpus-call-site-oracle-matrices.md`](2026-06-28_real-corpus-call-site-oracle-matrices.md)
 - [`2026-07-07_call-graph-usage-question-gap-audit.md`](2026-07-07_call-graph-usage-question-gap-audit.md)
 
-Status date: 2026-07-15
+Status date: 2026-07-16
 Baseline HEAD when created: `19860cc40`
 
 ## Operating Rule
@@ -50,7 +50,22 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Latest completed slice: owner-local aliased parameter field proof. The fixture
+Latest completed slice: axum `TapIo::accept` self-field parameter-flow proof
+payload. The real-corpus oracle is
+`axum/src/serve/listener.rs:116-123`, where `tap_io<F>(self, tap_fn: F)`
+returns `TapIo { listener: self, tap_fn }`, and
+`axum/src/serve/listener.rs:236`, where `TapIo::accept` later calls
+`(self.tap_fn)(&mut io)`. DB coverage now exposes an owner-scoped
+`self_field_parameter_flows_for_owner` query that explains the targetless
+`self.tap_fn` dynamic call as constructor-parameter evidence while preserving
+`Unsupported` status and zero traversal targets. Exact RAG, `code_item_lookup`,
+and `code_item_edges` surface the same `self_field_parameter_flows` payload
+and UI count. This is explanatory source-visible field/parameter evidence for
+one public constructor frontier; it does not admit a local edge, infer the
+runtime closure value, solve public callable parameter proof generally, or
+model trait-object dispatch.
+
+Recent completed slice: owner-local aliased parameter field proof. The fixture
 oracle
 `call_single_aliased_named_field_function_param(holder) { let alias = holder; (alias.callback)() }`
 now resolves through the existing private complete-caller callable-field proof

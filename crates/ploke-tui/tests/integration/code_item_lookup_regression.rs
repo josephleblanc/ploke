@@ -16,10 +16,10 @@ use crate::call_graph_tool_support::{
     AxumErrorHandlingTraitsToolFixture, AxumExpandWithToolFixture, AxumFromFnBasicToolFixture,
     AxumGeneratedRejectionToolFixture, AxumHandleErrorCallToolFixture, AxumHandlerCallToolFixture,
     AxumJsonFromBytesToolFixture, AxumParseAttrsToolFixture, AxumRequestExtractPathToolFixture,
-    AxumRunUiTestsToolFixture, AxumTapIoConstructorToolFixture, AxumTaskSpawnEffectToolFixture,
-    CallGraphToolFixture, CallableBlockerFixture, CallableBlockerShape,
-    CallableParamResolvedFixture, ChronoAliasConstructorToolFixture, ChronoNaiveUtcToolFixture,
-    DirectSelfFieldDispatchFixture, FixtureBranchReceiverToolFixture,
+    AxumRunUiTestsToolFixture, AxumTapIoAcceptToolFixture, AxumTapIoConstructorToolFixture,
+    AxumTaskSpawnEffectToolFixture, CallGraphToolFixture, CallableBlockerFixture,
+    CallableBlockerShape, CallableParamResolvedFixture, ChronoAliasConstructorToolFixture,
+    ChronoNaiveUtcToolFixture, DirectSelfFieldDispatchFixture, FixtureBranchReceiverToolFixture,
     FixtureDynamicCallableToolFixture, FixtureMethodCallableArgumentToolFixture,
     FixtureSelfFieldReceiverToolFixture, ResultCallbackFixture, ReturnedClosureToolFixture,
     assert_aliased_parameter_local_binding_payload, assert_ambiguous_candidate_proof,
@@ -48,6 +48,7 @@ use crate::call_graph_tool_support::{
     assert_run_ui_tests_incoming_context, assert_runtime_dispatch_blocker,
     assert_self_field_receiver_context, assert_self_field_receiver_proof,
     assert_serde_json_summary_proof, assert_serde_json_surface_measure_effect,
+    assert_tap_io_accept_self_field_parameter_flow_payload,
     assert_tap_io_constructor_local_binding_payload, assert_target_proof,
     assert_task_spawn_effects, assert_task_spawn_policy_violation, assert_two_hop_call_path,
     ui_field,
@@ -574,6 +575,46 @@ async fn code_item_lookup_returns_axum_tap_io_constructor_frontier_payload() {
     let ui = result.ui_payload.as_ref().expect("ui payload");
     assert_eq!(ui_field(ui, "local_bindings"), bindings.len().to_string());
     assert_eq!(ui_field(ui, "local_binding_edges"), edges.len().to_string());
+}
+
+#[tokio::test]
+async fn code_item_lookup_returns_axum_tap_io_accept_self_field_parameter_flow() {
+    let fixture = AxumTapIoAcceptToolFixture::new().await;
+    let params = LookupParams {
+        item_name: Cow::Borrowed("accept"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("method"),
+        module_path: Cow::Owned(fixture.module_path_arg()),
+        owner_trait: Some(Cow::Borrowed("Listener")),
+        owner_type: Some(Cow::Borrowed("TapIo")),
+        parent_name: None,
+        body_contains: Some(Cow::Borrowed("(self.tap_fn)(&mut io)")),
+        allowed_effects: Vec::new(),
+    };
+
+    let result = CodeItemLookup::execute(params, fixture.ctx("tap-io-accept-flow-lookup"))
+        .await
+        .expect("TapIo::accept self-field parameter flow lookup");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize ConciseContext");
+    let flows = payload
+        .get("self_field_parameter_flows")
+        .and_then(serde_json::Value::as_array)
+        .expect("self_field_parameter_flows array");
+
+    // Source oracle:
+    //   axum/src/serve/listener.rs:116-123
+    //     `TapIo { listener: self, tap_fn }`.
+    //   axum/src/serve/listener.rs:236
+    //     `(self.tap_fn)(&mut io)`.
+    assert_tap_io_accept_self_field_parameter_flow_payload(
+        flows,
+        fixture.owner,
+        "code_item_lookup",
+    );
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert_eq!(ui_field(ui, "self_field_parameter_flows"), "1");
 }
 
 #[tokio::test]

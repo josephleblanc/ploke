@@ -7,7 +7,8 @@ use ploke_core::{
         CallReachInfo, CallTestEntrypointInfo, CallTestSelectionInfo, CrateBoundaryEdgeInfo,
         ExternalSummaryNeedInfo, LocalBindingEdgeInfo, LocalBindingInfo, ModuleBoundaryEdgeInfo,
         ProofContextInfo, ReturnedCallBindingFlowInfo, ReturnedFutureExecutionFlowInfo,
-        ReturnedFutureFlowInfo, RuntimeDispatchNeedInfo, UnsafeBlockCallInfo,
+        ReturnedFutureFlowInfo, RuntimeDispatchNeedInfo, SelfFieldParameterFlowInfo,
+        UnsafeBlockCallInfo,
     },
     tool_types::ToolName,
 };
@@ -764,6 +765,25 @@ pub(super) fn local_binding_edges_for_node(
     }
 }
 
+pub(super) fn self_field_parameter_flows_for_node(
+    ctx: &super::Ctx,
+    node_id: Uuid,
+) -> Result<Vec<SelfFieldParameterFlowInfo>, ploke_error::Error> {
+    use ploke_error::InternalError;
+
+    match ctx.state.rag.as_ref() {
+        Some(rag) if !rag.call_context_degraded() => Ok(rag
+            .exact_self_field_parameter_flows_for_owner(node_id)
+            .map_err(|err| {
+                ploke_error::Error::Internal(InternalError::CompilerError(format!(
+                    "failed to collect self-field parameter flows for code item {node_id}: {err}"
+                )))
+            })?
+            .unwrap_or_default()),
+        _ => Ok(Vec::new()),
+    }
+}
+
 pub(super) fn returned_call_binding_flows_for_node(
     ctx: &super::Ctx,
     node_id: Uuid,
@@ -1005,6 +1025,7 @@ pub(super) fn with_call_usage_fields(
     runtime_needs: &[RuntimeDispatchNeedInfo],
     local_bindings: &[LocalBindingInfo],
     local_binding_edges: &[LocalBindingEdgeInfo],
+    self_field_flows: &[SelfFieldParameterFlowInfo],
     awaited_sites: &[AwaitedCallSiteInfo],
     returned_flows: &[ReturnedCallBindingFlowInfo],
     future_flows: &[ReturnedFutureFlowInfo],
@@ -1131,6 +1152,10 @@ pub(super) fn with_call_usage_fields(
         .with_field("runtime_dispatch_needs", runtime_needs.len().to_string())
         .with_field("local_bindings", local_bindings.len().to_string())
         .with_field("local_binding_edges", local_binding_edges.len().to_string())
+        .with_field(
+            "self_field_parameter_flows",
+            self_field_flows.len().to_string(),
+        )
         .with_field("awaited_call_sites", awaited_sites.len().to_string())
         .with_field(
             "returned_call_binding_flows",

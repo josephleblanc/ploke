@@ -1,5 +1,5 @@
 use super::*;
-use ploke_core::rag_types::{CallSiteKind, LocalBindingRelationKind};
+use ploke_core::rag_types::{CallSiteKind, CallStatusKind, LocalBindingRelationKind};
 
 #[tokio::test]
 async fn local_bindings_exact_expose_axum_tap_io_constructor_frontier() -> Result<(), Error> {
@@ -86,6 +86,58 @@ async fn local_bindings_exact_expose_axum_tap_io_constructor_frontier() -> Resul
         }),
         "RAG should expose return.tap_fn projection-to-return proof: {edges:#?}"
     );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn self_field_parameter_flows_exact_expose_axum_tap_io_accept_frontier() -> Result<(), Error>
+{
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    // Source oracle:
+    //   axum/src/serve/listener.rs:116-123
+    //     `tap_io<F>(self, tap_fn: F) -> TapIo<Self, F>` returns
+    //     `TapIo { listener: self, tap_fn }`.
+    //   axum/src/serve/listener.rs:236
+    //     `TapIo::accept` later calls `(self.tap_fn)(&mut io)`.
+    //
+    // Contract: exact RAG exposes the constructor-parameter source for the
+    // targetless `self.tap_fn` dynamic call without promoting it into a local
+    // traversal edge.
+    let constructor = method_id_by_name_and_body_substring(&db, "tap_io", "TapIo")?;
+    let accept = method_id_by_name_and_body_substring(&db, "accept", "(self.tap_fn)(&mut io)")?;
+
+    let flows = rag
+        .exact_self_field_parameter_flows_for_owner(accept)?
+        .expect("call context is enabled");
+    assert_eq!(
+        flows.len(),
+        1,
+        "RAG should expose one TapIo::accept self-field parameter flow: {flows:#?}"
+    );
+    let flow = &flows[0];
+    assert_eq!(flow.site.owner_id, accept);
+    assert_eq!(flow.site.kind, CallSiteKind::Dynamic);
+    assert_eq!(
+        flow.site.path.as_deref(),
+        Some(&["self".to_string(), "tap_fn".to_string()][..])
+    );
+    assert_eq!(flow.site.status, CallStatusKind::Unsupported);
+    assert!(flow.site.targets.is_empty());
+    assert_eq!(flow.constructor_id, constructor);
+    assert_eq!(flow.return_binding.kind, "ReturnExpression");
+    assert_eq!(flow.return_binding.source_kind, "Constructed");
+    assert_eq!(flow.field_binding.kind, "FieldProjection");
+    assert_eq!(flow.field_binding.source_id, Some(flow.return_binding.id));
+    assert_eq!(
+        flow.field_binding.source_path.as_deref(),
+        Some(&["tap_fn".to_string()][..])
+    );
+    assert_eq!(flow.parameter_binding.kind, "ParameterBinding");
+    assert_eq!(flow.parameter_binding.name, "tap_fn");
+    assert_eq!(flow.parameter_binding.source_kind, "Parameter");
 
     Ok(())
 }

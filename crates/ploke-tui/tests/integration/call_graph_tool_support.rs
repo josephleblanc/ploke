@@ -13,7 +13,7 @@ use ploke_core::{
         CallSiteKind, CallStatusKind, CallTargetKind, CrateBoundaryEdgeInfo, LocalBindingEdgeInfo,
         LocalBindingInfo, LocalBindingRelationKind, ProofContextInfo, ReturnedCallBindingFlowInfo,
         ReturnedCallSourceKind, ReturnedFutureExecutionFlowInfo, ReturnedFutureFlowInfo,
-        UnsafeBlockCallInfo,
+        SelfFieldParameterFlowInfo, UnsafeBlockCallInfo,
     },
 };
 use ploke_db::{
@@ -188,6 +188,13 @@ pub(crate) struct AxumAwaitReceiverToolFixture {
 }
 
 pub(crate) struct AxumTapIoConstructorToolFixture {
+    pub(crate) state: Arc<AppState>,
+    pub(crate) file_path: PathBuf,
+    pub(crate) module_path: Vec<String>,
+    pub(crate) owner: Uuid,
+}
+
+pub(crate) struct AxumTapIoAcceptToolFixture {
     pub(crate) state: Arc<AppState>,
     pub(crate) file_path: PathBuf,
     pub(crate) module_path: Vec<String>,
@@ -1035,6 +1042,38 @@ impl AxumTapIoConstructorToolFixture {
         rag_config.proof_context.enabled = false;
         let state =
             axum_state_for_target_with_rag_config(Arc::clone(&db), &target, "tap_io", rag_config)
+                .await;
+
+        Self {
+            state,
+            file_path: target.file_path,
+            module_path: target.module_path,
+            owner: target.id,
+        }
+    }
+
+    pub(crate) fn module_path_arg(&self) -> String {
+        self.module_path.join("::")
+    }
+
+    pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
+        ctx_for_state(&self.state, call_id)
+    }
+}
+
+impl AxumTapIoAcceptToolFixture {
+    pub(crate) async fn new() -> Self {
+        let db = axum_call_graph_db();
+        let target = axum_method_target_by_body_and_file(
+            db.as_ref(),
+            "accept",
+            "(self.tap_fn)(&mut io)",
+            "axum/src/serve/listener.rs",
+        );
+        let mut rag_config = RagConfig::default();
+        rag_config.proof_context.enabled = false;
+        let state =
+            axum_state_for_target_with_rag_config(Arc::clone(&db), &target, "accept", rag_config)
                 .await;
 
         Self {
@@ -3948,6 +3987,47 @@ pub(crate) fn assert_forwarded_async_future_execution_flow(
     assert_eq!(
         matches, 1,
         "{tool} should return exactly one contextual returned future execution flow for {label}: {flows:#?}"
+    );
+}
+
+pub(crate) fn assert_tap_io_accept_self_field_parameter_flow_payload(
+    flows: &[serde_json::Value],
+    owner: Uuid,
+    tool: &str,
+) {
+    let rows = flows
+        .iter()
+        .filter_map(|flow| serde_json::from_value::<SelfFieldParameterFlowInfo>(flow.clone()).ok())
+        .collect::<Vec<_>>();
+    let matches = rows
+        .iter()
+        .filter(|flow| {
+            flow.site.owner_id == owner
+                && flow.site.kind == CallSiteKind::Dynamic
+                && flow
+                    .site
+                    .path
+                    .as_deref()
+                    .is_some_and(|path| path.iter().map(String::as_str).eq(["self", "tap_fn"]))
+                && flow.site.status == CallStatusKind::Unsupported
+                && flow.site.targets.is_empty()
+                && flow.return_binding.kind == "ReturnExpression"
+                && flow.return_binding.source_kind == "Constructed"
+                && flow.field_binding.kind == "FieldProjection"
+                && flow.field_binding.source_id == Some(flow.return_binding.id)
+                && flow
+                    .field_binding
+                    .source_path
+                    .as_deref()
+                    .is_some_and(|path| path.iter().map(String::as_str).eq(["tap_fn"]))
+                && flow.parameter_binding.kind == "ParameterBinding"
+                && flow.parameter_binding.name == "tap_fn"
+                && flow.parameter_binding.source_kind == "Parameter"
+        })
+        .count();
+    assert_eq!(
+        matches, 1,
+        "{tool} should expose exactly one TapIo::accept self-field parameter flow: {flows:#?}"
     );
 }
 

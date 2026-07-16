@@ -218,6 +218,20 @@ Post-regeneration checkpoint, 2026-07-16:
   source-visible receiver/value-flow evidence. Targetless receiver rows
   deliberately preserve the fail-closed frontier when proof is insufficient.
 
+Follow-up downstream checkpoint, 2026-07-16:
+
+- Axum `TapIo::accept` now has proof-only downstream payload coverage for the
+  reviewed `self.tap_fn` frontier. The DB query
+  `self_field_parameter_flows_for_owner` composes the targetless dynamic
+  callsite with the constructor-side `tap_io` return/field/parameter binding
+  evidence from `axum/src/serve/listener.rs:116-123` and `:236`. Exact RAG,
+  `code_item_lookup`, and `code_item_edges` expose the same
+  `self_field_parameter_flows` payload. This keeps `self.tap_fn` unsupported
+  and targetless; it only records the source-visible constructor parameter
+  frontier. Router-side `self.into_route`, dyn future `poll`, callable
+  trait-object dispatch, broader public parameter proof, and general
+  interprocedural value flow remain outside this slice.
+
 Local-binding projection checkpoint, 2026-07-14:
 
 - Source oracles:
