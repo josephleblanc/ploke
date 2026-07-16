@@ -908,30 +908,6 @@ pub(super) fn assert_no_dynamic_rows_by_method_name(
     Ok(())
 }
 
-pub(super) fn assert_no_dynamic_rows_by_function_names(
-    db: &Database,
-    function_names: &[&str],
-) -> Result<(), DbError> {
-    for function_name in function_names {
-        let mut params = BTreeMap::new();
-        params.insert("function".to_string(), DataValue::from(*function_name));
-
-        let rows = db.raw_query_params(
-            r#"?[site_id] :=
-                *function { id: owner_id, name: $function @ 'NOW' },
-                *call_site { id: site_id, owner_id: owner_id, call_kind: "Dynamic" }"#,
-            params,
-        )?;
-        assert!(
-            rows.rows.is_empty(),
-            "expected no dynamic rows owned by functions named {function_name:?}: {:#?}",
-            rows.rows
-        );
-    }
-
-    Ok(())
-}
-
 fn path_value(path_parts: &[&str]) -> DataValue {
     DataValue::List(
         path_parts
