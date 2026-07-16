@@ -4,7 +4,10 @@ use std::{
 };
 
 use ploke_core::{
-    rag_types::{CallPathInfo, NodeFilepath, ProofContextInfo},
+    rag_types::{
+        CallPathInfo, CallReachInfo, ExternalSummaryNeedInfo, NodeFilepath, ProofContextInfo,
+        RuntimeDispatchNeedInfo,
+    },
     tool_descriptions::ToolDescription,
     tool_types::ToolName,
 };
@@ -92,6 +95,18 @@ pub struct CodeItemCallPathResult {
     pub violations: Vec<CallPathInfo>,
     pub source_files: Vec<NodeFilepath>,
     pub proof_context: Vec<ProofContextInfo>,
+    #[serde(default)]
+    pub source_context: SourceCallContext,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SourceCallContext {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reach: Option<CallReachInfo>,
+    #[serde(default)]
+    pub external_needs: Vec<ExternalSummaryNeedInfo>,
+    #[serde(default)]
+    pub runtime_needs: Vec<RuntimeDispatchNeedInfo>,
 }
 
 pub struct CodeItemCallPath;
@@ -245,6 +260,11 @@ impl Tool for CodeItemCallPath {
         };
         let guard_id = guard.as_ref().map(|guard| guard.id);
         let proof_context = proof_context_for_paths(&ctx, source.id, target.id, guard_id, &paths)?;
+        let source_context = SourceCallContext {
+            reach: lookup_support::call_reach_for_node(&ctx, source.id)?,
+            external_needs: lookup_support::external_summary_needs_for_node(&ctx, source.id)?,
+            runtime_needs: lookup_support::runtime_dispatch_needs_for_node(&ctx, source.id)?,
+        };
         let source_files = source_files_for_paths(&source, &target, guard.as_ref(), &paths);
         let result = CodeItemCallPathResult {
             source_id: source.id,
@@ -263,12 +283,46 @@ impl Tool for CodeItemCallPath {
             violations,
             source_files,
             proof_context,
+            source_context,
         };
         let summary = if result.reachable {
             format!("Found {} call path(s)", result.paths.len())
+        } else if !result.source_context.runtime_needs.is_empty()
+            || !result.source_context.external_needs.is_empty()
+        {
+            format!(
+                "No resolved call path found; source has {} runtime-dispatch and {} external-summary need(s)",
+                result.source_context.runtime_needs.len(),
+                result.source_context.external_needs.len()
+            )
         } else {
             "No resolved call path found".to_string()
         };
+        let source_frontier = result
+            .source_context
+            .reach
+            .as_ref()
+            .map_or(0, |reach| reach.frontier_calls.len());
+        let source_external = result
+            .source_context
+            .reach
+            .as_ref()
+            .map_or(0, |reach| reach.external_frontier_calls.len());
+        let source_unsupported = result
+            .source_context
+            .reach
+            .as_ref()
+            .map_or(0, |reach| reach.unsupported_frontier_calls.len());
+        let source_unresolved = result
+            .source_context
+            .reach
+            .as_ref()
+            .map_or(0, |reach| reach.unresolved_frontier_calls.len());
+        let source_ambiguous = result
+            .source_context
+            .reach
+            .as_ref()
+            .map_or(0, |reach| reach.ambiguous_frontier_calls.len());
         let ui_payload = super::ToolUiPayload::new(Self::name(), ctx.call_id.clone(), summary)
             .with_field("source_id", result.source_id.to_string())
             .with_field("target_id", result.target_id.to_string())
@@ -276,6 +330,19 @@ impl Tool for CodeItemCallPath {
             .with_field("paths", result.paths.len().to_string())
             .with_field("source_files", result.source_files.len().to_string())
             .with_field("proof_context", result.proof_context.len().to_string())
+            .with_field("source_frontier", source_frontier.to_string())
+            .with_field("source_external", source_external.to_string())
+            .with_field("source_unsupported", source_unsupported.to_string())
+            .with_field("source_unresolved", source_unresolved.to_string())
+            .with_field("source_ambiguous", source_ambiguous.to_string())
+            .with_field(
+                "source_external_needs",
+                result.source_context.external_needs.len().to_string(),
+            )
+            .with_field(
+                "source_runtime_needs",
+                result.source_context.runtime_needs.len().to_string(),
+            )
             .with_field("max_depth", result.max_depth.to_string())
             .with_field("max_paths", result.max_paths.to_string());
         let ui_payload = if let Some(guard_id) = result.guard_id {

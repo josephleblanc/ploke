@@ -6,8 +6,8 @@ use ploke_tui::tools::{
 };
 
 use crate::call_graph_tool_support::{
-    AxumFromRequestFreeFunctionPathToolFixture, AxumRequestExtractPathToolFixture,
-    assert_call_path_node, assert_two_hop_call_path, ui_field,
+    AxumFromRequestFreeFunctionPathToolFixture, AxumRequestExtractPathToolFixture, DynamicToolCase,
+    DynamicToolFixture, assert_call_path_node, assert_two_hop_call_path, ui_field,
 };
 
 #[tokio::test]
@@ -402,6 +402,110 @@ async fn code_item_call_path_returns_real_corpus_free_function_two_hop_reachabil
     );
 }
 
+#[tokio::test]
+async fn code_item_call_path_explains_unreachable_dynamic_source_frontier() {
+    let case = DynamicToolCase::AXUM
+        .into_iter()
+        .find(|case| case.method == "accept")
+        .expect("TapIo::accept dynamic callable-field case");
+    let fixture = DynamicToolFixture::new(case).await;
+    let params = CodeItemCallPathParams {
+        source: CodeItemCallPathEndpoint {
+            item_name: Cow::Borrowed(case.method),
+            file_path: Cow::Owned(fixture.file_path.display().to_string()),
+            node_kind: Cow::Borrowed("method"),
+            module_path: Cow::Owned(fixture.module_path_arg()),
+            owner_trait: None,
+            owner_type: Some(Cow::Borrowed(case.owner_type)),
+            parent_name: None,
+        },
+        target: CodeItemCallPathEndpoint {
+            item_name: Cow::Borrowed("handle_accept_error"),
+            file_path: Cow::Owned(fixture.file_path.display().to_string()),
+            node_kind: Cow::Borrowed("function"),
+            module_path: Cow::Owned(fixture.module_path_arg()),
+            owner_trait: None,
+            owner_type: None,
+            parent_name: None,
+        },
+        guard: None,
+        max_depth: Some(2),
+        max_paths: Some(16),
+    };
+
+    let result = CodeItemCallPath::execute(
+        params,
+        fixture.ctx("axum-dynamic-source-unreachable-call-path"),
+    )
+    .await
+    .expect("tool execution");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize CodeItemCallPathResult");
+    assert_eq!(
+        payload
+            .get("reachable")
+            .and_then(serde_json::Value::as_bool),
+        Some(false),
+        "dynamic callable-field frontier should remain fail-closed for unrelated target: {payload:#?}"
+    );
+    assert!(
+        payload
+            .get("paths")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(Vec::is_empty),
+        "unreachable dynamic source query should not synthesize a path: {payload:#?}"
+    );
+
+    // Matrix:
+    //   docs/active/agents/call-graph/
+    //   2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //
+    // Source oracle:
+    //   axum/src/serve/listener.rs:236
+    //     `TapIo::accept` calls `(self.tap_fn)(&mut io)`.
+    //
+    // This proves the user-facing call-path surface does not collapse a
+    // fail-closed runtime-dispatch frontier into an unexplained "no path".
+    let source_context = payload
+        .get("source_context")
+        .and_then(serde_json::Value::as_object)
+        .expect("source_context object");
+    let runtime_needs = source_context
+        .get("runtime_needs")
+        .and_then(serde_json::Value::as_array)
+        .expect("source_context.runtime_needs array");
+    assert_runtime_dispatch_need_path(
+        runtime_needs,
+        &["self", "tap_fn"],
+        "code_item_call_path source_context.runtime_needs",
+    );
+
+    let reach = source_context
+        .get("reach")
+        .and_then(serde_json::Value::as_object)
+        .expect("source_context.reach object");
+    assert!(
+        reach
+            .get("unsupported_frontier_calls")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|frontier| !frontier.is_empty()),
+        "source_context.reach should preserve unsupported frontier calls: {reach:#?}"
+    );
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert_eq!(
+        ui_field(ui, "source_runtime_needs"),
+        runtime_needs.len().to_string()
+    );
+    assert!(
+        ui_field(ui, "source_unsupported")
+            .parse::<usize>()
+            .expect("source unsupported frontier count")
+            >= 1,
+        "ui payload should surface unsupported source frontier count"
+    );
+}
+
 fn assert_edge_spans_present(path: &serde_json::Value, label: &str) {
     let edges = path
         .get("edges")
@@ -423,6 +527,40 @@ fn assert_edge_spans_present(path: &serde_json::Value, label: &str) {
             "{label} edge span should serialize numeric byte bounds: {edge:#?}"
         );
     }
+}
+
+fn assert_runtime_dispatch_need_path(
+    needs: &[serde_json::Value],
+    expected_path: &[&str],
+    label: &str,
+) {
+    let need = needs
+        .iter()
+        .find(|need| {
+            need.get("call_site")
+                .and_then(|call| call.get("path"))
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|path| {
+                    path.iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .eq(expected_path.iter().copied())
+                })
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "{label} should include a runtime-dispatch need for {expected_path:?}: {needs:#?}"
+            )
+        });
+    let blockers = need
+        .get("blocker_reasons")
+        .and_then(serde_json::Value::as_array)
+        .unwrap_or_else(|| panic!("{label} blocker_reasons array"));
+    assert!(
+        blockers
+            .iter()
+            .any(|reason| reason.as_str() == Some("dynamic_dispatch_unbounded")),
+        "{label} should preserve dynamic_dispatch_unbounded: {need:#?}"
+    );
 }
 
 fn assert_path_edge_proofs_present(
