@@ -1,49 +1,5 @@
 use super::*;
-use cozo::{DataValue, UuidWrapper};
 use ploke_db::LocalBindingRelationKind;
-use std::collections::BTreeMap;
-use uuid::Uuid;
-
-struct CalleeEvidence {
-    kind: String,
-    path: Vec<String>,
-}
-
-fn callee_evidence_for_site(db: &Database, site: Uuid) -> Result<CalleeEvidence, DbError> {
-    let mut params = BTreeMap::new();
-    params.insert("site".to_string(), DataValue::Uuid(UuidWrapper(site)));
-
-    let rows = db.raw_query_params(
-        r#"?[callee_kind, callee_path] :=
-            site = $site,
-            *call_callee_evidence {
-                source_id: site,
-                callee_kind,
-                callee_path @ 'NOW'
-            }"#,
-        params,
-    )?;
-    assert_eq!(
-        rows.rows.len(),
-        1,
-        "expected exactly one call_callee_evidence row for {site}: {:#?}",
-        rows.rows
-    );
-    Ok(CalleeEvidence {
-        kind: data_str(&rows.rows[0][0], "call_callee_evidence.callee_kind").to_string(),
-        path: data_string_list(&rows.rows[0][1], "call_callee_evidence.callee_path"),
-    })
-}
-
-fn data_string_list(value: &DataValue, label: &str) -> Vec<String> {
-    let DataValue::List(items) = value else {
-        panic!("{label} should be a string list, got {value:?}");
-    };
-    items
-        .iter()
-        .map(|item| data_str(item, label).to_string())
-        .collect()
-}
 
 #[test]
 fn fixture_projection_stores_parameter_binding_edges() -> Result<(), DbError> {
@@ -213,14 +169,24 @@ fn fixture_projection_stores_targetless_callable_callee_evidence() -> Result<(),
             case.source
         );
 
-        let evidence = callee_evidence_for_site(&db, row.site.id)?;
+        let evidence = db.call_callee_evidence_for_owner(owner)?;
         assert_eq!(
-            evidence.kind, case.callee,
+            evidence.len(),
+            1,
+            "{} should expose one callee evidence row for the owner: {evidence:#?}",
+            case.source
+        );
+        let evidence = &evidence[0];
+        assert_eq!(evidence.site_id, row.site.id, "{}", case.source);
+        assert_eq!(evidence.site_kind, case.kind, "{}", case.source);
+        assert_eq!(evidence.closure_id, None, "{}", case.source);
+        assert_eq!(
+            evidence.callee_kind, case.callee,
             "{} should persist parser callee classification",
             case.source
         );
         assert_eq!(
-            evidence.path,
+            evidence.callee_path,
             path(case.path),
             "{} should persist the structural callee path",
             case.source

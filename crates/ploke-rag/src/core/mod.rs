@@ -11,10 +11,11 @@ mod unit_tests;
 use super::*;
 use ploke_core::rag_types::AssembledContext;
 use ploke_core::rag_types::{
-    AwaitedCallSiteInfo, CallBuildDomainInfo, CallCalleeInfo, CallContextInfo, CallEffectGuardInfo,
-    CallEffectPolicyViolationInfo, CallEndpointKind, CallExpansionInfo, CallExpansionKind,
-    CallGuardInfo, CallImpactInfo, CallNodeInfo, CallPathEdgeInfo, CallPathInfo, CallPathNodeInfo,
-    CallProofInvariantFindingInfo, CallReachEffectInfo, CallReachInfo, CallReceiverInfo,
+    AwaitedCallSiteInfo, CallBuildDomainInfo, CallCalleeEvidenceInfo, CallCalleeInfo,
+    CallContextInfo, CallEffectGuardInfo, CallEffectPolicyViolationInfo, CallEndpointKind,
+    CallExpansionInfo, CallExpansionKind, CallGuardInfo, CallImpactInfo, CallNodeInfo,
+    CallPathEdgeInfo, CallPathInfo, CallPathNodeInfo, CallProofInvariantFindingInfo,
+    CallReachEffectInfo, CallReachInfo, CallReceiverInfo,
     CallResolutionKind as RagCallResolutionKind, CallSiteBucketInfo,
     CallSiteKind as RagCallSiteKind, CallStatusKind as RagCallStatusKind, CallTargetInfo,
     CallTargetKind, CallTestEntrypointInfo, CallTestSelectionInfo, CanonPath,
@@ -28,8 +29,8 @@ use ploke_core::rag_types::{
     SelfFieldAssignmentFlowInfo, SelfFieldParameterFlowInfo, UnsafeBlockCallInfo,
 };
 use ploke_db::{
-    CallBuildDomain as DbCallBuildDomain, CallContextCandidate, CallContextOptions,
-    CallContextRelation, CallContextRow, CallContextSeed,
+    CallBuildDomain as DbCallBuildDomain, CallCalleeEvidenceRow as DbCallCalleeEvidenceRow,
+    CallContextCandidate, CallContextOptions, CallContextRelation, CallContextRow, CallContextSeed,
     CallEffectGuardReport as DbCallEffectGuardReport,
     CallEffectPolicyViolation as DbCallEffectPolicyViolation, CallGuardReport as DbCallGuardReport,
     CallImpactReport as DbCallImpactReport, CallNodeInfo as DbCallNodeInfo, CallPath as DbCallPath,
@@ -669,6 +670,16 @@ fn local_binding_edge_info(row: DbLocalBindingEdgeRow) -> LocalBindingEdgeInfo {
         relation: local_binding_relation_kind(row.relation),
         source_kind: row.source_kind,
         target_kind: row.target_kind,
+    }
+}
+
+fn call_callee_evidence_info(row: DbCallCalleeEvidenceRow) -> CallCalleeEvidenceInfo {
+    CallCalleeEvidenceInfo {
+        site_id: row.site_id,
+        site_kind: site_kind(row.site_kind),
+        callee_kind: row.callee_kind,
+        callee_path: row.callee_path,
+        closure_id: row.closure_id,
     }
 }
 
@@ -1751,6 +1762,23 @@ impl RagService {
                 .local_binding_edges_for_owner(owner_id)?
                 .into_iter()
                 .map(local_binding_edge_info)
+                .collect(),
+        ))
+    }
+
+    pub fn exact_call_callee_evidence_for_owner(
+        &self,
+        owner_id: Uuid,
+    ) -> Result<Option<Vec<CallCalleeEvidenceInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .call_callee_evidence_for_owner(owner_id)?
+                .into_iter()
+                .map(call_callee_evidence_info)
                 .collect(),
         ))
     }

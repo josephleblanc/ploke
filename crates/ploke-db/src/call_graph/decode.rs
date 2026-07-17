@@ -7,12 +7,12 @@ use crate::{
 };
 
 use super::{
-    CallContextRow, CallPathEdge, CallReceiver, CallRelationKind, CallResolutionKind,
-    CallResolutionRow, CallSiteKind, CallSiteRow, CallStatusKind, CallTargetKind, CallTargetRow,
-    FuturePollFieldProducerFlow, LocalBindingEdgeRow, LocalBindingRelationKind, LocalBindingRow,
-    ReturnedCallBinding, ReturnedCallBindingFlow, ReturnedCallProducer, ReturnedCallSite,
-    ReturnedCallSource, ReturnedFutureExecutionFlow, ReturnedFutureFlow, ReturnedFutureSite,
-    SelfFieldAssignmentFlow, SelfFieldParameterFlow,
+    CallCalleeEvidenceRow, CallContextRow, CallPathEdge, CallReceiver, CallRelationKind,
+    CallResolutionKind, CallResolutionRow, CallSiteKind, CallSiteRow, CallStatusKind,
+    CallTargetKind, CallTargetRow, FuturePollFieldProducerFlow, LocalBindingEdgeRow,
+    LocalBindingRelationKind, LocalBindingRow, ReturnedCallBinding, ReturnedCallBindingFlow,
+    ReturnedCallProducer, ReturnedCallSite, ReturnedCallSource, ReturnedFutureExecutionFlow,
+    ReturnedFutureFlow, ReturnedFutureSite, SelfFieldAssignmentFlow, SelfFieldParameterFlow,
 };
 
 pub(super) fn decode_site(row: &[DataValue]) -> Result<CallSiteRow, DbError> {
@@ -120,6 +120,35 @@ pub(super) fn decode_resolution(row: &[DataValue]) -> Result<CallResolutionRow, 
     };
     validate_resolution_shape(&status)?;
     Ok(status)
+}
+
+pub(super) fn decode_callee_evidence(row: &[DataValue]) -> Result<CallCalleeEvidenceRow, DbError> {
+    let evidence = CallCalleeEvidenceRow {
+        site_id: to_uuid(&row[0])?,
+        site_kind: CallSiteKind::from_str(&to_string(&row[1])?)?,
+        callee_kind: to_string(&row[2])?,
+        callee_path: to_string_list(&row[3])?,
+        closure_id: optional_uuid(&row[4])?,
+    };
+    validate_callee_evidence_shape(&evidence)?;
+    Ok(evidence)
+}
+
+fn validate_callee_evidence_shape(evidence: &CallCalleeEvidenceRow) -> Result<(), DbError> {
+    if !evidence.callee_kind.is_empty()
+        && !evidence.callee_path.is_empty()
+        && evidence
+            .callee_path
+            .iter()
+            .all(|segment| !segment.is_empty())
+    {
+        Ok(())
+    } else {
+        Err(DbError::Cozo(format!(
+            "malformed call_callee_evidence row for site {}",
+            evidence.site_id
+        )))
+    }
 }
 
 pub(super) fn decode_local_binding(row: &[DataValue]) -> Result<LocalBindingRow, DbError> {

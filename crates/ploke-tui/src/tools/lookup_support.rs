@@ -4,11 +4,12 @@ use ploke_core::{
     rag_types::{
         AwaitedCallSiteInfo, CallBuildDomainInfo, CallContextInfo, CallEffectPolicyViolationInfo,
         CallImpactInfo, CallPathInfo, CallProofInvariantFindingInfo, CallReachEffectInfo,
-        CallReachInfo, CallTestEntrypointInfo, CallTestSelectionInfo, CrateBoundaryEdgeInfo,
-        ExternalSummaryNeedInfo, FuturePollFieldProducerFlowInfo, LocalBindingEdgeInfo,
-        LocalBindingInfo, ModuleBoundaryEdgeInfo, ProofContextInfo, ReturnedCallBindingFlowInfo,
-        ReturnedFutureExecutionFlowInfo, ReturnedFutureFlowInfo, RuntimeDispatchNeedInfo,
-        SelfFieldAssignmentFlowInfo, SelfFieldParameterFlowInfo, UnsafeBlockCallInfo,
+        CallReachInfo, CallStatusKind, CallTestEntrypointInfo, CallTestSelectionInfo,
+        CrateBoundaryEdgeInfo, ExternalSummaryNeedInfo, FuturePollFieldProducerFlowInfo,
+        LocalBindingEdgeInfo, LocalBindingInfo, ModuleBoundaryEdgeInfo, ProofContextInfo,
+        ReturnedCallBindingFlowInfo, ReturnedFutureExecutionFlowInfo, ReturnedFutureFlowInfo,
+        RuntimeDispatchNeedInfo, SelfFieldAssignmentFlowInfo, SelfFieldParameterFlowInfo,
+        UnsafeBlockCallInfo,
     },
     tool_types::ToolName,
 };
@@ -765,6 +766,38 @@ pub(super) fn local_binding_edges_for_node(
     }
 }
 
+pub(super) fn call_callee_evidence_for_node(
+    ctx: &super::Ctx,
+    node_id: Uuid,
+    call_context: &[CallContextInfo],
+) -> Result<Vec<ploke_core::rag_types::CallCalleeEvidenceInfo>, ploke_error::Error> {
+    use ploke_error::InternalError;
+
+    if !has_targetless_unsupported_owner_call(node_id, call_context) {
+        return Ok(Vec::new());
+    }
+
+    match ctx.state.rag.as_ref() {
+        Some(rag) if !rag.call_context_degraded() => Ok(rag
+            .exact_call_callee_evidence_for_owner(node_id)
+            .map_err(|err| {
+                ploke_error::Error::Internal(InternalError::CompilerError(format!(
+                    "failed to collect call callee evidence for code item {node_id}: {err}"
+                )))
+            })?
+            .unwrap_or_default()),
+        _ => Ok(Vec::new()),
+    }
+}
+
+fn has_targetless_unsupported_owner_call(node_id: Uuid, call_context: &[CallContextInfo]) -> bool {
+    call_context.iter().any(|call| {
+        call.owner_id == node_id
+            && call.status == CallStatusKind::Unsupported
+            && call.targets.is_empty()
+    })
+}
+
 pub(super) fn self_field_parameter_flows_for_node(
     ctx: &super::Ctx,
     node_id: Uuid,
@@ -1063,6 +1096,7 @@ pub(super) fn with_call_usage_fields(
     runtime_needs: &[RuntimeDispatchNeedInfo],
     local_bindings: &[LocalBindingInfo],
     local_binding_edges: &[LocalBindingEdgeInfo],
+    call_callee_evidence: &[ploke_core::rag_types::CallCalleeEvidenceInfo],
     self_field_flows: &[SelfFieldParameterFlowInfo],
     self_assignment_flows: &[SelfFieldAssignmentFlowInfo],
     future_poll_flows: &[FuturePollFieldProducerFlowInfo],
@@ -1192,6 +1226,10 @@ pub(super) fn with_call_usage_fields(
         .with_field("runtime_dispatch_needs", runtime_needs.len().to_string())
         .with_field("local_bindings", local_bindings.len().to_string())
         .with_field("local_binding_edges", local_binding_edges.len().to_string())
+        .with_field(
+            "call_callee_evidence",
+            call_callee_evidence.len().to_string(),
+        )
         .with_field(
             "self_field_parameter_flows",
             self_field_flows.len().to_string(),
@@ -1337,6 +1375,98 @@ mod tests {
         assert_eq!(
             owner.message(),
             " and owner_trait Service<Request> and owner_type HandlerService"
+        );
+    }
+
+    #[test]
+    fn targetless_unsupported_calls_request_callee_evidence() {
+        let owner = Uuid::nil();
+        let target = Uuid::max();
+
+        assert!(has_targetless_unsupported_owner_call(
+            owner,
+            &[CallContextInfo {
+                site_id: target,
+                owner_id: owner,
+                kind: ploke_core::rag_types::CallSiteKind::Path,
+                span: (0, 1),
+                path: Some(vec!["f".to_string()]),
+                arg_count: Some(0),
+                generic_arg_count: Some(0),
+                callee: ploke_core::rag_types::CallCalleeInfo::Path {
+                    path: vec!["f".to_string()]
+                },
+                status: CallStatusKind::Unsupported,
+                resolution: None,
+                targets: Vec::new(),
+            }]
+        ));
+
+        assert!(!has_targetless_unsupported_owner_call(
+            owner,
+            &[CallContextInfo {
+                site_id: target,
+                owner_id: owner,
+                kind: ploke_core::rag_types::CallSiteKind::Path,
+                span: (0, 1),
+                path: Some(vec!["f".to_string()]),
+                arg_count: Some(0),
+                generic_arg_count: Some(0),
+                callee: ploke_core::rag_types::CallCalleeInfo::Path {
+                    path: vec!["f".to_string()]
+                },
+                status: CallStatusKind::Resolved,
+                resolution: None,
+                targets: Vec::new(),
+            }]
+        ));
+    }
+
+    #[test]
+    fn call_usage_fields_counts_callee_evidence() {
+        let site = Uuid::nil();
+        let payload = with_call_usage_fields(
+            super::super::ToolUiPayload::new(ToolName::CodeItemLookup, "call-id".into(), "ok"),
+            None,
+            None,
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[ploke_core::rag_types::CallCalleeEvidenceInfo {
+                site_id: site,
+                site_kind: ploke_core::rag_types::CallSiteKind::Path,
+                callee_kind: "ValueBinding".to_string(),
+                callee_path: vec!["f".to_string()],
+                closure_id: None,
+            }],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            None,
+        );
+
+        assert_eq!(
+            payload
+                .fields
+                .iter()
+                .find(|field| field.name.as_ref() == "call_callee_evidence")
+                .expect("call_callee_evidence field")
+                .value
+                .as_ref(),
+            "1"
         );
     }
 }

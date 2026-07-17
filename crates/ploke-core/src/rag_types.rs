@@ -410,6 +410,16 @@ pub struct CallContextInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct CallCalleeEvidenceInfo {
+    pub site_id: Uuid,
+    pub site_kind: CallSiteKind,
+    pub callee_kind: String,
+    pub callee_path: Vec<String>,
+    #[serde(default)]
+    pub closure_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct CallPathEdgeInfo {
     pub caller_id: Uuid,
     pub callee_id: Uuid,
@@ -1026,6 +1036,7 @@ impl From<ContextPart> for ConciseContext {
             runtime_dispatch_needs: Vec::new(),
             local_bindings: Vec::new(),
             local_binding_edges: Vec::new(),
+            call_callee_evidence: Vec::new(),
             self_field_parameter_flows: Vec::new(),
             self_field_assignment_flows: Vec::new(),
             future_poll_field_producer_flows: Vec::new(),
@@ -1115,6 +1126,8 @@ pub struct ConciseContext {
     pub local_bindings: Vec<LocalBindingInfo>,
     #[serde(default)]
     pub local_binding_edges: Vec<LocalBindingEdgeInfo>,
+    #[serde(default)]
+    pub call_callee_evidence: Vec<CallCalleeEvidenceInfo>,
     #[serde(default)]
     pub self_field_parameter_flows: Vec<SelfFieldParameterFlowInfo>,
     #[serde(default)]

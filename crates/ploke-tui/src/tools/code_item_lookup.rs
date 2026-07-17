@@ -348,6 +348,11 @@ for a more fuzzy search."#
         let local_bindings = lookup_support::local_bindings_for_node(&ctx, resolved_item_id)?;
         let local_binding_edges =
             lookup_support::local_binding_edges_for_node(&ctx, resolved_item_id)?;
+        let call_callee_evidence = lookup_support::call_callee_evidence_for_node(
+            &ctx,
+            resolved_item_id,
+            &carriers.call_context,
+        )?;
         let self_field_parameter_flows =
             lookup_support::self_field_parameter_flows_for_node(&ctx, resolved_item_id)?;
         let self_field_assignment_flows =
@@ -417,6 +422,7 @@ for a more fuzzy search."#
             runtime_dispatch_needs,
             local_bindings,
             local_binding_edges,
+            call_callee_evidence,
             self_field_parameter_flows,
             self_field_assignment_flows,
             future_poll_field_producer_flows,
@@ -465,6 +471,7 @@ for a more fuzzy search."#
             &concise_context.runtime_dispatch_needs,
             &concise_context.local_bindings,
             &concise_context.local_binding_edges,
+            &concise_context.call_callee_evidence,
             &concise_context.self_field_parameter_flows,
             &concise_context.self_field_assignment_flows,
             &concise_context.future_poll_field_producer_flows,

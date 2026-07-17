@@ -6,11 +6,11 @@ use uuid::Uuid;
 use crate::{Database, DbError, database::to_string};
 
 use super::super::{
-    CallContextRow, CallResolutionRow, CallSiteKind, CallSiteRow, CallTargetRow,
-    LocalBindingEdgeRow, LocalBindingRow, ReturnedCallBindingFlow, ReturnedFutureExecutionFlow,
-    ReturnedFutureFlow,
+    CallCalleeEvidenceRow, CallContextRow, CallResolutionRow, CallSiteKind, CallSiteRow,
+    CallTargetRow, LocalBindingEdgeRow, LocalBindingRow, ReturnedCallBindingFlow,
+    ReturnedFutureExecutionFlow, ReturnedFutureFlow,
     decode::{
-        decode_local_binding, decode_local_binding_edge, decode_resolution,
+        decode_callee_evidence, decode_local_binding, decode_local_binding_edge, decode_resolution,
         decode_returned_call_binding_flow, decode_returned_future_execution_flow,
         decode_returned_future_flow, decode_site, decode_target, validate_owner_context_targets,
     },
@@ -270,6 +270,51 @@ impl Database {
         rows.rows
             .iter()
             .map(|row| decode_local_binding_edge(row))
+            .collect::<Result<Vec<_>, DbError>>()
+    }
+
+    pub fn call_callee_evidence_for_owner(
+        &self,
+        owner_id: Uuid,
+    ) -> Result<Vec<CallCalleeEvidenceRow>, DbError> {
+        let mut params = BTreeMap::new();
+        params.insert(
+            "owner_id".to_string(),
+            DataValue::Uuid(UuidWrapper(owner_id)),
+        );
+
+        let mut script = valid_call_owner_rules();
+        script.push_str(
+            r#"
+            ?[site_id, site_kind, callee_kind, callee_path, closure_id, span] :=
+                owner_id = $owner_id,
+                valid_owner[owner_id, owner_kind],
+                *call_site_edge {
+                    source_id: owner_id,
+                    target_id: site_id,
+                    relation_kind: "BodyContainsCall",
+                    source_kind: owner_kind,
+                    target_kind: site_kind @ 'NOW'
+                },
+                *call_site {
+                    id: site_id,
+                    owner_id,
+                    span @ 'NOW'
+                },
+                *call_callee_evidence {
+                    source_id: site_id,
+                    source_kind: site_kind,
+                    callee_kind,
+                    callee_path,
+                    closure_id @ 'NOW'
+                }
+            :sort span, site_id"#,
+        );
+        let rows = self.run_script(&script, params, ScriptMutability::Immutable)?;
+
+        rows.rows
+            .iter()
+            .map(|row| decode_callee_evidence(&row[..5]))
             .collect::<Result<Vec<_>, DbError>>()
     }
 

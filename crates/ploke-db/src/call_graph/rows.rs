@@ -47,6 +47,15 @@ pub struct CallContextRow {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CallCalleeEvidenceRow {
+    pub site_id: Uuid,
+    pub site_kind: CallSiteKind,
+    pub callee_kind: String,
+    pub callee_path: Vec<String>,
+    pub closure_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct LocalBindingRow {
     pub id: Uuid,
     pub owner_id: Uuid,

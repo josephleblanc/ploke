@@ -1,6 +1,86 @@
 use super::super::super::super::super::*;
 use super::super::super::helpers::*;
-use ploke_core::rag_types::LocalBindingRelationKind;
+use ploke_core::rag_types::{CallSiteKind, LocalBindingRelationKind};
+
+#[tokio::test]
+async fn call_callee_evidence_exact_exposes_targetless_callable_shapes() -> Result<(), Error> {
+    init_tracing_once();
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let rag = init_test_rag_mock(Arc::clone(&db));
+
+    struct Case {
+        owner: &'static str,
+        site_kind: CallSiteKind,
+        callee_kind: &'static str,
+        callee_path: &'static [&'static str],
+    }
+
+    let cases = [
+        Case {
+            owner: "call_function_pointer_param",
+            site_kind: CallSiteKind::Path,
+            callee_kind: "ValueBinding",
+            callee_path: &["f"],
+        },
+        Case {
+            owner: "call_parenthesized_function_pointer_param",
+            site_kind: CallSiteKind::Dynamic,
+            callee_kind: "LocalBinding",
+            callee_path: &["f"],
+        },
+        Case {
+            owner: "call_function_pointer_param_cast",
+            site_kind: CallSiteKind::Dynamic,
+            callee_kind: "FnPointerCastLocalBinding",
+            callee_path: &["f"],
+        },
+        Case {
+            owner: "call_field_function_param",
+            site_kind: CallSiteKind::Dynamic,
+            callee_kind: "FieldLocalBinding",
+            callee_path: &["holder", "callback"],
+        },
+        Case {
+            owner: "call_if_function_pointer_param_branch",
+            site_kind: CallSiteKind::Dynamic,
+            callee_kind: "IfBranchParameter",
+            callee_path: &["f"],
+        },
+        Case {
+            owner: "call_match_function_pointer_param_arm",
+            site_kind: CallSiteKind::Dynamic,
+            callee_kind: "MatchArmParameter",
+            callee_path: &["f"],
+        },
+    ];
+
+    for case in cases {
+        let owner = one_uuid(&db, &function_in_module_query(&["crate"], case.owner))?;
+        let rows = rag
+            .exact_call_callee_evidence_for_owner(owner)?
+            .expect("call context is enabled");
+        assert_eq!(
+            rows.len(),
+            1,
+            "{} should expose one exact callee evidence row: {rows:#?}",
+            case.owner
+        );
+        let row = &rows[0];
+        assert_eq!(row.site_kind, case.site_kind, "{}", case.owner);
+        assert_eq!(row.callee_kind, case.callee_kind, "{}", case.owner);
+        let expected_path = case
+            .callee_path
+            .iter()
+            .map(|part| (*part).to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(row.callee_path, expected_path, "{}", case.owner);
+        assert_eq!(row.closure_id, None, "{}", case.owner);
+    }
+
+    Ok(())
+}
 
 #[tokio::test]
 async fn local_bindings_exact_expose_initialized_path_evidence() -> Result<(), Error> {

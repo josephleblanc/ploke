@@ -22,19 +22,19 @@ pub mod workspace;
 
 pub mod multi_embedding;
 pub use call_graph::{
-    CallBuildDomain, CallCallerRow, CallContextCandidate, CallContextOptions, CallContextRelation,
-    CallContextRow, CallContextSeed, CallEffectGuardReport, CallEffectPolicyViolation,
-    CallGuardReport, CallImpactReport, CallNodeContext, CallNodeInfo, CallNodeKind, CallPath,
-    CallPathEdge, CallPathOptions, CallProofInvariantFinding, CallReachEffect, CallReachReport,
-    CallReceiver, CallRelationKind, CallResolutionKind, CallResolutionRow, CallSiteBucket,
-    CallSiteKind, CallSiteRow, CallStatusKind, CallTargetKind, CallTargetRow, CallTestEntrypoint,
-    CallTestSelectionReport, CrateBoundaryEdge, CrateBoundaryPolicyRule,
-    CrateBoundaryPolicyViolation, ExternalSummaryNeed, FuturePollFieldProducerFlow,
-    LocalBindingEdgeRow, LocalBindingRelationKind, LocalBindingRow, ModuleBoundaryEdge,
-    ModuleBoundaryPolicyRule, ModuleBoundaryPolicyViolation, ReturnedCallBinding,
-    ReturnedCallBindingFlow, ReturnedCallProducer, ReturnedCallSite, ReturnedCallSource,
-    ReturnedFutureExecutionFlow, ReturnedFutureFlow, ReturnedFutureSite, RuntimeDispatchNeed,
-    SelfFieldAssignmentFlow, SelfFieldParameterFlow, UnsafeBlockCall,
+    CallBuildDomain, CallCalleeEvidenceRow, CallCallerRow, CallContextCandidate,
+    CallContextOptions, CallContextRelation, CallContextRow, CallContextSeed,
+    CallEffectGuardReport, CallEffectPolicyViolation, CallGuardReport, CallImpactReport,
+    CallNodeContext, CallNodeInfo, CallNodeKind, CallPath, CallPathEdge, CallPathOptions,
+    CallProofInvariantFinding, CallReachEffect, CallReachReport, CallReceiver, CallRelationKind,
+    CallResolutionKind, CallResolutionRow, CallSiteBucket, CallSiteKind, CallSiteRow,
+    CallStatusKind, CallTargetKind, CallTargetRow, CallTestEntrypoint, CallTestSelectionReport,
+    CrateBoundaryEdge, CrateBoundaryPolicyRule, CrateBoundaryPolicyViolation, ExternalSummaryNeed,
+    FuturePollFieldProducerFlow, LocalBindingEdgeRow, LocalBindingRelationKind, LocalBindingRow,
+    ModuleBoundaryEdge, ModuleBoundaryPolicyRule, ModuleBoundaryPolicyViolation,
+    ReturnedCallBinding, ReturnedCallBindingFlow, ReturnedCallProducer, ReturnedCallSite,
+    ReturnedCallSource, ReturnedFutureExecutionFlow, ReturnedFutureFlow, ReturnedFutureSite,
+    RuntimeDispatchNeed, SelfFieldAssignmentFlow, SelfFieldParameterFlow, UnsafeBlockCall,
     call_target_endpoint_relation, valid_call_target_family,
 };
 pub use database::RestoredEmbeddingSet;
