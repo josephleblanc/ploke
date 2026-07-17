@@ -836,7 +836,7 @@ fn boxed_call_parameter_path(call: &syn::ExprCall) -> Option<Vec<String>> {
     let syn::Expr::Path(func) = unparen_expr(call.func.as_ref()) else {
         return None;
     };
-    if func.qself.is_some() || !is_box_new(&path_segments(&func.path)) {
+    if func.qself.is_some() || !super::is_box_new_path(&func.path) {
         return None;
     }
     let mut args = call.args.iter();
@@ -870,15 +870,6 @@ fn option_some_parameter_path(call: &syn::ExprCall) -> Option<Vec<String>> {
 
 fn single_segment_path(path: Vec<String>) -> Option<Vec<String>> {
     matches!(path.as_slice(), [_]).then_some(path)
-}
-
-fn is_box_new(path: &[String]) -> bool {
-    matches!(path, [box_, new] if box_ == "Box" && new == "new")
-        || matches!(
-            path,
-            [root, boxed, box_, new]
-                if (root == "std" || root == "alloc") && boxed == "boxed" && box_ == "Box" && new == "new"
-        )
 }
 
 fn is_option_some(path: &[String]) -> bool {

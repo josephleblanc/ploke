@@ -319,6 +319,18 @@ impl CallRelationResolver<'_> {
             return Ok(());
         }
 
+        if let Some(target) = self.direct_returned_boxed_function(returning_function)? {
+            relations.push(CallRelation::DynamicFunction {
+                source: call.id,
+                target,
+            });
+            statuses.push(CallResolutionStatus::Resolved {
+                source,
+                kind: CallResolutionKind::LocalExact,
+            });
+            return Ok(());
+        }
+
         let Some(return_path) = self.direct_return_path(returning_function)? else {
             statuses.push(CallResolutionStatus::Unsupported { source });
             return Ok(());
@@ -470,6 +482,32 @@ impl CallRelationResolver<'_> {
             return Ok(None);
         };
         Ok(expr_return_call_path(&expr))
+    }
+
+    fn direct_returned_boxed_function(
+        &self,
+        function_id: FunctionNodeId,
+    ) -> Result<Option<FunctionNodeId>, SynParserError> {
+        let Some(return_type) = self.function_return_type(function_id)? else {
+            return Ok(None);
+        };
+        if !self.boxed_callable_type(self.type_node(return_type)?)? {
+            return Ok(None);
+        }
+        let Some(expr) = self.direct_return_expr(function_id, "returned boxed function proof")?
+        else {
+            return Ok(None);
+        };
+        let Some(path) = expr_return_boxed_path(&expr) else {
+            return Ok(None);
+        };
+        match self.resolve_dynamic_path(function_id.into(), &path)? {
+            DynamicPathResolution::Resolved(target) => Ok(Some(target)),
+            DynamicPathResolution::Unresolved
+            | DynamicPathResolution::Ambiguous
+            | DynamicPathResolution::External
+            | DynamicPathResolution::Unsupported => Ok(None),
+        }
     }
 
     fn direct_return_closure(
@@ -785,6 +823,39 @@ fn expr_return_call_path(expr: &syn::Expr) -> Option<Vec<String>> {
         return None;
     }
     expr_return_path(call.func.as_ref())
+}
+
+fn expr_return_boxed_path(expr: &syn::Expr) -> Option<Vec<String>> {
+    let syn::Expr::Call(call) = unparen_expr(expr) else {
+        return None;
+    };
+    let syn::Expr::Path(func) = unparen_expr(call.func.as_ref()) else {
+        return None;
+    };
+    if func.qself.is_some() || !is_box_new_path(&func.path) {
+        return None;
+    }
+    let mut args = call.args.iter();
+    let arg = args.next()?;
+    if args.next().is_some() {
+        return None;
+    }
+    expr_return_path(arg)
+}
+
+fn is_box_new_path(path: &syn::Path) -> bool {
+    let segments = path
+        .segments
+        .iter()
+        .map(|segment| segment.ident.to_string())
+        .collect::<Vec<_>>();
+    match segments.as_slice() {
+        [box_, new] => box_ == "Box" && new == "new",
+        [root, boxed, box_, new] => {
+            (root == "std" || root == "alloc") && boxed == "boxed" && box_ == "Box" && new == "new"
+        }
+        _ => false,
+    }
 }
 
 fn expr_path_ident(expr: &syn::Expr) -> Option<String> {

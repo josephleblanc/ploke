@@ -158,6 +158,18 @@ Current completed checkpoint:
   and exact TUI lookup/edges payloads now expose setter-call
   `ArgumentSuppliesParameter` proof without admitting a boxed callable
   traversal edge.
+- The latest fixture returned boxed callable slice resolves the reviewed
+  source oracle `tests/fixture_crates/fixture_call_graph/src/lib.rs:2438-2444`.
+  `make_boxed_dyn_fn() -> Box<dyn Fn() -> i32>` returns exactly
+  `Box::new(local_target)`, and `call_returned_boxed_dyn_fn()` immediately
+  invokes that returned boxed callable. The resolver admits a `DynamicFunction`
+  edge only when the producer return type is a boxed callable trait object and
+  the final producer expression is exactly `Box::new(local_function_path)`.
+  The DB proof asserts the one-hop caller-to-target traversal plus the existing
+  returned-call binding-flow payload whose producer return binding is sourced
+  by the external `Box::new` setup path call. This is a bounded returned
+  boxed-value proof, not general trait-object dispatch or arbitrary returned
+  expression value-flow.
 
 Next bucket rule: pick one row below only when there is a fresh proof input and
 a DB-first assertion. Do not add another fixture-only breadth slice for shapes

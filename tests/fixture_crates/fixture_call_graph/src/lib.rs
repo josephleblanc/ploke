@@ -2434,3 +2434,11 @@ pub fn call_method_function_pointer_param_with_local_target() -> i32 {
     let value = LocalAssoc;
     value.call_function_pointer_param(local_target)
 }
+
+pub fn make_boxed_dyn_fn() -> Box<dyn Fn() -> i32> {
+    Box::new(local_target)
+}
+
+pub fn call_returned_boxed_dyn_fn() -> i32 {
+    make_boxed_dyn_fn()()
+}

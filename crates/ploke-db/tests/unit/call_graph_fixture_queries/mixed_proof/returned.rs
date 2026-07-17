@@ -151,6 +151,97 @@ fn fixture_projection_stores_returned_parameter_function_call_proof_facts() -> R
 }
 
 #[test]
+fn fixture_projection_stores_returned_boxed_dyn_fn_value_flow() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let owner = function_id_by_name(&db, "call_returned_boxed_dyn_fn")?;
+    let maker = function_id_by_name(&db, "make_boxed_dyn_fn")?;
+    let returned = function_id_by_name(&db, "local_target")?;
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:2438-2444:
+    // the producer returns exactly `Box::new(local_target)`, and the caller
+    // immediately invokes the returned boxed `dyn Fn`. The producer return
+    // proof remains a `PathCallResult` for `Box::new`; the dynamic call edge is
+    // admitted only because the boxed value's argument is an exact local path.
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(
+        context.len(),
+        2,
+        "returned boxed dyn Fn proof context rows: {context:#?}"
+    );
+
+    let path_row = row_by_path(&context, &["make_boxed_dyn_fn"]);
+    assert_resolved_target(
+        path_row,
+        maker,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
+
+    let dynamic_row = row_by_kind_path(&context, CallSiteKind::Dynamic, &["make_boxed_dyn_fn"]);
+    assert_resolved_target(
+        dynamic_row,
+        returned,
+        CallRelationKind::DynamicFunction,
+        CallSiteKind::Dynamic,
+        CallTargetKind::Function,
+    );
+
+    let producer_context = db.call_context_for_owner(maker)?;
+    assert_eq!(
+        producer_context.len(),
+        1,
+        "boxed dyn Fn producer should expose only the `Box::new` setup call: {producer_context:#?}"
+    );
+    let box_new = row_by_path(&producer_context, &["Box", "new"]);
+    assert_eq!(box_new.status.status, CallStatusKind::External);
+    assert!(
+        box_new.targets.is_empty(),
+        "Box::new remains an external setup call, not a local target: {box_new:#?}"
+    );
+    assert_return_path_call_binding(
+        &db,
+        maker,
+        box_new.site.id,
+        &["Box", "new"],
+        "make_boxed_dyn_fn",
+    )?;
+
+    let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
+    assert_eq!(count, 7);
+    assert_returned_callable_binding_evidence(
+        &db,
+        dynamic_row,
+        "resolved",
+        "returned boxed dyn Fn dynamic call",
+    )?;
+
+    assert_owner_proof_edges(
+        &db,
+        "returned boxed dyn Fn resolved calls",
+        &[
+            OwnerProofEdge {
+                owner,
+                site: path_row.site.id,
+                span: path_row.site.span,
+                target: maker,
+            },
+            OwnerProofEdge {
+                owner,
+                site: dynamic_row.site.id,
+                span: dynamic_row.site.span,
+                target: returned,
+            },
+        ],
+        "fixture_call_graph/src/lib.rs",
+        "type_resolution_missing",
+        ProofEdgeCount::Exact,
+    )?;
+
+    Ok(())
+}
+
+#[test]
 fn fixture_projection_stores_returned_closure_dynamic_edge() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let cases = [

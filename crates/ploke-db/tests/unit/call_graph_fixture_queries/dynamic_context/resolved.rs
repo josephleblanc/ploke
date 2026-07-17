@@ -109,6 +109,86 @@ fn fixture_context_reads_projected_returned_parameter_function_call() -> Result<
 }
 
 #[test]
+fn fixture_context_resolves_returned_boxed_dyn_fn_value_flow() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let owner = function_id_by_name(&db, "call_returned_boxed_dyn_fn")?;
+    let maker = function_id_by_name(&db, "make_boxed_dyn_fn")?;
+    let returned = function_id_by_name(&db, "local_target")?;
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:2438-2444:
+    // `make_boxed_dyn_fn` returns the exact `Box::new(local_target)` value,
+    // and `call_returned_boxed_dyn_fn` immediately invokes that returned boxed
+    // callable. This should admit only the exact returned function edge.
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(
+        context.len(),
+        2,
+        "returned boxed dyn Fn context rows: {context:#?}"
+    );
+
+    let maker_row = row_by_path(&context, &["make_boxed_dyn_fn"]);
+    assert_eq!(maker_row.site.arg_count, Some(0));
+    assert_resolved_target(
+        maker_row,
+        maker,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
+
+    let dynamic_row = row_by_kind_path(&context, CallSiteKind::Dynamic, &["make_boxed_dyn_fn"]);
+    assert_eq!(dynamic_row.site.arg_count, Some(0));
+    assert_resolved_target(
+        dynamic_row,
+        returned,
+        CallRelationKind::DynamicFunction,
+        CallSiteKind::Dynamic,
+        CallTargetKind::Function,
+    );
+
+    let paths = db.call_paths_between(
+        owner,
+        returned,
+        CallPathOptions {
+            max_depth: 1,
+            max_paths: 8,
+        },
+    )?;
+    assert!(
+        paths.iter().any(|path| {
+            path.start_id == owner
+                && path.end_id == returned
+                && path.depth == 1
+                && path.edges[0].relation == CallRelationKind::DynamicFunction
+        }),
+        "returned boxed dyn Fn should traverse one exact dynamic edge to local_target: {paths:#?}"
+    );
+
+    let flows = db.returned_call_binding_flows_for_owner(owner)?;
+    assert_eq!(
+        flows.len(),
+        1,
+        "returned boxed dyn Fn should expose one producer return-binding proof flow: {flows:#?}"
+    );
+    let flow = &flows[0];
+    assert_eq!(flow.caller_id, owner);
+    assert_eq!(flow.dynamic.id, dynamic_row.site.id);
+    assert_eq!(flow.dynamic.path, path(&["make_boxed_dyn_fn"]));
+    assert_eq!(flow.dynamic.target_id, returned);
+    assert_eq!(flow.dynamic.relation, CallRelationKind::DynamicFunction);
+    assert_eq!(flow.dynamic.target_kind, CallTargetKind::Function);
+    assert_eq!(flow.producer.id, maker);
+    assert_eq!(flow.producer.site_id, maker_row.site.id);
+    assert_eq!(
+        flow.binding.source.relation,
+        LocalBindingRelationKind::BindingSourceCallResult
+    );
+    assert_eq!(flow.binding.source.kind, "Path");
+
+    Ok(())
+}
+
+#[test]
 fn fixture_context_reads_projected_returned_closure_nested_calls() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let cases = [

@@ -50,6 +50,20 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
+Latest completed slice: fixture returned boxed callable value flow. The source
+oracle is `tests/fixture_crates/fixture_call_graph/src/lib.rs:2438-2444`,
+where `make_boxed_dyn_fn() -> Box<dyn Fn() -> i32>` returns exactly
+`Box::new(local_target)` and `call_returned_boxed_dyn_fn()` immediately invokes
+that returned boxed callable. The dynamic resolver now admits a
+`DynamicFunction` edge only when the producer return type is a boxed callable
+trait object and the producer's final expression is exactly
+`Box::new(local_function_path)`. DB coverage proves the caller's one-hop path
+to `local_target`, the producer path edge to `make_boxed_dyn_fn`, the producer
+return binding sourced by the external `Box::new` setup call, and the existing
+`returned_call_binding_flows` payload. This is a bounded returned value-flow
+case; it does not add general trait-object dispatch, non-final return
+analysis, boxed arbitrary expressions, or public callable value inference.
+
 Latest completed slice: memchr `Runner::run` setter-argument proof payload.
 The real-corpus oracle is `memchr/src/tests/substring/mod.rs:94,110`, where
 `Runner::run` calls the local path bindings `fwd(...)` and `rev(...)`;

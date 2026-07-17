@@ -923,7 +923,10 @@ impl CallRelationResolver<'_> {
         }
     }
 
-    fn boxed_callable_type(&self, param_type: &TypeNode) -> Result<bool, SynParserError> {
+    pub(super) fn boxed_callable_type(
+        &self,
+        param_type: &TypeNode,
+    ) -> Result<bool, SynParserError> {
         let TypeNode::Named(node) = param_type else {
             return Ok(false);
         };
@@ -988,7 +991,7 @@ impl CallRelationResolver<'_> {
         Ok(false)
     }
 
-    fn bounds_include_callable_trait(
+    pub(super) fn bounds_include_callable_trait(
         &self,
         bounds: &[crate::parser::type_slots::TraitTypeUseId],
     ) -> Result<bool, SynParserError> {
