@@ -3796,6 +3796,98 @@ pub(crate) fn assert_typed_setter_local_binding_payload(
     );
 }
 
+pub(crate) fn assert_chrono_typed_setter_candidate_payload(
+    calls: &[serde_json::Value],
+    proofs: &[serde_json::Value],
+    owner: Uuid,
+    label: &str,
+    tool: &str,
+) -> Uuid {
+    let matching = calls
+        .iter()
+        .filter_map(|call| serde_json::from_value::<CallContextInfo>(call.clone()).ok())
+        .filter(|call| {
+            call.owner_id == owner
+                && call.kind == CallSiteKind::Path
+                && call.callee
+                    == CallCalleeInfo::Path {
+                        path: vec!["set".to_string()],
+                    }
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching.len(),
+        1,
+        "{tool} should return exactly one ambiguous typed setter row for {label}: {calls:#?}"
+    );
+    let call = &matching[0];
+    assert_eq!(call.status, CallStatusKind::Ambiguous);
+    assert_eq!(call.resolution, None);
+    assert_eq!(
+        call.targets.len(),
+        21,
+        "{tool} should expose every reviewed setter candidate for {label}: {call:#?}"
+    );
+    let function_count = call
+        .targets
+        .iter()
+        .filter(|target| target.relation == CallTargetKind::Function)
+        .count();
+    let associated_count = call
+        .targets
+        .iter()
+        .filter(|target| target.relation == CallTargetKind::AssociatedFunction)
+        .count();
+    assert_eq!(
+        function_count, 2,
+        "{tool} should preserve the two free setter function candidates for {label}: {call:#?}"
+    );
+    assert_eq!(
+        associated_count, 19,
+        "{tool} should preserve the nineteen Parsed::* setter candidates for {label}: {call:#?}"
+    );
+
+    let site = call.site_id;
+    let site_string = site.to_string();
+    let expected = call
+        .targets
+        .iter()
+        .map(|target| target.target_id.to_string())
+        .collect::<std::collections::BTreeSet<_>>();
+    let rows = proofs
+        .iter()
+        .filter_map(|proof| serde_json::from_value::<ProofContextInfo>(proof.clone()).ok())
+        .collect::<Vec<_>>();
+    let resolution = rows
+        .iter()
+        .find(|proof| {
+            proof.kind == "call_resolution"
+                && proof.call_site_id.as_deref() == Some(site_string.as_str())
+                && proof.resolution_state.as_deref() == Some("ambiguous")
+        })
+        .unwrap_or_else(|| {
+            panic!("{tool} should expose ambiguous setter proof row for {label}: {proofs:#?}")
+        });
+    let actual = resolution
+        .candidate_def_ids
+        .iter()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        actual, expected,
+        "{tool} should preserve proof candidate IDs for {label}"
+    );
+    assert!(
+        rows.iter().all(|proof| {
+            !(proof.kind == "call_edge"
+                && proof.call_site_id.as_deref() == Some(site_string.as_str()))
+        }),
+        "{tool} should not fabricate call_edge proofs for ambiguous setter {label}: {proofs:#?}"
+    );
+
+    site
+}
+
 pub(crate) fn assert_method_argument_parameter_local_binding_payload(
     bindings: &[serde_json::Value],
     edges: &[serde_json::Value],

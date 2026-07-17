@@ -51,11 +51,11 @@ use crate::call_graph_tool_support::{
     assert_body_new_impact_summary, assert_body_new_incoming_context,
     assert_boxed_into_route_incoming_context, assert_branch_receiver_context,
     assert_branch_receiver_proof, assert_call_path_node, assert_chrono_naive_utc_incoming_context,
-    assert_dynamic_context, assert_dynamic_proof, assert_expected_path_incoming_context,
-    assert_fixture_extern_c_abs_effects, assert_forwarded_async_future_awaited_site,
-    assert_forwarded_async_future_execution_flow, assert_forwarded_async_future_flow,
-    assert_forwarded_returned_closure_binding_flow, assert_from_fn_basic_body_empty_crate_boundary,
-    assert_generated_rejection_outgoing_context,
+    assert_chrono_typed_setter_candidate_payload, assert_dynamic_context, assert_dynamic_proof,
+    assert_expected_path_incoming_context, assert_fixture_extern_c_abs_effects,
+    assert_forwarded_async_future_awaited_site, assert_forwarded_async_future_execution_flow,
+    assert_forwarded_async_future_flow, assert_forwarded_returned_closure_binding_flow,
+    assert_from_fn_basic_body_empty_crate_boundary, assert_generated_rejection_outgoing_context,
     assert_handle_error_returned_future_local_binding_payload,
     assert_handler_call_incoming_context, assert_incoming_context,
     assert_initialized_local_receiver_context, assert_initialized_local_receiver_proof,
@@ -4597,6 +4597,14 @@ async fn code_item_edges_returns_chrono_parse_internal_typed_setter_binding_payl
         .get("local_binding_edges")
         .and_then(serde_json::Value::as_array)
         .expect("node_info.local_binding_edges array");
+    let call_context = node_info
+        .get("call_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.call_context array");
+    let proof_context = node_info
+        .get("proof_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.proof_context array");
 
     // Same oracle as lookup: expose the typed `set: Setter` local-binding
     // frontier while keeping the ambiguous `set(parsed, v)?` call out of
@@ -4608,10 +4616,28 @@ async fn code_item_edges_returns_chrono_parse_internal_typed_setter_binding_payl
         "chrono parse_internal",
         "code_item_edges",
     );
+    assert_chrono_typed_setter_candidate_payload(
+        call_context,
+        proof_context,
+        fixture.owner,
+        "chrono parse_internal",
+        "code_item_edges",
+    );
 
     let ui = result.ui_payload.as_ref().expect("ui payload");
     assert_eq!(ui_field(ui, "local_bindings"), bindings.len().to_string());
     assert_eq!(ui_field(ui, "local_binding_edges"), edges.len().to_string());
+    assert!(
+        ui_field(ui, "call_context_outgoing")
+            .parse::<usize>()
+            .expect("outgoing count")
+            >= 1,
+        "code_item_edges should surface outgoing chrono setter candidate context"
+    );
+    assert_eq!(
+        ui_field(ui, "proof_context"),
+        proof_context.len().to_string()
+    );
 }
 
 #[tokio::test]

@@ -1,7 +1,16 @@
 use super::*;
+use cozo::DataValue;
 use ploke_core::rag_types::{
-    CallCalleeInfo, CallReceiverInfo, CallSiteKind, CallStatusKind, LocalBindingRelationKind,
+    CallCalleeInfo, CallReceiverInfo, CallSiteKind, CallStatusKind, CallTargetKind,
+    LocalBindingRelationKind,
 };
+use ploke_db::{
+    Database,
+    multi_embedding::db_ext::{ANCESTOR_RULES_NOW, METHOD_NODE_ANCESTOR_RULE},
+    to_uuid,
+};
+use std::collections::{BTreeMap, BTreeSet};
+use uuid::Uuid;
 
 #[tokio::test]
 async fn local_bindings_exact_expose_axum_tap_io_constructor_frontier() -> Result<(), Error> {
@@ -147,7 +156,146 @@ async fn local_bindings_exact_expose_chrono_parse_internal_typed_setter_frontier
         "RAG should expose owner-to-typed setter binding containment: {edges:#?}"
     );
 
+    let context = rag.exact_call_context(owner)?;
+    let set_call = context
+        .iter()
+        .find(|call| {
+            call.owner_id == owner
+                && call.kind == CallSiteKind::Path
+                && call.callee
+                    == CallCalleeInfo::Path {
+                        path: path(&["set"]),
+                    }
+        })
+        .unwrap_or_else(|| {
+            panic!("RAG should expose chrono parse_internal set(parsed, v): {context:#?}")
+        });
+    assert_eq!(set_call.status, CallStatusKind::Ambiguous);
+    assert_eq!(set_call.resolution, None);
+    assert_eq!(
+        set_call.targets.len(),
+        21,
+        "RAG should preserve every reviewed setter candidate: {set_call:#?}"
+    );
+
+    let free_targets = [
+        chrono_function_id_by_name(&db, "set_weekday_with_num_days_from_sunday")?,
+        chrono_function_id_by_name(&db, "set_weekday_with_number_from_monday")?,
+    ];
+    for target in free_targets {
+        assert!(
+            set_call.targets.iter().any(|candidate| {
+                candidate.target_id == target && candidate.relation == CallTargetKind::Function
+            }),
+            "RAG should expose free setter function candidate {target}: {set_call:#?}"
+        );
+    }
+
+    for method in CHRONO_PARSED_SETTER_METHODS {
+        let target = chrono_parsed_method_id(&db, method)?;
+        assert!(
+            set_call.targets.iter().any(|candidate| {
+                candidate.target_id == target
+                    && candidate.relation == CallTargetKind::AssociatedFunction
+            }),
+            "RAG should expose Parsed::{method} associated-function candidate: {set_call:#?}"
+        );
+    }
+
+    let actual = set_call
+        .targets
+        .iter()
+        .map(|candidate| candidate.target_id)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        actual.len(),
+        21,
+        "RAG should not duplicate chrono setter candidates: {set_call:#?}"
+    );
+
     Ok(())
+}
+
+const CHRONO_PARSED_SETTER_METHODS: &[&str] = &[
+    "set_year",
+    "set_year_div_100",
+    "set_year_mod_100",
+    "set_isoyear",
+    "set_isoyear_div_100",
+    "set_isoyear_mod_100",
+    "set_quarter",
+    "set_month",
+    "set_day",
+    "set_week_from_sun",
+    "set_week_from_mon",
+    "set_isoweek",
+    "set_ordinal",
+    "set_hour",
+    "set_hour12",
+    "set_minute",
+    "set_second",
+    "set_nanosecond",
+    "set_timestamp",
+];
+
+fn chrono_function_id_by_name(db: &Database, name: &str) -> Result<Uuid, Error> {
+    let mut params = BTreeMap::new();
+    params.insert("name".to_string(), DataValue::from(name));
+    let rows = db.raw_query_params(
+        r#"?[id] :=
+            *function { id, name: $name @ 'NOW' }"#,
+        params,
+    )?;
+    assert_eq!(
+        rows.rows.len(),
+        1,
+        "expected exactly one chrono function named {name:?}; rows: {:#?}",
+        rows.rows
+    );
+    to_uuid(&rows.rows[0][0]).map_err(Error::from)
+}
+
+fn chrono_parsed_method_id(db: &Database, name: &str) -> Result<Uuid, Error> {
+    let mut params = BTreeMap::new();
+    params.insert("name".to_string(), DataValue::from(name));
+    params.insert("owner_type".to_string(), DataValue::from("Parsed"));
+    params.insert(
+        "owner_path".to_string(),
+        DataValue::List(vec![DataValue::from("Parsed")]),
+    );
+
+    let script = format!(
+        r#"
+ancestor[desc, desc] := *module{{ id: desc @ 'NOW' }}
+{ANCESTOR_RULES_NOW}
+{METHOD_NODE_ANCESTOR_RULE}
+
+impl_self_target[self_target_id] := *struct {{ id: self_target_id, name: $owner_type @ 'NOW' }}
+impl_self_type[self_type_id] :=
+    *type_relation {{
+        source_id: self_type_id,
+        target_id: self_target_id,
+        relation_kind: "Ordinary" @ 'NOW'
+    }},
+    impl_self_target[self_target_id]
+impl_self_type[self_type_id] :=
+    *named_type {{ type_id: self_type_id, path @ 'NOW' }},
+    path == $owner_path
+
+?[id] :=
+    *method {{ id, name: $name, owner_id: impl_id @ 'NOW' }},
+    *impl {{ id: impl_id, self_type: self_type_id @ 'NOW' }},
+    impl_self_type[self_type_id]
+"#
+    );
+    let rows = db.raw_query_params(&script, params)?;
+    assert_eq!(
+        rows.rows.len(),
+        1,
+        "expected exactly one chrono Parsed::{name} method; rows: {:#?}",
+        rows.rows
+    );
+    to_uuid(&rows.rows[0][0]).map_err(Error::from)
 }
 
 #[tokio::test]
