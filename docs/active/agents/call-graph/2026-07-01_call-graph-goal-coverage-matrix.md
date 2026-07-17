@@ -60,10 +60,15 @@ targetless callable-value shapes as `ValueBinding`, `LocalBinding`,
 `FnPointerCastLocalBinding`, `FieldLocalBinding`, `IfBranchParameter`, and
 `MatchArmParameter`. DB coverage asserts each row remains `Unsupported`,
 has zero traversal targets and zero `call_relation` rows, and still projects
-only `call_site` plus `call_resolution` proof facts. Active call-graph corpus
-fixtures were regenerated and `verify-backup-dbs` passed. This is visibility
-for parser-owned callee classification, not a new resolver edge, public
-callable-parameter proof, trait-object dispatch, or callable value-flow model.
+only `call_site` plus `call_resolution` proof facts. The follow-up downstream
+slice adds an owner-scoped `call_callee_evidence_for_owner` DB query, exact RAG
+mapping, and exact `code_item_lookup` / `code_item_edges` payload fields gated
+by targetless unsupported owner calls. Focused DB/RAG tests cover the full
+six-shape matrix; focused TUI unit tests cover the targetless gating predicate
+and UI count field. Active call-graph corpus fixtures were regenerated and
+`verify-backup-dbs` passed. This is visibility for parser-owned callee
+classification, not a new resolver edge, public callable-parameter proof,
+trait-object dispatch, or callable value-flow model.
 
 Latest completed slice: memchr `Runner::run` callable field-assignment source
 flow payload. The real-corpus oracle is
