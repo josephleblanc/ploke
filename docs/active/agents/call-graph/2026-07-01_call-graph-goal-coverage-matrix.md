@@ -50,6 +50,22 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
+Latest completed slice: memchr `Runner::run` setter-argument proof payload.
+The real-corpus oracle is `memchr/src/tests/substring/mod.rs:94,110`, where
+`Runner::run` calls the local path bindings `fwd(...)` and `rev(...)`;
+`memchr/src/tests/substring/mod.rs:133-154`, where `Runner::{fwd,rev}` assign
+the setter parameter `search` into `self.fwd` / `self.rev`; and
+`memchr/src/tests/substring/naive.rs:38,43` plus
+`memchr/src/memmem/mod.rs:762-771`, where real callers supply source-visible
+callable arguments to the setters. DB coverage now exposes
+`self_field_assignment_argument_flows_for_owner`, which composes the
+targetless boxed callable callsite, same-type setter assignment flow, resolved
+setter callsite, and `ArgumentSuppliesParameter` edge from caller argument to
+setter parameter. Exact RAG, `code_item_lookup`, and `code_item_edges` surface
+the same `self_field_assignment_argument_flows` payload and UI count. This is
+proof-only: the boxed `dyn FnMut` dispatch remains unsupported/targetless and
+no local traversal edge is fabricated.
+
 Latest completed slice: targetless callable callee evidence projection. The
 fixture oracles are
 `tests/fixture_crates/fixture_call_graph/src/lib.rs:683-729`, covering

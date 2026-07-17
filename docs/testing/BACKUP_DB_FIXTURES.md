@@ -239,7 +239,9 @@ after preserving the finite ambiguous `Setter` match-tuple callable candidates
 for `set(parsed, v)?`. The axum fixture was then recreated with
 `cargo run -p xtask --features call_graph -- recreate-backup-db --fixture corpus_axum_call_graph`
 after preserving the generated `from_fn` `ResponseFuture` producer proof for
-`self.inner.as_mut().poll(cx)`.
+`self.inner.as_mut().poll(cx)`. The active refresh was rerun after adding the
+memchr setter-argument proof payload, and the regenerated shared corpus
+snapshots were promoted into `tests/backup_dbs/`.
 
 Post-regeneration verification:
 
@@ -272,13 +274,13 @@ Post-regeneration verification:
   `parse_internal` typed function-pointer tuple-binding candidate case.
 - Current committed seed checksums:
   - `corpus_memchr_call_graph_2026-07-15.sqlite`:
-    `ae8bd8e7f382e381f8577a88c9a4cfa2cfe5c0303205531495aaf28af85b6371`
+    `a7f60aa7f09c2d2cd7e6c05a64d59c765f729e60f9ac69e712418f59be8e1ae6`
   - `corpus_generic_array_call_graph_2026-07-15.sqlite`:
-    `8065e52d823decdc3eff493b02480c93cecf38dd2316c70c893cf9c2fa5b6c35`
+    `ef3bf08097e217d007dfdc821bf59dc0112eebb4ebfde7d57722df37b045c56b`
   - `corpus_chrono_call_graph_2026-07-17.sqlite`:
-    `87f2aa5d6907b0f69f26e2d3eb9f69dd0a1490c37e6d06c559ed4e05d8f147d7`
+    `19f6d2eda80e7efb9f09fb1a1fc87a96b343e53ee13d9b6e742d15b0408dcfa4`
   - `corpus_axum_call_graph_2026-07-17.sqlite`:
-    `7c446351a750cf7c972cd8ac025fafd0ecb735936c8bca1c048136af6f6813c3`
+    `c1bdfa7cc08d03998aa00d3fa1180079d614f34b4557ae335e657b7d36eee147`
 
 ## 2026-07-16 Active Call-Graph Fixture Refresh
 

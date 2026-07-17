@@ -470,6 +470,57 @@ async fn self_field_assignment_flows_exact_expose_memchr_runner_run_frontier() -
         assert_eq!(flow.source_edge.target_id, flow.parameter_binding.id);
     }
 
+    let argument_flows = rag
+        .exact_self_field_assignment_argument_flows_for_owner(run)?
+        .expect("call context is enabled");
+    assert!(
+        argument_flows.len() >= 2,
+        "RAG should expose setter-call argument proof for Runner::run fwd/rev boxed callables: {argument_flows:#?}"
+    );
+    for field_name in ["fwd", "rev"] {
+        let flow = argument_flows
+            .iter()
+            .find(|flow| {
+                flow.field_flow.site.owner_id == run
+                    && flow.field_flow.site.kind == CallSiteKind::Path
+                    && flow
+                        .field_flow
+                        .site
+                        .path
+                        .as_deref()
+                        .is_some_and(|path| path.iter().map(String::as_str).eq([field_name]))
+                    && flow.setter_call.kind == CallSiteKind::Method
+                    && matches!(
+                        &flow.setter_call.callee,
+                        CallCalleeInfo::Method { name, .. } if name == field_name
+                    )
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "RAG should expose setter argument proof for Runner::{field_name}: {argument_flows:#?}"
+                )
+            });
+        assert_eq!(flow.field_flow.site.status, CallStatusKind::Unsupported);
+        assert!(flow.field_flow.site.targets.is_empty());
+        assert_eq!(flow.field_flow.parameter_binding.name, "search");
+        assert_eq!(flow.setter_call.status, CallStatusKind::Resolved);
+        assert_eq!(flow.setter_call.targets.len(), 1);
+        assert_eq!(
+            flow.setter_call.targets[0].target_id,
+            flow.field_flow.setter_id
+        );
+        assert_eq!(flow.setter_call.targets[0].relation, CallTargetKind::Method);
+        assert_eq!(
+            flow.argument_edge.relation,
+            LocalBindingRelationKind::ArgumentSuppliesParameter
+        );
+        assert_eq!(flow.argument_edge.source_id, flow.setter_call.site_id);
+        assert_eq!(
+            flow.argument_edge.target_id,
+            flow.field_flow.parameter_binding.id
+        );
+    }
+
     Ok(())
 }
 

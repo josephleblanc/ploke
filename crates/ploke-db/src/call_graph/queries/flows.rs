@@ -6,11 +6,13 @@ use uuid::Uuid;
 use crate::{Database, DbError};
 
 use super::super::{
-    CallReceiver, CallSiteKind, CallStatusKind, FuturePollFieldProducerFlow,
+    CallContextRow, CallReceiver, CallRelationKind, CallSiteKind, CallStatusKind, CallTargetKind,
+    FuturePollFieldProducerFlow, LocalBindingRelationKind, SelfFieldAssignmentArgumentFlow,
     SelfFieldAssignmentFlow, SelfFieldParameterFlow,
     decode::{
-        decode_future_poll_field_producer_flow, decode_self_field_assignment_flow,
-        decode_self_field_parameter_flow,
+        decode_future_poll_field_producer_flow, decode_local_binding_edge, decode_resolution,
+        decode_self_field_assignment_flow, decode_self_field_parameter_flow, decode_site,
+        decode_target,
     },
     families::valid_call_owner_rules,
 };
@@ -871,5 +873,184 @@ impl Database {
             .iter()
             .map(|row| decode_self_field_assignment_flow(row))
             .collect::<Result<Vec<_>, DbError>>()
+    }
+
+    pub fn self_field_assignment_argument_flows_for_owner(
+        &self,
+        owner_id: Uuid,
+    ) -> Result<Vec<SelfFieldAssignmentArgumentFlow>, DbError> {
+        let field_flows = self.self_field_assignment_flows_for_owner(owner_id)?;
+        let mut flows = Vec::new();
+
+        for field_flow in field_flows {
+            flows.extend(self.self_field_assignment_argument_flows_for_field(&field_flow)?);
+        }
+
+        flows.sort_by_key(|flow| {
+            (
+                flow.field_flow.site.span,
+                flow.field_flow.setter_id,
+                flow.setter_call.site.span,
+                flow.argument_edge.source_id,
+            )
+        });
+        Ok(flows)
+    }
+
+    fn self_field_assignment_argument_flows_for_field(
+        &self,
+        field_flow: &SelfFieldAssignmentFlow,
+    ) -> Result<Vec<SelfFieldAssignmentArgumentFlow>, DbError> {
+        let mut params = BTreeMap::new();
+        params.insert(
+            "setter_id".to_string(),
+            DataValue::Uuid(UuidWrapper(field_flow.setter_id)),
+        );
+        params.insert(
+            "parameter_id".to_string(),
+            DataValue::Uuid(UuidWrapper(field_flow.parameter_binding.id)),
+        );
+
+        let mut script = valid_call_owner_rules();
+        script.push_str(
+            r#"
+            ?[
+                site_id,
+                owner_id,
+                site_kind,
+                site_span,
+                site_cfgs,
+                site_unsafe_block,
+                site_path,
+                site_method_name,
+                site_macro_name,
+                site_receiver_kind,
+                site_receiver_path,
+                site_arg_count,
+                site_generic_arg_count,
+                status_site_id,
+                status_source_kind,
+                status_kind,
+                resolution_kind,
+                target_site_id,
+                target_id,
+                target_relation,
+                target_source_kind,
+                target_kind,
+                edge_source_id,
+                edge_target_id,
+                edge_relation,
+                edge_source_kind,
+                edge_target_kind
+            ] :=
+                setter_id = $setter_id,
+                parameter_id = $parameter_id,
+                *local_binding_edge {
+                    source_id: edge_source_id,
+                    target_id: edge_target_id,
+                    relation_kind: edge_relation,
+                    source_kind: edge_source_kind,
+                    target_kind: edge_target_kind @ 'NOW'
+                },
+                edge_target_id = parameter_id,
+                edge_relation = "ArgumentSuppliesParameter",
+                edge_target_kind = "LocalBinding",
+                *call_relation {
+                    source_id: target_site_id,
+                    target_id,
+                    relation_kind: target_relation,
+                    source_kind: target_source_kind,
+                    target_kind @ 'NOW'
+                },
+                target_site_id = edge_source_id,
+                target_id = setter_id,
+                target_kind = "Method",
+                target_source_kind = edge_source_kind,
+                *call_site {
+                    id: site_id,
+                    owner_id,
+                    call_kind: site_kind,
+                    span: site_span,
+                    cfgs: site_cfgs,
+                    unsafe_block: site_unsafe_block,
+                    path: site_path,
+                    method_name: site_method_name,
+                    macro_name: site_macro_name,
+                    receiver_kind: site_receiver_kind,
+                    receiver_path: site_receiver_path,
+                    arg_count: site_arg_count,
+                    generic_arg_count: site_generic_arg_count @ 'NOW'
+                },
+                site_id = edge_source_id,
+                site_kind = edge_source_kind,
+                valid_owner[owner_id, _owner_kind],
+                *call_resolution_status {
+                    source_id: status_site_id,
+                    source_kind: status_source_kind,
+                    status_kind,
+                    resolution_kind @ 'NOW'
+                },
+                status_site_id = site_id,
+                status_source_kind = site_kind,
+                status_kind = "Resolved"
+            :sort site_span, site_id"#,
+        );
+
+        let rows = self.run_script(&script, params, ScriptMutability::Immutable)?;
+        rows.rows
+            .iter()
+            .map(|row| {
+                let site = decode_site(&row[0..13])?;
+                let status = decode_resolution(&row[13..17])?;
+                let target = decode_target(&row[17..22])?;
+                let argument_edge = decode_local_binding_edge(&row[22..27])?;
+                let flow = SelfFieldAssignmentArgumentFlow {
+                    field_flow: field_flow.clone(),
+                    setter_call: CallContextRow {
+                        site,
+                        status,
+                        targets: vec![target],
+                    },
+                    argument_edge,
+                };
+                validate_self_field_assignment_argument_flow(&flow)?;
+                Ok(flow)
+            })
+            .collect::<Result<Vec<_>, DbError>>()
+    }
+}
+
+fn validate_self_field_assignment_argument_flow(
+    flow: &SelfFieldAssignmentArgumentFlow,
+) -> Result<(), DbError> {
+    let Some(target) = flow.setter_call.targets.as_slice().first() else {
+        return Err(DbError::Cozo(format!(
+            "self-field assignment argument flow missing setter target for call site {}",
+            flow.setter_call.site.id
+        )));
+    };
+    let valid = flow.setter_call.targets.len() == 1
+        && flow.setter_call.status.site_id == flow.setter_call.site.id
+        && flow.setter_call.status.site_kind == flow.setter_call.site.kind
+        && flow.setter_call.status.status == CallStatusKind::Resolved
+        && flow.setter_call.status.resolution.is_some()
+        && target.site_id == flow.setter_call.site.id
+        && target.target_id == flow.field_flow.setter_id
+        && target.relation == CallRelationKind::Method
+        && target.source_kind == flow.setter_call.site.kind
+        && target.target_kind == CallTargetKind::Method
+        && flow.argument_edge.source_id == flow.setter_call.site.id
+        && flow.argument_edge.target_id == flow.field_flow.parameter_binding.id
+        && flow.argument_edge.relation == LocalBindingRelationKind::ArgumentSuppliesParameter
+        && flow.argument_edge.source_kind == flow.setter_call.site.kind.as_str()
+        && flow.argument_edge.target_kind == "LocalBinding";
+
+    if valid {
+        Ok(())
+    } else {
+        Err(DbError::Cozo(format!(
+            "malformed self-field assignment argument flow for call site {}",
+            flow.setter_call.site.id
+        )))
     }
 }

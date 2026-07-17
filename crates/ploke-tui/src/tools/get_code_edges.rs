@@ -360,6 +360,8 @@ for a more fuzzy search."#
             lookup_support::self_field_parameter_flows_for_node(&ctx, resolved_item_id)?;
         let self_field_assignment_flows =
             lookup_support::self_field_assignment_flows_for_node(&ctx, resolved_item_id)?;
+        let self_field_assignment_argument_flows =
+            lookup_support::self_field_assignment_argument_flows_for_node(&ctx, resolved_item_id)?;
         let future_poll_field_producer_flows =
             lookup_support::future_poll_field_producer_flows_for_node(&ctx, resolved_item_id)?;
         let awaited_call_sites =
@@ -442,6 +444,7 @@ for a more fuzzy search."#
             call_callee_evidence,
             self_field_parameter_flows,
             self_field_assignment_flows,
+            self_field_assignment_argument_flows,
             future_poll_field_producer_flows,
             awaited_call_sites,
             returned_call_binding_flows,
@@ -516,6 +519,9 @@ for a more fuzzy search."#
             &node_edge_info.node_info.call_callee_evidence,
             &node_edge_info.node_info.self_field_parameter_flows,
             &node_edge_info.node_info.self_field_assignment_flows,
+            &node_edge_info
+                .node_info
+                .self_field_assignment_argument_flows,
             &node_edge_info.node_info.future_poll_field_producer_flows,
             &node_edge_info.node_info.awaited_call_sites,
             &node_edge_info.node_info.returned_call_binding_flows,

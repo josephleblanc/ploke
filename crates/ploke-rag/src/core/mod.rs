@@ -26,7 +26,8 @@ use ploke_core::rag_types::{
     ReturnedCallBindingInfo, ReturnedCallProducerInfo, ReturnedCallSiteInfo,
     ReturnedCallSourceInfo, ReturnedCallSourceKind, ReturnedFutureExecutionFlowInfo,
     ReturnedFutureFlowInfo, ReturnedFutureSiteInfo, RuntimeDispatchNeedInfo,
-    SelfFieldAssignmentFlowInfo, SelfFieldParameterFlowInfo, UnsafeBlockCallInfo,
+    SelfFieldAssignmentArgumentFlowInfo, SelfFieldAssignmentFlowInfo, SelfFieldParameterFlowInfo,
+    UnsafeBlockCallInfo,
 };
 use ploke_db::{
     CallBuildDomain as DbCallBuildDomain, CallCalleeEvidenceRow as DbCallCalleeEvidenceRow,
@@ -51,6 +52,7 @@ use ploke_db::{
     ProofGraphStore, ReturnedCallBindingFlow as DbReturnedCallBindingFlow,
     ReturnedFutureExecutionFlow as DbReturnedFutureExecutionFlow,
     ReturnedFutureFlow as DbReturnedFutureFlow, RuntimeDispatchNeed as DbRuntimeDispatchNeed,
+    SelfFieldAssignmentArgumentFlow as DbSelfFieldAssignmentArgumentFlow,
     SelfFieldAssignmentFlow as DbSelfFieldAssignmentFlow,
     SelfFieldParameterFlow as DbSelfFieldParameterFlow, UnsafeBlockCall as DbUnsafeBlockCall,
 };
@@ -719,6 +721,16 @@ fn self_field_assignment_flow_info(
         assignment_binding: local_binding_info(row.assignment_binding),
         parameter_binding: local_binding_info(row.parameter_binding),
         source_edge: local_binding_edge_info(row.source_edge),
+    })
+}
+
+fn self_field_assignment_argument_flow_info(
+    row: DbSelfFieldAssignmentArgumentFlow,
+) -> Result<SelfFieldAssignmentArgumentFlowInfo, RagError> {
+    Ok(SelfFieldAssignmentArgumentFlowInfo {
+        field_flow: self_field_assignment_flow_info(row.field_flow)?,
+        setter_call: row_to_call_context(row.setter_call, usize::MAX)?,
+        argument_edge: local_binding_edge_info(row.argument_edge),
     })
 }
 
@@ -1813,6 +1825,23 @@ impl RagService {
                 .self_field_assignment_flows_for_owner(owner_id)?
                 .into_iter()
                 .map(self_field_assignment_flow_info)
+                .collect::<Result<Vec<_>, RagError>>()?,
+        ))
+    }
+
+    pub fn exact_self_field_assignment_argument_flows_for_owner(
+        &self,
+        owner_id: Uuid,
+    ) -> Result<Option<Vec<SelfFieldAssignmentArgumentFlowInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .self_field_assignment_argument_flows_for_owner(owner_id)?
+                .into_iter()
+                .map(self_field_assignment_argument_flow_info)
                 .collect::<Result<Vec<_>, RagError>>()?,
         ))
     }

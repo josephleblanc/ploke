@@ -148,6 +148,16 @@ Current completed checkpoint:
   single local caller supplying `local_result_target`. This is an explanatory
   local-binding edge over an already-resolved `MethodCallbackFunction` row; it
   does not add callback traversal breadth or trait-object dispatch.
+- The latest memchr callable-field proof slice exposes
+  `self_field_assignment_argument_flows` over existing local-binding and
+  call-relation facts. The real-corpus oracle is
+  `memchr/src/tests/substring/mod.rs:94,110` for the targetless boxed
+  `dyn FnMut` field calls, `:133-154` for the `Runner::{fwd,rev}` setter
+  assignments, and `src/tests/substring/naive.rs:38,43` plus
+  `src/memmem/mod.rs:762-771` for source-visible setter calls. DB, exact RAG,
+  and exact TUI lookup/edges payloads now expose setter-call
+  `ArgumentSuppliesParameter` proof without admitting a boxed callable
+  traversal edge.
 
 Next bucket rule: pick one row below only when there is a fresh proof input and
 a DB-first assertion. Do not add another fixture-only breadth slice for shapes
@@ -598,6 +608,20 @@ Post-regeneration source-oracle audit, 2026-07-17:
   that satisfies one remaining bucket's entry criterion. Otherwise the correct
   action is verification, cleanup of stale notes, or handoff, not another
   same-family fixture or targetless-proof breadth slice.
+
+Memchr setter-argument proof checkpoint, 2026-07-17:
+
+- `cargo run -p xtask --features call_graph -- fixtures regenerate --active`
+  completed after the setter-argument proof payload. It roundtripped
+  all active checkout-local fixtures and the shared call-graph corpus snapshots
+  for memchr, generic-array, chrono, and axum.
+- `cargo run -p xtask --features call_graph -- verify-backup-dbs` passed for
+  all registered backup DB fixtures after promoting the regenerated shared
+  call-graph corpus snapshots into `tests/backup_dbs/`.
+- The new payload composes `Runner::run` targetless boxed callable callsites
+  with setter-side `SelfFieldAssignment` proof and incoming setter-call
+  `ArgumentSuppliesParameter` edges. It remains explanatory proof and does not
+  model boxed `dyn FnMut` dispatch as a local traversal edge.
 
 ## Do Not Reselect Without New Evidence
 

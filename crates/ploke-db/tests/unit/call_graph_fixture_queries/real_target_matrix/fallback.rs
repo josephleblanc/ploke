@@ -1087,6 +1087,109 @@ fn memchr_callable_trait_object_field_calls_are_visible_targetless_path_rows() -
 }
 
 #[test]
+fn memchr_callable_trait_object_setter_arguments_remain_proof_only() -> Result<(), DbError> {
+    let db = setup_call_graph_db(&CORPUS_MEMCHR_CALL_GRAPH)?;
+
+    // Matrix: `Fallback Source Oracle Matrix`.
+    //
+    // Source chain:
+    //   memchr/src/tests/substring/mod.rs:94 calls boxed `fwd(...)`.
+    //   memchr/src/tests/substring/mod.rs:110 calls boxed `rev(...)`.
+    //   memchr/src/tests/substring/mod.rs:133-154 stores setter parameter
+    //   `search` into `self.fwd` / `self.rev` through `Some(Box::new(search))`.
+    //   Real callers such as src/tests/substring/naive.rs:38,43 and
+    //   src/memmem/mod.rs:762-771 call `Runner::new().fwd(...)` / `.rev(...)`
+    //   with source-visible callable arguments.
+    //
+    // Expected proof: the owner-scoped flow composes the targetless boxed
+    // dyn-FnMut call with setter assignment evidence and the incoming setter
+    // callsite's `ArgumentSuppliesParameter` edge. It must not turn the boxed
+    // dyn dispatch into a local traversal edge.
+    let owner = method_id_by_name_body_and_file_suffix(
+        &db,
+        "run",
+        "fwd(t.haystack.as_bytes(), t.needle.as_bytes())",
+        "src/tests/substring/mod.rs",
+    )?;
+    let context = db.call_context_for_owner(owner)?;
+    let fwd_site = row_by_path(&context, &["fwd"]).site.id;
+    let rev_site = row_by_path(&context, &["rev"]).site.id;
+
+    let flows = db.self_field_assignment_argument_flows_for_owner(owner)?;
+    assert!(
+        flows.len() >= 2,
+        "Runner::run should expose setter argument proof for at least the substring fwd/rev fields: {flows:#?}"
+    );
+
+    for (site, method_name, assignment, field_name, line) in [
+        (
+            fwd_site,
+            "fwd",
+            "self.fwd = Some(Box::new(search));",
+            "fwd",
+            137,
+        ),
+        (
+            rev_site,
+            "rev",
+            "self.rev = Some(Box::new(search));",
+            "rev",
+            153,
+        ),
+    ] {
+        let setter = method_id_by_name_body_and_file_suffix(
+            &db,
+            method_name,
+            assignment,
+            "src/tests/substring/mod.rs",
+        )?;
+        let flow = flows
+            .iter()
+            .find(|flow| flow.field_flow.site.id == site && flow.field_flow.setter_id == setter)
+            .unwrap_or_else(|| {
+                panic!(
+                    "memchr/src/tests/substring/mod.rs:{line} should expose caller argument proof for self.{field_name}: {flows:#?}"
+                )
+            });
+        assert_eq!(
+            flow.field_flow.site.path.as_ref(),
+            Some(&path(&[field_name]))
+        );
+        assert_eq!(flow.field_flow.status.status, CallStatusKind::Unsupported);
+        assert!(flow.field_flow.status.resolution.is_none());
+        assert_eq!(flow.setter_call.site.kind, CallSiteKind::Method);
+        assert_eq!(flow.setter_call.site.method.as_deref(), Some(method_name));
+        assert_eq!(flow.setter_call.status.status, CallStatusKind::Resolved);
+        assert_eq!(
+            flow.setter_call.status.resolution,
+            Some(CallResolutionKind::LocalExact)
+        );
+        assert_eq!(flow.setter_call.targets.len(), 1);
+        assert_eq!(flow.setter_call.targets[0].target_id, setter);
+        assert_eq!(
+            flow.setter_call.targets[0].relation,
+            CallRelationKind::Method
+        );
+        assert_eq!(
+            flow.argument_edge.relation,
+            LocalBindingRelationKind::ArgumentSuppliesParameter
+        );
+        assert_eq!(flow.argument_edge.source_id, flow.setter_call.site.id);
+        assert_eq!(
+            flow.argument_edge.target_id,
+            flow.field_flow.parameter_binding.id
+        );
+        assert_eq!(flow.field_flow.parameter_binding.name, "search");
+        assert!(
+            relations_for_site(&db, site)?.rows.is_empty(),
+            "setter argument proof must not fabricate a boxed dyn FnMut dispatch edge"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
 fn generic_array_guarded_match_arm_method_guard_is_external_frontier() -> Result<(), DbError> {
     let db = setup_call_graph_db(&CORPUS_GENERIC_ARRAY_CALL_GRAPH)?;
 

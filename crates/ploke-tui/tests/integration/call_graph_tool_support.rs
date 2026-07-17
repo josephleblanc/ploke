@@ -14,7 +14,8 @@ use ploke_core::{
         FuturePollFieldProducerFlowInfo, LocalBindingEdgeInfo, LocalBindingInfo,
         LocalBindingRelationKind, ProofContextInfo, ReturnedCallBindingFlowInfo,
         ReturnedCallSourceKind, ReturnedFutureExecutionFlowInfo, ReturnedFutureFlowInfo,
-        SelfFieldAssignmentFlowInfo, SelfFieldParameterFlowInfo, UnsafeBlockCallInfo,
+        SelfFieldAssignmentArgumentFlowInfo, SelfFieldAssignmentFlowInfo,
+        SelfFieldParameterFlowInfo, UnsafeBlockCallInfo,
     },
 };
 use ploke_db::{
@@ -4313,6 +4314,97 @@ pub(crate) fn assert_memchr_runner_run_assignment_flow_payload(
         );
         assert_eq!(flow.source_edge.source_id, flow.assignment_binding.id);
         assert_eq!(flow.source_edge.target_id, flow.parameter_binding.id);
+    }
+}
+
+pub(crate) fn assert_memchr_runner_run_assignment_argument_flow_payload(
+    flows: &[serde_json::Value],
+    owner: Uuid,
+    tool: &str,
+) {
+    let rows = flows
+        .iter()
+        .filter_map(|flow| {
+            serde_json::from_value::<SelfFieldAssignmentArgumentFlowInfo>(flow.clone()).ok()
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        rows.len() >= 2,
+        "{tool} should expose setter-call argument proof for memchr Runner::run fwd/rev boxed callables: {flows:#?}"
+    );
+
+    for field_name in ["fwd", "rev"] {
+        let flow = rows
+            .iter()
+            .find(|flow| {
+                flow.field_flow.site.owner_id == owner
+                    && flow.field_flow.site.kind == CallSiteKind::Path
+                    && flow
+                        .field_flow
+                        .site
+                        .path
+                        .as_deref()
+                        .is_some_and(|path| path.iter().map(String::as_str).eq([field_name]))
+                    && flow.setter_call.kind == CallSiteKind::Method
+                    && matches!(
+                        &flow.setter_call.callee,
+                        ploke_core::rag_types::CallCalleeInfo::Method { name, .. } if name == field_name
+                    )
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "{tool} should expose setter argument proof for memchr Runner::{field_name}: {flows:#?}"
+                )
+            });
+
+        assert_eq!(flow.field_flow.site.status, CallStatusKind::Unsupported);
+        assert!(
+            flow.field_flow.site.targets.is_empty(),
+            "{tool} must keep memchr Runner::{field_name} boxed callable targetless: {flow:#?}"
+        );
+        assert_eq!(flow.field_flow.owner_type, "Runner");
+        assert_eq!(
+            flow.field_flow.assignment_binding.owner_id,
+            flow.field_flow.setter_id
+        );
+        assert_eq!(flow.field_flow.assignment_binding.kind, "FieldAssignment");
+        assert_eq!(
+            flow.field_flow.assignment_binding.name,
+            format!("self.{field_name}")
+        );
+        assert_eq!(
+            flow.field_flow.assignment_binding.source_kind,
+            "SelfFieldAssignment"
+        );
+        assert_eq!(
+            flow.field_flow.assignment_binding.callee_kind.as_deref(),
+            Some("Path")
+        );
+        assert!(
+            flow.field_flow
+                .assignment_binding
+                .callee_path
+                .as_deref()
+                .is_some_and(|path| path.iter().map(String::as_str).eq(["search"])),
+            "{tool} should expose the {field_name} assignment parameter path: {flow:#?}"
+        );
+        assert_eq!(flow.field_flow.parameter_binding.name, "search");
+        assert_eq!(flow.setter_call.status, CallStatusKind::Resolved);
+        assert_eq!(flow.setter_call.targets.len(), 1);
+        assert_eq!(
+            flow.setter_call.targets[0].target_id,
+            flow.field_flow.setter_id
+        );
+        assert_eq!(flow.setter_call.targets[0].relation, CallTargetKind::Method);
+        assert_eq!(
+            flow.argument_edge.relation,
+            LocalBindingRelationKind::ArgumentSuppliesParameter
+        );
+        assert_eq!(flow.argument_edge.source_id, flow.setter_call.site_id);
+        assert_eq!(
+            flow.argument_edge.target_id,
+            flow.field_flow.parameter_binding.id
+        );
     }
 }
 

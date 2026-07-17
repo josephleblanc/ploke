@@ -41,7 +41,9 @@ use crate::call_graph_tool_support::{
     assert_handler_call_incoming_context, assert_incoming_context,
     assert_initialized_local_receiver_context, assert_initialized_local_receiver_proof,
     assert_initialized_path_local_binding_payload, assert_json_from_bytes_incoming_context,
-    assert_local_function_binding_payload, assert_memchr_runner_run_assignment_flow_payload,
+    assert_local_function_binding_payload,
+    assert_memchr_runner_run_assignment_argument_flow_payload,
+    assert_memchr_runner_run_assignment_flow_payload,
     assert_memchr_runner_setter_local_binding_payload,
     assert_method_argument_parameter_local_binding_payload,
     assert_no_external_summary_need_for_site, assert_parse_attrs_incoming_context,
@@ -703,16 +705,32 @@ async fn code_item_lookup_returns_memchr_runner_run_assignment_flow_payload() {
         .get("self_field_assignment_flows")
         .and_then(serde_json::Value::as_array)
         .expect("self_field_assignment_flows array");
+    let argument_flows = payload
+        .get("self_field_assignment_argument_flows")
+        .and_then(serde_json::Value::as_array)
+        .expect("self_field_assignment_argument_flows array");
 
     // Source oracle:
     //   memchr/src/tests/substring/mod.rs:94 and :110 call `fwd(...)` /
     //   `rev(...)` after extracting boxed callable fields.
     //   memchr/src/tests/substring/mod.rs:133-154 stores setter parameters
     //   into `self.fwd` / `self.rev`.
+    //   memchr/src/tests/substring/naive.rs:38,43 and
+    //   memchr/src/memmem/mod.rs:762-771 call the setters with source-visible
+    //   callable arguments.
     assert_memchr_runner_run_assignment_flow_payload(flows, fixture.owner, "code_item_lookup");
+    assert_memchr_runner_run_assignment_argument_flow_payload(
+        argument_flows,
+        fixture.owner,
+        "code_item_lookup",
+    );
 
     let ui = result.ui_payload.as_ref().expect("ui payload");
     assert_eq!(ui_field(ui, "self_field_assignment_flows"), "3");
+    assert_eq!(
+        ui_field(ui, "self_field_assignment_argument_flows"),
+        argument_flows.len().to_string()
+    );
 }
 
 #[tokio::test]

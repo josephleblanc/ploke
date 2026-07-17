@@ -169,6 +169,13 @@ pub struct SelfFieldAssignmentFlow {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SelfFieldAssignmentArgumentFlow {
+    pub field_flow: SelfFieldAssignmentFlow,
+    pub setter_call: CallContextRow,
+    pub argument_edge: LocalBindingEdgeRow,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct FuturePollFieldProducerFlow {
     pub site: CallSiteRow,
     pub status: CallResolutionRow,
