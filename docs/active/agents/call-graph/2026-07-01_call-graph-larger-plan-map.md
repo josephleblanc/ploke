@@ -127,7 +127,8 @@ Current matrix posture:
   `dependency_root` carriers for the real axum `FromRef::from_ref`
   dependency-root rows, the axum-core `request_parts.rs:193` `Router::new`
   workspace-import row, the axum-core `TestClient::new` workspace-glob row,
-  and the direct axum `form.rs:158` `Body::empty` workspace import row, so
+  and the direct axum `form.rs:158` plus re-exported
+  `extract/raw_form.rs:65` `Body::empty` workspace import rows, so
   downstream context can explain those target admissions. Broader
   dependency-root imports still need their own exact source oracle and proof
   carrier instances before they can be promoted; the per-crate `ModuleTree`
