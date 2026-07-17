@@ -223,3 +223,8 @@ file and current code before treating a report as still open.
   an operationally kept child but no oracle evaluation, so successor admission
   now has a separate fail-closed `all-resolved` gate bound to exact profile
   targets without weakening handoff or digest verification.
+- [`2026-07-17-prototype1-post-edit-refresh-panic-hang.md`](./2026-07-17-prototype1-post-edit-refresh-panic-hang.md)
+  Source repaired, fresh strict live validation pending: v20 wrote a duplicate
+  semantic item, then a correct parser invariant panic escaped the post-edit
+  task without a terminal tool event; exact historical replay now proves
+  durable `PartiallyApplied` failure evidence instead of a hang.

@@ -311,3 +311,7 @@ state without checking newer code, History records, and run artifacts.
   Preserved negative live proof that `all-resolved` excludes the only
   operationally kept child when its MBE verdict remains unresolved, plus the
   durable schema-v5 no-selection receipt and R12 stopped-record regression.
+- [`2026-07-17-p1-v20-strictkeephandoff-refresh-panic.md`](2026-07-17-p1-v20-strictkeephandoff-refresh-panic.md)
+  Preserved failed live-run review for the generation-zero post-edit parser
+  panic that stranded v20 until its outer timeout, plus the exact historical
+  replay and fresh-campaign handoff proof requirements.
