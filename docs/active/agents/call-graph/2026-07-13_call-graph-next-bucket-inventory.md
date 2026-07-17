@@ -635,6 +635,30 @@ Memchr setter-argument proof checkpoint, 2026-07-17:
   `ArgumentSuppliesParameter` edges. It remains explanatory proof and does not
   model boxed `dyn FnMut` dispatch as a local traversal edge.
 
+Post-returned-boxed-callable fixture checkpoint, 2026-07-17:
+
+- Active fixture regeneration was re-run after the returned boxed callable
+  value-flow slice. The run refreshed checkout-local/shared snapshots through
+  memchr, generic-array, and chrono, then spent an unbounded interval in the
+  axum corpus pass without writing a new tracked snapshot. The process was
+  stopped to avoid another long-running wait loop.
+- `cargo run -p xtask --features call_graph -- verify-backup-dbs` passed for
+  the registered backup fixtures afterward. The tracked shared corpus
+  snapshots in `tests/backup_dbs/` were already at the committed 2026-07-17
+  versions, so there was no fixture diff to promote.
+- The remaining buckets were rechecked against the current matrix. The
+  router-side `MakeErasedRouter::into_route` field still lacks a
+  selected-source construction path, `TapIo::accept` remains covered by the
+  constructor-parameter frontier carrier, `self.layer` remains candidate-only,
+  callable trait-object and async poll frontiers are covered by exact proof or
+  fail-closed blocker/summary rows, generated/macro rows have bounded models or
+  blockers, and source/sink policy surfaces already answer the reviewed usage
+  questions.
+- Next code work should therefore start only from a fresh source oracle that
+  satisfies one of the entry criteria above. Without that typed proof input,
+  the correct action is verification or handoff, not another same-family
+  fixture, targetless-proof, or resolver-breadth slice.
+
 ## Do Not Reselect Without New Evidence
 
 - Public callable parameters and public callable fields that lack complete
