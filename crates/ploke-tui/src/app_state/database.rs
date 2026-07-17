@@ -1462,41 +1462,53 @@ async fn scan_for_change_target(
             "scan_for_change_target_parse_start"
         );
         let parse_started = Instant::now();
-        let mut parser_output =
-            match run_parse_no_transform(Arc::clone(&state.db), Some(crate_path.clone()), &pwd) {
-                Ok(output) => {
-                    info!(
-                        target: "ploke_tui::post_apply_refresh",
-                        crate_name = %crate_name,
-                        parse_ms = parse_started.elapsed().as_millis() as u64,
-                        "scan_for_change_target_parse_done"
-                    );
-                    state
-                        .with_system_txn(|txn| {
-                            txn.record_parse_success();
-                        })
-                        .await;
-                    output
-                }
-                Err(err) => {
-                    let msg = format_parse_failure(&crate_path, &err);
-                    let diagnostics = extract_nested_parser_diagnostics(&err);
-                    state
-                        .with_system_txn(|txn| {
-                            txn.record_parse_failure_with_diagnostics(
-                                crate_path.clone(),
-                                msg.clone(),
-                                diagnostics.clone(),
-                            );
-                        })
-                        .await;
-                    event_bus.send(AppEvent::Error(crate::event_bus::ErrorEvent {
-                        message: msg.clone(),
-                        severity: crate::error::ErrorSeverity::Error,
-                    }));
-                    return Err(ploke_error::Error::Domain(DomainError::Ui { message: msg }));
-                }
-            };
+        let parse_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            run_parse_no_transform(Arc::clone(&state.db), Some(crate_path.clone()), &pwd)
+        }))
+        .unwrap_or_else(|payload| {
+            let detail = payload
+                .downcast_ref::<&str>()
+                .copied()
+                .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+                .unwrap_or("non-string panic payload");
+            Err(SynParserError::InternalState(format!(
+                "Parser invariant panic while refreshing {crate_name}: {detail}"
+            )))
+        });
+        let mut parser_output = match parse_result {
+            Ok(output) => {
+                info!(
+                    target: "ploke_tui::post_apply_refresh",
+                    crate_name = %crate_name,
+                    parse_ms = parse_started.elapsed().as_millis() as u64,
+                    "scan_for_change_target_parse_done"
+                );
+                state
+                    .with_system_txn(|txn| {
+                        txn.record_parse_success();
+                    })
+                    .await;
+                output
+            }
+            Err(err) => {
+                let msg = format_parse_failure(&crate_path, &err);
+                let diagnostics = extract_nested_parser_diagnostics(&err);
+                state
+                    .with_system_txn(|txn| {
+                        txn.record_parse_failure_with_diagnostics(
+                            crate_path.clone(),
+                            msg.clone(),
+                            diagnostics.clone(),
+                        );
+                    })
+                    .await;
+                event_bus.send(AppEvent::Error(crate::event_bus::ErrorEvent {
+                    message: msg.clone(),
+                    severity: crate::error::ErrorSeverity::Error,
+                }));
+                return Err(ploke_error::Error::Domain(DomainError::Ui { message: msg }));
+            }
+        };
         let mut merged = match parser_output
             .extract_merged_graph()
             .ok_or(SynParserError::MergeError)

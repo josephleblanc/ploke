@@ -192,10 +192,19 @@ pub async fn scan_paths_for_change(
     paths: Vec<std::path::PathBuf>,
     scan_tx: oneshot::Sender<Option<Vec<std::path::PathBuf>>>,
 ) {
-    let _ = database::scan_paths_for_change(state, event_bus, paths, scan_tx)
+    let _ = scan_paths_checked(state, event_bus, paths, scan_tx).await;
+}
+
+pub(crate) async fn scan_paths_checked(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    paths: Vec<std::path::PathBuf>,
+    scan_tx: oneshot::Sender<Option<Vec<std::path::PathBuf>>>,
+) -> Result<(), ploke_error::Error> {
+    database::scan_paths_for_change(state, event_bus, paths, scan_tx)
         .await
         .inspect_err(|e| {
             e.emit_error();
             tracing::error!("Error in ScanPathsForChange:\n{e}");
-        });
+        })
 }
