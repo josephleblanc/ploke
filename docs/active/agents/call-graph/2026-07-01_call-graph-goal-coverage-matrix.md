@@ -50,6 +50,21 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
+Latest completed slice: targetless callable callee evidence projection. The
+fixture oracles are
+`tests/fixture_crates/fixture_call_graph/src/lib.rs:683-729`, covering
+`f()`, `(f)()`, `(f as fn() -> i32)()`, `(holder.callback)()`,
+same-parameter `if` branch calls, and same-parameter `match` arm calls. The
+transform now persists proof-only `call_callee_evidence` rows for those
+targetless callable-value shapes as `ValueBinding`, `LocalBinding`,
+`FnPointerCastLocalBinding`, `FieldLocalBinding`, `IfBranchParameter`, and
+`MatchArmParameter`. DB coverage asserts each row remains `Unsupported`,
+has zero traversal targets and zero `call_relation` rows, and still projects
+only `call_site` plus `call_resolution` proof facts. Active call-graph corpus
+fixtures were regenerated and `verify-backup-dbs` passed. This is visibility
+for parser-owned callee classification, not a new resolver edge, public
+callable-parameter proof, trait-object dispatch, or callable value-flow model.
+
 Latest completed slice: memchr `Runner::run` callable field-assignment source
 flow payload. The real-corpus oracle is
 `memchr/src/tests/substring/mod.rs:94,110`, where `Runner::run` calls the local
