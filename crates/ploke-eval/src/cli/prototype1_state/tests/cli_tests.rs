@@ -332,6 +332,7 @@ fn selection_material_from_history() -> SelectionSealMaterial {
         traversal: Some(TraversalEvidence {
             seed: 0,
             strategy: StrategyKind::default(),
+            oracle_targets: Vec::new(),
             selected_source: Some(TraversalCandidateSource::History),
             child_counts: std::collections::BTreeMap::new(),
         }),
@@ -763,6 +764,9 @@ name = "overnight-edit-surface"
 [storage.eval]
 backend = "dual-strict"
 
+[target]
+instance = "BurntSushi__ripgrep-2209"
+
 [search]
 max_generations = 15
 max_total_nodes = 96
@@ -816,6 +820,14 @@ observe_child_stale_after_secs = 17
         crate::successor_selection::OracleMode::RecordOnly
     );
     assert!(shape.successor_oracle_require_evidence);
+    assert_eq!(
+        shape.successor_oracle_gate,
+        crate::successor_selection::OracleGate::Disabled
+    );
+    assert_eq!(
+        shape.successor_oracle_targets,
+        vec!["BurntSushi__ripgrep-2209".to_string()]
+    );
 }
 
 #[test]
@@ -9362,6 +9374,8 @@ async fn r12_reject_replay() {
         successor_selection_metrics: profile.selection.traversal_metrics(),
         successor_oracle_mode: profile.selection.oracle_mode(),
         successor_oracle_require_evidence: profile.selection.oracle_require_evidence(),
+        successor_oracle_gate: profile.selection.oracle_gate(),
+        successor_oracle_targets: profile.target.eval_instances(),
         successor_metrics_policy: profile.selection.metrics_policy(),
         eval_storage_backend: profile.storage.eval.backend,
     };
@@ -9410,7 +9424,7 @@ async fn r12_reject_replay() {
         repo_root.clone(),
         parent.campaign_id().clone(),
         manifest_path.clone(),
-        run_shape,
+        run_shape.clone(),
         config.clone(),
         journal_path.clone(),
         journal,
@@ -9614,6 +9628,258 @@ async fn r12_reject_replay() {
         .expect("historical replay status after stop");
     assert!(status_after.status.success());
     assert_eq!(status_after.stdout, status_before.stdout);
+}
+
+#[test]
+fn v15_missing_oracle_replay_fails_closed_under_all_resolved_gate() {
+    const NODE_ID: &str = "node-6bae782006db482c";
+    const BRANCH_ID: &str = "branch-68afac57e92d5ebd";
+    const FIXTURE_HASHES: [(&str, &str); 9] = [
+        (
+            "branch-68afac57e92d5ebd.evaluation.json",
+            "d41b3dd2effebc4dde22cc9b9dddc59d4890b3b37f2f3b44f692f4e1d460bbb4",
+        ),
+        (
+            "campaign.json",
+            "2f21c8af424c15603bc0219446b87c161a01f7f2c2ce044cb82aa54d32c00dfb",
+        ),
+        (
+            "child-node.json",
+            "5cb0ae5153a198522077ef0946d6c37b4ce74f115450ec275bb86bfa4d70039c",
+        ),
+        (
+            "child-plan-node-9c9dcbeeb3a4d400.json",
+            "c3251db8d66075579d114891432fb128715e6d2379ffbe5cf7dafda26e45e3c2",
+        ),
+        (
+            "child-runner-result.json",
+            "0ba334192a79524eda1aa227701cc5c41c5eb2a0058ce4ee9e7f379021439368",
+        ),
+        (
+            "child-to-parent.jsonl",
+            "64d919e0d0bbc814bab76fb4d8de671056781a1957841ae0a606e252dd4ad372",
+        ),
+        (
+            "parent_identity.json",
+            "96f0c9cbb3e00b5d78d7d55e18b6bee1b2a2aa3ae1b7eb8f2828de3532bc5fbc",
+        ),
+        (
+            "run-profile.commitment.json",
+            "d693b80d9cf92a1790c8d1019aee9be5e2ba2d1468ddd400be7c8f3a93403bd7",
+        ),
+        (
+            "run-profile.toml",
+            "cfda200a2ad71803cb405c6e109bca8c80dd6b2101d4ec4a12abe9eedf1c4f95",
+        ),
+    ];
+
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("src/tests/fixtures/prototype1-v15-missing-oracle-20260717");
+    for (name, expected) in FIXTURE_HASHES {
+        let bytes = fs::read(fixture.join(name)).expect("read immutable v15 fixture artifact");
+        assert_eq!(format!("{:x}", Sha256::digest(bytes)), expected, "{name}");
+    }
+    let manifest_path = fixture.join("campaign.json");
+    let profile_text =
+        fs::read_to_string(fixture.join("run-profile.toml")).expect("read v15 run profile");
+    let profile: profile::Prototype1RunProfile =
+        toml::from_str(&profile_text).expect("parse v15 run profile");
+    profile.validate().expect("v15 profile remains valid");
+    assert_eq!(
+        profile.selection.oracle_mode(),
+        crate::successor_selection::OracleMode::RecordOnly
+    );
+    assert!(profile.selection.oracle_require_evidence());
+    assert_eq!(
+        profile.selection.oracle_gate(),
+        crate::successor_selection::OracleGate::Disabled
+    );
+    assert!(!profile.execution.mbe.enabled);
+
+    let commitment: serde_json::Value = json_fixture(
+        &fs::read_to_string(fixture.join("run-profile.commitment.json"))
+            .expect("read v15 profile commitment"),
+    );
+    let profile_hash = format!("{:x}", Sha256::digest(profile_text.as_bytes()));
+    assert_eq!(commitment["sha256"], profile_hash);
+    assert_eq!(
+        profile_hash,
+        "cfda200a2ad71803cb405c6e109bca8c80dd6b2101d4ec4a12abe9eedf1c4f95"
+    );
+
+    let parent: ParentIdentity = json_fixture(
+        &fs::read_to_string(fixture.join("parent_identity.json"))
+            .expect("read v15 parent identity"),
+    );
+    assert_eq!(parent.node_id(), "node-9c9dcbeeb3a4d400");
+
+    let child_plan: ChildPlanFiles = json_fixture(
+        &fs::read_to_string(fixture.join("child-plan-node-9c9dcbeeb3a4d400.json"))
+            .expect("read v15 child plan"),
+    );
+    let (plan_index, child) = child_plan
+        .children()
+        .iter()
+        .enumerate()
+        .find(|(_, child)| child.node_id() == NODE_ID)
+        .expect("v15 selected child plan entry");
+
+    let node: Prototype1NodeRecord = json_fixture(
+        &fs::read_to_string(fixture.join("child-node.json")).expect("read v15 child node"),
+    );
+    assert_eq!(node.node_id, NODE_ID);
+    assert_eq!(node.branch_id, BRANCH_ID);
+
+    let runner_result: Prototype1RunnerResult = json_fixture(
+        &fs::read_to_string(fixture.join("child-runner-result.json"))
+            .expect("read v15 runner result"),
+    );
+    assert_eq!(runner_result.node_id, node.node_id);
+    assert_eq!(runner_result.branch_id, node.branch_id);
+
+    let report: Prototype1BranchEvaluationReport = json_fixture(
+        &fs::read_to_string(fixture.join("branch-68afac57e92d5ebd.evaluation.json"))
+            .expect("read v15 branch evaluation"),
+    );
+    assert_eq!(report.branch_id, BRANCH_ID);
+    assert_eq!(report.overall_disposition, BranchDisposition::Keep);
+    assert_eq!(
+        report
+            .eval_set_identity
+            .as_ref()
+            .expect("v15 eval set identity")
+            .instance_ids,
+        vec!["BurntSushi__ripgrep-2209".to_string()]
+    );
+    assert_eq!(report.compared_instances.len(), 1);
+    let compared = &report.compared_instances[0];
+    assert!(
+        compared
+            .baseline_metrics
+            .as_ref()
+            .is_some_and(|metrics| metrics.oracle_eligible)
+    );
+    assert!(
+        compared
+            .treatment_metrics
+            .as_ref()
+            .is_some_and(|metrics| metrics.oracle_eligible)
+    );
+    assert!(compared.oracle_evaluation.is_none());
+
+    let terminal = fs::read_to_string(fixture.join("child-to-parent.jsonl"))
+        .expect("read v15 child channel")
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            serde_json::from_str::<
+                crate::cli::prototype1_state::channel::Envelope<
+                    crate::cli::prototype1_state::channel::ToParent,
+                >,
+            >(line)
+            .expect("v15 child channel envelope")
+        })
+        .find_map(|envelope| match envelope.body() {
+            crate::cli::prototype1_state::channel::ToParent::Result {
+                runner_result,
+                treatment,
+            } => Some((
+                envelope.runtime_id().to_string(),
+                runner_result.clone(),
+                treatment.clone(),
+            )),
+            _ => None,
+        })
+        .expect("v15 child terminal result");
+    assert_eq!(terminal.1, runner_result);
+    let terminal_body = crate::cli::prototype1_state::channel::ToParent::Result {
+        runner_result: terminal.1.clone(),
+        treatment: terminal.2,
+    };
+    let channel_evidence = ChildChannelEvidenceRefs {
+        runtime_id: terminal.0.clone(),
+        terminal_result: SealedEvidenceCitation {
+            ref_id: format!(
+                "channel:child-to-parent:terminal-result:{NODE_ID}:{}",
+                terminal.0
+            ),
+            content_hash: Some(
+                HistoryHash::of_domain_json(
+                    "prototype1.history.child_channel_terminal_result.v1",
+                    &terminal_body,
+                )
+                .expect("v15 terminal channel hash"),
+            ),
+            record_name: Some(CHILD_CHANNEL_TERMINAL_RESULT_RECORD.to_string()),
+        },
+        attempt_result: Some(SealedEvidenceCitation {
+            ref_id: format!("child-store:attempt-runner-result:{NODE_ID}:{}", terminal.0),
+            content_hash: Some(
+                HistoryHash::of_domain_json(
+                    "prototype1.history.child_attempt_runner_result.v1",
+                    &runner_result,
+                )
+                .expect("v15 attempt result hash"),
+            ),
+            record_name: Some(CHILD_ATTEMPT_RUNNER_RESULT_RECORD.to_string()),
+        }),
+        invocation: None,
+    };
+    let outcome = PlannedChildOutcome {
+        plan_index,
+        node_id: node.node_id.clone(),
+        outcome: "completed:Keep".to_string(),
+        node_status: node.status,
+        workspace_root: node.workspace_root.clone(),
+        binary_path: node.binary_path.clone(),
+        resolved: child.resolved().clone(),
+        child_runtime: Some(terminal.0),
+        channel_evidence: Some(channel_evidence),
+        evaluation_report: Some(report.clone()),
+        selection_input: Some(selection_input_from_child_report(&node, &report)),
+        surface: child.surface().cloned(),
+        artifact_surface: Some(
+            child
+                .harness_evidence()
+                .expect("v15 broad harness evidence")
+                .artifact_surface()
+                .clone(),
+        ),
+        node,
+    };
+
+    let original = select_successor_for_profile(
+        &manifest_path,
+        &parent,
+        std::slice::from_ref(&outcome),
+        child_plan.rejected_surface_attempts(),
+        &profile,
+    )
+    .expect("replay original v15 selection")
+    .expect("original v15 policy selected the candidate");
+    assert_eq!(original.0.candidate_node_id, NODE_ID);
+    assert_eq!(original.0.selected_branch_id.as_deref(), Some(BRANCH_ID));
+
+    let mut strict = profile.clone();
+    strict.selection.oracle.gate = crate::successor_selection::OracleGate::AllResolved;
+    strict.execution.mbe.enabled = true;
+    strict.validate().expect("strict replay profile is valid");
+    let error = match select_successor_for_profile(
+        &manifest_path,
+        &parent,
+        std::slice::from_ref(&outcome),
+        child_plan.rejected_surface_attempts(),
+        &strict,
+    ) {
+        Err(error) => error,
+        Ok(_) => panic!("v15 missing oracle evidence must fail closed"),
+    };
+    assert!(
+        error.to_string().contains("missing oracle evaluation"),
+        "unexpected strict replay error: {error}"
+    );
+    assert!(!fixture.join("prototype1/history").exists());
+    assert!(!eval_store::prototype1_eval_store_db_path(&manifest_path).exists());
 }
 
 #[test]
@@ -9998,6 +10264,56 @@ seed = 0
             .get::<String>("decision_hash")
             .expect("decision hash")
             .is_empty()
+    );
+
+    let mut oracle_params = std::collections::BTreeMap::new();
+    oracle_params.insert(
+        "decision_id".to_string(),
+        cozo::DataValue::from(decision_id.clone()),
+    );
+    let oracle_rows = db
+        .raw_query_params(
+            r#"
+?[mode, require_evidence, gate, targets, formula_id] :=
+    *eval_selection_oracle {
+        decision_id,
+        mode,
+        require_evidence,
+        gate,
+        targets,
+        formula_id
+    },
+    decision_id = $decision_id
+"#,
+            oracle_params,
+        )
+        .expect("query selection oracle row");
+    assert_eq!(oracle_rows.rows.len(), 1);
+    let oracle_row = oracle_rows.row_refs().next().expect("selection oracle row");
+    assert_eq!(
+        oracle_row.get::<String>("mode").expect("oracle mode"),
+        "record-only"
+    );
+    assert!(
+        oracle_row
+            .get::<bool>("require_evidence")
+            .expect("oracle evidence policy")
+    );
+    assert_eq!(
+        oracle_row.get::<String>("gate").expect("oracle gate"),
+        "disabled"
+    );
+    assert!(
+        oracle_row
+            .get::<Vec<String>>("targets")
+            .expect("oracle targets")
+            .is_empty()
+    );
+    assert!(
+        oracle_row
+            .get::<String>("formula_id")
+            .expect("oracle formula")
+            .starts_with("score_child_prop:")
     );
 
     let mut candidate_params = std::collections::BTreeMap::new();
@@ -10548,6 +10864,7 @@ fn history_handoff_rejects_missing_artifact_payload_before_seal() {
         traversal: Some(TraversalEvidence {
             seed: 1,
             strategy: StrategyKind::default(),
+            oracle_targets: Vec::new(),
             selected_source: None,
             child_counts: std::collections::BTreeMap::new(),
         }),
@@ -10626,6 +10943,7 @@ fn history_handoff_rejects_missing_artifact_surface_before_seal() {
         traversal: Some(TraversalEvidence {
             seed: 1,
             strategy: StrategyKind::default(),
+            oracle_targets: Vec::new(),
             selected_source: None,
             child_counts: std::collections::BTreeMap::new(),
         }),
@@ -10707,6 +11025,7 @@ fn history_handoff_rejects_unresolvable_runtime_before_seal() {
         traversal: Some(TraversalEvidence {
             seed: 1,
             strategy: StrategyKind::default(),
+            oracle_targets: Vec::new(),
             selected_source: None,
             child_counts: std::collections::BTreeMap::new(),
         }),
@@ -10784,6 +11103,7 @@ fn history_handoff_selection_carries_resolved_artifact() {
         traversal: Some(TraversalEvidence {
             seed: 1,
             strategy: StrategyKind::default(),
+            oracle_targets: Vec::new(),
             selected_source: None,
             child_counts: std::collections::BTreeMap::new(),
         }),

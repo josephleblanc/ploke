@@ -65,10 +65,21 @@ define_eval_schema!(SelectionScoreSchema {
     selected: "Bool",
 });
 
+define_eval_schema!(SelectionOracleSchema {
+    "eval_selection_oracle",
+    decision_id: "String" =>
+    mode: "String",
+    require_evidence: "Bool",
+    gate: "String",
+    targets: "[String]",
+    formula_id: "String?",
+});
+
 pub(crate) const SELECTION_DECISION_REL: &str = SelectionDecisionSchema::RELATION;
 pub(crate) const SELECTION_CANDIDATE_REL: &str = SelectionCandidateSchema::RELATION;
 pub(crate) const SELECTION_FINDING_REL: &str = SelectionFindingSchema::RELATION;
 pub(crate) const SELECTION_SCORE_REL: &str = SelectionScoreSchema::RELATION;
+pub(crate) const SELECTION_ORACLE_REL: &str = SelectionOracleSchema::RELATION;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct SelectionDecisionEvidence {
@@ -89,6 +100,7 @@ pub(crate) struct SelectionDecisionReceipt {
 
 struct SelectionRows {
     decision: EvalSelectionDecisionRow,
+    oracle: Option<SelectionOracleRow>,
     candidates: Vec<EvalSelectionCandidateRow>,
     findings: Vec<EvalSelectionFindingRow>,
     scores: Vec<EvalSelectionScoreRow>,
@@ -140,11 +152,21 @@ struct EvalSelectionScoreRow {
     selected: bool,
 }
 
+struct SelectionOracleRow {
+    decision_id: String,
+    mode: String,
+    require_evidence: bool,
+    gate: String,
+    targets: Vec<String>,
+    formula_id: Option<String>,
+}
+
 pub(super) fn ensure_selection_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(), EvalStoreError> {
     SelectionDecisionSchema::SCHEMA.ensure_installed(db, "schema.eval_selection_decision")?;
     SelectionCandidateSchema::SCHEMA.ensure_installed(db, "schema.eval_selection_candidate")?;
     SelectionFindingSchema::SCHEMA.ensure_installed(db, "schema.eval_selection_finding")?;
     SelectionScoreSchema::SCHEMA.ensure_installed(db, "schema.eval_selection_score")?;
+    SelectionOracleSchema::SCHEMA.ensure_installed(db, "schema.eval_selection_oracle")?;
     Ok(())
 }
 
@@ -156,6 +178,9 @@ pub(crate) fn write_selection_decision_to_owner_db(
         ensure_selection_schema(db)?;
         let rows = selection_rows(evidence)?;
         put_selection_decision_row(db, &rows.decision)?;
+        if let Some(oracle) = &rows.oracle {
+            put_oracle_row(db, oracle)?;
+        }
         for candidate in &rows.candidates {
             put_selection_candidate_row(db, candidate)?;
         }
@@ -225,6 +250,7 @@ fn selection_rows(evidence: SelectionDecisionEvidence) -> Result<SelectionRows, 
     let selected_member_id = selected_member_id(&evidence.entry)?;
     let findings = selection_finding_rows(&decision_id, selected_member_id.as_deref(), &evidence)?;
     let scores = selection_score_rows(&decision_id, &evidence.entry)?;
+    let oracle = selection_oracle_row(&decision_id, &evidence.entry)?;
     Ok(SelectionRows {
         decision: EvalSelectionDecisionRow {
             decision_id,
@@ -240,10 +266,45 @@ fn selection_rows(evidence: SelectionDecisionEvidence) -> Result<SelectionRows, 
             decision_hash: Some(decision_hash),
             recorded_at: evidence.recorded_at,
         },
+        oracle,
         candidates,
         findings,
         scores,
     })
+}
+
+fn selection_oracle_row(
+    decision_id: &str,
+    entry: &SelectionDecisionEntry,
+) -> Result<Option<SelectionOracleRow>, EvalStoreError> {
+    let Some(traversal) = entry.traversal.as_ref() else {
+        return Ok(None);
+    };
+    let (mode, require_evidence, gate) = match traversal.strategy {
+        crate::successor_selection::traversal::StrategyKind::FrontierMax {
+            oracle,
+            require_evidence,
+            gate,
+            ..
+        }
+        | crate::successor_selection::traversal::StrategyKind::ScoreChildProp {
+            oracle,
+            require_evidence,
+            gate,
+            ..
+        } => (oracle, require_evidence, gate),
+    };
+    Ok(Some(SelectionOracleRow {
+        decision_id: decision_id.to_string(),
+        mode: serde_name(&mode)?,
+        require_evidence,
+        gate: serde_name(&gate)?,
+        targets: traversal.oracle_targets.clone(),
+        formula_id: entry
+            .formula
+            .as_ref()
+            .map(|formula| format!("score_child_prop:{}", formula.metric_set_id.as_str())),
+    }))
 }
 
 fn selection_candidate_row(
@@ -260,14 +321,22 @@ fn selection_candidate_row(
         })?;
     let member_id = member_id(membership, payload)?;
     let (node_id, branch_id) = candidate_coordinate(payload)?;
+    let formula_row = entry
+        .formula
+        .as_ref()
+        .and_then(|formula| match &formula.formula {
+            crate::successor_selection::traversal::Formula::ScoreChildProp(formula) => {
+                formula.rows.iter().find(|row| row.payload_index == index)
+            }
+        });
     Ok(EvalSelectionCandidateRow {
         decision_id: decision_id.to_string(),
         member_id,
         node_id,
         branch_id,
-        selectable: true,
+        selectable: formula_row.is_none_or(|row| row.selectable),
         selected: payload_selected_by_decision(entry, membership, payload),
-        exclusion_ref: None,
+        exclusion_ref: formula_row.and_then(|row| row.exclusion_reason.clone()),
     })
 }
 
@@ -532,6 +601,19 @@ fn put_selection_score_row<D: EvalDb + ?Sized>(
     Ok(())
 }
 
+fn put_oracle_row<D: EvalDb + ?Sized>(
+    db: &D,
+    row: &SelectionOracleRow,
+) -> Result<(), EvalStoreError> {
+    put_eval_params(
+        db,
+        &SelectionOracleSchema::SCHEMA,
+        oracle_params(row),
+        "put.eval_selection_oracle",
+    )?;
+    Ok(())
+}
+
 fn selection_decision_params(row: &EvalSelectionDecisionRow) -> BTreeMap<String, DataValue> {
     let mut params = BTreeMap::new();
     params.insert("decision_id".to_string(), row.decision_id.clone().into());
@@ -601,6 +683,23 @@ fn selection_candidate_params(row: &EvalSelectionCandidateRow) -> BTreeMap<Strin
         "exclusion_ref".to_string(),
         option_string(&row.exclusion_ref),
     );
+    params
+}
+
+fn oracle_params(row: &SelectionOracleRow) -> BTreeMap<String, DataValue> {
+    let mut params = BTreeMap::new();
+    params.insert("decision_id".to_string(), row.decision_id.clone().into());
+    params.insert("mode".to_string(), row.mode.clone().into());
+    params.insert(
+        "require_evidence".to_string(),
+        DataValue::Bool(row.require_evidence),
+    );
+    params.insert("gate".to_string(), row.gate.clone().into());
+    params.insert(
+        "targets".to_string(),
+        DataValue::List(row.targets.iter().cloned().map(DataValue::from).collect()),
+    );
+    params.insert("formula_id".to_string(), option_string(&row.formula_id));
     params
 }
 

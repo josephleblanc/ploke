@@ -645,6 +645,8 @@ pub enum TraversalStrategyRecord {
         oracle: TraversalOracleModeRecord,
         #[serde(default = "default_oracle_require_evidence")]
         require_evidence: bool,
+        #[serde(default)]
+        gate: crate::run_profile::OracleGate,
     },
     ScoreChildProp {
         top_m: usize,
@@ -655,6 +657,8 @@ pub enum TraversalStrategyRecord {
         oracle: TraversalOracleModeRecord,
         #[serde(default = "default_oracle_require_evidence")]
         require_evidence: bool,
+        #[serde(default)]
+        gate: crate::run_profile::OracleGate,
     },
 }
 
@@ -665,6 +669,7 @@ impl Default for TraversalStrategyRecord {
             metrics: TraversalMetricInputsRecord::default(),
             oracle: TraversalOracleModeRecord::default(),
             require_evidence: default_oracle_require_evidence(),
+            gate: crate::run_profile::OracleGate::Disabled,
         }
     }
 }
@@ -678,6 +683,8 @@ pub struct TraversalEvidenceRecord {
     pub seed: u64,
     #[serde(default)]
     pub strategy: TraversalStrategyRecord,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub oracle_targets: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selected_source: Option<TraversalCandidateSourceRecord>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -790,15 +797,41 @@ mod tests {
                 metrics: TraversalMetricInputsRecord::OperationalAndProtocol,
                 oracle: TraversalOracleModeRecord::RecordOnly,
                 require_evidence: true,
+                gate: crate::run_profile::OracleGate::Disabled,
             }
         );
         assert_eq!(
             parsed.selected_source,
             Some(TraversalCandidateSourceRecord::CurrentGeneration)
         );
+        assert!(parsed.oracle_targets.is_empty());
         assert_eq!(parsed.child_counts.get("expanded"), Some(&1));
         let roundtrip = serde_json::to_value(&parsed).expect("roundtrip traversal evidence");
         assert_eq!(roundtrip["child_counts"], value["child_counts"]);
+    }
+
+    #[test]
+    fn traversal_evidence_roundtrips_oracle_targets() {
+        let value = json!({
+            "seed": 0,
+            "strategy": {
+                "kind": "frontier_max",
+                "normalize_frontier": true
+            },
+            "oracle_targets": ["instance-a", "instance-b"]
+        });
+
+        let parsed: TraversalEvidenceRecord =
+            serde_json::from_value(value).expect("parse oracle targets");
+        assert_eq!(
+            parsed.oracle_targets,
+            vec!["instance-a".to_string(), "instance-b".to_string()]
+        );
+        let roundtrip = serde_json::to_value(&parsed).expect("roundtrip oracle targets");
+        assert_eq!(
+            roundtrip["oracle_targets"],
+            json!(["instance-a", "instance-b"])
+        );
     }
 
     #[test]

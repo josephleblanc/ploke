@@ -618,7 +618,7 @@ fn reconstruct_after_r8(
     let children = child_plan.children.clone();
     let rejected_surface_attempts = child_plan.rejected_surface_attempts.clone();
     let parent_identity = parent.identity().clone();
-    let selection_strategy = match parts.facts.selection_strategy {
+    let selection_strategy = match parts.facts.selection_strategy.clone() {
         Some(strategy) => strategy,
         None => {
             blockers.push("blocked edge r10 -> r11: missing selection strategy".into());

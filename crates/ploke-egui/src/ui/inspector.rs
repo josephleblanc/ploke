@@ -4284,6 +4284,8 @@ mod tests {
                         metric_inputs: "operational".to_owned(),
                         oracle_mode: "record_only".to_owned(),
                         oracle_require_evidence: true,
+                        oracle_gate: ploke_records::run_profile::OracleGate::Disabled,
+                        oracle_targets: Vec::new(),
                         total_weight: 1.0,
                         sample: Some(0.25),
                         sample_threshold: Some(0.25),

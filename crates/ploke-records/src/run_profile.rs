@@ -332,6 +332,8 @@ pub struct Oracle {
     pub mode: OracleMode,
     #[serde(default = "default_oracle_require_evidence")]
     pub require_evidence: bool,
+    #[serde(default)]
+    pub gate: OracleGate,
 }
 
 impl Default for Oracle {
@@ -339,6 +341,7 @@ impl Default for Oracle {
         Self {
             mode: OracleMode::RecordOnly,
             require_evidence: default_oracle_require_evidence(),
+            gate: OracleGate::Disabled,
         }
     }
 }
@@ -353,6 +356,14 @@ pub enum OracleMode {
     #[default]
     RecordOnly,
     RelativeScore,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum OracleGate {
+    #[default]
+    Disabled,
+    AllResolved,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -793,6 +804,7 @@ name = "runtime-defaults"
 
         assert_eq!(parsed.selection.oracle.mode, OracleMode::RecordOnly);
         assert!(parsed.selection.oracle.require_evidence);
+        assert_eq!(parsed.selection.oracle.gate, OracleGate::Disabled);
     }
 
     #[test]
@@ -844,6 +856,22 @@ name = "runtime-defaults"
 
         assert_eq!(parsed.selection.oracle.mode, OracleMode::RelativeScore);
         assert!(!parsed.selection.oracle.require_evidence);
+
+        let encoded = toml::to_string(&parsed).expect("profile serializes");
+        let decoded: RunProfileRecord = toml::from_str(&encoded).expect("roundtrip parses");
+
+        assert_eq!(decoded, parsed);
+    }
+
+    #[test]
+    fn run_profile_toml_roundtrips_all_resolved_oracle_gate() {
+        let profile = PROFILE.replace(
+            "require_evidence = true",
+            "require_evidence = true\ngate = \"all-resolved\"",
+        );
+        let parsed: RunProfileRecord = toml::from_str(&profile).expect("profile parses");
+
+        assert_eq!(parsed.selection.oracle.gate, OracleGate::AllResolved);
 
         let encoded = toml::to_string(&parsed).expect("profile serializes");
         let decoded: RunProfileRecord = toml::from_str(&encoded).expect("roundtrip parses");

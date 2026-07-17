@@ -30,12 +30,12 @@ use super::{
     EVALUATION_INSTANCE_REL, EVALUATION_REL, HARNESS_DIAGNOSTIC_REL, HARNESS_REQUEST_REL,
     HARNESS_SUBMISSION_CHANGE_REL, HARNESS_SUBMISSION_CHECK_REL, HARNESS_SUBMISSION_CITATION_REL,
     HARNESS_SUBMISSION_REL, HARNESS_WORKSPACE_CHANGE_REL, HARNESS_WORKSPACE_REL, MESSAGE_EVENT_REL,
-    MODEL_EXCHANGE_REL, OPERATION_REL, PARENT_IDENTITY_REL, PARENT_START_REL, PATCH_REL,
-    PROFILE_COMMITMENT_REL, RUN_PROFILE_POLICY_REL, RUNNER_REQUEST_ARG_REL, RUNNER_REQUEST_REL,
-    RUNNER_REQUEST_TARGET_REL, RUNNER_RESULT_REL, SCHEDULER_NODE_REL, SCHEDULER_NODE_STATUS_REL,
-    SCHEDULER_NODE_TARGET_REL, SELECTION_CANDIDATE_REL, SELECTION_DECISION_REL,
-    SELECTION_FINDING_REL, SELECTION_SCORE_REL, TOOL_EVENT_REL, WALK_EVENT_REL,
-    WALK_EVENT_TRANSITION_REL,
+    MODEL_EXCHANGE_REL, OPERATION_REL, ORACLE_GATE_REL, PARENT_IDENTITY_REL, PARENT_START_REL,
+    PATCH_REL, PROFILE_COMMITMENT_REL, RUN_PROFILE_POLICY_REL, RUNNER_REQUEST_ARG_REL,
+    RUNNER_REQUEST_REL, RUNNER_REQUEST_TARGET_REL, RUNNER_RESULT_REL, SCHEDULER_NODE_REL,
+    SCHEDULER_NODE_STATUS_REL, SCHEDULER_NODE_TARGET_REL, SELECTION_CANDIDATE_REL,
+    SELECTION_DECISION_REL, SELECTION_FINDING_REL, SELECTION_ORACLE_REL, SELECTION_SCORE_REL,
+    TOOL_EVENT_REL, WALK_EVENT_REL, WALK_EVENT_TRANSITION_REL,
     api::EvalStorageMode,
     cozo_schema::eval_relation_exists,
     error::EvalStoreError,
@@ -170,6 +170,14 @@ fn non_agent_schema_scripts() -> Vec<(&'static str, String, String)> {
         },
         {
             let schema = &super::setup::RunProfilePolicySchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::setup::OracleGateSchema::SCHEMA;
             (
                 schema.relation(),
                 schema.script_create(),
@@ -608,6 +616,14 @@ fn non_agent_schema_scripts() -> Vec<(&'static str, String, String)> {
                 schema.script_put(&eval_schema_params(schema)),
             )
         },
+        {
+            let schema = &super::selection::SelectionOracleSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
     ]
 }
 
@@ -654,6 +670,11 @@ fn eval_store_non_agent_schema_scripts_are_stable() {
             "eval_run_profile_policy",
             r#":create eval_run_profile_policy { campaign_id: String => profile_ref_id: String, schema_version: String, max_generations: Int, max_total_nodes: Int, child_min: Int, child_max: Int, parallel_targets: Int?, schedule_mode: String, stop_first_keep: Bool, require_keep: Bool, explore_rejected: Bool, generation_source: String, selection_strategy: String, selection_evidence: String, selection_seed: Int, metrics_persist: Bool, score_profile: String, imp_enabled: Bool, imp_budget_k: Int, imp_archive: String, imp_score_points: Int, imp_required: Bool, oracle_mode: String, oracle_required: Bool, stop_after: String, observe_stale_secs: Int, trace_jsonl: String, debug_tools: Bool, broad_max_attempts: Int?, fresh_slots: Int?, graph_nearest: Int?, timeout_secs: Int?, control_mode: String, parallel_cap: Int?, ingested_at: String }"#,
             r#"?[campaign_id, profile_ref_id, schema_version, max_generations, max_total_nodes, child_min, child_max, parallel_targets, schedule_mode, stop_first_keep, require_keep, explore_rejected, generation_source, selection_strategy, selection_evidence, selection_seed, metrics_persist, score_profile, imp_enabled, imp_budget_k, imp_archive, imp_score_points, imp_required, oracle_mode, oracle_required, stop_after, observe_stale_secs, trace_jsonl, debug_tools, broad_max_attempts, fresh_slots, graph_nearest, timeout_secs, control_mode, parallel_cap, ingested_at] <- [[$campaign_id, $profile_ref_id, $schema_version, $max_generations, $max_total_nodes, $child_min, $child_max, $parallel_targets, $schedule_mode, $stop_first_keep, $require_keep, $explore_rejected, $generation_source, $selection_strategy, $selection_evidence, $selection_seed, $metrics_persist, $score_profile, $imp_enabled, $imp_budget_k, $imp_archive, $imp_score_points, $imp_required, $oracle_mode, $oracle_required, $stop_after, $observe_stale_secs, $trace_jsonl, $debug_tools, $broad_max_attempts, $fresh_slots, $graph_nearest, $timeout_secs, $control_mode, $parallel_cap, $ingested_at]] :put eval_run_profile_policy { campaign_id => profile_ref_id, schema_version, max_generations, max_total_nodes, child_min, child_max, parallel_targets, schedule_mode, stop_first_keep, require_keep, explore_rejected, generation_source, selection_strategy, selection_evidence, selection_seed, metrics_persist, score_profile, imp_enabled, imp_budget_k, imp_archive, imp_score_points, imp_required, oracle_mode, oracle_required, stop_after, observe_stale_secs, trace_jsonl, debug_tools, broad_max_attempts, fresh_slots, graph_nearest, timeout_secs, control_mode, parallel_cap, ingested_at }"#,
+        ),
+        (
+            "eval_oracle_gate",
+            r#":create eval_oracle_gate { campaign_id: String => profile_ref_id: String, gate: String, targets: [String], ingested_at: String }"#,
+            r#"?[campaign_id, profile_ref_id, gate, targets, ingested_at] <- [[$campaign_id, $profile_ref_id, $gate, $targets, $ingested_at]] :put eval_oracle_gate { campaign_id => profile_ref_id, gate, targets, ingested_at }"#,
         ),
         (
             "eval_closure_ref",
@@ -925,6 +946,11 @@ fn eval_store_non_agent_schema_scripts_are_stable() {
             r#":create eval_selection_score { decision_id: String, member_id: String => formula_id: String, score_json: String, weight: Float?, rank: Int?, selected: Bool }"#,
             r#"?[decision_id, member_id, formula_id, score_json, weight, rank, selected] <- [[$decision_id, $member_id, $formula_id, $score_json, $weight, $rank, $selected]] :put eval_selection_score { decision_id, member_id => formula_id, score_json, weight, rank, selected }"#,
         ),
+        (
+            "eval_selection_oracle",
+            r#":create eval_selection_oracle { decision_id: String => mode: String, require_evidence: Bool, gate: String, targets: [String], formula_id: String? }"#,
+            r#"?[decision_id, mode, require_evidence, gate, targets, formula_id] <- [[$decision_id, $mode, $require_evidence, $gate, $targets, $formula_id]] :put eval_selection_oracle { decision_id => mode, require_evidence, gate, targets, formula_id }"#,
+        ),
     ];
 
     assert_eq!(actual.len(), expected.len());
@@ -1041,6 +1067,7 @@ fn prototype1_eval_store_parent_start_db_schema_installs_idempotently() {
     assert!(
         eval_relation_exists(&db, RUN_PROFILE_POLICY_REL).expect("run profile policy rel exists")
     );
+    assert!(eval_relation_exists(&db, ORACLE_GATE_REL).expect("oracle gate rel exists"));
     assert!(eval_relation_exists(&db, CLOSURE_REF_REL).expect("closure ref rel exists"));
     assert!(eval_relation_exists(&db, CLOSURE_INSTANCE_REL).expect("closure instance rel exists"));
     assert!(
@@ -1086,6 +1113,7 @@ fn prototype1_eval_store_parent_start_db_schema_installs_idempotently() {
         eval_relation_exists(&db, SELECTION_FINDING_REL).expect("selection finding rel exists")
     );
     assert!(eval_relation_exists(&db, SELECTION_SCORE_REL).expect("selection score rel exists"));
+    assert!(eval_relation_exists(&db, SELECTION_ORACLE_REL).expect("selection oracle rel exists"));
     assert!(eval_relation_exists(&db, ARTIFACT_REL).expect("artifact rel exists"));
     assert!(eval_relation_exists(&db, ARTIFACT_SURFACE_REL).expect("artifact surface rel exists"));
     assert!(eval_relation_exists(&db, ARTIFACT_REF_REL).expect("artifact ref rel exists"));
@@ -1158,6 +1186,42 @@ fn prototype1_eval_store_parent_start_db_schema_installs_idempotently() {
     assert!(eval_relation_exists(&db, MODEL_EXCHANGE_REL).expect("model exchange rel exists"));
     assert!(eval_relation_exists(&db, MESSAGE_EVENT_REL).expect("message event rel exists"));
     assert!(eval_relation_exists(&db, TOOL_EVENT_REL).expect("tool event rel exists"));
+}
+
+#[test]
+fn oracle_gate_schema_installs_additively() {
+    let db = Database::new_init().expect("db");
+    let store = DbEvalStore::new(&db);
+    store.install_schema().expect("current schema installs");
+    db.raw_query_mut_params("::remove eval_oracle_gate", BTreeMap::new())
+        .expect("remove additive oracle relation");
+
+    assert!(eval_relation_exists(&db, RUN_PROFILE_POLICY_REL).expect("legacy policy exists"));
+    assert!(!eval_relation_exists(&db, ORACLE_GATE_REL).expect("oracle gate absent"));
+
+    store
+        .install_schema()
+        .expect("oracle gate relation installs without rewriting policy schema");
+
+    assert!(eval_relation_exists(&db, ORACLE_GATE_REL).expect("oracle gate restored"));
+}
+
+#[test]
+fn selection_oracle_schema_installs_additively() {
+    let db = Database::new_init().expect("db");
+    let store = DbEvalStore::new(&db);
+    store.install_schema().expect("current schema installs");
+    db.raw_query_mut_params("::remove eval_selection_oracle", BTreeMap::new())
+        .expect("remove additive selection oracle relation");
+
+    assert!(eval_relation_exists(&db, SELECTION_DECISION_REL).expect("selection decision exists"));
+    assert!(!eval_relation_exists(&db, SELECTION_ORACLE_REL).expect("selection oracle absent"));
+
+    store
+        .install_schema()
+        .expect("selection oracle relation installs without rewriting decision schema");
+
+    assert!(eval_relation_exists(&db, SELECTION_ORACLE_REL).expect("selection oracle restored"));
 }
 
 #[test]
@@ -1957,6 +2021,18 @@ fn prototype1_eval_store_setup_relations_round_trip_actual_loop_types() {
             .get::<String>("generation_source")
             .expect("generation source"),
         "broad-harness-request"
+    );
+    assert_eq!(
+        policy_row
+            .get::<String>("oracle_gate")
+            .expect("oracle gate"),
+        "disabled"
+    );
+    assert_eq!(
+        policy_row
+            .get::<Vec<String>>("oracle_targets")
+            .expect("oracle targets"),
+        vec!["BurntSushi__ripgrep-2209".to_string()]
     );
     assert_eq!(policy_row.get::<i64>("timeout_secs").expect("timeout"), 300);
     assert_eq!(
@@ -2837,7 +2913,11 @@ fn sample_admitted_profile(root: &std::path::Path) -> profile::AdmittedRunProfil
                 backend: profile::EvalStorageBackend::DualStrict,
             },
         },
-        target: profile::Target::default(),
+        target: profile::Target {
+            dataset_key: Some("ripgrep".to_string()),
+            instance: Some("BurntSushi__ripgrep-2209".to_string()),
+            instances: Vec::new(),
+        },
         model: profile::ModelDefaults::default(),
         search: profile::Search::default(),
         generation: profile::Generation::default(),
@@ -3143,8 +3223,9 @@ fn query_run_profile_policy(db: &Database, campaign_id: &CampaignId) -> QueryRes
     params.insert("campaign_id".to_string(), campaign_id.to_string().into());
     db.raw_query_params(
         r#"
-?[profile_ref_id, max_generations, max_total_nodes, child_min, child_max, parallel_targets, generation_source, timeout_secs, control_mode] :=
+?[profile_ref_id, max_generations, max_total_nodes, child_min, child_max, parallel_targets, generation_source, oracle_gate, oracle_targets, timeout_secs, control_mode] :=
     *eval_run_profile_policy { campaign_id, profile_ref_id, max_generations, max_total_nodes, child_min, child_max, parallel_targets, generation_source, timeout_secs, control_mode },
+    *eval_oracle_gate { campaign_id, profile_ref_id, gate: oracle_gate, targets: oracle_targets },
     campaign_id = $campaign_id
 "#,
         params,

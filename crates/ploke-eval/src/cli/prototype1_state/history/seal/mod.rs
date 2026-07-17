@@ -2329,6 +2329,7 @@ mod tests {
             Some(TraversalEvidence {
                 seed: 7,
                 strategy: StrategyKind::default(),
+                oracle_targets: Vec::new(),
                 selected_source: Some(TraversalCandidateSource::CurrentGeneration),
                 child_counts: BTreeMap::new(),
             }),
@@ -2754,6 +2755,7 @@ mod tests {
             Some(TraversalEvidence {
                 seed: 7,
                 strategy: StrategyKind::default(),
+                oracle_targets: Vec::new(),
                 selected_source: None,
                 child_counts: traversal.child_counts,
             }),
@@ -2840,6 +2842,7 @@ mod tests {
             Some(TraversalEvidence {
                 seed: 7,
                 strategy: StrategyKind::default(),
+                oracle_targets: Vec::new(),
                 selected_source: None,
                 child_counts: first_traversal.child_counts.clone(),
             }),
@@ -2885,6 +2888,7 @@ mod tests {
             Some(TraversalEvidence {
                 seed: 7,
                 strategy: StrategyKind::default(),
+                oracle_targets: Vec::new(),
                 selected_source: None,
                 child_counts: second_traversal.child_counts,
             }),

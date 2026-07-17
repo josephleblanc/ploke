@@ -2125,6 +2125,19 @@ fn render_candidate_comparison_formula_summary(
             cached_kv_text(
                 ui,
                 render_cache,
+                "oracle gate",
+                match score.record.oracle_gate {
+                    ploke_records::run_profile::OracleGate::Disabled => "disabled",
+                    ploke_records::run_profile::OracleGate::AllResolved => "all resolved",
+                },
+            );
+            if !score.record.oracle_targets.is_empty() {
+                let oracle_targets = score.record.oracle_targets.join(", ");
+                cached_kv_text(ui, render_cache, "oracle targets", oracle_targets.as_str());
+            }
+            cached_kv_text(
+                ui,
+                render_cache,
                 "alpha source",
                 if score.record.oracle_used_for_alpha {
                     "oracle"

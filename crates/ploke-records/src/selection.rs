@@ -166,6 +166,10 @@ pub struct ScoreChildPropRecord {
     pub metric_inputs: String,
     pub oracle_mode: String,
     pub oracle_require_evidence: bool,
+    #[serde(default)]
+    pub oracle_gate: crate::run_profile::OracleGate,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub oracle_targets: Vec<String>,
     pub total_weight: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sample: Option<f64>,
@@ -470,6 +474,8 @@ mod tests {
                 metric_inputs: "operational".to_string(),
                 oracle_mode: "record_only".to_string(),
                 oracle_require_evidence: true,
+                oracle_gate: crate::run_profile::OracleGate::Disabled,
+                oracle_targets: vec!["instance-a".to_string()],
                 total_weight: 0.75,
                 sample: Some(0.25),
                 sample_threshold: Some(0.1875),

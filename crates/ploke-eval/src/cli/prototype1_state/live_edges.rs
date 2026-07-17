@@ -700,6 +700,8 @@ pub(crate) fn r9_to_r10(
         metric_inputs,
         parts.run_shape.successor_oracle_mode,
         parts.run_shape.successor_oracle_require_evidence,
+        parts.run_shape.successor_oracle_gate,
+        parts.run_shape.successor_oracle_targets.clone(),
         parts.run_shape.successor_metrics_policy,
     );
     parts.facts.selection_strategy = Some(selection_strategy);
@@ -738,13 +740,11 @@ pub(crate) async fn r10_to_r11(
             .ok_or_else(|| PrepareError::InvalidBatchSelection {
                 detail: "R10 fanout transition missing child schedule mode".to_string(),
             })?;
-    let selection_strategy =
-        parts
-            .facts
-            .selection_strategy
-            .ok_or_else(|| PrepareError::InvalidBatchSelection {
-                detail: "R10 fanout transition missing selection strategy".to_string(),
-            })?;
+    let selection_strategy = parts.facts.selection_strategy.clone().ok_or_else(|| {
+        PrepareError::InvalidBatchSelection {
+            detail: "R10 fanout transition missing selection strategy".to_string(),
+        }
+    })?;
     let child_plan =
         parts
             .facts

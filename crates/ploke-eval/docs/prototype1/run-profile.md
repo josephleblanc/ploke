@@ -180,6 +180,9 @@ The profile rejects internally conflicting settings:
 - `selection.oracle.mode = "relative-score"` with
   `selection.oracle.require_evidence = true` requires MBE to be enabled and at
   least one configured target instance.
+- `selection.oracle.gate = "all-resolved"` requires
+  `selection.oracle.require_evidence = true`, MBE to be enabled, and at least
+  one configured target instance.
 - `selection.metrics.imp_at_k.enabled = true` requires
   `selection.metrics.imp_at_k.budget_k` to be nonzero.
 - `selection.metrics.persist = false` conflicts with metric-driven scoring:
@@ -357,6 +360,7 @@ metric fixtures for later `ploke-tree` and `ploke-egui` work.
 [selection.oracle]
 mode = "record-only"
 require_evidence = true
+gate = "disabled"
 ```
 
 - `mode`: Oracle selection policy. `record-only` records oracle evidence when
@@ -368,11 +372,17 @@ require_evidence = true
   false, missing oracle evidence does not block selection; it contributes no
   resolved point, so the score is still `resolved / configured`. Duplicate,
   mismatched, or unknown oracle evidence remains invalid in both modes.
+- `gate`: Successor-admission policy, independent of ranking. `disabled`
+  preserves the existing mode behavior. `all-resolved` requires both sealed
+  evidence and selection-input evidence to cover exactly the admitted profile
+  targets, requires the two carriers to agree, and excludes any candidate whose
+  oracle verdicts are not all `resolved`. Missing, duplicate, unknown,
+  mismatched, or internally inconsistent evidence fails closed.
 
 `selection.oracle` is deliberately separate from `selection.evidence`.
-Operational/protocol metrics decide the hard successor outcome; oracle policy
-only controls whether recorded MBE results are used as a relative traversal
-signal.
+Operational/protocol metrics determine the candidate disposition and ranking
+inputs. Oracle `mode` controls relative traversal scoring, while oracle `gate`
+separately controls whether a candidate may enter that ranking pool.
 
 ## `protocol`
 
@@ -460,7 +470,8 @@ mbe = { enabled = true, python = "python3", workers = 2 }
 - `debug_tools`: Enables extra execution debug logging.
 - `mbe.enabled`: Run Multi-SWE-bench Evaluation as the oracle recording pass.
   When enabled, `target.instance` or `target.instances` must be nonempty and the
-  final MBE report must cover exactly those configured target instances.
+  final MBE report must cover exactly those configured target instances. It is
+  required when `selection.oracle.gate = "all-resolved"`.
 - `mbe.python`: Python executable used to run the MBE harness.
 - `mbe.workers`: Worker count applied to the MBE harness worker pools. Must be
   nonzero when `mbe.enabled = true`.

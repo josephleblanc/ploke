@@ -23,7 +23,7 @@ use crate::{
     intervention::{Prototype1ChildBudget, Prototype1ChildScheduleMode, Prototype1SearchPolicy},
     layout::ploke_eval_home,
     spec::PrepareError,
-    successor_selection::{OracleMode, metrics as selection_metrics},
+    successor_selection::{OracleGate, OracleMode, metrics as selection_metrics},
 };
 
 pub(crate) const RUN_PROFILE_SCHEMA_VERSION: &str = "prototype1-run-profile.v1";
@@ -510,6 +510,10 @@ impl Selection {
         self.oracle.require_evidence
     }
 
+    pub(crate) fn oracle_gate(self) -> OracleGate {
+        self.oracle.gate
+    }
+
     pub(crate) fn metrics_policy(self) -> selection_metrics::Policy {
         selection_metrics::Policy {
             persist: self.metrics.persist,
@@ -546,6 +550,23 @@ impl Selection {
             if target.eval_instances().is_empty() {
                 return Err(profile_error(
                     "selection.oracle.mode = \"relative-score\" with require_evidence = true requires target.instance or target.instances",
+                ));
+            }
+        }
+        if self.oracle.gate == OracleGate::AllResolved {
+            if !self.oracle.require_evidence {
+                return Err(profile_error(
+                    "selection.oracle.gate = \"all-resolved\" requires selection.oracle.require_evidence = true",
+                ));
+            }
+            if !execution.mbe.enabled {
+                return Err(profile_error(
+                    "selection.oracle.gate = \"all-resolved\" requires execution.mbe.enabled = true",
+                ));
+            }
+            if target.eval_instances().is_empty() {
+                return Err(profile_error(
+                    "selection.oracle.gate = \"all-resolved\" requires target.instance or target.instances",
                 ));
             }
         }
@@ -724,6 +745,8 @@ pub(crate) struct Oracle {
     pub(crate) mode: OracleMode,
     #[serde(default = "default_oracle_require_evidence")]
     pub(crate) require_evidence: bool,
+    #[serde(default)]
+    pub(crate) gate: OracleGate,
 }
 
 impl Default for Oracle {
@@ -731,6 +754,7 @@ impl Default for Oracle {
         Self {
             mode: OracleMode::RecordOnly,
             require_evidence: default_oracle_require_evidence(),
+            gate: OracleGate::Disabled,
         }
     }
 }
@@ -1501,6 +1525,7 @@ graph_nearest = 13
         assert_eq!(profile.selection.metrics.imp_at_k.budget_k, 50);
         assert_eq!(profile.selection.oracle_mode(), OracleMode::RecordOnly);
         assert!(profile.selection.oracle_require_evidence());
+        assert_eq!(profile.selection.oracle_gate(), OracleGate::Disabled);
         assert_eq!(profile.protocol_policy().max_tokens, 4096);
         assert_eq!(profile.protocol_policy().tool_review_parallelism, 2);
         assert_eq!(
@@ -2484,6 +2509,34 @@ provider = "google"
 
         assert_eq!(profile.selection.oracle_mode(), OracleMode::RelativeScore);
         assert!(!profile.selection.oracle_require_evidence());
+    }
+
+    #[test]
+    fn all_resolved_oracle_gate_requires_complete_mbe_evidence() {
+        let gated = PROFILE.replace(
+            "require_evidence = true",
+            "require_evidence = true\ngate = \"all-resolved\"",
+        );
+        let profile =
+            parse_profile(Path::new("profile.toml"), &gated).expect("strict oracle gate parses");
+        assert_eq!(profile.selection.oracle_gate(), OracleGate::AllResolved);
+
+        let disabled_mbe = gated.replace("enabled = true", "enabled = false");
+        let err = parse_profile(Path::new("profile.toml"), &disabled_mbe)
+            .expect_err("strict oracle gate requires MBE");
+        assert!(err.to_string().contains("execution.mbe.enabled"));
+
+        let missing_evidence = gated.replace("require_evidence = true", "require_evidence = false");
+        let err = parse_profile(Path::new("profile.toml"), &missing_evidence)
+            .expect_err("strict oracle gate requires complete evidence");
+        assert!(err.to_string().contains("require_evidence = true"));
+
+        let empty_targets = gated
+            .replace("instance = \"BurntSushi__ripgrep-2209\"\n", "")
+            .replace("instances = [\"BurntSushi__ripgrep-2209\"]\n", "");
+        let err = parse_profile(Path::new("profile.toml"), &empty_targets)
+            .expect_err("strict oracle gate requires target set");
+        assert!(err.to_string().contains("target.instance"));
     }
 
     #[test]

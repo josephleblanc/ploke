@@ -784,6 +784,8 @@ fn score_child_prop_formula(metric_set_id: HistoryHash) -> SelectionFormulaRecor
             lambda: 1.0,
             metric_inputs: "operational".to_owned(),
             oracle_mode: "record_only".to_owned(),
+            oracle_gate: ploke_records::run_profile::OracleGate::Disabled,
+            oracle_targets: Vec::new(),
             oracle_require_evidence: true,
             total_weight: 0.5,
             sample: Some(0.25),

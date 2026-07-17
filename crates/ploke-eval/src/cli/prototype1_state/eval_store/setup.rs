@@ -168,6 +168,15 @@ define_eval_schema!(RunProfilePolicySchema {
     ingested_at: "String",
 });
 
+define_eval_schema!(OracleGateSchema {
+    "eval_oracle_gate",
+    campaign_id: "String" =>
+    profile_ref_id: "String",
+    gate: "String",
+    targets: "[String]",
+    ingested_at: "String",
+});
+
 define_eval_schema!(ClosureRefSchema {
     "eval_closure_ref",
     closure_ref_id: "String" =>
@@ -298,6 +307,7 @@ pub(crate) const CAMPAIGN_EVAL_BUDGET_REL: &str = CampaignEvalBudgetSchema::RELA
 pub(crate) const CAMPAIGN_PROTOCOL_POLICY_REL: &str = CampaignProtocolPolicySchema::RELATION;
 pub(crate) const PROFILE_COMMITMENT_REL: &str = ProfileCommitmentSchema::RELATION;
 pub(crate) const RUN_PROFILE_POLICY_REL: &str = RunProfilePolicySchema::RELATION;
+pub(crate) const ORACLE_GATE_REL: &str = OracleGateSchema::RELATION;
 pub(crate) const CLOSURE_REF_REL: &str = ClosureRefSchema::RELATION;
 pub(crate) const CLOSURE_INSTANCE_REL: &str = ClosureInstanceSchema::RELATION;
 pub(crate) const CLOSURE_ARTIFACT_REF_REL: &str = ClosureArtifactRefSchema::RELATION;
@@ -318,6 +328,7 @@ pub(super) fn ensure_setup_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(), Eval
         .ensure_installed(db, "schema.eval_campaign_protocol_policy")?;
     ProfileCommitmentSchema::SCHEMA.ensure_installed(db, "schema.eval_profile_commitment")?;
     RunProfilePolicySchema::SCHEMA.ensure_installed(db, "schema.eval_run_profile_policy")?;
+    OracleGateSchema::SCHEMA.ensure_installed(db, "schema.eval_oracle_gate")?;
     ClosureRefSchema::SCHEMA.ensure_installed(db, "schema.eval_closure_ref")?;
     ClosureInstanceSchema::SCHEMA.ensure_installed(db, "schema.eval_closure_instance")?;
     ClosureArtifactRefSchema::SCHEMA.ensure_installed(db, "schema.eval_closure_artifact_ref")?;
@@ -515,6 +526,7 @@ pub(super) fn put_run_profile_policy<D: EvalDb + ?Sized>(
     let execution = &profile.execution;
     let broad = execution.broad_tui;
     let control = profile.control;
+    let oracle_targets = profile.target.eval_instances();
 
     let mut params = BTreeMap::new();
     params.insert("campaign_id".to_string(), campaign_id.to_string().into());
@@ -676,16 +688,33 @@ pub(super) fn put_run_profile_policy<D: EvalDb + ?Sized>(
         "parallel_cap".to_string(),
         option_u32_param(control.parallel_cap),
     );
-    params.insert(
-        "ingested_at".to_string(),
-        chrono::Utc::now().to_rfc3339().into(),
-    );
+    let ingested_at = chrono::Utc::now().to_rfc3339();
+    params.insert("ingested_at".to_string(), ingested_at.clone().into());
 
     put_eval_params(
         db,
         &RunProfilePolicySchema::SCHEMA,
         params,
         "put.eval_run_profile_policy",
+    )?;
+
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    params.insert(
+        "profile_ref_id".to_string(),
+        profile_ref_id.to_string().into(),
+    );
+    params.insert(
+        "gate".to_string(),
+        enum_string(&selection.oracle.gate, "eval_oracle_gate.gate")?.into(),
+    );
+    params.insert("targets".to_string(), string_list_param(&oracle_targets));
+    params.insert("ingested_at".to_string(), ingested_at.into());
+    put_eval_params(
+        db,
+        &OracleGateSchema::SCHEMA,
+        params,
+        "put.eval_oracle_gate",
     )
 }
 

@@ -18,6 +18,8 @@
 
 use std::path::PathBuf;
 
+pub(crate) use ploke_records::run_profile::OracleGate;
+
 use crate::BranchDisposition;
 
 pub mod decision;

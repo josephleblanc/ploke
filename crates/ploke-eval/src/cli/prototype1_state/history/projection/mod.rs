@@ -3519,6 +3519,8 @@ pub(crate) struct TraversalEvidence {
     pub(crate) seed: u64,
     #[serde(default)]
     pub(crate) strategy: crate::successor_selection::traversal::StrategyKind,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) oracle_targets: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) selected_source: Option<TraversalCandidateSource>,
     /// Successful child counts used by traversal scoring before pruning expanded candidates.

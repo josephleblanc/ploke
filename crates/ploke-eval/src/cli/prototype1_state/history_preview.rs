@@ -907,19 +907,37 @@ fn print_selection_show(show: &SelectionShow) {
             replay.selected_index,
             replay.selected_candidate.as_deref().unwrap_or("-")
         );
+        println!(
+            "  oracle: mode={} require_evidence={} gate={} targets={}",
+            replay.oracle_mode,
+            replay.oracle_require_evidence,
+            replay.oracle_gate,
+            if replay.oracle_targets.is_empty() {
+                "-".to_string()
+            } else {
+                replay.oracle_targets.join(",")
+            }
+        );
         for row in &replay.rows {
+            let oracle = match (row.oracle_resolved, row.oracle_configured) {
+                (Some(resolved), Some(configured)) => format!("{resolved}/{configured}"),
+                _ => "-".to_string(),
+            };
             println!(
-                "  [{}] selected={} candidate={} perf={} children={} alpha={:.6} exploit={:.6} explore={:.6} weight={:.9} base_outcome={:?}",
+                "  [{}] selected={} selectable={} candidate={} perf={} oracle={} children={} alpha={:.6} exploit={:.6} explore={:.6} weight={:.9} base_outcome={:?} excluded={}",
                 row.index,
                 row.selected,
+                row.selectable,
                 row.candidate,
                 row.performance,
+                oracle,
                 row.child_count,
                 row.alpha,
                 row.exploitation,
                 row.exploration,
                 row.weight,
-                row.base_outcome
+                row.base_outcome,
+                row.exclusion_reason.as_deref().unwrap_or("-")
             );
         }
     }

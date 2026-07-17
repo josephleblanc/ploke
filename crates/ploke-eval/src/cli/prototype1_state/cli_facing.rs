@@ -2203,7 +2203,7 @@ impl CandidateGenerationConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Prototype1StateRunShape {
     pub(crate) stop_after: Prototype1StateStopAfter,
     pub(crate) observe_child_stale_after: Duration,
@@ -2214,6 +2214,8 @@ pub(crate) struct Prototype1StateRunShape {
     pub(crate) successor_selection_metrics: Prototype1TraversalMetrics,
     pub(crate) successor_oracle_mode: crate::successor_selection::OracleMode,
     pub(crate) successor_oracle_require_evidence: bool,
+    pub(crate) successor_oracle_gate: crate::successor_selection::OracleGate,
+    pub(crate) successor_oracle_targets: Vec<String>,
     pub(crate) successor_metrics_policy: crate::successor_selection::metrics::Policy,
     pub(crate) eval_storage_backend: profile::EvalStorageBackend,
 }
@@ -2236,6 +2238,8 @@ impl Prototype1StateRunShape {
                 .unwrap_or(Prototype1TraversalMetrics::Operational),
             successor_oracle_mode: crate::successor_selection::OracleMode::RecordOnly,
             successor_oracle_require_evidence: true,
+            successor_oracle_gate: crate::successor_selection::OracleGate::Disabled,
+            successor_oracle_targets: Vec::new(),
             successor_metrics_policy: crate::successor_selection::metrics::Policy::default(),
             eval_storage_backend: profile::EvalStorageBackend::Fs,
         }
@@ -2254,6 +2258,8 @@ impl Prototype1StateRunShape {
             successor_selection_metrics: profile.selection.traversal_metrics(),
             successor_oracle_mode: profile.selection.oracle_mode(),
             successor_oracle_require_evidence: profile.selection.oracle_require_evidence(),
+            successor_oracle_gate: profile.selection.oracle_gate(),
+            successor_oracle_targets: profile.target.eval_instances(),
             successor_metrics_policy: profile.selection.metrics_policy(),
             eval_storage_backend: profile.storage.eval.backend,
         }
@@ -8493,7 +8499,8 @@ pub(crate) async fn run_adaptive_child_fanout(
             &completed,
             rejected_surface_attempts,
         );
-        selection = parent_selection.select_successor(selection_seed, selection_strategy)?;
+        selection =
+            parent_selection.select_successor(selection_seed, selection_strategy.clone())?;
         if adaptive_selection_accepts_successor(&selection) {
             break;
         }
@@ -8799,10 +8806,11 @@ enum SelectionCandidateScope {
     AllAdmittedHistory,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(crate) struct ActiveSelectionStrategy {
     candidate_scope: SelectionCandidateScope,
     traversal: StrategyKind,
+    oracle_targets: Vec<String>,
     metrics_policy: crate::successor_selection::metrics::Policy,
 }
 
@@ -8812,6 +8820,8 @@ impl Prototype1SuccessorSelection {
         metrics: crate::metric::Inputs,
         oracle: crate::successor_selection::OracleMode,
         require_evidence: bool,
+        gate: crate::successor_selection::OracleGate,
+        oracle_targets: Vec<String>,
         metrics_policy: crate::successor_selection::metrics::Policy,
     ) -> ActiveSelectionStrategy {
         match self {
@@ -8819,21 +8829,27 @@ impl Prototype1SuccessorSelection {
                 candidate_scope: SelectionCandidateScope::CurrentGeneration,
                 traversal: StrategyKind::score_child_prop()
                     .with_metrics(metrics)
-                    .with_oracle_policy(oracle, require_evidence),
+                    .with_oracle_policy(oracle, require_evidence)
+                    .with_oracle_gate(gate),
+                oracle_targets,
                 metrics_policy,
             },
             Prototype1SuccessorSelection::HistoryFrontierMax => ActiveSelectionStrategy {
                 candidate_scope: SelectionCandidateScope::AllAdmittedHistory,
                 traversal: StrategyKind::default()
                     .with_metrics(metrics)
-                    .with_oracle_policy(oracle, require_evidence),
+                    .with_oracle_policy(oracle, require_evidence)
+                    .with_oracle_gate(gate),
+                oracle_targets,
                 metrics_policy,
             },
             Prototype1SuccessorSelection::HistoryScoreChildProp => ActiveSelectionStrategy {
                 candidate_scope: SelectionCandidateScope::AllAdmittedHistory,
                 traversal: StrategyKind::score_child_prop()
                     .with_metrics(metrics)
-                    .with_oracle_policy(oracle, require_evidence),
+                    .with_oracle_policy(oracle, require_evidence)
+                    .with_oracle_gate(gate),
+                oracle_targets,
                 metrics_policy,
             },
         }
@@ -8852,6 +8868,8 @@ pub(crate) fn select_successor_for_profile(
         metric_inputs,
         run_profile.selection.oracle_mode(),
         run_profile.selection.oracle_require_evidence(),
+        run_profile.selection.oracle_gate(),
+        run_profile.target.eval_instances(),
         run_profile.selection.metrics_policy(),
     );
     let selection = ParentSelection::new(
@@ -9366,6 +9384,7 @@ impl<'a> ParentSelection<'a> {
             seed,
             strategy.traversal,
             strategy.metrics_policy,
+            &strategy.oracle_targets,
         )
         .map_err(|err| PrepareError::InvalidBatchSelection {
             detail: format!("failed to decide History traversal successor: {err}"),
@@ -9391,6 +9410,7 @@ impl<'a> ParentSelection<'a> {
             traversal: Some(TraversalEvidence {
                 seed,
                 strategy: strategy.traversal,
+                oracle_targets: strategy.oracle_targets,
                 selected_source: Some(if selection.selected_from_current_generation {
                     TraversalCandidateSource::CurrentGeneration
                 } else {

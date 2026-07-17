@@ -1,0 +1,14 @@
+?[decision_id, campaign_id, parent_id, mode, require_evidence, gate, targets, formula_id] :=
+  *eval_selection_decision{
+    decision_id,
+    campaign_id,
+    parent_id
+  },
+  *eval_selection_oracle{
+    decision_id,
+    mode,
+    require_evidence,
+    gate,
+    targets,
+    formula_id
+  }

@@ -133,13 +133,13 @@ For keyed relations with composite keys, count one required key field.
 
 Run count queries for these relation groups after each major phase:
 
-- setup/profile/closure: `eval_campaign`, `eval_profile_commitment`, `eval_run_profile_policy`, `eval_closure_ref`, `eval_closure_instance`, `eval_closure_artifact_ref`, `eval_closure_protocol_procedure`, `eval_closure_protocol_counts`
+- setup/profile/closure: `eval_campaign`, `eval_profile_commitment`, `eval_run_profile_policy`, `eval_oracle_gate`, `eval_closure_ref`, `eval_closure_instance`, `eval_closure_artifact_ref`, `eval_closure_protocol_procedure`, `eval_closure_protocol_counts`
 - parent/start/baseline: `eval_parent_identity`, `eval_parent_start`, `eval_transition_event`, `eval_baseline`, `eval_baseline_instance`, `eval_baseline_instance_metrics`
 - scheduler/runner: `eval_scheduler_node`, `eval_scheduler_node_status_event`, `eval_runner_request`, `eval_runner_request_arg`, `eval_runner_result`
 - broad harness and agent turn: `eval_harness_request`, `eval_harness_diagnostic`, `eval_harness_workspace`, `eval_harness_workspace_change`, `eval_harness_submission*`, `eval_agent_turn`, `eval_model_exchange`, `eval_tool_event`, `eval_message_event`, `eval_trace_event`
 - child plan: `eval_child_plan`, `eval_child_plan_child`, `eval_child_plan_rejected_attempt`
 - materialize/build/spawn/observe: `eval_artifact*`, `eval_operation`, `eval_patch`, `eval_apply_event`, `eval_build_event`, `eval_binary_ref`, `eval_invocation`, `eval_channel_message`, `eval_channel_receipt`, `eval_import_event`, `eval_log_ref`, `eval_runner_result`
-- compare/selection/handoff: `eval_evaluation`, `eval_evaluation_instance`, `eval_selection_decision`, `eval_selection_candidate`, `eval_selection_finding`, `eval_selection_score`, `eval_continuation_decision`
+- compare/selection/handoff: `eval_evaluation`, `eval_evaluation_instance`, `eval_selection_decision`, `eval_selection_candidate`, `eval_selection_finding`, `eval_selection_score`, `eval_selection_oracle`, `eval_continuation_decision`
 - operator walk: `eval_walk_event`, `eval_walk_event_transition`
 
 ## Findings summary to fill after run
