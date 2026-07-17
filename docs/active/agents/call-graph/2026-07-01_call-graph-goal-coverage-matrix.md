@@ -3856,6 +3856,22 @@ exact RAG, and exact `code_item_lookup` / `code_item_edges` tests expose the
 setter-side proof payload while preserving the later boxed `dyn FnMut` rows as
 targetless runtime-dispatch frontiers with no local traversal edge.
 
+Update 2026-07-17: the async future value-flow bucket now includes one-hop
+aggregate alias proof for stored forwarded returned futures. The fixture source
+oracle is `tests/fixture_crates/fixture_call_graph/src/lib.rs:2410-2413`,
+where `call_aliased_stored_forwarded_returned_async_future_tuple_field()`
+stores `make_forwarded_returned_async_future()` in `futures.0`, aliases the
+aggregate with `let alias = futures`, and awaits `alias.0`. Parser awaitedness
+tracking now carries known aggregate future child paths through that simple
+same-block value alias. DB proof tests assert the `PathCallResult`
+`local_binding`, `BindingSourceCallResult` edge, returned-future proof flow,
+contextual execution proof flow, and zero ordinary traversal paths to
+`local_target`. Exact RAG and exact `code_item_lookup` / `code_item_edges`
+payload tests now include the aliased owner beside the direct and stored
+forwarded-future owners. This does not add general aggregate alias analysis,
+interprocedural future flow, async callable trait-object dispatch, or a
+poll/resume traversal edge.
+
 ## Parking Lot
 
 - Add binding tracking plan that ties syntax body ownership, local bindings, and type graph edges before attempting receiver/dynamic traversal.

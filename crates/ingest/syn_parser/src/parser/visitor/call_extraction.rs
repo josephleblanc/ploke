@@ -2288,22 +2288,41 @@ fn awaited_future_spans(block: &syn::Block) -> Vec<(usize, usize)> {
             future_bindings.extend(bindings);
         } else if let Some(bindings) = future_struct_bindings(stmt) {
             future_bindings.extend(bindings);
-        } else if let Some((name, source)) = future_alias_binding(stmt)
-            && let Some(binding) = future_bindings
-                .iter()
-                .rev()
-                .find(|binding: &&FutureBinding| binding.path == source)
-        {
-            future_bindings.push(FutureBinding {
-                path: vec![name],
-                span: binding.span,
-            });
+        } else if let Some((name, source)) = future_alias_binding(stmt) {
+            future_bindings.extend(aliased_future_bindings(name, source, &future_bindings));
         }
     }
 
     awaited_spans.sort();
     awaited_spans.dedup();
     awaited_spans
+}
+
+fn aliased_future_bindings(
+    name: String,
+    source: Vec<String>,
+    future_bindings: &[FutureBinding],
+) -> Vec<FutureBinding> {
+    let mut aliases = Vec::new();
+    for binding in future_bindings.iter().rev() {
+        let Some(tail) = binding.path.strip_prefix(source.as_slice()) else {
+            continue;
+        };
+        let mut path = Vec::with_capacity(1 + tail.len());
+        path.push(name.clone());
+        path.extend(tail.iter().cloned());
+        if aliases
+            .iter()
+            .any(|alias: &FutureBinding| alias.path == path)
+        {
+            continue;
+        }
+        aliases.push(FutureBinding {
+            path,
+            span: binding.span,
+        });
+    }
+    aliases
 }
 
 fn future_call_binding(stmt: &syn::Stmt) -> Option<FutureBinding> {

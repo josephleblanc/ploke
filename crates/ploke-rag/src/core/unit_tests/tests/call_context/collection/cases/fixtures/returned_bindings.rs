@@ -90,11 +90,16 @@ async fn returned_call_binding_flows_exact_expose_forwarded_closure_proof() -> R
             "call_stored_forwarded_returned_async_future_tuple_field",
             "stored forwarded async future",
         ),
+        (
+            "call_aliased_stored_forwarded_returned_async_future_tuple_field",
+            "aliased stored forwarded async future",
+        ),
     ] {
-        // tests/fixture_crates/fixture_call_graph/src/lib.rs:2397-2407:
+        // tests/fixture_crates/fixture_call_graph/src/lib.rs:2397-2413:
         // The direct caller awaits `make_forwarded_returned_async_future()`;
         // the stored caller awaits the same producer after storing it in
-        // `futures.0`. Both expose returned-future proof rows without
+        // `futures.0`, and the aliased stored caller awaits `alias.0`. All
+        // expose returned-future proof rows without
         // promoting returned-call binding flow or ordinary traversal to the
         // async closure body.
         let future_owner = one_uuid(&db, &function_in_module_query(&["crate"], owner_name))?;

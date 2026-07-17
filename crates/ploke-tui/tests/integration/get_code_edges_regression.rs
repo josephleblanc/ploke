@@ -2051,6 +2051,11 @@ async fn code_item_edges_returns_forwarded_async_future_awaited_site() {
             "stored forwarded returned async future",
             "stored-forwarded-async-future-edges",
         ),
+        (
+            "call_aliased_stored_forwarded_returned_async_future_tuple_field",
+            "aliased stored forwarded returned async future",
+            "aliased-stored-forwarded-async-future-edges",
+        ),
     ] {
         let params = EdgesParams {
             item_name: Cow::Borrowed(item_name),

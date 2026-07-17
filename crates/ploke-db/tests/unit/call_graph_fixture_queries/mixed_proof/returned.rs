@@ -682,25 +682,44 @@ fn fixture_projection_keeps_forwarded_returned_async_future_fail_closed() -> Res
 fn fixture_projection_tracks_stored_forwarded_returned_async_future_flow() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
 
-    // tests/fixture_crates/fixture_call_graph/src/lib.rs:2405-2407:
-    // `call_stored_forwarded_returned_async_future_tuple_field()` stores
-    // `make_forwarded_returned_async_future()` in `futures.0` and then awaits
-    // that aggregate slot. The query can identify the producer future and its
-    // async-closure body proof, but must not fabricate an ordinary traversal
-    // edge from the caller to `local_target`.
-    let owner = function_id_by_name(
-        &db,
-        "call_stored_forwarded_returned_async_future_tuple_field",
-    )?;
-    let producer = function_id_by_name(&db, "make_forwarded_returned_async_future")?;
-    let returned_maker = function_id_by_name(&db, "make_returned_async_closure")?;
-    let local_target = function_id_by_name(&db, "local_target")?;
+    let cases = [
+        (
+            "call_stored_forwarded_returned_async_future_tuple_field",
+            "tests/fixture_crates/fixture_call_graph/src/lib.rs:2405-2407 `futures.0.await`",
+        ),
+        (
+            "call_aliased_stored_forwarded_returned_async_future_tuple_field",
+            "tests/fixture_crates/fixture_call_graph/src/lib.rs:2410-2413 `alias.0.await`",
+        ),
+    ];
+
+    for (owner_name, source) in cases {
+        assert_stored_forwarded_returned_async_future_flow(&db, owner_name, source)?;
+    }
+
+    Ok(())
+}
+
+fn assert_stored_forwarded_returned_async_future_flow(
+    db: &ploke_db::Database,
+    owner_name: &str,
+    source: &str,
+) -> Result<(), DbError> {
+    // Source oracle: `make_forwarded_returned_async_future()` returns a future
+    // produced by a returned async closure. The direct case awaits
+    // `futures.0`; the aliased case awaits `alias.0`. Both should expose the
+    // producer and contextual execution proof without fabricating an ordinary
+    // traversal edge from the caller to `local_target`.
+    let owner = function_id_by_name(db, owner_name)?;
+    let producer = function_id_by_name(db, "make_forwarded_returned_async_future")?;
+    let returned_maker = function_id_by_name(db, "make_returned_async_closure")?;
+    let local_target = function_id_by_name(db, "local_target")?;
 
     let owner_context = db.call_context_for_owner(owner)?;
     assert_eq!(
         owner_context.len(),
         1,
-        "stored forwarded future caller should expose only the awaited producer path: {owner_context:#?}"
+        "{owner_name} should expose only the awaited producer path: {source}; {owner_context:#?}"
     );
     let producer_row = row_by_path(&owner_context, &["make_forwarded_returned_async_future"]);
     assert_resolved_target(
@@ -715,7 +734,7 @@ fn fixture_projection_tracks_stored_forwarded_returned_async_future_flow() -> Re
     assert_eq!(
         future_flows.len(),
         1,
-        "stored forwarded future should expose one returned-future proof flow: {future_flows:#?}"
+        "{owner_name} should expose one returned-future proof flow: {source}; {future_flows:#?}"
     );
     let flow = &future_flows[0];
     assert_eq!(flow.caller_id, owner);
@@ -736,7 +755,7 @@ fn fixture_projection_tracks_stored_forwarded_returned_async_future_flow() -> Re
     assert_eq!(
         execution_flows.len(),
         1,
-        "stored forwarded future should expose one contextual returned-future execution proof: {execution_flows:#?}"
+        "{owner_name} should expose one contextual returned-future execution proof: {source}; {execution_flows:#?}"
     );
     let execution = &execution_flows[0];
     assert_eq!(execution.caller_id, owner);
@@ -764,7 +783,7 @@ fn fixture_projection_tracks_stored_forwarded_returned_async_future_flow() -> Re
     assert_eq!(
         producer_paths.len(),
         1,
-        "stored forwarded future caller should traverse exactly one edge to the producer: {producer_paths:#?}"
+        "{owner_name} should traverse exactly one edge to the producer: {producer_paths:#?}"
     );
     assert_eq!(producer_paths[0].edges[0].caller_id, owner);
     assert_eq!(producer_paths[0].edges[0].callee_id, producer);
@@ -779,7 +798,7 @@ fn fixture_projection_tracks_stored_forwarded_returned_async_future_flow() -> Re
     )?;
     assert!(
         local_target_paths.is_empty(),
-        "stored forwarded future proof flow must not create a normal traversal path to local_target: {local_target_paths:#?}"
+        "{owner_name} proof flow must not create a normal traversal path to local_target: {local_target_paths:#?}"
     );
 
     Ok(())

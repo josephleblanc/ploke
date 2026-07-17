@@ -1485,6 +1485,11 @@ async fn code_item_lookup_returns_forwarded_async_future_awaited_site() {
             "stored forwarded returned async future",
             "stored-forwarded-async-future-lookup",
         ),
+        (
+            "call_aliased_stored_forwarded_returned_async_future_tuple_field",
+            "aliased stored forwarded returned async future",
+            "aliased-stored-forwarded-async-future-lookup",
+        ),
     ] {
         let params = LookupParams {
             item_name: Cow::Borrowed(item_name),

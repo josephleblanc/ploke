@@ -2407,6 +2407,12 @@ pub async fn call_stored_forwarded_returned_async_future_tuple_field() -> i32 {
     futures.0.await
 }
 
+pub async fn call_aliased_stored_forwarded_returned_async_future_tuple_field() -> i32 {
+    let futures = (make_forwarded_returned_async_future(),);
+    let alias = futures;
+    alias.0.await
+}
+
 fn call_single_aliased_named_field_function_param(holder: CallbackHolder) -> i32 {
     let alias = holder;
     (alias.callback)()

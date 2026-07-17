@@ -506,6 +506,31 @@ Constructor field frontier checkpoint, 2026-07-16:
   and the broader `ploke-db --features call_graph real_target_matrix::unsupported`
   suite.
 
+Aliased stored forwarded-future checkpoint, 2026-07-17:
+
+- Implemented the narrow async future value-flow proof for
+  `tests/fixture_crates/fixture_call_graph/src/lib.rs:2410-2413`, where
+  `call_aliased_stored_forwarded_returned_async_future_tuple_field()` stores
+  `make_forwarded_returned_async_future()` in `futures.0`, aliases the
+  aggregate with `let alias = futures`, and awaits `alias.0`.
+- Parser awaited-future tracking now propagates a simple value alias across
+  known aggregate future paths, so `alias.0.await` marks the original producer
+  call result as polled. This reuses the existing `CallResultAwaited`,
+  `PathCallResult`, and `BindingSourceCallResult` carriers.
+- DB tests assert the aliased aggregate slot binding, the returned-future proof
+  flow, the contextual returned-future execution flow, and the fail-closed
+  absence of an ordinary traversal path from the caller to `local_target`.
+- Exact RAG and exact `code_item_lookup` / `code_item_edges` payload tests now
+  include the aliased stored-forwarded owner beside the existing direct and
+  stored forwarded-future owners.
+- Active fixtures were regenerated with
+  `cargo run -p xtask --features call_graph -- fixtures regenerate --active`;
+  registry-backed backup verification passed.
+- This is not general aggregate alias analysis, interprocedural future value
+  flow, async trait-object dispatch, or general poll/resume traversal. It is a
+  one-hop same-block alias proof for an already source-visible aggregate future
+  slot.
+
 ## Do Not Reselect Without New Evidence
 
 - Public callable parameters and public callable fields that lack complete

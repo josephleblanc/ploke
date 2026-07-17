@@ -1180,17 +1180,37 @@ fn fixture_projection_stores_aggregate_returned_future_call_result_edges() -> Re
 #[test]
 fn fixture_projection_stores_aggregate_forwarded_future_call_result_edges() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
-    let owner = function_id_by_name(
-        &db,
-        "call_stored_forwarded_returned_async_future_tuple_field",
-    )?;
-    let producer = function_id_by_name(&db, "make_forwarded_returned_async_future")?;
+    let cases = [
+        (
+            "call_stored_forwarded_returned_async_future_tuple_field",
+            "tests/fixture_crates/fixture_call_graph/src/lib.rs:2405-2407 `futures.0.await`",
+        ),
+        (
+            "call_aliased_stored_forwarded_returned_async_future_tuple_field",
+            "tests/fixture_crates/fixture_call_graph/src/lib.rs:2410-2413 `alias.0.await`",
+        ),
+    ];
 
-    // tests/fixture_crates/fixture_call_graph/src/lib.rs:2405-2407:
-    // `let futures = (make_forwarded_returned_async_future(),); futures.0.await`
-    // proves the aggregate slot is sourced by the awaited producer path-call
-    // result, without turning the returned future into a direct edge to the
-    // async closure body.
+    for (owner_name, source) in cases {
+        assert_forwarded_future_storage_binding(&db, owner_name, source)?;
+    }
+
+    Ok(())
+}
+
+fn assert_forwarded_future_storage_binding(
+    db: &ploke_db::Database,
+    owner_name: &str,
+    source: &str,
+) -> Result<(), DbError> {
+    let owner = function_id_by_name(db, owner_name)?;
+    let producer = function_id_by_name(db, "make_forwarded_returned_async_future")?;
+
+    // Source oracle: the awaited tuple slot is produced by
+    // `make_forwarded_returned_async_future()`. For the aliased case the poll
+    // point is visible only through `alias.0.await`, so this assertion proves
+    // one-hop aggregate alias tracking without admitting a traversal edge to
+    // the async closure body.
     let context = db.call_context_for_owner(owner)?;
     let producer_row = row_by_path(&context, &["make_forwarded_returned_async_future"]);
     assert_resolved_target(
@@ -1205,7 +1225,7 @@ fn fixture_projection_stores_aggregate_forwarded_future_call_result_edges() -> R
     assert_eq!(
         awaited_sites.len(),
         1,
-        "stored forwarded future should record exactly one awaited producer call: {awaited_sites:#?}"
+        "{owner_name} should record exactly one awaited producer call: {source}; {awaited_sites:#?}"
     );
     assert_eq!(awaited_sites[0].id, producer_row.site.id);
     assert_eq!(awaited_sites[0].kind, CallSiteKind::Path);
@@ -1218,7 +1238,7 @@ fn fixture_projection_stores_aggregate_forwarded_future_call_result_edges() -> R
     assert_eq!(
         matches.len(),
         1,
-        "stored forwarded future should expose one aggregate future binding: {bindings:#?}"
+        "{owner_name} should expose one aggregate future binding: {source}; {bindings:#?}"
     );
     let binding = matches[0];
     assert_eq!(binding.source_kind, "PathCallResult");
@@ -1239,7 +1259,7 @@ fn fixture_projection_stores_aggregate_forwarded_future_call_result_edges() -> R
     assert_eq!(
         binding_edges.len(),
         2,
-        "stored forwarded future binding should expose owner and source edges: {edges:#?}"
+        "{owner_name} forwarded future binding should expose owner and source edges: {edges:#?}"
     );
     assert!(
         binding_edges.iter().any(|edge| edge.relation
@@ -1247,7 +1267,7 @@ fn fixture_projection_stores_aggregate_forwarded_future_call_result_edges() -> R
             && edge.source_id == owner
             && edge.target_id == binding.id
             && edge.target_kind == "LocalBinding"),
-        "missing owner-to-forwarded-future binding edge: {binding_edges:#?}"
+        "missing owner-to-forwarded-future binding edge for {owner_name}: {binding_edges:#?}"
     );
     assert!(
         binding_edges.iter().any(|edge| edge.relation
@@ -1256,7 +1276,7 @@ fn fixture_projection_stores_aggregate_forwarded_future_call_result_edges() -> R
             && edge.target_id == producer_row.site.id
             && edge.source_kind == "LocalBinding"
             && edge.target_kind == "Path"),
-        "missing forwarded-future binding-to-path-call edge: {binding_edges:#?}"
+        "missing forwarded-future binding-to-path-call edge for {owner_name}: {binding_edges:#?}"
     );
 
     Ok(())
