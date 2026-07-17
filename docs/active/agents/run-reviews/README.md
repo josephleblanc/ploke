@@ -297,3 +297,8 @@ state without checking newer code, History records, and run artifacts.
   ripgrep targets versus gen-1 baseline, operational `keep` on 2209 same-file
   retry improvement, alternate-shape patches, test-expectation tampering on 2209,
   and no campaign blockers.
+- [`2026-07-16-p1-v13-walktargetfix-keeponly-g35f-oropenai-3g1x3-p3-20260716-214818-terminal-review.md`](2026-07-16-p1-v13-walktargetfix-keeponly-g35f-oropenai-3g1x3-p3-20260716-214818-terminal-review.md)
+  Terminal live-walk review proving the repaired R3-to-R14a controller path,
+  persistence-audit readiness, and correct rejected-child stop while preserving
+  the remaining multi-generation handoff, final-message projection, protocol
+  semantics, and candidate causal-attribution gaps.
