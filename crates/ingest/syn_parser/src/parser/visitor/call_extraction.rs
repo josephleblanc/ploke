@@ -463,6 +463,14 @@ impl BodyCallVisitor<'_> {
                 },
                 None => return,
             },
+            LocalBindingProof::TypedAmbiguous { type_path, .. } => {
+                if !self.binding_is_called(binding.name()) {
+                    return;
+                }
+                LocalBindingSource::Typed {
+                    type_path: type_path.clone(),
+                }
+            }
             LocalBindingProof::ValueAlias { source_path, .. } => LocalBindingSource::ValueAlias {
                 source_path: source_path.clone(),
             },
@@ -1577,6 +1585,12 @@ fn classify_path_callee(
                     init_paths: init_paths.clone(),
                 }
             }
+            LocalBindingProof::TypedAmbiguous { init_paths, .. } => {
+                PathCallCallee::AmbiguousInitializedValueBinding {
+                    path: path.to_vec(),
+                    init_paths: init_paths.clone(),
+                }
+            }
             LocalBindingProof::SelfField { field_path, .. } => PathCallCallee::SelfFieldBinding {
                 path: path.to_vec(),
                 field_path: field_path.clone(),
@@ -2097,7 +2111,7 @@ fn tuple_binding_proofs(
         return proofs;
     }
 
-    let typed = typed_tuple_binding_proofs(pat);
+    let typed = typed_tuple_binding_proofs(pat, init_expr, param_names, local_scopes);
     if !typed.is_empty() {
         return typed;
     }
@@ -2229,7 +2243,12 @@ fn direct_tuple_binding_proofs(
     )
 }
 
-fn typed_tuple_binding_proofs(pat: &syn::Pat) -> Vec<LocalBindingProof> {
+fn typed_tuple_binding_proofs(
+    pat: &syn::Pat,
+    init_expr: Option<&syn::Expr>,
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Vec<LocalBindingProof> {
     let syn::Pat::Type(typed) = pat else {
         return Vec::new();
     };
@@ -2243,19 +2262,112 @@ fn typed_tuple_binding_proofs(pat: &syn::Pat) -> Vec<LocalBindingProof> {
         return Vec::new();
     }
 
+    let init_paths = typed_tuple_match_position_init_paths(
+        init_expr,
+        pattern.elems.len(),
+        param_names,
+        local_scopes,
+    );
     pattern
         .elems
         .iter()
         .zip(tuple.elems.iter())
-        .filter_map(|(pat, ty)| {
+        .enumerate()
+        .filter_map(|(index, (pat, ty))| {
             let name = pat_ident_name(pat)?;
-            typed_local_type_path_segments(ty).map(|type_path| LocalBindingProof::Typed {
-                name,
-                type_path,
-                init_path: None,
-            })
+            let type_path = typed_local_type_path_segments(ty)?;
+            let paths = init_paths
+                .get(index)
+                .and_then(|paths| paths.as_ref())
+                .cloned()
+                .unwrap_or_default();
+            match paths.as_slice() {
+                [] => Some(LocalBindingProof::Typed {
+                    name,
+                    type_path,
+                    init_path: None,
+                }),
+                [init_path] => Some(LocalBindingProof::Typed {
+                    name,
+                    type_path,
+                    init_path: Some(init_path.clone()),
+                }),
+                _ => Some(LocalBindingProof::TypedAmbiguous {
+                    name,
+                    type_path,
+                    init_paths: paths,
+                }),
+            }
         })
         .collect()
+}
+
+fn typed_tuple_match_position_init_paths(
+    expr: Option<&syn::Expr>,
+    arity: usize,
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Vec<Option<Vec<Vec<String>>>> {
+    let Some(syn::Expr::Match(expr)) = expr.map(unparen_expr) else {
+        return vec![None; arity];
+    };
+
+    let mut positions = vec![Some(Vec::new()); arity];
+    for arm in &expr.arms {
+        let body = unparen_expr(arm.body.as_ref());
+        if is_diverging_empty_match(body) {
+            continue;
+        }
+        let syn::Expr::Tuple(tuple) = body else {
+            return vec![None; arity];
+        };
+        if tuple.elems.len() != arity {
+            return vec![None; arity];
+        }
+
+        for (index, slot) in positions.iter_mut().enumerate() {
+            let Some(paths) = slot else {
+                continue;
+            };
+            let Some(target) = tuple_position_init_path(tuple, index, param_names, local_scopes)
+            else {
+                *slot = None;
+                continue;
+            };
+            paths.push(target);
+        }
+    }
+
+    for slot in positions.iter_mut().flatten() {
+        slot.sort();
+        slot.dedup();
+        if slot.is_empty() {
+            *slot = Vec::new();
+        }
+    }
+    positions
+}
+
+fn tuple_position_init_path(
+    tuple: &syn::ExprTuple,
+    index: usize,
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<Vec<String>> {
+    let syn::Expr::Path(path) = unparen_expr(tuple.elems.get(index)?) else {
+        return None;
+    };
+    if path.qself.is_some() {
+        return None;
+    }
+    let path = path_segments(&path.path);
+    (!path.is_empty())
+        .then_some(path)
+        .and_then(|path| init_target_path(&path, param_names, local_scopes))
+}
+
+fn is_diverging_empty_match(expr: &syn::Expr) -> bool {
+    matches!(unparen_expr(expr), syn::Expr::Match(expr) if expr.arms.is_empty())
 }
 
 fn tuple_return_binding_proofs(
@@ -3275,6 +3387,7 @@ fn init_target_path(
             LocalBindingProof::Typed {
                 init_path: None, ..
             }
+            | LocalBindingProof::TypedAmbiguous { .. }
             | LocalBindingProof::TraitObject {
                 init_path: None, ..
             }

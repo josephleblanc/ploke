@@ -341,7 +341,7 @@ fn chrono_try_receiver_method_rows_resolve_option_ok_or_oracles() -> Result<(), 
 }
 
 #[test]
-fn chrono_parse_internal_function_pointer_match_tuple_binding_stays_targetless()
+fn chrono_parse_internal_function_pointer_match_tuple_binding_exposes_ambiguous_candidates()
 -> Result<(), DbError> {
     let db = setup_call_graph_db(&CORPUS_CHRONO_CALL_GRAPH)?;
 
@@ -355,19 +355,95 @@ fn chrono_parse_internal_function_pointer_match_tuple_binding_stays_targetless()
     //   whose tuple arms contain setter function and method items.
     //   chrono/src/format/parse.rs:421 calls `set(parsed, v)?`.
     //
-    // Current model gap: the parser preserves the `set(parsed, v)` callsite,
-    // but it does not yet carry per-position candidate evidence out of tuple
-    // match arms. The call therefore remains targetless instead of guessing
-    // which `Setter` branch flows to this invocation.
+    // Expected result: the parser preserves the per-position setter paths from
+    // the tuple match arms, but keeps the call ambiguous because the selected
+    // branch depends on the runtime `spec` value. This exposes finite candidate
+    // evidence without admitting a resolved traversal edge.
     let owner = function_id_by_name(&db, "parse_internal")?;
-    let site = assert_owner_path_targetless(
-        &db,
-        owner,
-        &["set"],
-        CallStatusKind::Unsupported,
-        "chrono/src/format/parse.rs:421 set(parsed, v)",
+    let target_label = "chrono/src/format/parse.rs:421 set(parsed, v)";
+    let context = db.call_context_for_owner(owner)?;
+    let rows = context
+        .iter()
+        .filter(|row| row.site.kind == CallSiteKind::Path && row.site.path == Some(path(&["set"])))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        rows.len(),
+        1,
+        "{target_label} should expose one ambiguous path-call row: {context:#?}"
     );
-    let site = site?;
+    let row = rows[0];
+    assert_eq!(row.status.status, CallStatusKind::Ambiguous);
+    assert_eq!(row.status.resolution, None);
+    assert_eq!(row.targets.len(), 21, "{target_label} candidates: {row:#?}");
+    assert_eq!(
+        relations_for_site(&db, row.site.id)?.rows.len(),
+        21,
+        "{target_label} should persist the finite reviewed candidate set"
+    );
+
+    let free_targets = [
+        function_id_by_name(&db, "set_weekday_with_num_days_from_sunday")?,
+        function_id_by_name(&db, "set_weekday_with_number_from_monday")?,
+    ];
+    for target in free_targets {
+        assert!(
+            row.targets.iter().any(|candidate| {
+                candidate.target_id == target
+                    && candidate.relation == CallRelationKind::Function
+                    && candidate.source_kind == CallSiteKind::Path
+                    && candidate.target_kind == CallTargetKind::Function
+            }),
+            "{target_label} should include the free setter function candidate {target}: {row:#?}"
+        );
+    }
+
+    for method in [
+        "set_year",
+        "set_year_div_100",
+        "set_year_mod_100",
+        "set_isoyear",
+        "set_isoyear_div_100",
+        "set_isoyear_mod_100",
+        "set_quarter",
+        "set_month",
+        "set_day",
+        "set_week_from_sun",
+        "set_week_from_mon",
+        "set_isoweek",
+        "set_ordinal",
+        "set_hour",
+        "set_hour12",
+        "set_minute",
+        "set_second",
+        "set_nanosecond",
+        "set_timestamp",
+    ] {
+        let target = method_id_by_impl_self_type_name(&db, "Parsed", method)?;
+        assert!(
+            row.targets.iter().any(|candidate| {
+                candidate.target_id == target
+                    && candidate.relation == CallRelationKind::AssociatedFunction
+                    && candidate.source_kind == CallSiteKind::Path
+                    && candidate.target_kind == CallTargetKind::Method
+            }),
+            "{target_label} should include Parsed::{method} as an associated-function candidate: {row:#?}"
+        );
+    }
+
+    let paths = db.call_paths_from_owner(
+        owner,
+        CallPathOptions {
+            max_depth: 1,
+            max_paths: 64,
+        },
+    )?;
+    assert!(
+        paths.iter().all(|path| path
+            .edges
+            .iter()
+            .all(|edge| edge.call_site_id != row.site.id)),
+        "{target_label} must remain outside resolved-only traversal paths: {paths:#?}"
+    );
 
     let bindings = db.local_bindings_for_owner(owner)?;
     assert!(
@@ -382,13 +458,6 @@ fn chrono_parse_internal_function_pointer_match_tuple_binding_stays_targetless()
         projected >= 2,
         "chrono parse_internal should project node-scoped proof rows for `set`: {projected}"
     );
-    assert_blocked_resolution_proof(
-        &db,
-        site,
-        "type_resolution_missing",
-        "src/format/parse.rs",
-        "chrono/src/format/parse.rs:421 set(parsed, v)",
-    )?;
 
     Ok(())
 }

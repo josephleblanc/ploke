@@ -4370,8 +4370,9 @@ async fn code_item_lookup_returns_chrono_parse_internal_typed_setter_binding_pay
     // Source oracle:
     //   chrono/src/format/parse.rs:378-421
     //   `parse_internal` binds typed tuple field `set: Setter` from a match
-    //   expression, then calls `set(parsed, v)?`. The call remains targetless;
-    //   the tool should still expose the typed local-binding proof frontier.
+    //   expression, then calls `set(parsed, v)?`. The call exposes finite
+    //   ambiguous setter candidates, and the tool should still expose the typed
+    //   local-binding proof frontier.
     assert_typed_setter_local_binding_payload(
         bindings,
         edges,

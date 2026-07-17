@@ -105,9 +105,9 @@ async fn local_bindings_exact_expose_chrono_parse_internal_typed_setter_frontier
     //   `(width, signed, set): (usize, bool, Setter)` from `match *spec`.
     //   chrono/src/format/parse.rs:421 calls `set(parsed, v)?`.
     //
-    // Contract: exact RAG exposes the typed `set` local-binding frontier while
-    // the callsite remains targetless until per-position match tuple and
-    // method-item target evidence exists.
+    // Contract: exact RAG exposes the typed `set` local-binding frontier. The
+    // callsite now carries finite ambiguous setter candidates, but still has no
+    // resolved traversal edge because runtime `spec` selects the match arm.
     let owner = function_id_by_name_body_and_file_suffix(
         &db,
         "parse_internal",

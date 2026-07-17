@@ -4599,8 +4599,8 @@ async fn code_item_edges_returns_chrono_parse_internal_typed_setter_binding_payl
         .expect("node_info.local_binding_edges array");
 
     // Same oracle as lookup: expose the typed `set: Setter` local-binding
-    // frontier without turning the targetless `set(parsed, v)?` call into a
-    // traversal edge.
+    // frontier while keeping the ambiguous `set(parsed, v)?` call out of
+    // resolved-only traversal paths.
     assert_typed_setter_local_binding_payload(
         bindings,
         edges,

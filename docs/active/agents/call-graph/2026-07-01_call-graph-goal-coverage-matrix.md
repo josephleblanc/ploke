@@ -3879,12 +3879,13 @@ chrono real-corpus typed setter blocker. The source oracle is
 `(width, signed, set): (usize, bool, Setter)` from a `match *spec` tuple, and
 calls `set(parsed, v)?`. Parser extraction preserves a typed `LetBinding`
 frontier for `set`, transform and DB decode persist it as
-`source_kind = "Typed"` with `source_path = ["Setter"]`, and proof projection
-records `type_resolution_missing` while the direct call remains targetless and
-`Unsupported`. DB, exact RAG, and exact `code_item_lookup` / `code_item_edges`
-tests expose that typed local-binding payload. This does not add per-position
-match tuple candidate flow, method-item target modeling, or a traversal edge
-from `set(parsed, v)?` to the setter functions.
+`source_kind = "Typed"` with `source_path = ["Setter"]`, and the direct call
+now preserves the finite ambiguous setter candidate set from the third tuple
+slot of the `match *spec` arms. DB, exact RAG, and exact `code_item_lookup` /
+`code_item_edges` tests expose that typed local-binding payload while the
+ambiguous call remains outside resolved-only traversal paths. This does not add
+runtime branch selection or a resolved traversal edge from `set(parsed, v)?` to
+one setter function.
 
 ## Parking Lot
 

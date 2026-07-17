@@ -25,6 +25,9 @@ pub(super) fn classify_method_receiver(
                 return match binding {
                     LocalBindingProof::Typed {
                         name, type_path, ..
+                    }
+                    | LocalBindingProof::TypedAmbiguous {
+                        name, type_path, ..
                     } => MethodCallReceiver::TypedLocalBinding {
                         name: name.clone(),
                         type_path: type_path.clone(),
@@ -247,6 +250,9 @@ fn borrowed_local_receiver(
         match binding {
             LocalBindingProof::Typed {
                 name, type_path, ..
+            }
+            | LocalBindingProof::TypedAmbiguous {
+                name, type_path, ..
             } => {
                 return Some(MethodCallReceiver::BorrowedTypedLocalBinding {
                     name: name.clone(),
@@ -347,6 +353,9 @@ fn local_field_receiver(
     if let Some(binding) = visible_local_binding(&name, local_scopes) {
         return match binding {
             LocalBindingProof::Typed {
+                name, type_path, ..
+            }
+            | LocalBindingProof::TypedAmbiguous {
                 name, type_path, ..
             } => Some(MethodCallReceiver::FieldTypedLocalBinding {
                 name: name.clone(),

@@ -76,6 +76,7 @@ pub(super) fn classify_dynamic_callee(
                     LocalBindingProof::Typed {
                         init_path: None, ..
                     }
+                    | LocalBindingProof::TypedAmbiguous { .. }
                     | LocalBindingProof::TraitObject { .. }
                     | LocalBindingProof::AmbiguousInitialized { .. }
                     | LocalBindingProof::SelfField { .. }
@@ -255,6 +256,7 @@ fn classify_dynamic_path_expr(
                 LocalBindingProof::Typed {
                     init_path: None, ..
                 }
+                | LocalBindingProof::TypedAmbiguous { .. }
                 | LocalBindingProof::TraitObject { .. }
                 | LocalBindingProof::AmbiguousInitialized { .. }
                 | LocalBindingProof::SelfField { .. }
@@ -569,6 +571,7 @@ fn dereferenced_local_binding_callee(
         LocalBindingProof::Typed {
             init_path: None, ..
         }
+        | LocalBindingProof::TypedAmbiguous { .. }
         | LocalBindingProof::TraitObject { .. }
         | LocalBindingProof::AmbiguousInitialized { .. }
         | LocalBindingProof::SelfField { .. }

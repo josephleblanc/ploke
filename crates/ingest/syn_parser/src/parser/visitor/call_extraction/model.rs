@@ -7,6 +7,11 @@ pub(super) enum LocalBindingProof {
         type_path: Vec<String>,
         init_path: Option<Vec<String>>,
     },
+    TypedAmbiguous {
+        name: String,
+        type_path: Vec<String>,
+        init_paths: Vec<Vec<String>>,
+    },
     TraitObject {
         name: String,
         trait_path: Vec<String>,
@@ -94,6 +99,7 @@ impl LocalBindingProof {
     pub(super) fn name(&self) -> &str {
         match self {
             Self::Typed { name, .. }
+            | Self::TypedAmbiguous { name, .. }
             | Self::TraitObject { name, .. }
             | Self::Initialized { name, .. }
             | Self::AmbiguousInitialized { name, .. }

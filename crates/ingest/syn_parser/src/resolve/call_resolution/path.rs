@@ -29,6 +29,21 @@ pub(super) enum ParameterCallResolution {
     Ambiguous(Vec<ParameterCallTarget>),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum InitializedCallableTarget {
+    Function(FunctionNodeId),
+    AssociatedFunction(MethodNodeId),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InitializedCallableResolution {
+    Resolved(InitializedCallableTarget),
+    External,
+    Unresolved,
+    Ambiguous,
+    Unsupported,
+}
+
 #[derive(Debug, Clone, Copy)]
 enum ParameterProof<'a> {
     Value,
@@ -111,11 +126,23 @@ impl CallRelationResolver<'_> {
                 return Ok(());
             }
             PathCallCallee::InitializedValueBinding { init_path, .. } => {
-                self.resolve_initialized_value_binding_call(call, init_path, relations, statuses)?;
+                self.resolve_initialized_value_binding_call(
+                    call,
+                    init_path,
+                    type_relations,
+                    relations,
+                    statuses,
+                )?;
                 return Ok(());
             }
             PathCallCallee::AmbiguousInitializedValueBinding { init_paths, .. } => {
-                self.resolve_ambiguous_init_call(call, init_paths, relations, statuses)?;
+                self.resolve_ambiguous_init_call(
+                    call,
+                    init_paths,
+                    type_relations,
+                    relations,
+                    statuses,
+                )?;
                 return Ok(());
             }
             PathCallCallee::SelfFieldBinding { field_path, .. } => {
@@ -280,34 +307,35 @@ impl CallRelationResolver<'_> {
         &self,
         call: &PathCallNode,
         init_path: &[String],
+        type_relations: &[TypeRelation],
         relations: &mut Vec<CallRelation>,
         statuses: &mut Vec<CallResolutionStatus>,
     ) -> Result<(), SynParserError> {
         let source = AnyCallSiteId::Path(call.id);
 
-        let Some(resolution) = self.resolve_initialized_path(call.owner, init_path)? else {
-            statuses.push(CallResolutionStatus::External { source });
-            return Ok(());
-        };
-
-        match resolution {
-            LocalFunctionPathResolution::Resolved(target) => {
-                relations.push(CallRelation::Function {
-                    source: call.id,
-                    target,
-                });
+        match self.resolve_initialized_callable_path(
+            call.owner,
+            init_path,
+            call.arg_count,
+            type_relations,
+        )? {
+            InitializedCallableResolution::Resolved(target) => {
+                push_initialized_callable_target(call, target, relations);
                 statuses.push(CallResolutionStatus::Resolved {
                     source,
                     kind: CallResolutionKind::LocalExact,
                 });
             }
-            LocalFunctionPathResolution::Unresolved => {
+            InitializedCallableResolution::External => {
+                statuses.push(CallResolutionStatus::External { source });
+            }
+            InitializedCallableResolution::Unresolved => {
                 statuses.push(CallResolutionStatus::Unresolved { source });
             }
-            LocalFunctionPathResolution::Ambiguous => {
+            InitializedCallableResolution::Ambiguous => {
                 statuses.push(CallResolutionStatus::Ambiguous { source });
             }
-            LocalFunctionPathResolution::Unsupported => {
+            InitializedCallableResolution::Unsupported => {
                 statuses.push(CallResolutionStatus::Unsupported { source });
             }
         }
@@ -319,6 +347,7 @@ impl CallRelationResolver<'_> {
         &self,
         call: &PathCallNode,
         init_paths: &[Vec<String>],
+        type_relations: &[TypeRelation],
         relations: &mut Vec<CallRelation>,
         statuses: &mut Vec<CallResolutionStatus>,
     ) -> Result<(), SynParserError> {
@@ -326,23 +355,24 @@ impl CallRelationResolver<'_> {
         let mut targets = Vec::new();
 
         for init_path in init_paths {
-            let Some(resolution) = self.resolve_initialized_path(call.owner, init_path)? else {
-                statuses.push(CallResolutionStatus::Unsupported { source });
-                return Ok(());
-            };
-
-            match resolution {
-                LocalFunctionPathResolution::Resolved(target) => targets.push(target),
-                LocalFunctionPathResolution::Unresolved => {
+            match self.resolve_initialized_callable_path(
+                call.owner,
+                init_path,
+                call.arg_count,
+                type_relations,
+            )? {
+                InitializedCallableResolution::Resolved(target) => targets.push(target),
+                InitializedCallableResolution::External
+                | InitializedCallableResolution::Unsupported => {
+                    statuses.push(CallResolutionStatus::Unsupported { source });
+                    return Ok(());
+                }
+                InitializedCallableResolution::Unresolved => {
                     statuses.push(CallResolutionStatus::Unresolved { source });
                     return Ok(());
                 }
-                LocalFunctionPathResolution::Ambiguous => {
+                InitializedCallableResolution::Ambiguous => {
                     statuses.push(CallResolutionStatus::Ambiguous { source });
-                    return Ok(());
-                }
-                LocalFunctionPathResolution::Unsupported => {
-                    statuses.push(CallResolutionStatus::Unsupported { source });
                     return Ok(());
                 }
             }
@@ -354,10 +384,7 @@ impl CallRelationResolver<'_> {
         match targets.as_slice() {
             [] => statuses.push(CallResolutionStatus::Unsupported { source }),
             [target] => {
-                relations.push(CallRelation::Function {
-                    source: call.id,
-                    target: *target,
-                });
+                push_initialized_callable_target(call, *target, relations);
                 statuses.push(CallResolutionStatus::Resolved {
                     source,
                     kind: CallResolutionKind::LocalExact,
@@ -365,10 +392,7 @@ impl CallRelationResolver<'_> {
             }
             _ => {
                 for target in targets {
-                    relations.push(CallRelation::Function {
-                        source: call.id,
-                        target,
-                    });
+                    push_initialized_callable_target(call, target, relations);
                 }
                 statuses.push(CallResolutionStatus::Ambiguous { source });
             }
@@ -377,13 +401,28 @@ impl CallRelationResolver<'_> {
         Ok(())
     }
 
-    fn resolve_initialized_path(
+    fn resolve_initialized_callable_path(
         &self,
         owner: CallBodyOwnerId,
         init_path: &[String],
-    ) -> Result<Option<LocalFunctionPathResolution>, SynParserError> {
+        arg_count: usize,
+        type_relations: &[TypeRelation],
+    ) -> Result<InitializedCallableResolution, SynParserError> {
         if self.is_external_path(init_path) || self.is_external_import_path(owner, init_path)? {
-            return Ok(None);
+            return Ok(InitializedCallableResolution::External);
+        }
+
+        if let Some(resolution) =
+            self.resolve_associated_function_path(owner, init_path, arg_count, type_relations)?
+        {
+            return Ok(match resolution {
+                AssocPathResolution::Resolved(target) => InitializedCallableResolution::Resolved(
+                    InitializedCallableTarget::AssociatedFunction(target),
+                ),
+                AssocPathResolution::Unresolved => InitializedCallableResolution::Unresolved,
+                AssocPathResolution::Ambiguous => InitializedCallableResolution::Ambiguous,
+                AssocPathResolution::Unsupported => InitializedCallableResolution::Unsupported,
+            });
         }
 
         let resolution = if self.is_unqualified_path(init_path) {
@@ -394,7 +433,14 @@ impl CallRelationResolver<'_> {
             self.resolve_implicit_local_function_path(owner, init_path)?
         };
 
-        Ok(Some(resolution))
+        Ok(match resolution {
+            LocalFunctionPathResolution::Resolved(target) => {
+                InitializedCallableResolution::Resolved(InitializedCallableTarget::Function(target))
+            }
+            LocalFunctionPathResolution::Unresolved => InitializedCallableResolution::Unresolved,
+            LocalFunctionPathResolution::Ambiguous => InitializedCallableResolution::Ambiguous,
+            LocalFunctionPathResolution::Unsupported => InitializedCallableResolution::Unsupported,
+        })
     }
 
     fn resolve_parameter_value_path_call(
@@ -458,6 +504,25 @@ fn push_path_parameter_resolution(
                 push_path_parameter_target(call, target, relations);
             }
             statuses.push(CallResolutionStatus::Ambiguous { source });
+        }
+    }
+}
+
+fn push_initialized_callable_target(
+    call: &PathCallNode,
+    target: InitializedCallableTarget,
+    relations: &mut Vec<CallRelation>,
+) {
+    match target {
+        InitializedCallableTarget::Function(target) => relations.push(CallRelation::Function {
+            source: call.id,
+            target,
+        }),
+        InitializedCallableTarget::AssociatedFunction(target) => {
+            relations.push(CallRelation::AssociatedFunction {
+                source: call.id,
+                target,
+            });
         }
     }
 }

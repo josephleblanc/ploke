@@ -210,7 +210,7 @@ impl Drop for FixtureRestoreGuard {
 | `corpus_generic_array_call_graph_2026-07-15.sqlite` | `github:fizyk20/generic-array@80bab87431c2e29823dc551a3311324812838a23` | plain corpus backup for real-target call graph query contracts | 2026-07-15 |
 | `corpus_generic_array_openrouter_embeddings_2026-05-17.sqlite` | `github:fizyk20/generic-array@80bab87431c2e29823dc551a3311324812838a23` | OpenRouter-searchable corpus backup for type-context matrix tests | 2026-05-17 |
 | `corpus_chrono_type_graph_2026-05-17.sqlite` | `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be` | typed graphRAG type traversal corpus backup | 2026-05-17 |
-| `corpus_chrono_call_graph_2026-07-15.sqlite` | `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be` | plain corpus backup for real-target call graph query contracts | 2026-07-15 |
+| `corpus_chrono_call_graph_2026-07-17.sqlite` | `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be` | plain corpus backup for real-target call graph query contracts | 2026-07-17 |
 | `corpus_chrono_openrouter_embeddings_2026-05-17.sqlite` | `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be` | OpenRouter-searchable corpus backup for type-context matrix tests | 2026-05-17 |
 | `corpus_axum_type_graph_2026-05-17.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | typed graphRAG workspace-member corpus backup for type-context matrix tests | 2026-05-17 |
 | `corpus_axum_call_graph_2026-07-16.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | plain workspace-member corpus backup for real-target call graph query contracts | 2026-07-16 |
@@ -232,7 +232,11 @@ after adding durable memchr `SelfFieldAssignment` /
 callee evidence for function-pointer parameters, field callable parameters, and
 same-parameter branch/match dynamic calls. The refresh was repeated again after
 adding the chrono `parse_internal` typed local-binding proof frontier; only the
-chrono committed seed artifact needed promotion for that latest slice.
+chrono committed seed artifact needed promotion for that slice. The chrono
+fixture was then recreated with
+`cargo run -p xtask --features call_graph -- recreate-backup-db --fixture corpus_chrono_call_graph`
+after preserving the finite ambiguous `Setter` match-tuple callable candidates
+for `set(parsed, v)?`.
 
 Post-regeneration verification:
 
@@ -262,14 +266,14 @@ Post-regeneration verification:
   passed against the exact tool payload surfaces.
 - `cargo test -p ploke-db --features call_graph real_target_matrix::fallback -- --nocapture`
   passed with 10 fallback real-target tests, including the chrono
-  `parse_internal` typed function-pointer tuple-binding blocker case.
+  `parse_internal` typed function-pointer tuple-binding candidate case.
 - Current committed seed checksums:
   - `corpus_memchr_call_graph_2026-07-15.sqlite`:
     `ae8bd8e7f382e381f8577a88c9a4cfa2cfe5c0303205531495aaf28af85b6371`
   - `corpus_generic_array_call_graph_2026-07-15.sqlite`:
     `8065e52d823decdc3eff493b02480c93cecf38dd2316c70c893cf9c2fa5b6c35`
-  - `corpus_chrono_call_graph_2026-07-15.sqlite`:
-    `19e61239a1638f5254d35140267dd5b9f24f868466f1fda975f4540f4cface57`
+  - `corpus_chrono_call_graph_2026-07-17.sqlite`:
+    `87f2aa5d6907b0f69f26e2d3eb9f69dd0a1490c37e6d06c559ed4e05d8f147d7`
   - `corpus_axum_call_graph_2026-07-16.sqlite`:
     `9491a9fa0e4efec9fed4c06f11143fb117968c398e24df43fca5f162acf86aea`
 
@@ -1423,10 +1427,10 @@ Expected searchable corpus embedding config:
   - traversal from `MappedLocalTime<T>` aliases to `LocalResult<T>`
   - later traversal from timezone API owners into their generic result model
 
-### `corpus_chrono_call_graph_2026-07-15.sqlite`
+### `corpus_chrono_call_graph_2026-07-17.sqlite`
 
 - Status: active
-- File: `tests/backup_dbs/corpus_chrono_call_graph_2026-07-15.sqlite`
+- File: `tests/backup_dbs/corpus_chrono_call_graph_2026-07-17.sqlite`
 - Parsed target: `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be`
 - Checkout slug: `tests/fixture_github_clones/corpus/chronotope__chrono`
 - Expected DB config:
@@ -1436,7 +1440,19 @@ Expected searchable corpus embedding config:
   - call graph relations projected from the current parser/transform baseline
 - Tests using this fixture:
   - real-target call graph matrix rows for resolved alias constructors, try
-    receivers, and guarded match-arm external slice receiver frontier calls
+    receivers, guarded match-arm external slice receiver frontier calls, and
+    ambiguous typed `Setter` match-tuple callable candidates in
+    `chrono/src/format/parse.rs`
+
+## 2026-07-17 Chrono Typed Setter Match-Tuple Candidate Refresh
+
+- Command: `cargo run -p xtask --features call_graph -- recreate-backup-db --fixture corpus_chrono_call_graph`
+- Shared snapshot: `~/.config/ploke/db_snapshot_fixtures/corpus_chrono_call_graph_2026-07-17.sqlite`
+- Seed artifact: `tests/backup_dbs/corpus_chrono_call_graph_2026-07-17.sqlite`
+- Change covered: `chrono/src/format/parse.rs:378-421` now preserves the
+  typed `Setter` tuple binding and the finite ambiguous candidate set from the
+  third tuple slot of the `match *spec` arms while keeping `set(parsed, v)?`
+  out of resolved-only traversal paths.
 
 ## 2026-07-07 Chrono Option ok_or Try Receiver Refresh
 

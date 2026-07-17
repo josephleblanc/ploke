@@ -537,24 +537,24 @@ Aliased stored forwarded-future checkpoint, 2026-07-17:
   `parse_internal` defines `type Setter = fn(&mut Parsed, i64) ->
   ParseResult<()>`, binds `(width, signed, set): (usize, bool, Setter)` from a
   `match *spec` tuple, then calls `set(parsed, v)?`.
-- Expected result: explicit blocker, not a resolved traversal edge. The direct
-  `set(...)` row remains targetless with `Unsupported` status, while
-  `local_binding` preserves a typed `LetBinding` proof frontier for `set` and
-  proof-fact projection records `type_resolution_missing`.
-- Reason for stopping at the blocker: the match tuple arms mix associated
+- Expected result: ambiguous finite candidates, not a resolved traversal edge.
+  The direct `set(...)` row records every setter candidate visible in the third
+  tuple slot of the `match *spec` arms, while `local_binding` preserves a typed
+  `LetBinding` proof frontier for `set`.
+- Reason for stopping before traversal: the match tuple arms mix associated
   method items such as `Parsed::set_year` with free function items such as
-  `set_weekday_with_num_days_from_monday`. Promoting this to candidates needs a
-  separate typed per-position match tuple model and method-item target model.
+  `set_weekday_with_num_days_from_monday`, and runtime `spec` selects which
+  candidate is called.
 - Verification: active fixtures were regenerated with
   `cargo run -p xtask --features call_graph -- fixtures regenerate --active`,
   the chrono committed seed was promoted, registry-backed backup verification
   passed, and
   `cargo test -p ploke-db --features call_graph real_target_matrix::fallback -- --nocapture`
-  passed with the new chrono fallback case included. Exact RAG
+  passed with the new chrono fallback candidate case included. Exact RAG
   `local_bindings_exact_expose_chrono_parse_internal_typed_setter_frontier`
   and exact `code_item_lookup` / `code_item_edges` typed-setter payload tests
   also pass, proving the typed frontier is exposed downstream without promoting
-  the targetless call into a traversal edge.
+  the ambiguous call into a traversal edge.
 
 Post-regeneration source-oracle audit, 2026-07-17:
 
