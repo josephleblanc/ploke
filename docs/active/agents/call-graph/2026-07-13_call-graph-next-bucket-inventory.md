@@ -550,7 +550,11 @@ Aliased stored forwarded-future checkpoint, 2026-07-17:
   the chrono committed seed was promoted, registry-backed backup verification
   passed, and
   `cargo test -p ploke-db --features call_graph real_target_matrix::fallback -- --nocapture`
-  passed with the new chrono fallback case included.
+  passed with the new chrono fallback case included. Exact RAG
+  `local_bindings_exact_expose_chrono_parse_internal_typed_setter_frontier`
+  and exact `code_item_lookup` / `code_item_edges` typed-setter payload tests
+  also pass, proving the typed frontier is exposed downstream without promoting
+  the targetless call into a traversal edge.
 
 Post-regeneration source-oracle audit, 2026-07-17:
 

@@ -3872,6 +3872,20 @@ forwarded-future owners. This does not add general aggregate alias analysis,
 interprocedural future flow, async callable trait-object dispatch, or a
 poll/resume traversal edge.
 
+Update 2026-07-17: the callable binding frontier bucket now includes the
+chrono real-corpus typed setter blocker. The source oracle is
+`chrono/src/format/parse.rs:378-421`, where `parse_internal` defines
+`type Setter = fn(&mut Parsed, i64) -> ParseResult<()>`, binds
+`(width, signed, set): (usize, bool, Setter)` from a `match *spec` tuple, and
+calls `set(parsed, v)?`. Parser extraction preserves a typed `LetBinding`
+frontier for `set`, transform and DB decode persist it as
+`source_kind = "Typed"` with `source_path = ["Setter"]`, and proof projection
+records `type_resolution_missing` while the direct call remains targetless and
+`Unsupported`. DB, exact RAG, and exact `code_item_lookup` / `code_item_edges`
+tests expose that typed local-binding payload. This does not add per-position
+match tuple candidate flow, method-item target modeling, or a traversal edge
+from `set(parsed, v)?` to the setter functions.
+
 ## Parking Lot
 
 - Add binding tracking plan that ties syntax body ownership, local bindings, and type graph edges before attempting receiver/dynamic traversal.
