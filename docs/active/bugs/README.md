@@ -214,3 +214,7 @@ file and current code before treating a report as still open.
   Source repaired, live validation pending: a bounded walk now returns as soon
   as its committed edge reaches the requested target instead of claiming the
   transferred successor session a second time.
+- [`2026-07-16-prototype1-post-edit-indexer-stall.md`](./2026-07-16-prototype1-post-edit-indexer-stall.md)
+  Source repaired, live validation pending: an unbounded post-edit scan barrier
+  left one broad lane and the R7-to-R8 walk edge nonterminal while the server
+  remained CPU- and memory-hot; v14 is preserved as abandoned evidence.

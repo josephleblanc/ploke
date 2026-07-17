@@ -132,13 +132,13 @@ use super::harness_request::{EvidenceRoot, EvidenceRootKind, EvidenceRootLocatio
 #[cfg(test)]
 pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) use tui_bridge::{
     AppliedItem, AttemptEnd, Candidate, LiveObserver, StagedItem, ToolBatch, attempt_prompt,
-    classify_applied_terminal, classify_paths, command_display_matches, contract_cargo_args,
-    drain_response_records, evidence_read_roots, next_event, policy_repair_prompt,
-    provider_failure_from_message, provider_unavailable_reason, record_batch_terminal,
-    record_post_approval_indeterminate, retry_feedback, run_attempt, select_disjoint,
-    sparse_search_refresh_enabled, start_attempt_runtime, submit_prompt, terminal_ids,
-    timeout_terminal_for_run, turn_aborted_after_apply_terminal, validation_command_display,
-    wait_for_refresh,
+    await_scan_barrier, classify_applied_terminal, classify_paths, command_display_matches,
+    contract_cargo_args, drain_response_records, evidence_read_roots, next_event,
+    policy_repair_prompt, provider_failure_from_message, provider_unavailable_reason,
+    record_batch_terminal, record_post_approval_indeterminate, retry_feedback, run_attempt,
+    select_disjoint, sparse_search_refresh_enabled, start_attempt_runtime, submit_prompt,
+    terminal_ids, timeout_terminal_for_run, turn_aborted_after_apply_terminal,
+    validation_command_display, wait_for_refresh,
 };
 
 #[cfg(test)]

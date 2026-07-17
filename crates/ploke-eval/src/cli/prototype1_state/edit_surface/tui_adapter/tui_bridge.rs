@@ -1438,9 +1438,7 @@ pub(super) async fn wait_for_refresh(
     );
 
     let scan_wait_started = Instant::now();
-    let changed = scan_rx
-        .await
-        .map_err(|source| Error::HeadlessEvent(format!("scan barrier failed: {source}")))?;
+    let changed = await_scan_barrier(scan_rx, deadline).await?;
     let scan_wait_ms = scan_wait_started.elapsed().as_millis() as u64;
     runtime.app.pump_pending_events().await;
     tracing::info!(
@@ -1495,6 +1493,27 @@ pub(super) async fn wait_for_refresh(
         timeouts,
     )
     .await
+}
+
+pub(super) async fn await_scan_barrier(
+    scan_rx: oneshot::Receiver<Option<Vec<PathBuf>>>,
+    deadline: Instant,
+) -> Result<Option<Vec<PathBuf>>, Error> {
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        return Err(Error::HeadlessEvent(
+            "timed out waiting for scan barrier before post-apply refresh deadline".to_string(),
+        ));
+    }
+
+    tokio::time::timeout(remaining, scan_rx)
+        .await
+        .map_err(|_| {
+            Error::HeadlessEvent(
+                "timed out waiting for scan barrier before post-apply refresh deadline".to_string(),
+            )
+        })?
+        .map_err(|source| Error::HeadlessEvent(format!("scan barrier failed: {source}")))
 }
 
 async fn wait_for_sparse_search_refresh(

@@ -659,6 +659,27 @@ fn sparse_post_apply_refresh_gate_uses_sparse_search_config() {
     ));
 }
 
+#[tokio::test]
+async fn scan_barrier_times_out() {
+    let (_scan_tx, scan_rx) = tokio::sync::oneshot::channel();
+    let deadline = std::time::Instant::now() + Duration::from_millis(20);
+
+    let error = tokio::time::timeout(
+        Duration::from_millis(250),
+        await_scan_barrier(scan_rx, deadline),
+    )
+    .await
+    .expect("scan barrier must honor the refresh deadline")
+    .expect_err("an unresolved scan barrier must time out");
+
+    assert!(
+        error
+            .to_string()
+            .contains("timed out waiting for scan barrier"),
+        "unexpected scan barrier error: {error}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn sparse_post_apply_refresh_returns_on_bm25_without_dense_index_completion() {
     let _recorded_replay_guard = recorded_replay_test_mutex().lock().await;
