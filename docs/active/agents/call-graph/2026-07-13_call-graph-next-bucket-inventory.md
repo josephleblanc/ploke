@@ -659,6 +659,28 @@ Post-returned-boxed-callable fixture checkpoint, 2026-07-17:
   the correct action is verification or handoff, not another same-family
   fixture, targetless-proof, or resolver-breadth slice.
 
+Workspace-import candidate audit, 2026-07-17:
+
+- Rechecked the workspace dependency-root/import bucket against the registered
+  axum call-graph fixture and pinned `tokio-rs/axum` source checkout. The
+  visible candidate families found in source are already represented by
+  existing matrix rows:
+  `RequestExt` / `RequestPartsExt`, `Body::empty`, `Body::new`,
+  `Error::new`, generated `IntoResponse` rejection impls, `FromRequest` /
+  `FromRequestParts`, `Router::new`, and `TestClient::new`.
+- Existing DB/RAG/TUI coverage already proves the useful resolved rows or
+  targetless frontiers for those families: generated `Body::from ->
+  Body::new`, `Error::new(error).into()` as an external impl-Trait frontier,
+  the `RequestExt::extract -> extract_with_state -> FromRequest::from_request`
+  path, the `RequestPartsExt for Parts` local receiver row, dependency-root
+  proof for `FromRef`, `Router::new`, `TestClient::new`, and direct plus
+  re-exported `Body::empty` rows.
+- No fresh workspace-import source oracle in this pass met the implementation
+  entry criterion of “resolved edge that needs a new explicit proof-authority
+  row.” Do not spend another slice on this bucket unless the candidate is
+  neither one of the families above nor covered by the current dependency-root
+  proof rows.
+
 ## Do Not Reselect Without New Evidence
 
 - Public callable parameters and public callable fields that lack complete
