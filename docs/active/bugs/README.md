@@ -206,3 +206,7 @@ file and current code before treating a report as still open.
   Source repaired: a broad-only session guard now stops one-tool no-progress
   loops after 15 calls, but only after the threshold batch and terminal trace
   settle; checked-in R2 replay coverage is active in the normal test suite.
+- [`2026-07-16-prototype1-r12-policy-stop-routing.md`](./2026-07-16-prototype1-r12-policy-stop-routing.md)
+  Source repaired, live validation pending: R12 policy stops now route from the
+  continuation disposition instead of treating selected-candidate evidence as
+  successor-handoff authority.

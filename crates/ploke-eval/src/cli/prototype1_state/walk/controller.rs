@@ -1653,19 +1653,13 @@ impl WalkController {
         }
         let from = self.phase();
         let branch_step = until.is_none() && allow_live_api && self.phase() == WalkPhase::R10;
-        let r12_selected =
-            matches!(&self.state, WalkState::R12(r12) if r12.has_successor_selection());
-        let target = until.unwrap_or_else(|| {
-            if allow_live_api && self.phase() == WalkPhase::R7 {
-                WalkPhase::R8
-            } else if r12_selected {
-                WalkPhase::R13b
-            } else {
-                self.phase().next().unwrap_or(self.phase())
-            }
-        });
-        ensure_supported_target(target)?;
-        self.ensure_branch_target(target)?;
+        let r12_handoff = match &self.state {
+            WalkState::R12(r12) => r12
+                .preview_continuation()?
+                .is_some_and(|decision| decision.disposition.allows_successor()),
+            _ => false,
+        };
+        let target = step_target(self.phase(), until, allow_live_api, r12_handoff)?;
         let (transitions, version) = if until.is_none() && self.phase() == target && !branch_step {
             let (transition, version) = self
                 .step_once(allow_live_api, allow_git_changes, expected)
@@ -1700,27 +1694,6 @@ impl WalkController {
         };
         self.last_delta = Some(report.clone());
         Ok(report)
-    }
-
-    fn ensure_branch_target(&self, target: WalkPhase) -> Result<(), PrepareError> {
-        if let WalkState::R12(r12) = &self.state {
-            let selected = r12.has_successor_selection();
-            if selected && matches!(target, WalkPhase::R13a | WalkPhase::R14a) {
-                return Err(PrepareError::InvalidBatchSelection {
-                    detail: format!(
-                        "target {target} is the stopped/no-selection branch, but R12 has selected-successor evidence; use --until r13b or --until r14b with --allow git-changes"
-                    ),
-                });
-            }
-            if !selected && matches!(target, WalkPhase::R13b | WalkPhase::R13c | WalkPhase::R14b) {
-                return Err(PrepareError::InvalidBatchSelection {
-                    detail: format!(
-                        "target {target} is the successor-handoff branch, but R12 has no selected-successor evidence; use --until r13a or --until r14a"
-                    ),
-                });
-            }
-        }
-        Ok(())
     }
 
     pub(crate) fn refresh_from_disk(&mut self) -> Result<(), PrepareError> {
@@ -2327,6 +2300,64 @@ fn ensure_supported_target(target: WalkPhase) -> Result<(), PrepareError> {
             detail: format!("walk target {target} is not supported by the current server slice"),
         })
     }
+}
+
+fn step_target(
+    phase: WalkPhase,
+    until: Option<WalkPhase>,
+    allow_live_api: bool,
+    r12_handoff: bool,
+) -> Result<WalkPhase, PrepareError> {
+    let target = until.unwrap_or_else(|| {
+        if allow_live_api && phase == WalkPhase::R7 {
+            WalkPhase::R8
+        } else if r12_handoff {
+            WalkPhase::R13b
+        } else {
+            phase.next().unwrap_or(phase)
+        }
+    });
+    ensure_supported_target(target)?;
+    ensure_branch_target(phase, target, r12_handoff)?;
+    Ok(target)
+}
+
+fn ensure_branch_target(
+    phase: WalkPhase,
+    target: WalkPhase,
+    r12_handoff: bool,
+) -> Result<(), PrepareError> {
+    if phase == WalkPhase::R12 {
+        if r12_handoff && matches!(target, WalkPhase::R13a | WalkPhase::R14a) {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "target {target} is the stopped branch, but the R12 continuation authorizes successor handoff; use --until r13b or --until r14b with --allow git-changes"
+                ),
+            });
+        }
+        if !r12_handoff && matches!(target, WalkPhase::R13b | WalkPhase::R13c | WalkPhase::R14b) {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "target {target} is the successor-handoff branch, but the R12 continuation does not authorize handoff; use --until r13a or --until r14a"
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+pub(crate) fn test_r12_target(
+    r12: &typestate::R12<
+        crate::cli::prototype1_state::cli_facing::Prototype1StateRunShape,
+        crate::ResolvedCampaignConfig,
+    >,
+    until: Option<WalkPhase>,
+) -> Result<WalkPhase, PrepareError> {
+    let handoff = r12
+        .preview_continuation()?
+        .is_some_and(|decision| decision.disposition.allows_successor());
+    step_target(WalkPhase::R12, until, false, handoff)
 }
 
 fn push_changes(lines: &mut Vec<String>, from: WalkPhase, to: WalkPhase, label: &str) {

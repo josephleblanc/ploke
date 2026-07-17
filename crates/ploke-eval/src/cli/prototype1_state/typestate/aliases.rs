@@ -1387,6 +1387,14 @@ impl<RunShape, CampaignConfig> R12<RunShape, CampaignConfig> {
     pub(crate) fn has_successor_selection(&self) -> bool {
         self.context.state().has_successor_selection()
     }
+
+    pub(crate) fn preview_continuation(
+        &self,
+    ) -> Result<Option<Prototype1ContinuationDecision>, crate::spec::PrepareError> {
+        self.context
+            .state()
+            .preview_continuation(self.role.identity())
+    }
 }
 
 // ANCHOR: prototype1_alias_r13a_stopped

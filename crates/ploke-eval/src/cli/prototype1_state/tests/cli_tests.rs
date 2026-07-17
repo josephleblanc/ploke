@@ -371,6 +371,20 @@ fn successor_decision_for(node: &Prototype1NodeRecord) -> SuccessorDecision {
     }
 }
 
+fn persisted_continuation_decision(
+    manifest_path: &Path,
+    parent: &ParentIdentity,
+    policy: &Prototype1SearchPolicy,
+    decision: &SuccessorDecision,
+    material: &SelectionSealMaterial,
+    node: &Prototype1NodeRecord,
+) -> Result<Prototype1ContinuationDecision, PrepareError> {
+    let continuation =
+        preview_successor_continuation(manifest_path, parent, policy, decision, material, node)?;
+    record_continuation_decision(manifest_path, parent, &continuation)?;
+    Ok(continuation)
+}
+
 #[test]
 fn historical_selection_can_continue_when_unspent_and_bounded() {
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -387,7 +401,7 @@ fn historical_selection_can_continue_when_unspent_and_bounded() {
         max_total_nodes: 96,
         ..Prototype1SearchPolicy::default()
     };
-    let decision = live_successor_continuation_decision(
+    let decision = persisted_continuation_decision(
         &manifest_path,
         &parent,
         &policy,
@@ -422,7 +436,7 @@ fn historical_selection_allows_archive_parent_revisit() {
         ..Prototype1SearchPolicy::default()
     };
 
-    let decision = live_successor_continuation_decision(
+    let decision = persisted_continuation_decision(
         &manifest_path,
         &parent,
         &policy,
@@ -461,7 +475,7 @@ fn historical_selection_rejects_already_active_parent_cycle() {
         ..Prototype1SearchPolicy::default()
     };
 
-    let decision = live_successor_continuation_decision(
+    let decision = persisted_continuation_decision(
         &manifest_path,
         &parent,
         &policy,
@@ -500,7 +514,7 @@ fn continuation_decision_mirrors_owned_eval_store_row_without_successor_authorit
         ..Prototype1SearchPolicy::default()
     };
 
-    let decision = live_successor_continuation_decision(
+    let decision = persisted_continuation_decision(
         &manifest_path,
         &parent,
         &policy,
@@ -631,7 +645,7 @@ fn historical_selection_rejects_exhausted_parent_turn_budget() {
         ..Prototype1SearchPolicy::default()
     };
 
-    let decision = live_successor_continuation_decision(
+    let decision = persisted_continuation_decision(
         &manifest_path,
         &parent,
         &policy,
@@ -664,7 +678,7 @@ fn generation_cap_stops_direct_child_handoff_at_max_generation() {
         ..Prototype1SearchPolicy::default()
     };
 
-    let decision = live_successor_continuation_decision(
+    let decision = persisted_continuation_decision(
         &manifest_path,
         &parent,
         &policy,
@@ -8993,6 +9007,535 @@ fn test_completed_outcome(
         artifact_surface: Some(ArtifactSurface::test(&node.node_id)),
         node,
     }
+}
+
+#[tokio::test]
+async fn r12_reject_replay() {
+    const NODE_ID: &str = "node-cb1b41e21e01ddc7";
+    const BRANCH_ID: &str = "branch-aef83be6f4105a58";
+
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("src/tests/fixtures/prototype1-r12-selected-reject-20260716");
+    let profile_text =
+        fs::read_to_string(fixture.join("run-profile.toml")).expect("read historical run profile");
+    let profile: profile::Prototype1RunProfile =
+        toml::from_str(&profile_text).expect("parse historical run profile");
+    profile
+        .validate()
+        .expect("historical profile remains valid");
+    assert!(profile.search.require_keep_for_continuation);
+    assert!(!profile.search.explore_from_rejected);
+    let commitment: serde_json::Value = json_fixture(
+        &fs::read_to_string(fixture.join("run-profile.commitment.json"))
+            .expect("read historical profile commitment"),
+    );
+    let profile_hash = format!("{:x}", Sha256::digest(profile_text.as_bytes()));
+    assert_eq!(commitment["sha256"], profile_hash);
+    assert_eq!(
+        profile_hash,
+        "7a92bef48096e563b4b1287207a006b320029f0bf88ca5314caa102900340275"
+    );
+
+    let parent: ParentIdentity = json_fixture(
+        &fs::read_to_string(fixture.join("parent_identity.json"))
+            .expect("read historical parent identity"),
+    );
+    assert_eq!(parent.node_id(), "node-802e115bdf749c6d");
+    assert_eq!(parent.generation(), 0);
+
+    let temp = tempfile::tempdir().expect("historical R12 replay tempdir");
+    let manifest_path = temp.path().join("campaign.json");
+    fs::copy(fixture.join("campaign.json"), &manifest_path)
+        .expect("stage historical campaign manifest");
+    let repo_root = temp.path().join("repo");
+    init_indexed_repo(&repo_root);
+    write_surface_target(
+        &repo_root,
+        Path::new("README.md"),
+        "historical R12 replay\n",
+    );
+    index_repo(&repo_root);
+    commit_indexed_repo(&repo_root, "historical R12 replay");
+
+    let control = crate::cli::prototype1_state::session::Store::new(temp.path().join("control"));
+    let control_path = control.paths(&parent).journal().to_path_buf();
+    fs::create_dir_all(control_path.parent().expect("control journal parent"))
+        .expect("create control journal directory");
+    fs::copy(fixture.join("control-journal.jsonl"), &control_path)
+        .expect("stage historical control journal");
+    let epoch = crate::cli::prototype1_state::walk::epoch::ServerEpoch::capture(&repo_root)
+        .expect("capture replay epoch");
+    let control_history = control
+        .inspect_history(&parent, epoch)
+        .expect("replay historical controller journal")
+        .expect("historical controller session exists");
+    assert!(control_history.damage.is_none());
+    assert_eq!(control_history.version.phase(), WalkPhase::R12);
+    assert!(control_history.events.iter().any(|event| {
+        matches!(
+            event.kind,
+            crate::cli::prototype1_state::walk::protocol::WalkSessionEventKind::Acquired {
+                fence: 19,
+                ..
+            }
+        )
+    }));
+    assert!(!control_history.events.iter().any(|event| {
+        matches!(
+            event.kind,
+            crate::cli::prototype1_state::walk::protocol::WalkSessionEventKind::AttemptBegan {
+                fence: 19,
+                ..
+            }
+        )
+    }));
+
+    let journal_path = prototype1_transition_journal_path(&manifest_path);
+    fs::create_dir_all(journal_path.parent().expect("transition journal parent"))
+        .expect("create transition journal directory");
+    fs::copy(fixture.join("transition-journal.jsonl"), &journal_path)
+        .expect("stage historical transition journal");
+    let journal = PrototypeJournal::new(&journal_path);
+    let journal_before = journal
+        .load_entries()
+        .expect("load historical transition journal");
+
+    let child_plan_path = child_plan_message_path_for_parent(&manifest_path, &parent);
+    fs::create_dir_all(child_plan_path.parent().expect("child plan parent"))
+        .expect("create child plan directory");
+    let mut child_plan_json: serde_json::Value = json_fixture(
+        &fs::read_to_string(fixture.join("child-plan-node-802e115bdf749c6d.json"))
+            .expect("read historical child plan fixture"),
+    );
+    child_plan_json["message"] = serde_json::Value::String(
+        child_plan_path
+            .to_str()
+            .expect("temporary child plan path is UTF-8")
+            .to_string(),
+    );
+    fs::write(
+        &child_plan_path,
+        serde_json::to_vec_pretty(&child_plan_json).expect("serialize re-homed child plan"),
+    )
+    .expect("stage historical child plan");
+    let child_plan: ChildPlanFiles = json_fixture(
+        &fs::read_to_string(&child_plan_path).expect("read staged historical child plan"),
+    );
+    let (plan_index, child) = child_plan
+        .children()
+        .iter()
+        .enumerate()
+        .find(|(_, child)| child.node_id() == NODE_ID)
+        .expect("historical selected child plan entry");
+
+    let load_parent = || {
+        let unchecked = Parent::<Unchecked>::load(&manifest_path, parent.clone())
+            .expect("load historical parent");
+        let checked = unchecked
+            .check(
+                &NoopBackend,
+                &manifest_path,
+                Check {
+                    campaign_id: parent.campaign_id(),
+                    active_root: &repo_root,
+                },
+            )
+            .expect("check historical parent");
+        let startup = Startup::<Genesis>::from_history(checked.identity(), &manifest_path)
+            .expect("historical genesis startup");
+        let ready = checked.ready(startup).expect("historical parent ready");
+        load_existing_child_plan_for_id(parent.campaign_id(), &manifest_path, ready)
+            .expect("replay historical child plan authority")
+            .parent
+    };
+    let planned_parent = load_parent();
+    let denied_parent = load_parent();
+
+    let mut node: Prototype1NodeRecord = json_fixture(
+        &fs::read_to_string(fixture.join("child-node.json")).expect("read historical child node"),
+    );
+    let node_dir = manifest_path
+        .parent()
+        .expect("manifest parent")
+        .join("prototype1/nodes")
+        .join(NODE_ID);
+    node.node_dir = node_dir.clone();
+    node.workspace_root = temp.path().join("candidate");
+    node.binary_path = node_dir.join("bin/ploke-eval");
+    node.runner_request_path = node_dir.join("runner-request.json");
+    node.runner_result_path = node_dir.join("runner-result.json");
+    fs::create_dir_all(&node_dir).expect("create historical child node directory");
+    fs::write(
+        crate::intervention::prototype1_node_record_path(&manifest_path, NODE_ID),
+        serde_json::to_vec_pretty(&node).expect("serialize re-homed historical node"),
+    )
+    .expect("stage historical child node");
+
+    let runner_result: Prototype1RunnerResult = json_fixture(
+        &fs::read_to_string(fixture.join("child-runner-result.json"))
+            .expect("read historical runner result"),
+    );
+    assert_eq!(runner_result.node_id, node.node_id);
+    assert_eq!(runner_result.branch_id, node.branch_id);
+    fs::copy(
+        fixture.join("child-runner-result.json"),
+        &node.runner_result_path,
+    )
+    .expect("stage historical runner result");
+
+    let report: Prototype1BranchEvaluationReport = json_fixture(
+        &fs::read_to_string(fixture.join("branch-aef83be6f4105a58.evaluation.json"))
+            .expect("read historical branch evaluation"),
+    );
+    assert_eq!(report.branch_id, BRANCH_ID);
+    assert_eq!(report.overall_disposition, BranchDisposition::Reject);
+
+    let terminal = fs::read_to_string(fixture.join("child-to-parent.jsonl"))
+        .expect("read historical child channel")
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            serde_json::from_str::<
+                crate::cli::prototype1_state::channel::Envelope<
+                    crate::cli::prototype1_state::channel::ToParent,
+                >,
+            >(line)
+            .expect("historical child channel envelope")
+        })
+        .find_map(|envelope| match envelope.body() {
+            crate::cli::prototype1_state::channel::ToParent::Result {
+                runner_result,
+                treatment,
+            } => Some((
+                envelope.runtime_id().to_string(),
+                runner_result.clone(),
+                treatment.clone(),
+            )),
+            _ => None,
+        })
+        .expect("historical child terminal result");
+    assert_eq!(terminal.1, runner_result);
+    let terminal_body = crate::cli::prototype1_state::channel::ToParent::Result {
+        runner_result: terminal.1.clone(),
+        treatment: terminal.2,
+    };
+    let channel_evidence = ChildChannelEvidenceRefs {
+        runtime_id: terminal.0.clone(),
+        terminal_result: SealedEvidenceCitation {
+            ref_id: format!(
+                "channel:child-to-parent:terminal-result:{NODE_ID}:{}",
+                terminal.0
+            ),
+            content_hash: Some(
+                HistoryHash::of_domain_json(
+                    "prototype1.history.child_channel_terminal_result.v1",
+                    &terminal_body,
+                )
+                .expect("historical terminal channel hash"),
+            ),
+            record_name: Some(CHILD_CHANNEL_TERMINAL_RESULT_RECORD.to_string()),
+        },
+        attempt_result: Some(SealedEvidenceCitation {
+            ref_id: format!("child-store:attempt-runner-result:{NODE_ID}:{}", terminal.0),
+            content_hash: Some(
+                HistoryHash::of_domain_json(
+                    "prototype1.history.child_attempt_runner_result.v1",
+                    &runner_result,
+                )
+                .expect("historical attempt result hash"),
+            ),
+            record_name: Some(CHILD_ATTEMPT_RUNNER_RESULT_RECORD.to_string()),
+        }),
+        invocation: None,
+    };
+    let outcome = PlannedChildOutcome {
+        plan_index,
+        node_id: node.node_id.clone(),
+        outcome: "completed:Reject".to_string(),
+        node_status: node.status,
+        workspace_root: node.workspace_root.clone(),
+        binary_path: node.binary_path.clone(),
+        resolved: child.resolved().clone(),
+        child_runtime: Some(terminal.0),
+        channel_evidence: Some(channel_evidence),
+        evaluation_report: Some(report.clone()),
+        selection_input: Some(selection_input_from_child_report(&node, &report)),
+        surface: child.surface().cloned(),
+        artifact_surface: Some(
+            child
+                .harness_evidence()
+                .expect("historical broad harness evidence")
+                .artifact_surface()
+                .clone(),
+        ),
+        node: node.clone(),
+    };
+    let (selection, material) = select_successor_for_profile(
+        &manifest_path,
+        &parent,
+        std::slice::from_ref(&outcome),
+        child_plan.rejected_surface_attempts(),
+        &profile,
+    )
+    .expect("replay historical successor selection")
+    .expect("historical rejected child remains traversal-selected");
+    assert_eq!(selection.candidate_node_id, NODE_ID);
+    assert_eq!(selection.selected_branch_id.as_deref(), Some(BRANCH_ID));
+    let denied_selection = selection.clone();
+    let denied_material = material.clone();
+
+    let candidate_generation = match profile.generation.source {
+        profile::GenerationSource::Legacy => CandidateGenerationConfig::Legacy,
+        profile::GenerationSource::BroadHarnessRequest => {
+            CandidateGenerationConfig::BroadHarnessRequest
+        }
+        profile::GenerationSource::DeterministicTuiTools => {
+            CandidateGenerationConfig::DeterministicTuiTools
+        }
+    };
+    let run_shape = Prototype1StateRunShape {
+        stop_after: profile.execution.state_stop_after(),
+        observe_child_stale_after: profile.execution.observe_child_stale_after(),
+        broad_tui: profile.execution.broad_tui,
+        candidate_generation,
+        successor_selection: profile.selection.successor_selection(),
+        successor_selection_seed: profile.selection.seed,
+        successor_selection_metrics: profile.selection.traversal_metrics(),
+        successor_oracle_mode: profile.selection.oracle_mode(),
+        successor_oracle_require_evidence: profile.selection.oracle_require_evidence(),
+        successor_metrics_policy: profile.selection.metrics_policy(),
+        eval_storage_backend: profile.storage.eval.backend,
+    };
+    let config = ResolvedCampaignConfig {
+        campaign_id: parent.campaign_id().clone(),
+        benchmark_family: BenchmarkFamily::MultiSweBenchRust,
+        dataset_sources: Vec::new(),
+        model_id: profile
+            .model
+            .id
+            .clone()
+            .expect("historical profile model id"),
+        provider_slug: profile.model.provider.clone(),
+        route_source: profile
+            .model
+            .route_source
+            .expect("historical profile route source"),
+        required_procedures: Vec::new(),
+        instances_root: temp.path().join("instances"),
+        batches_root: temp.path().join("batches"),
+        eval: EvalCampaignPolicy::default(),
+        protocol: ProtocolCampaignPolicy::default(),
+        framework: crate::FrameworkConfig::default(),
+    };
+    let mut command = state_command_without_ids();
+    command.campaign = Some(parent.campaign_id().clone());
+    command.repo_root = Some(repo_root.clone());
+    let facts = typestate::context::Facts {
+        complete_search_policy: Some(profile.search_policy()),
+        selection: Some((selection, material)),
+        report: Some(typestate::context::ReportFacts {
+            outcome: "historical R12 selected rejected child".to_string(),
+            node_id: node.node_id.clone(),
+            node_status: node.status,
+            workspace_root: node.workspace_root.clone(),
+            binary_path: node.binary_path.clone(),
+            child_runtime: outcome.child_runtime.clone(),
+            successor_runtime: None,
+            successor_pid: None,
+            successor_ready_path: None,
+        }),
+        ..Default::default()
+    };
+    let collected = typestate::context::Collected::new(
+        command,
+        repo_root.clone(),
+        parent.campaign_id().clone(),
+        manifest_path.clone(),
+        run_shape,
+        config.clone(),
+        journal_path.clone(),
+        journal,
+    )
+    .with_facts(facts);
+    let r12 = typestate::R12::from_collected_parent(collected, planned_parent);
+    assert!(r12.has_successor_selection());
+    let preview = r12
+        .preview_continuation()
+        .expect("preview historical continuation")
+        .expect("historical R12 has selected continuation evidence");
+    assert_eq!(
+        preview.disposition,
+        Prototype1ContinuationDisposition::StopSelectedBranchRejected
+    );
+    assert!(!preview.disposition.allows_successor());
+
+    let mut denied_policy = profile.search_policy();
+    denied_policy.explore_from_rejected = true;
+    let mut denied_command = state_command_without_ids();
+    denied_command.campaign = Some(parent.campaign_id().clone());
+    denied_command.repo_root = Some(repo_root.clone());
+    let denied_facts = typestate::context::Facts {
+        complete_search_policy: Some(denied_policy),
+        selection: Some((denied_selection, denied_material)),
+        report: Some(typestate::context::ReportFacts {
+            outcome: "historical R12 rejected exploration".to_string(),
+            node_id: node.node_id.clone(),
+            node_status: node.status,
+            workspace_root: node.workspace_root.clone(),
+            binary_path: node.binary_path.clone(),
+            child_runtime: outcome.child_runtime.clone(),
+            successor_runtime: None,
+            successor_pid: None,
+            successor_ready_path: None,
+        }),
+        ..Default::default()
+    };
+    let denied = typestate::context::Collected::new(
+        denied_command,
+        repo_root.clone(),
+        parent.campaign_id().clone(),
+        manifest_path.clone(),
+        run_shape,
+        config,
+        journal_path.clone(),
+        PrototypeJournal::new(&journal_path),
+    )
+    .with_facts(denied_facts);
+    let denied = typestate::R12::from_collected_parent(denied, denied_parent);
+    let denied_preview = denied
+        .preview_continuation()
+        .expect("preview rejected exploration")
+        .expect("rejected exploration has selected continuation evidence");
+    assert_eq!(
+        denied_preview.disposition,
+        Prototype1ContinuationDisposition::ContinueExploreFromRejected
+    );
+    assert!(denied_preview.disposition.allows_successor());
+
+    let db_path = eval_store::prototype1_eval_store_db_path(&manifest_path);
+    fs::create_dir_all(db_path.parent().expect("eval db parent")).expect("eval db dir");
+    ploke_db::Database::new_init()
+        .expect("empty eval db")
+        .write_backup_to_path(&db_path)
+        .expect("seed owner eval db");
+    let db_before = fs::read(&db_path).expect("read owner eval DB before denied handoff");
+    assert_eq!(
+        crate::cli::prototype1_state::walk::controller::test_r12_target(
+            &r12,
+            Some(WalkPhase::R13a),
+        )
+        .expect("historical policy stop must admit the operator's R13a target"),
+        WalkPhase::R13a
+    );
+    assert_eq!(
+        crate::cli::prototype1_state::walk::controller::test_r12_target(&r12, None)
+            .expect("historical policy stop must default to R13a"),
+        WalkPhase::R13a
+    );
+    let branch_error = crate::cli::prototype1_state::walk::controller::test_r12_target(
+        &r12,
+        Some(WalkPhase::R13b),
+    )
+    .expect_err("historical policy stop must reject the handoff branch");
+    assert!(
+        branch_error
+            .to_string()
+            .contains("continuation does not authorize handoff"),
+        "unexpected branch error: {branch_error}"
+    );
+
+    let history_root = manifest_path
+        .parent()
+        .expect("manifest parent")
+        .join("prototype1/history");
+    assert!(!history_root.exists());
+    let head_before = GitWorktreeBackend
+        .head_commit(&repo_root)
+        .expect("historical replay head");
+    let status_before = std::process::Command::new("git")
+        .current_dir(&repo_root)
+        .args(["status", "--porcelain=v1"])
+        .output()
+        .expect("historical replay status");
+    assert!(status_before.status.success());
+
+    let denied_error =
+        crate::cli::prototype1_state::driver::control::test_r12_denied(&repo_root, denied)
+            .expect_err("continuable R12 must reject a stopped-branch permit before mutation");
+    assert!(
+        denied_error
+            .to_string()
+            .contains("only an admitted R12->R13b controller attempt"),
+        "unexpected denied handoff error: {denied_error}"
+    );
+    let denied_journal = PrototypeJournal::new(&journal_path)
+        .load_entries()
+        .expect("load journal after denied handoff");
+    assert_eq!(denied_journal.len(), journal_before.len());
+    assert_eq!(
+        fs::read(&db_path).expect("read owner eval DB after denied handoff"),
+        db_before
+    );
+    assert!(!history_root.exists());
+    assert_eq!(
+        GitWorktreeBackend
+            .head_commit(&repo_root)
+            .expect("head after denied handoff"),
+        head_before
+    );
+    let status_denied = std::process::Command::new("git")
+        .current_dir(&repo_root)
+        .args(["status", "--porcelain=v1"])
+        .output()
+        .expect("status after denied handoff");
+    assert!(status_denied.status.success());
+    assert_eq!(status_denied.stdout, status_before.stdout);
+
+    let step = crate::cli::prototype1_state::driver::control::test_r12_stop(&repo_root, r12)
+        .await
+        .expect("selected rejected continuation must stop without checkout permission");
+
+    assert_eq!(step.transition().from(), WalkPhase::R12);
+    assert_eq!(step.transition().to(), WalkPhase::R13a);
+    assert!(matches!(
+        step.state(),
+        crate::cli::prototype1_state::driver::control::ControlState::R13a(_)
+    ));
+    let journal_after = PrototypeJournal::new(&journal_path)
+        .load_entries()
+        .expect("load stopped transition journal");
+    assert_eq!(journal_after.len(), journal_before.len() + 1);
+    let stopped = journal_after
+        .iter()
+        .rev()
+        .find_map(|entry| match entry {
+            JournalEntry::Successor(record) if record.node_id == NODE_ID => Some(record),
+            _ => None,
+        })
+        .expect("stopped successor record");
+    let crate::cli::prototype1_state::successor::State::Stopped { decision, .. } = &stopped.state
+    else {
+        panic!("selected rejected child must record a stopped successor")
+    };
+    assert_eq!(
+        decision.disposition,
+        Prototype1ContinuationDisposition::StopSelectedBranchRejected
+    );
+    assert!(!decision.disposition.allows_successor());
+    assert!(!history_root.exists());
+    assert_eq!(
+        GitWorktreeBackend
+            .head_commit(&repo_root)
+            .expect("unchanged historical replay head"),
+        head_before
+    );
+    let status_after = std::process::Command::new("git")
+        .current_dir(&repo_root)
+        .args(["status", "--porcelain=v1"])
+        .output()
+        .expect("historical replay status after stop");
+    assert!(status_after.status.success());
+    assert_eq!(status_after.stdout, status_before.stdout);
 }
 
 #[test]

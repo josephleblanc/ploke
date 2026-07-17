@@ -284,6 +284,44 @@ impl ControlPermit {
     }
 }
 
+#[cfg(test)]
+pub(crate) async fn test_r12_stop(
+    repo_root: &Path,
+    r12: R12<RunShape, CampaignConfig>,
+) -> Result<ControlStep, PrepareError> {
+    let permit = ControlPermit {
+        session_id: SessionId::for_test(0x1213),
+        fence: Fence::for_test(12),
+        transition_id: TransitionId::new(),
+        repo_root: repo_root.to_path_buf(),
+        expected: WalkPhase::R12,
+        targets: vec![WalkPhase::R13a],
+        allow_live_api: false,
+        allow_git_changes: false,
+    };
+    advance(repo_root, ControlState::R12(r12), &permit)
+        .await
+        .map_err(|failure| failure.error)
+}
+
+#[cfg(test)]
+pub(crate) fn test_r12_denied(
+    repo_root: &Path,
+    r12: R12<RunShape, CampaignConfig>,
+) -> Result<(), PrepareError> {
+    let permit = ControlPermit {
+        session_id: SessionId::for_test(0x1213),
+        fence: Fence::for_test(12),
+        transition_id: TransitionId::new(),
+        repo_root: repo_root.to_path_buf(),
+        expected: WalkPhase::R12,
+        targets: vec![WalkPhase::R13a],
+        allow_live_api: false,
+        allow_git_changes: false,
+    };
+    r12_to_r13(r12, &permit).map(|_| ())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ControlTransition {
     from: WalkPhase,
@@ -1958,7 +1996,18 @@ async fn advance(
             r11_to_r12(typestate::R10FanoutBranch::FanoutComplete(r11)).map(ControlState::R12)
         }
         ControlState::R12(r12) => {
-            if r12.has_successor_selection() && !admission.checkout {
+            let handoff = match r12.preview_continuation() {
+                Ok(decision) => {
+                    decision.is_some_and(|decision| decision.disposition.allows_successor())
+                }
+                Err(error) => {
+                    return Err(StepFailure {
+                        state: ControlState::R12(r12),
+                        error,
+                    });
+                }
+            };
+            if handoff && !admission.checkout {
                 return retained(
                     ControlState::R12(r12),
                     "walk R13b handoff installs the selected successor into the active checkout; rerun with `--allow git-changes`",

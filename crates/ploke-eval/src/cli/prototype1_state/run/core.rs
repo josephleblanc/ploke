@@ -49,9 +49,9 @@ use crate::cli::prototype1_state::{
     cli_facing::{
         PlannedChildOutcome, Prototype1BranchEvaluationReport, compare_observed_child_treatment,
         ensure_prototype1_baseline_closure_state, establish_parent_baseline,
-        live_successor_continuation_decision, prototype1_branch_evaluation_path,
-        reserve_profile_child_budget, resolve_profile_child_plan, run_planned_child,
-        select_successor_for_profile, selection_input_from_child_report,
+        preview_successor_continuation, prototype1_branch_evaluation_path,
+        record_continuation_decision, reserve_profile_child_budget, resolve_profile_child_plan,
+        run_planned_child, select_successor_for_profile, selection_input_from_child_report,
     },
     driver::advance as session_driver,
     edit_surface::harness_request::{
@@ -3153,13 +3153,18 @@ fn advance_select(diagnosis: Diagnosis) -> Result<(), PrepareError> {
     )?;
     if let Some((decision, material)) = selection {
         let selected = material.selected_artifact()?;
-        let continuation = live_successor_continuation_decision(
+        let continuation = preview_successor_continuation(
             &diagnosis.context.manifest_path,
             &diagnosis.context.parent_identity,
             &diagnosis.context.admitted_profile.profile.search_policy(),
             &decision,
             &material,
             selected.node(),
+        )?;
+        record_continuation_decision(
+            &diagnosis.context.manifest_path,
+            &diagnosis.context.parent_identity,
+            &continuation,
         )?;
         let record = if continuation.disposition.allows_successor() {
             successor::Record::selected_with_decision(

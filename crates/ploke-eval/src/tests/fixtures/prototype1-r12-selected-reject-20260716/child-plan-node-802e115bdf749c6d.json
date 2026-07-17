@@ -1,0 +1,186 @@
+{
+  "message": "/home/brasides/.ploke-eval/campaigns/p1-v11-keeponly-g35f-oropenai-3g1x3-p3-20260716-185301/prototype1/messages/child-plan/node-802e115bdf749c6d.json",
+  "parent_node_id": "node-802e115bdf749c6d",
+  "child_generation": 1,
+  "children": [
+    {
+      "node": {
+        "schema_version": "prototype1-treatment-node.v1",
+        "node_id": "node-cb1b41e21e01ddc7",
+        "parent_node_id": "node-802e115bdf749c6d",
+        "generation": 1,
+        "instance_id": "da61ad77-c9f1-4344-a988-eeaa97a3bba9",
+        "source_state_id": "prototype1-parent-p1-v11-keeponly-g35f-oropenai-3g1x3-p3-20260716-185301-gen0",
+        "operation_target": {
+          "kind": "artifact",
+          "artifact_id": "artifact:git-commit:9d722f2a2cceffc3bc0d5b2f59fd1f062643eed9"
+        },
+        "base_artifact_id": "artifact:git-commit:9d722f2a2cceffc3bc0d5b2f59fd1f062643eed9",
+        "patch_id": "broad-harness:broad-harness-request:node-802e115bdf749c6d:r2",
+        "derived_artifact_id": "artifact:git-commit:af36ab04a272634750a2bfc930222d4af0e5851a",
+        "parent_branch_id": "prototype1-parent-p1-v11-keeponly-g35f-oropenai-3g1x3-p3-20260716-185301-gen0",
+        "branch_id": "branch-aef83be6f4105a58",
+        "candidate_id": "broad-harness-g1-01",
+        "target_relpath": "proc_macros/syn_parser/syn_parser_macros/src/lib.rs",
+        "node_dir": "/home/brasides/.ploke-eval/campaigns/p1-v11-keeponly-g35f-oropenai-3g1x3-p3-20260716-185301/prototype1/nodes/node-cb1b41e21e01ddc7",
+        "workspace_root": "/home/brasides/.ploke-eval/setup-seeds/p1-v11-keeponly-g35f-oropenai-3g1x3-p3-20260716-185301",
+        "binary_path": "/home/brasides/.ploke-eval/campaigns/p1-v11-keeponly-g35f-oropenai-3g1x3-p3-20260716-185301/prototype1/nodes/node-cb1b41e21e01ddc7/bin/ploke-eval",
+        "runner_request_path": "/home/brasides/.ploke-eval/campaigns/p1-v11-keeponly-g35f-oropenai-3g1x3-p3-20260716-185301/prototype1/nodes/node-cb1b41e21e01ddc7/runner-request.json",
+        "runner_result_path": "/home/brasides/.ploke-eval/campaigns/p1-v11-keeponly-g35f-oropenai-3g1x3-p3-20260716-185301/prototype1/nodes/node-cb1b41e21e01ddc7/runner-result.json",
+        "status": "planned",
+        "created_at": "2026-07-17T02:24:27.861950209+00:00",
+        "updated_at": "2026-07-17T02:24:27.861950209+00:00"
+      },
+      "request": {
+        "schema_version": "prototype1-treatment-node.v1",
+        "campaign_id": "p1-v11-keeponly-g35f-oropenai-3g1x3-p3-20260716-185301",
+        "node_id": "node-cb1b41e21e01ddc7",
+        "generation": 1,
+        "instance_id": "da61ad77-c9f1-4344-a988-eeaa97a3bba9",
+        "source_state_id": "prototype1-parent-p1-v11-keeponly-g35f-oropenai-3g1x3-p3-20260716-185301-gen0",
+        "operation_target": {
+          "kind": "artifact",
+          "artifact_id": "artifact:git-commit:9d722f2a2cceffc3bc0d5b2f59fd1f062643eed9"
+        },
+        "base_artifact_id": "artifact:git-commit:9d722f2a2cceffc3bc0d5b2f59fd1f062643eed9",
+        "patch_id": "broad-harness:broad-harness-request:node-802e115bdf749c6d:r2",
+        "derived_artifact_id": "artifact:git-commit:af36ab04a272634750a2bfc930222d4af0e5851a",
+        "branch_id": "branch-aef83be6f4105a58",
+        "target_relpath": "proc_macros/syn_parser/syn_parser_macros/src/lib.rs",
+        "workspace_root": "/home/brasides/.ploke-eval/setup-seeds/p1-v11-keeponly-g35f-oropenai-3g1x3-p3-20260716-185301",
+        "binary_path": "/home/brasides/.ploke-eval/campaigns/p1-v11-keeponly-g35f-oropenai-3g1x3-p3-20260716-185301/prototype1/nodes/node-cb1b41e21e01ddc7/bin/ploke-eval",
+        "stop_on_error": false,
+        "runner_args": [
+          "loop",
+          "prototype1-runner",
+          "--campaign",
+          "p1-v11-keeponly-g35f-oropenai-3g1x3-p3-20260716-185301",
+          "--node-id",
+          "node-cb1b41e21e01ddc7",
+          "--execute",
+          "--stop-on-error",
+          "false",
+          "--format",
+          "json"
+        ]
+      },
+      "resolved": {
+        "instance_id": "da61ad77-c9f1-4344-a988-eeaa97a3bba9",
+        "source_state_id": "prototype1-parent-p1-v11-keeponly-g35f-oropenai-3g1x3-p3-20260716-185301-gen0",
+        "parent_branch_id": "prototype1-parent-p1-v11-keeponly-g35f-oropenai-3g1x3-p3-20260716-185301-gen0",
+        "target_relpath": "proc_macros/syn_parser/syn_parser_macros/src/lib.rs",
+        "source_content": "extern crate proc_macro;\nuse proc_macro::TokenStream;\nuse quote::{format_ident, quote};\nuse syn::{parse_macro_input, Data, DeriveInput, Fields, Type};\n\n/// Derives a `pub(crate) struct *NodeInfo` based on the fields of the struct this is applied to.\n///\n/// The generated `*NodeInfo` struct will have:\n/// - The same visibility as the original struct (assumed `pub` within the crate).\n/// - A name derived by appending \"Info\" to the original struct name (e.g., `StructNode` -> `StructNodeInfo`).\n/// - A `pub id: ploke_core::NodeId` field.\n/// - All other public fields from the original struct, preserving their names and types.\n/// - Basic derives on the `*NodeInfo` struct: `Debug`, `Clone`, `PartialEq`.\n/// - A `pub(crate) fn new(info: *NodeInfo) -> Self` constructor method implemented on the original struct.\n///\n/// # Example Usage\n/// ```ignore\n/// // removed GenerateNodeInfo\n/// use ploke_core::{StructNodeId}; // Assuming these exist\n/// // ... other necessary imports ...\n///\n/// #[derive(GenerateNodeInfo)]\n/// pub struct StructNode {\n///     pub id: StructNodeId, // Typed ID in the original struct\n///     pub name: String,\n///     pub span: (usize, usize),\n///     // ... other fields\n/// }\n///\n/// // This will generate:\n/// // #[derive(Debug, Clone, PartialEq)]\n/// // pub(crate) struct StructNodeInfo {\n/// //     pub id: ploke_core::NodeId, // Raw NodeId\n/// //     pub name: String,\n/// //     pub span: (usize, usize),\n/// //     // ... other fields copied from StructNode\n/// // }\n/// ```\n#[proc_macro_derive(GenerateNodeInfo)]\npub fn generate_node_info_derive(input: TokenStream) -> TokenStream {\n    // Parse the input tokens into a syntax tree (DeriveInput represents a struct/enum/union)\n    let input = parse_macro_input!(input as DeriveInput);\n\n    // Extract the name of the struct the derive is attached to (e.g., \"StructNode\")\n    let original_struct_name = &input.ident;\n\n    // Create the name for the generated *NodeInfo struct (e.g., \"StructNodeInfo\")\n    let info_struct_name = format_ident!(\"{}Info\", original_struct_name);\n\n    // Ensure the input is a struct\n    let fields = match &input.data {\n        Data::Struct(data_struct) => match &data_struct.fields {\n            Fields::Named(fields_named) => &fields_named.named,\n            _ => panic!(\"GenerateNodeInfo can only be derived on structs with named fields\"),\n        },\n        _ => panic!(\"GenerateNodeInfo can only be derived on structs\"),\n    };\n\n    // --- Generate the fields for the *NodeInfo struct ---\n    // We iterate through the fields of the original struct and copy them,\n    // except for the 'id' field, which we replace.\n\n    let mut info_fields = Vec::new();\n    // Add the mandatory 'id: NodeId' field first.\n    // IMPORTANT: Adjust the path `ploke_core::NodeId` if NodeId is located elsewhere\n    // relative to the crate where the *Node structs are defined (syn_parser).\n    info_fields.push(quote! {\n        /// The raw NodeId before being wrapped into a typed ID.\n        pub id: ::ploke_core::NodeId\n    });\n\n    // Iterate over the fields of the original struct\n    for field in fields {\n        let field_name = field\n            .ident\n            .as_ref()\n            .expect(\"Named fields should have names\");\n        let field_type = &field.ty;\n        let field_vis = &field.vis; // Capture original visibility\n\n        // Skip the original 'id' field, as we've already added our own 'id: NodeId'\n        if field_name == \"id\" {\n            continue;\n        }\n\n        // Add the field to our list for the generated struct, preserving visibility\n        info_fields.push(quote! {\n            #field_vis #field_name : #field_type\n        });\n    }\n\n    // --- Generate the fields for the `new` method constructor body ---\n    let mut constructor_fields = Vec::new();\n    let mut id_type: Option<&Type> = None; // To store the type of the original 'id' field\n\n    for field in fields {\n        let field_name = field\n            .ident\n            .as_ref()\n            .expect(\"Named fields should have names\");\n        let field_type = &field.ty;\n\n        if field_name == \"id\" {\n            // Store the type of the original 'id' field (e.g., StructNodeId)\n            id_type = Some(field_type);\n            // Generate the ID wrapping line for the constructor using the restricted ::create method\n            constructor_fields.push(quote! {\n                #field_name : #field_type::create(info.id) // Use the restricted constructor\n            });\n        } else {\n            // Generate simple field copying for other fields\n            // Generate simple field copying for other fields\n            constructor_fields.push(quote! {\n                #field_name : info.#field_name\n            });\n        }\n    }\n\n    // Ensure the original struct had an 'id' field\n    let _ = id_type.expect(\"GenerateNodeInfo requires the struct to have an 'id' field.\");\n\n    // --- Generate the *NodeInfo struct definition ---\n    let generated_info_struct = quote! {\n        // Apply standard derives. Add more if needed (e.g., Serialize, Deserialize)\n        // but keep them minimal for these intermediate structs unless necessary.\n        #[derive(Debug, Clone, PartialEq)]\n        // Make the generated struct pub(crate)\n        pub(crate) struct #info_struct_name {\n            // Add the collected fields, separated by commas\n            #(#info_fields),*\n        }\n    };\n\n    // --- Generate the `impl` block with the `new` constructor ---\n    let generated_impl = quote! {\n        impl #original_struct_name {\n            /// Creates a new instance from the corresponding `*NodeInfo` struct.\n            /// This constructor is typically `pub(crate)` and handles wrapping the raw `NodeId`\n            /// from the info struct into the specific typed ID for this node.\n            #[inline] // Suggest inlining for simple constructors\n            pub(crate) fn new(info: #info_struct_name) -> Self {\n                Self {\n                    // Add the generated constructor field assignments\n                    #(#constructor_fields),*\n                }\n            }\n        }\n    };\n\n    // --- Combine generated struct and impl block ---\n    let final_output = quote! {\n        #generated_info_struct\n        #generated_impl\n    };\n\n    // Convert the combined tokens back into a TokenStream and return it\n    TokenStream::from(final_output)\n}\n",
+        "source_content_hash": "74e3ac3bc3745ece23a77a54fe18daf3b2105cee80dbfeae414d7a7005269df3",
+        "selected_branch_id": "branch-aef83be6f4105a58",
+        "branch": {
+          "branch_id": "branch-aef83be6f4105a58",
+          "candidate_id": "broad-harness-g1-01",
+          "patch_id": "broad-harness:broad-harness-request:node-802e115bdf749c6d:r2",
+          "branch_label": "broad harness edit broad-harness-request:node-802e115bdf749c6d:r2",
+          "synthesized_spec_id": "prototype1:broad-headless-tui-adapter-v1",
+          "proposed_content": "extern crate proc_macro;\nuse proc_macro::TokenStream;\nuse quote::{format_ident, quote};\nuse syn::{parse_macro_input, Data, DeriveInput, Fields, Type};\n\n/// Derives a `pub(crate) struct *NodeInfo` based on the fields of the struct this is applied to.\n///\n/// The generated `*NodeInfo` struct will have:\n/// - The same visibility as the original struct (assumed `pub` within the crate).\n/// - A name derived by appending \"Info\" to the original struct name (e.g., `StructNode` -> `StructNodeInfo`).\n/// - A `pub id: ploke_core::NodeId` field.\n/// - All other public fields from the original struct, preserving their names and types.\n/// - Basic derives on the `*NodeInfo` struct: `Debug`, `Clone`, `PartialEq`.\n/// - A `pub(crate) fn new(info: *NodeInfo) -> Self` constructor method implemented on the original struct.\n///\n/// # Example Usage\n/// ```ignore\n/// // removed GenerateNodeInfo\n/// use ploke_core::{StructNodeId}; // Assuming these exist\n/// // ... other necessary imports ...\n///\n/// #[derive(GenerateNodeInfo)]\n/// pub struct StructNode {\n///     pub id: StructNodeId, // Typed ID in the original struct\n///     pub name: String,\n///     pub span: (usize, usize),\n///     // ... other fields\n/// }\n///\n/// // This will generate:\n/// // #[derive(Debug, Clone, PartialEq)]\n/// // pub(crate) struct StructNodeInfo {\n/// //     pub id: ploke_core::NodeId, // Raw NodeId\n/// //     pub name: String,\n/// //     pub span: (usize, usize),\n/// //     // ... other fields copied from StructNode\n/// // }\n/// ```\n#[proc_macro_derive(GenerateNodeInfo)]\npub fn generate_node_info_derive(input: TokenStream) -> TokenStream {\n    // Parse the input tokens into a syntax tree (DeriveInput represents a struct/enum/union)\n    let input = parse_macro_input!(input as DeriveInput);\n\n    // Extract the name of the struct the derive is attached to (e.g., \"StructNode\")\n    let original_struct_name = &input.ident;\n\n    // Create the name for the generated *NodeInfo struct (e.g., \"StructNodeInfo\")\n    let info_struct_name = format_ident!(\"{}Info\", original_struct_name);\n\n    // Ensure the input is a struct\n    let fields = match &input.data {\n        Data::Struct(data_struct) => match &data_struct.fields {\n            Fields::Named(fields_named) => &fields_named.named,\n            _ => panic!(\"GenerateNodeInfo can only be derived on structs with named fields\"),\n        },\n        _ => panic!(\"GenerateNodeInfo can only be derived on structs\"),\n    };\n\n    // --- Generate the fields for the *NodeInfo struct ---\n    // We iterate through the fields of the original struct and copy them,\n    // except for the 'id' field, which we replace.\n\n    let mut info_fields = Vec::new();\n    // Add the mandatory 'id: NodeId' field first.\n    // IMPORTANT: Adjust the path `ploke_core::NodeId` if NodeId is located elsewhere\n    // relative to the crate where the *Node structs are defined (syn_parser).\n    info_fields.push(quote! {\n        /// The raw NodeId before being wrapped into a typed ID.\n        pub id: ::ploke_core::NodeId\n    });\n\n    // Iterate over the fields of the original struct\n    for field in fields {\n        let field_name = field\n            .ident\n            .as_ref()\n            .expect(\"Named fields should have names\");\n        let field_type = &field.ty;\n        let field_vis = &field.vis; // Capture original visibility\n\n        // Skip the original 'id' field, as we've already added our own 'id: NodeId'\n        if field_name == \"id\" {\n            continue;\n        }\n\n        // Add the field to our list for the generated struct, preserving visibility\n        info_fields.push(quote! {\n            #field_vis #field_name : #field_type\n        });\n    }\n\n    // --- Generate the fields for the `new` method constructor body ---\n    let mut constructor_fields = Vec::new();\n    let mut id_type: Option<&Type> = None; // To store the type of the original 'id' field\n\n    for field in fields {\n        let field_name = field\n            .ident\n            .as_ref()\n            .expect(\"Named fields should have names\");\n        let field_type = &field.ty;\n\n        if field_name == \"id\" {\n            // Store the type of the original 'id' field (e.g., StructNodeId)\n            id_type = Some(field_type);\n            // Generate the ID wrapping line for the constructor using the restricted ::create method\n            constructor_fields.push(quote! {\n                #field_name : #field_type::create(info.id) // Use the restricted constructor\n            });\n        } else {\n            // Generate simple field copying for other fields\n            // Generate simple field copying for other fields\n            constructor_fields.push(quote! {\n                #field_name : info.#field_name\n            });\n        }\n    }\n\n    // Ensure the original struct had an 'id' field\n    let _ = id_type.expect(\"GenerateNodeInfo requires the struct to have an 'id' field.\");\n\n    // --- Generate the *NodeInfo struct definition ---\n    let generated_info_struct = quote! {\n        // Apply standard derives. Add more if needed (e.g., Serialize, Deserialize)\n        // but keep them minimal for these intermediate structs unless necessary.\n        #[derive(Debug, Clone, PartialEq)]\n        // Make the generated struct pub(crate)\n        pub(crate) struct #info_struct_name {\n            // Add the collected fields, separated by commas\n            #(#info_fields),*\n        }\n    };\n\n    // --- Generate the `impl` block with the `new` constructor ---\n    let generated_impl = quote! {\n        impl #original_struct_name {\n            /// Creates a new instance from the corresponding `*NodeInfo` struct.\n            /// This constructor is typically `pub(crate)` and handles wrapping the raw `NodeId`\n            /// from the info struct into the specific typed ID for this node.\n            ///\n            /// Performance optimization: inline this constructor to avoid function call overhead\n            /// when rebuilding node trees.\n            #[inline(always)]\n            #[inline] // Suggest inlining for simple constructors\n            pub(crate) fn new(info: #info_struct_name) -> Self {\n                Self {\n                    // Add the generated constructor field assignments\n                    #(#constructor_fields),*\n                }\n            }\n        }\n    };\n\n    // --- Combine generated struct and impl block ---\n    let final_output = quote! {\n        #generated_info_struct\n        #generated_impl\n    };\n\n    // Convert the combined tokens back into a TokenStream and return it\n    TokenStream::from(final_output)\n}\n",
+          "proposed_content_hash": "31dde716cbd5d63652e8f771f1f071e6174d8bebbc75c8dfd294ce81023a25a1",
+          "generation_target": {
+            "kind": "artifact",
+            "artifact_id": "artifact:git-commit:9d722f2a2cceffc3bc0d5b2f59fd1f062643eed9"
+          },
+          "generation_coordinate": {
+            "runtime_id": "da61ad77-c9f1-4344-a988-eeaa97a3bba9",
+            "target": {
+              "kind": "artifact",
+              "artifact_id": "artifact:git-commit:9d722f2a2cceffc3bc0d5b2f59fd1f062643eed9"
+            }
+          },
+          "status": "selected",
+          "apply_id": "broad-harness-request:node-802e115bdf749c6d:r2",
+          "derived_artifact_id": "artifact:git-commit:af36ab04a272634750a2bfc930222d4af0e5851a"
+        }
+      },
+      "harness": {
+        "schema_version": 1,
+        "request": {
+          "identity": "broad-harness-request:node-802e115bdf749c6d:r2",
+          "hash": "54d1e0d1cedeeaf3050d8299e316fc3907b1516dcc964ed784cc906e94e31155"
+        },
+        "admission_binding": {
+          "coordinate": {
+            "runtime_id": "da61ad77-c9f1-4344-a988-eeaa97a3bba9",
+            "target": {
+              "kind": "artifact",
+              "artifact_id": "artifact:git-commit:9d722f2a2cceffc3bc0d5b2f59fd1f062643eed9"
+            }
+          },
+          "target_artifact_id": "artifact:git-commit:9d722f2a2cceffc3bc0d5b2f59fd1f062643eed9",
+          "policy_id": "workspace except ploke-eval"
+        },
+        "submitted_result_path": "/home/brasides/.ploke-eval/campaigns/p1-v11-keeponly-g35f-oropenai-3g1x3-p3-20260716-185301/prototype1/messages/edit-harness-result/node-802e115bdf749c6d-r2.json",
+        "changed_paths": [
+          "proc_macros/syn_parser/syn_parser_macros/src/lib.rs"
+        ],
+        "artifact_surface": {
+          "schema_version": 1,
+          "measurement": {
+            "value": "prototype1:artifact-surface:v1"
+          },
+          "tree_key": {
+            "hash": "c55a6af98cb19a871c6e6673acc6807d59f1e3dcb5d19ee79ac6aec7386c0bf6"
+          },
+          "immutable": {
+            "root": {
+              "hash": "501521b678c796fc47ce18d0ef9d717a76429ab66722ce7a61d17dd10ba8eb00"
+            }
+          },
+          "mutated": {
+            "root": {
+              "hash": "39185e2b738af8b0210b0657a7eec6f16ebfc5971e1b78c1799431b122462588"
+            }
+          },
+          "ambient": {
+            "root": {
+              "hash": "2dd8b52ad59887821eee46e458519b7a2c1916cdeb480433957710bf6612e11b"
+            }
+          }
+        },
+        "workspace": {
+          "source_root": "/home/brasides/.ploke-eval/setup-seeds/p1-v11-keeponly-g35f-oropenai-3g1x3-p3-20260716-185301",
+          "candidate_root": "/home/brasides/.ploke-eval/campaigns/p1-v11-keeponly-g35f-oropenai-3g1x3-p3-20260716-185301/prototype1/workspaces/edit-harness/node-802e115bdf749c6d-r2",
+          "base_head": "9d722f2a2cceffc3bc0d5b2f59fd1f062643eed9"
+        },
+        "artifact": {
+          "base_artifact_id": "artifact:git-commit:9d722f2a2cceffc3bc0d5b2f59fd1f062643eed9",
+          "derived_artifact_id": "artifact:git-commit:af36ab04a272634750a2bfc930222d4af0e5851a"
+        },
+        "executor": {
+          "run_id": "28f2a98e-f295-44f5-b7bd-c5934a294463",
+          "attempt_id": "c238f4d1-da1d-5db7-88ad-59072557d92e"
+        }
+      }
+    }
+  ],
+  "rejected_surface_attempts": [
+    {
+      "schema_version": 1,
+      "producer_id": "prototype1:broad-headless-tui-adapter-v1",
+      "proposal_id": "broad-harness-request:node-802e115bdf749c6d",
+      "run_id": "84fa8c3ff77dc26319b579703096da0db61435ec3c9571109b2db3fc37076f8c",
+      "policy": "workspace_except_ploke_eval",
+      "target_relpath": ".",
+      "outcome": {
+        "kind": "rejected",
+        "reason": "broad headless-tui slot 'broad-harness-request:node-802e115bdf749c6d' completed without edit: outcome=completed; Request summary: [success]; diagnostics='/home/brasides/.ploke-eval/campaigns/p1-v11-keeponly-g35f-oropenai-3g1x3-p3-20260716-185301/prototype1/messages/edit-harness-result/node-802e115bdf749c6d.headless-tui.json'"
+      }
+    },
+    {
+      "schema_version": 1,
+      "producer_id": "prototype1:broad-headless-tui-adapter-v1",
+      "proposal_id": "broad-harness-request:node-802e115bdf749c6d:r3",
+      "run_id": "c758c04073ef0c505db6efbbfebe0a61d9957b3f7f45cce145c98274b4091612",
+      "policy": "workspace_except_ploke_eval",
+      "target_relpath": ".",
+      "outcome": {
+        "kind": "rejected",
+        "reason": "broad headless-tui slot 'broad-harness-request:node-802e115bdf749c6d:r3' completed without edit: outcome=completed; Request summary: [completed_with_errors] code=MALFORMED_FUNCTION_CALL kind=model_behavior error_summary=FinishReason Error: Provider returned malformed function call diagnostic=FinishReason Error: Provider returned malformed function call; diagnostics='/home/brasides/.ploke-eval/campaigns/p1-v11-keeponly-g35f-oropenai-3g1x3-p3-20260716-185301/prototype1/messages/edit-harness-result/node-802e115bdf749c6d-r3.headless-tui.json'"
+      }
+    }
+  ]
+}

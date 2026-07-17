@@ -5,15 +5,19 @@ use ploke_records::ids::CampaignId;
 use crate::{
     cli::Prototype1StateCommand,
     intervention::{
-        CompleteBaseline, Prototype1ChildBudget, Prototype1ChildScheduleMode, Prototype1NodeStatus,
-        Prototype1SearchPolicy,
+        CompleteBaseline, Prototype1ChildBudget, Prototype1ChildScheduleMode,
+        Prototype1ContinuationDecision, Prototype1NodeStatus, Prototype1SearchPolicy,
     },
+    spec::PrepareError,
     successor_selection::SuccessorDecision,
 };
 
 use super::{
     super::{
-        cli_facing::{ActiveSelectionStrategy, PlannedChildOutcome, SelectionSealMaterial},
+        cli_facing::{
+            ActiveSelectionStrategy, PlannedChildOutcome, SelectionSealMaterial,
+            preview_successor_continuation,
+        },
         history::surface_attempt,
         identity::ParentIdentity,
         inner::Received,
@@ -238,6 +242,30 @@ impl<RunShape, CampaignConfig> Collected<RunShape, CampaignConfig> {
     /// docs/workflow/evalnomicon/src/prototype1/selection-and-evaluation.md.
     pub(crate) fn has_successor_selection(&self) -> bool {
         self.facts.selection.is_some()
+    }
+
+    pub(crate) fn preview_continuation(
+        &self,
+        parent: &ParentIdentity,
+    ) -> Result<Option<Prototype1ContinuationDecision>, PrepareError> {
+        let Some((decision, material)) = self.facts.selection.as_ref() else {
+            return Ok(None);
+        };
+        let policy = self.facts.complete_search_policy.as_ref().ok_or_else(|| {
+            PrepareError::InvalidBatchSelection {
+                detail: "R12 continuation preview missing search policy".to_string(),
+            }
+        })?;
+        let artifact = material.selected_artifact()?;
+        preview_successor_continuation(
+            &self.manifest_path,
+            parent,
+            policy,
+            decision,
+            material,
+            artifact.node(),
+        )
+        .map(Some)
     }
 
     pub(crate) fn into_parts(self) -> CollectedParts<RunShape, CampaignConfig> {

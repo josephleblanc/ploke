@@ -26,9 +26,9 @@ use crate::{
                 append_parent_target_sample, current_dir_as_repo_root,
                 emit_selection_decision_for_backend, ensure_prototype1_baseline_closure_state,
                 establish_parent_baseline, initialize_prototype1_parent_identity,
-                live_successor_continuation_decision, outcome_for_report,
-                prototype1_state_report_path, prototype1_state_successor_handoff_mode,
-                prototype1_state_transition_error, record_active_prototype1_monitor_target,
+                outcome_for_report, preview_successor_continuation, prototype1_state_report_path,
+                prototype1_state_successor_handoff_mode, prototype1_state_transition_error,
+                record_active_prototype1_monitor_target, record_continuation_decision,
                 resolve_linked_plan, resolve_parent_policy_budget,
                 resolve_prototype1_parent_identity, resolve_prototype1_state_campaign,
                 run_adaptive_child_fanout, run_child_fanout, same_existing_path,
@@ -954,7 +954,7 @@ pub(crate) fn r12_to_r13(
                     "successor selection reached handoff without an admitted or scheduler search policy"
                         .to_string(),
             })?;
-        let decision = live_successor_continuation_decision(
+        let decision = preview_successor_continuation(
             &parts.manifest_path,
             &parent_identity,
             search_policy,
@@ -963,12 +963,14 @@ pub(crate) fn r12_to_r13(
             &node,
         )?;
         let handoff = if decision.disposition.allows_successor() {
+            let attempt = permit.handoff_attempt()?;
             let selected_artifact = select_artifact_for_handoff(&selection_decision, &material)?;
             let selection_entry = material.into_entry(selection_decision.clone())?;
-            Some((selected_artifact, selection_entry))
+            Some((selected_artifact, selection_entry, attempt))
         } else {
             None
         };
+        record_continuation_decision(&parts.manifest_path, &parent_identity, &decision)?;
         observe::Step::start(observe::span!(
             "prototype1.parent.select_successor",
             campaign_id = %parts.campaign_id,
@@ -996,7 +998,7 @@ pub(crate) fn r12_to_r13(
             ));
 
         // ANCHOR: prototype1_live_edge_r12_handoff_branch
-        if let Some((selected_artifact, selection_entry)) = handoff {
+        if let Some((selected_artifact, selection_entry, attempt)) = handoff {
             parts
                 .journal
                 .append(JournalEntry::Successor(
@@ -1020,7 +1022,7 @@ pub(crate) fn r12_to_r13(
                 parent,
                 selection_entry,
                 prototype1_state_successor_handoff_mode(),
-                permit.handoff_attempt()?,
+                attempt,
             )? {
                 (retired, HandoffOutcome::Ready(successor)) => {
                     let report = parts.facts.report.as_mut().ok_or_else(|| {

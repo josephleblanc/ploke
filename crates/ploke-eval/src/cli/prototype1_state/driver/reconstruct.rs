@@ -28,9 +28,9 @@ use crate::{
             cli_facing::{
                 ParentSelection, Prototype1StateRunShape, child_plan_message_path_for_parent,
                 load_existing_child_plan_for_id, load_parent_baseline,
-                prototype1_state_transition_error, reconstruct_child_outcomes_from_store,
-                resolve_parent_policy_budget, same_existing_path,
-                validate_existing_child_plan_for_id,
+                preview_successor_continuation, prototype1_state_transition_error,
+                reconstruct_child_outcomes_from_store, resolve_parent_policy_budget,
+                same_existing_path, validate_existing_child_plan_for_id,
             },
             history::{ActorRef, BlockStore, FsBlockStore, LineageId, StoreHead},
             identity::{ParentIdentity, load_parent_identity_optional, parent_identity_path},
@@ -740,15 +740,14 @@ fn reconstruct_after_r12(
                 detail: "R12 handoff reconstruction missing search policy".to_string(),
             }
         })?;
-        let decision =
-            crate::cli::prototype1_state::cli_facing::live_successor_continuation_decision(
-                &parts.manifest_path,
-                parent.identity(),
-                policy,
-                selection_decision,
-                selection_material,
-                node,
-            )?;
+        let decision = preview_successor_continuation(
+            &parts.manifest_path,
+            parent.identity(),
+            policy,
+            selection_decision,
+            selection_material,
+            node,
+        )?;
         parts
             .facts
             .report

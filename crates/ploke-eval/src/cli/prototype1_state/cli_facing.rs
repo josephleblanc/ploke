@@ -8514,7 +8514,7 @@ fn adaptive_selection_accepts_successor(
     })
 }
 
-pub(crate) fn live_successor_continuation_decision(
+pub(crate) fn preview_successor_continuation(
     campaign_manifest_path: &Path,
     parent_identity: &ParentIdentity,
     policy: &Prototype1SearchPolicy,
@@ -8591,12 +8591,15 @@ pub(crate) fn live_successor_continuation_decision(
         next_generation: selected_node.generation,
         total_nodes_after_continue,
     };
-    emit_continuation_decision_if_owner_db_exists(
-        campaign_manifest_path,
-        parent_identity,
-        &continuation,
-    )?;
     Ok(continuation)
+}
+
+pub(crate) fn record_continuation_decision(
+    campaign_manifest_path: &Path,
+    parent_identity: &ParentIdentity,
+    decision: &Prototype1ContinuationDecision,
+) -> Result<(), PrepareError> {
+    emit_continuation_decision_if_owner_db_exists(campaign_manifest_path, parent_identity, decision)
 }
 
 fn emit_continuation_decision_if_owner_db_exists(

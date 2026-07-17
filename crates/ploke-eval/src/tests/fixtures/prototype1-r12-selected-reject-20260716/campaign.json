@@ -1,0 +1,48 @@
+{
+  "schema_version": "campaign-manifest.v1",
+  "campaign_id": "p1-v11-keeponly-g35f-oropenai-3g1x3-p3-20260716-185301",
+  "benchmark_family": "multi_swe_bench_rust",
+  "dataset_sources": [
+    {
+      "path": "/home/brasides/.ploke-eval/campaigns/p1-v11-keeponly-g35f-oropenai-3g1x3-p3-20260716-185301/slice.jsonl",
+      "label": "prototype1/p1-stage6-g35f-rg2209-orembed-20260714-224040-setup",
+      "url": "https://huggingface.co/datasets/ByteDance-Seed/Multi-SWE-bench/resolve/main/rust/BurntSushi__ripgrep_dataset.jsonl"
+    }
+  ],
+  "model_id": "google/gemini-3.5-flash",
+  "route_source": "direct_google",
+  "required_procedures": [
+    "tool-call-intent-segments",
+    "tool-call-review",
+    "tool-call-segment-review"
+  ],
+  "instances_root": "/home/brasides/.ploke-eval/instances/prototype1/p1-v11-keeponly-g35f-oropenai-3g1x3-p3-20260716-185301",
+  "batches_root": "/home/brasides/.ploke-eval/batches/prototype1/p1-v11-keeponly-g35f-oropenai-3g1x3-p3-20260716-185301",
+  "eval": {
+    "include_partial": false,
+    "stop_on_error": false,
+    "budget": {
+      "max_turns": 40,
+      "max_tool_calls": 200,
+      "wall_clock_secs": 1800
+    },
+    "batch_prefix": "p1-stage6-g35f-rg2209-orembed-20260714-224040-setup",
+    "embedding_model_id": "openai/text-embedding-3-small",
+    "embedding_provider_slug": "openai",
+    "max_tokens": 32768
+  },
+  "protocol": {
+    "model_id": "google/gemini-3.5-flash",
+    "route_source": "direct_google",
+    "include_partial": true,
+    "include_incompatible": false,
+    "include_failed": false,
+    "stop_on_error": false,
+    "max_concurrency": 100,
+    "tool_review_parallelism": 1,
+    "max_tokens": 4096,
+    "reasoning": {
+      "mode": "omit"
+    }
+  }
+}
