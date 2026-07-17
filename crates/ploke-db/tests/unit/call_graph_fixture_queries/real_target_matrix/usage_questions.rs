@@ -2785,12 +2785,50 @@ fn axum_usage_questions_link_future_poll_to_returned_field_producer() -> Result<
         "axum/src/error_handling/mod.rs:251 poll-to-field-producer proof",
     )?;
 
-    let unrelated = FuturePollCase::AXUM[1].owner(&db)?;
-    let unrelated_flows = db.future_poll_field_producer_flows_for_owner(unrelated)?;
+    let from_fn_poll = FuturePollCase::AXUM[1].owner(&db)?;
+    let from_fn_context = db.call_context_for_owner(from_fn_poll)?;
+    let from_fn_site = FuturePollCase::AXUM[1].poll_row(&from_fn_context);
+    let from_fn_flows = db.future_poll_field_producer_flows_for_owner(from_fn_poll)?;
     assert!(
-        unrelated_flows.is_empty(),
-        "BoxFuture::as_mut().poll has no returned-field producer proof in the current carrier: {unrelated_flows:#?}"
+        !from_fn_flows.is_empty(),
+        "BoxFuture::as_mut().poll should expose generated from_fn producer proof: {from_fn_flows:#?}"
     );
+    assert_eq!(
+        from_fn_flows.len(),
+        16,
+        "from_fn impl_service! should expose one ResponseFuture producer per generated arity: {from_fn_flows:#?}"
+    );
+    for flow in &from_fn_flows {
+        assert_eq!(flow.site.id, from_fn_site.site.id);
+        assert_eq!(flow.site.owner_id, from_fn_poll);
+        assert_eq!(flow.status.status, CallStatusKind::Unsupported);
+        assert!(flow.status.resolution.is_none());
+        assert_eq!(flow.poll_owner_type, "ResponseFuture");
+        assert_eq!(flow.return_binding.kind, "ReturnExpression");
+        assert_eq!(flow.return_binding.name, "return");
+        assert_eq!(flow.return_binding.source_kind, "Constructed");
+        assert_eq!(
+            flow.return_binding.source_path.as_ref(),
+            Some(&path(&["ResponseFuture"]))
+        );
+        assert_eq!(flow.field_binding.kind, "LetBinding");
+        assert_eq!(flow.field_binding.name, "return.inner");
+        assert_eq!(flow.field_binding.source_kind, "PathCallResult");
+        assert_eq!(flow.field_binding.source_id, Some(flow.source_site.id));
+        assert_eq!(flow.source_site.owner_id, flow.producer_id);
+        assert_eq!(flow.source_site.kind, CallSiteKind::Path);
+        assert_eq!(flow.source_site.path.as_ref(), Some(&path(&["Box", "pin"])));
+        assert_eq!(
+            flow.source_edge.relation,
+            LocalBindingRelationKind::BindingSourceCallResult
+        );
+        assert_eq!(flow.source_edge.source_id, flow.field_binding.id);
+        assert_eq!(flow.source_edge.target_id, flow.source_site.id);
+        assert!(
+            relations_for_site(&db, flow.site.id)?.rows.is_empty(),
+            "from_fn poll-to-producer proof must not fabricate a local dyn Future::poll edge"
+        );
+    }
 
     Ok(())
 }
@@ -2807,7 +2845,6 @@ struct FuturePollCase {
 
 #[derive(Clone, Copy)]
 enum FuturePollReceiver {
-    MethodResult(&'static str),
     MethodResultField {
         method_name: &'static str,
         field_path: &'static [&'static str],
@@ -2833,15 +2870,15 @@ impl FuturePollCase {
             body: "self.inner.as_mut().poll(cx).map(Ok)",
             source: "axum/src/middleware/from_fn.rs:375 BoxFuture::as_mut().poll",
             query: "BoxFuture::as_mut().poll",
-            receiver: FuturePollReceiver::MethodResult("as_mut"),
+            receiver: FuturePollReceiver::MethodResultField {
+                method_name: "as_mut",
+                field_path: &["inner"],
+            },
         },
     ];
 
     fn call_receiver(self) -> CallReceiver {
         match self.receiver {
-            FuturePollReceiver::MethodResult(method) => CallReceiver::MethodCallResult {
-                method_name: method.to_string(),
-            },
             FuturePollReceiver::MethodResultField {
                 method_name,
                 field_path,

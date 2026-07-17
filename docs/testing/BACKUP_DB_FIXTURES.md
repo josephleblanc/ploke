@@ -213,7 +213,7 @@ impl Drop for FixtureRestoreGuard {
 | `corpus_chrono_call_graph_2026-07-17.sqlite` | `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be` | plain corpus backup for real-target call graph query contracts | 2026-07-17 |
 | `corpus_chrono_openrouter_embeddings_2026-05-17.sqlite` | `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be` | OpenRouter-searchable corpus backup for type-context matrix tests | 2026-05-17 |
 | `corpus_axum_type_graph_2026-05-17.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | typed graphRAG workspace-member corpus backup for type-context matrix tests | 2026-05-17 |
-| `corpus_axum_call_graph_2026-07-16.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | plain workspace-member corpus backup for real-target call graph query contracts | 2026-07-16 |
+| `corpus_axum_call_graph_2026-07-17.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | plain workspace-member corpus backup for real-target call graph query contracts | 2026-07-17 |
 | `corpus_axum_openrouter_embeddings_2026-05-17.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | OpenRouter-searchable workspace-member corpus backup for type-context matrix tests | 2026-05-17 |
 | `ploke-db_af8e3a20-728d-5967-8523-da8a5ccdae45` | `crates/ploke-db` | currently orphaned snapshot | 2026-03-20 |
 
@@ -236,7 +236,10 @@ chrono committed seed artifact needed promotion for that slice. The chrono
 fixture was then recreated with
 `cargo run -p xtask --features call_graph -- recreate-backup-db --fixture corpus_chrono_call_graph`
 after preserving the finite ambiguous `Setter` match-tuple callable candidates
-for `set(parsed, v)?`.
+for `set(parsed, v)?`. The axum fixture was then recreated with
+`cargo run -p xtask --features call_graph -- recreate-backup-db --fixture corpus_axum_call_graph`
+after preserving the generated `from_fn` `ResponseFuture` producer proof for
+`self.inner.as_mut().poll(cx)`.
 
 Post-regeneration verification:
 
@@ -274,8 +277,8 @@ Post-regeneration verification:
     `8065e52d823decdc3eff493b02480c93cecf38dd2316c70c893cf9c2fa5b6c35`
   - `corpus_chrono_call_graph_2026-07-17.sqlite`:
     `87f2aa5d6907b0f69f26e2d3eb9f69dd0a1490c37e6d06c559ed4e05d8f147d7`
-  - `corpus_axum_call_graph_2026-07-16.sqlite`:
-    `9491a9fa0e4efec9fed4c06f11143fb117968c398e24df43fca5f162acf86aea`
+  - `corpus_axum_call_graph_2026-07-17.sqlite`:
+    `f39e97babf9894dc96191cb00f855c69047dbf980778781de8cc25b65ca218a3`
 
 ## 2026-07-16 Active Call-Graph Fixture Refresh
 
@@ -1521,10 +1524,10 @@ Expected searchable corpus embedding config:
   - `Token![,]` under `Punctuated<syn::Variant, Token![,]>` retains a nested
     macro type without fabricating a terminal target
 
-### `corpus_axum_call_graph_2026-07-16.sqlite`
+### `corpus_axum_call_graph_2026-07-17.sqlite`
 
 - Status: active
-- File: `tests/backup_dbs/corpus_axum_call_graph_2026-07-16.sqlite`
+- File: `tests/backup_dbs/corpus_axum_call_graph_2026-07-17.sqlite`
 - Parsed target: `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1`
 - Checkout slug: `tests/fixture_github_clones/corpus/tokio-rs__axum`
 - Selected workspace members:

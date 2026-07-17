@@ -1036,7 +1036,22 @@ fn middleware_impl_service_item(kind: MiddlewareService, arity: usize) -> Option
                         for FromFn<F, S, I, (#(#parts,)* #last,)>
                     {
                         fn call(&mut self, req: Request) -> Self::Future {
-                            std::mem::replace(&mut self.inner, not_ready_inner);
+                            let not_ready_inner = self.inner.clone();
+                            let ready_inner = std::mem::replace(&mut self.inner, not_ready_inner);
+                            let mut f = self.f.clone();
+                            let state = self.state.clone();
+                            let (mut parts, body) = req.into_parts();
+                            let future = Box::pin(async move {
+                                #(
+                                    let #parts = #parts::from_request_parts(&mut parts, &state).await;
+                                )*
+                                let req = Request::from_parts(parts, body);
+                                let #last = #last::from_request(req, &state).await;
+                                let inner = BoxCloneSyncService::new(MapIntoResponse::new(ready_inner));
+                                let next = Next { inner };
+                                f(#(#parts,)* #last, next).await.into_response()
+                            });
+                            ResponseFuture { inner: future }
                         }
                     }
                 }),

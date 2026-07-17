@@ -142,9 +142,11 @@ pub(super) fn classify_method_receiver(
         syn::Expr::Call(call) => {
             receiver_path_call(call).unwrap_or(MethodCallReceiver::Unsupported)
         }
-        syn::Expr::MethodCall(call) => MethodCallReceiver::MethodCallResult {
-            method_name: call.method.to_string(),
-        },
+        syn::Expr::MethodCall(call) => self_field_method_result_receiver(call).unwrap_or(
+            MethodCallReceiver::MethodCallResult {
+                method_name: call.method.to_string(),
+            },
+        ),
         syn::Expr::Await(await_expr) => {
             receiver_await_path_call(await_expr).unwrap_or(MethodCallReceiver::AwaitResult)
         }
@@ -204,6 +206,19 @@ fn receiver_try_call(try_expr: &syn::ExprTry) -> Option<MethodCallReceiver> {
 
 fn method_result_field_receiver(receiver: &syn::Expr) -> Option<MethodCallReceiver> {
     let (call, field_path) = method_result_field_path(receiver)?;
+    if field_path.is_empty() {
+        return None;
+    }
+    let byte_range = call.span().byte_range();
+    Some(MethodCallReceiver::MethodResultField {
+        method_name: call.method.to_string(),
+        method_span: (byte_range.start, byte_range.end),
+        field_path,
+    })
+}
+
+fn self_field_method_result_receiver(call: &syn::ExprMethodCall) -> Option<MethodCallReceiver> {
+    let field_path = self_field_path(call.receiver.as_ref())?;
     if field_path.is_empty() {
         return None;
     }
