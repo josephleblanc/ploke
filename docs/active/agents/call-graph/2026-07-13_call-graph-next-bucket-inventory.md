@@ -531,6 +531,37 @@ Aliased stored forwarded-future checkpoint, 2026-07-17:
   one-hop same-block alias proof for an already source-visible aggregate future
   slot.
 
+Post-regeneration source-oracle audit, 2026-07-17:
+
+- Rechecked the remaining buckets after active fixture regeneration and the
+  aliased stored forwarded-future slice. The generated/macro-expanded bucket is
+  already represented by bounded axum models for `opaque_future!`, top-level
+  route helpers, method-routing impl methods, body conversion impls, rejection
+  macros, handler/service tuples, middleware services, and error-handling
+  service impls.
+- Rechecked object/field callable rows against the pinned axum source. The
+  router-side `MakeErasedRouter::into_route` row has no selected-source
+  construction path for `into_route`, only field copies, so it still fails the
+  source-visible proof entry criterion. The `Map.layer` rows remain
+  candidate-only, and `TapIo::accept` remains a constructor-parameter frontier
+  without a concrete traversal target.
+- Rechecked callable argument/value flow. The fixture family already covers the
+  current complete private-caller proof shapes, including one-hop and two-hop
+  forwarding for function pointers, generic callable bounds, referenced and
+  boxed trait objects, holder fields, candidate-only conflicting rows, and
+  returned callable parameters. The real axum callable rows found in this pass
+  are public/generic/runtime-dispatch shapes and should remain explicit
+  blockers or summaries until a larger interprocedural value-flow model exists.
+- Rechecked source/sink and build/test policy surfaces. Current DB/RAG/TUI
+  coverage already handles effect seeds, caller-supplied and stored
+  `effect_policy` rows, guard reports, external summaries, build domains,
+  generated test-entrypoint summaries, test-selection payloads, and proof
+  invariant findings for the reviewed source oracles.
+- Next implementation should start only after choosing a fresh source oracle
+  that satisfies one remaining bucket's entry criterion. Otherwise the correct
+  action is verification, cleanup of stale notes, or handoff, not another
+  same-family fixture or targetless-proof breadth slice.
+
 ## Do Not Reselect Without New Evidence
 
 - Public callable parameters and public callable fields that lack complete
