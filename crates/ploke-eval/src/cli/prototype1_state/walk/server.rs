@@ -6455,6 +6455,265 @@ mod tests {
         );
     }
 
+    #[test]
+    fn v12_handoff_operation_replays_target_reached_before_second_claim_failure() {
+        use crate::cli::prototype1_state::{
+            journal::{JournalEntry, PrototypeJournal},
+            successor::State as SuccessorState,
+            walk::protocol::WalkAttemptResult,
+        };
+        use sha2::{Digest, Sha256};
+
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("src/tests/fixtures/prototype1-v12-target-reached-handoff-20260716");
+        let predecessor_bytes =
+            inflate_hex(&fixture.join("predecessor-control-journal.jsonl.gz.hex"));
+        let successor_bytes = inflate_hex(&fixture.join("successor-control-journal.jsonl.gz.hex"));
+        assert_eq!(
+            format!("{:x}", Sha256::digest(&predecessor_bytes)),
+            "933132a4076b666c7b947741631d5dc9dca6f1757b7c492bb1726f69b724dcf2"
+        );
+        assert_eq!(
+            format!("{:x}", Sha256::digest(&successor_bytes)),
+            "ff5030308ebef6e89baee9313ef2b9eac3558da3c746b97abe79914673cdd3f5"
+        );
+        let predecessor = journal_parent(&predecessor_bytes);
+        let successor = journal_parent(&successor_bytes);
+        assert_eq!(predecessor.generation(), 0);
+        assert_eq!(successor.generation(), 1);
+        assert_eq!(
+            successor.previous_parent_id(),
+            Some(predecessor.parent_id())
+        );
+
+        let temp = tempdir().expect("historical replay tempdir");
+        let invocation_path = temp.path().join("successor-invocation.json");
+        let invocation_bytes = decode_hex(&fixture.join("successor-invocation.json.hex"));
+        assert_eq!(
+            format!("{:x}", Sha256::digest(&invocation_bytes)),
+            "2779a6cdd2f929a1f33d1ee300cde0176e3ca74766f705003081a8580831336e"
+        );
+        fs::write(&invocation_path, invocation_bytes)
+            .expect("install exact historical successor invocation");
+        let InvocationAuthority::Successor(invocation) =
+            invocation::load_authority(&invocation_path)
+                .expect("load historical successor invocation")
+        else {
+            panic!("historical invocation must carry successor authority");
+        };
+        let attempt = invocation
+            .predecessor_attempt()
+            .expect("historical successor preserves predecessor attempt");
+        assert_eq!(
+            attempt.session().to_string(),
+            "d9d5ddbc-1f71-4a73-900a-d2d3d34a5bf7"
+        );
+        assert_eq!(
+            attempt.transition().to_string(),
+            "d1b66192-ee2b-51cb-afcb-109bd6a0a7ec"
+        );
+        assert_eq!(attempt.fence().to_string(), "18");
+        assert!(!attempt.allow_live_api());
+        assert!(attempt.allow_git_changes());
+
+        let store = Store::new(temp.path().join("control"));
+        let predecessor_path = store.paths(&predecessor).journal().to_path_buf();
+        let successor_path = store.paths(&successor).journal().to_path_buf();
+        fs::create_dir_all(
+            predecessor_path
+                .parent()
+                .expect("predecessor journal parent"),
+        )
+        .expect("create predecessor replay directory");
+        fs::create_dir_all(successor_path.parent().expect("successor journal parent"))
+            .expect("create successor replay directory");
+        fs::write(&predecessor_path, predecessor_bytes)
+            .expect("install predecessor historical journal");
+        fs::write(&successor_path, successor_bytes).expect("install successor historical journal");
+
+        let epoch = ServerEpoch::capture(temp.path()).expect("capture replay presentation epoch");
+        let predecessor_history = store
+            .inspect_history(&predecessor, epoch.clone())
+            .expect("replay predecessor history")
+            .expect("predecessor history exists");
+        let successor_history = store
+            .inspect_history(&successor, epoch)
+            .expect("replay successor history")
+            .expect("successor history exists");
+        assert!(predecessor_history.damage.is_none());
+        assert!(successor_history.damage.is_none());
+        assert_eq!(predecessor_history.version.phase(), WalkPhase::R13b);
+        assert_eq!(predecessor_history.version.journal_revision(), 61);
+        assert_eq!(successor_history.version.phase(), WalkPhase::R4c);
+        assert_eq!(successor_history.version.journal_revision(), 7);
+
+        let predecessor_snapshot = store
+            .inspect(&predecessor)
+            .expect("inspect predecessor session")
+            .expect("predecessor session exists");
+        let committed = predecessor_snapshot
+            .committed_handoff(attempt.session(), attempt.fence())
+            .expect("production replay identifies the exact committed handoff");
+        assert_eq!(committed.intent().transition_id(), attempt.transition());
+        assert!(matches!(
+            committed.result(),
+            crate::cli::prototype1_state::session::AttemptResult::Committed {
+                phase: WalkPhase::R13b,
+                ..
+            }
+        ));
+
+        let finished = predecessor_history
+            .events
+            .iter()
+            .find(|event| {
+                matches!(
+                    &event.kind,
+                    WalkSessionEventKind::AttemptFinished { receipt }
+                        if receipt.transition_id == attempt.transition()
+                            && receipt.fence == attempt.fence().get()
+                            && matches!(
+                                receipt.result,
+                                WalkAttemptResult::Committed {
+                                    phase: WalkPhase::R13b,
+                                    ..
+                                }
+                            )
+                )
+            })
+            .expect("replay committed predecessor handoff receipt");
+        let predecessor_release = predecessor_history
+            .events
+            .iter()
+            .find(|event| {
+                matches!(
+                    event.kind,
+                    WalkSessionEventKind::Released {
+                        fence: 18,
+                        ready: None
+                    }
+                )
+            })
+            .expect("replay clean predecessor release");
+        let successor_ready = successor_history
+            .events
+            .iter()
+            .find_map(|event| match &event.kind {
+                WalkSessionEventKind::Released {
+                    fence: 1,
+                    ready: Some(ready),
+                } => Some((event, ready)),
+                _ => None,
+            })
+            .expect("replay atomic successor Ready release");
+        assert_eq!(
+            successor_ready.1.runtime_id.to_string(),
+            invocation.runtime_id().to_string()
+        );
+        assert_eq!(successor_ready.1.commit.cursor.phase, WalkPhase::R4c);
+        assert!(successor_ready.0.recorded_at_ms < finished.recorded_at_ms);
+        assert!(finished.recorded_at_ms < predecessor_release.recorded_at_ms);
+
+        let transition_path = temp.path().join("transition-journal.jsonl");
+        let transition_bytes = inflate_hex(&fixture.join("transition-journal.jsonl.gz.hex"));
+        assert_eq!(
+            format!("{:x}", Sha256::digest(&transition_bytes)),
+            "8e2bf04f1506f2fe400892692b1b9a212bf1c6edcb0e98b230a12ed9c7d639d0"
+        );
+        fs::write(&transition_path, transition_bytes)
+            .expect("install exact historical transition journal");
+        let entries = PrototypeJournal::new(&transition_path)
+            .load_entries()
+            .expect("replay transition journal");
+        let journal_ready = entries
+            .iter()
+            .find_map(|entry| match entry {
+                JournalEntry::Successor(record)
+                    if record.runtime_id == Some(invocation.runtime_id()) =>
+                {
+                    match &record.state {
+                        SuccessorState::Ready {
+                            controller: Some(ready),
+                            ..
+                        } => Some(ready),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            })
+            .expect("replay typed successor Ready projection");
+        journal_ready
+            .validate_persisted()
+            .expect("historical Ready receipt remains structurally valid");
+        assert_eq!(
+            journal_ready.commit().session_id(),
+            successor_ready.1.commit.session_id
+        );
+        let acceptance = entries
+            .iter()
+            .find_map(|entry| match entry {
+                JournalEntry::SuccessorHandoff(handoff)
+                    if handoff.runtime_id == invocation.runtime_id() =>
+                {
+                    handoff.acceptance.as_ref()
+                }
+                _ => None,
+            })
+            .expect("replay typed successor handoff acceptance");
+        assert_eq!(acceptance.ready(), journal_ready);
+        assert_eq!(acceptance.attempt(), attempt);
+
+        let operation_bytes = decode_hex(&fixture.join("predecessor-operation.json.hex"));
+        assert_eq!(
+            format!("{:x}", Sha256::digest(&operation_bytes)),
+            "d0d473aedf274fba24e371bf77234a7d082f71ca42efd66a806bf6a37a63d5e8"
+        );
+        let operation: DurableOperation = serde_json::from_slice(&operation_bytes)
+            .expect("decode historical predecessor operation");
+        let snapshot = &operation.stored.snapshot;
+        assert_eq!(
+            snapshot.operation_id.to_string(),
+            "ee7bae91-f6a9-4e49-8121-27b6ac0aef5c"
+        );
+        assert_eq!(snapshot.job_id, 8);
+        assert_eq!(snapshot.status, WalkJobStatus::Indeterminate);
+        assert_eq!(snapshot.expected.session_id(), Some(attempt.session()));
+        assert_eq!(snapshot.expected.phase(), WalkPhase::R12);
+        assert_eq!(snapshot.expected.journal_revision(), 57);
+        assert_eq!(snapshot.phase_before, WalkPhase::R12);
+        assert_eq!(snapshot.phase_after, Some(WalkPhase::R13b));
+        assert_eq!(snapshot.target_phase, Some(WalkPhase::R13b));
+        assert!(snapshot.receipt.is_none());
+        let message = snapshot
+            .message
+            .as_deref()
+            .expect("historical operation preserves failure detail");
+        assert!(message.contains("successor executable"), "{message}");
+        assert!(
+            message.contains("/home/brasides/code/ploke/target/debug/ploke-eval"),
+            "{message}"
+        );
+        assert!(
+            message.contains(
+                "/home/brasides/.ploke-eval/setup-seeds/p1-v12-r12fix-keeponly-g35f-oropenai-3g1x3-p3-20260716-204252/target/debug/ploke-eval"
+            ),
+            "{message}"
+        );
+        assert!(
+            message.contains("durable controller cursor changed"),
+            "{message}"
+        );
+        let operation_finished = chrono::DateTime::parse_from_rfc3339(
+            snapshot
+                .finished_at
+                .as_deref()
+                .expect("operation finish time"),
+        )
+        .expect("parse operation finish time")
+        .timestamp_millis();
+        assert!(operation_finished > predecessor_release.recorded_at_ms);
+    }
+
     #[tokio::test]
     async fn handoff_terminal_fences_predecessor_admission() {
         let repo = tempdir().expect("repo tempdir");

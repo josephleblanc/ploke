@@ -1871,6 +1871,9 @@ impl WalkController {
                     ),
                 });
             }
+            if self.phase() == target {
+                break;
+            }
         }
         Ok((transitions, expected))
     }
@@ -2293,6 +2296,12 @@ impl NextPhase for WalkPhase {
 }
 
 fn ensure_supported_target(target: WalkPhase) -> Result<(), PrepareError> {
+    if target == WalkPhase::R14b {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: "step-mode walk target r14b crosses the R13b successor runtime boundary; bound this operation at r13b. R14b finalization requires predecessor authority retained across the handoff and is not admitted through the transferred successor controller"
+                .to_string(),
+        });
+    }
     if target.is_early_boundary() {
         Ok(())
     } else {
@@ -2331,7 +2340,7 @@ fn ensure_branch_target(
         if r12_handoff && matches!(target, WalkPhase::R13a | WalkPhase::R14a) {
             return Err(PrepareError::InvalidBatchSelection {
                 detail: format!(
-                    "target {target} is the stopped branch, but the R12 continuation authorizes successor handoff; use --until r13b or --until r14b with --allow git-changes"
+                    "target {target} is the stopped branch, but the R12 continuation authorizes successor handoff; use --until r13b with --allow git-changes"
                 ),
             });
         }
@@ -2597,6 +2606,13 @@ fn paint(value: &str, color: bool, code: &str) -> String {
 
 fn push_next_steps(lines: &mut Vec<String>, phase: WalkPhase) {
     lines.push("next:".to_string());
+    if phase == WalkPhase::R13b {
+        lines.push(
+            "  (step-mode authority transferred at r13b; r14b finalization requires a retained predecessor lease in continuous mode)"
+                .to_string(),
+        );
+        return;
+    }
     let steps = phase.next_steps();
     if steps.is_empty() {
         lines.push("  (no admitted next step in this server slice)".to_string());
@@ -4702,6 +4718,25 @@ mod tests {
                 edge.to()
             );
         }
+    }
+
+    #[test]
+    fn r13b_next_output_explains_step_authority_boundary() {
+        assert!(WalkPhase::R13b.next_steps().is_empty());
+        assert_eq!(
+            WalkPhase::R13b
+                .topology_steps()
+                .first()
+                .map(|step| step.phase),
+            Some(WalkPhase::R14b)
+        );
+        let mut lines = Vec::new();
+        push_next_steps(&mut lines, WalkPhase::R13b);
+        let rendered = lines.join("\n");
+
+        assert!(rendered.contains("step-mode authority transferred at r13b"));
+        assert!(rendered.contains("retained predecessor lease in continuous mode"));
+        assert!(!rendered.contains("r13_to_r14"));
     }
 
     #[test]

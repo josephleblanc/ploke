@@ -312,8 +312,17 @@ impl WalkPhase {
         )
     }
 
-    /// Admitted next edges from this phase.
+    /// Mutation edges admitted by the step-mode walk service from this phase.
     pub(crate) fn next_steps(self) -> &'static [WalkNextStep] {
+        if self == WalkPhase::R13b {
+            return NO_NEXT;
+        }
+        self.topology_steps()
+    }
+
+    /// Canonical typestate topology, including edges owned only by continuous
+    /// mode after the step-mode service has transferred runtime authority.
+    pub(crate) fn topology_steps(self) -> &'static [WalkNextStep] {
         match self {
             WalkPhase::Empty => EMPTY_NEXT,
             WalkPhase::R0 => R0_NEXT,
@@ -388,7 +397,7 @@ impl WalkPhase {
     }
 
     fn next_from(self, from: WalkPhase) -> Option<&'static WalkNextStep> {
-        from.next_steps().iter().find(|step| step.phase == self)
+        from.topology_steps().iter().find(|step| step.phase == self)
     }
 }
 

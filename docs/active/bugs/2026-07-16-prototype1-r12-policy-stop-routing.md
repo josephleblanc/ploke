@@ -119,9 +119,13 @@ operator branches end to end:
 
 1. a selected policy-stop candidate reaches R13a/R14a without
    `--allow-git-changes`; and
-2. a later kept/continuable candidate reaches R13b/R14b only with explicit
+2. a later kept/continuable candidate reaches step-mode R13b only with explicit
    checkout authority, seals History, installs the exact candidate Artifact,
-   and starts the successor runtime from the verified handoff.
+   transfers the shared endpoint, and continues from the verified successor's
+   R4c cursor; and
+3. continuous-mode R14b finalization, when exercised separately, retains the
+   predecessor lease across handoff instead of claiming through the transferred
+   successor controller.
 
 ## Fix Direction
 

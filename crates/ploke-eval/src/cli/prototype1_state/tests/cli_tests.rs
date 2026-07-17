@@ -1300,6 +1300,65 @@ backend = "dual-strict"
     assert!(session.active.is_none());
     assert_eq!(session.cursor.expect("session cursor").phase, WalkPhase::R3);
     assert!(paths.journal().exists());
+
+    let cross_runtime = match controller
+        .step_version(Some(WalkPhase::R14b), false, true, &version)
+        .await
+    {
+        Ok(_) => panic!("one bounded operation must not cross successor authority"),
+        Err(error) => error,
+    };
+    let detail = cross_runtime.to_string();
+    assert!(
+        detail.contains("crosses the R13b successor runtime boundary"),
+        "{detail}"
+    );
+    let session = store
+        .inspect(&parent)
+        .expect("inspect session after rejected cross-runtime target")
+        .expect("session remains after rejected cross-runtime target");
+    assert!(session.active.is_none());
+    assert_eq!(session.journal_revision, version.journal_revision());
+    assert_eq!(
+        session
+            .cursor
+            .expect("session cursor after rejected cross-runtime target")
+            .phase,
+        WalkPhase::R3
+    );
+
+    let advanced = controller
+        .step_version(Some(WalkPhase::R4a), false, false, &version)
+        .await
+        .expect("bounded walk step should stop on its committed target");
+    assert_eq!(advanced.from(), WalkPhase::R3);
+    assert_eq!(advanced.to(), WalkPhase::R4a);
+    assert_eq!(
+        advanced
+            .transition_edges()
+            .expect("bounded transition edge"),
+        [crate::cli::prototype1_state::edge::ControlEdge::R3ToR4a]
+    );
+    let advanced_version = advanced.exact_version().expect("advanced session version");
+    assert_eq!(
+        advanced_version.journal_revision(),
+        version.journal_revision() + 4,
+        "one committed edge must append exactly Acquired, Began, Finished, and Released; reaching the requested target must not acquire a second no-op lease"
+    );
+
+    let session = store
+        .inspect(&parent)
+        .expect("inspect advanced session")
+        .expect("advanced session exists");
+    assert!(session.active.is_none());
+    assert_eq!(
+        session.journal_revision,
+        advanced_version.journal_revision()
+    );
+    assert_eq!(
+        session.cursor.expect("advanced session cursor").phase,
+        WalkPhase::R4a
+    );
 }
 
 #[tokio::test]
@@ -9411,6 +9470,25 @@ async fn r12_reject_replay() {
         Prototype1ContinuationDisposition::ContinueExploreFromRejected
     );
     assert!(denied_preview.disposition.allows_successor());
+    assert_eq!(
+        crate::cli::prototype1_state::walk::controller::test_r12_target(
+            &denied,
+            Some(WalkPhase::R13b),
+        )
+        .expect("continuable R12 must admit the bounded handoff target"),
+        WalkPhase::R13b
+    );
+    let boundary_error = crate::cli::prototype1_state::walk::controller::test_r12_target(
+        &denied,
+        Some(WalkPhase::R14b),
+    )
+    .expect_err("step-mode R12 must reject a target beyond transferred authority");
+    assert!(
+        boundary_error
+            .to_string()
+            .contains("crosses the R13b successor runtime boundary"),
+        "unexpected runtime-boundary error: {boundary_error}"
+    );
 
     let db_path = eval_store::prototype1_eval_store_db_path(&manifest_path);
     fs::create_dir_all(db_path.parent().expect("eval db parent")).expect("eval db dir");

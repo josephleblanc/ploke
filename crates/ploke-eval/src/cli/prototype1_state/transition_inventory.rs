@@ -71,7 +71,7 @@ pub(crate) struct TransitionInventoryRow {
 pub(crate) fn prototype1_transition_inventory_rows() -> Vec<TransitionInventoryRow> {
     let mut rows = Vec::new();
     for phase in parent_source_phases() {
-        for step in phase.next_steps() {
+        for step in phase.topology_steps() {
             rows.push(parent_transition_row(*phase, step.phase, step.edge));
         }
     }
@@ -652,7 +652,7 @@ mod tests {
         let rows = prototype1_transition_inventory_rows();
         let parent_count: usize = parent_source_phases()
             .iter()
-            .map(|phase| phase.next_steps().len())
+            .map(|phase| phase.topology_steps().len())
             .sum();
         let child_count = child_transition_rows().len();
 

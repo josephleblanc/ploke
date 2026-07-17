@@ -210,3 +210,7 @@ file and current code before treating a report as still open.
   Source repaired, live validation pending: R12 policy stops now route from the
   continuation disposition instead of treating selected-candidate evidence as
   successor-handoff authority.
+- [`2026-07-16-walk-until-target-second-claim.md`](./2026-07-16-walk-until-target-second-claim.md)
+  Source repaired, live validation pending: a bounded walk now returns as soon
+  as its committed edge reaches the requested target instead of claiming the
+  transferred successor session a second time.
