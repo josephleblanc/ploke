@@ -307,3 +307,7 @@ state without checking newer code, History records, and run artifacts.
   path while rejecting v15 as a handoff proof because an operational `keep`
   had no MBE oracle evaluation; records the strict gate repair and remaining
   no-selection observability gaps.
+- [`2026-07-17-p1-v16-oraclegate-mbe-g35f-direct-3g1x3-p3-20260717-020840.md`](2026-07-17-p1-v16-oraclegate-mbe-g35f-direct-3g1x3-p3-20260717-020840.md)
+  Preserved negative live proof that `all-resolved` excludes the only
+  operationally kept child when its MBE verdict remains unresolved, plus the
+  durable schema-v5 no-selection receipt and R12 stopped-record regression.

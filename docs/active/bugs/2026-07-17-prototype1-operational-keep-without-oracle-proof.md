@@ -1,7 +1,7 @@
 # Prototype 1 Operational Keep Without Oracle Proof
 
-Status: source repaired; historical replay passes; fresh strict live handoff
-validation pending.
+Status: source repaired; positive and negative historical replay passes; fresh
+strict live handoff validation pending.
 
 ## Broken Contract
 
@@ -47,6 +47,15 @@ oracle proof nor a convincing source-level causal argument for handoff.
 The campaign remains preserved at R12. No digest or committed profile was
 rewritten and no successor checkout was installed.
 
+A fresh strict follow-up campaign,
+`p1-v16-oraclegate-mbe-g35f-direct-3g1x3-p3-20260717-020840`, proved the
+negative gate path against live evidence. Child `node-0d80c1aeea697e6b` /
+branch `branch-652e6dab480c355a` was operationally `keep`, but its MBE verdict
+was unresolved: regression r2095 was fixed while r2208 still failed. The
+`all-resolved` gate correctly excluded the only candidate. That pre-receipt
+binary stopped at R12 because it had no durable no-selection journal evidence;
+the run remains preserved rather than being retrofitted.
+
 ## Source Boundary
 
 Before repair:
@@ -85,6 +94,19 @@ summary. The additive relation avoids changing the stored shape of
 `eval_selection_oracle` row binds each persisted selection decision to its
 sealed oracle mode, evidence requirement, gate, target set, and formula id.
 
+Completed negative selection is now represented by a passive schema-v5
+selection receipt. It preserves the considered candidates, source provenance,
+formula rows, oracle gate, metrics, and projection failures while carrying no
+selected identity or successor decision. The receipt is written to the owner DB
+and its hash is bound to the R12 stopped journal record, but schema v5 is
+explicitly forbidden from sealing into History. Rejected-only execution instead
+records `NotRun`, keeping “no admissible candidate” distinct from “selection was
+not attempted.”
+
+`eval_selection_projection_failure` is an additive relation keyed by decision
+and failure id so the operator can query candidate projection and traversal
+failures without decoding a raw selection blob.
+
 ## Docs Expectation
 
 `crates/ploke-eval/docs/prototype1/run-profile.md` now documents oracle `mode`
@@ -111,6 +133,13 @@ contains SHA-256-pinned copies of the production carriers. The historical replay
 drives `select_successor_for_profile` and proves the original profile selects
 while `all-resolved` rejects the same evidence.
 
+The immutable v16 fixture at
+`crates/ploke-eval/src/tests/fixtures/prototype1-v16-all-unresolved-20260717/`
+replays the live all-unresolved evidence through production selection and DB
+projection. It proves the pure selector is read-only, persists one
+`no_selection` decision with its candidate, score, oracle, and four projection
+failure rows, and leaves History and successor handoff untouched.
+
 Additional tests cover:
 
 - resolved candidate selection over a higher-performing unresolved candidate;
@@ -119,7 +148,10 @@ Additional tests cover:
 - legacy RelativeScore sealed-evidence precedence under `disabled`;
 - profile admission constraints;
 - passive record and traversal target round trips; and
-- additive eval DB schema installation.
+- additive eval DB schema installation;
+- exact R12 `Completed { hash }` versus rejected-only `NotRun` receipts;
+- strict reconstruction of the receipt hash and continuation decision; and
+- read-only doctor/status selection probing.
 
 ## Remaining Repro / Validation
 
@@ -133,6 +165,7 @@ Run a fresh campaign from the repaired source with MBE enabled and
 4. the predecessor hands control to the verified successor runtime; and
 5. the successor advances another generation without rewriting prior evidence.
 
-If every candidate is unresolved, preserve the run and add a typed persisted
-no-selection outcome before treating the negative gate behavior as fully
-observable.
+The v16 negative path is now fully observable and preserved. The remaining live
+proof must use a fresh campaign and reach a resolved selected candidate, strict
+History admission, verified successor handoff, and at least one successor
+generation without rewriting any prior evidence.

@@ -139,7 +139,7 @@ Run count queries for these relation groups after each major phase:
 - broad harness and agent turn: `eval_harness_request`, `eval_harness_diagnostic`, `eval_harness_workspace`, `eval_harness_workspace_change`, `eval_harness_submission*`, `eval_agent_turn`, `eval_model_exchange`, `eval_tool_event`, `eval_message_event`, `eval_trace_event`
 - child plan: `eval_child_plan`, `eval_child_plan_child`, `eval_child_plan_rejected_attempt`
 - materialize/build/spawn/observe: `eval_artifact*`, `eval_operation`, `eval_patch`, `eval_apply_event`, `eval_build_event`, `eval_binary_ref`, `eval_invocation`, `eval_channel_message`, `eval_channel_receipt`, `eval_import_event`, `eval_log_ref`, `eval_runner_result`
-- compare/selection/handoff: `eval_evaluation`, `eval_evaluation_instance`, `eval_selection_decision`, `eval_selection_candidate`, `eval_selection_finding`, `eval_selection_score`, `eval_selection_oracle`, `eval_continuation_decision`
+- compare/selection/handoff: `eval_evaluation`, `eval_evaluation_instance`, `eval_selection_decision`, `eval_selection_candidate`, `eval_selection_finding`, `eval_selection_score`, `eval_selection_oracle`, `eval_selection_projection_failure`, `eval_continuation_decision`
 - operator walk: `eval_walk_event`, `eval_walk_event_transition`
 
 ## Findings summary to fill after run

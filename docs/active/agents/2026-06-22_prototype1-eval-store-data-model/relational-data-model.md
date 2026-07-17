@@ -973,7 +973,11 @@ eval_oracle_result {
 
 ### Selection and continuation relations
 
-`eval_selection_event` from the first draft is split into decision, candidate, finding, score, and continuation rows.
+`eval_selection_event` from the first draft is split into decision, candidate,
+finding, score, oracle, projection-failure, and continuation rows. A completed
+selection procedure that finds no admissible candidate is still a durable
+decision row with `outcome = no_selection`; it is passive evidence and is not a
+sealed History selection.
 
 ```text
 eval_selection_decision {
@@ -984,7 +988,7 @@ eval_selection_decision {
   procedure_id: String,
   selected_node_id: String?,
   selected_artifact_id: String?,
-  outcome: String,                -- accepted | explore_from | stop
+  outcome: String,                -- accepted | explore_from | stop | no_selection
   disposition: String?,
   decision_ref: String?,
   decision_hash: String?,
@@ -1020,6 +1024,23 @@ eval_selection_score {
   weight: Float?,
   rank: Int?,
   selected: Bool
+}
+
+eval_selection_oracle {
+  decision_id: String =>
+  mode: String,
+  require_evidence: Bool,
+  gate: String,
+  targets: [String],
+  formula_id: String?
+}
+
+eval_selection_projection_failure {
+  decision_id: String,
+  failure_id: String =>
+  candidate_subject: String?,
+  kind: String,
+  message: String?
 }
 
 eval_continuation_decision {
@@ -1421,6 +1442,8 @@ eval_selection_decision
 -> eval_selection_candidate
 -> eval_selection_finding
 -> eval_selection_score
+-> eval_selection_oracle
+-> eval_selection_projection_failure
 -> eval_evaluation / eval_evaluation_instance
 -> eval_oracle_result / eval_metric_observation
 -> eval_profile_commitment / eval_policy_config
