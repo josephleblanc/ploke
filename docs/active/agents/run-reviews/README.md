@@ -302,3 +302,8 @@ state without checking newer code, History records, and run artifacts.
   persistence-audit readiness, and correct rejected-child stop while preserving
   the remaining multi-generation handoff, final-message projection, protocol
   semantics, and candidate causal-attribution gaps.
+- [`2026-07-17-p1-v15-oracle-gap-r12-review.md`](2026-07-17-p1-v15-oracle-gap-r12-review.md)
+  Preserved R12 review proving the bounded scan barrier and child treatment
+  path while rejecting v15 as a handoff proof because an operational `keep`
+  had no MBE oracle evaluation; records the strict gate repair and remaining
+  no-selection observability gaps.

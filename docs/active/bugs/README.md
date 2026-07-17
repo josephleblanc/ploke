@@ -218,3 +218,8 @@ file and current code before treating a report as still open.
   Source repaired, live validation pending: an unbounded post-edit scan barrier
   left one broad lane and the R7-to-R8 walk edge nonterminal while the server
   remained CPU- and memory-hot; v14 is preserved as abandoned evidence.
+- [`2026-07-17-prototype1-operational-keep-without-oracle-proof.md`](./2026-07-17-prototype1-operational-keep-without-oracle-proof.md)
+  Source repaired, fresh strict live validation pending: v15 reached R12 with
+  an operationally kept child but no oracle evaluation, so successor admission
+  now has a separate fail-closed `all-resolved` gate bound to exact profile
+  targets without weakening handoff or digest verification.
