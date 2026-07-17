@@ -58,7 +58,7 @@ use crate::call_graph_tool_support::{
     assert_handler_call_incoming_context, assert_incoming_context,
     assert_initialized_local_receiver_context, assert_initialized_local_receiver_proof,
     assert_initialized_path_local_binding_payload, assert_json_from_bytes_incoming_context,
-    assert_method_argument_parameter_local_binding_payload,
+    assert_local_function_binding_payload, assert_method_argument_parameter_local_binding_payload,
     assert_no_external_summary_need_for_site, assert_parse_attrs_incoming_context,
     assert_path_blocker_proof, assert_path_context, assert_path_resolution_proof,
     assert_process_invariant_findings, assert_resolved_callable_param_proof,
@@ -873,6 +873,54 @@ async fn code_item_edges_returns_local_binding_payload_for_initialized_callable(
         edges,
         fixture.owner,
         fixture.target,
+        fixture.owner_name,
+        "code_item_edges",
+    );
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert_eq!(ui_field(ui, "local_bindings"), bindings.len().to_string());
+    assert_eq!(ui_field(ui, "local_binding_edges"), edges.len().to_string());
+}
+
+#[tokio::test]
+async fn code_item_edges_returns_local_binding_payload_for_local_function_binding() {
+    let fixture = FixtureDynamicCallableToolFixture::new_for_owner(
+        "local_fn_body_call_is_not_outer_call_site",
+    )
+    .await;
+    let params = EdgesParams {
+        item_name: Cow::Borrowed(fixture.owner_name),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("function"),
+        module_path: Cow::Borrowed("crate"),
+        owner_trait: None,
+        owner_type: None,
+        parent_name: None,
+        body_contains: None,
+        allowed_effects: Vec::new(),
+    };
+
+    let result = CodeItemEdges::execute(params, fixture.ctx("local-function-binding-edges"))
+        .await
+        .expect("local function binding edges");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
+    let node_info = payload.get("node_info").expect("node_info");
+    let bindings = node_info
+        .get("local_bindings")
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.local_bindings array");
+    let edges = node_info
+        .get("local_binding_edges")
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.local_binding_edges array");
+
+    // Same oracle as lookup: block-local `fn inner()` should expose the typed
+    // LocalBinding -> LocalItem proof without requiring a tool-specific query.
+    assert_local_function_binding_payload(
+        bindings,
+        edges,
+        fixture.owner,
         fixture.owner_name,
         "code_item_edges",
     );

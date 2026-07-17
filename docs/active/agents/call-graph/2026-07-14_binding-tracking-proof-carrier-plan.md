@@ -945,6 +945,42 @@ What remains:
   parser carrier, resolver rule, call traversal edge, public parameter proof,
   callable-field value-flow model, or trait-object dispatch model.
 
+## 2026-07-17 Local Function Binding Source Checkpoint
+
+Implemented slice: durable `LocalFunctionBinding` rows and
+`BindingSourceLocalItem` edges for block-local function declarations.
+
+What is complete:
+
+- The fixture-backed source oracle is
+  `tests/fixture_crates/fixture_call_graph/src/lib.rs:1447-1453`, where
+  `local_fn_body_call_is_not_outer_call_site` declares block-local
+  `fn inner()` and then calls `inner()`.
+- The call edge already resolves as `LocalFunction -> LocalItem`. The new
+  parser-owned binding row now records the visible binding of the name
+  `inner`, and transform projects a typed `LocalBinding -> LocalItem` source
+  edge.
+- `ploke-db` strictly decodes the new binding row and edge shape. Focused DB
+  coverage asserts the existing local-function call edge, the durable
+  `LocalFunctionBinding`, `OwnerContainsBinding`, and `BindingSourceLocalItem`
+  rows.
+- Exact RAG coverage asserts the same local-binding payload through
+  `exact_local_bindings_for_owner` and `exact_local_binding_edges_for_owner`.
+- Exact `code_item_lookup` and `code_item_edges` coverage assert that the
+  serialized tool payloads expose the same `LocalFunctionBinding` and
+  `BindingSourceLocalItem` rows with matching UI counts.
+- Active fixtures were regenerated with
+  `cargo run -p xtask --features call_graph -- fixtures regenerate --active`;
+  registry-backed backup verification passed after promoting the refreshed
+  shared snapshots into `tests/backup_dbs/`.
+
+What remains:
+
+- This is a binding/source proof carrier for already-modeled local function
+  items. It does not add general object value-flow, public callable-parameter
+  inference, trait-object dispatch, generated macro body expansion, or
+  poll/resume traversal.
+
 ## Exit Criteria
 
 For the first carrier slice:
