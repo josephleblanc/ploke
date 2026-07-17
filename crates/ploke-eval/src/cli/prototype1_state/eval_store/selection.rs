@@ -75,11 +75,21 @@ define_eval_schema!(SelectionOracleSchema {
     formula_id: "String?",
 });
 
+define_eval_schema!(SelectionProjectionSchema {
+    "eval_selection_projection_failure",
+    decision_id: "String",
+    failure_id: "String" =>
+    candidate_subject: "String?",
+    kind: "String",
+    message: "String?",
+});
+
 pub(crate) const SELECTION_DECISION_REL: &str = SelectionDecisionSchema::RELATION;
 pub(crate) const SELECTION_CANDIDATE_REL: &str = SelectionCandidateSchema::RELATION;
 pub(crate) const SELECTION_FINDING_REL: &str = SelectionFindingSchema::RELATION;
 pub(crate) const SELECTION_SCORE_REL: &str = SelectionScoreSchema::RELATION;
 pub(crate) const SELECTION_ORACLE_REL: &str = SelectionOracleSchema::RELATION;
+pub(crate) const SELECTION_PROJECTION_REL: &str = SelectionProjectionSchema::RELATION;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct SelectionDecisionEvidence {
@@ -96,6 +106,7 @@ pub(crate) struct SelectionDecisionReceipt {
     pub(crate) candidate_count: usize,
     pub(crate) finding_count: usize,
     pub(crate) score_count: usize,
+    pub(crate) projection_count: usize,
 }
 
 struct SelectionRows {
@@ -104,6 +115,7 @@ struct SelectionRows {
     candidates: Vec<EvalSelectionCandidateRow>,
     findings: Vec<EvalSelectionFindingRow>,
     scores: Vec<EvalSelectionScoreRow>,
+    projections: Vec<SelectionProjectionRow>,
 }
 
 struct EvalSelectionDecisionRow {
@@ -161,12 +173,22 @@ struct SelectionOracleRow {
     formula_id: Option<String>,
 }
 
+struct SelectionProjectionRow {
+    decision_id: String,
+    failure_id: String,
+    candidate_subject: Option<String>,
+    kind: String,
+    message: Option<String>,
+}
+
 pub(super) fn ensure_selection_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(), EvalStoreError> {
     SelectionDecisionSchema::SCHEMA.ensure_installed(db, "schema.eval_selection_decision")?;
     SelectionCandidateSchema::SCHEMA.ensure_installed(db, "schema.eval_selection_candidate")?;
     SelectionFindingSchema::SCHEMA.ensure_installed(db, "schema.eval_selection_finding")?;
     SelectionScoreSchema::SCHEMA.ensure_installed(db, "schema.eval_selection_score")?;
     SelectionOracleSchema::SCHEMA.ensure_installed(db, "schema.eval_selection_oracle")?;
+    SelectionProjectionSchema::SCHEMA
+        .ensure_installed(db, "schema.eval_selection_projection_failure")?;
     Ok(())
 }
 
@@ -190,17 +212,28 @@ pub(crate) fn write_selection_decision_to_owner_db(
         for score in &rows.scores {
             put_selection_score_row(db, score)?;
         }
+        for projection in &rows.projections {
+            put_selection_projection_row(db, projection)?;
+        }
         Ok(SelectionDecisionReceipt {
             decision_id: rows.decision.decision_id,
             candidate_count: rows.candidates.len(),
             finding_count: rows.findings.len(),
             score_count: rows.scores.len(),
+            projection_count: rows.projections.len(),
         })
     })
 }
 
 fn selection_rows(evidence: SelectionDecisionEvidence) -> Result<SelectionRows, EvalStoreError> {
     require_non_empty("selection.parent_id", &evidence.parent_id)?;
+    evidence
+        .entry
+        .validate_shape()
+        .map_err(|source| EvalStoreError::Validation {
+            field: "selection.entry",
+            detail: source.to_string(),
+        })?;
     let set_id = evidence
         .entry
         .candidate_set
@@ -210,11 +243,13 @@ fn selection_rows(evidence: SelectionDecisionEvidence) -> Result<SelectionRows, 
     require_non_empty("selection.set_id", &set_id)?;
     let procedure_id = evidence.entry.procedure_or_policy.as_str().to_string();
     require_non_empty("selection.procedure_id", &procedure_id)?;
-    let outcome = serde_name(&evidence.entry.decision.outcome)?;
-    let disposition = evidence
-        .entry
-        .decision
-        .selected_branch_disposition()
+    let decision = evidence.entry.decision.as_ref();
+    let outcome = match decision {
+        Some(decision) => serde_name(&decision.outcome)?,
+        None => "no_selection".to_string(),
+    };
+    let disposition = decision
+        .and_then(|decision| decision.selected_branch_disposition())
         .map(ToOwned::to_owned);
     let decision_hash = evidence
         .entry
@@ -231,12 +266,12 @@ fn selection_rows(evidence: SelectionDecisionEvidence) -> Result<SelectionRows, 
         &procedure_id,
         &decision_hash,
     );
-    let selected_node_id = evidence
-        .entry
-        .decision
-        .selected_branch_id
-        .as_ref()
-        .map(|_| evidence.entry.decision.candidate_node_id.clone());
+    let selected_node_id = decision.and_then(|decision| {
+        decision
+            .selected_branch_id
+            .as_ref()
+            .map(|_| decision.candidate_node_id.clone())
+    });
     let selected_artifact_id = selected_artifact_id(&evidence.entry)?;
     let candidates = evidence
         .entry
@@ -251,6 +286,7 @@ fn selection_rows(evidence: SelectionDecisionEvidence) -> Result<SelectionRows, 
     let findings = selection_finding_rows(&decision_id, selected_member_id.as_deref(), &evidence)?;
     let scores = selection_score_rows(&decision_id, &evidence.entry)?;
     let oracle = selection_oracle_row(&decision_id, &evidence.entry)?;
+    let projections = selection_projection_rows(&decision_id, &evidence.entry)?;
     Ok(SelectionRows {
         decision: EvalSelectionDecisionRow {
             decision_id,
@@ -270,7 +306,30 @@ fn selection_rows(evidence: SelectionDecisionEvidence) -> Result<SelectionRows, 
         candidates,
         findings,
         scores,
+        projections,
     })
+}
+
+fn selection_projection_rows(
+    decision_id: &str,
+    entry: &SelectionDecisionEntry,
+) -> Result<Vec<SelectionProjectionRow>, EvalStoreError> {
+    entry
+        .projection_failures
+        .iter()
+        .map(|failure| {
+            Ok(SelectionProjectionRow {
+                decision_id: decision_id.to_string(),
+                failure_id: failure.id.0.as_str().to_string(),
+                candidate_subject: failure
+                    .candidate
+                    .as_ref()
+                    .map(|candidate| candidate.as_str().to_string()),
+                kind: serde_name(&failure.kind)?,
+                message: failure.committed_message.clone(),
+            })
+        })
+        .collect()
 }
 
 fn selection_oracle_row(
@@ -334,9 +393,18 @@ fn selection_candidate_row(
         member_id,
         node_id,
         branch_id,
-        selectable: formula_row.is_none_or(|row| row.selectable),
+        selectable: formula_row
+            .map(|row| row.selectable)
+            .unwrap_or(entry.decision.is_some()),
         selected: payload_selected_by_decision(entry, membership, payload),
-        exclusion_ref: formula_row.and_then(|row| row.exclusion_reason.clone()),
+        exclusion_ref: formula_row
+            .and_then(|row| row.exclusion_reason.clone())
+            .or_else(|| {
+                entry
+                    .decision
+                    .is_none()
+                    .then(|| "selection_procedure_returned_no_candidate".to_string())
+            }),
     })
 }
 
@@ -348,8 +416,8 @@ fn selection_finding_rows(
     evidence
         .entry
         .decision
-        .findings
         .iter()
+        .flat_map(|decision| decision.findings.iter())
         .enumerate()
         .map(|(index, finding)| {
             let domain = serde_name(&finding.domain)?;
@@ -614,6 +682,19 @@ fn put_oracle_row<D: EvalDb + ?Sized>(
     Ok(())
 }
 
+fn put_selection_projection_row<D: EvalDb + ?Sized>(
+    db: &D,
+    row: &SelectionProjectionRow,
+) -> Result<(), EvalStoreError> {
+    put_eval_params(
+        db,
+        &SelectionProjectionSchema::SCHEMA,
+        selection_projection_params(row),
+        "put.eval_selection_projection_failure",
+    )?;
+    Ok(())
+}
+
 fn selection_decision_params(row: &EvalSelectionDecisionRow) -> BTreeMap<String, DataValue> {
     let mut params = BTreeMap::new();
     params.insert("decision_id".to_string(), row.decision_id.clone().into());
@@ -700,6 +781,19 @@ fn oracle_params(row: &SelectionOracleRow) -> BTreeMap<String, DataValue> {
         DataValue::List(row.targets.iter().cloned().map(DataValue::from).collect()),
     );
     params.insert("formula_id".to_string(), option_string(&row.formula_id));
+    params
+}
+
+fn selection_projection_params(row: &SelectionProjectionRow) -> BTreeMap<String, DataValue> {
+    let mut params = BTreeMap::new();
+    params.insert("decision_id".to_string(), row.decision_id.clone().into());
+    params.insert("failure_id".to_string(), row.failure_id.clone().into());
+    params.insert(
+        "candidate_subject".to_string(),
+        option_string(&row.candidate_subject),
+    );
+    params.insert("kind".to_string(), row.kind.clone().into());
+    params.insert("message".to_string(), option_string(&row.message));
     params
 }
 

@@ -2146,6 +2146,40 @@ impl SelectionSealMaterial {
     }
 }
 
+#[derive(Clone)]
+pub(crate) enum ParentSelectionOutcome {
+    Selected {
+        decision: SuccessorDecision,
+        material: SelectionSealMaterial,
+    },
+    NoSelection {
+        entry: SelectionDecisionEntry,
+    },
+}
+
+impl ParentSelectionOutcome {
+    pub(crate) fn selected(&self) -> Option<(&SuccessorDecision, &SelectionSealMaterial)> {
+        match self {
+            Self::Selected { decision, material } => Some((decision, material)),
+            Self::NoSelection { .. } => None,
+        }
+    }
+
+    pub(crate) fn into_selection(self) -> Option<(SuccessorDecision, SelectionSealMaterial)> {
+        match self {
+            Self::Selected { decision, material } => Some((decision, material)),
+            Self::NoSelection { .. } => None,
+        }
+    }
+
+    pub(crate) fn entry(&self) -> Result<SelectionDecisionEntry, PrepareError> {
+        match self {
+            Self::Selected { decision, material } => material.clone().into_entry(decision.clone()),
+            Self::NoSelection { entry } => Ok(entry.clone()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CandidateGenerationConfig {
     Legacy,
@@ -8454,13 +8488,7 @@ pub(crate) async fn run_adaptive_child_fanout(
     rejected_surface_attempts: &[surface_attempt::Evidence],
     selection_seed: u64,
     selection_strategy: ActiveSelectionStrategy,
-) -> Result<
-    (
-        Vec<PlannedChildOutcome>,
-        Option<(SuccessorDecision, SelectionSealMaterial)>,
-    ),
-    PrepareError,
-> {
+) -> Result<(Vec<PlannedChildOutcome>, ParentSelectionOutcome), PrepareError> {
     if children.is_empty() {
         return Err(PrepareError::InvalidBatchSelection {
             detail: "child plan contained no runnable child nodes".to_string(),
@@ -8470,7 +8498,7 @@ pub(crate) async fn run_adaptive_child_fanout(
     let fanout_width =
         Prototype1ChildScheduleMode::AdaptiveBatch.fanout_width(child_budget, children.len());
     let mut completed = Vec::new();
-    let mut selection = None;
+    let mut outcome = None;
     let mut next = 0usize;
     while next < children.len() {
         let end = usize::min(next + fanout_width, children.len());
@@ -8499,21 +8527,24 @@ pub(crate) async fn run_adaptive_child_fanout(
             &completed,
             rejected_surface_attempts,
         );
-        selection =
-            parent_selection.select_successor(selection_seed, selection_strategy.clone())?;
-        if adaptive_selection_accepts_successor(&selection) {
+        outcome = Some(
+            parent_selection
+                .select_successor_attempt(selection_seed, selection_strategy.clone())?,
+        );
+        if adaptive_selection_accepts_successor(outcome.as_ref().expect("selection attempt")) {
             break;
         }
         next = end;
     }
 
-    Ok((completed, selection))
+    let outcome = outcome.ok_or_else(|| PrepareError::InvalidBatchSelection {
+        detail: "adaptive child fanout completed without a selection attempt".to_string(),
+    })?;
+    Ok((completed, outcome))
 }
 
-fn adaptive_selection_accepts_successor(
-    selection: &Option<(SuccessorDecision, SelectionSealMaterial)>,
-) -> bool {
-    selection.as_ref().is_some_and(|(decision, _)| {
+fn adaptive_selection_accepts_successor(outcome: &ParentSelectionOutcome) -> bool {
+    outcome.selected().is_some_and(|(decision, _)| {
         matches!(
             decision.outcome,
             SuccessorOutcome::Accepted | SuccessorOutcome::ExploreFrom
@@ -8599,6 +8630,19 @@ pub(crate) fn preview_successor_continuation(
         total_nodes_after_continue,
     };
     Ok(continuation)
+}
+
+pub(crate) fn preview_no_selection_continuation(
+    campaign_manifest_path: &Path,
+    parent_identity: &ParentIdentity,
+) -> Result<Prototype1ContinuationDecision, PrepareError> {
+    Ok(Prototype1ContinuationDecision {
+        disposition: Prototype1ContinuationDisposition::StopNoSelectedBranch,
+        selected_next_branch_id: None,
+        selected_branch_disposition: None,
+        next_generation: parent_identity.generation().saturating_add(1),
+        total_nodes_after_continue: persisted_prototype1_node_count(campaign_manifest_path)?,
+    })
 }
 
 pub(crate) fn record_continuation_decision(
@@ -8856,13 +8900,13 @@ impl Prototype1SuccessorSelection {
     }
 }
 
-pub(crate) fn select_successor_for_profile(
+pub(crate) fn selection_outcome_for_profile(
     manifest_path: &Path,
     parent_identity: &ParentIdentity,
     child_outcomes: &[PlannedChildOutcome],
     rejected_surface_attempts: &[surface_attempt::Evidence],
     run_profile: &profile::Prototype1RunProfile,
-) -> Result<Option<(SuccessorDecision, SelectionSealMaterial)>, PrepareError> {
+) -> Result<ParentSelectionOutcome, PrepareError> {
     let metric_inputs = traversal_metric_inputs(run_profile.selection.traversal_metrics());
     let strategy = run_profile.selection.successor_selection().active_strategy(
         metric_inputs,
@@ -8872,24 +8916,34 @@ pub(crate) fn select_successor_for_profile(
         run_profile.target.eval_instances(),
         run_profile.selection.metrics_policy(),
     );
-    let selection = ParentSelection::new(
+    ParentSelection::new(
         manifest_path,
         parent_identity,
         child_outcomes,
         rejected_surface_attempts,
     )
-    .select_successor(run_profile.selection.seed, strategy)?;
-    if let Some((decision, material)) = selection.as_ref() {
-        emit_selection_decision_if_owner_db_exists(
-            manifest_path,
-            parent_identity,
-            decision,
-            material,
-        )?;
-    }
-    Ok(selection)
+    .select_successor_attempt(run_profile.selection.seed, strategy)
 }
 
+pub(crate) fn select_successor_for_profile(
+    manifest_path: &Path,
+    parent_identity: &ParentIdentity,
+    child_outcomes: &[PlannedChildOutcome],
+    rejected_surface_attempts: &[surface_attempt::Evidence],
+    run_profile: &profile::Prototype1RunProfile,
+) -> Result<Option<(SuccessorDecision, SelectionSealMaterial)>, PrepareError> {
+    let outcome = selection_outcome_for_profile(
+        manifest_path,
+        parent_identity,
+        child_outcomes,
+        rejected_surface_attempts,
+        run_profile,
+    )?;
+    emit_selection_outcome_if_owner_db_exists(manifest_path, parent_identity, &outcome)?;
+    Ok(outcome.into_selection())
+}
+
+#[cfg(test)]
 pub(crate) fn emit_selection_decision_for_backend(
     manifest_path: &Path,
     parent_identity: &ParentIdentity,
@@ -8897,17 +8951,29 @@ pub(crate) fn emit_selection_decision_for_backend(
     material: &SelectionSealMaterial,
     backend: profile::EvalStorageBackend,
 ) -> Result<(), PrepareError> {
+    emit_selection_outcome_for_backend(
+        manifest_path,
+        parent_identity,
+        &ParentSelectionOutcome::Selected {
+            decision: decision.clone(),
+            material: material.clone(),
+        },
+        backend,
+    )
+}
+
+pub(crate) fn emit_selection_outcome_for_backend(
+    manifest_path: &Path,
+    parent_identity: &ParentIdentity,
+    outcome: &ParentSelectionOutcome,
+    backend: profile::EvalStorageBackend,
+) -> Result<(), PrepareError> {
     let db_path = eval_store::prototype1_eval_store_db_path(manifest_path);
     match backend {
         profile::EvalStorageBackend::Fs => Ok(()),
         profile::EvalStorageBackend::DbMirror | profile::EvalStorageBackend::Database => {
             if db_path.is_file() {
-                persist_selection_decision_to_owner_db(
-                    &db_path,
-                    parent_identity,
-                    decision,
-                    material,
-                )
+                persist_selection_outcome_to_owner_db(&db_path, parent_identity, outcome)
             } else {
                 Ok(())
             }
@@ -8922,38 +8988,41 @@ pub(crate) fn emit_selection_decision_for_backend(
                     ),
                 });
             }
-            persist_selection_decision_to_owner_db(&db_path, parent_identity, decision, material)
+            persist_selection_outcome_to_owner_db(&db_path, parent_identity, outcome)
         }
     }
 }
 
-fn emit_selection_decision_if_owner_db_exists(
+fn emit_selection_outcome_if_owner_db_exists(
     manifest_path: &Path,
     parent_identity: &ParentIdentity,
-    decision: &SuccessorDecision,
-    material: &SelectionSealMaterial,
+    outcome: &ParentSelectionOutcome,
 ) -> Result<(), PrepareError> {
     let db_path = eval_store::prototype1_eval_store_db_path(manifest_path);
     if !db_path.is_file() {
         return Ok(());
     }
-    persist_selection_decision_to_owner_db(&db_path, parent_identity, decision, material)
+    persist_selection_outcome_to_owner_db(&db_path, parent_identity, outcome)
 }
 
-fn persist_selection_decision_to_owner_db(
+fn persist_selection_outcome_to_owner_db(
     db_path: &Path,
     parent_identity: &ParentIdentity,
-    decision: &SuccessorDecision,
-    material: &SelectionSealMaterial,
+    outcome: &ParentSelectionOutcome,
 ) -> Result<(), PrepareError> {
-    let entry = material.clone().into_entry(decision.clone())?;
+    let entry = outcome.entry()?;
+    let selected_node = entry
+        .decision
+        .as_ref()
+        .filter(|decision| decision.selected_branch_id.is_some())
+        .map(|decision| decision.candidate_node_id.as_str());
     let evidence = eval_store::SelectionDecisionEvidence {
         campaign_id: parent_identity.campaign_id().clone(),
         parent_id: parent_identity.parent_id().to_string(),
         decision_ref: Some(format!(
             "selection:{}:{}",
             parent_identity.parent_id(),
-            entry.decision.candidate_node_id
+            selected_node.unwrap_or("none")
         )),
         entry,
         recorded_at: Some(Utc::now().to_rfc3339()),
@@ -9351,11 +9420,11 @@ impl<'a> ParentSelection<'a> {
         })
     }
 
-    pub(crate) fn select_successor(
+    pub(crate) fn select_successor_attempt(
         &self,
         seed: u64,
         strategy: ActiveSelectionStrategy,
-    ) -> Result<Option<(SuccessorDecision, SelectionSealMaterial)>, PrepareError> {
+    ) -> Result<ParentSelectionOutcome, PrepareError> {
         let current_scope =
             <Self as ScopeFor<Generation>>::scope_for(self, self.parent_identity.generation() + 1)
                 .into_selection_scope();
@@ -9379,7 +9448,7 @@ impl<'a> ParentSelection<'a> {
             .map_err(|err| PrepareError::InvalidBatchSelection {
                 detail: format!("failed to add current generation traversal candidates: {err}"),
             })?;
-        let Some(selection) = traversal_selection::select_with_policy(
+        let attempt = traversal_selection::select_attempt_with_policy(
             traversal_candidates,
             seed,
             strategy.traversal,
@@ -9388,40 +9457,67 @@ impl<'a> ParentSelection<'a> {
         )
         .map_err(|err| PrepareError::InvalidBatchSelection {
             detail: format!("failed to decide History traversal successor: {err}"),
-        })?
-        else {
-            return Ok(None);
-        };
-        let selected_occurrence_id = selection.selected_occurrence_id();
-        let selected_membership_id = selection.selected_membership_id();
-        let mut projection_failures = current.projection_failures;
-        projection_failures.extend(selection.projection_failures);
-        let material = SelectionSealMaterial {
-            procedure: ProcedureRef::new(
-                crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID,
-            ),
-            scope,
-            selected_candidate: selection.selected_payload.candidate.clone(),
-            selected_occurrence_id,
-            selected_membership_id,
-            considered: selection.considered,
-            considered_sources: selection.considered_sources,
-            projection_failures,
-            traversal: Some(TraversalEvidence {
-                seed,
-                strategy: strategy.traversal,
-                oracle_targets: strategy.oracle_targets,
-                selected_source: Some(if selection.selected_from_current_generation {
-                    TraversalCandidateSource::CurrentGeneration
-                } else {
-                    TraversalCandidateSource::History
-                }),
-                child_counts: selection.child_counts,
-            }),
-            metrics: selection.metrics,
-            selected_from_generation_outcomes: selection.selected_from_current_generation,
-        };
-        Ok(Some((selection.decision, material)))
+        })?;
+        match attempt {
+            traversal_selection::SelectionAttempt::Selected(selection) => {
+                let selected_occurrence_id = selection.selected_occurrence_id();
+                let selected_membership_id = selection.selected_membership_id();
+                let mut projection_failures = current.projection_failures;
+                projection_failures.extend(selection.projection_failures);
+                let material = SelectionSealMaterial {
+                    procedure: ProcedureRef::new(
+                        crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID,
+                    ),
+                    scope,
+                    selected_candidate: selection.selected_payload.candidate.clone(),
+                    selected_occurrence_id,
+                    selected_membership_id,
+                    considered: selection.considered,
+                    considered_sources: selection.considered_sources,
+                    projection_failures,
+                    traversal: Some(TraversalEvidence {
+                        seed,
+                        strategy: strategy.traversal,
+                        oracle_targets: strategy.oracle_targets,
+                        selected_source: Some(if selection.selected_from_current_generation {
+                            TraversalCandidateSource::CurrentGeneration
+                        } else {
+                            TraversalCandidateSource::History
+                        }),
+                        child_counts: selection.child_counts,
+                    }),
+                    metrics: selection.metrics,
+                    selected_from_generation_outcomes: selection.selected_from_current_generation,
+                };
+                Ok(ParentSelectionOutcome::Selected {
+                    decision: selection.decision,
+                    material,
+                })
+            }
+            traversal_selection::SelectionAttempt::NoSelection(no_selection) => {
+                let mut projection_failures = current.projection_failures;
+                projection_failures.extend(no_selection.projection_failures);
+                let entry = SelectionDecisionEntry::new_no_selection_with_traversal_metrics(
+                    ProcedureRef::new(crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID),
+                    scope,
+                    no_selection.considered,
+                    no_selection.considered_sources,
+                    projection_failures,
+                    Some(TraversalEvidence {
+                        seed,
+                        strategy: strategy.traversal,
+                        oracle_targets: strategy.oracle_targets,
+                        selected_source: None,
+                        child_counts: no_selection.child_counts,
+                    }),
+                    no_selection.metrics,
+                )
+                .map_err(|err| PrepareError::InvalidBatchSelection {
+                    detail: format!("failed to construct no-selection receipt: {err}"),
+                })?;
+                Ok(ParentSelectionOutcome::NoSelection { entry })
+            }
+        }
     }
 }
 

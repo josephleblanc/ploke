@@ -110,7 +110,7 @@ pub(crate) use scheduler_node::{
 #[cfg(test)]
 pub(crate) use selection::{
     SELECTION_CANDIDATE_REL, SELECTION_DECISION_REL, SELECTION_FINDING_REL, SELECTION_ORACLE_REL,
-    SELECTION_SCORE_REL,
+    SELECTION_PROJECTION_REL, SELECTION_SCORE_REL,
 };
 pub(crate) use selection::{SelectionDecisionEvidence, write_selection_decision_to_owner_db};
 #[cfg(test)]

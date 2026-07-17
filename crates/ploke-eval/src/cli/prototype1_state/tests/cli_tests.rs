@@ -1,6 +1,6 @@
 use super::*;
 
-use crate::cli::prototype1_state::cli_facing::CandidateGenerationConfig;
+use crate::cli::prototype1_state::cli_facing::{CandidateGenerationConfig, ParentSelectionOutcome};
 use crate::cli::prototype1_state::edit_surface::harness_request::{
     PublishedBroadHarnessRequest, RequestAdmissionBinding,
 };
@@ -166,6 +166,23 @@ where
     T: serde::de::DeserializeOwned,
 {
     serde_json::from_str(text).expect("fixture deserializes")
+}
+
+fn hex_fixture_bytes(path: &Path) -> Vec<u8> {
+    let encoded = fs::read_to_string(path).expect("read hex fixture");
+    let compact = encoded
+        .chars()
+        .filter(|value| !value.is_whitespace())
+        .collect::<String>();
+    assert_eq!(compact.len() % 2, 0, "hex fixture is complete");
+    compact
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| {
+            let pair = std::str::from_utf8(pair).expect("hex pair is UTF-8");
+            u8::from_str_radix(pair, 16).expect("decode hex fixture")
+        })
+        .collect()
 }
 
 fn state_command_without_ids() -> Prototype1StateCommand {
@@ -9405,7 +9422,10 @@ async fn r12_reject_replay() {
     command.repo_root = Some(repo_root.clone());
     let facts = typestate::context::Facts {
         complete_search_policy: Some(profile.search_policy()),
-        selection: Some((selection, material)),
+        selection: Some(ParentSelectionOutcome::Selected {
+            decision: selection,
+            material,
+        }),
         report: Some(typestate::context::ReportFacts {
             outcome: "historical R12 selected rejected child".to_string(),
             node_id: node.node_id.clone(),
@@ -9449,7 +9469,10 @@ async fn r12_reject_replay() {
     denied_command.repo_root = Some(repo_root.clone());
     let denied_facts = typestate::context::Facts {
         complete_search_policy: Some(denied_policy),
-        selection: Some((denied_selection, denied_material)),
+        selection: Some(ParentSelectionOutcome::Selected {
+            decision: denied_selection,
+            material: denied_material,
+        }),
         report: Some(typestate::context::ReportFacts {
             outcome: "historical R12 rejected exploration".to_string(),
             node_id: node.node_id.clone(),
@@ -9880,6 +9903,943 @@ fn v15_missing_oracle_replay_fails_closed_under_all_resolved_gate() {
     );
     assert!(!fixture.join("prototype1/history").exists());
     assert!(!eval_store::prototype1_eval_store_db_path(&manifest_path).exists());
+}
+
+#[tokio::test]
+async fn v16_all_unresolved_replay_persists_no_selection_evidence() {
+    const NODE_ID: &str = "node-0d80c1aeea697e6b";
+    const BRANCH_ID: &str = "branch-652e6dab480c355a";
+    const FIXTURE_HASHES: [(&str, &str); 9] = [
+        (
+            "branch-652e6dab480c355a.evaluation.json",
+            "91a9aea152cff69f171823126ae90a93b939d88ccc87db11be683f3bf6f406ec",
+        ),
+        (
+            "campaign.json",
+            "dcb2679451b905181fb99a8fe038acd33ca27b29a97a00c8dfd653d50fdfb57b",
+        ),
+        (
+            "child-node.json",
+            "353bdf9fb01e0f2bdde9e02eeaabf34ce497edb0f01043bb3460cd8738422161",
+        ),
+        (
+            "child-plan-node-e4ecdce2d6ee1098.json",
+            "ea3bcc6b9528577af591681afa171055158f35b612787bc498e0a67289b7ab6e",
+        ),
+        (
+            "child-runner-result.json",
+            "855cfaa8618d4739c4ea64a9f7c636a9634ab5ae146516b397be3586b1b7d2a0",
+        ),
+        (
+            "child-to-parent.jsonl",
+            "bc0a7c2377057392a1b4096088138aca8d1bbdb96163664928e93af2903b4e32",
+        ),
+        (
+            "parent_identity.json",
+            "dc89d998348061704bdab22269a34e297d80e856ed4a16acc299ae03135f66a3",
+        ),
+        (
+            "run-profile.commitment.json",
+            "84844a242dd344e5b4bd47aa0a4c32a721ea91b1a260eb4159d3ed0a45cbbdde",
+        ),
+        (
+            "run-profile.toml",
+            "0949cf0e14e78111577e3823f433468301b13062b89eaea83f0533ee946d4d77",
+        ),
+    ];
+
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("src/tests/fixtures/prototype1-v16-all-unresolved-20260717");
+    for (name, expected) in FIXTURE_HASHES {
+        let bytes = fs::read(fixture.join(name)).expect("read immutable v16 fixture artifact");
+        assert_eq!(format!("{:x}", Sha256::digest(bytes)), expected, "{name}");
+    }
+    let temp = tempfile::tempdir().expect("v16 replay tempdir");
+    let baseline_bytes = hex_fixture_bytes(&fixture.join("baseline-record.json.gz.hex"));
+    assert_eq!(
+        format!("{:x}", Sha256::digest(&baseline_bytes)),
+        "f4c6adc1451f86ef072d218dd0ef6fb6a66c6ddcfa16405ee5b0122d30db820f"
+    );
+    let baseline_path = temp.path().join("baseline-record.json.gz");
+    fs::write(&baseline_path, baseline_bytes).expect("stage v16 baseline record");
+    let treatment_bytes = hex_fixture_bytes(&fixture.join("treatment-record.json.gz.hex"));
+    assert_eq!(
+        format!("{:x}", Sha256::digest(&treatment_bytes)),
+        "09d191acf579a994e6fea9706575ccc8567d4a43139877444ac455967b2e7dd5"
+    );
+    let treatment_path = temp.path().join("treatment-record.json.gz");
+    fs::write(&treatment_path, treatment_bytes).expect("stage v16 treatment record");
+
+    let profile_text =
+        fs::read_to_string(fixture.join("run-profile.toml")).expect("read v16 run profile");
+    let profile: profile::Prototype1RunProfile =
+        toml::from_str(&profile_text).expect("parse v16 run profile");
+    profile.validate().expect("v16 profile remains valid");
+    assert_eq!(
+        profile.selection.oracle_mode(),
+        crate::successor_selection::OracleMode::RecordOnly
+    );
+    assert!(profile.selection.oracle_require_evidence());
+    assert_eq!(
+        profile.selection.oracle_gate(),
+        crate::successor_selection::OracleGate::AllResolved
+    );
+    assert!(profile.execution.mbe.enabled);
+
+    let commitment: serde_json::Value = json_fixture(
+        &fs::read_to_string(fixture.join("run-profile.commitment.json"))
+            .expect("read v16 profile commitment"),
+    );
+    let profile_hash = format!("{:x}", Sha256::digest(profile_text.as_bytes()));
+    assert_eq!(commitment["sha256"], profile_hash);
+    assert_eq!(
+        profile_hash,
+        "0949cf0e14e78111577e3823f433468301b13062b89eaea83f0533ee946d4d77"
+    );
+
+    let parent: ParentIdentity = json_fixture(
+        &fs::read_to_string(fixture.join("parent_identity.json"))
+            .expect("read v16 parent identity"),
+    );
+    assert_eq!(parent.node_id(), "node-e4ecdce2d6ee1098");
+    assert_eq!(parent.generation(), 0);
+
+    let child_plan: ChildPlanFiles = json_fixture(
+        &fs::read_to_string(fixture.join("child-plan-node-e4ecdce2d6ee1098.json"))
+            .expect("read v16 child plan"),
+    );
+    assert_eq!(child_plan.rejected_surface_attempts().len(), 2);
+    let (plan_index, child) = child_plan
+        .children()
+        .iter()
+        .enumerate()
+        .find(|(_, child)| child.node_id() == NODE_ID)
+        .expect("v16 admitted child plan entry");
+
+    let node: Prototype1NodeRecord = json_fixture(
+        &fs::read_to_string(fixture.join("child-node.json")).expect("read v16 child node"),
+    );
+    assert_eq!(node.node_id, NODE_ID);
+    assert_eq!(node.branch_id, BRANCH_ID);
+
+    let runner_result: Prototype1RunnerResult = json_fixture(
+        &fs::read_to_string(fixture.join("child-runner-result.json"))
+            .expect("read v16 runner result"),
+    );
+    assert_eq!(runner_result.node_id, node.node_id);
+    assert_eq!(runner_result.branch_id, node.branch_id);
+
+    let mut report: Prototype1BranchEvaluationReport = json_fixture(
+        &fs::read_to_string(fixture.join("branch-652e6dab480c355a.evaluation.json"))
+            .expect("read v16 branch evaluation"),
+    );
+    assert_eq!(report.branch_id, BRANCH_ID);
+    assert_eq!(report.overall_disposition, BranchDisposition::Keep);
+    assert_eq!(
+        report
+            .eval_set_identity
+            .as_ref()
+            .expect("v16 eval set identity")
+            .instance_ids,
+        vec!["BurntSushi__ripgrep-2209".to_string()]
+    );
+    assert_eq!(report.compared_instances.len(), 1);
+    let oracle = report.compared_instances[0]
+        .oracle_evaluation
+        .as_ref()
+        .expect("v16 oracle evaluation");
+    assert_eq!(oracle.evidence.verdict, crate::mbe::Verdict::Unresolved);
+    assert!(oracle.usable_for_selection);
+    let instance_report = oracle
+        .instance_report
+        .as_ref()
+        .expect("v16 MBE instance report");
+    assert_eq!(instance_report.valid, Some(true));
+    assert!(
+        instance_report
+            .fixed_tests
+            .contains_key("regression::r2095")
+    );
+    assert!(
+        instance_report
+            .fix_patch_result
+            .failed_tests
+            .contains("regression::r2208")
+    );
+    report.compared_instances[0].baseline_record_path = Some(baseline_path);
+    report.compared_instances[0].treatment_record_path = Some(treatment_path);
+
+    let terminal = fs::read_to_string(fixture.join("child-to-parent.jsonl"))
+        .expect("read v16 child channel")
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            serde_json::from_str::<
+                crate::cli::prototype1_state::channel::Envelope<
+                    crate::cli::prototype1_state::channel::ToParent,
+                >,
+            >(line)
+            .expect("v16 child channel envelope")
+        })
+        .find_map(|envelope| match envelope.body() {
+            crate::cli::prototype1_state::channel::ToParent::Result {
+                runner_result,
+                treatment,
+            } => Some((
+                envelope.runtime_id().to_string(),
+                runner_result.clone(),
+                treatment.clone(),
+            )),
+            _ => None,
+        })
+        .expect("v16 child terminal result");
+    assert_eq!(terminal.1, runner_result);
+    let terminal_body = crate::cli::prototype1_state::channel::ToParent::Result {
+        runner_result: terminal.1.clone(),
+        treatment: terminal.2,
+    };
+    let channel_evidence = ChildChannelEvidenceRefs {
+        runtime_id: terminal.0.clone(),
+        terminal_result: SealedEvidenceCitation {
+            ref_id: format!(
+                "channel:child-to-parent:terminal-result:{NODE_ID}:{}",
+                terminal.0
+            ),
+            content_hash: Some(
+                HistoryHash::of_domain_json(
+                    "prototype1.history.child_channel_terminal_result.v1",
+                    &terminal_body,
+                )
+                .expect("v16 terminal channel hash"),
+            ),
+            record_name: Some(CHILD_CHANNEL_TERMINAL_RESULT_RECORD.to_string()),
+        },
+        attempt_result: Some(SealedEvidenceCitation {
+            ref_id: format!("child-store:attempt-runner-result:{NODE_ID}:{}", terminal.0),
+            content_hash: Some(
+                HistoryHash::of_domain_json(
+                    "prototype1.history.child_attempt_runner_result.v1",
+                    &runner_result,
+                )
+                .expect("v16 attempt result hash"),
+            ),
+            record_name: Some(CHILD_ATTEMPT_RUNNER_RESULT_RECORD.to_string()),
+        }),
+        invocation: None,
+    };
+    let outcome = PlannedChildOutcome {
+        plan_index,
+        node_id: node.node_id.clone(),
+        outcome: "completed:Keep".to_string(),
+        node_status: node.status,
+        workspace_root: node.workspace_root.clone(),
+        binary_path: node.binary_path.clone(),
+        resolved: child.resolved().clone(),
+        child_runtime: Some(terminal.0),
+        channel_evidence: Some(channel_evidence),
+        evaluation_report: Some(report.clone()),
+        selection_input: Some(selection_input_from_child_report(&node, &report)),
+        surface: child.surface().cloned(),
+        artifact_surface: Some(
+            child
+                .harness_evidence()
+                .expect("v16 broad harness evidence")
+                .artifact_surface()
+                .clone(),
+        ),
+        node,
+    };
+
+    let manifest_path = temp.path().join("campaign.json");
+    fs::copy(fixture.join("campaign.json"), &manifest_path).expect("stage v16 campaign manifest");
+    let db_path = eval_store::prototype1_eval_store_db_path(&manifest_path);
+    fs::create_dir_all(db_path.parent().expect("v16 eval DB parent"))
+        .expect("create v16 eval DB directory");
+    let seed_db = ploke_db::Database::new_init().expect("empty v16 eval DB");
+    eval_store::DbEvalStore::new(&seed_db)
+        .install_schema()
+        .expect("install current v16 replay schema");
+    seed_db
+        .write_backup_to_path(&db_path)
+        .expect("seed v16 owner eval DB");
+    let db_before = fs::read(&db_path).expect("read owner DB before pure selection");
+
+    let pure_outcome = selection_outcome_for_profile(
+        &manifest_path,
+        &parent,
+        std::slice::from_ref(&outcome),
+        child_plan.rejected_surface_attempts(),
+        &profile,
+    )
+    .expect("compute pure v16 selection outcome");
+    assert_eq!(
+        fs::read(&db_path).expect("read owner DB after pure selection"),
+        db_before,
+        "pure selection must not persist eval rows"
+    );
+    let entry = match pure_outcome {
+        ParentSelectionOutcome::NoSelection { entry } => entry,
+        ParentSelectionOutcome::Selected { .. } => {
+            panic!("v16 unresolved oracle evidence must not select a successor")
+        }
+    };
+    entry
+        .validate_shape()
+        .expect("v16 no-selection receipt shape");
+    assert_eq!(entry.schema_version, 5);
+    assert!(entry.decision.is_none());
+    assert!(entry.selected_candidate.is_none());
+    assert!(entry.selected_occurrence_id.is_none());
+    assert!(entry.selected_membership_id.is_none());
+    assert_eq!(entry.considered.len(), 1);
+    assert_eq!(entry.projection_failures.len(), 4);
+    let formula = entry.formula.as_ref().expect("v16 selection formula");
+    let crate::successor_selection::traversal::Formula::ScoreChildProp(formula) = &formula.formula;
+    assert_eq!(formula.rows.len(), 1);
+    let formula_row = &formula.rows[0];
+    assert_eq!(formula_row.node_id.as_deref(), Some(NODE_ID));
+    assert_eq!(formula_row.branch_id.as_deref(), Some(BRANCH_ID));
+    assert_eq!(formula_row.oracle_resolved, Some(0));
+    assert_eq!(formula_row.oracle_configured, Some(1));
+    assert!(!formula_row.selectable);
+    assert_eq!(
+        formula_row.exclusion_reason.as_deref(),
+        Some("oracle_gate_not_satisfied")
+    );
+    assert!(!formula_row.selected);
+    let receipt_hash = entry.receipt_hash().expect("hash v16 no-selection receipt");
+    let expected_hash = receipt_hash.as_str().to_string();
+    let mut tampered = entry.clone();
+    tampered.projection_failures[0].committed_message =
+        Some("tampered projection evidence".to_string());
+    assert!(tampered.receipt_hash().is_err());
+
+    let selected = select_successor_for_profile(
+        &manifest_path,
+        &parent,
+        std::slice::from_ref(&outcome),
+        child_plan.rejected_surface_attempts(),
+        &profile,
+    )
+    .expect("persist v16 no-selection outcome");
+    assert!(selected.is_none());
+
+    let db = eval_store::load_owner_eval_database(&db_path).expect("load v16 owner eval DB");
+    let decision_rows = db
+        .raw_query_params(
+            r#"
+?[
+    decision_id,
+    parent_id,
+    procedure_id,
+    selected_node_id,
+    selected_artifact_id,
+    outcome,
+    disposition,
+    decision_hash
+] :=
+    *eval_selection_decision {
+        decision_id,
+        parent_id,
+        procedure_id,
+        selected_node_id,
+        selected_artifact_id,
+        outcome,
+        disposition,
+        decision_hash
+    }
+"#,
+            std::collections::BTreeMap::new(),
+        )
+        .expect("query v16 selection decision");
+    assert_eq!(decision_rows.rows.len(), 1);
+    let decision_row = decision_rows.row_refs().next().expect("v16 decision row");
+    let decision_id = decision_row
+        .get::<String>("decision_id")
+        .expect("v16 decision id");
+    assert_eq!(
+        decision_row.get::<String>("parent_id").expect("v16 parent"),
+        parent.parent_id()
+    );
+    assert_eq!(
+        decision_row
+            .get::<String>("procedure_id")
+            .expect("v16 procedure"),
+        crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID
+    );
+    assert_eq!(
+        decision_row
+            .get::<Option<String>>("selected_node_id")
+            .expect("v16 selected node"),
+        None
+    );
+    assert_eq!(
+        decision_row
+            .get::<Option<String>>("selected_artifact_id")
+            .expect("v16 selected artifact"),
+        None
+    );
+    assert_eq!(
+        decision_row.get::<String>("outcome").expect("v16 outcome"),
+        "no_selection"
+    );
+    assert_eq!(
+        decision_row
+            .get::<Option<String>>("disposition")
+            .expect("v16 disposition"),
+        None
+    );
+    assert_eq!(
+        decision_row
+            .get::<String>("decision_hash")
+            .expect("v16 decision hash"),
+        expected_hash
+    );
+
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "decision_id".to_string(),
+        cozo::DataValue::from(decision_id.clone()),
+    );
+    let candidate_rows = db
+        .raw_query_params(
+            r#"
+?[node_id, branch_id, selectable, selected, exclusion_ref] :=
+    *eval_selection_candidate {
+        decision_id,
+        node_id,
+        branch_id,
+        selectable,
+        selected,
+        exclusion_ref
+    },
+    decision_id = $decision_id
+"#,
+            params.clone(),
+        )
+        .expect("query v16 selection candidate");
+    assert_eq!(candidate_rows.rows.len(), 1);
+    let candidate_row = candidate_rows.row_refs().next().expect("v16 candidate row");
+    assert_eq!(
+        candidate_row.get::<String>("node_id").expect("v16 node"),
+        NODE_ID
+    );
+    assert_eq!(
+        candidate_row
+            .get::<String>("branch_id")
+            .expect("v16 branch"),
+        BRANCH_ID
+    );
+    assert!(
+        !candidate_row
+            .get::<bool>("selectable")
+            .expect("v16 selectable")
+    );
+    assert!(!candidate_row.get::<bool>("selected").expect("v16 selected"));
+    assert_eq!(
+        candidate_row
+            .get::<Option<String>>("exclusion_ref")
+            .expect("v16 exclusion")
+            .as_deref(),
+        Some("oracle_gate_not_satisfied")
+    );
+
+    let score_rows = db
+        .raw_query_params(
+            r#"
+?[formula_id, score_json, weight, selected] :=
+    *eval_selection_score {
+        decision_id,
+        formula_id,
+        score_json,
+        weight,
+        selected
+    },
+    decision_id = $decision_id
+"#,
+            params.clone(),
+        )
+        .expect("query v16 selection score");
+    assert_eq!(score_rows.rows.len(), 1);
+    let score_row = score_rows.row_refs().next().expect("v16 score row");
+    assert!(
+        score_row
+            .get::<String>("formula_id")
+            .expect("v16 formula id")
+            .starts_with("score_child_prop:")
+    );
+    assert_eq!(
+        score_row.get::<Option<f64>>("weight").expect("v16 weight"),
+        None
+    );
+    assert!(
+        !score_row
+            .get::<bool>("selected")
+            .expect("v16 score selected")
+    );
+    let score_json: serde_json::Value = serde_json::from_str(
+        &score_row
+            .get::<String>("score_json")
+            .expect("v16 score JSON"),
+    )
+    .expect("parse v16 score JSON");
+    assert_eq!(score_json["oracle_resolved"], 0);
+    assert_eq!(score_json["oracle_configured"], 1);
+    assert_eq!(score_json["selectable"], false);
+    assert_eq!(score_json["exclusion_reason"], "oracle_gate_not_satisfied");
+    assert_eq!(score_json["selected"], false);
+
+    let oracle_rows = db
+        .raw_query_params(
+            r#"
+?[mode, require_evidence, gate, targets, formula_id] :=
+    *eval_selection_oracle {
+        decision_id,
+        mode,
+        require_evidence,
+        gate,
+        targets,
+        formula_id
+    },
+    decision_id = $decision_id
+"#,
+            params.clone(),
+        )
+        .expect("query v16 selection oracle");
+    assert_eq!(oracle_rows.rows.len(), 1);
+    let oracle_row = oracle_rows.row_refs().next().expect("v16 oracle row");
+    assert_eq!(
+        oracle_row.get::<String>("mode").expect("v16 oracle mode"),
+        "record-only"
+    );
+    assert!(
+        oracle_row
+            .get::<bool>("require_evidence")
+            .expect("v16 oracle evidence policy")
+    );
+    assert_eq!(
+        oracle_row.get::<String>("gate").expect("v16 oracle gate"),
+        "all-resolved"
+    );
+    assert_eq!(
+        oracle_row
+            .get::<Vec<String>>("targets")
+            .expect("v16 oracle targets"),
+        vec!["BurntSushi__ripgrep-2209".to_string()]
+    );
+    assert!(
+        oracle_row
+            .get::<String>("formula_id")
+            .expect("v16 oracle formula")
+            .starts_with("score_child_prop:")
+    );
+
+    let projection_rows = db
+        .raw_query_params(
+            r#"
+?[failure_id, candidate_subject, kind, message] :=
+    *eval_selection_projection_failure {
+        decision_id,
+        failure_id,
+        candidate_subject,
+        kind,
+        message
+    },
+    decision_id = $decision_id
+"#,
+            params,
+        )
+        .expect("query v16 selection projection failures");
+    assert_eq!(projection_rows.rows.len(), 4);
+    let mut subjects = std::collections::BTreeMap::<String, usize>::new();
+    let mut messages = std::collections::BTreeSet::new();
+    for row in projection_rows.row_refs() {
+        assert!(
+            !row.get::<String>("failure_id")
+                .expect("v16 projection failure id")
+                .is_empty()
+        );
+        assert_eq!(
+            row.get::<String>("kind")
+                .expect("v16 projection failure kind"),
+            "missing_selection_input"
+        );
+        let subject = row
+            .get::<Option<String>>("candidate_subject")
+            .expect("v16 projection subject")
+            .expect("v16 rejected surface candidate");
+        assert!(subject.starts_with("candidate:rejected_surface_attempt:"));
+        *subjects.entry(subject).or_default() += 1;
+        messages.insert(
+            row.get::<Option<String>>("message")
+                .expect("v16 projection message")
+                .expect("v16 committed projection message"),
+        );
+    }
+    assert_eq!(subjects.len(), 2);
+    assert!(subjects.values().all(|count| *count == 2));
+    assert!(
+        messages
+            .contains("missing_selection_input: rejected_surface_attempt_without_child_runtime")
+    );
+    assert!(messages.contains("traversal: missing SelectionInput"));
+    drop(db);
+
+    let history_root = temp.path().join("prototype1/history");
+    assert!(
+        !history_root.exists(),
+        "passive no-selection evidence must not create History"
+    );
+    let journal_path = prototype1_transition_journal_path(&manifest_path);
+    assert!(
+        !journal_path.exists(),
+        "selection replay alone must not create a successor handoff journal"
+    );
+    let journal_entries = PrototypeJournal::new(&journal_path)
+        .load_entries()
+        .expect("load empty v16 replay journal");
+    assert!(
+        journal_entries
+            .iter()
+            .all(|entry| !matches!(entry, JournalEntry::Successor(_)))
+    );
+
+    let child_plan_path = child_plan_message_path_for_parent(&manifest_path, &parent);
+    fs::create_dir_all(child_plan_path.parent().expect("v16 child-plan parent"))
+        .expect("create v16 child-plan directory");
+    let mut child_plan_json: serde_json::Value = json_fixture(
+        &fs::read_to_string(fixture.join("child-plan-node-e4ecdce2d6ee1098.json"))
+            .expect("read v16 child-plan fixture for R12"),
+    );
+    child_plan_json["message"] = serde_json::Value::String(
+        child_plan_path
+            .to_str()
+            .expect("temporary v16 child-plan path is UTF-8")
+            .to_string(),
+    );
+    fs::write(
+        &child_plan_path,
+        serde_json::to_vec_pretty(&child_plan_json).expect("serialize re-homed v16 child plan"),
+    )
+    .expect("stage v16 child plan");
+
+    let repo_root = temp.path().join("repo");
+    init_indexed_repo(&repo_root);
+    write_surface_target(&repo_root, Path::new("README.md"), "v16 R12 replay\n");
+    index_repo(&repo_root);
+    commit_indexed_repo(&repo_root, "v16 R12 replay");
+    let head_before = GitWorktreeBackend
+        .head_commit(&repo_root)
+        .expect("v16 R12 replay head");
+    let status_before = std::process::Command::new("git")
+        .current_dir(&repo_root)
+        .args(["status", "--porcelain=v1"])
+        .output()
+        .expect("v16 R12 replay status");
+    assert!(status_before.status.success());
+
+    let unchecked =
+        Parent::<Unchecked>::load(&manifest_path, parent.clone()).expect("load v16 parent for R12");
+    let checked = unchecked
+        .check(
+            &NoopBackend,
+            &manifest_path,
+            Check {
+                campaign_id: parent.campaign_id(),
+                active_root: &repo_root,
+            },
+        )
+        .expect("check v16 parent for R12");
+    let startup = Startup::<Genesis>::from_history(checked.identity(), &manifest_path)
+        .expect("validate v16 genesis startup");
+    let ready = checked.ready(startup).expect("ready v16 parent for R12");
+    let planned = load_existing_child_plan_for_id(parent.campaign_id(), &manifest_path, ready)
+        .expect("load staged v16 child plan");
+    let selectable_parent = planned.parent;
+
+    let mut command = state_command_without_ids();
+    command.campaign = Some(parent.campaign_id().clone());
+    command.repo_root = Some(repo_root.clone());
+    let run_shape = Prototype1StateRunShape::from_profile(&profile);
+    let config = ResolvedCampaignConfig {
+        campaign_id: parent.campaign_id().clone(),
+        benchmark_family: BenchmarkFamily::MultiSweBenchRust,
+        dataset_sources: Vec::new(),
+        model_id: profile.model.id.clone().expect("v16 profile model id"),
+        provider_slug: profile.model.provider.clone(),
+        route_source: profile
+            .model
+            .route_source
+            .expect("v16 profile route source"),
+        required_procedures: Vec::new(),
+        instances_root: temp.path().join("instances"),
+        batches_root: temp.path().join("batches"),
+        eval: EvalCampaignPolicy::default(),
+        protocol: ProtocolCampaignPolicy::default(),
+        framework: crate::FrameworkConfig::default(),
+    };
+    let facts = typestate::context::Facts {
+        complete_search_policy: Some(profile.search_policy()),
+        selection: Some(ParentSelectionOutcome::NoSelection { entry }),
+        report: Some(typestate::context::ReportFacts {
+            outcome: "historical v16 no-selection".to_string(),
+            node_id: outcome.node_id.clone(),
+            node_status: outcome.node_status,
+            workspace_root: outcome.workspace_root.clone(),
+            binary_path: outcome.binary_path.clone(),
+            child_runtime: outcome.child_runtime.clone(),
+            successor_runtime: None,
+            successor_pid: None,
+            successor_ready_path: None,
+        }),
+        ..Default::default()
+    };
+    let collected = typestate::context::Collected::new(
+        command,
+        repo_root.clone(),
+        parent.campaign_id().clone(),
+        manifest_path.clone(),
+        run_shape,
+        config,
+        journal_path.clone(),
+        PrototypeJournal::new(&journal_path),
+    )
+    .with_facts(facts);
+    let r12 = typestate::R12::from_collected_parent(collected, selectable_parent);
+    let step = crate::cli::prototype1_state::driver::control::test_r12_stop(&repo_root, r12)
+        .await
+        .expect("v16 no-selection R12 must stop");
+    assert_eq!(step.transition().from(), WalkPhase::R12);
+    assert_eq!(step.transition().to(), WalkPhase::R13a);
+    assert!(matches!(
+        step.state(),
+        crate::cli::prototype1_state::driver::control::ControlState::R13a(_)
+    ));
+
+    let journal_entries = PrototypeJournal::new(&journal_path)
+        .load_entries()
+        .expect("load v16 stopped journal");
+    assert_eq!(journal_entries.len(), 1);
+    let stopped = journal_entries
+        .iter()
+        .find_map(|entry| match entry {
+            JournalEntry::Successor(record) if record.node_id == parent.node_id() => Some(record),
+            _ => None,
+        })
+        .expect("v16 parent-node stopped record");
+    assert_eq!(stopped.runtime_id, None);
+    let crate::cli::prototype1_state::successor::State::Stopped {
+        decision,
+        selection_decision,
+        selection_receipt,
+    } = &stopped.state
+    else {
+        panic!("v16 no-selection R12 must persist a stopped successor record")
+    };
+    assert_eq!(
+        decision.disposition,
+        Prototype1ContinuationDisposition::StopNoSelectedBranch
+    );
+    assert!(selection_decision.is_none());
+    assert_eq!(
+        selection_receipt,
+        &Some(
+            crate::cli::prototype1_state::successor::SelectionReceipt::Completed {
+                hash: receipt_hash,
+            }
+        )
+    );
+    assert!(journal_entries.iter().all(|entry| {
+        !matches!(
+            entry,
+            JournalEntry::Successor(crate::cli::prototype1_state::successor::Record {
+                state: crate::cli::prototype1_state::successor::State::Checkout { .. },
+                ..
+            })
+        )
+    }));
+    assert!(
+        !history_root.exists(),
+        "schema-v5 no-selection stop must not create History"
+    );
+    assert_eq!(
+        GitWorktreeBackend
+            .head_commit(&repo_root)
+            .expect("v16 head after R12 stop"),
+        head_before
+    );
+    let status_after = std::process::Command::new("git")
+        .current_dir(&repo_root)
+        .args(["status", "--porcelain=v1"])
+        .output()
+        .expect("v16 status after R12 stop");
+    assert!(status_after.status.success());
+    assert_eq!(status_after.stdout, status_before.stdout);
+}
+
+#[tokio::test]
+async fn r12_rejected_only_records_selection_not_run() {
+    let temp = tempfile::tempdir().expect("rejected-only R12 tempdir");
+    let manifest_path = temp.path().join("campaign.json");
+    let repo_root = temp.path().join("repo");
+    init_indexed_repo(&repo_root);
+    write_surface_target(&repo_root, Path::new("README.md"), "rejected-only R12\n");
+    index_repo(&repo_root);
+    commit_indexed_repo(&repo_root, "rejected-only R12");
+
+    let ready = ready_parent_for_test(&manifest_path, &repo_root);
+    let parent = ready.identity().clone();
+    let rejected = surface_attempt::Evidence::rejected(
+        TUI_EDIT_SURFACE_PRODUCER_ID,
+        "proposal-rejected",
+        "run-rejected",
+        "workspace_except_ploke_eval",
+        PathBuf::from("crates/ploke-tui/src/tools/code_edit.rs"),
+        "synthetic rejected-only R12 evidence",
+    );
+    persist_rejected_surface_attempt_child_plan(
+        parent.campaign_id(),
+        &manifest_path,
+        ready,
+        vec![rejected.clone()],
+    )
+    .expect("persist rejected-only child plan");
+    let ready = ready_parent_for_test(&manifest_path, &repo_root);
+    let planned = load_existing_child_plan_for_id(parent.campaign_id(), &manifest_path, ready)
+        .expect("load rejected-only child plan");
+    assert!(planned.children.is_empty());
+    assert_eq!(
+        planned.rejected_surface_attempts.as_slice(),
+        std::slice::from_ref(&rejected)
+    );
+    let selectable_parent = planned.parent;
+
+    let mut command = state_command_without_ids();
+    command.campaign = Some(parent.campaign_id().clone());
+    command.repo_root = Some(repo_root.clone());
+    let run_shape = Prototype1StateRunShape::from_command(&command);
+    let config = ResolvedCampaignConfig {
+        campaign_id: parent.campaign_id().clone(),
+        benchmark_family: BenchmarkFamily::MultiSweBenchRust,
+        dataset_sources: Vec::new(),
+        model_id: "test-model".to_string(),
+        provider_slug: None,
+        route_source: ModelRouteSource::DirectGoogle,
+        required_procedures: Vec::new(),
+        instances_root: temp.path().join("instances"),
+        batches_root: temp.path().join("batches"),
+        eval: EvalCampaignPolicy::default(),
+        protocol: ProtocolCampaignPolicy::default(),
+        framework: crate::FrameworkConfig::default(),
+    };
+    let journal_path = prototype1_transition_journal_path(&manifest_path);
+    let facts = typestate::context::Facts {
+        complete_search_policy: Some(Prototype1SearchPolicy::default()),
+        selection: None,
+        rejected_attempt_payloads: Some(1),
+        report: Some(typestate::context::ReportFacts {
+            outcome: "synthetic rejected-only R12".to_string(),
+            node_id: parent.node_id().to_string(),
+            node_status: Prototype1NodeStatus::Running,
+            workspace_root: repo_root.clone(),
+            binary_path: temp.path().join("unused-ploke-eval"),
+            child_runtime: None,
+            successor_runtime: None,
+            successor_pid: None,
+            successor_ready_path: None,
+        }),
+        ..Default::default()
+    };
+    let collected = typestate::context::Collected::new(
+        command,
+        repo_root.clone(),
+        parent.campaign_id().clone(),
+        manifest_path.clone(),
+        run_shape,
+        config,
+        journal_path.clone(),
+        PrototypeJournal::new(&journal_path),
+    )
+    .with_facts(facts);
+    let r12 = typestate::R12::from_collected_parent(collected, selectable_parent);
+
+    let history_root = temp.path().join("prototype1/history");
+    assert!(!history_root.exists());
+    let head_before = GitWorktreeBackend
+        .head_commit(&repo_root)
+        .expect("rejected-only R12 head");
+    let status_before = std::process::Command::new("git")
+        .current_dir(&repo_root)
+        .args(["status", "--porcelain=v1"])
+        .output()
+        .expect("rejected-only R12 status");
+    assert!(status_before.status.success());
+
+    let step = crate::cli::prototype1_state::driver::control::test_r12_stop(&repo_root, r12)
+        .await
+        .expect("rejected-only R12 must stop");
+    assert_eq!(step.transition().from(), WalkPhase::R12);
+    assert_eq!(step.transition().to(), WalkPhase::R13a);
+    assert!(matches!(
+        step.state(),
+        crate::cli::prototype1_state::driver::control::ControlState::R13a(_)
+    ));
+
+    let journal_entries = PrototypeJournal::new(&journal_path)
+        .load_entries()
+        .expect("load rejected-only stopped journal");
+    assert_eq!(journal_entries.len(), 1);
+    let stopped = journal_entries
+        .iter()
+        .find_map(|entry| match entry {
+            JournalEntry::Successor(record) if record.node_id == parent.node_id() => Some(record),
+            _ => None,
+        })
+        .expect("rejected-only parent-node stopped record");
+    assert_eq!(stopped.runtime_id, None);
+    let crate::cli::prototype1_state::successor::State::Stopped {
+        decision,
+        selection_decision,
+        selection_receipt,
+    } = &stopped.state
+    else {
+        panic!("rejected-only R12 must persist a stopped successor record")
+    };
+    assert_eq!(
+        decision.disposition,
+        Prototype1ContinuationDisposition::StopNoSelectedBranch
+    );
+    assert!(selection_decision.is_none());
+    assert_eq!(
+        selection_receipt,
+        &Some(crate::cli::prototype1_state::successor::SelectionReceipt::NotRun)
+    );
+    assert!(journal_entries.iter().all(|entry| {
+        !matches!(
+            entry,
+            JournalEntry::Successor(crate::cli::prototype1_state::successor::Record {
+                state: crate::cli::prototype1_state::successor::State::Checkout { .. },
+                ..
+            })
+        )
+    }));
+    assert!(
+        !history_root.exists(),
+        "rejected-only stop must not create History"
+    );
+    assert_eq!(
+        GitWorktreeBackend
+            .head_commit(&repo_root)
+            .expect("rejected-only head after R12 stop"),
+        head_before
+    );
+    let status_after = std::process::Command::new("git")
+        .current_dir(&repo_root)
+        .args(["status", "--porcelain=v1"])
+        .output()
+        .expect("rejected-only status after R12 stop");
+    assert!(status_after.status.success());
+    assert_eq!(status_after.stdout, status_before.stdout);
 }
 
 #[test]

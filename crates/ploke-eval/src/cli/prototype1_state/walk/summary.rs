@@ -26,8 +26,9 @@ use crate::{
     cli::{
         InspectOutputFormat, Prototype1StateWalkSummaryCommand,
         prototype1_state::{
+            cli_facing::same_existing_path,
             event::RuntimeId,
-            identity::{load_parent_identity, parent_identity_path},
+            identity::{ParentIdentity, load_parent_identity, parent_identity_path},
             journal::{self, JournalEntry, prototype1_transition_journal_path},
             session, successor,
         },
@@ -102,6 +103,11 @@ struct JournalSummary {
     path: PathBuf,
     entries: usize,
     latest_cursor: Option<JournalCursor>,
+    active_parent_cursor: Option<JournalCursor>,
+    #[serde(skip)]
+    source: String,
+    #[serde(skip)]
+    typed: Vec<Option<JournalEntry>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -375,7 +381,7 @@ impl WalkSummary {
         let policy = load_policy(&profile)?;
         let reports = load_reports(&root)?;
         let journal_path = prototype1_transition_journal_path(&manifest);
-        let journal = load_journal(&journal_path)?;
+        let (journal, stop_blocker) = load_reconciled_journal(repo_root, &journal_path)?;
         let node_count = count_dirs(&root.join("nodes"))?;
         let sessions = session::Store::for_manifest(&manifest);
         let session_path = sessions.paths(&identity).journal().to_path_buf();
@@ -423,7 +429,11 @@ impl WalkSummary {
             expected_children,
             expected_nodes,
         };
-        let completion = completion(&policy, &progress, &generations);
+        let mut completion = completion(&policy, &progress, &generations);
+        if let Some(blocker) = stop_blocker {
+            completion.expected_completion_satisfied = false;
+            completion.blockers.push(blocker);
+        }
         Ok(Self {
             schema_version: SUMMARY_SCHEMA_VERSION,
             repo_root: repo_root.to_path_buf(),
@@ -448,6 +458,199 @@ impl WalkSummary {
             },
         })
     }
+}
+
+fn load_reconciled_journal(
+    repo_root: &Path,
+    path: &Path,
+) -> Result<(JournalSummary, Option<String>), PrepareError> {
+    for _ in 0..3 {
+        let mut journal = load_journal(path)?;
+        let (active_parent_cursor, stop_blocker) = reconcile_stopped_cursor(repo_root, &journal)?;
+        if journal_is_current(&journal)? {
+            journal.active_parent_cursor = active_parent_cursor;
+            return Ok((journal, stop_blocker));
+        }
+    }
+    Err(PrepareError::InvalidBatchSelection {
+        detail: format!(
+            "transition journal '{}' changed during summary reconstruction after three attempts",
+            path.display()
+        ),
+    })
+}
+
+fn reconcile_stopped_cursor(
+    repo_root: &Path,
+    journal: &JournalSummary,
+) -> Result<(Option<JournalCursor>, Option<String>), PrepareError> {
+    let active = load_parent_identity(repo_root)?;
+    let candidate = candidate_stop_index(&journal.typed, &active);
+    let snapshot = crate::cli::prototype1_state::driver::reconstruct::reconstruct_early(repo_root)?;
+    let phase = snapshot
+        .state
+        .as_ref()
+        .map(|state| state.phase())
+        .or_else(|| snapshot.blocked.as_ref().map(|blocked| blocked.phase));
+    if snapshot.blockers.is_empty() && matches!(phase, Some(WalkPhase::R13a | WalkPhase::R14a)) {
+        let Some(stop_index) = snapshot.stop_index else {
+            let detail = "exact stopped reconstruction did not expose its matched journal index";
+            return Ok((
+                candidate.map(|index| unverified_stop_cursor(index, &active, detail)),
+                Some(format!(
+                    "stopped successor evidence is not a trustworthy active-parent boundary: {detail}"
+                )),
+            ));
+        };
+        if !stop_at_index(&journal.typed, &active, stop_index) {
+            let detail = format!(
+                "exact stopped reconstruction index {stop_index} is absent from the summary journal snapshot"
+            );
+            return Ok((
+                candidate.map(|index| unverified_stop_cursor(index, &active, &detail)),
+                Some(format!(
+                    "stopped successor evidence is not a trustworthy active-parent boundary: {detail}"
+                )),
+            ));
+        }
+        let complete_index = parent_complete_index(&journal.typed, &active, repo_root, stop_index);
+        let (index, label, meaning, phase) = match phase {
+            Some(WalkPhase::R13a) => (
+                stop_index,
+                "r13a successor.stopped".to_string(),
+                "active parent recorded an exactly reconstructed stopped continuation; later inbound-runtime lifecycle records do not change its typestate".to_string(),
+                WalkPhase::R13a,
+            ),
+            Some(WalkPhase::R14a) => {
+                let Some(index) = complete_index else {
+                    let detail = "exact R14a reconstruction has no matching active-parent ParentComplete journal index".to_string();
+                    return Ok((
+                        Some(unverified_stop_cursor(stop_index, &active, &detail)),
+                        Some(format!(
+                            "stopped successor evidence is not a trustworthy R14a boundary: {detail}"
+                        )),
+                    ));
+                };
+                let (label, meaning, phase) = parent_complete_cursor(WalkPhase::R14a);
+                (index, label, meaning, phase)
+            }
+            _ => unreachable!("validated stopped reconstruction is R13a or R14a"),
+        };
+        return Ok((
+            Some(JournalCursor {
+                index,
+                label,
+                meaning,
+                node_id: Some(active.node_id().to_string()),
+                generation: Some(active.generation()),
+                phase,
+            }),
+            None,
+        ));
+    }
+    let detail = if snapshot.blockers.is_empty() {
+        "stopped successor evidence did not reconstruct to R13a/R14a".to_string()
+    } else {
+        snapshot.blockers.join("; ")
+    };
+    Ok((
+        candidate.map(|index| unverified_stop_cursor(index, &active, &detail)),
+        candidate.map(|_| {
+            format!("stopped successor evidence is not a trustworthy R13a boundary: {detail}")
+        }),
+    ))
+}
+
+fn unverified_stop_cursor(index: usize, active: &ParentIdentity, detail: &str) -> JournalCursor {
+    JournalCursor {
+        index,
+        label: "r12 successor.stopped_unverified".to_string(),
+        meaning: format!(
+            "stopped successor journal evidence failed exact typed reconstruction: {detail}"
+        ),
+        node_id: Some(active.node_id().to_string()),
+        generation: Some(active.generation()),
+        phase: WalkPhase::R12,
+    }
+}
+
+fn parent_start_index(entries: &[Option<JournalEntry>], active: &ParentIdentity) -> Option<usize> {
+    entries.iter().rposition(|entry| {
+        matches!(
+            entry,
+            Some(JournalEntry::ParentStarted(started))
+                if started.campaign_id == *active.campaign_id()
+                    && started.parent_identity == *active
+        )
+    })
+}
+
+fn candidate_stop_index(
+    entries: &[Option<JournalEntry>],
+    active: &ParentIdentity,
+) -> Option<usize> {
+    let turn_start = parent_start_index(entries, active)?;
+    entries
+        .iter()
+        .enumerate()
+        .skip(turn_start + 1)
+        .rev()
+        .find_map(|(index, entry)| match entry {
+            Some(JournalEntry::Successor(record))
+                if record.campaign_id == *active.campaign_id()
+                    && matches!(&record.state, successor::State::Stopped { .. }) =>
+            {
+                Some(index)
+            }
+            _ => None,
+        })
+}
+
+fn stop_at_index(
+    entries: &[Option<JournalEntry>],
+    active: &ParentIdentity,
+    stop_index: usize,
+) -> bool {
+    let Some(turn_start) = parent_start_index(entries, active) else {
+        return false;
+    };
+    stop_index > turn_start
+        && matches!(
+            entries.get(stop_index),
+            Some(Some(JournalEntry::Successor(record)))
+                if record.campaign_id == *active.campaign_id()
+                    && matches!(&record.state, successor::State::Stopped { .. })
+        )
+}
+
+fn parent_complete_index(
+    entries: &[Option<JournalEntry>],
+    active: &ParentIdentity,
+    repo_root: &Path,
+    stop_index: usize,
+) -> Option<usize> {
+    if !stop_at_index(entries, active, stop_index) {
+        return None;
+    }
+    let target_dir = repo_root.join("target");
+    entries
+        .iter()
+        .enumerate()
+        .skip(stop_index + 1)
+        .rev()
+        .find_map(|(index, entry)| match entry {
+            Some(JournalEntry::Resource(sample))
+                if sample.campaign_id == *active.campaign_id()
+                    && sample.parent_id == active.parent_id()
+                    && sample.node_id == active.node_id()
+                    && sample.generation == active.generation()
+                    && sample.phase == journal::resource::Phase::ParentComplete
+                    && same_existing_path(&sample.path, &target_dir) =>
+            {
+                Some(index)
+            }
+            _ => None,
+        })
 }
 
 fn print_table(summary: &WalkSummary, verbose: bool) {
@@ -534,6 +737,12 @@ fn print_table(summary: &WalkSummary, verbose: bool) {
     } else {
         println!("  latest_entry: -");
     }
+    if let Some(cursor) = &summary.journal.active_parent_cursor {
+        println!("  active_parent_cursor: #{} {}", cursor.index, cursor.label);
+        println!("  active_parent_meaning: {}", cursor.meaning);
+    } else {
+        println!("  active_parent_cursor: -");
+    }
     println!("generations:");
     if summary.generations.is_empty() {
         println!("  (no child plans found)");
@@ -585,7 +794,12 @@ fn print_progress_mismatch(summary: &WalkSummary) {
 }
 
 fn parent_turn_status(summary: &WalkSummary) -> String {
-    match summary.journal.latest_cursor.as_ref() {
+    match summary
+        .journal
+        .active_parent_cursor
+        .as_ref()
+        .or(summary.journal.latest_cursor.as_ref())
+    {
         Some(cursor) if cursor.label.starts_with("r14a") || cursor.label.starts_with("r14b") => {
             format!("complete ({})", cursor.label)
         }
@@ -697,7 +911,10 @@ fn print_verbose(summary: &WalkSummary) {
     );
     println!("  handoff: selected-successor handoff status from the parent final report.");
     println!(
-        "  latest_entry: latest durable transition-journal entry; replay cursor is separate and operator-local."
+        "  latest_entry: actual latest durable transition-journal entry; replay cursor is separate and operator-local."
+    );
+    println!(
+        "  active_parent_cursor: exact reconstructed parent typestate boundary; it may point to an earlier stop or parent-complete entry when a later runtime lifecycle event exists."
     );
     println!(
         "  progress.expected: policy-derived child/node counts if the configured child budget is met."
@@ -994,25 +1211,20 @@ fn child_summary(value: &JsonValue) -> ChildSummary {
 }
 
 fn load_journal(path: &Path) -> Result<JournalSummary, PrepareError> {
-    let text = match fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            return Ok(JournalSummary {
-                path: path.to_path_buf(),
-                entries: 0,
-                latest_cursor: None,
-            });
-        }
-        Err(source) => {
-            return Err(PrepareError::ReadManifest {
-                path: path.to_path_buf(),
-                source,
-            });
-        }
-    };
+    let text = read_journal_text(path)?;
+    if text.is_empty() && !path.exists() {
+        return Ok(JournalSummary {
+            path: path.to_path_buf(),
+            entries: 0,
+            latest_cursor: None,
+            active_parent_cursor: None,
+            source: text,
+            typed: Vec::new(),
+        });
+    }
     let mut projection = JournalProjection::default();
     let mut latest = None;
-    let mut count = 0usize;
+    let mut typed = Vec::new();
     for line in text.lines().filter(|line| !line.trim().is_empty()) {
         let value: JsonValue =
             serde_json::from_str(line).map_err(|source| PrepareError::ParseManifest {
@@ -1033,15 +1245,34 @@ fn load_journal(path: &Path) -> Result<JournalSummary, PrepareError> {
                 }
             })?)
         };
-        let cursor = cursor_from_entry(count, &value, entry.as_ref(), &mut projection);
+        let index = typed.len();
+        let cursor = cursor_from_entry(index, &value, entry.as_ref(), &mut projection);
         latest = Some(cursor);
-        count += 1;
+        typed.push(entry);
     }
     Ok(JournalSummary {
         path: path.to_path_buf(),
-        entries: count,
+        entries: typed.len(),
         latest_cursor: latest,
+        active_parent_cursor: None,
+        source: text,
+        typed,
     })
+}
+
+fn read_journal_text(path: &Path) -> Result<String, PrepareError> {
+    match fs::read_to_string(path) {
+        Ok(text) => Ok(text),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(String::new()),
+        Err(source) => Err(PrepareError::ReadManifest {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
+}
+
+fn journal_is_current(journal: &JournalSummary) -> Result<bool, PrepareError> {
+    read_journal_text(&journal.path).map(|source| source == journal.source)
 }
 
 fn cursor_from_entry(
@@ -1603,6 +1834,48 @@ mod tests {
         })
     }
 
+    fn stopped() -> JournalEntry {
+        JournalEntry::Successor(successor::Record::stopped_without_attempt(
+            CampaignId::from("campaign"),
+            "node-parent".to_string(),
+            crate::intervention::Prototype1ContinuationDecision {
+                disposition:
+                    crate::intervention::Prototype1ContinuationDisposition::StopNoSelectedBranch,
+                selected_next_branch_id: None,
+                selected_branch_disposition: None,
+                next_generation: 1,
+                total_nodes_after_continue: 1,
+            },
+        ))
+    }
+
+    fn stopped_parent_started(active: &ParentIdentity) -> JournalEntry {
+        JournalEntry::ParentStarted(ParentStartedEntry {
+            recorded_at: crate::cli::prototype1_state::event::RecordedAt(4),
+            campaign_id: CampaignId::from("campaign"),
+            parent_identity: active.clone(),
+            repo_root: PathBuf::from("/tmp/repo"),
+            handoff_runtime_id: Some(RuntimeId(uuid::Uuid::from_u128(1))),
+            pid: 43,
+        })
+    }
+
+    fn completed() -> JournalEntry {
+        JournalEntry::Successor(successor::Record {
+            runtime_id: Some(RuntimeId(uuid::Uuid::from_u128(1))),
+            recorded_at: crate::cli::prototype1_state::event::RecordedAt(5),
+            campaign_id: CampaignId::from("campaign"),
+            node_id: "node-parent".to_string(),
+            state: successor::State::Completed {
+                status:
+                    crate::cli::prototype1_state::invocation::SuccessorCompletionStatus::Succeeded,
+                completion_path: PathBuf::from("/tmp/completion.json"),
+                trace_path: None,
+                detail: None,
+            },
+        })
+    }
+
     fn load_persisted(entries: Vec<JournalEntry>) -> JournalSummary {
         let tmp = tempfile::tempdir().expect("tempdir");
         let path = tmp.path().join("transition-journal.jsonl");
@@ -1613,6 +1886,10 @@ mod tests {
                 .expect("persist journal entry");
         }
         load_journal(&path).expect("load persisted journal summary")
+    }
+
+    fn typed_entries(entries: &[JournalEntry]) -> Vec<Option<JournalEntry>> {
+        entries.iter().cloned().map(Some).collect()
     }
 
     #[test]
@@ -1640,6 +1917,100 @@ mod tests {
             .latest_cursor
             .expect("latest complete cursor");
         assert_eq!(cursor.label, "r14b parent_complete");
+    }
+
+    #[test]
+    fn parent_complete_after_stop_still_requires_receipt_validation() {
+        let active = identity("node-parent");
+        let entries = vec![
+            stopped_parent_started(&active),
+            stopped(),
+            parent_complete(),
+        ];
+        let summary = load_persisted(entries.clone());
+        let cursor = summary.latest_cursor.expect("parent-complete cursor");
+
+        assert_eq!(cursor.label, "r14a parent_complete");
+        let typed = typed_entries(&entries);
+        assert_eq!(candidate_stop_index(&typed, &active), Some(1));
+        assert_eq!(
+            parent_complete_index(&typed, &active, Path::new("/tmp/repo"), 1),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn parent_complete_before_stop_is_not_active_turn_completion() {
+        let active = identity("node-parent");
+        let entries = vec![
+            stopped_parent_started(&active),
+            parent_complete(),
+            stopped(),
+        ];
+
+        let typed = typed_entries(&entries);
+        assert_eq!(candidate_stop_index(&typed, &active), Some(2));
+        assert_eq!(
+            parent_complete_index(&typed, &active, Path::new("/tmp/repo"), 2),
+            None
+        );
+    }
+
+    #[test]
+    fn completed_after_stop_still_requires_active_receipt_validation() {
+        let active = identity("node-parent");
+        let entries = vec![stopped_parent_started(&active), stopped(), completed()];
+        let summary = load_persisted(entries.clone());
+        let cursor = summary.latest_cursor.expect("runtime completion cursor");
+
+        assert_eq!(cursor.label, "r13c successor.completed_unacknowledged");
+        let typed = typed_entries(&entries);
+        assert_eq!(candidate_stop_index(&typed, &active), Some(1));
+        assert_eq!(
+            parent_complete_index(&typed, &active, Path::new("/tmp/repo"), 1),
+            None
+        );
+        assert!(!stop_at_index(&typed, &identity("node-other"), 1));
+    }
+
+    #[test]
+    fn exact_stop_index_is_not_overwritten_by_later_candidate() {
+        let active = identity("node-parent");
+        let mut unrelated = stopped();
+        let JournalEntry::Successor(record) = &mut unrelated else {
+            unreachable!("stopped fixture must be a successor record")
+        };
+        record.node_id = "node-other".to_string();
+        let entries = vec![
+            stopped_parent_started(&active),
+            stopped(),
+            unrelated,
+            parent_complete(),
+        ];
+        let typed = typed_entries(&entries);
+
+        assert_eq!(candidate_stop_index(&typed, &active), Some(2));
+        assert_eq!(
+            parent_complete_index(&typed, &active, Path::new("/tmp/repo"), 1),
+            Some(3)
+        );
+    }
+
+    #[test]
+    fn journal_source_detects_concurrent_append() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("transition-journal.jsonl");
+        let mut journal = PrototypeJournal::new(path.clone());
+        journal
+            .append_with_receipt(stopped())
+            .expect("persist initial journal entry");
+        let summary = load_journal(&path).expect("load journal snapshot");
+
+        assert!(journal_is_current(&summary).expect("compare current journal"));
+        journal
+            .append_with_receipt(completed())
+            .expect("append concurrent journal entry");
+        assert!(!journal_is_current(&summary).expect("detect changed journal"));
     }
 
     #[test]

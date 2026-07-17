@@ -24,9 +24,9 @@ use crate::{
     },
     closure::load_closure_state,
     intervention::{
-        CompleteBaseline, Intervention, Prototype1NodeRecord, Prototype1NodeStatus,
-        Prototype1RunnerRequest, RecordStore, load_node_record, load_runner_request,
-        load_runner_result,
+        CompleteBaseline, Intervention, Prototype1ContinuationDecision, Prototype1NodeRecord,
+        Prototype1NodeStatus, Prototype1RunnerRequest, RecordStore, load_node_record,
+        load_runner_request, load_runner_result,
     },
     projection::OperatorProjectionRead,
     run_registry::{RunExecutionStatus, list_registrations_for_instance},
@@ -47,11 +47,13 @@ use crate::cli::prototype1_state::{
     c3::{C4, SpawnChild},
     c4::{ObserveChild, ObservedChild},
     cli_facing::{
-        PlannedChildOutcome, Prototype1BranchEvaluationReport, compare_observed_child_treatment,
+        ParentSelectionOutcome, PlannedChildOutcome, Prototype1BranchEvaluationReport,
+        compare_observed_child_treatment, emit_selection_outcome_for_backend,
         ensure_prototype1_baseline_closure_state, establish_parent_baseline,
-        preview_successor_continuation, prototype1_branch_evaluation_path,
-        record_continuation_decision, reserve_profile_child_budget, resolve_profile_child_plan,
-        run_planned_child, select_successor_for_profile, selection_input_from_child_report,
+        preview_no_selection_continuation, preview_successor_continuation,
+        prototype1_branch_evaluation_path, record_continuation_decision,
+        reserve_profile_child_budget, resolve_profile_child_plan, run_planned_child,
+        selection_input_from_child_report, selection_outcome_for_profile,
     },
     driver::advance as session_driver,
     edit_surface::harness_request::{
@@ -267,6 +269,12 @@ struct ChildSnapshot {
 #[derive(Debug, Clone)]
 struct SuccessorMarker {
     state: SuccessorMarkerState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ExpectedStop {
+    decision: Prototype1ContinuationDecision,
+    receipt: successor::SelectionReceipt,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1946,7 +1954,12 @@ fn diagnose(context: &RuntimeContext) -> Result<Diagnosis, PrepareError> {
     } else {
         Vec::new()
     };
-    let successor_marker = latest_successor_marker(context, &mut blockers)?;
+    let successor_marker = latest_successor_marker(
+        context,
+        child_plan.as_ref(),
+        &child_snapshots,
+        &mut blockers,
+    )?;
 
     if !blockers.is_empty() {
         return Ok(Diagnosis {
@@ -2025,18 +2038,24 @@ fn diagnose(context: &RuntimeContext) -> Result<Diagnosis, PrepareError> {
 
     let phase = if let Some(marker) = successor_marker.as_ref() {
         terminal_phase_from_marker(marker.state)
-    } else if selection_available(
-        context,
-        &child_snapshots,
-        child_plan
-            .as_ref()
-            .map(|plan| plan.rejected_surface_attempts())
-            .unwrap_or(&[]),
-    )? {
-        DiagnosedPhase::Select
     } else {
-        notes.push("admitted successor selection resolved to none".to_string());
-        DiagnosedPhase::Complete
+        match selection_available(
+            context,
+            &child_snapshots,
+            child_plan
+                .as_ref()
+                .map(|plan| plan.rejected_surface_attempts())
+                .unwrap_or(&[]),
+        )? {
+            ParentSelectionOutcome::Selected { .. } => DiagnosedPhase::Select,
+            ParentSelectionOutcome::NoSelection { .. } => {
+                notes.push(
+                    "successor selection completed with no admissible candidate; a session-backed R12->R13a step must persist the typed stop receipt"
+                        .to_string(),
+                );
+                DiagnosedPhase::Select
+            }
+        }
     };
     Ok(Diagnosis {
         context: context.clone(),
@@ -2070,16 +2089,15 @@ fn selection_available(
     context: &RuntimeContext,
     child_snapshots: &[ChildSnapshot],
     rejected_surface_attempts: &[surface_attempt::Evidence],
-) -> Result<bool, PrepareError> {
+) -> Result<ParentSelectionOutcome, PrepareError> {
     let child_outcomes = reconstruct_terminal_outcomes(child_snapshots)?;
-    Ok(select_successor_for_profile(
+    selection_outcome_for_profile(
         &context.manifest_path,
         &context.parent_identity,
         &child_outcomes,
         rejected_surface_attempts,
         &context.admitted_profile.profile,
-    )?
-    .is_some())
+    )
 }
 
 fn load_child_plan(
@@ -2397,6 +2415,8 @@ fn pid_alive(pid: u32) -> bool {
 
 fn latest_successor_marker(
     context: &RuntimeContext,
+    child_plan: Option<&ChildPlanFiles>,
+    child_snapshots: &[ChildSnapshot],
     blockers: &mut Vec<String>,
 ) -> Result<Option<SuccessorMarker>, PrepareError> {
     let journal = PrototypeJournal::new(prototype1_transition_journal_path(&context.manifest_path));
@@ -2413,7 +2433,7 @@ fn latest_successor_marker(
             Some(context.parent_identity.node_id()),
             blockers,
         );
-        let state = classify_successor_entries(&relevant);
+        let state = classify_successor_entries(&relevant, None);
         if predecessor_blocks(state) {
             blockers.push(format!(
                 "active checkout advanced from predecessor '{}' to successor '{}', but predecessor handoff evidence is {:?}; successor mutation remains blocked until a durable same-runtime acknowledgement is committed",
@@ -2430,13 +2450,75 @@ fn latest_successor_marker(
 
     let relevant =
         collect_successor_entries(context, &entries, &context.parent_identity, None, blockers);
-    let Some(state) = classify_successor_entries(&relevant) else {
+    let expected = expected_stop(context, child_plan, child_snapshots, &relevant)?;
+    let Some(state) = classify_successor_entries(&relevant, expected.as_ref()) else {
         return Ok(None);
     };
     if state == SuccessorMarkerState::Incomplete {
         push_handoff_blocker(blockers);
     }
     Ok(Some(SuccessorMarker { state }))
+}
+
+fn expected_stop(
+    context: &RuntimeContext,
+    child_plan: Option<&ChildPlanFiles>,
+    child_snapshots: &[ChildSnapshot],
+    entries: &[&JournalEntry],
+) -> Result<Option<ExpectedStop>, PrepareError> {
+    let needs_receipt = entries.iter().any(|entry| {
+        matches!(
+            entry,
+            JournalEntry::Successor(successor::Record {
+                state: successor::State::Stopped {
+                    selection_decision: None,
+                    ..
+                },
+                ..
+            })
+        )
+    });
+    if !needs_receipt {
+        return Ok(None);
+    }
+    let Some(plan) = child_plan else {
+        return Ok(None);
+    };
+    let decision =
+        preview_no_selection_continuation(&context.manifest_path, &context.parent_identity)?;
+    if plan.children().is_empty() && !plan.rejected_surface_attempts().is_empty() {
+        return Ok(Some(ExpectedStop {
+            decision,
+            receipt: successor::SelectionReceipt::NotRun,
+        }));
+    }
+    if child_snapshots.len() != plan.children().len()
+        || child_snapshots.iter().any(|snapshot| {
+            !is_terminal_status(snapshot.node.status) || needs_terminal_observe(snapshot)
+        })
+    {
+        return Ok(None);
+    }
+    let child_outcomes = reconstruct_terminal_outcomes(child_snapshots)?;
+    let outcome = selection_outcome_for_profile(
+        &context.manifest_path,
+        &context.parent_identity,
+        &child_outcomes,
+        plan.rejected_surface_attempts(),
+        &context.admitted_profile.profile,
+    )?;
+    let ParentSelectionOutcome::NoSelection { entry } = outcome else {
+        return Ok(None);
+    };
+    let hash = entry
+        .receipt_hash()
+        .map_err(|error| PrepareError::InvalidBatchSelection {
+            detail: format!("failed to hash expected no-selection receipt: {error}"),
+        })?;
+    Ok(Some(ExpectedStop {
+        decision,
+        receipt: successor::SelectionReceipt::Completed { hash },
+    }))
 }
 
 fn predecessor_blocks(state: Option<SuccessorMarkerState>) -> bool {
@@ -2474,6 +2556,22 @@ fn collect_successor_entries<'a>(
         if selected_node.is_some_and(|selected| selected != node_id) {
             continue;
         }
+        if selected_node.is_none()
+            && node_id == parent.node_id()
+            && matches!(
+                entry,
+                JournalEntry::Successor(successor::Record {
+                    state: successor::State::Stopped {
+                        selection_decision: None,
+                        ..
+                    },
+                    ..
+                })
+            )
+        {
+            relevant.push(entry);
+            continue;
+        }
         let node = match load_node_record(
             &context.manifest_path,
             node_id,
@@ -2503,13 +2601,17 @@ fn push_handoff_blocker(blockers: &mut Vec<String>) {
     );
 }
 
-fn classify_successor_entries(entries: &[&JournalEntry]) -> Option<SuccessorMarkerState> {
+fn classify_successor_entries(
+    entries: &[&JournalEntry],
+    expected_stop: Option<&ExpectedStop>,
+) -> Option<SuccessorMarkerState> {
     type AttemptKey = (RuntimeId, String);
 
     let mut spawned = BTreeMap::<AttemptKey, &successor::Record>::new();
     let mut failed = BTreeSet::<AttemptKey>::new();
     let mut acknowledgements = BTreeSet::new();
     let mut saw_process = false;
+    let mut invalid_stop = false;
     let mut latest = None;
     for entry in entries {
         match entry {
@@ -2518,8 +2620,25 @@ fn classify_successor_entries(entries: &[&JournalEntry]) -> Option<SuccessorMark
                     successor::State::Selected { .. } | successor::State::Checkout { .. } => {
                         SuccessorMarkerState::InProgress
                     }
-                    successor::State::Stopped { .. } => {
-                        if !saw_process {
+                    successor::State::Stopped {
+                        decision,
+                        selection_decision,
+                        selection_receipt,
+                    } => {
+                        let no_selection_valid = selection_decision.is_none()
+                            && expected_stop.is_some_and(|expected| {
+                                decision == &expected.decision
+                                    && selection_receipt.as_ref() == Some(&expected.receipt)
+                            })
+                            && record.runtime_id.is_none();
+                        let selected_stop_valid = selection_decision.is_some()
+                            && selection_receipt.is_none()
+                            && record.runtime_id.is_none();
+                        let valid = !saw_process && (no_selection_valid || selected_stop_valid);
+                        if !valid {
+                            invalid_stop = true;
+                        }
+                        if valid {
                             SuccessorMarkerState::Committed
                         } else {
                             SuccessorMarkerState::Incomplete
@@ -2600,7 +2719,11 @@ fn classify_successor_entries(entries: &[&JournalEntry]) -> Option<SuccessorMark
             _ => {}
         }
     }
-    latest
+    if invalid_stop {
+        Some(SuccessorMarkerState::Incomplete)
+    } else {
+        latest
+    }
 }
 
 fn spawn_matches_ready(record: &successor::Record, pid: u32, ready_path: &Path) -> bool {
@@ -3140,7 +3263,7 @@ fn reconstruct_terminal_outcomes(
 
 fn advance_select(diagnosis: Diagnosis) -> Result<(), PrepareError> {
     let child_outcomes = reconstruct_terminal_outcomes(&diagnosis.child_snapshots)?;
-    let selection = select_successor_for_profile(
+    let outcome = selection_outcome_for_profile(
         &diagnosis.context.manifest_path,
         &diagnosis.context.parent_identity,
         &child_outcomes,
@@ -3151,45 +3274,64 @@ fn advance_select(diagnosis: Diagnosis) -> Result<(), PrepareError> {
             .unwrap_or(&[]),
         &diagnosis.context.admitted_profile.profile,
     )?;
-    if let Some((decision, material)) = selection {
-        let selected = material.selected_artifact()?;
-        let continuation = preview_successor_continuation(
-            &diagnosis.context.manifest_path,
-            &diagnosis.context.parent_identity,
-            &diagnosis.context.admitted_profile.profile.search_policy(),
-            &decision,
-            &material,
-            selected.node(),
-        )?;
-        record_continuation_decision(
-            &diagnosis.context.manifest_path,
-            &diagnosis.context.parent_identity,
-            &continuation,
-        )?;
-        let record = if continuation.disposition.allows_successor() {
-            successor::Record::selected_with_decision(
-                diagnosis.context.campaign_id.clone(),
-                selected.node().node_id.clone(),
-                continuation,
-                decision,
-            )
-        } else {
-            successor::Record::stopped(
-                diagnosis.context.campaign_id.clone(),
-                selected.node().node_id.clone(),
-                continuation,
-                decision,
-            )
-        };
-        let mut journal = PrototypeJournal::new(prototype1_transition_journal_path(
-            &diagnosis.context.manifest_path,
-        ));
-        journal
-            .append(JournalEntry::Successor(record))
-            .map_err(|err| PrepareError::InvalidBatchSelection {
-                detail: format!("failed to append successor selection record: {err}"),
-            })?;
+    if matches!(outcome, ParentSelectionOutcome::NoSelection { .. }) {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: "legacy diagnosis-driven selection cannot mint a no-selection stop receipt; use the session-backed prototype1-state, prototype1-step, or walk driver"
+                .to_string(),
+        });
     }
+    emit_selection_outcome_for_backend(
+        &diagnosis.context.manifest_path,
+        &diagnosis.context.parent_identity,
+        &outcome,
+        diagnosis
+            .context
+            .admitted_profile
+            .profile
+            .storage
+            .eval
+            .backend,
+    )?;
+    let ParentSelectionOutcome::Selected { decision, material } = outcome else {
+        unreachable!("no-selection outcomes return before persistence")
+    };
+    let selected = material.selected_artifact()?;
+    let continuation = preview_successor_continuation(
+        &diagnosis.context.manifest_path,
+        &diagnosis.context.parent_identity,
+        &diagnosis.context.admitted_profile.profile.search_policy(),
+        &decision,
+        &material,
+        selected.node(),
+    )?;
+    record_continuation_decision(
+        &diagnosis.context.manifest_path,
+        &diagnosis.context.parent_identity,
+        &continuation,
+    )?;
+    let record = if continuation.disposition.allows_successor() {
+        successor::Record::selected_with_decision(
+            diagnosis.context.campaign_id.clone(),
+            selected.node().node_id.clone(),
+            continuation,
+            decision,
+        )
+    } else {
+        successor::Record::stopped(
+            diagnosis.context.campaign_id.clone(),
+            selected.node().node_id.clone(),
+            continuation,
+            decision,
+        )
+    };
+    let mut journal = PrototypeJournal::new(prototype1_transition_journal_path(
+        &diagnosis.context.manifest_path,
+    ));
+    journal
+        .append(JournalEntry::Successor(record))
+        .map_err(|err| PrepareError::InvalidBatchSelection {
+            detail: format!("failed to append successor selection record: {err}"),
+        })?;
     Ok(())
 }
 
@@ -4021,6 +4163,37 @@ mod tests {
                 parent_identity,
             }
         }
+    }
+
+    #[test]
+    fn doctor_selection_probe_is_read_only_for_no_selection() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let eval_home = temp.path().join("eval-home");
+        let _env = crate::test_support::env_guard_os(vec![(
+            "PLOKE_EVAL_HOME",
+            eval_home.clone().into_os_string(),
+        )]);
+        let world = ChildPlanWorld::mint_at_child_plan_phase_with_budget(&eval_home, 1, 1);
+        let context = resolve_context(Some(&world.repo_root)).expect("context");
+        let fixture: ChildPlanFiles = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/prototype1-v16-all-unresolved-20260717/child-plan-node-e4ecdce2d6ee1098.json"
+        ))
+        .expect("v16 child plan fixture");
+        let campaign_root = world.manifest_path.parent().expect("campaign root");
+        let before = snapshot_tree(campaign_root).expect("snapshot before probe");
+
+        let outcome = selection_available(&context, &[], fixture.rejected_surface_attempts())
+            .expect("doctor selection probe");
+
+        assert!(matches!(
+            outcome,
+            ParentSelectionOutcome::NoSelection { .. }
+        ));
+        assert_eq!(
+            snapshot_tree(campaign_root).expect("snapshot after probe"),
+            before,
+            "read-only diagnosis must not mint or rewrite selection evidence"
+        );
     }
 
     fn write_parent_workspace_fixture(repo_root: &Path) {
@@ -5442,7 +5615,14 @@ Suggested validation after editing: run `cargo test`.
     }
 
     fn marker_state(entries: &[JournalEntry]) -> Option<SuccessorMarkerState> {
-        classify_successor_entries(&entries.iter().collect::<Vec<_>>())
+        classify_successor_entries(&entries.iter().collect::<Vec<_>>(), None)
+    }
+
+    fn marker_state_with_stop(
+        entries: &[JournalEntry],
+        expected: &ExpectedStop,
+    ) -> Option<SuccessorMarkerState> {
+        classify_successor_entries(&entries.iter().collect::<Vec<_>>(), Some(expected))
     }
 
     #[test]
@@ -5486,6 +5666,86 @@ Suggested validation after editing: run `cargo test`.
     }
 
     #[test]
+    fn no_selection_marker_requires_a_typed_receipt() {
+        use crate::intervention::{
+            Prototype1ContinuationDecision, Prototype1ContinuationDisposition,
+        };
+
+        let decision = Prototype1ContinuationDecision {
+            disposition: Prototype1ContinuationDisposition::StopNoSelectedBranch,
+            selected_next_branch_id: None,
+            selected_branch_disposition: None,
+            next_generation: 1,
+            total_nodes_after_continue: 1,
+        };
+        let completed = JournalEntry::Successor(successor::Record::stopped_without_selection(
+            CampaignId::from("campaign"),
+            "node-parent".to_string(),
+            decision.clone(),
+            crate::cli::prototype1_state::history::HistoryHash::of_bytes(b"selection-receipt"),
+        ));
+        let not_run = JournalEntry::Successor(successor::Record::stopped_without_attempt(
+            CampaignId::from("campaign"),
+            "node-parent".to_string(),
+            decision.clone(),
+        ));
+        let missing = successor_entry(
+            None,
+            successor::State::Stopped {
+                decision: decision.clone(),
+                selection_decision: None,
+                selection_receipt: None,
+            },
+        );
+
+        let completed_stop = ExpectedStop {
+            decision: decision.clone(),
+            receipt: successor::SelectionReceipt::Completed {
+                hash: crate::cli::prototype1_state::history::HistoryHash::of_bytes(
+                    b"selection-receipt",
+                ),
+            },
+        };
+        let not_run_stop = ExpectedStop {
+            decision: decision.clone(),
+            receipt: successor::SelectionReceipt::NotRun,
+        };
+        let wrong_hash = ExpectedStop {
+            decision: decision.clone(),
+            receipt: successor::SelectionReceipt::Completed {
+                hash: crate::cli::prototype1_state::history::HistoryHash::of_bytes(b"wrong"),
+            },
+        };
+        let wrong_record = JournalEntry::Successor(successor::Record::stopped_without_selection(
+            CampaignId::from("campaign"),
+            "node-parent".to_string(),
+            decision,
+            crate::cli::prototype1_state::history::HistoryHash::of_bytes(b"wrong"),
+        ));
+
+        assert_eq!(
+            marker_state_with_stop(&[completed.clone()], &completed_stop),
+            Some(SuccessorMarkerState::Committed)
+        );
+        assert_eq!(
+            marker_state_with_stop(&[completed.clone()], &wrong_hash),
+            Some(SuccessorMarkerState::Incomplete)
+        );
+        assert_eq!(
+            marker_state_with_stop(&[wrong_record, completed], &completed_stop),
+            Some(SuccessorMarkerState::Incomplete)
+        );
+        assert_eq!(
+            marker_state_with_stop(&[not_run], &not_run_stop),
+            Some(SuccessorMarkerState::Committed)
+        );
+        assert_eq!(
+            marker_state(&[missing]),
+            Some(SuccessorMarkerState::Incomplete)
+        );
+    }
+
+    #[test]
     fn successor_markers_require_same_runtime_handoff() {
         use crate::intervention::{
             CommitPhase, Prototype1ContinuationDecision, Prototype1ContinuationDisposition,
@@ -5510,6 +5770,7 @@ Suggested validation after editing: run `cargo test`.
             successor::State::Stopped {
                 decision: decision.clone(),
                 selection_decision: None,
+                selection_receipt: None,
             },
         );
         let checkout = successor_entry(
@@ -5652,6 +5913,7 @@ Suggested validation after editing: run `cargo test`.
                         successor::State::Stopped {
                             decision: decision.clone(),
                             selection_decision: None,
+                            selection_receipt: None,
                         },
                     ),
                 ]),

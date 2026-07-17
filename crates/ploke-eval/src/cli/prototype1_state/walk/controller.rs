@@ -1808,6 +1808,7 @@ impl WalkController {
             state,
             blocked,
             campaign_id,
+            stop_index: _,
             notes,
             blockers,
         } = snapshot;

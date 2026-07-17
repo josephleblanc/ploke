@@ -26,8 +26,9 @@ use crate::{
         prototype1_state::{
             backend::GitWorktreeBackend,
             cli_facing::{
-                ParentSelection, Prototype1StateRunShape, child_plan_message_path_for_parent,
-                load_existing_child_plan_for_id, load_parent_baseline,
+                ParentSelection, ParentSelectionOutcome, Prototype1StateRunShape,
+                child_plan_message_path_for_parent, load_existing_child_plan_for_id,
+                load_parent_baseline, preview_no_selection_continuation,
                 preview_successor_continuation, prototype1_state_transition_error,
                 reconstruct_child_outcomes_from_store, resolve_parent_policy_budget,
                 same_existing_path, validate_existing_child_plan_for_id,
@@ -114,6 +115,7 @@ pub(crate) struct EarlySnapshot {
     pub(crate) state: Option<EarlyState>,
     pub(crate) blocked: Option<ReconstructionBlocker>,
     pub(crate) campaign_id: Option<CampaignId>,
+    pub(crate) stop_index: Option<usize>,
     pub(crate) notes: Vec<String>,
     pub(crate) blockers: Vec<String>,
 }
@@ -182,6 +184,7 @@ fn reconstruct_exact(
                 ),
             }),
             campaign_id: None,
+            stop_index: None,
             notes: Vec::new(),
             blockers: Vec::new(),
         });
@@ -222,6 +225,7 @@ fn reconstruct(
             state: None,
             blocked: None,
             campaign_id: None,
+            stop_index: None,
             notes,
             blockers,
         });
@@ -242,6 +246,7 @@ fn reconstruct(
             state: None,
             blocked: Some(blocked),
             campaign_id: Some(campaign_id),
+            stop_index: None,
             notes,
             blockers,
         });
@@ -274,6 +279,7 @@ fn reconstruct(
                 state: None,
                 blocked: None,
                 campaign_id: Some(campaign_id),
+                stop_index: None,
                 notes,
                 blockers,
             });
@@ -304,6 +310,7 @@ fn reconstruct(
                 ),
                 blocked: None,
                 campaign_id: Some(campaign_id),
+                stop_index: None,
                 notes,
                 blockers,
             });
@@ -322,6 +329,7 @@ fn reconstruct(
                 ),
                 blocked: None,
                 campaign_id: Some(campaign_id),
+                stop_index: None,
                 notes,
                 blockers,
             });
@@ -348,6 +356,7 @@ fn reconstruct(
                 ),
                 blocked: None,
                 campaign_id: Some(campaign_id),
+                stop_index: None,
                 notes,
                 blockers,
             });
@@ -374,6 +383,7 @@ fn reconstruct(
                 ),
                 blocked: None,
                 campaign_id: Some(campaign_id),
+                stop_index: None,
                 notes,
                 blockers,
             });
@@ -401,6 +411,7 @@ fn reconstruct(
                         state: Some(reconstruct_r4b(repo_root, &campaign_id).map(EarlyState::R4b)?),
                         blocked: None,
                         campaign_id: Some(campaign_id),
+                        stop_index: None,
                         notes,
                         blockers,
                     });
@@ -502,12 +513,19 @@ fn reconstruct(
                                     parts.into_collected(),
                                     parent,
                                 );
-                                let state =
-                                    reconstruct_after_r8(r8, target, &mut notes, &mut blockers)?;
+                                let mut stop_index = None;
+                                let state = reconstruct_after_r8(
+                                    r8,
+                                    target,
+                                    &mut notes,
+                                    &mut blockers,
+                                    &mut stop_index,
+                                )?;
                                 return Ok(EarlySnapshot {
                                     state: Some(state),
                                     blocked: None,
                                     campaign_id: Some(campaign_id),
+                                    stop_index,
                                     notes,
                                     blockers,
                                 });
@@ -524,6 +542,7 @@ fn reconstruct(
                         ))),
                         blocked: None,
                         campaign_id: Some(campaign_id),
+                        stop_index: None,
                         notes,
                         blockers,
                     });
@@ -537,6 +556,7 @@ fn reconstruct(
                         ))),
                         blocked: None,
                         campaign_id: Some(campaign_id),
+                        stop_index: None,
                         notes,
                         blockers,
                     });
@@ -550,6 +570,7 @@ fn reconstruct(
             ))),
             blocked: None,
             campaign_id: Some(campaign_id),
+            stop_index: None,
             notes,
             blockers,
         })
@@ -561,6 +582,7 @@ fn reconstruct(
             ))),
             blocked: None,
             campaign_id: Some(campaign_id),
+            stop_index: None,
             notes,
             blockers,
         })
@@ -578,6 +600,7 @@ fn state_snapshot(
         state: Some(state),
         blocked: None,
         campaign_id: Some(campaign_id),
+        stop_index: None,
         notes,
         blockers,
     }
@@ -588,6 +611,7 @@ fn reconstruct_after_r8(
     target: Option<WalkPhase>,
     notes: &mut Vec<String>,
     blockers: &mut Vec<String>,
+    boundary: &mut Option<usize>,
 ) -> Result<EarlyState, PrepareError> {
     if target == Some(WalkPhase::R8) {
         return Ok(EarlyState::R8(r8));
@@ -663,7 +687,7 @@ fn reconstruct_after_r8(
         }
         let r12 = r11_to_r12(typestate::R10FanoutBranch::RejectedOnly(r11a))?;
         notes.push("reconstructed R12 report facts from rejected-only evidence".into());
-        return reconstruct_after_r12(r12, target, notes, blockers);
+        return reconstruct_after_r12(r12, target, notes, blockers, boundary);
     }
 
     let child_outcomes = match reconstruct_child_outcomes_from_store(
@@ -689,9 +713,9 @@ fn reconstruct_after_r8(
             &child_outcomes,
             &rejected_surface_attempts,
         )
-        .select_successor(parts.run_shape.successor_selection_seed, selection_strategy)
+        .select_successor_attempt(parts.run_shape.successor_selection_seed, selection_strategy)
         {
-            Ok(selection) => selection,
+            Ok(selection) => Some(selection),
             Err(error) => {
                 blockers.push(format!(
                     "blocked edge r10 -> r11: successor selection reconstruction failed: {error}"
@@ -718,7 +742,7 @@ fn reconstruct_after_r8(
     }
     let r12 = r11_to_r12(typestate::R10FanoutBranch::FanoutComplete(r11))?;
     notes.push("reconstructed R12 report facts from child outcomes".into());
-    reconstruct_after_r12(r12, target, notes, blockers)
+    reconstruct_after_r12(r12, target, notes, blockers, boundary)
 }
 
 fn reconstruct_after_r12(
@@ -726,13 +750,19 @@ fn reconstruct_after_r12(
     target: Option<WalkPhase>,
     notes: &mut Vec<String>,
     blockers: &mut Vec<String>,
+    boundary: &mut Option<usize>,
 ) -> Result<EarlyState, PrepareError> {
     if target == Some(WalkPhase::R12) {
         return Ok(EarlyState::R12(r12));
     }
     let typestate::SelectableParts { collected, parent } = r12.into_parts();
     let mut parts = collected.into_parts();
-    if let Some((selection_decision, selection_material)) = parts.facts.selection.as_ref() {
+    if let Some((selection_decision, selection_material)) = parts
+        .facts
+        .selection
+        .as_ref()
+        .and_then(ParentSelectionOutcome::selected)
+    {
         let selected_artifact = selection_material.selected_artifact()?;
         let node = selected_artifact.node();
         let policy = parts.facts.complete_search_policy.as_ref().ok_or_else(|| {
@@ -770,7 +800,7 @@ fn reconstruct_after_r12(
                 parent.identity(),
                 &selection_decision.candidate_node_id,
             )?;
-            let Some(evidence) = evidence else {
+            let Some((evidence_index, evidence)) = evidence else {
                 if let Some((runtime_id, _)) =
                     sealed_handoff(&parts.campaign_id, &selection_decision.candidate_node_id)?
                 {
@@ -802,10 +832,11 @@ fn reconstruct_after_r12(
                     report.successor_pid = Some(handoff.pid);
                     report.successor_ready_path = Some(handoff.ready_path);
                     report.outcome.push_str(";successor_handoff=acknowledged");
-                    let complete_recorded = parent_complete_recorded(
+                    let complete_recorded = parent_complete_after(
                         &parts.repo_root,
                         &parts.campaign_id,
                         parent.identity(),
+                        evidence_index,
                     )?;
                     let (retired, _lineage) = parent.into_retired_and_lineage();
                     let r13b = typestate::R13bHandoffCommitted::from_collected_parent(
@@ -849,10 +880,11 @@ fn reconstruct_after_r12(
                     report
                         .outcome
                         .push_str(&format!(";successor_handoff={status}"));
-                    let complete_recorded = parent_complete_recorded(
+                    let complete_recorded = parent_complete_after(
                         &parts.repo_root,
                         &parts.campaign_id,
                         parent.identity(),
+                        evidence_index,
                     )?;
                     let (retired, _lineage) = parent.into_retired_and_lineage();
                     let r13c = typestate::R13cHandoffIncomplete::from_collected_parent(
@@ -886,22 +918,34 @@ fn reconstruct_after_r12(
                 .ok_or_else(|| PrepareError::InvalidBatchSelection {
                     detail: "R12 stopped reconstruction missing report facts".to_string(),
                 })?;
-        if !successor_stopped_recorded(&parts.campaign_id, &selection_decision.candidate_node_id)? {
+        let Some(stop_index) = selected_stop(
+            &parts.campaign_id,
+            parent.identity(),
+            &selection_decision.candidate_node_id,
+            &decision,
+            selection_decision,
+        )?
+        else {
             blockers.push(format!(
-                "blocked edge r12 -> r13a: selected successor '{}' stopped by policy but no durable stopped successor record exists",
+                "blocked edge r12 -> r13a: selected successor '{}' stopped by policy but no exact turn-scoped stopped successor record exists",
                 selection_decision.candidate_node_id
             ));
             return Ok(EarlyState::R12(typestate::R12::from_collected_parent(
                 parts.into_collected(),
                 parent,
             )));
-        }
+        };
         report.outcome.push_str(&format!(
             ";successor_handoff=skipped:{:?}",
             decision.disposition
         ));
-        let complete_recorded =
-            parent_complete_recorded(&parts.repo_root, &parts.campaign_id, parent.identity())?;
+        let complete_recorded = parent_complete_after(
+            &parts.repo_root,
+            &parts.campaign_id,
+            parent.identity(),
+            stop_index,
+        )?;
+        *boundary = Some(stop_index);
         let r13a = typestate::R13aStopped::from_collected_parent(parts.into_collected(), parent);
         notes.push("reconstructed R13a selected-successor stopped continuation from durable successor record".into());
         if target == Some(WalkPhase::R13a) || !complete_recorded {
@@ -916,23 +960,82 @@ fn reconstruct_after_r12(
         ));
     }
 
+    let expected_receipt = match parts.facts.selection.as_ref() {
+        Some(ParentSelectionOutcome::NoSelection { entry }) => {
+            successor::SelectionReceipt::Completed {
+                hash: entry.receipt_hash().map_err(|error| {
+                    PrepareError::InvalidBatchSelection {
+                        detail: format!(
+                            "failed to hash reconstructed no-selection receipt: {error}"
+                        ),
+                    }
+                })?,
+            }
+        }
+        None if parts.facts.rejected_attempt_payloads.is_some() => {
+            successor::SelectionReceipt::NotRun
+        }
+        None => {
+            blockers.push(format!(
+                "blocked edge r12 -> r13a: parent '{}' has neither a successor-selection result nor rejected-only procedure evidence",
+                parent.identity().parent_id()
+            ));
+            return Ok(EarlyState::R12(typestate::R12::from_collected_parent(
+                parts.into_collected(),
+                parent,
+            )));
+        }
+        Some(ParentSelectionOutcome::Selected { .. }) => unreachable!(
+            "selected successor outcome was handled by the selected reconstruction branch"
+        ),
+    };
+    let expected_decision =
+        preview_no_selection_continuation(&parts.manifest_path, parent.identity())?;
+    let stop_index = no_selection_stop(
+        &parts.campaign_id,
+        parent.identity(),
+        &expected_decision,
+        &expected_receipt,
+    )?;
+    let Some(stop_index) = stop_index else {
+        blockers.push(format!(
+            "blocked edge r12 -> r13a: parent '{}' has no durable stopped record bound to the reconstructed selection receipt",
+            parent.identity().parent_id()
+        ));
+        return Ok(EarlyState::R12(typestate::R12::from_collected_parent(
+            parts.into_collected(),
+            parent,
+        )));
+    };
     if parts.run_shape.stop_after == Prototype1StateStopAfter::Complete {
-        parts
-            .facts
-            .report
-            .as_mut()
-            .ok_or_else(|| PrepareError::InvalidBatchSelection {
-                detail: "R12 no-selection reconstruction missing report facts".to_string(),
-            })?
-            .outcome
-            .push_str(";selection=none");
+        let report =
+            parts
+                .facts
+                .report
+                .as_mut()
+                .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                    detail: "R12 no-selection reconstruction missing report facts".to_string(),
+                })?;
+        report.outcome.push_str(match expected_receipt {
+            successor::SelectionReceipt::Completed { .. } => ";selection=none",
+            successor::SelectionReceipt::NotRun => ";selection=not_run",
+        });
+        report.outcome.push_str(&format!(
+            ";successor_handoff=skipped:{:?}",
+            expected_decision.disposition
+        ));
     }
-    let complete_recorded =
-        parent_complete_recorded(&parts.repo_root, &parts.campaign_id, parent.identity())?;
+    let complete_recorded = parent_complete_after(
+        &parts.repo_root,
+        &parts.campaign_id,
+        parent.identity(),
+        stop_index,
+    )?;
+    *boundary = Some(stop_index);
     parts.facts.parent_identity = Some(parent.identity().clone());
     let r13a = typestate::R13aStopped::from_collected_parent(parts.into_collected(), parent);
     notes.push(
-        "reconstructed R13a no-selection stopped continuation from absent successor selection"
+        "reconstructed R13a stopped continuation from a durable selection-receipt-bound successor record"
             .into(),
     );
     if target == Some(WalkPhase::R13a) || !complete_recorded {
@@ -1214,7 +1317,7 @@ fn successor_handoff_evidence(
     campaign_id: &CampaignId,
     predecessor: &ParentIdentity,
     node_id: &str,
-) -> Result<Option<JournalEntry>, PrepareError> {
+) -> Result<Option<(usize, JournalEntry)>, PrepareError> {
     let Some((runtime_id, _)) = sealed_handoff(campaign_id, node_id)? else {
         return Ok(None);
     };
@@ -1304,7 +1407,7 @@ fn successor_handoff_evidence(
             });
         }
     }
-    Ok(Some(evidence.clone()))
+    Ok(Some((index, evidence.clone())))
 }
 
 fn post_checkout_blocker(
@@ -1371,8 +1474,8 @@ fn post_checkout_blocker(
         }
     };
     match evidence {
-        Some(JournalEntry::SuccessorHandoff(_)) => Ok(None),
-        Some(JournalEntry::Successor(record)) => {
+        Some((_, JournalEntry::SuccessorHandoff(_))) => Ok(None),
+        Some((_, JournalEntry::Successor(record))) => {
             let (status, _, _) = incomplete_report(&record)?;
             Ok(Some(ReconstructionBlocker {
                 phase: WalkPhase::R13c,
@@ -1383,7 +1486,7 @@ fn post_checkout_blocker(
                 ),
             }))
         }
-        Some(_) => Err(PrepareError::InvalidBatchSelection {
+        Some((_, _)) => Err(PrepareError::InvalidBatchSelection {
             detail: "post-checkout reconstruction selected a non-successor journal entry"
                 .to_string(),
         }),
@@ -1676,20 +1779,96 @@ fn incomplete_report(
     }
 }
 
-fn successor_stopped_recorded(
+fn active_turn_start(
+    entries: &[JournalEntry],
     campaign_id: &CampaignId,
+    identity: &ParentIdentity,
+) -> Option<usize> {
+    entries.iter().rposition(|entry| {
+        matches!(
+            entry,
+            JournalEntry::ParentStarted(started)
+                if started.campaign_id == *campaign_id
+                    && started.parent_identity == *identity
+        )
+    })
+}
+
+fn selected_stop(
+    campaign_id: &CampaignId,
+    identity: &ParentIdentity,
     node_id: &str,
-) -> Result<bool, PrepareError> {
-    Ok(journal_entries(campaign_id)?
-        .into_iter()
-        .any(|entry| match entry {
-            JournalEntry::Successor(record) => {
-                record.campaign_id == *campaign_id
-                    && record.node_id == node_id
-                    && matches!(record.state, successor::State::Stopped { .. })
-            }
-            _ => false,
-        }))
+    expected_decision: &crate::intervention::Prototype1ContinuationDecision,
+    expected_selection: &crate::successor_selection::SuccessorDecision,
+) -> Result<Option<usize>, PrepareError> {
+    let entries = journal_entries(campaign_id)?;
+    let Some(turn_start) = active_turn_start(&entries, campaign_id, identity) else {
+        return Ok(None);
+    };
+    let mut found = None;
+    for (index, entry) in entries.into_iter().enumerate().skip(turn_start + 1) {
+        let JournalEntry::Successor(record) = entry else {
+            continue;
+        };
+        if record.campaign_id != *campaign_id || record.node_id != node_id {
+            continue;
+        }
+        let successor::State::Stopped {
+            decision,
+            selection_decision,
+            selection_receipt,
+        } = record.state
+        else {
+            continue;
+        };
+        found = Some(index);
+        if record.runtime_id.is_some()
+            || decision != *expected_decision
+            || selection_decision.as_ref() != Some(expected_selection)
+            || selection_receipt.is_some()
+        {
+            return Ok(None);
+        }
+    }
+    Ok(found)
+}
+
+fn no_selection_stop(
+    campaign_id: &CampaignId,
+    identity: &ParentIdentity,
+    expected_decision: &crate::intervention::Prototype1ContinuationDecision,
+    expected: &successor::SelectionReceipt,
+) -> Result<Option<usize>, PrepareError> {
+    let entries = journal_entries(campaign_id)?;
+    let Some(turn_start) = active_turn_start(&entries, campaign_id, identity) else {
+        return Ok(None);
+    };
+    let mut found = None;
+    for (index, entry) in entries.into_iter().enumerate().skip(turn_start + 1) {
+        let JournalEntry::Successor(record) = entry else {
+            continue;
+        };
+        if record.campaign_id != *campaign_id || record.node_id != identity.node_id() {
+            continue;
+        }
+        let successor::State::Stopped {
+            decision,
+            selection_decision,
+            selection_receipt,
+        } = record.state
+        else {
+            continue;
+        };
+        found = Some(index);
+        if record.runtime_id.is_some()
+            || decision != *expected_decision
+            || selection_decision.is_some()
+            || selection_receipt.as_ref() != Some(expected)
+        {
+            return Ok(None);
+        }
+    }
+    Ok(found)
 }
 
 fn journal_entries(campaign_id: &CampaignId) -> Result<Vec<JournalEntry>, PrepareError> {
@@ -1700,28 +1879,38 @@ fn journal_entries(campaign_id: &CampaignId) -> Result<Vec<JournalEntry>, Prepar
     })
 }
 
-fn parent_complete_recorded(
+fn parent_complete_after(
     repo_root: &Path,
     campaign_id: &CampaignId,
     identity: &ParentIdentity,
+    boundary: usize,
 ) -> Result<bool, PrepareError> {
     let manifest_path = campaign_manifest_path(campaign_id)?;
     let journal = PrototypeJournal::new(prototype1_transition_journal_path(&manifest_path));
     let entries = journal.load_entries().map_err(|error| {
         prototype1_state_transition_error("prototype1_reconstruct_journal", error.to_string())
     })?;
+    let Some(turn_start) = active_turn_start(&entries, campaign_id, identity) else {
+        return Ok(false);
+    };
+    if boundary <= turn_start || boundary >= entries.len() {
+        return Ok(false);
+    }
     let target_dir = repo_root.join("target");
-    Ok(entries.into_iter().any(|entry| match entry {
-        JournalEntry::Resource(sample) => {
-            sample.campaign_id == *campaign_id
-                && sample.parent_id == identity.parent_id()
-                && sample.node_id == identity.node_id()
-                && sample.generation == identity.generation()
-                && sample.phase == journal::resource::Phase::ParentComplete
-                && same_existing_path(&sample.path, &target_dir)
-        }
-        _ => false,
-    }))
+    Ok(entries
+        .into_iter()
+        .skip(boundary + 1)
+        .any(|entry| match entry {
+            JournalEntry::Resource(sample) => {
+                sample.campaign_id == *campaign_id
+                    && sample.parent_id == identity.parent_id()
+                    && sample.node_id == identity.node_id()
+                    && sample.generation == identity.generation()
+                    && sample.phase == journal::resource::Phase::ParentComplete
+                    && same_existing_path(&sample.path, &target_dir)
+            }
+            _ => false,
+        }))
 }
 
 fn parent_start_recorded(
@@ -1772,10 +1961,14 @@ mod tests {
     use crate::{
         cli::prototype1_state::{
             event::RecordedAt,
+            history::HistoryHash,
             invocation::SuccessorCompletionStatus,
             journal::{Streams, SuccessorHandoffEntry},
         },
-        intervention::CommitPhase,
+        intervention::{
+            CommitPhase, Prototype1ContinuationDecision, Prototype1ContinuationDisposition,
+            RecordStore,
+        },
         loop_graph::RuntimeId,
     };
     use std::ffi::OsString;
@@ -1885,6 +2078,414 @@ mod tests {
                 .expect("persist journal entry");
         }
         journal_entries(&campaign_id).expect("load reconstruction journal")
+    }
+
+    fn no_selection_decision(total_nodes: u32) -> Prototype1ContinuationDecision {
+        Prototype1ContinuationDecision {
+            disposition: Prototype1ContinuationDisposition::StopNoSelectedBranch,
+            selected_next_branch_id: None,
+            selected_branch_disposition: None,
+            next_generation: 1,
+            total_nodes_after_continue: total_nodes,
+        }
+    }
+
+    fn selected_continuation(total_nodes: u32) -> Prototype1ContinuationDecision {
+        Prototype1ContinuationDecision {
+            disposition: Prototype1ContinuationDisposition::StopMaxGenerations,
+            selected_next_branch_id: Some("branch-selected".to_string()),
+            selected_branch_disposition: Some("keep".to_string()),
+            next_generation: 2,
+            total_nodes_after_continue: total_nodes,
+        }
+    }
+
+    fn selected_decision() -> crate::successor_selection::SuccessorDecision {
+        crate::successor_selection::SuccessorDecision {
+            procedure_id: crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID.to_string(),
+            candidate_node_id: "node-selected".to_string(),
+            selected_branch_id: Some("branch-selected".to_string()),
+            branch_disposition: "keep".to_string(),
+            outcome: crate::successor_selection::decision::SuccessorOutcome::Accepted,
+            findings: Vec::new(),
+            rationale: Vec::new(),
+        }
+    }
+
+    fn no_selection_parent() -> ParentIdentity {
+        ParentIdentity::from_record_for_test(ploke_records::identity::ParentIdentityRecord {
+            schema_version: crate::cli::prototype1_state::identity::PARENT_IDENTITY_SCHEMA_VERSION
+                .to_string(),
+            campaign_id: CampaignId::from("campaign-reconstruct-test"),
+            parent_id: "node-parent".to_string(),
+            node_id: "node-parent".to_string(),
+            generation: 1,
+            instance_id: Some("BurntSushi__ripgrep-2209".to_string()),
+            previous_parent_id: Some("node-predecessor".to_string()),
+            parent_node_id: Some("node-predecessor".to_string()),
+            branch_id: "branch-parent".to_string(),
+            artifact_branch: Some("prototype1-node-parent".to_string()),
+            created_at: "2026-07-17T00:00:00Z".to_string(),
+        })
+    }
+
+    fn parent_started_record(parent: &ParentIdentity) -> JournalEntry {
+        JournalEntry::ParentStarted(journal::ParentStartedEntry {
+            recorded_at: RecordedAt(6),
+            campaign_id: parent.campaign_id().clone(),
+            parent_identity: parent.clone(),
+            repo_root: PathBuf::from("/tmp/repo"),
+            handoff_runtime_id: Some(runtime(9)),
+            pid: 42,
+        })
+    }
+
+    fn no_selection_matches(
+        mut entries: Vec<JournalEntry>,
+        expected_decision: &Prototype1ContinuationDecision,
+        expected_receipt: &successor::SelectionReceipt,
+    ) -> bool {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _guard = crate::test_support::env_guard_os(vec![(
+            "PLOKE_EVAL_HOME",
+            OsString::from(tmp.path()),
+        )]);
+        let campaign_id = CampaignId::from("campaign-reconstruct-test");
+        let manifest_path = campaign_manifest_path(&campaign_id).expect("campaign path");
+        let mut journal = PrototypeJournal::new(prototype1_transition_journal_path(&manifest_path));
+        let parent = no_selection_parent();
+        if !entries
+            .iter()
+            .any(|entry| matches!(entry, JournalEntry::ParentStarted(_)))
+        {
+            entries.insert(0, parent_started_record(&parent));
+        }
+        for entry in entries {
+            journal.append(entry).expect("persist journal entry");
+        }
+        no_selection_stop(&campaign_id, &parent, expected_decision, expected_receipt)
+            .expect("match stopped record")
+            .is_some()
+    }
+
+    fn selected_matches(
+        mut entries: Vec<JournalEntry>,
+        expected_decision: &Prototype1ContinuationDecision,
+        expected_selection: &crate::successor_selection::SuccessorDecision,
+    ) -> bool {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _guard = crate::test_support::env_guard_os(vec![(
+            "PLOKE_EVAL_HOME",
+            OsString::from(tmp.path()),
+        )]);
+        let campaign_id = CampaignId::from("campaign-reconstruct-test");
+        let manifest_path = campaign_manifest_path(&campaign_id).expect("campaign path");
+        let mut journal = PrototypeJournal::new(prototype1_transition_journal_path(&manifest_path));
+        let parent = no_selection_parent();
+        if !entries
+            .iter()
+            .any(|entry| matches!(entry, JournalEntry::ParentStarted(_)))
+        {
+            entries.insert(0, parent_started_record(&parent));
+        }
+        for entry in entries {
+            journal.append(entry).expect("persist journal entry");
+        }
+        selected_stop(
+            &campaign_id,
+            &parent,
+            "node-selected",
+            expected_decision,
+            expected_selection,
+        )
+        .expect("match selected stopped record")
+        .is_some()
+    }
+
+    fn parent_complete_record(parent: &ParentIdentity) -> JournalEntry {
+        JournalEntry::Resource(journal::resource::Sample {
+            recorded_at: RecordedAt(8),
+            campaign_id: parent.campaign_id().clone(),
+            parent_id: parent.parent_id().to_string(),
+            node_id: parent.node_id().to_string(),
+            generation: parent.generation(),
+            runtime_id: Some(runtime(9)),
+            subject: journal::resource::Subject::CargoTarget,
+            phase: journal::resource::Phase::ParentComplete,
+            path: PathBuf::from("/tmp/repo/target"),
+            status: journal::resource::Status::Measured,
+            bytes: Some(1),
+            error: None,
+        })
+    }
+
+    fn no_selection_record(
+        decision: Prototype1ContinuationDecision,
+        hash: HistoryHash,
+    ) -> JournalEntry {
+        JournalEntry::Successor(successor::Record::stopped_without_selection(
+            CampaignId::from("campaign-reconstruct-test"),
+            "node-parent".to_string(),
+            decision,
+            hash,
+        ))
+    }
+
+    fn no_attempt_record(decision: Prototype1ContinuationDecision) -> JournalEntry {
+        JournalEntry::Successor(successor::Record::stopped_without_attempt(
+            CampaignId::from("campaign-reconstruct-test"),
+            "node-parent".to_string(),
+            decision,
+        ))
+    }
+
+    fn selected_record(
+        decision: Prototype1ContinuationDecision,
+        selection: crate::successor_selection::SuccessorDecision,
+    ) -> JournalEntry {
+        JournalEntry::Successor(successor::Record::stopped(
+            CampaignId::from("campaign-reconstruct-test"),
+            "node-selected".to_string(),
+            decision,
+            selection,
+        ))
+    }
+
+    fn selected_lifecycle(state: successor::State) -> JournalEntry {
+        JournalEntry::Successor(successor::Record {
+            runtime_id: Some(runtime(9)),
+            recorded_at: RecordedAt(9),
+            campaign_id: CampaignId::from("campaign-reconstruct-test"),
+            node_id: "node-selected".to_string(),
+            state,
+        })
+    }
+
+    fn prior_parent_lifecycle(state: successor::State) -> JournalEntry {
+        JournalEntry::Successor(successor::Record {
+            runtime_id: Some(runtime(9)),
+            recorded_at: RecordedAt(5),
+            campaign_id: CampaignId::from("campaign-reconstruct-test"),
+            node_id: "node-parent".to_string(),
+            state,
+        })
+    }
+
+    #[test]
+    fn no_selection_reconstruction_requires_exact_stopped_receipt() {
+        let decision = no_selection_decision(1);
+        let hash = HistoryHash::of_bytes(b"selection-receipt");
+        let receipt = successor::SelectionReceipt::Completed { hash: hash.clone() };
+
+        assert!(!no_selection_matches(Vec::new(), &decision, &receipt));
+        assert!(no_selection_matches(
+            vec![no_selection_record(decision.clone(), hash)],
+            &decision,
+            &receipt,
+        ));
+        assert!(!no_selection_matches(
+            vec![no_selection_record(
+                decision.clone(),
+                HistoryHash::of_bytes(b"different-receipt"),
+            )],
+            &decision,
+            &receipt,
+        ));
+    }
+
+    #[test]
+    fn rejected_only_reconstruction_requires_not_run_receipt() {
+        let decision = no_selection_decision(1);
+
+        assert!(no_selection_matches(
+            vec![no_attempt_record(decision.clone())],
+            &decision,
+            &successor::SelectionReceipt::NotRun,
+        ));
+        assert!(!no_selection_matches(
+            vec![no_selection_record(
+                decision.clone(),
+                HistoryHash::of_bytes(b"selection-receipt"),
+            )],
+            &decision,
+            &successor::SelectionReceipt::NotRun,
+        ));
+    }
+
+    #[test]
+    fn no_selection_reconstruction_rejects_mismatched_continuation() {
+        let expected = no_selection_decision(1);
+        let hash = HistoryHash::of_bytes(b"selection-receipt");
+        let receipt = successor::SelectionReceipt::Completed { hash: hash.clone() };
+
+        assert!(!no_selection_matches(
+            vec![no_selection_record(no_selection_decision(2), hash)],
+            &expected,
+            &receipt,
+        ));
+    }
+
+    #[test]
+    fn no_selection_reconstruction_rejects_conflicting_journal_history() {
+        let expected = no_selection_decision(1);
+        let hash = HistoryHash::of_bytes(b"selection-receipt");
+        let receipt = successor::SelectionReceipt::Completed { hash: hash.clone() };
+
+        assert!(!no_selection_matches(
+            vec![
+                no_selection_record(expected.clone(), hash.clone()),
+                no_selection_record(no_selection_decision(2), hash),
+            ],
+            &expected,
+            &receipt,
+        ));
+    }
+
+    #[test]
+    fn no_selection_reconstruction_allows_prior_successor_lifecycle() {
+        let expected = no_selection_decision(2);
+        let hash = HistoryHash::of_bytes(b"selection-receipt");
+        let receipt = successor::SelectionReceipt::Completed { hash: hash.clone() };
+        let parent = no_selection_parent();
+
+        assert!(no_selection_matches(
+            vec![
+                prior_parent_lifecycle(successor::State::Spawned {
+                    pid: 42,
+                    incarnation: None,
+                    active_parent_root: PathBuf::from("/tmp/repo"),
+                    binary_path: PathBuf::from("/tmp/ploke-eval"),
+                    invocation_path: PathBuf::from("/tmp/invocation.json"),
+                    ready_path: PathBuf::from("/tmp/ready.jsonl"),
+                    streams: Streams {
+                        stdout: PathBuf::from("/tmp/stdout"),
+                        stderr: PathBuf::from("/tmp/stderr"),
+                    },
+                }),
+                no_selection_record(
+                    no_selection_decision(1),
+                    HistoryHash::of_bytes(b"prior-turn-receipt"),
+                ),
+                parent_started_record(&parent),
+                no_selection_record(expected.clone(), hash),
+                JournalEntry::Resource(journal::resource::Sample {
+                    recorded_at: RecordedAt(8),
+                    campaign_id: parent.campaign_id().clone(),
+                    parent_id: parent.parent_id().to_string(),
+                    node_id: parent.node_id().to_string(),
+                    generation: parent.generation(),
+                    runtime_id: Some(runtime(9)),
+                    subject: journal::resource::Subject::CargoTarget,
+                    phase: journal::resource::Phase::ParentComplete,
+                    path: PathBuf::from("/tmp/repo/target"),
+                    status: journal::resource::Status::Measured,
+                    bytes: Some(1),
+                    error: None,
+                }),
+                prior_parent_lifecycle(successor::State::Completed {
+                    status: SuccessorCompletionStatus::Succeeded,
+                    completion_path: PathBuf::from("/tmp/completion.json"),
+                    trace_path: None,
+                    detail: None,
+                }),
+            ],
+            &expected,
+            &receipt,
+        ));
+    }
+
+    #[test]
+    fn selected_stop_reconstruction_requires_exact_active_turn_evidence() {
+        let expected = selected_continuation(2);
+        let selection = selected_decision();
+
+        assert!(selected_matches(
+            vec![selected_record(expected.clone(), selection.clone())],
+            &expected,
+            &selection,
+        ));
+        assert!(!selected_matches(
+            vec![selected_record(selected_continuation(3), selection.clone())],
+            &expected,
+            &selection,
+        ));
+
+        let mut wrong_selection = selection.clone();
+        wrong_selection.selected_branch_id = Some("branch-other".to_string());
+        assert!(!selected_matches(
+            vec![selected_record(expected.clone(), wrong_selection.clone())],
+            &expected,
+            &selection,
+        ));
+
+        let parent = no_selection_parent();
+        assert!(selected_matches(
+            vec![
+                selected_record(selected_continuation(3), wrong_selection),
+                parent_started_record(&parent),
+                selected_record(expected.clone(), selection.clone()),
+                selected_lifecycle(successor::State::Completed {
+                    status: SuccessorCompletionStatus::Succeeded,
+                    completion_path: PathBuf::from("/tmp/completion.json"),
+                    trace_path: None,
+                    detail: None,
+                }),
+            ],
+            &expected,
+            &selection,
+        ));
+    }
+
+    #[test]
+    fn parent_complete_requires_current_post_boundary_evidence() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _guard = crate::test_support::env_guard_os(vec![(
+            "PLOKE_EVAL_HOME",
+            OsString::from(tmp.path()),
+        )]);
+        let campaign_id = CampaignId::from("campaign-reconstruct-test");
+        let manifest_path = campaign_manifest_path(&campaign_id).expect("campaign path");
+        let mut journal = PrototypeJournal::new(prototype1_transition_journal_path(&manifest_path));
+        let parent = no_selection_parent();
+        let decision = no_selection_decision(1);
+
+        for entry in [
+            parent_started_record(&parent),
+            parent_complete_record(&parent),
+            no_attempt_record(decision.clone()),
+        ] {
+            journal.append(entry).expect("persist journal entry");
+        }
+        let boundary = journal.load_entries().expect("load current turn").len() - 1;
+        assert!(
+            !parent_complete_after(Path::new("/tmp/repo"), &campaign_id, &parent, boundary,)
+                .expect("reject pre-boundary completion")
+        );
+
+        journal
+            .append(parent_complete_record(&parent))
+            .expect("persist post-boundary completion");
+        assert!(
+            parent_complete_after(Path::new("/tmp/repo"), &campaign_id, &parent, boundary,)
+                .expect("accept post-boundary completion")
+        );
+
+        for entry in [parent_started_record(&parent), no_attempt_record(decision)] {
+            journal.append(entry).expect("persist next turn entry");
+        }
+        let next_boundary = journal.load_entries().expect("load next turn").len() - 1;
+        assert!(
+            !parent_complete_after(Path::new("/tmp/repo"), &campaign_id, &parent, next_boundary,)
+                .expect("reject stale prior-turn completion")
+        );
+
+        journal
+            .append(parent_complete_record(&parent))
+            .expect("persist next-turn completion");
+        assert!(
+            parent_complete_after(Path::new("/tmp/repo"), &campaign_id, &parent, next_boundary,)
+                .expect("accept next-turn completion")
+        );
     }
 
     #[test]

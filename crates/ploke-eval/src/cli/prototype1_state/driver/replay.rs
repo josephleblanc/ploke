@@ -723,15 +723,17 @@ fn successor_step(
         State::Stopped {
             decision,
             selection_decision,
+            selection_receipt,
         } => (
             Some(record.recorded_at),
             Some(WalkPhase::R13a),
             "successor.stopped".to_string(),
             record.node_id.clone(),
             format!(
-                "disposition={:?} selection_outcome={:?}",
+                "disposition={:?} selection_outcome={:?} selection_receipt={:?}",
                 decision.disposition,
-                selection_decision.as_ref().map(|decision| decision.outcome)
+                selection_decision.as_ref().map(|decision| decision.outcome),
+                selection_receipt
             ),
         ),
         State::Spawned {

@@ -12,6 +12,7 @@ use crate::intervention::Prototype1ContinuationDecision;
 use crate::successor_selection::SuccessorDecision;
 
 use super::event::{RecordedAt, RuntimeId, TransitionId};
+use super::history::HistoryHash;
 use super::invocation::{
     ProcessIncarnation, SUCCESSOR_READY_SCHEMA_VERSION, SUCCESSOR_READY_SCHEMA_VERSION_V1,
     SuccessorCompletionStatus, SuccessorInvocation, SuccessorReadyRecord, process_incarnation,
@@ -320,6 +321,8 @@ pub(crate) enum State {
         decision: Prototype1ContinuationDecision,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         selection_decision: Option<SuccessorDecision>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        selection_receipt: Option<SelectionReceipt>,
     },
     /// Parent spawned the successor process.
     Spawned {
@@ -357,6 +360,13 @@ pub(crate) enum State {
         trace_path: Option<PathBuf>,
         detail: Option<String>,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SelectionReceipt {
+    Completed { hash: HistoryHash },
+    NotRun,
 }
 
 impl State {
@@ -429,6 +439,46 @@ impl Record {
             state: State::Stopped {
                 decision,
                 selection_decision: Some(selection_decision),
+                selection_receipt: None,
+            },
+        }
+    }
+
+    pub(crate) fn stopped_without_selection(
+        campaign_id: CampaignId,
+        node_id: String,
+        decision: Prototype1ContinuationDecision,
+        selection_receipt_hash: HistoryHash,
+    ) -> Self {
+        Self {
+            runtime_id: None,
+            recorded_at: RecordedAt::now(),
+            campaign_id,
+            node_id,
+            state: State::Stopped {
+                decision,
+                selection_decision: None,
+                selection_receipt: Some(SelectionReceipt::Completed {
+                    hash: selection_receipt_hash,
+                }),
+            },
+        }
+    }
+
+    pub(crate) fn stopped_without_attempt(
+        campaign_id: CampaignId,
+        node_id: String,
+        decision: Prototype1ContinuationDecision,
+    ) -> Self {
+        Self {
+            runtime_id: None,
+            recorded_at: RecordedAt::now(),
+            campaign_id,
+            node_id,
+            state: State::Stopped {
+                decision,
+                selection_decision: None,
+                selection_receipt: Some(SelectionReceipt::NotRun),
             },
         }
     }

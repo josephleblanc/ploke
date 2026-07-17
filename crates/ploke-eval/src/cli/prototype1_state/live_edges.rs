@@ -22,11 +22,12 @@ use crate::{
         prototype1_state::{
             backend::GitWorktreeBackend,
             cli_facing::{
-                ParentSelection, PlannedChildren, Prototype1StateReport, Prototype1StateRunShape,
-                append_parent_target_sample, current_dir_as_repo_root,
-                emit_selection_decision_for_backend, ensure_prototype1_baseline_closure_state,
+                ParentSelection, ParentSelectionOutcome, PlannedChildren, Prototype1StateReport,
+                Prototype1StateRunShape, append_parent_target_sample, current_dir_as_repo_root,
+                emit_selection_outcome_for_backend, ensure_prototype1_baseline_closure_state,
                 establish_parent_baseline, initialize_prototype1_parent_identity,
-                outcome_for_report, preview_successor_continuation, prototype1_state_report_path,
+                outcome_for_report, preview_no_selection_continuation,
+                preview_successor_continuation, prototype1_state_report_path,
                 prototype1_state_successor_handoff_mode, prototype1_state_transition_error,
                 record_active_prototype1_monitor_target, record_continuation_decision,
                 resolve_linked_plan, resolve_parent_policy_budget,
@@ -777,11 +778,11 @@ pub(crate) async fn r10_to_r11(
         ));
     }
 
-    let (child_outcomes, selection) = if parts.run_shape.stop_after
+    let (child_outcomes, outcome) = if parts.run_shape.stop_after
         == Prototype1StateStopAfter::Complete
         && child_schedule_mode == Prototype1ChildScheduleMode::AdaptiveBatch
     {
-        run_adaptive_child_fanout(
+        let (child_outcomes, outcome) = run_adaptive_child_fanout(
             &parts.campaign_id,
             &parts.manifest_path,
             &parts.repo_root,
@@ -795,7 +796,8 @@ pub(crate) async fn r10_to_r11(
             parts.run_shape.successor_selection_seed,
             selection_strategy,
         )
-        .await?
+        .await?;
+        (child_outcomes, Some(outcome))
     } else {
         let child_outcomes = run_child_fanout(
             &parts.campaign_id,
@@ -818,25 +820,26 @@ pub(crate) async fn r10_to_r11(
             &child_outcomes,
             &rejected_surface_attempts,
         );
-        let selection = if parts.run_shape.stop_after == Prototype1StateStopAfter::Complete {
-            parent_selection
-                .select_successor(parts.run_shape.successor_selection_seed, selection_strategy)?
+        let outcome = if parts.run_shape.stop_after == Prototype1StateStopAfter::Complete {
+            Some(parent_selection.select_successor_attempt(
+                parts.run_shape.successor_selection_seed,
+                selection_strategy,
+            )?)
         } else {
             None
         };
-        (child_outcomes, selection)
+        (child_outcomes, outcome)
     };
-    if let Some((decision, material)) = selection.as_ref() {
-        emit_selection_decision_for_backend(
+    if let Some(outcome) = outcome.as_ref() {
+        emit_selection_outcome_for_backend(
             &parts.manifest_path,
             &parent_identity,
-            decision,
-            material,
+            outcome,
             parts.run_shape.eval_storage_backend,
         )?;
     }
     parts.facts.child_outcomes = Some(child_outcomes);
-    parts.facts.selection = selection;
+    parts.facts.selection = outcome;
     parts.facts.rejected_attempt_payloads = None;
     Ok(typestate::R10FanoutBranch::FanoutComplete(
         typestate::R11FanoutComplete::from_collected_parent(parts.into_collected(), parent),
@@ -877,6 +880,7 @@ pub(crate) fn r11_to_r12(
             .facts
             .selection
             .as_ref()
+            .and_then(ParentSelectionOutcome::selected)
             .map(|(decision, _)| decision.candidate_node_id.as_str());
         outcome_for_report(child_outcomes, selected_node_id)
     };
@@ -941,8 +945,13 @@ pub(crate) fn r12_to_r13(
     let parent_identity = parent.identity().clone();
     parts.facts.parent_identity = Some(parent_identity.clone());
 
-    if let Some((selection_decision, selection_material)) = parts.facts.selection.take() {
-        let material = selection_material;
+    let selection = parts.facts.selection.take();
+    if let Some((selection_decision, selection_material)) = selection
+        .as_ref()
+        .and_then(ParentSelectionOutcome::selected)
+    {
+        let selection_decision = selection_decision.clone();
+        let material = selection_material.clone();
         let artifact = material.selected_artifact()?;
         let node = artifact.node().clone();
         let search_policy = parts
@@ -1107,16 +1116,71 @@ pub(crate) fn r12_to_r13(
             ))
         }
     } else {
+        let selection_receipt = match selection {
+            Some(ParentSelectionOutcome::NoSelection { entry }) => Some(
+                entry
+                    .receipt_hash()
+                    .map_err(|error| PrepareError::InvalidBatchSelection {
+                        detail: format!("failed to hash no-selection receipt: {error}"),
+                    })?,
+            ),
+            None => None,
+            Some(ParentSelectionOutcome::Selected { .. }) => unreachable!(
+                "selected successor outcome was handled by the selected continuation branch"
+            ),
+        };
         if parts.run_shape.stop_after == Prototype1StateStopAfter::Complete {
+            let selection_completed = selection_receipt.is_some();
+            if !selection_completed && parts.facts.rejected_attempt_payloads.is_none() {
+                return Err(PrepareError::InvalidBatchSelection {
+                    detail: "R12 stopped transition has neither a completed selection receipt nor rejected-only procedure evidence"
+                        .to_string(),
+                });
+            }
+            if parts.facts.report.is_none() {
+                return Err(PrepareError::InvalidBatchSelection {
+                    detail: "R12 no-selection transition missing report facts".to_string(),
+                });
+            }
+            let decision =
+                preview_no_selection_continuation(&parts.manifest_path, &parent_identity)?;
+            record_continuation_decision(&parts.manifest_path, &parent_identity, &decision)?;
+            parts
+                .journal
+                .append(JournalEntry::Successor(match selection_receipt {
+                    Some(hash) => SuccessorRecord::stopped_without_selection(
+                        parts.campaign_id.clone(),
+                        parent_identity.node_id().to_string(),
+                        decision.clone(),
+                        hash,
+                    ),
+                    None => SuccessorRecord::stopped_without_attempt(
+                        parts.campaign_id.clone(),
+                        parent_identity.node_id().to_string(),
+                        decision.clone(),
+                    ),
+                }))
+                .map_err(|err| {
+                    prototype1_state_transition_error(
+                        "prototype1_successor_no_selection",
+                        err.to_string(),
+                    )
+                })?;
             parts
                 .facts
                 .report
                 .as_mut()
-                .ok_or_else(|| PrepareError::InvalidBatchSelection {
-                    detail: "R12 no-selection transition missing report facts".to_string(),
-                })?
+                .expect("R12 no-selection report was validated before persistence")
                 .outcome
-                .push_str(";selection=none");
+                .push_str(&format!(
+                    ";selection={};successor_handoff=skipped:{:?}",
+                    if selection_completed {
+                        "none"
+                    } else {
+                        "not_run"
+                    },
+                    decision.disposition
+                ));
         }
         Ok(typestate::R12ContinuationBranch::Stopped(
             typestate::R13aStopped::from_collected_parent(parts.into_collected(), parent),

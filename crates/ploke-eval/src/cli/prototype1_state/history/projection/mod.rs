@@ -3487,7 +3487,8 @@ pub(crate) struct SelectionDecisionEntry {
 
     /// Authenticated map commitment for membership proofs over the considered candidate universe.
     ///
-    /// Missing only for older stored entries sealed before this field existed.
+    /// Missing for older stored entries sealed before this field existed and
+    /// for a passive no-selection receipt with no decision-grade candidates.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) candidate_set: Option<CandidateSetCommitment>,
 
@@ -3509,8 +3510,13 @@ pub(crate) struct SelectionDecisionEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) formula: Option<crate::successor_selection::traversal::SelectionFormula>,
 
-    /// Decision result under `procedure_or_policy`.
-    pub(crate) decision: crate::successor_selection::SuccessorDecision,
+    /// Selected-candidate decision under `procedure_or_policy`.
+    ///
+    /// This is absent when the selector completed successfully but found no
+    /// admissible candidate. Existing selected entries retain their historical
+    /// wire shape because `Some(decision)` serializes as the same JSON object.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) decision: Option<crate::successor_selection::SuccessorDecision>,
 }
 // ANCHOR_END: prototype1_selection_decision_entry
 
@@ -3638,26 +3644,102 @@ impl SelectionDecisionEntry {
         metrics: selection_metrics::Set,
         decision: crate::successor_selection::SuccessorDecision,
     ) -> Result<Self, HistoryError> {
-        let candidate_set = Some(Self::candidate_set_for_considered(
-            &considered,
-            &considered_sources,
-        )?);
-        let selected_candidate = Self::selected_candidate_projection(
+        Self::new_with_result(
+            4,
+            procedure_or_policy,
+            scope,
             selected_candidate,
-            selected_occurrence_id.as_ref(),
-            selected_membership_id.as_ref(),
-            candidate_set.as_ref().expect("candidate set"),
-            &considered,
-        )?;
-        Self::validate_decision(
-            &procedure_or_policy,
-            selected_candidate.as_ref(),
-            selected_occurrence_id.as_ref(),
-            selected_membership_id.as_ref(),
-            candidate_set.as_ref().expect("candidate set"),
-            &considered,
-            &decision,
-        )?;
+            selected_occurrence_id,
+            selected_membership_id,
+            considered,
+            considered_sources,
+            projection_failures,
+            traversal,
+            metrics,
+            Some(decision),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_no_selection_with_traversal_metrics(
+        procedure_or_policy: ProcedureRef,
+        scope: SelectionScope,
+        considered: Vec<EvaluationPayload>,
+        considered_sources: Vec<TraversalCandidateSource>,
+        projection_failures: Vec<SelectionProjectionFailure>,
+        traversal: Option<TraversalEvidence>,
+        metrics: selection_metrics::Set,
+    ) -> Result<Self, HistoryError> {
+        Self::new_with_result(
+            5,
+            procedure_or_policy,
+            scope,
+            None,
+            None,
+            None,
+            considered,
+            considered_sources,
+            projection_failures,
+            traversal,
+            metrics,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn new_with_result(
+        schema_version: u32,
+        procedure_or_policy: ProcedureRef,
+        scope: SelectionScope,
+        selected_candidate: Option<SubjectRef>,
+        selected_occurrence_id: Option<CandidateOccurrenceId>,
+        selected_membership_id: Option<CandidateMembershipId>,
+        considered: Vec<EvaluationPayload>,
+        considered_sources: Vec<TraversalCandidateSource>,
+        projection_failures: Vec<SelectionProjectionFailure>,
+        traversal: Option<TraversalEvidence>,
+        metrics: selection_metrics::Set,
+        decision: Option<crate::successor_selection::SuccessorDecision>,
+    ) -> Result<Self, HistoryError> {
+        let candidate_set = if schema_version == 5 && considered.is_empty() {
+            None
+        } else {
+            Some(Self::candidate_set_for_considered(
+                &considered,
+                &considered_sources,
+            )?)
+        };
+        let selected_candidate = if let Some(candidate_set) = candidate_set.as_ref() {
+            let selected_candidate = Self::selected_candidate_projection(
+                selected_candidate,
+                selected_occurrence_id.as_ref(),
+                selected_membership_id.as_ref(),
+                candidate_set,
+                &considered,
+            )?;
+            Self::validate_decision(
+                &procedure_or_policy,
+                selected_candidate.as_ref(),
+                selected_occurrence_id.as_ref(),
+                selected_membership_id.as_ref(),
+                candidate_set,
+                &considered,
+                decision.as_ref(),
+            )?;
+            selected_candidate
+        } else {
+            if selected_candidate.is_some()
+                || selected_occurrence_id.is_some()
+                || selected_membership_id.is_some()
+                || decision.is_some()
+            {
+                return Err(HistoryError::InvalidSelectionDecision {
+                    detail: "selection without a candidate set cannot carry selected identity or decision"
+                        .to_string(),
+                });
+            }
+            None
+        };
         let considered_order_hash = HistoryHash::of_domain_json(
             "prototype1.history.selection_considered_order.v1",
             &Self::considered_order_preimage(&considered)?,
@@ -3668,7 +3750,7 @@ impl SelectionDecisionEntry {
             candidate_set.as_ref().map(|set| &set.root),
         )?;
         let mut entry = Self {
-            schema_version: 4,
+            schema_version,
             procedure_or_policy,
             scope,
             selected_candidate,
@@ -3685,9 +3767,144 @@ impl SelectionDecisionEntry {
             decision,
         };
         entry.formula = crate::successor_selection::traversal::score_child_prop_formula(&entry)?;
+        entry.validate_shape()?;
         Ok(entry)
     }
     // ANCHOR_END: prototype1_selection_entry_with_metrics
+
+    pub(crate) fn validate_shape(&self) -> Result<(), HistoryError> {
+        fn invalid(detail: impl Into<String>) -> HistoryError {
+            HistoryError::InvalidSelectionDecision {
+                detail: detail.into(),
+            }
+        }
+
+        match self.schema_version {
+            1..=4 if self.decision.is_none() => {
+                return Err(invalid(format!(
+                    "selection schema v{} requires a selected-candidate decision",
+                    self.schema_version
+                )));
+            }
+            1..=4 => {}
+            5 if self.decision.is_some() => {
+                return Err(invalid(
+                    "selection schema v5 is reserved for completed no-selection receipts",
+                ));
+            }
+            5 => {
+                if self.selected_candidate.is_some()
+                    || self.selected_occurrence_id.is_some()
+                    || self.selected_membership_id.is_some()
+                {
+                    return Err(invalid(
+                        "selection schema v5 cannot carry selected candidate identity",
+                    ));
+                }
+                if let Some(crate::successor_selection::traversal::SelectionFormula {
+                    formula:
+                        crate::successor_selection::traversal::Formula::ScoreChildProp(formula),
+                    ..
+                }) = self.formula.as_ref()
+                    && (formula.selected_index.is_some()
+                        || formula.selected_candidate.is_some()
+                        || formula.rows.iter().any(|row| row.selected))
+                {
+                    return Err(invalid(
+                        "selection schema v5 formula cannot identify a selected candidate",
+                    ));
+                }
+                self.validate_v5_commitments()?;
+            }
+            version => {
+                return Err(invalid(format!(
+                    "unsupported selection schema version {version}"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_v5_commitments(&self) -> Result<(), HistoryError> {
+        fn invalid(detail: impl Into<String>) -> HistoryError {
+            HistoryError::InvalidSelectionDecision {
+                detail: detail.into(),
+            }
+        }
+
+        if !self.verify_considered_order_hash()? {
+            return Err(invalid(
+                "selection schema v5 considered_order_hash does not match considered payloads",
+            ));
+        }
+        if self.considered.is_empty() {
+            if self.candidate_set.is_some() || !self.considered_sources.is_empty() {
+                return Err(invalid(
+                    "empty selection schema v5 receipt cannot carry candidate-set or source rows",
+                ));
+            }
+        } else if self.verify_candidate_set_commitment()? != Some(true) {
+            return Err(invalid(
+                "selection schema v5 candidate-set commitment does not match considered payloads",
+            ));
+        }
+        if let Some(candidate_set) = self.candidate_set.as_ref() {
+            Self::validate_decision(
+                &self.procedure_or_policy,
+                self.selected_candidate.as_ref(),
+                self.selected_occurrence_id.as_ref(),
+                self.selected_membership_id.as_ref(),
+                candidate_set,
+                &self.considered,
+                self.decision.as_ref(),
+            )?;
+        }
+        let expected_metrics = selection_metrics::Set::from_considered(
+            self.metrics.policy,
+            &self.considered,
+            &self.considered_sources,
+        )?;
+        if self.metrics != expected_metrics {
+            return Err(invalid(
+                "selection schema v5 metrics commitment does not match considered payloads",
+            ));
+        }
+        for failure in &self.projection_failures {
+            if !failure.verify_id()? {
+                return Err(invalid(
+                    "selection schema v5 projection failure id does not match its committed evidence",
+                ));
+            }
+        }
+        if self
+            .traversal
+            .as_ref()
+            .is_some_and(|traversal| traversal.selected_source.is_some())
+        {
+            return Err(invalid(
+                "selection schema v5 traversal cannot identify a selected source",
+            ));
+        }
+        let expected_formula =
+            crate::successor_selection::traversal::score_child_prop_formula(self)?;
+        if self.formula != expected_formula {
+            return Err(invalid(
+                "selection schema v5 formula does not match its traversal evidence",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn validate_sealed_shape(&self) -> Result<(), HistoryError> {
+        self.validate_shape()?;
+        if self.schema_version == 5 {
+            return Err(HistoryError::InvalidSelectionDecision {
+                detail: "no-selection receipts are passive evidence and cannot be sealed into History"
+                    .to_string(),
+            });
+        }
+        Ok(())
+    }
 
     fn contributes_candidates_to_history_projection(&self) -> bool {
         matches!(
@@ -3704,7 +3921,7 @@ impl SelectionDecisionEntry {
         selected_membership_id: Option<&CandidateMembershipId>,
         candidate_set: &CandidateSetCommitment,
         considered: &[EvaluationPayload],
-        decision: &crate::successor_selection::SuccessorDecision,
+        decision: Option<&crate::successor_selection::SuccessorDecision>,
     ) -> Result<(), HistoryError> {
         fn invalid(detail: impl Into<String>) -> HistoryError {
             HistoryError::InvalidSelectionDecision {
@@ -3712,7 +3929,9 @@ impl SelectionDecisionEntry {
             }
         }
 
-        if procedure_or_policy.as_str() != decision.procedure_id {
+        if let Some(decision) = decision
+            && procedure_or_policy.as_str() != decision.procedure_id
+        {
             return Err(invalid(format!(
                 "procedure mismatch: entry={}, decision={}",
                 procedure_or_policy.as_str(),
@@ -3738,6 +3957,18 @@ impl SelectionDecisionEntry {
                 )));
             }
         }
+
+        let Some(decision) = decision else {
+            if selected_candidate.is_some()
+                || selected_occurrence_id.is_some()
+                || selected_membership_id.is_some()
+            {
+                return Err(invalid(
+                    "no-selection entry cannot carry a selected candidate identity",
+                ));
+            }
+            return Ok(());
+        };
 
         let selected_payload_by_identity = Self::selected_payload_by_identity(
             selected_occurrence_id,
@@ -3977,6 +4208,16 @@ impl SelectionDecisionEntry {
         HistoryHash::of_domain_json("prototype1.history.selection_decision_entry.v1", self)
     }
 
+    pub(crate) fn receipt_hash(&self) -> Result<HistoryHash, HistoryError> {
+        self.validate_shape()?;
+        if self.schema_version != 5 {
+            return Err(HistoryError::InvalidSelectionDecision {
+                detail: "passive selection receipts require schema v5".to_string(),
+            });
+        }
+        self.decision_hash()
+    }
+
     pub(crate) fn verify_considered_order_hash(&self) -> Result<bool, HistoryError> {
         let preimage = Self::considered_order_preimage(&self.considered)?;
         let h = HistoryHash::of_domain_json(
@@ -4139,6 +4380,15 @@ impl SelectionProjectionFailure {
             "prototype1.history.selection_projection_failure.v3",
             &preimage,
         )
+    }
+
+    fn verify_id(&self) -> Result<bool, HistoryError> {
+        Ok(self.id.0
+            == Self::identity_hash(
+                &self.kind,
+                self.candidate.as_ref(),
+                self.committed_message.as_deref(),
+            )?)
     }
 }
 

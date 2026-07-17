@@ -225,6 +225,7 @@ impl Entry<Admitted> {
         let Some(selection) = self.selection_decision() else {
             return Ok(None);
         };
+        selection.validate_sealed_shape()?;
         if let Some(hash) = &self.state.selection_hash {
             return Ok(Some(hash.clone()));
         }
@@ -665,6 +666,10 @@ impl Block<block::Open> {
         entry: Entry<Proposed>,
         admitting_authority: ActorRef,
     ) -> Result<EntryId, HistoryError> {
+        if let EntryPayload::SelectionDecision(payload) = &entry.core.payload {
+            payload.validate_sealed_shape()?;
+        }
+
         if let EntryPayload::IngressImport(payload) = &entry.core.payload {
             if payload.imported_into_lineage != self.state.common.lineage_id {
                 return Err(HistoryError::WrongLineage);
@@ -2640,6 +2645,116 @@ mod tests {
     }
 
     #[test]
+    fn v12_selection_replays() {
+        use flate2::read::GzDecoder;
+        use std::io::Read;
+
+        let encoded = include_str!(
+            "../../../../tests/fixtures/prototype1-v12-target-reached-handoff-20260716/history-segment-000000.jsonl.gz.hex"
+        );
+        let encoded = encoded
+            .chars()
+            .filter(|value| !value.is_whitespace())
+            .collect::<String>();
+        assert_eq!(encoded.len() % 2, 0, "historical fixture hex is complete");
+        let compressed = (0..encoded.len())
+            .step_by(2)
+            .map(|offset| {
+                u8::from_str_radix(&encoded[offset..offset + 2], 16)
+                    .expect("decode historical fixture hex")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            HistoryHash::of_bytes(&compressed).as_str(),
+            "7952d2c20135c6d5f3561fd9d2e91c0112222906b744e542f0f4910bf7019471"
+        );
+        let mut decoder = GzDecoder::new(compressed.as_slice());
+        let mut segment = Vec::new();
+        decoder
+            .read_to_end(&mut segment)
+            .expect("inflate historical History segment");
+        assert_eq!(
+            HistoryHash::of_bytes(&segment).as_str(),
+            "9141f6bf5d08fbc1cdf109f625f7b5fd2643c6f44cd871e3772c8a8c2e9f3137"
+        );
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let store = FsBlockStore::new(tmp.path().join("history"));
+        let segment_path = store.segment_path();
+        fs::create_dir_all(segment_path.parent().expect("segment parent"))
+            .expect("create History block directory");
+        fs::write(&segment_path, &segment).expect("write historical History segment");
+
+        let loaded = store
+            .load_segment_verified_blocks()
+            .expect("load verified historical History segment");
+        assert_eq!(loaded.len(), 1);
+        let block = &loaded[0].1;
+        assert_eq!(
+            block.block_hash().to_hex(),
+            "269bfd58c21bd54bba63a913dfa7d4849f2866d9747ae0781d8370b21adb03c1"
+        );
+        assert_eq!(block.entries().len(), 1);
+        let entry = &block.entries()[0];
+        assert_eq!(
+            entry.entry_id().to_string(),
+            "23dc3f11-04ca-4c80-b720-56bdde055b22"
+        );
+        let selection = entry
+            .selection_decision()
+            .expect("historical entry carries selection decision");
+        assert_eq!(selection.schema_version, 4);
+        selection
+            .validate_sealed_shape()
+            .expect("historical selected entry remains sealable");
+        assert_eq!(
+            selection
+                .selected_candidate
+                .as_ref()
+                .expect("selected candidate")
+                .as_str(),
+            "candidate:node-871d66bb3b91f35c:plan_index=0"
+        );
+        assert_eq!(
+            entry
+                .decision_observation_hash()
+                .expect("selection observation hash")
+                .expect("selection observation")
+                .as_str(),
+            "1a297ca7ea75808391f165f6e4887d9896c8c4cc934828d33dddf462d041e859"
+        );
+        assert_eq!(
+            entry
+                .verify_selection_decision_observation()
+                .expect("selection observation verifies"),
+            Some(true)
+        );
+        let line = std::str::from_utf8(&segment)
+            .expect("History segment utf-8")
+            .trim();
+        let raw: StoredRawEntries<'_> = serde_json::from_str(line).expect("stored raw entries");
+        let raw_entry: StoredRawEntry<'_> =
+            serde_json::from_str(raw.entries[0].get()).expect("stored raw entry");
+        let raw_selection =
+            selection_json_without_kind(raw_entry.core.payload.get()).expect("raw selection JSON");
+        assert_eq!(
+            selection_hash_from_raw_json(&raw_selection).as_str(),
+            "1a297ca7ea75808391f165f6e4887d9896c8c4cc934828d33dddf462d041e859"
+        );
+        assert_eq!(
+            entry_hash_from_raw_json(raw.entries[0].get()).as_str(),
+            "2672aa01fed688eab50c668bb4eaa664e5a681afa722bcaf95b079ecab759a2a"
+        );
+        assert!(
+            serde_json::to_value(selection)
+                .expect("typed selection JSON")
+                .get("decision")
+                .is_some_and(serde_json::Value::is_object),
+            "selected schema-v4 decisions must remain unwrapped JSON objects"
+        );
+    }
+
+    #[test]
     fn history_candidates_reads_cross_generation_selection_payloads_with_proofs() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let store = FsBlockStore::new(tmp.path().join("history"));
@@ -3393,6 +3508,100 @@ mod tests {
             first.decision_hash().expect("hash"),
             second.decision_hash().expect("hash")
         );
+    }
+
+    #[test]
+    fn selected_v4_wire_shape_remains_mandatory() {
+        let entry = selection_entry_for_scope(
+            SelectionScope::new("generation_local:test"),
+            "child-a",
+            "branch-a",
+            vec![evaluation_payload("child-a", "branch-a", 0)],
+        );
+        let value = serde_json::to_value(&entry).expect("serialize selected v4 entry");
+        assert_eq!(value["schema_version"], 4);
+        assert!(value["decision"].is_object());
+        let bytes = serde_json::to_vec(&entry).expect("serialize selected v4 bytes");
+        let decoded: SelectionDecisionEntry =
+            serde_json::from_slice(&bytes).expect("deserialize selected v4 bytes");
+        assert_eq!(decoded, entry);
+        decoded
+            .validate_sealed_shape()
+            .expect("selected v4 entry remains sealable");
+
+        let mut missing = value.clone();
+        missing
+            .as_object_mut()
+            .expect("selection entry object")
+            .remove("decision");
+        let missing: SelectionDecisionEntry =
+            serde_json::from_value(missing).expect("deserialize structurally compatible v4");
+        let error = missing
+            .validate_shape()
+            .expect_err("schema v4 cannot omit its decision");
+        assert!(error.to_string().contains("schema v4 requires"));
+
+        let mut wrong_v5 = value;
+        wrong_v5["schema_version"] = serde_json::json!(5);
+        let wrong_v5: SelectionDecisionEntry =
+            serde_json::from_value(wrong_v5).expect("deserialize structurally compatible v5");
+        let error = wrong_v5
+            .validate_shape()
+            .expect_err("schema v5 cannot carry a selected decision");
+        assert!(error.to_string().contains("reserved for completed no-selection"));
+    }
+
+    #[test]
+    fn passive_no_selection_receipt_is_rejected_before_history_admission() {
+        let considered = Vec::new();
+        let sources = Vec::new();
+        let metrics = crate::successor_selection::metrics::Set::from_considered(
+            crate::successor_selection::metrics::Policy::default(),
+            &considered,
+            &sources,
+        )
+        .expect("empty no-selection metrics");
+        let receipt = SelectionDecisionEntry::new_no_selection_with_traversal_metrics(
+            ProcedureRef::new(crate::successor_selection::PROCEDURE_ID),
+            SelectionScope::new("generation_local:test"),
+            considered,
+            sources,
+            Vec::new(),
+            None,
+            metrics,
+        )
+        .expect("valid passive no-selection receipt");
+        receipt.receipt_hash().expect("passive receipt hash");
+
+        let crown = ruling_crown();
+        let mut block = crown
+            .open_block(open_block_fields("lineage:a", 0, Vec::new()))
+            .expect("open block through ruling Crown");
+        let error = crown
+            .admit_entry(
+                &mut block,
+                proposed_selection_entry(receipt),
+                actor("admitter"),
+            )
+            .expect_err("passive no-selection receipt must not enter History");
+
+        assert!(matches!(
+            error,
+            HistoryError::InvalidSelectionDecision { .. }
+        ));
+        assert!(
+            error
+                .to_string()
+                .contains("passive evidence and cannot be sealed into History")
+        );
+        assert!(
+            block.entries.is_empty(),
+            "failed admission must not mutate the open History block"
+        );
+
+        let sealed = seal(block);
+        assert_eq!(sealed.header().entry_count, 0);
+        assert!(sealed.entries().is_empty());
     }
 
     #[test]

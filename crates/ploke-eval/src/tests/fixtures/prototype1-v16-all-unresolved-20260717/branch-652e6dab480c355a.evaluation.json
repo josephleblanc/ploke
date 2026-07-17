@@ -1,0 +1,2359 @@
+{
+  "baseline_campaign_id": "p1-v16-oraclegate-mbe-g35f-direct-3g1x3-p3-20260717-020840",
+  "branch_id": "branch-652e6dab480c355a",
+  "treatment_campaign_id": "p1-v16-oraclegate-mbe-g35f-direct-3g1x3-p3-20260717-020840-treatment-branch-652e6dab480c355a-1784281621343",
+  "evaluation_procedure_id": "prototype1.branch_evaluation.operational_metrics.v1",
+  "evaluator_identity": {
+    "id": "prototype1.branch_evaluation.mechanized",
+    "version": "v1"
+  },
+  "eval_set_identity": {
+    "id": "prototype1.eval_set.closure_instance_slice.v2:5b31fb2e8216bbc7b0b76b2cd84dcc026179490083e56d0b193e60ea764c2845",
+    "kind": "closure_instance_slice",
+    "authority": "typed_closure_context:prototype1.eval_set.closure_instance_slice.v2:8da21284dc633a591682f07e0bbf21cfaa6d7223376c7b92242cfa055a8dda8c",
+    "explicit": true,
+    "benchmark_family": "multi_swe_bench_rust",
+    "dataset_sources": [
+      {
+        "path": "/home/brasides/.ploke-eval/campaigns/p1-v16-oraclegate-mbe-g35f-direct-3g1x3-p3-20260717-020840/slice.jsonl",
+        "label": "prototype1/p1-v16-oraclegate-mbe-g35f-direct-3g1x3-p3-20260717-020840-setup",
+        "url": "https://huggingface.co/datasets/ByteDance-Seed/Multi-SWE-bench/resolve/main/rust/BurntSushi__ripgrep_dataset.jsonl"
+      }
+    ],
+    "eval_policy": {
+      "include_partial": false,
+      "stop_on_error": false,
+      "budget": {
+        "max_turns": 40,
+        "max_tool_calls": 200,
+        "wall_clock_secs": 1800
+      },
+      "batch_prefix": "p1-v16-oraclegate-mbe-g35f-direct-3g1x3-p3-20260717-020840-setup",
+      "embedding_model_id": "mistralai/codestral-embed-2505",
+      "embedding_provider_slug": "openrouter",
+      "max_tokens": 32768
+    },
+    "instance_ids": [
+      "BurntSushi__ripgrep-2209"
+    ],
+    "note": "eval set identity is derived from typed closure/campaign context and the compared baseline closure slice"
+  },
+  "branch_registry_path": "/home/brasides/.ploke-eval/campaigns/p1-v16-oraclegate-mbe-g35f-direct-3g1x3-p3-20260717-020840/prototype1/branches.json",
+  "evaluation_artifact_path": "/home/brasides/.ploke-eval/campaigns/p1-v16-oraclegate-mbe-g35f-direct-3g1x3-p3-20260717-020840/prototype1/evaluations/branch-652e6dab480c355a.json",
+  "treatment_campaign_manifest": "/home/brasides/.ploke-eval/campaigns/p1-v16-oraclegate-mbe-g35f-direct-3g1x3-p3-20260717-020840-treatment-branch-652e6dab480c355a-1784281621343/campaign.json",
+  "treatment_closure_state_path": "/home/brasides/.ploke-eval/campaigns/p1-v16-oraclegate-mbe-g35f-direct-3g1x3-p3-20260717-020840-treatment-branch-652e6dab480c355a-1784281621343/closure-state.json",
+  "overall_disposition": "keep",
+  "reasons": [],
+  "compared_instances": [
+    {
+      "instance_id": "BurntSushi__ripgrep-2209",
+      "baseline_registration_path": "/home/brasides/.ploke-eval/registries/runs/run-1784279727111-structured-current-policy-3be8aab5.json",
+      "treatment_registration_path": "/home/brasides/.ploke-eval/registries/runs/run-1784281623086-structured-current-policy-761a62b2.json",
+      "baseline_record_path": "/home/brasides/.ploke-eval/instances/prototype1/p1-v16-oraclegate-mbe-g35f-direct-3g1x3-p3-20260717-020840/BurntSushi__ripgrep-2209/runs/run-1784279727111-structured-current-policy-3be8aab5/record.json.gz",
+      "treatment_record_path": "/home/brasides/.ploke-eval/instances/prototype1/p1-v16-oraclegate-mbe-g35f-direct-3g1x3-p3-20260717-020840/treatments/branch-652e6dab480c355a/instances/BurntSushi__ripgrep-2209/runs/run-1784281623086-structured-current-policy-761a62b2/record.json.gz",
+      "baseline_metrics": {
+        "tool_calls_total": 32,
+        "tool_calls_failed": 4,
+        "patch_attempted": true,
+        "patch_apply_state": "applied",
+        "submission_artifact_state": "nonempty",
+        "patch_projection_check_state": "passed",
+        "partial_patch_failures": 1,
+        "same_file_patch_retry_count": 2,
+        "same_file_patch_max_streak": 3,
+        "aborted": false,
+        "aborted_repair_loop": false,
+        "nonempty_valid_patch": true,
+        "convergence": true,
+        "oracle_eligible": true
+      },
+      "treatment_metrics": {
+        "tool_calls_total": 23,
+        "tool_calls_failed": 0,
+        "patch_attempted": true,
+        "patch_apply_state": "applied",
+        "submission_artifact_state": "nonempty",
+        "patch_projection_check_state": "passed",
+        "partial_patch_failures": 0,
+        "same_file_patch_retry_count": 0,
+        "same_file_patch_max_streak": 0,
+        "aborted": false,
+        "aborted_repair_loop": false,
+        "nonempty_valid_patch": true,
+        "convergence": true,
+        "oracle_eligible": true
+      },
+      "oracle_evaluation": {
+        "evidence": {
+          "report_path": "/home/brasides/.ploke-eval/campaigns/p1-v16-oraclegate-mbe-g35f-direct-3g1x3-p3-20260717-020840/prototype1/nodes/node-0d80c1aeea697e6b/mbe/final_report.json",
+          "instance_id": "BurntSushi__ripgrep-2209",
+          "report_id": "BurntSushi/ripgrep:pr-2209",
+          "verdict": "unresolved"
+        },
+        "instance_report_path": "/home/brasides/.ploke-eval/campaigns/p1-v16-oraclegate-mbe-g35f-direct-3g1x3-p3-20260717-020840/prototype1/nodes/node-0d80c1aeea697e6b/mbe/workdir/BurntSushi/ripgrep/evals/pr-2209/report.json",
+        "instance_report": {
+          "org": "BurntSushi",
+          "repo": "ripgrep",
+          "number": 2209,
+          "valid": true,
+          "error_msg": "",
+          "fixed_tests": {
+            "regression::r2095": {
+              "run": "NONE",
+              "test": "FAIL",
+              "fix": "PASS"
+            }
+          },
+          "p2p_tests": {
+            "binary::after_match1_explicit": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "binary::after_match1_explicit_count": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "binary::after_match1_explicit_text": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "binary::after_match1_implicit": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "binary::after_match1_implicit_binary": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "binary::after_match1_implicit_count": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "binary::after_match1_implicit_count_binary": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "binary::after_match1_implicit_path": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "binary::after_match1_implicit_quiet": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "binary::after_match1_implicit_text": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "binary::after_match1_stdin": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "binary::after_match2_implicit": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "binary::after_match2_implicit_text": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "binary::before_match1_explicit": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "binary::before_match1_implicit": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "binary::before_match1_implicit_binary": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "binary::before_match1_implicit_text": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "binary::before_match2_explicit": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "binary::before_match2_implicit": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "binary::before_match2_implicit_text": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "config::tests::basic": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "config::tests::error": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::context_sep": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::context_sep_default": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::context_sep_empty": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f1078_max_columns_preview1": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f1078_max_columns_preview2": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f109_case_sensitive_part1": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f109_case_sensitive_part2": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f109_max_depth": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f1138_no_ignore_dot": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f1155_auto_hybrid_regex": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f1207_auto_encoding": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f1207_ignore_encoding": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f129_context": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f129_matches": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f129_replace": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f1404_nothing_searched_ignored": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f1404_nothing_searched_warning": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f1414_no_require_git": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f1420_no_ignore_exclude": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f1466_no_ignore_files": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f159_max_count": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f159_max_count_zero": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f1842_field_context_separator": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f1842_field_match_separator": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f196_persistent_config": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f1_eucjp": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f1_replacement_encoding": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f1_sjis": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f1_unknown_encoding": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f1_utf16_auto": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f1_utf16_explicit": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f20_no_filename": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f243_column_line": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f263_sort_files": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f275_pathsep": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f34_only_matching": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f34_only_matching_line_column": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f362_dfa_size_limit": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f362_exceeds_regex_size_limit": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f411_parallel_search_stats": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f411_single_threaded_search_stats": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f416_crlf": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f416_crlf_multiline": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f416_crlf_only_matching": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f419_zero_as_shortcut_for_null": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f45_precedence_internal": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f45_precedence_with_others": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f45_relative_cwd": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f68_no_ignore_vcs": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f7": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f70_smart_case": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f740_passthru": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f7_stdin": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f89_count": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f89_files": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f89_files_with_matches": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f89_files_without_match": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f89_match": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f917_trim": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f917_trim_match": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f948_exit_code_error": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f948_exit_code_match": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f948_exit_code_no_match": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::f993_null_data": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::no_context_sep": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::no_context_sep_overridden": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::no_context_sep_overrides": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "feature::no_unicode": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "json::basic": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "json::crlf": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "json::notutf8": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "json::notutf8_file": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "json::r1095_crlf_empty_match": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "json::r1095_missing_crlf": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "json::r1412_look_behind_match_missing": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::after_context": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::after_context_line_numbers": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::before_context": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::before_context_line_numbers": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::binary_convert": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::binary_convert_mmap": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::binary_quit": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::binary_quit_mmap": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::binary_search_mmap": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::binary_search_no_mmap": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::byte_offset_only_matching": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::case_insensitive": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::columns": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::compressed_brotli": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::compressed_bzip2": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::compressed_failing_gzip": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::compressed_gzip": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::compressed_lz4": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::compressed_lzma": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::compressed_uncompress": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::compressed_xz": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::compressed_zstd": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::context": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::context_line_numbers": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::count": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::count_matches": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::count_matches_inverted": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::count_matches_via_only": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::dir": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::file_type_add": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::file_type_add_compose": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::file_type_clear": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::file_types": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::file_types_all": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::file_types_negate": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::file_types_negate_all": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::files": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::files_with_matches": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::files_without_match": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::glob": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::glob_always_case_insensitive": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::glob_case_insensitive": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::glob_case_sensitive": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::glob_negate": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::ignore_generic": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::ignore_git": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::ignore_git_parent": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::ignore_git_parent_stop": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::ignore_git_parent_stop_file": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::ignore_hidden": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::ignore_ripgrep": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::ignore_ripgrep_parent_no_stop": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::include_zero": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::include_zero_override": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::inverted": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::inverted_line_numbers": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::line": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::line_numbers": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::literal": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::max_filesize_parse_error_length": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::max_filesize_parse_error_suffix": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::max_filesize_parse_k_suffix": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::max_filesize_parse_m_suffix": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::max_filesize_parse_no_suffix": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::max_filesize_suffix_overflow": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::no_ignore": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::no_ignore_hidden": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::no_parent_ignore_git": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::preprocessing": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::preprocessing_glob": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::quiet": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::replace": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::replace_groups": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::replace_named_groups": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::replace_with_only_matching": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::single_file": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::symlink_follow": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::symlink_nofollow": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::type_list": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::unrestricted1": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::unrestricted2": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::unrestricted3": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::vimgrep": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::vimgrep_no_line": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::vimgrep_no_line_no_column": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::with_filename": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::with_heading": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::with_heading_default": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "misc::word": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "multiline::context": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "multiline::dot_all": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "multiline::dot_no_newline": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "multiline::only_matching": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "multiline::overlap1": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "multiline::overlap2": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "multiline::stdin": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "multiline::vimgrep": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r105_part1": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r105_part2": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r1064": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r1098": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r1130": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r1159_exit_status": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r1159_invalid_flag": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r1163": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r1164": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r1173": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r1174": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r1176_line_regex": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r1176_literal_file": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r1203_reverse_suffix_literal": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r1223_no_dir_check_for_default_path": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r1259_drop_last_byte_nonl": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r127": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r128": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r131": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r1311_multi_line_term_replace": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r1319": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r1334_crazy_literals": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r137": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r1380": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r1389_bad_symlinks_no_biscuit": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r1401_look_ahead_only_matching_1": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r1401_look_ahead_only_matching_2": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r1412_look_behind_no_replacement": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r1446_respect_excludes_in_worktree": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r1537": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r1559": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r156": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r1573": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r16": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r1638": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r1739_replacement_lineterm_match": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r1765": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r184": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r1866": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r1868_context_passthru_override": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r1878": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r1891": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r199": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r206": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r210": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r228": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r229": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r25": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r251": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r256": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r256_j1": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r270": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r279": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r30": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r391": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r405": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r428_color_context_path": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r428_unrecognized_style": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r451_only_matching": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r451_only_matching_as_in_issue": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r483_matching_no_stdout": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r483_non_matching_exit_code": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r49": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r493": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r50": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r506_word_not_parenthesized": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r553_flag": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r553_switch": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r568_leading_hyphen_option_args": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r599": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r64": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r65": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r67": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r693_context_in_contextless_mode": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r807": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r87": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r90": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r900": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r93": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            },
+            "regression::r99": {
+              "run": "PASS",
+              "test": "PASS",
+              "fix": "PASS"
+            }
+          },
+          "f2p_tests": {
+            "regression::r2095": {
+              "run": "NONE",
+              "test": "FAIL",
+              "fix": "PASS"
+            }
+          },
+          "s2p_tests": {},
+          "n2p_tests": {},
+          "run_result": {
+            "passed_count": 274,
+            "failed_count": 0,
+            "skipped_count": 0,
+            "passed_tests": [
+              "binary::after_match1_explicit",
+              "binary::after_match1_explicit_count",
+              "binary::after_match1_explicit_text",
+              "binary::after_match1_implicit",
+              "binary::after_match1_implicit_binary",
+              "binary::after_match1_implicit_count",
+              "binary::after_match1_implicit_count_binary",
+              "binary::after_match1_implicit_path",
+              "binary::after_match1_implicit_quiet",
+              "binary::after_match1_implicit_text",
+              "binary::after_match1_stdin",
+              "binary::after_match2_implicit",
+              "binary::after_match2_implicit_text",
+              "binary::before_match1_explicit",
+              "binary::before_match1_implicit",
+              "binary::before_match1_implicit_binary",
+              "binary::before_match1_implicit_text",
+              "binary::before_match2_explicit",
+              "binary::before_match2_implicit",
+              "binary::before_match2_implicit_text",
+              "config::tests::basic",
+              "config::tests::error",
+              "feature::context_sep",
+              "feature::context_sep_default",
+              "feature::context_sep_empty",
+              "feature::f1078_max_columns_preview1",
+              "feature::f1078_max_columns_preview2",
+              "feature::f109_case_sensitive_part1",
+              "feature::f109_case_sensitive_part2",
+              "feature::f109_max_depth",
+              "feature::f1138_no_ignore_dot",
+              "feature::f1155_auto_hybrid_regex",
+              "feature::f1207_auto_encoding",
+              "feature::f1207_ignore_encoding",
+              "feature::f129_context",
+              "feature::f129_matches",
+              "feature::f129_replace",
+              "feature::f1404_nothing_searched_ignored",
+              "feature::f1404_nothing_searched_warning",
+              "feature::f1414_no_require_git",
+              "feature::f1420_no_ignore_exclude",
+              "feature::f1466_no_ignore_files",
+              "feature::f159_max_count",
+              "feature::f159_max_count_zero",
+              "feature::f1842_field_context_separator",
+              "feature::f1842_field_match_separator",
+              "feature::f196_persistent_config",
+              "feature::f1_eucjp",
+              "feature::f1_replacement_encoding",
+              "feature::f1_sjis",
+              "feature::f1_unknown_encoding",
+              "feature::f1_utf16_auto",
+              "feature::f1_utf16_explicit",
+              "feature::f20_no_filename",
+              "feature::f243_column_line",
+              "feature::f263_sort_files",
+              "feature::f275_pathsep",
+              "feature::f34_only_matching",
+              "feature::f34_only_matching_line_column",
+              "feature::f362_dfa_size_limit",
+              "feature::f362_exceeds_regex_size_limit",
+              "feature::f411_parallel_search_stats",
+              "feature::f411_single_threaded_search_stats",
+              "feature::f416_crlf",
+              "feature::f416_crlf_multiline",
+              "feature::f416_crlf_only_matching",
+              "feature::f419_zero_as_shortcut_for_null",
+              "feature::f45_precedence_internal",
+              "feature::f45_precedence_with_others",
+              "feature::f45_relative_cwd",
+              "feature::f68_no_ignore_vcs",
+              "feature::f7",
+              "feature::f70_smart_case",
+              "feature::f740_passthru",
+              "feature::f7_stdin",
+              "feature::f89_count",
+              "feature::f89_files",
+              "feature::f89_files_with_matches",
+              "feature::f89_files_without_match",
+              "feature::f89_match",
+              "feature::f917_trim",
+              "feature::f917_trim_match",
+              "feature::f948_exit_code_error",
+              "feature::f948_exit_code_match",
+              "feature::f948_exit_code_no_match",
+              "feature::f993_null_data",
+              "feature::no_context_sep",
+              "feature::no_context_sep_overridden",
+              "feature::no_context_sep_overrides",
+              "feature::no_unicode",
+              "json::basic",
+              "json::crlf",
+              "json::notutf8",
+              "json::notutf8_file",
+              "json::r1095_crlf_empty_match",
+              "json::r1095_missing_crlf",
+              "json::r1412_look_behind_match_missing",
+              "misc::after_context",
+              "misc::after_context_line_numbers",
+              "misc::before_context",
+              "misc::before_context_line_numbers",
+              "misc::binary_convert",
+              "misc::binary_convert_mmap",
+              "misc::binary_quit",
+              "misc::binary_quit_mmap",
+              "misc::binary_search_mmap",
+              "misc::binary_search_no_mmap",
+              "misc::byte_offset_only_matching",
+              "misc::case_insensitive",
+              "misc::columns",
+              "misc::compressed_brotli",
+              "misc::compressed_bzip2",
+              "misc::compressed_failing_gzip",
+              "misc::compressed_gzip",
+              "misc::compressed_lz4",
+              "misc::compressed_lzma",
+              "misc::compressed_uncompress",
+              "misc::compressed_xz",
+              "misc::compressed_zstd",
+              "misc::context",
+              "misc::context_line_numbers",
+              "misc::count",
+              "misc::count_matches",
+              "misc::count_matches_inverted",
+              "misc::count_matches_via_only",
+              "misc::dir",
+              "misc::file_type_add",
+              "misc::file_type_add_compose",
+              "misc::file_type_clear",
+              "misc::file_types",
+              "misc::file_types_all",
+              "misc::file_types_negate",
+              "misc::file_types_negate_all",
+              "misc::files",
+              "misc::files_with_matches",
+              "misc::files_without_match",
+              "misc::glob",
+              "misc::glob_always_case_insensitive",
+              "misc::glob_case_insensitive",
+              "misc::glob_case_sensitive",
+              "misc::glob_negate",
+              "misc::ignore_generic",
+              "misc::ignore_git",
+              "misc::ignore_git_parent",
+              "misc::ignore_git_parent_stop",
+              "misc::ignore_git_parent_stop_file",
+              "misc::ignore_hidden",
+              "misc::ignore_ripgrep",
+              "misc::ignore_ripgrep_parent_no_stop",
+              "misc::include_zero",
+              "misc::include_zero_override",
+              "misc::inverted",
+              "misc::inverted_line_numbers",
+              "misc::line",
+              "misc::line_numbers",
+              "misc::literal",
+              "misc::max_filesize_parse_error_length",
+              "misc::max_filesize_parse_error_suffix",
+              "misc::max_filesize_parse_k_suffix",
+              "misc::max_filesize_parse_m_suffix",
+              "misc::max_filesize_parse_no_suffix",
+              "misc::max_filesize_suffix_overflow",
+              "misc::no_ignore",
+              "misc::no_ignore_hidden",
+              "misc::no_parent_ignore_git",
+              "misc::preprocessing",
+              "misc::preprocessing_glob",
+              "misc::quiet",
+              "misc::replace",
+              "misc::replace_groups",
+              "misc::replace_named_groups",
+              "misc::replace_with_only_matching",
+              "misc::single_file",
+              "misc::symlink_follow",
+              "misc::symlink_nofollow",
+              "misc::type_list",
+              "misc::unrestricted1",
+              "misc::unrestricted2",
+              "misc::unrestricted3",
+              "misc::vimgrep",
+              "misc::vimgrep_no_line",
+              "misc::vimgrep_no_line_no_column",
+              "misc::with_filename",
+              "misc::with_heading",
+              "misc::with_heading_default",
+              "misc::word",
+              "multiline::context",
+              "multiline::dot_all",
+              "multiline::dot_no_newline",
+              "multiline::only_matching",
+              "multiline::overlap1",
+              "multiline::overlap2",
+              "multiline::stdin",
+              "multiline::vimgrep",
+              "regression::r105_part1",
+              "regression::r105_part2",
+              "regression::r1064",
+              "regression::r1098",
+              "regression::r1130",
+              "regression::r1159_exit_status",
+              "regression::r1159_invalid_flag",
+              "regression::r1163",
+              "regression::r1164",
+              "regression::r1173",
+              "regression::r1174",
+              "regression::r1176_line_regex",
+              "regression::r1176_literal_file",
+              "regression::r1203_reverse_suffix_literal",
+              "regression::r1223_no_dir_check_for_default_path",
+              "regression::r1259_drop_last_byte_nonl",
+              "regression::r127",
+              "regression::r128",
+              "regression::r131",
+              "regression::r1311_multi_line_term_replace",
+              "regression::r1319",
+              "regression::r1334_crazy_literals",
+              "regression::r137",
+              "regression::r1380",
+              "regression::r1389_bad_symlinks_no_biscuit",
+              "regression::r1401_look_ahead_only_matching_1",
+              "regression::r1401_look_ahead_only_matching_2",
+              "regression::r1412_look_behind_no_replacement",
+              "regression::r1446_respect_excludes_in_worktree",
+              "regression::r1537",
+              "regression::r1559",
+              "regression::r156",
+              "regression::r1573",
+              "regression::r16",
+              "regression::r1638",
+              "regression::r1739_replacement_lineterm_match",
+              "regression::r1765",
+              "regression::r184",
+              "regression::r1866",
+              "regression::r1868_context_passthru_override",
+              "regression::r1878",
+              "regression::r1891",
+              "regression::r199",
+              "regression::r206",
+              "regression::r210",
+              "regression::r228",
+              "regression::r229",
+              "regression::r25",
+              "regression::r251",
+              "regression::r256",
+              "regression::r256_j1",
+              "regression::r270",
+              "regression::r279",
+              "regression::r30",
+              "regression::r391",
+              "regression::r405",
+              "regression::r428_color_context_path",
+              "regression::r428_unrecognized_style",
+              "regression::r451_only_matching",
+              "regression::r451_only_matching_as_in_issue",
+              "regression::r483_matching_no_stdout",
+              "regression::r483_non_matching_exit_code",
+              "regression::r49",
+              "regression::r493",
+              "regression::r50",
+              "regression::r506_word_not_parenthesized",
+              "regression::r553_flag",
+              "regression::r553_switch",
+              "regression::r568_leading_hyphen_option_args",
+              "regression::r599",
+              "regression::r64",
+              "regression::r65",
+              "regression::r67",
+              "regression::r693_context_in_contextless_mode",
+              "regression::r807",
+              "regression::r87",
+              "regression::r90",
+              "regression::r900",
+              "regression::r93",
+              "regression::r99"
+            ],
+            "failed_tests": [],
+            "skipped_tests": []
+          },
+          "test_patch_result": {
+            "passed_count": 274,
+            "failed_count": 2,
+            "skipped_count": 0,
+            "passed_tests": [
+              "binary::after_match1_explicit",
+              "binary::after_match1_explicit_count",
+              "binary::after_match1_explicit_text",
+              "binary::after_match1_implicit",
+              "binary::after_match1_implicit_binary",
+              "binary::after_match1_implicit_count",
+              "binary::after_match1_implicit_count_binary",
+              "binary::after_match1_implicit_path",
+              "binary::after_match1_implicit_quiet",
+              "binary::after_match1_implicit_text",
+              "binary::after_match1_stdin",
+              "binary::after_match2_implicit",
+              "binary::after_match2_implicit_text",
+              "binary::before_match1_explicit",
+              "binary::before_match1_implicit",
+              "binary::before_match1_implicit_binary",
+              "binary::before_match1_implicit_text",
+              "binary::before_match2_explicit",
+              "binary::before_match2_implicit",
+              "binary::before_match2_implicit_text",
+              "config::tests::basic",
+              "config::tests::error",
+              "feature::context_sep",
+              "feature::context_sep_default",
+              "feature::context_sep_empty",
+              "feature::f1078_max_columns_preview1",
+              "feature::f1078_max_columns_preview2",
+              "feature::f109_case_sensitive_part1",
+              "feature::f109_case_sensitive_part2",
+              "feature::f109_max_depth",
+              "feature::f1138_no_ignore_dot",
+              "feature::f1155_auto_hybrid_regex",
+              "feature::f1207_auto_encoding",
+              "feature::f1207_ignore_encoding",
+              "feature::f129_context",
+              "feature::f129_matches",
+              "feature::f129_replace",
+              "feature::f1404_nothing_searched_ignored",
+              "feature::f1404_nothing_searched_warning",
+              "feature::f1414_no_require_git",
+              "feature::f1420_no_ignore_exclude",
+              "feature::f1466_no_ignore_files",
+              "feature::f159_max_count",
+              "feature::f159_max_count_zero",
+              "feature::f1842_field_context_separator",
+              "feature::f1842_field_match_separator",
+              "feature::f196_persistent_config",
+              "feature::f1_eucjp",
+              "feature::f1_replacement_encoding",
+              "feature::f1_sjis",
+              "feature::f1_unknown_encoding",
+              "feature::f1_utf16_auto",
+              "feature::f1_utf16_explicit",
+              "feature::f20_no_filename",
+              "feature::f243_column_line",
+              "feature::f263_sort_files",
+              "feature::f275_pathsep",
+              "feature::f34_only_matching",
+              "feature::f34_only_matching_line_column",
+              "feature::f362_dfa_size_limit",
+              "feature::f362_exceeds_regex_size_limit",
+              "feature::f411_parallel_search_stats",
+              "feature::f411_single_threaded_search_stats",
+              "feature::f416_crlf",
+              "feature::f416_crlf_multiline",
+              "feature::f416_crlf_only_matching",
+              "feature::f419_zero_as_shortcut_for_null",
+              "feature::f45_precedence_internal",
+              "feature::f45_precedence_with_others",
+              "feature::f45_relative_cwd",
+              "feature::f68_no_ignore_vcs",
+              "feature::f7",
+              "feature::f70_smart_case",
+              "feature::f740_passthru",
+              "feature::f7_stdin",
+              "feature::f89_count",
+              "feature::f89_files",
+              "feature::f89_files_with_matches",
+              "feature::f89_files_without_match",
+              "feature::f89_match",
+              "feature::f917_trim",
+              "feature::f917_trim_match",
+              "feature::f948_exit_code_error",
+              "feature::f948_exit_code_match",
+              "feature::f948_exit_code_no_match",
+              "feature::f993_null_data",
+              "feature::no_context_sep",
+              "feature::no_context_sep_overridden",
+              "feature::no_context_sep_overrides",
+              "feature::no_unicode",
+              "json::basic",
+              "json::crlf",
+              "json::notutf8",
+              "json::notutf8_file",
+              "json::r1095_crlf_empty_match",
+              "json::r1095_missing_crlf",
+              "json::r1412_look_behind_match_missing",
+              "misc::after_context",
+              "misc::after_context_line_numbers",
+              "misc::before_context",
+              "misc::before_context_line_numbers",
+              "misc::binary_convert",
+              "misc::binary_convert_mmap",
+              "misc::binary_quit",
+              "misc::binary_quit_mmap",
+              "misc::binary_search_mmap",
+              "misc::binary_search_no_mmap",
+              "misc::byte_offset_only_matching",
+              "misc::case_insensitive",
+              "misc::columns",
+              "misc::compressed_brotli",
+              "misc::compressed_bzip2",
+              "misc::compressed_failing_gzip",
+              "misc::compressed_gzip",
+              "misc::compressed_lz4",
+              "misc::compressed_lzma",
+              "misc::compressed_uncompress",
+              "misc::compressed_xz",
+              "misc::compressed_zstd",
+              "misc::context",
+              "misc::context_line_numbers",
+              "misc::count",
+              "misc::count_matches",
+              "misc::count_matches_inverted",
+              "misc::count_matches_via_only",
+              "misc::dir",
+              "misc::file_type_add",
+              "misc::file_type_add_compose",
+              "misc::file_type_clear",
+              "misc::file_types",
+              "misc::file_types_all",
+              "misc::file_types_negate",
+              "misc::file_types_negate_all",
+              "misc::files",
+              "misc::files_with_matches",
+              "misc::files_without_match",
+              "misc::glob",
+              "misc::glob_always_case_insensitive",
+              "misc::glob_case_insensitive",
+              "misc::glob_case_sensitive",
+              "misc::glob_negate",
+              "misc::ignore_generic",
+              "misc::ignore_git",
+              "misc::ignore_git_parent",
+              "misc::ignore_git_parent_stop",
+              "misc::ignore_git_parent_stop_file",
+              "misc::ignore_hidden",
+              "misc::ignore_ripgrep",
+              "misc::ignore_ripgrep_parent_no_stop",
+              "misc::include_zero",
+              "misc::include_zero_override",
+              "misc::inverted",
+              "misc::inverted_line_numbers",
+              "misc::line",
+              "misc::line_numbers",
+              "misc::literal",
+              "misc::max_filesize_parse_error_length",
+              "misc::max_filesize_parse_error_suffix",
+              "misc::max_filesize_parse_k_suffix",
+              "misc::max_filesize_parse_m_suffix",
+              "misc::max_filesize_parse_no_suffix",
+              "misc::max_filesize_suffix_overflow",
+              "misc::no_ignore",
+              "misc::no_ignore_hidden",
+              "misc::no_parent_ignore_git",
+              "misc::preprocessing",
+              "misc::preprocessing_glob",
+              "misc::quiet",
+              "misc::replace",
+              "misc::replace_groups",
+              "misc::replace_named_groups",
+              "misc::replace_with_only_matching",
+              "misc::single_file",
+              "misc::symlink_follow",
+              "misc::symlink_nofollow",
+              "misc::type_list",
+              "misc::unrestricted1",
+              "misc::unrestricted2",
+              "misc::unrestricted3",
+              "misc::vimgrep",
+              "misc::vimgrep_no_line",
+              "misc::vimgrep_no_line_no_column",
+              "misc::with_filename",
+              "misc::with_heading",
+              "misc::with_heading_default",
+              "misc::word",
+              "multiline::context",
+              "multiline::dot_all",
+              "multiline::dot_no_newline",
+              "multiline::only_matching",
+              "multiline::overlap1",
+              "multiline::overlap2",
+              "multiline::stdin",
+              "multiline::vimgrep",
+              "regression::r105_part1",
+              "regression::r105_part2",
+              "regression::r1064",
+              "regression::r1098",
+              "regression::r1130",
+              "regression::r1159_exit_status",
+              "regression::r1159_invalid_flag",
+              "regression::r1163",
+              "regression::r1164",
+              "regression::r1173",
+              "regression::r1174",
+              "regression::r1176_line_regex",
+              "regression::r1176_literal_file",
+              "regression::r1203_reverse_suffix_literal",
+              "regression::r1223_no_dir_check_for_default_path",
+              "regression::r1259_drop_last_byte_nonl",
+              "regression::r127",
+              "regression::r128",
+              "regression::r131",
+              "regression::r1311_multi_line_term_replace",
+              "regression::r1319",
+              "regression::r1334_crazy_literals",
+              "regression::r137",
+              "regression::r1380",
+              "regression::r1389_bad_symlinks_no_biscuit",
+              "regression::r1401_look_ahead_only_matching_1",
+              "regression::r1401_look_ahead_only_matching_2",
+              "regression::r1412_look_behind_no_replacement",
+              "regression::r1446_respect_excludes_in_worktree",
+              "regression::r1537",
+              "regression::r1559",
+              "regression::r156",
+              "regression::r1573",
+              "regression::r16",
+              "regression::r1638",
+              "regression::r1739_replacement_lineterm_match",
+              "regression::r1765",
+              "regression::r184",
+              "regression::r1866",
+              "regression::r1868_context_passthru_override",
+              "regression::r1878",
+              "regression::r1891",
+              "regression::r199",
+              "regression::r206",
+              "regression::r210",
+              "regression::r228",
+              "regression::r229",
+              "regression::r25",
+              "regression::r251",
+              "regression::r256",
+              "regression::r256_j1",
+              "regression::r270",
+              "regression::r279",
+              "regression::r30",
+              "regression::r391",
+              "regression::r405",
+              "regression::r428_color_context_path",
+              "regression::r428_unrecognized_style",
+              "regression::r451_only_matching",
+              "regression::r451_only_matching_as_in_issue",
+              "regression::r483_matching_no_stdout",
+              "regression::r483_non_matching_exit_code",
+              "regression::r49",
+              "regression::r493",
+              "regression::r50",
+              "regression::r506_word_not_parenthesized",
+              "regression::r553_flag",
+              "regression::r553_switch",
+              "regression::r568_leading_hyphen_option_args",
+              "regression::r599",
+              "regression::r64",
+              "regression::r65",
+              "regression::r67",
+              "regression::r693_context_in_contextless_mode",
+              "regression::r807",
+              "regression::r87",
+              "regression::r90",
+              "regression::r900",
+              "regression::r93",
+              "regression::r99"
+            ],
+            "failed_tests": [
+              "regression::r2095",
+              "regression::r2208"
+            ],
+            "skipped_tests": []
+          },
+          "fix_patch_result": {
+            "passed_count": 275,
+            "failed_count": 1,
+            "skipped_count": 0,
+            "passed_tests": [
+              "binary::after_match1_explicit",
+              "binary::after_match1_explicit_count",
+              "binary::after_match1_explicit_text",
+              "binary::after_match1_implicit",
+              "binary::after_match1_implicit_binary",
+              "binary::after_match1_implicit_count",
+              "binary::after_match1_implicit_count_binary",
+              "binary::after_match1_implicit_path",
+              "binary::after_match1_implicit_quiet",
+              "binary::after_match1_implicit_text",
+              "binary::after_match1_stdin",
+              "binary::after_match2_implicit",
+              "binary::after_match2_implicit_text",
+              "binary::before_match1_explicit",
+              "binary::before_match1_implicit",
+              "binary::before_match1_implicit_binary",
+              "binary::before_match1_implicit_text",
+              "binary::before_match2_explicit",
+              "binary::before_match2_implicit",
+              "binary::before_match2_implicit_text",
+              "config::tests::basic",
+              "config::tests::error",
+              "feature::context_sep",
+              "feature::context_sep_default",
+              "feature::context_sep_empty",
+              "feature::f1078_max_columns_preview1",
+              "feature::f1078_max_columns_preview2",
+              "feature::f109_case_sensitive_part1",
+              "feature::f109_case_sensitive_part2",
+              "feature::f109_max_depth",
+              "feature::f1138_no_ignore_dot",
+              "feature::f1155_auto_hybrid_regex",
+              "feature::f1207_auto_encoding",
+              "feature::f1207_ignore_encoding",
+              "feature::f129_context",
+              "feature::f129_matches",
+              "feature::f129_replace",
+              "feature::f1404_nothing_searched_ignored",
+              "feature::f1404_nothing_searched_warning",
+              "feature::f1414_no_require_git",
+              "feature::f1420_no_ignore_exclude",
+              "feature::f1466_no_ignore_files",
+              "feature::f159_max_count",
+              "feature::f159_max_count_zero",
+              "feature::f1842_field_context_separator",
+              "feature::f1842_field_match_separator",
+              "feature::f196_persistent_config",
+              "feature::f1_eucjp",
+              "feature::f1_replacement_encoding",
+              "feature::f1_sjis",
+              "feature::f1_unknown_encoding",
+              "feature::f1_utf16_auto",
+              "feature::f1_utf16_explicit",
+              "feature::f20_no_filename",
+              "feature::f243_column_line",
+              "feature::f263_sort_files",
+              "feature::f275_pathsep",
+              "feature::f34_only_matching",
+              "feature::f34_only_matching_line_column",
+              "feature::f362_dfa_size_limit",
+              "feature::f362_exceeds_regex_size_limit",
+              "feature::f411_parallel_search_stats",
+              "feature::f411_single_threaded_search_stats",
+              "feature::f416_crlf",
+              "feature::f416_crlf_multiline",
+              "feature::f416_crlf_only_matching",
+              "feature::f419_zero_as_shortcut_for_null",
+              "feature::f45_precedence_internal",
+              "feature::f45_precedence_with_others",
+              "feature::f45_relative_cwd",
+              "feature::f68_no_ignore_vcs",
+              "feature::f7",
+              "feature::f70_smart_case",
+              "feature::f740_passthru",
+              "feature::f7_stdin",
+              "feature::f89_count",
+              "feature::f89_files",
+              "feature::f89_files_with_matches",
+              "feature::f89_files_without_match",
+              "feature::f89_match",
+              "feature::f917_trim",
+              "feature::f917_trim_match",
+              "feature::f948_exit_code_error",
+              "feature::f948_exit_code_match",
+              "feature::f948_exit_code_no_match",
+              "feature::f993_null_data",
+              "feature::no_context_sep",
+              "feature::no_context_sep_overridden",
+              "feature::no_context_sep_overrides",
+              "feature::no_unicode",
+              "json::basic",
+              "json::crlf",
+              "json::notutf8",
+              "json::notutf8_file",
+              "json::r1095_crlf_empty_match",
+              "json::r1095_missing_crlf",
+              "json::r1412_look_behind_match_missing",
+              "misc::after_context",
+              "misc::after_context_line_numbers",
+              "misc::before_context",
+              "misc::before_context_line_numbers",
+              "misc::binary_convert",
+              "misc::binary_convert_mmap",
+              "misc::binary_quit",
+              "misc::binary_quit_mmap",
+              "misc::binary_search_mmap",
+              "misc::binary_search_no_mmap",
+              "misc::byte_offset_only_matching",
+              "misc::case_insensitive",
+              "misc::columns",
+              "misc::compressed_brotli",
+              "misc::compressed_bzip2",
+              "misc::compressed_failing_gzip",
+              "misc::compressed_gzip",
+              "misc::compressed_lz4",
+              "misc::compressed_lzma",
+              "misc::compressed_uncompress",
+              "misc::compressed_xz",
+              "misc::compressed_zstd",
+              "misc::context",
+              "misc::context_line_numbers",
+              "misc::count",
+              "misc::count_matches",
+              "misc::count_matches_inverted",
+              "misc::count_matches_via_only",
+              "misc::dir",
+              "misc::file_type_add",
+              "misc::file_type_add_compose",
+              "misc::file_type_clear",
+              "misc::file_types",
+              "misc::file_types_all",
+              "misc::file_types_negate",
+              "misc::file_types_negate_all",
+              "misc::files",
+              "misc::files_with_matches",
+              "misc::files_without_match",
+              "misc::glob",
+              "misc::glob_always_case_insensitive",
+              "misc::glob_case_insensitive",
+              "misc::glob_case_sensitive",
+              "misc::glob_negate",
+              "misc::ignore_generic",
+              "misc::ignore_git",
+              "misc::ignore_git_parent",
+              "misc::ignore_git_parent_stop",
+              "misc::ignore_git_parent_stop_file",
+              "misc::ignore_hidden",
+              "misc::ignore_ripgrep",
+              "misc::ignore_ripgrep_parent_no_stop",
+              "misc::include_zero",
+              "misc::include_zero_override",
+              "misc::inverted",
+              "misc::inverted_line_numbers",
+              "misc::line",
+              "misc::line_numbers",
+              "misc::literal",
+              "misc::max_filesize_parse_error_length",
+              "misc::max_filesize_parse_error_suffix",
+              "misc::max_filesize_parse_k_suffix",
+              "misc::max_filesize_parse_m_suffix",
+              "misc::max_filesize_parse_no_suffix",
+              "misc::max_filesize_suffix_overflow",
+              "misc::no_ignore",
+              "misc::no_ignore_hidden",
+              "misc::no_parent_ignore_git",
+              "misc::preprocessing",
+              "misc::preprocessing_glob",
+              "misc::quiet",
+              "misc::replace",
+              "misc::replace_groups",
+              "misc::replace_named_groups",
+              "misc::replace_with_only_matching",
+              "misc::single_file",
+              "misc::symlink_follow",
+              "misc::symlink_nofollow",
+              "misc::type_list",
+              "misc::unrestricted1",
+              "misc::unrestricted2",
+              "misc::unrestricted3",
+              "misc::vimgrep",
+              "misc::vimgrep_no_line",
+              "misc::vimgrep_no_line_no_column",
+              "misc::with_filename",
+              "misc::with_heading",
+              "misc::with_heading_default",
+              "misc::word",
+              "multiline::context",
+              "multiline::dot_all",
+              "multiline::dot_no_newline",
+              "multiline::only_matching",
+              "multiline::overlap1",
+              "multiline::overlap2",
+              "multiline::stdin",
+              "multiline::vimgrep",
+              "regression::r105_part1",
+              "regression::r105_part2",
+              "regression::r1064",
+              "regression::r1098",
+              "regression::r1130",
+              "regression::r1159_exit_status",
+              "regression::r1159_invalid_flag",
+              "regression::r1163",
+              "regression::r1164",
+              "regression::r1173",
+              "regression::r1174",
+              "regression::r1176_line_regex",
+              "regression::r1176_literal_file",
+              "regression::r1203_reverse_suffix_literal",
+              "regression::r1223_no_dir_check_for_default_path",
+              "regression::r1259_drop_last_byte_nonl",
+              "regression::r127",
+              "regression::r128",
+              "regression::r131",
+              "regression::r1311_multi_line_term_replace",
+              "regression::r1319",
+              "regression::r1334_crazy_literals",
+              "regression::r137",
+              "regression::r1380",
+              "regression::r1389_bad_symlinks_no_biscuit",
+              "regression::r1401_look_ahead_only_matching_1",
+              "regression::r1401_look_ahead_only_matching_2",
+              "regression::r1412_look_behind_no_replacement",
+              "regression::r1446_respect_excludes_in_worktree",
+              "regression::r1537",
+              "regression::r1559",
+              "regression::r156",
+              "regression::r1573",
+              "regression::r16",
+              "regression::r1638",
+              "regression::r1739_replacement_lineterm_match",
+              "regression::r1765",
+              "regression::r184",
+              "regression::r1866",
+              "regression::r1868_context_passthru_override",
+              "regression::r1878",
+              "regression::r1891",
+              "regression::r199",
+              "regression::r206",
+              "regression::r2095",
+              "regression::r210",
+              "regression::r228",
+              "regression::r229",
+              "regression::r25",
+              "regression::r251",
+              "regression::r256",
+              "regression::r256_j1",
+              "regression::r270",
+              "regression::r279",
+              "regression::r30",
+              "regression::r391",
+              "regression::r405",
+              "regression::r428_color_context_path",
+              "regression::r428_unrecognized_style",
+              "regression::r451_only_matching",
+              "regression::r451_only_matching_as_in_issue",
+              "regression::r483_matching_no_stdout",
+              "regression::r483_non_matching_exit_code",
+              "regression::r49",
+              "regression::r493",
+              "regression::r50",
+              "regression::r506_word_not_parenthesized",
+              "regression::r553_flag",
+              "regression::r553_switch",
+              "regression::r568_leading_hyphen_option_args",
+              "regression::r599",
+              "regression::r64",
+              "regression::r65",
+              "regression::r67",
+              "regression::r693_context_in_contextless_mode",
+              "regression::r807",
+              "regression::r87",
+              "regression::r90",
+              "regression::r900",
+              "regression::r93",
+              "regression::r99"
+            ],
+            "failed_tests": [
+              "regression::r2208"
+            ],
+            "skipped_tests": []
+          }
+        },
+        "diagnostic": "unresolved_tests_ran",
+        "usable_for_selection": true
+      },
+      "evaluation": {
+        "disposition": "keep",
+        "reasons": [
+          "tool_calls_failed improved: 4 -> 0",
+          "partial_patch_failures improved: 1 -> 0",
+          "same_file_patch_retry_count improved: 2 -> 0",
+          "same_file_patch_max_streak improved: 3 -> 0"
+        ]
+      },
+      "status": "compared"
+    }
+  ]
+}

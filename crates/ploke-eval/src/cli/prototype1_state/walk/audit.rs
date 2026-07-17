@@ -69,6 +69,8 @@ const EVAL_RELS: &[(&str, &str)] = &[
     ("eval_selection_candidate", "decision_id"),
     ("eval_selection_finding", "finding_id"),
     ("eval_selection_score", "decision_id"),
+    ("eval_selection_oracle", "decision_id"),
+    ("eval_selection_projection_failure", "decision_id"),
     ("eval_artifact", "artifact_id"),
     ("eval_artifact_surface", "surface_id"),
     ("eval_artifact_ref", "artifact_ref_id"),
@@ -373,8 +375,13 @@ pub(crate) fn audit_r0_to_r1(
 
     let database = database_audit(campaign_audit.campaign_id.as_ref());
     let transition = r0_to_r1_expectations();
-    let mut transitions =
-        transition_checklist(campaign_audit.campaign_id.as_ref(), &docs, &database);
+    let stopped = stopped_reconstruction_side(&repo_root, campaign_audit.campaign_id.as_ref());
+    let mut transitions = transition_checklist(
+        campaign_audit.campaign_id.as_ref(),
+        &docs,
+        &database,
+        &stopped,
+    );
     if let Some(filter) = transition_filter {
         transitions.retain(|transition| transition.transition == audit_transition_label(filter));
     }
@@ -602,6 +609,7 @@ fn transition_checklist(
     campaign_id: Option<&CampaignId>,
     docs: &[DocumentAudit],
     database: &DatabaseAudit,
+    stopped: &PersistenceSide,
 ) -> Vec<TransitionChecklist> {
     let manifest = campaign_id.and_then(|id| campaign_manifest_path(id).ok());
     let root = manifest.as_ref().map(prototype_root_for_manifest);
@@ -1190,6 +1198,14 @@ fn transition_checklist(
                     "stopped/no-successor path appends stopped successor evidence when a selected branch is not handed off",
                 ),
                 item(
+                    "typed stopped reconstruction",
+                    stopped.clone(),
+                    PersistenceSide::not_applicable(
+                        "exact stopped-receipt validation is a typed file/journal reconstruction check",
+                    ),
+                    "the active parent's stopped record advances to R13a only when its continuation and selection receipt reconstruct exactly",
+                ),
+                item(
                     "continuation rows",
                     count_side(journal.clone(), count_continuation),
                     db_side_for_file(database, "eval_continuation_decision", &root, |root| {
@@ -1457,6 +1473,155 @@ fn transition_checklist(
             ],
         ),
     ]
+}
+
+fn stopped_reconstruction_side(
+    repo_root: &Path,
+    campaign_id: Option<&CampaignId>,
+) -> PersistenceSide {
+    let Some(campaign_id) = campaign_id else {
+        return PersistenceSide {
+            status: PersistenceStatus::None,
+            count: None,
+            path: None,
+            relation: None,
+            detail: Some("campaign unresolved".to_string()),
+        };
+    };
+    let Ok(manifest) = campaign_manifest_path(campaign_id) else {
+        return PersistenceSide {
+            status: PersistenceStatus::None,
+            count: None,
+            path: None,
+            relation: None,
+            detail: Some("campaign manifest unresolved".to_string()),
+        };
+    };
+    let path = manifest
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("prototype1")
+        .join("transition-journal.jsonl");
+    let journal = PrototypeJournal::new(&path);
+    let entries = match journal.load_entries() {
+        Ok(entries) => entries,
+        Err(error) => {
+            return PersistenceSide {
+                status: PersistenceStatus::Error,
+                count: None,
+                path: Some(path),
+                relation: None,
+                detail: Some(format!("failed to load transition journal: {error}")),
+            };
+        }
+    };
+    let active = match identity::load_parent_identity_optional(repo_root) {
+        Ok(Some(active)) => active,
+        Ok(None) => {
+            return PersistenceSide {
+                status: PersistenceStatus::None,
+                count: Some(0),
+                path: Some(path),
+                relation: None,
+                detail: Some("active parent identity is unavailable".to_string()),
+            };
+        }
+        Err(error) => {
+            return PersistenceSide {
+                status: PersistenceStatus::Error,
+                count: None,
+                path: Some(path),
+                relation: None,
+                detail: Some(format!("failed to load active parent identity: {error}")),
+            };
+        }
+    };
+    if active.campaign_id() != campaign_id {
+        return PersistenceSide {
+            status: PersistenceStatus::None,
+            count: Some(0),
+            path: Some(path),
+            relation: None,
+            detail: Some(format!(
+                "active parent belongs to campaign '{}', not audited campaign '{}'",
+                active.campaign_id(),
+                campaign_id
+            )),
+        };
+    }
+    if !has_turn_stop(&entries, &active) {
+        return PersistenceSide {
+            status: PersistenceStatus::None,
+            count: Some(0),
+            path: Some(path),
+            relation: None,
+            detail: Some(format!(
+                "active parent '{}' has no stopped continuation",
+                active.node_id()
+            )),
+        };
+    }
+    match crate::cli::prototype1_state::driver::reconstruct::reconstruct_early(repo_root) {
+        Ok(snapshot)
+            if snapshot.campaign_id.as_ref() == Some(campaign_id)
+                && snapshot.blockers.is_empty()
+                && snapshot.state.as_ref().is_some_and(|state| {
+                    matches!(state.phase(), WalkPhase::R13a | WalkPhase::R14a)
+                }) =>
+        {
+            PersistenceSide {
+                status: PersistenceStatus::Ok,
+                count: Some(1),
+                path: Some(path),
+                relation: None,
+                detail: Some(
+                    "active parent stopped continuation passed exact typed reconstruction"
+                        .to_string(),
+                ),
+            }
+        }
+        Ok(snapshot) => PersistenceSide {
+            status: PersistenceStatus::Error,
+            count: Some(1),
+            path: Some(path),
+            relation: None,
+            detail: Some(if snapshot.blockers.is_empty() {
+                "active parent stopped continuation did not reconstruct to R13a/R14a".to_string()
+            } else {
+                snapshot.blockers.join("; ")
+            }),
+        },
+        Err(error) => PersistenceSide {
+            status: PersistenceStatus::Error,
+            count: Some(1),
+            path: Some(path),
+            relation: None,
+            detail: Some(format!("stopped reconstruction failed: {error}")),
+        },
+    }
+}
+
+fn has_turn_stop(entries: &[JournalEntry], active: &identity::ParentIdentity) -> bool {
+    let Some(turn_start) = entries.iter().rposition(|entry| {
+        matches!(
+            entry,
+            JournalEntry::ParentStarted(started)
+                if started.campaign_id == *active.campaign_id()
+                    && started.parent_identity == *active
+        )
+    }) else {
+        return false;
+    };
+    entries
+        .iter()
+        .skip(turn_start + 1)
+        .any(|entry| match entry {
+            JournalEntry::Successor(record) => {
+                record.campaign_id == *active.campaign_id()
+                    && matches!(&record.state, successor::State::Stopped { .. })
+            }
+            _ => false,
+        })
 }
 
 fn checklist_transition(
@@ -2702,6 +2867,71 @@ mod tests {
         .expect("journal");
 
         assert_eq!(count_continuation(&journal).expect("count continuation"), 2);
+    }
+
+    #[test]
+    fn runtime_completion_does_not_hide_active_stop() {
+        use crate::{
+            cli::prototype1_state::event::{RecordedAt, RuntimeId},
+            intervention::{Prototype1ContinuationDecision, Prototype1ContinuationDisposition},
+        };
+
+        let campaign_id = CampaignId::from("campaign");
+        let active = identity::ParentIdentity::root_bootstrap(
+            campaign_id.clone(),
+            "node-parent",
+            "instance-parent",
+            "branch-parent",
+            None,
+        );
+        let decision = Prototype1ContinuationDecision {
+            disposition: Prototype1ContinuationDisposition::StopNoSelectedBranch,
+            selected_next_branch_id: None,
+            selected_branch_disposition: None,
+            next_generation: 2,
+            total_nodes_after_continue: 2,
+        };
+        let stopped = JournalEntry::Successor(successor::Record::stopped_without_attempt(
+            campaign_id.clone(),
+            "node-parent".to_string(),
+            decision,
+        ));
+        let completed = JournalEntry::Successor(successor::Record {
+            runtime_id: Some(RuntimeId(uuid::Uuid::from_u128(1))),
+            recorded_at: RecordedAt(2),
+            campaign_id: campaign_id.clone(),
+            node_id: "node-parent".to_string(),
+            state: successor::State::Completed {
+                status:
+                    crate::cli::prototype1_state::invocation::SuccessorCompletionStatus::Succeeded,
+                completion_path: PathBuf::from("/tmp/completion.json"),
+                trace_path: None,
+                detail: None,
+            },
+        });
+        let started = JournalEntry::ParentStarted(
+            crate::cli::prototype1_state::journal::ParentStartedEntry {
+                recorded_at: RecordedAt(1),
+                campaign_id: campaign_id.clone(),
+                parent_identity: active.clone(),
+                repo_root: PathBuf::from("/tmp/repo"),
+                handoff_runtime_id: Some(RuntimeId(uuid::Uuid::from_u128(1))),
+                pid: 42,
+            },
+        );
+        let entries = vec![started, stopped, completed];
+
+        assert!(has_turn_stop(&entries, &active));
+        assert!(!has_turn_stop(
+            &entries,
+            &identity::ParentIdentity::root_bootstrap(
+                campaign_id,
+                "node-other",
+                "instance-other",
+                "branch-other",
+                None,
+            )
+        ));
     }
 
     #[test]

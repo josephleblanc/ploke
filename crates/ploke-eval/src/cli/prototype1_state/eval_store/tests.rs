@@ -34,8 +34,8 @@ use super::{
     PATCH_REL, PROFILE_COMMITMENT_REL, RUN_PROFILE_POLICY_REL, RUNNER_REQUEST_ARG_REL,
     RUNNER_REQUEST_REL, RUNNER_REQUEST_TARGET_REL, RUNNER_RESULT_REL, SCHEDULER_NODE_REL,
     SCHEDULER_NODE_STATUS_REL, SCHEDULER_NODE_TARGET_REL, SELECTION_CANDIDATE_REL,
-    SELECTION_DECISION_REL, SELECTION_FINDING_REL, SELECTION_ORACLE_REL, SELECTION_SCORE_REL,
-    TOOL_EVENT_REL, WALK_EVENT_REL, WALK_EVENT_TRANSITION_REL,
+    SELECTION_DECISION_REL, SELECTION_FINDING_REL, SELECTION_ORACLE_REL, SELECTION_PROJECTION_REL,
+    SELECTION_SCORE_REL, TOOL_EVENT_REL, WALK_EVENT_REL, WALK_EVENT_TRANSITION_REL,
     api::EvalStorageMode,
     cozo_schema::eval_relation_exists,
     error::EvalStoreError,
@@ -624,6 +624,14 @@ fn non_agent_schema_scripts() -> Vec<(&'static str, String, String)> {
                 schema.script_put(&eval_schema_params(schema)),
             )
         },
+        {
+            let schema = &super::selection::SelectionProjectionSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
     ]
 }
 
@@ -951,6 +959,11 @@ fn eval_store_non_agent_schema_scripts_are_stable() {
             r#":create eval_selection_oracle { decision_id: String => mode: String, require_evidence: Bool, gate: String, targets: [String], formula_id: String? }"#,
             r#"?[decision_id, mode, require_evidence, gate, targets, formula_id] <- [[$decision_id, $mode, $require_evidence, $gate, $targets, $formula_id]] :put eval_selection_oracle { decision_id => mode, require_evidence, gate, targets, formula_id }"#,
         ),
+        (
+            "eval_selection_projection_failure",
+            r#":create eval_selection_projection_failure { decision_id: String, failure_id: String => candidate_subject: String?, kind: String, message: String? }"#,
+            r#"?[decision_id, failure_id, candidate_subject, kind, message] <- [[$decision_id, $failure_id, $candidate_subject, $kind, $message]] :put eval_selection_projection_failure { decision_id, failure_id => candidate_subject, kind, message }"#,
+        ),
     ];
 
     assert_eq!(actual.len(), expected.len());
@@ -1114,6 +1127,10 @@ fn prototype1_eval_store_parent_start_db_schema_installs_idempotently() {
     );
     assert!(eval_relation_exists(&db, SELECTION_SCORE_REL).expect("selection score rel exists"));
     assert!(eval_relation_exists(&db, SELECTION_ORACLE_REL).expect("selection oracle rel exists"));
+    assert!(
+        eval_relation_exists(&db, SELECTION_PROJECTION_REL)
+            .expect("selection projection failure rel exists")
+    );
     assert!(eval_relation_exists(&db, ARTIFACT_REL).expect("artifact rel exists"));
     assert!(eval_relation_exists(&db, ARTIFACT_SURFACE_REL).expect("artifact surface rel exists"));
     assert!(eval_relation_exists(&db, ARTIFACT_REF_REL).expect("artifact ref rel exists"));
@@ -1222,6 +1239,145 @@ fn selection_oracle_schema_installs_additively() {
         .expect("selection oracle relation installs without rewriting decision schema");
 
     assert!(eval_relation_exists(&db, SELECTION_ORACLE_REL).expect("selection oracle restored"));
+}
+
+#[test]
+fn selection_projection_schema_installs_additively() {
+    let db = Database::new_init().expect("db");
+    let store = DbEvalStore::new(&db);
+    store.install_schema().expect("current schema installs");
+    db.raw_query_mut_params(
+        "::remove eval_selection_projection_failure",
+        BTreeMap::new(),
+    )
+    .expect("remove additive selection projection relation");
+
+    assert!(eval_relation_exists(&db, SELECTION_DECISION_REL).expect("selection decision exists"));
+    assert!(
+        !eval_relation_exists(&db, SELECTION_PROJECTION_REL)
+            .expect("selection projection failure absent")
+    );
+
+    store
+        .install_schema()
+        .expect("selection projection relation installs without rewriting decision schema");
+
+    assert!(
+        eval_relation_exists(&db, SELECTION_PROJECTION_REL)
+            .expect("selection projection failure restored")
+    );
+}
+
+#[test]
+fn no_selection_projection_failure_rows_are_queryable() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let db_path = tmp.path().join("prototype1/eval-store.cozo.sqlite");
+    let candidate = crate::cli::prototype1_state::history::SubjectRef::new("child-missing-input");
+    let failure = crate::cli::prototype1_state::history::SelectionProjectionFailure::committed(
+        crate::cli::prototype1_state::history::SelectionProjectionFailureKind::MissingSelectionInput,
+        Some(candidate.clone()),
+        Some("rejected_surface_attempt_without_child_runtime".to_string()),
+    )
+    .expect("projection failure");
+    let failure_id = failure.id.0.as_str().to_string();
+    let considered = Vec::new();
+    let sources = Vec::new();
+    let metrics = crate::successor_selection::metrics::Set::from_considered(
+        crate::successor_selection::metrics::Policy::default(),
+        &considered,
+        &sources,
+    )
+    .expect("empty metric set");
+    let entry = crate::cli::prototype1_state::history::SelectionDecisionEntry::new_no_selection_with_traversal_metrics(
+        crate::cli::prototype1_state::history::ProcedureRef::new(
+            crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID,
+        ),
+        crate::cli::prototype1_state::history::SelectionScope::new("projection-only"),
+        considered,
+        sources,
+        vec![failure],
+        None,
+        metrics,
+    )
+    .expect("no-selection entry");
+
+    let receipt = write_selection_decision_to_owner_db(
+        &db_path,
+        SelectionDecisionEvidence {
+            campaign_id: CampaignId::from("campaign-projection-only"),
+            parent_id: "parent-projection-only".to_string(),
+            entry,
+            decision_ref: Some("selection:parent-projection-only:none".to_string()),
+            recorded_at: Some("2026-07-17T00:00:00Z".to_string()),
+        },
+    )
+    .expect("selection evidence writes");
+
+    assert_eq!(receipt.candidate_count, 0);
+    assert_eq!(receipt.finding_count, 0);
+    assert_eq!(receipt.score_count, 0);
+    assert_eq!(receipt.projection_count, 1);
+
+    let db = load_owner_eval_database(&db_path).expect("owner db loads");
+    let decisions = db
+        .raw_query_params(
+            r#"
+?[decision_id, outcome] :=
+    *eval_selection_decision { decision_id: decision_id, outcome: outcome }
+"#,
+            BTreeMap::new(),
+        )
+        .expect("selection decision query");
+    let decision = decisions.row_refs().next().expect("decision row");
+    assert_eq!(
+        decision.get::<String>("decision_id").expect("decision id"),
+        receipt.decision_id
+    );
+    assert_eq!(
+        decision.get::<String>("outcome").expect("outcome"),
+        "no_selection"
+    );
+
+    let projections = db
+        .raw_query_params(
+            r#"
+?[decision_id, failure_id, candidate_subject, kind, message] :=
+    *eval_selection_projection_failure {
+        decision_id: decision_id,
+        failure_id: failure_id,
+        candidate_subject: candidate_subject,
+        kind: kind,
+        message: message,
+    }
+"#,
+            BTreeMap::new(),
+        )
+        .expect("selection projection query");
+    let projection = projections.row_refs().next().expect("projection row");
+    assert_eq!(
+        projection
+            .get::<String>("decision_id")
+            .expect("projection decision id"),
+        receipt.decision_id
+    );
+    assert_eq!(
+        projection.get::<String>("failure_id").expect("failure id"),
+        failure_id
+    );
+    assert_eq!(
+        projection
+            .get::<String>("candidate_subject")
+            .expect("candidate subject"),
+        candidate.as_str()
+    );
+    assert_eq!(
+        projection.get::<String>("kind").expect("failure kind"),
+        "missing_selection_input"
+    );
+    assert_eq!(
+        projection.get::<String>("message").expect("message"),
+        "rejected_surface_attempt_without_child_runtime"
+    );
 }
 
 #[test]

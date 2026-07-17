@@ -371,6 +371,30 @@ pub(crate) struct Selection {
     pub(crate) selected_from_current_generation: bool,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum SelectionAttempt {
+    Selected(Selection),
+    NoSelection(NoSelection),
+}
+
+impl SelectionAttempt {
+    fn into_selection(self) -> Option<Selection> {
+        match self {
+            Self::Selected(selection) => Some(selection),
+            Self::NoSelection(_) => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct NoSelection {
+    pub(crate) considered: Vec<EvaluationPayload>,
+    pub(crate) considered_sources: Vec<TraversalCandidateSource>,
+    pub(crate) projection_failures: Vec<SelectionProjectionFailure>,
+    pub(crate) child_counts: BTreeMap<String, usize>,
+    pub(crate) metrics: selection_metrics::Set,
+}
+
 impl Selection {
     pub(crate) fn selected_occurrence_id(&self) -> Option<CandidateOccurrenceId> {
         self.selected_decision_membership
@@ -425,6 +449,7 @@ pub(crate) fn select(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn select_with_policy(
     candidates: Candidates,
     seed: u64,
@@ -432,6 +457,17 @@ pub(crate) fn select_with_policy(
     metrics_policy: selection_metrics::Policy,
     oracle_targets: &[String],
 ) -> Result<Option<Selection>, HistoryError> {
+    select_attempt_with_policy(candidates, seed, strategy, metrics_policy, oracle_targets)
+        .map(SelectionAttempt::into_selection)
+}
+
+pub(crate) fn select_attempt_with_policy(
+    candidates: Candidates,
+    seed: u64,
+    strategy: StrategyKind,
+    metrics_policy: selection_metrics::Policy,
+    oracle_targets: &[String],
+) -> Result<SelectionAttempt, HistoryError> {
     match strategy {
         StrategyKind::FrontierMax {
             normalize_frontier,
@@ -439,7 +475,7 @@ pub(crate) fn select_with_policy(
             oracle,
             require_evidence,
             gate,
-        } => candidates.traverse_with_policy(
+        } => candidates.traverse_attempt_with_policy(
             seed,
             FrontierMax {
                 normalize_frontier,
@@ -458,7 +494,7 @@ pub(crate) fn select_with_policy(
             oracle,
             require_evidence,
             gate,
-        } => candidates.traverse_with_policy(
+        } => candidates.traverse_attempt_with_policy(
             seed,
             ScoreChildProp {
                 top_m,
@@ -918,6 +954,19 @@ impl Candidates {
     where
         S: Strategy<Item = Item>,
     {
+        self.traverse_attempt_with_policy(seed, strategy, metrics_policy)
+            .map(SelectionAttempt::into_selection)
+    }
+
+    fn traverse_attempt_with_policy<S>(
+        self,
+        seed: u64,
+        strategy: S,
+        metrics_policy: selection_metrics::Policy,
+    ) -> Result<SelectionAttempt, HistoryError>
+    where
+        S: Strategy<Item = Item>,
+    {
         let mut items = Vec::new();
         let mut failures = Vec::new();
 
@@ -954,7 +1003,13 @@ impl Candidates {
             &considered_sources,
         )?;
         let Some(selection) = strategy.select(&items, &child_counts, &metric_set, seed)? else {
-            return Ok(None);
+            return Ok(SelectionAttempt::NoSelection(NoSelection {
+                considered,
+                considered_sources,
+                projection_failures: failures,
+                child_counts,
+                metrics: metric_set,
+            }));
         };
         let decision_membership =
             decision_membership_for_chosen(&considered, &considered_sources, &selection.chosen)?;
@@ -969,7 +1024,7 @@ impl Candidates {
         decision.rationale.push(evidence_summary.rationale());
         decision.rationale.extend(selection.rationale);
 
-        Ok(Some(Selection {
+        Ok(SelectionAttempt::Selected(Selection {
             decision,
             selected_payload: selection.chosen.payload,
             selected_decision_membership: decision_membership,
@@ -2652,6 +2707,54 @@ mod tests {
     }
 
     #[test]
+    fn projection_only_failure_constructs_no_selection_receipt() {
+        let candidates = HistoryCandidates {
+            scope: SelectionScope::all_admitted_candidates(),
+            candidates: vec![candidate_from_payload(payload_without_selection_input(
+                "missing-input",
+                "branch-missing",
+                0,
+            ))],
+        };
+        let strategy = StrategyKind::score_child_prop();
+
+        let attempt = select_attempt_with_policy(
+            Candidates::from_history(candidates),
+            0,
+            strategy,
+            selection_metrics::Policy::default(),
+            &[],
+        )
+        .expect("projection-only failure completes selection");
+        let SelectionAttempt::NoSelection(receipt) = attempt else {
+            panic!("missing selection input must not select a successor")
+        };
+        assert!(receipt.considered.is_empty());
+        assert_eq!(receipt.projection_failures.len(), 1);
+
+        let entry = SelectionDecisionEntry::new_no_selection_with_traversal_metrics(
+            ProcedureRef::new(HISTORY_TRAVERSAL_PROCEDURE_ID),
+            SelectionScope::all_admitted_candidates(),
+            receipt.considered,
+            receipt.considered_sources,
+            receipt.projection_failures,
+            Some(TraversalEvidence {
+                seed: 0,
+                strategy,
+                oracle_targets: Vec::new(),
+                selected_source: None,
+                child_counts: receipt.child_counts,
+            }),
+            receipt.metrics,
+        )
+        .expect("projection-only no-selection receipt");
+
+        assert!(entry.candidate_set.is_none());
+        assert_eq!(entry.projection_failures.len(), 1);
+        entry.validate_shape().expect("passive receipt validates");
+    }
+
+    #[test]
     fn traversal_excludes_invalid_candidate_set_membership() {
         let mut candidate = candidate_from_payload(decision_grade_payload(
             "node-a",
@@ -3391,6 +3494,100 @@ mod tests {
         .expect("unresolved evidence is valid negative evidence");
 
         assert!(selection.is_none());
+    }
+
+    #[test]
+    fn all_resolved_gate_preserves_completed_no_selection_receipt() {
+        let unresolved = candidate_from_payload(with_oracle(
+            decision_grade_payload(
+                "gate-unresolved",
+                "branch-gate-unresolved",
+                None,
+                0,
+                BranchDisposition::Keep,
+                metrics(true, true, 0),
+            ),
+            crate::mbe::Verdict::Unresolved,
+        ));
+        let candidates = HistoryCandidates {
+            scope: SelectionScope::all_admitted_candidates(),
+            candidates: vec![unresolved],
+        };
+        let oracle_targets = vec!["instance-a".to_string()];
+        let strategy = StrategyKind::score_child_prop().with_oracle_gate(OracleGate::AllResolved);
+
+        let attempt = select_attempt_with_policy(
+            Candidates::from_history(candidates),
+            0,
+            strategy,
+            selection_metrics::Policy::default(),
+            &oracle_targets,
+        )
+        .expect("unresolved evidence completes selection without a successor");
+        let SelectionAttempt::NoSelection(receipt) = attempt else {
+            panic!("strict unresolved evidence must not select a successor")
+        };
+        assert_eq!(receipt.considered.len(), 1);
+        assert_eq!(receipt.considered_sources.len(), 1);
+
+        let entry = SelectionDecisionEntry::new_no_selection_with_traversal_metrics(
+            ProcedureRef::new(HISTORY_TRAVERSAL_PROCEDURE_ID),
+            SelectionScope::all_admitted_candidates(),
+            receipt.considered,
+            receipt.considered_sources,
+            receipt.projection_failures,
+            Some(TraversalEvidence {
+                seed: 0,
+                strategy,
+                oracle_targets,
+                selected_source: None,
+                child_counts: receipt.child_counts,
+            }),
+            receipt.metrics,
+        )
+        .expect("construct completed no-selection receipt");
+        assert!(entry.decision.is_none());
+        entry.validate_shape().expect("passive receipt validates");
+        assert!(entry.validate_sealed_shape().is_err());
+
+        let Formula::ScoreChildProp(formula) = &entry
+            .formula
+            .as_ref()
+            .expect("score-child-prop receipt retains formula")
+            .formula;
+        assert!(formula.selected_index.is_none());
+        assert!(formula.selected_candidate.is_none());
+        assert_eq!(formula.rows.len(), 1);
+        assert!(!formula.rows[0].selectable);
+        assert!(!formula.rows[0].selected);
+        assert_eq!(
+            formula.rows[0].exclusion_reason.as_deref(),
+            Some("oracle_gate_not_satisfied")
+        );
+
+        let mut tampered = entry.clone();
+        tampered.considered_order_hash = HistoryHash::of_bytes(b"tampered-order");
+        assert!(tampered.validate_shape().is_err());
+
+        let mut tampered = entry.clone();
+        tampered.candidate_set = None;
+        assert!(tampered.validate_shape().is_err());
+
+        let mut tampered = entry.clone();
+        tampered.metrics.id = HistoryHash::of_bytes(b"tampered-metrics");
+        assert!(tampered.validate_shape().is_err());
+
+        let mut tampered = entry.clone();
+        tampered.procedure_or_policy = ProcedureRef::new("other-procedure");
+        assert!(tampered.validate_shape().is_err());
+
+        let mut tampered = entry;
+        tampered
+            .traversal
+            .as_mut()
+            .expect("v5 traversal evidence")
+            .selected_source = Some(TraversalCandidateSource::CurrentGeneration);
+        assert!(tampered.validate_shape().is_err());
     }
 
     #[test]
