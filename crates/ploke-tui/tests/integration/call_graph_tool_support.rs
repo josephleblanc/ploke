@@ -4417,9 +4417,19 @@ pub(crate) fn assert_handle_error_returned_future_local_binding_payload(
     );
 }
 
-pub(crate) fn assert_handle_error_future_poll_producer_flow_payload(
+#[derive(Clone, Copy)]
+pub(crate) struct PollProducerCase {
+    pub(crate) owner_type: &'static str,
+    pub(crate) receiver_method: &'static str,
+    pub(crate) field_path: &'static [&'static str],
+    pub(crate) return_path: &'static [&'static str],
+    pub(crate) field_binding: &'static str,
+}
+
+pub(crate) fn assert_poll_producer(
     flows: &[serde_json::Value],
     owner: Uuid,
+    expected: PollProducerCase,
     tool: &str,
 ) {
     let rows = flows
@@ -4434,7 +4444,7 @@ pub(crate) fn assert_handle_error_future_poll_producer_flow_payload(
             flow.site.owner_id == owner
                 && flow.site.kind == CallSiteKind::Method
                 && flow.site.status == CallStatusKind::Unsupported
-                && flow.poll_owner_type == "HandleErrorFuture"
+                && flow.poll_owner_type == expected.owner_type
                 && matches!(
                     &flow.site.callee,
                     CallCalleeInfo::Method {
@@ -4444,18 +4454,21 @@ pub(crate) fn assert_handle_error_future_poll_producer_flow_payload(
                             field_path,
                             ..
                         }),
-                    } if name == "poll"
-                        && method_name == "project"
-                        && field_path.iter().map(String::as_str).eq(["future"])
+                    } if name == "poll" && method_name == expected.receiver_method
+                        && field_path.iter().map(String::as_str).eq(expected.field_path.iter().copied())
                 )
         })
         .unwrap_or_else(|| {
-            panic!("{tool} should expose HandleErrorFuture::poll producer flow: {flows:#?}")
+            panic!(
+                "{tool} should expose {}::poll producer flow: {flows:#?}",
+                expected.owner_type
+            )
         });
 
     assert!(
         flow.site.targets.is_empty(),
-        "{tool} should keep HandleErrorFuture::poll targetless: {flow:#?}"
+        "{tool} should keep {}::poll targetless: {flow:#?}",
+        expected.owner_type
     );
     assert_eq!(flow.return_binding.owner_id, flow.producer_id);
     assert_eq!(flow.return_binding.kind, "ReturnExpression");
@@ -4468,12 +4481,13 @@ pub(crate) fn assert_handle_error_future_poll_producer_flow_payload(
             .is_some_and(|path| path
                 .iter()
                 .map(String::as_str)
-                .eq(["future", "HandleErrorFuture"])),
-        "{tool} should expose the constructed HandleErrorFuture return binding: {flow:#?}"
+                .eq(expected.return_path.iter().copied())),
+        "{tool} should expose the constructed {} return binding: {flow:#?}",
+        expected.owner_type
     );
     assert_eq!(flow.field_binding.owner_id, flow.producer_id);
     assert_eq!(flow.field_binding.kind, "LetBinding");
-    assert_eq!(flow.field_binding.name, "return.future");
+    assert_eq!(flow.field_binding.name, expected.field_binding);
     assert_eq!(flow.field_binding.source_kind, "PathCallResult");
     assert_eq!(flow.field_binding.source_id, Some(flow.source_site.site_id));
     assert_eq!(flow.source_site.owner_id, flow.producer_id);

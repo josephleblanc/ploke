@@ -15,14 +15,14 @@ use crate::call_graph_tool_support::{
     ReceiverToolFixture, assert_admitted_external_summary_effect,
     assert_admitted_external_summary_proof, assert_admitted_macro_boundary_summary_proof,
     assert_ambiguous_candidate_proof, assert_ambiguous_dynamic_candidates_with_relation,
-    assert_dynamic_context, assert_dynamic_proof,
-    assert_handle_error_future_poll_producer_flow_payload, assert_ifunc_context,
-    assert_ifunc_proof, assert_ifunc_unsafe_calls, assert_method_context, assert_method_proof,
+    assert_dynamic_context, assert_dynamic_proof, assert_ifunc_context, assert_ifunc_proof,
+    assert_ifunc_unsafe_calls, assert_method_context, assert_method_proof,
     assert_path_blocker_proof, assert_path_context, assert_path_context_absent,
-    assert_path_resolution_proof, assert_resolved_method_context, assert_resolved_method_proof,
-    assert_resolved_path_context_count, assert_resolved_path_context_target,
-    assert_resolved_path_proof, assert_runtime_dispatch_blocker,
-    assert_self_field_binding_evidence, request_parts_extract_target, ui_field,
+    assert_path_resolution_proof, assert_poll_producer, assert_resolved_method_context,
+    assert_resolved_method_proof, assert_resolved_path_context_count,
+    assert_resolved_path_context_target, assert_resolved_path_proof,
+    assert_runtime_dispatch_blocker, assert_self_field_binding_evidence,
+    request_parts_extract_target, ui_field,
 };
 
 #[tokio::test]
@@ -626,17 +626,19 @@ async fn code_item_lookup_returns_unsupported_receiver_targetless_real_corpus_ro
                     "lookup",
                 );
                 assert_runtime_dispatch_need(runtime_needs, site_id, fixture.case.label, "lookup");
-                assert_handle_error_future_poll_producer_flow_payload(
+                assert_poll_producer(
                     future_poll_flows,
                     fixture.owner,
+                    fixture
+                        .case
+                        .poll_producer()
+                        .expect("future-poll case should have producer proof shape"),
                     "code_item_lookup",
                 );
                 fixture
                     .state
                     .db
-                    .upsert_proof_fact_values(&[
-                        ploke_test_utils::axum_dyn_future_poll_runtime_dispatch_summary(site_id),
-                    ])
+                    .upsert_proof_fact_values(&[fixture.case.runtime_dispatch_summary(site_id)])
                     .unwrap_or_else(|err| {
                         panic!(
                             "{} runtime dispatch summary insert: {err}",
@@ -1855,17 +1857,19 @@ async fn code_item_edges_returns_unsupported_receiver_targetless_real_corpus_row
                     "edges",
                 );
                 assert_runtime_dispatch_need(runtime_needs, site_id, fixture.case.label, "edges");
-                assert_handle_error_future_poll_producer_flow_payload(
+                assert_poll_producer(
                     future_poll_flows,
                     fixture.owner,
+                    fixture
+                        .case
+                        .poll_producer()
+                        .expect("future-poll case should have producer proof shape"),
                     "code_item_edges",
                 );
                 fixture
                     .state
                     .db
-                    .upsert_proof_fact_values(&[
-                        ploke_test_utils::axum_dyn_future_poll_runtime_dispatch_summary(site_id),
-                    ])
+                    .upsert_proof_fact_values(&[fixture.case.runtime_dispatch_summary(site_id)])
                     .unwrap_or_else(|err| {
                         panic!(
                             "{} runtime dispatch summary insert: {err}",

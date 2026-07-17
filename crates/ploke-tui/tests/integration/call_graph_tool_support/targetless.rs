@@ -313,21 +313,38 @@ impl ReceiverToolCase {
         },
     }];
 
-    pub(crate) const FUTURE_POLL: [Self; 1] = [Self {
-        label: "axum/src/error_handling/mod.rs:251 HandleErrorFuture::poll dyn Future",
-        item: "poll",
-        callee: "poll",
-        status: CallStatusKind::Unsupported,
-        owner_type: Some("HandleErrorFuture"),
-        module_path: Some(&["crate", "error_handling", "future"]),
-        file_suffix: "axum/src/error_handling/mod.rs",
-        body: "self.project().future.poll(cx)",
-        generic_arg_count: None,
-        receiver: ReceiverShape::MethodResultField {
-            method_name: "project",
-            field_path: &["future"],
+    pub(crate) const FUTURE_POLL: [Self; 2] = [
+        Self {
+            label: "axum/src/error_handling/mod.rs:251 HandleErrorFuture::poll dyn Future",
+            item: "poll",
+            callee: "poll",
+            status: CallStatusKind::Unsupported,
+            owner_type: Some("HandleErrorFuture"),
+            module_path: Some(&["crate", "error_handling", "future"]),
+            file_suffix: "axum/src/error_handling/mod.rs",
+            body: "self.project().future.poll(cx)",
+            generic_arg_count: None,
+            receiver: ReceiverShape::MethodResultField {
+                method_name: "project",
+                field_path: &["future"],
+            },
         },
-    }];
+        Self {
+            label: "axum/src/middleware/from_fn.rs:375 ResponseFuture::poll BoxFuture",
+            item: "poll",
+            callee: "poll",
+            status: CallStatusKind::Unsupported,
+            owner_type: Some("ResponseFuture"),
+            module_path: Some(&["crate", "middleware", "from_fn"]),
+            file_suffix: "axum/src/middleware/from_fn.rs",
+            body: "self.inner.as_mut().poll(cx).map(Ok)",
+            generic_arg_count: None,
+            receiver: ReceiverShape::MethodResultField {
+                method_name: "as_mut",
+                field_path: &["inner"],
+            },
+        },
+    ];
 
     pub(crate) fn callee(&self) -> CallCalleeInfo {
         let receiver = match self.receiver {
@@ -411,9 +428,38 @@ impl ReceiverToolCase {
     }
 
     pub(crate) fn expects_runtime_dispatch_blocker(&self) -> bool {
-        self.file_suffix == "axum/src/error_handling/mod.rs"
-            && self.body == "self.project().future.poll(cx)"
-            && self.callee == "poll"
+        matches!(
+            self.owner_type,
+            Some("HandleErrorFuture" | "ResponseFuture")
+        ) && self.callee == "poll"
+    }
+
+    pub(crate) fn runtime_dispatch_blocker(&self, site_id: Uuid) -> serde_json::Value {
+        ploke_test_utils::axum_future_poll_blocker(site_id, self.label)
+    }
+
+    pub(crate) fn runtime_dispatch_summary(&self, site_id: Uuid) -> serde_json::Value {
+        ploke_test_utils::axum_future_poll_runtime_dispatch_summary(site_id, self.label)
+    }
+
+    pub(crate) fn poll_producer(&self) -> Option<PollProducerCase> {
+        match self.owner_type {
+            Some("HandleErrorFuture") => Some(PollProducerCase {
+                owner_type: "HandleErrorFuture",
+                receiver_method: "project",
+                field_path: &["future"],
+                return_path: &["future", "HandleErrorFuture"],
+                field_binding: "return.future",
+            }),
+            Some("ResponseFuture") => Some(PollProducerCase {
+                owner_type: "ResponseFuture",
+                receiver_method: "as_mut",
+                field_path: &["inner"],
+                return_path: &["ResponseFuture"],
+                field_binding: "return.inner",
+            }),
+            _ => None,
+        }
     }
 }
 
@@ -933,7 +979,7 @@ fn attach_runtime_dispatch_blocker_if_needed(db: &Database, owner: Uuid, case: &
         .site
         .id;
 
-    db.upsert_proof_fact_values(&[ploke_test_utils::axum_dyn_future_poll_blocker(site)])
+    db.upsert_proof_fact_values(&[case.runtime_dispatch_blocker(site)])
         .unwrap_or_else(|err| panic!("{} runtime dispatch blocker insert: {err}", case.label));
 }
 

@@ -2,7 +2,7 @@ use super::*;
 use cozo::DataValue;
 use ploke_core::rag_types::{
     CallCalleeInfo, CallReceiverInfo, CallSiteKind, CallStatusKind, CallTargetKind,
-    LocalBindingRelationKind,
+    FuturePollFieldProducerFlowInfo, LocalBindingRelationKind,
 };
 use ploke_db::{
     Database,
@@ -11,6 +11,15 @@ use ploke_db::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;
+
+#[derive(Clone, Copy)]
+struct PollFlowCase {
+    owner_type: &'static str,
+    receiver_method: &'static str,
+    field_path: &'static [&'static str],
+    return_path: &'static [&'static str],
+    field_binding: &'static str,
+}
 
 #[tokio::test]
 async fn local_bindings_exact_expose_axum_tap_io_constructor_frontier() -> Result<(), Error> {
@@ -630,6 +639,69 @@ async fn local_bindings_exact_expose_axum_handle_error_returned_future_producer(
     Ok(())
 }
 
+fn assert_poll_flow(
+    flow: &FuturePollFieldProducerFlowInfo,
+    poll_owner: Uuid,
+    expected: PollFlowCase,
+) {
+    assert_eq!(flow.site.owner_id, poll_owner);
+    assert_eq!(flow.site.kind, CallSiteKind::Method);
+    assert_eq!(flow.site.status, CallStatusKind::Unsupported);
+    assert!(flow.site.targets.is_empty());
+    assert!(
+        matches!(
+            &flow.site.callee,
+            CallCalleeInfo::Method {
+                name,
+                receiver: Some(CallReceiverInfo::MethodResultField {
+                    method_name,
+                    field_path,
+                    ..
+                }),
+            } if name == "poll"
+                && method_name == expected.receiver_method
+                && field_path
+                    .iter()
+                    .map(String::as_str)
+                    .eq(expected.field_path.iter().copied())
+        ),
+        "RAG should preserve the {}::poll receiver: {flow:#?}",
+        expected.owner_type
+    );
+    assert_eq!(flow.poll_owner_type, expected.owner_type);
+    assert_eq!(flow.return_binding.owner_id, flow.producer_id);
+    assert_eq!(flow.return_binding.kind, "ReturnExpression");
+    assert_eq!(flow.return_binding.source_kind, "Constructed");
+    assert!(
+        flow.return_binding
+            .source_path
+            .as_deref()
+            .is_some_and(|path| path
+                .iter()
+                .map(String::as_str)
+                .eq(expected.return_path.iter().copied()))
+    );
+    assert_eq!(flow.field_binding.owner_id, flow.producer_id);
+    assert_eq!(flow.field_binding.kind, "LetBinding");
+    assert_eq!(flow.field_binding.name, expected.field_binding);
+    assert_eq!(flow.field_binding.source_kind, "PathCallResult");
+    assert_eq!(flow.field_binding.source_id, Some(flow.source_site.site_id));
+    assert_eq!(flow.source_site.owner_id, flow.producer_id);
+    assert_eq!(flow.source_site.kind, CallSiteKind::Path);
+    assert!(
+        flow.source_site
+            .path
+            .as_deref()
+            .is_some_and(|path| path.iter().map(String::as_str).eq(["Box", "pin"]))
+    );
+    assert_eq!(
+        flow.source_edge.relation,
+        LocalBindingRelationKind::BindingSourceCallResult
+    );
+    assert_eq!(flow.source_edge.source_id, flow.field_binding.id);
+    assert_eq!(flow.source_edge.target_id, flow.source_site.site_id);
+}
+
 #[tokio::test]
 async fn future_poll_field_producer_flows_exact_expose_axum_handle_error_poll_frontier()
 -> Result<(), Error> {
@@ -668,59 +740,18 @@ async fn future_poll_field_producer_flows_exact_expose_axum_handle_error_poll_fr
         "RAG should expose one HandleErrorFuture::poll producer flow: {flows:#?}"
     );
     let flow = &flows[0];
-    assert_eq!(flow.site.owner_id, poll_owner);
-    assert_eq!(flow.site.kind, CallSiteKind::Method);
-    assert_eq!(flow.site.status, CallStatusKind::Unsupported);
-    assert!(flow.site.targets.is_empty());
-    assert!(
-        matches!(
-            &flow.site.callee,
-            CallCalleeInfo::Method {
-                name,
-                receiver: Some(CallReceiverInfo::MethodResultField {
-                    method_name,
-                    field_path,
-                    ..
-                }),
-            } if name == "poll"
-                && method_name == "project"
-                && field_path.iter().map(String::as_str).eq(["future"])
-        ),
-        "RAG should preserve the project().future poll receiver: {flow:#?}"
-    );
-    assert_eq!(flow.poll_owner_type, "HandleErrorFuture");
     assert_eq!(flow.producer_id, producer);
-    assert_eq!(flow.return_binding.owner_id, producer);
-    assert_eq!(flow.return_binding.kind, "ReturnExpression");
-    assert_eq!(flow.return_binding.source_kind, "Constructed");
-    assert!(
-        flow.return_binding
-            .source_path
-            .as_deref()
-            .is_some_and(|path| path
-                .iter()
-                .map(String::as_str)
-                .eq(["future", "HandleErrorFuture"]))
+    assert_poll_flow(
+        flow,
+        poll_owner,
+        PollFlowCase {
+            owner_type: "HandleErrorFuture",
+            receiver_method: "project",
+            field_path: &["future"],
+            return_path: &["future", "HandleErrorFuture"],
+            field_binding: "return.future",
+        },
     );
-    assert_eq!(flow.field_binding.owner_id, producer);
-    assert_eq!(flow.field_binding.kind, "LetBinding");
-    assert_eq!(flow.field_binding.name, "return.future");
-    assert_eq!(flow.field_binding.source_kind, "PathCallResult");
-    assert_eq!(flow.field_binding.source_id, Some(flow.source_site.site_id));
-    assert_eq!(flow.source_site.owner_id, producer);
-    assert_eq!(flow.source_site.kind, CallSiteKind::Path);
-    assert!(
-        flow.source_site
-            .path
-            .as_deref()
-            .is_some_and(|path| path.iter().map(String::as_str).eq(["Box", "pin"]))
-    );
-    assert_eq!(
-        flow.source_edge.relation,
-        LocalBindingRelationKind::BindingSourceCallResult
-    );
-    assert_eq!(flow.source_edge.source_id, flow.field_binding.id);
-    assert_eq!(flow.source_edge.target_id, flow.source_site.site_id);
 
     let context = rag.exact_call_context(poll_owner)?;
     let poll_site = context
@@ -730,6 +761,71 @@ async fn future_poll_field_producer_flows_exact_expose_axum_handle_error_poll_fr
     assert!(
         poll_site.targets.is_empty(),
         "RAG must not fabricate a dyn Future::poll target from producer proof: {poll_site:#?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn future_poll_field_producer_flows_exact_expose_axum_from_fn_poll_frontier()
+-> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    // Source oracle:
+    //   axum/src/middleware/from_fn.rs:291 creates
+    //   `let future = Box::pin(async move { ... })`.
+    //   axum/src/middleware/from_fn.rs:313 returns
+    //   `ResponseFuture { inner: future }`.
+    //   axum/src/middleware/from_fn.rs:375 later calls
+    //   `self.inner.as_mut().poll(cx).map(Ok)`.
+    //
+    // Contract: exact RAG surfaces the generated `impl_service!`
+    // producer-side returned-field proof for each arity while keeping
+    // BoxFuture::poll targetless.
+    let poll_owner = method_id_by_file(
+        &db,
+        "poll",
+        "self.inner.as_mut().poll(cx).map(Ok)",
+        "axum/src/middleware/from_fn.rs",
+    )?;
+    let flows = rag
+        .exact_future_poll_field_producer_flows_for_owner(poll_owner)?
+        .expect("call context is enabled");
+    assert_eq!(
+        flows.len(),
+        16,
+        "RAG should expose one ResponseFuture producer flow per generated arity: {flows:#?}"
+    );
+
+    let expected = PollFlowCase {
+        owner_type: "ResponseFuture",
+        receiver_method: "as_mut",
+        field_path: &["inner"],
+        return_path: &["ResponseFuture"],
+        field_binding: "return.inner",
+    };
+    let producers = flows
+        .iter()
+        .map(|flow| flow.producer_id)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        producers.len(),
+        16,
+        "from_fn impl_service! should expose sixteen generated producer owners: {flows:#?}"
+    );
+    for flow in &flows {
+        assert_poll_flow(flow, poll_owner, expected);
+    }
+
+    let context = rag.exact_call_context(poll_owner)?;
+    let poll_site = context
+        .iter()
+        .find(|site| site.site_id == flows[0].site.site_id)
+        .unwrap_or_else(|| panic!("RAG should expose poll site in call context: {context:#?}"));
+    assert!(
+        poll_site.targets.is_empty(),
+        "RAG must not fabricate a BoxFuture::poll target from producer proof: {poll_site:#?}"
     );
 
     Ok(())
