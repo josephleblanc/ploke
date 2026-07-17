@@ -1,7 +1,7 @@
 # Backup DB Fixtures
 
 Last reviewed: 2026-07-10
-Last updated: 2026-07-16
+Last updated: 2026-07-17
 
 This document is the current inventory for backup database fixtures under
 the shared DB snapshot fixture directory. It records which source targets
@@ -216,6 +216,35 @@ impl Drop for FixtureRestoreGuard {
 | `corpus_axum_call_graph_2026-07-16.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | plain workspace-member corpus backup for real-target call graph query contracts | 2026-07-16 |
 | `corpus_axum_openrouter_embeddings_2026-05-17.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | OpenRouter-searchable workspace-member corpus backup for type-context matrix tests | 2026-05-17 |
 | `ploke-db_af8e3a20-728d-5967-8523-da8a5ccdae45` | `crates/ploke-db` | currently orphaned snapshot | 2026-03-20 |
+
+## 2026-07-17 Active Call-Graph Fixture Refresh
+
+The active fixture set was regenerated with
+`cargo run -p xtask --features call_graph -- fixtures regenerate --active`.
+The regenerated shared call-graph corpus snapshots were copied into
+`tests/backup_dbs/` as committed seed artifacts.
+
+Post-regeneration verification:
+
+- `cargo run -p xtask --features call_graph -- fixtures regenerate --active`
+  completed for all registered active checkout-local and shared call-graph
+  corpus fixtures. The shared call-graph corpus snapshots still report 66
+  relations and each regenerated fixture roundtripped cleanly.
+- `cargo run -p xtask --features call_graph -- verify-backup-dbs` passed for
+  all registered active fixtures after copying the regenerated shared snapshots
+  into `tests/backup_dbs/`.
+- `timeout 1200s cargo test -p ploke-db real_target_matrix -- --nocapture`
+  passed with 113 tests and 355 filtered out against the refreshed committed
+  seed artifacts.
+- Current committed seed checksums:
+  - `corpus_memchr_call_graph_2026-07-15.sqlite`:
+    `503fe619e607f7dddae437ae748698b323dab4a78c4784002eba27fc7df838bf`
+  - `corpus_generic_array_call_graph_2026-07-15.sqlite`:
+    `653f2baa9e5433bf7ff935c5b600e1ac7a219add3ba20b7e70e1688d4b24fc66`
+  - `corpus_chrono_call_graph_2026-07-15.sqlite`:
+    `6aa12edd2b03c3473261c33c4c3627ca46e7da026176b7e517bebf7fc9c86e98`
+  - `corpus_axum_call_graph_2026-07-16.sqlite`:
+    `4ac05d50c7650363badedd1dec953005af979dffdd40f452a3ac94662f3efb39`
 
 ## 2026-07-16 Active Call-Graph Fixture Refresh
 
