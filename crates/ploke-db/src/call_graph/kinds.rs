@@ -91,6 +91,7 @@ pub enum LocalBindingRelationKind {
     BindingSourceFunction,
     BindingSourceLocalItem,
     BindingProjectsField,
+    BindingSourceParameter,
     BindingAliasesBinding,
     ArgumentSuppliesParameter,
 }
@@ -104,6 +105,7 @@ impl LocalBindingRelationKind {
             "BindingSourceFunction" => Ok(Self::BindingSourceFunction),
             "BindingSourceLocalItem" => Ok(Self::BindingSourceLocalItem),
             "BindingProjectsField" => Ok(Self::BindingProjectsField),
+            "BindingSourceParameter" => Ok(Self::BindingSourceParameter),
             "BindingAliasesBinding" => Ok(Self::BindingAliasesBinding),
             "ArgumentSuppliesParameter" => Ok(Self::ArgumentSuppliesParameter),
             other => Err(DbError::Cozo(format!(

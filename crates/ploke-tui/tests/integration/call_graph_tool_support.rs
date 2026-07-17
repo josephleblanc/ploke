@@ -202,6 +202,14 @@ pub(crate) struct AxumTapIoAcceptToolFixture {
     pub(crate) owner: Uuid,
 }
 
+pub(crate) struct MemchrRunnerSetterToolFixture {
+    pub(crate) state: Arc<AppState>,
+    pub(crate) file_path: PathBuf,
+    pub(crate) module_path: Vec<String>,
+    pub(crate) owner: Uuid,
+    pub(crate) field_name: &'static str,
+}
+
 #[derive(Debug)]
 pub(crate) struct ExpectedCallSite {
     pub(crate) owner: Uuid,
@@ -1094,6 +1102,43 @@ impl AxumTapIoAcceptToolFixture {
     }
 }
 
+impl MemchrRunnerSetterToolFixture {
+    pub(crate) async fn new_fwd() -> Self {
+        let db = memchr_call_graph_db();
+        let target = method_target_by_body_and_file(
+            db.as_ref(),
+            "fwd",
+            "self.fwd = Some(Box::new(search));",
+            "src/tests/substring/mod.rs",
+        );
+        let mut rag_config = RagConfig::default();
+        rag_config.proof_context.enabled = false;
+        let state = source_state_for_target_with_rag_config(
+            Arc::clone(&db),
+            &target,
+            "memchr fwd",
+            rag_config,
+        )
+        .await;
+
+        Self {
+            state,
+            file_path: target.file_path,
+            module_path: target.module_path,
+            owner: target.id,
+            field_name: "fwd",
+        }
+    }
+
+    pub(crate) fn module_path_arg(&self) -> String {
+        self.module_path.join("::")
+    }
+
+    pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
+        ctx_for_state(&self.state, call_id)
+    }
+}
+
 impl AxumCallbackClosureToolFixture {
     pub(crate) async fn new() -> Self {
         let db = axum_call_graph_db();
@@ -1361,6 +1406,24 @@ async fn axum_state_for_target_with_rag_config(
         .parent()
         .and_then(|src_dir| src_dir.parent())
         .unwrap_or_else(|| panic!("{label} file should live under a crate src directory"))
+        .to_path_buf();
+    app_state_with_rag_config(db, crate_root, rag_config).await
+}
+
+async fn source_state_for_target_with_rag_config(
+    db: Arc<Database>,
+    target: &TargetInfo,
+    label: &str,
+    rag_config: RagConfig,
+) -> Arc<AppState> {
+    let src_dir = target
+        .file_path
+        .ancestors()
+        .find(|path| path.file_name().is_some_and(|name| name == "src"))
+        .unwrap_or_else(|| panic!("{label} file should live under a crate src directory"));
+    let crate_root = src_dir
+        .parent()
+        .unwrap_or_else(|| panic!("{label} src directory should have a crate root"))
         .to_path_buf();
     app_state_with_rag_config(db, crate_root, rag_config).await
 }
@@ -3849,6 +3912,72 @@ pub(crate) fn assert_tap_io_constructor_local_binding_payload(
                 && edge.target_kind == "LocalBinding"
         }),
         "{tool} should expose BindingProjectsField for tap_io return.tap_fn: {edges:#?}"
+    );
+}
+
+pub(crate) fn assert_memchr_runner_setter_local_binding_payload(
+    bindings: &[serde_json::Value],
+    edges: &[serde_json::Value],
+    owner: Uuid,
+    field_name: &str,
+    tool: &str,
+) {
+    let rows = bindings
+        .iter()
+        .filter_map(|binding| serde_json::from_value::<LocalBindingInfo>(binding.clone()).ok())
+        .collect::<Vec<_>>();
+    let parameter = rows
+        .iter()
+        .find(|binding| {
+            binding.owner_id == owner
+                && binding.kind == "ParameterBinding"
+                && binding.name == "search"
+                && binding.source_kind == "Parameter"
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "{tool} should expose memchr Runner::{field_name} search parameter: {bindings:#?}"
+            )
+        });
+    let assignment = rows
+        .iter()
+        .find(|binding| {
+            binding.owner_id == owner
+                && binding.kind == "FieldAssignment"
+                && binding.name == format!("self.{field_name}")
+                && binding.source_kind == "SelfFieldAssignment"
+                && matches!(binding.source_path.as_deref(), Some([segment]) if segment == field_name)
+                && binding.callee_kind.as_deref() == Some("Path")
+                && matches!(binding.callee_path.as_deref(), Some([segment]) if segment == "search")
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "{tool} should expose memchr Runner::{field_name} self-field assignment: {bindings:#?}"
+            )
+        });
+
+    let edge_rows = edges
+        .iter()
+        .filter_map(|edge| serde_json::from_value::<LocalBindingEdgeInfo>(edge.clone()).ok())
+        .collect::<Vec<_>>();
+    assert!(
+        edge_rows.iter().any(|edge| {
+            edge.source_id == owner
+                && edge.target_id == assignment.id
+                && edge.relation == LocalBindingRelationKind::OwnerContainsBinding
+                && edge.target_kind == "LocalBinding"
+        }),
+        "{tool} should expose OwnerContainsBinding for memchr Runner::{field_name} assignment: {edges:#?}"
+    );
+    assert!(
+        edge_rows.iter().any(|edge| {
+            edge.source_id == assignment.id
+                && edge.target_id == parameter.id
+                && edge.relation == LocalBindingRelationKind::BindingSourceParameter
+                && edge.source_kind == "LocalBinding"
+                && edge.target_kind == "LocalBinding"
+        }),
+        "{tool} should expose BindingSourceParameter for memchr Runner::{field_name}: {edges:#?}"
     );
 }
 

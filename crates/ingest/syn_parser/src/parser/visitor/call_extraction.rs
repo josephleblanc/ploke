@@ -136,6 +136,13 @@ struct BodyCallVisitor<'a> {
     unsafe_depth: usize,
 }
 
+struct SelfFieldAssignment {
+    name: String,
+    span: (usize, usize),
+    field_path: Vec<String>,
+    source_path: Vec<String>,
+}
+
 impl BodyCallVisitor<'_> {
     fn record_macro_call(&mut self, mac: &syn::Macro) {
         let macro_name = path_discriminator(&mac.path);
@@ -526,6 +533,25 @@ impl BodyCallVisitor<'_> {
         );
     }
 
+    fn record_self_field_assignment(&mut self, assign: &syn::ExprAssign) {
+        let Some(binding) = self_field_assignment(
+            assign.left.as_ref(),
+            assign.right.as_ref(),
+            self.param_names,
+        ) else {
+            return;
+        };
+        self.record_local_binding(
+            &binding.name,
+            binding.span,
+            LocalBindingKind::FieldAssignment,
+            LocalBindingSource::SelfFieldAssignment {
+                field_path: binding.field_path,
+                source_path: binding.source_path,
+            },
+        );
+    }
+
     fn record_constructed_binding(
         &mut self,
         name: &str,
@@ -751,6 +777,11 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
             self.record_dynamic_call(call);
         }
         visit::visit_expr_call(self, call);
+    }
+
+    fn visit_expr_assign(&mut self, assign: &'ast syn::ExprAssign) {
+        self.record_self_field_assignment(assign);
+        visit::visit_expr_assign(self, assign);
     }
 
     fn visit_expr_await(&mut self, await_expr: &'ast syn::ExprAwait) {
@@ -1102,6 +1133,7 @@ fn local_binding_source_relation(
             source,
             target: *base_binding_id,
         }),
+        LocalBindingSource::SelfFieldAssignment { .. } => None,
         LocalBindingSource::Closure { body_id } | LocalBindingSource::AsyncClosure { body_id } => {
             Some(LocalBindingRelation::BindingSourceClosure {
                 source,
@@ -3331,6 +3363,81 @@ fn self_field_path(expr: &syn::Expr) -> Option<Vec<String>> {
             Some(field_path)
         }
         _ => None,
+    }
+}
+
+fn self_field_assignment(
+    left: &syn::Expr,
+    right: &syn::Expr,
+    param_names: &[String],
+) -> Option<SelfFieldAssignment> {
+    let field_path = self_field_path(unparen_expr(left))?;
+    if field_path.is_empty() {
+        return None;
+    }
+    let source_path = callable_parameter_path(right, param_names)?;
+    let byte_range = left.span().byte_range();
+    let mut name = Vec::with_capacity(field_path.len() + 1);
+    name.push("self".to_string());
+    name.extend(field_path.iter().cloned());
+    Some(SelfFieldAssignment {
+        name: name.join("."),
+        span: (byte_range.start, byte_range.end),
+        field_path,
+        source_path,
+    })
+}
+
+fn callable_parameter_path(expr: &syn::Expr, param_names: &[String]) -> Option<Vec<String>> {
+    match unparen_expr(expr) {
+        syn::Expr::Path(path) if path.qself.is_none() => {
+            let path = path_segments(&path.path);
+            let [name] = path.as_slice() else {
+                return None;
+            };
+            param_names
+                .iter()
+                .any(|candidate| candidate == name)
+                .then_some(path)
+        }
+        syn::Expr::Call(call) => callable_wrapped_parameter_path(call, param_names),
+        _ => None,
+    }
+}
+
+fn callable_wrapped_parameter_path(
+    call: &syn::ExprCall,
+    param_names: &[String],
+) -> Option<Vec<String>> {
+    let syn::Expr::Path(func) = unparen_expr(call.func.as_ref()) else {
+        return None;
+    };
+    if func.qself.is_some() {
+        return None;
+    }
+    let path = path_segments(&func.path);
+    if !is_box_new(&path) && !is_option_some(&path) {
+        return None;
+    }
+    let mut args = call.args.iter();
+    let arg = args.next()?;
+    if args.next().is_some() {
+        return None;
+    }
+    callable_parameter_path(arg, param_names)
+}
+
+fn is_option_some(path: &[String]) -> bool {
+    match path {
+        [variant] => variant == "Some",
+        [option, variant] => option == "Option" && variant == "Some",
+        [root, option_mod, option, variant] => {
+            (root == "std" || root == "core")
+                && option_mod == "option"
+                && option == "Option"
+                && variant == "Some"
+        }
+        _ => false,
     }
 }
 

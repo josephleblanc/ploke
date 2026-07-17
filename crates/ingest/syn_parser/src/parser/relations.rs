@@ -234,6 +234,19 @@ pub enum LocalBindingRelation {
         source: LocalBindingId,
         target: LocalBindingId,
     },
+    /// A binding is sourced by a parameter binding in the same owner.
+    ///
+    /// The source endpoint is the binding/value-flow record, for example a
+    /// self-field assignment. The target endpoint is the parameter binding that
+    /// supplied the stored value.
+    ///
+    /// ```text
+    /// BindingSourceParameter ⊆ LocalBindingId × LocalBindingId
+    /// ```
+    BindingSourceParameter {
+        source: LocalBindingId,
+        target: LocalBindingId,
+    },
     /// A local binding aliases another local binding in the same owner.
     ///
     /// The source endpoint is the alias binding. The target endpoint is the
@@ -268,6 +281,7 @@ impl LocalBindingRelation {
             Self::BindingSourceFunction { .. } => "BindingSourceFunction",
             Self::BindingSourceLocalItem { .. } => "BindingSourceLocalItem",
             Self::BindingProjectsField { .. } => "BindingProjectsField",
+            Self::BindingSourceParameter { .. } => "BindingSourceParameter",
             Self::BindingAliasesBinding { .. } => "BindingAliasesBinding",
             Self::ArgumentSuppliesParameter { .. } => "ArgumentSuppliesParameter",
         }

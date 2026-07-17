@@ -225,7 +225,10 @@ The regenerated shared call-graph corpus snapshots were copied into
 `tests/backup_dbs/` as committed seed artifacts.
 This refresh covers both the real-target query fixture update and the later
 durable `LocalFunctionBinding` / `BindingSourceLocalItem` projection update for
-block-local function declarations.
+block-local function declarations. The same active refresh was later repeated
+after adding durable memchr `SelfFieldAssignment` /
+`BindingSourceParameter` evidence for `Runner::fwd` and `Runner::rev` boxed
+`dyn FnMut` setter methods.
 
 Post-regeneration verification:
 
@@ -243,15 +246,25 @@ Post-regeneration verification:
   passed against the regenerated local fixture projection.
 - `cargo test -p ploke-rag local_bindings_exact_expose_local_function_binding_evidence -- --nocapture`
   passed against the exact call-context RAG surface.
+- `cargo test -p ploke-db memchr_callable_trait_object_field_calls_are_visible_targetless_path_rows -- --nocapture`
+  passed against the regenerated memchr seed, proving setter-side
+  `SelfFieldAssignment` / `BindingSourceParameter` evidence while keeping the
+  later boxed `dyn FnMut` rows targetless.
+- `cargo test -p ploke-rag local_bindings_exact_expose_memchr_runner_setter_assignment -- --nocapture`
+  passed against the exact call-context RAG surface.
+- `cargo test -p ploke-tui code_item_lookup_returns_memchr_runner_setter_assignment_payload -- --nocapture`
+  and
+  `cargo test -p ploke-tui code_item_edges_returns_memchr_runner_setter_assignment_payload -- --nocapture`
+  passed against the exact tool payload surfaces.
 - Current committed seed checksums:
   - `corpus_memchr_call_graph_2026-07-15.sqlite`:
-    `0c15b7ccdef0074a2febb04339c06ce71dac3a0949a90498025712729c8d32e5`
+    `91b60ad53738011106a4a9278d277f05e935e4f80c7542e0479ea38280f5daca`
   - `corpus_generic_array_call_graph_2026-07-15.sqlite`:
-    `9c097af5f8c5ad381e995a8636f41c385eaa353e2be3a3a3422a55c9483406fe`
+    `262715a24c8c25d5087ed908cd3e3b5cd7f828138ffc93d3e6b1890c78c997e8`
   - `corpus_chrono_call_graph_2026-07-15.sqlite`:
-    `0348ceb0c1fc85b16df5c9ec7b88d417a9b697d0f393f135ce5fcf47f4c1312b`
+    `a581439ee759b92e0a8240e26b89492ff29f4b7389a036da37b73bb798cb0070`
   - `corpus_axum_call_graph_2026-07-16.sqlite`:
-    `644445722a98d735b806b070304df88bc0286cce2824ff1967fcb044e4aa2dfc`
+    `d167528870a8a9a4c4f23051246cd4ade1f1639d54cd272229d7a61137fff6d5`
 
 ## 2026-07-16 Active Call-Graph Fixture Refresh
 

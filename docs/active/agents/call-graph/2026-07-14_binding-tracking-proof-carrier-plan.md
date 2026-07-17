@@ -981,6 +981,32 @@ What remains:
   inference, trait-object dispatch, generated macro body expansion, or
   poll/resume traversal.
 
+## 2026-07-17 Self-Field Assignment Source Checkpoint
+
+Implemented slice: memchr boxed callable setter assignment evidence.
+
+What is complete:
+
+- Parser extraction records `FieldAssignment` `local_binding` rows for exact
+  `self.field = parameter` assignments where the parameter may be wrapped in
+  `Box::new(...)`, `Some(...)`, or the reviewed nested
+  `Some(Box::new(parameter))` shape.
+- Transform derives `BindingSourceParameter` `local_binding_edge` rows from
+  those assignment records to the same-owner parameter binding, following the
+  existing value-alias pattern where parser stores source paths and transform
+  resolves binding IDs after all rows exist.
+- The real-corpus source oracle is
+  `memchr/src/tests/substring/mod.rs:133-154`, where
+  `Runner::{fwd, rev}` store `search` into boxed callable fields. DB, exact
+  RAG, and exact TUI lookup/edges payload tests assert the setter-side proof.
+
+What remains:
+
+- The later `Runner::run` boxed `dyn FnMut` calls remain targetless
+  runtime-dispatch frontiers. This slice records source evidence for the stored
+  callable value; it does not add vtable dispatch, public caller proof, or a
+  traversal edge to arbitrary setter arguments.
+
 ## Exit Criteria
 
 For the first carrier slice:

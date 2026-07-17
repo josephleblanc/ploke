@@ -633,6 +633,7 @@ pub enum LocalBindingRelationKind {
     BindingSourceFunction,
     BindingSourceLocalItem,
     BindingProjectsField,
+    BindingSourceParameter,
     BindingAliasesBinding,
     ArgumentSuppliesParameter,
 }

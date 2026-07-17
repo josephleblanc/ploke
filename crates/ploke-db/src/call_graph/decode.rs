@@ -494,6 +494,9 @@ fn validate_local_binding_edge_shape(edge: &LocalBindingEdgeRow) -> Result<(), D
         LocalBindingRelationKind::BindingProjectsField => {
             edge.source_kind == "LocalBinding" && edge.target_kind == "LocalBinding"
         }
+        LocalBindingRelationKind::BindingSourceParameter => {
+            edge.source_kind == "LocalBinding" && edge.target_kind == "LocalBinding"
+        }
         LocalBindingRelationKind::BindingAliasesBinding => {
             edge.source_kind == "LocalBinding" && edge.target_kind == "LocalBinding"
         }
@@ -544,6 +547,13 @@ fn validate_local_binding_shape(binding: &LocalBindingRow) -> Result<(), DbError
         }
         "FieldProjection" => {
             binding.source_id.is_some()
+                && binding.source_call_kind.is_none()
+                && non_empty_path(binding.source_path.as_deref())
+                && binding.callee_kind.as_deref() == Some("Path")
+                && non_empty_path(binding.callee_path.as_deref())
+        }
+        "SelfFieldAssignment" => {
+            binding.source_id.is_none()
                 && binding.source_call_kind.is_none()
                 && non_empty_path(binding.source_path.as_deref())
                 && binding.callee_kind.as_deref() == Some("Path")
@@ -604,6 +614,10 @@ fn validate_local_binding_shape(binding: &LocalBindingRow) -> Result<(), DbError
         "FieldProjection" => {
             non_empty_string(Some(binding.name.as_str()))
                 && binding.source_kind == "FieldProjection"
+        }
+        "FieldAssignment" => {
+            non_empty_string(Some(binding.name.as_str()))
+                && binding.source_kind == "SelfFieldAssignment"
         }
         _ => false,
     };

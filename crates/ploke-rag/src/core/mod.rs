@@ -1323,6 +1323,9 @@ fn local_binding_relation_kind(kind: LocalBindingRelationKind) -> RagLocalBindin
         LocalBindingRelationKind::BindingProjectsField => {
             RagLocalBindingRelationKind::BindingProjectsField
         }
+        LocalBindingRelationKind::BindingSourceParameter => {
+            RagLocalBindingRelationKind::BindingSourceParameter
+        }
         LocalBindingRelationKind::BindingAliasesBinding => {
             RagLocalBindingRelationKind::BindingAliasesBinding
         }
@@ -1343,6 +1346,7 @@ fn returned_call_source_relation_kind(
         | LocalBindingRelationKind::BindingSourceFunction
         | LocalBindingRelationKind::BindingSourceLocalItem
         | LocalBindingRelationKind::BindingProjectsField
+        | LocalBindingRelationKind::BindingSourceParameter
         | LocalBindingRelationKind::BindingAliasesBinding
         | LocalBindingRelationKind::ArgumentSuppliesParameter => Err(RagError::Db(DbError::Cozo(
             format!("{kind:?} is not a returned-call source relation"),

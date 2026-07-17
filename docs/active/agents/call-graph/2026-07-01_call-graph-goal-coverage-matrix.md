@@ -3810,6 +3810,18 @@ registered axum call-graph fixture was refreshed to
 value-flow, does not prove all public callers of `tap_io`, and does not admit a
 local traversal edge from `TapIo::accept` to arbitrary caller closures.
 
+Update 2026-07-17: callable trait-object setter evidence now has durable
+local-binding coverage for memchr `Runner::{fwd, rev}`. The source oracle is
+`memchr/src/tests/substring/mod.rs:133-154`, where each setter stores the
+`search` parameter into `self.fwd` / `self.rev` through
+`Some(Box::new(search))`, and `Runner::run` later calls those boxed
+`dyn FnMut` fields at `:94` and `:110`. Parser extraction records
+`FieldAssignment` rows with `source_kind = "SelfFieldAssignment"` and transform
+derives `BindingSourceParameter` edges to the `search` parameter binding. DB,
+exact RAG, and exact `code_item_lookup` / `code_item_edges` tests expose the
+setter-side proof payload while preserving the later boxed `dyn FnMut` rows as
+targetless runtime-dispatch frontiers with no local traversal edge.
+
 ## Parking Lot
 
 - Add binding tracking plan that ties syntax body ownership, local bindings, and type graph edges before attempting receiver/dynamic traversal.

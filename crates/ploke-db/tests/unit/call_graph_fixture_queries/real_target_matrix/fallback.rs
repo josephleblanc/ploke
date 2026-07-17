@@ -1,4 +1,4 @@
-use ploke_db::CallPathOptions;
+use ploke_db::{CallPathOptions, LocalBindingRelationKind};
 use ploke_test_utils::{
     CORPUS_CHRONO_CALL_GRAPH, CORPUS_GENERIC_ARRAY_CALL_GRAPH, CORPUS_MEMCHR_CALL_GRAPH,
 };
@@ -677,6 +677,65 @@ fn memchr_callable_trait_object_field_calls_are_visible_targetless_path_rows() -
     // targetless path rows, but boxed `dyn FnMut` dispatch is not resolved and
     // must not fabricate call edges to the setter closures.
     assert_no_dynamic_rows_by_method_name(&db, "run")?;
+    for (method_name, assignment, field_name, line) in [
+        ("fwd", "self.fwd = Some(Box::new(search));", "fwd", 137),
+        ("rev", "self.rev = Some(Box::new(search));", "rev", 153),
+    ] {
+        let setter = method_id_by_name_body_and_file_suffix(
+            &db,
+            method_name,
+            assignment,
+            "src/tests/substring/mod.rs",
+        )?;
+        let bindings = db.local_bindings_for_owner(setter)?;
+        let search = bindings
+            .iter()
+            .find(|binding| {
+                binding.kind == "ParameterBinding"
+                    && binding.name == "search"
+                    && binding.source_kind == "Parameter"
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "memchr/src/tests/substring/mod.rs:{line} should persist the setter search parameter: {bindings:#?}"
+                )
+            });
+        let field = bindings
+            .iter()
+            .find(|binding| {
+                binding.kind == "FieldAssignment"
+                    && binding.name == format!("self.{field_name}")
+                    && binding.source_kind == "SelfFieldAssignment"
+                    && binding.source_path.as_ref() == Some(&path(&[field_name]))
+                    && binding.callee_kind.as_deref() == Some("Path")
+                    && binding.callee_path.as_ref() == Some(&path(&["search"]))
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "memchr/src/tests/substring/mod.rs:{line} should persist the self.{field_name} setter assignment source: {bindings:#?}"
+                )
+            });
+
+        let edges = db.local_binding_edges_for_owner(setter)?;
+        assert!(
+            edges.iter().any(|edge| edge.relation
+                == LocalBindingRelationKind::OwnerContainsBinding
+                && edge.source_id == setter
+                && edge.target_id == field.id
+                && edge.target_kind == "LocalBinding"),
+            "memchr/src/tests/substring/mod.rs:{line} should expose owner-to-field-assignment evidence: {edges:#?}"
+        );
+        assert!(
+            edges.iter().any(|edge| edge.relation
+                == LocalBindingRelationKind::BindingSourceParameter
+                && edge.source_id == field.id
+                && edge.target_id == search.id
+                && edge.source_kind == "LocalBinding"
+                && edge.target_kind == "LocalBinding"),
+            "memchr/src/tests/substring/mod.rs:{line} should link self.{field_name} assignment to the search parameter: {edges:#?}"
+        );
+    }
+
     let owner = method_id_by_name_body_and_file_suffix(
         &db,
         "run",

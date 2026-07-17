@@ -218,6 +218,33 @@ pub(super) fn derive_value_alias_relations(graph: &CodeGraph) -> Vec<LocalBindin
     relations
 }
 
+pub(super) fn derive_self_field_assignment_parameter_relations(
+    graph: &CodeGraph,
+) -> Vec<LocalBindingRelation> {
+    let parameters = parameter_binding_ids(graph);
+    let mut relations = Vec::new();
+
+    for binding in &graph.local_bindings {
+        let LocalBindingSource::SelfFieldAssignment { source_path, .. } = &binding.source else {
+            continue;
+        };
+        let [source_name] = source_path.as_slice() else {
+            continue;
+        };
+        let Some(target) = parameters.get(&(binding.owner, source_name.as_str())) else {
+            continue;
+        };
+        relations.push(LocalBindingRelation::BindingSourceParameter {
+            source: binding.id,
+            target: *target,
+        });
+    }
+
+    relations.sort_unstable();
+    relations.dedup();
+    relations
+}
+
 pub(super) fn derive_value_binding_function_relations(
     graph: &CodeGraph,
     report: &CallResolutionReport,

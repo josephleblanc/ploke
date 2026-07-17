@@ -63,6 +63,7 @@ pub enum LocalBindingKind {
     LetBinding,
     LocalFunctionBinding,
     FieldProjection,
+    FieldAssignment,
     ReturnExpression,
 }
 
@@ -73,6 +74,7 @@ impl LocalBindingKind {
             Self::LetBinding => "LetBinding",
             Self::LocalFunctionBinding => "LocalFunctionBinding",
             Self::FieldProjection => "FieldProjection",
+            Self::FieldAssignment => "FieldAssignment",
             Self::ReturnExpression => "ReturnExpression",
         }
     }
@@ -94,6 +96,10 @@ pub enum LocalBindingSource {
         base_binding_id: LocalBindingId,
         field_path: Vec<String>,
         init_path: Vec<String>,
+    },
+    SelfFieldAssignment {
+        field_path: Vec<String>,
+        source_path: Vec<String>,
     },
     Closure {
         body_id: ExecutableBodyId,
@@ -123,6 +129,7 @@ impl LocalBindingSource {
             Self::InitializedPath { .. } => "InitializedPath",
             Self::ValueAlias { .. } => "ValueAlias",
             Self::FieldProjection { .. } => "FieldProjection",
+            Self::SelfFieldAssignment { .. } => "SelfFieldAssignment",
             Self::Closure { .. } => "Closure",
             Self::AsyncClosure { .. } => "AsyncClosure",
             Self::LocalFunction { .. } => "LocalFunction",

@@ -93,6 +93,79 @@ async fn local_bindings_exact_expose_axum_tap_io_constructor_frontier() -> Resul
 }
 
 #[tokio::test]
+async fn local_bindings_exact_expose_memchr_runner_setter_assignment() -> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_memchr_call_graph_rag()?;
+
+    // Source oracle:
+    //   memchr/src/tests/substring/mod.rs:133-138 stores the `search`
+    //   parameter into `self.fwd` through `Some(Box::new(search))`.
+    //
+    // Contract: exact RAG exposes the setter-side field-assignment source
+    // evidence without resolving the later boxed `dyn FnMut` call in
+    // `Runner::run`.
+    let owner = method_id_by_name_body_and_file_suffix(
+        &db,
+        "fwd",
+        "self.fwd = Some(Box::new(search));",
+        "src/tests/substring/mod.rs",
+    )?;
+    let bindings = rag
+        .exact_local_bindings_for_owner(owner)?
+        .expect("call context is enabled");
+    let parameter = bindings
+        .iter()
+        .find(|binding| {
+            binding.owner_id == owner
+                && binding.kind == "ParameterBinding"
+                && binding.name == "search"
+                && binding.source_kind == "Parameter"
+        })
+        .unwrap_or_else(|| {
+            panic!("RAG should expose memchr Runner::fwd search parameter: {bindings:#?}")
+        });
+    let assignment = bindings
+        .iter()
+        .find(|binding| {
+            binding.owner_id == owner
+                && binding.kind == "FieldAssignment"
+                && binding.name == "self.fwd"
+                && binding.source_kind == "SelfFieldAssignment"
+                && matches!(binding.source_path.as_deref(), Some([segment]) if segment == "fwd")
+                && binding.callee_kind.as_deref() == Some("Path")
+                && matches!(binding.callee_path.as_deref(), Some([segment]) if segment == "search")
+        })
+        .unwrap_or_else(|| {
+            panic!("RAG should expose memchr Runner::fwd self-field assignment: {bindings:#?}")
+        });
+
+    let edges = rag
+        .exact_local_binding_edges_for_owner(owner)?
+        .expect("call context is enabled");
+    assert!(
+        edges.iter().any(|edge| {
+            edge.source_id == owner
+                && edge.target_id == assignment.id
+                && edge.relation == LocalBindingRelationKind::OwnerContainsBinding
+                && edge.target_kind == "LocalBinding"
+        }),
+        "RAG should expose owner-to-field assignment containment: {edges:#?}"
+    );
+    assert!(
+        edges.iter().any(|edge| {
+            edge.source_id == assignment.id
+                && edge.target_id == parameter.id
+                && edge.relation == LocalBindingRelationKind::BindingSourceParameter
+                && edge.source_kind == "LocalBinding"
+                && edge.target_kind == "LocalBinding"
+        }),
+        "RAG should expose memchr self-field assignment-to-parameter proof: {edges:#?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn self_field_parameter_flows_exact_expose_axum_tap_io_accept_frontier() -> Result<(), Error>
 {
     init_tracing_once();
