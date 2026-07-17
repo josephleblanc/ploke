@@ -488,6 +488,9 @@ fn validate_local_binding_edge_shape(edge: &LocalBindingEdgeRow) -> Result<(), D
         LocalBindingRelationKind::BindingSourceFunction => {
             edge.source_kind == "LocalBinding" && edge.target_kind == "Function"
         }
+        LocalBindingRelationKind::BindingSourceLocalItem => {
+            edge.source_kind == "LocalBinding" && edge.target_kind == "LocalItem"
+        }
         LocalBindingRelationKind::BindingProjectsField => {
             edge.source_kind == "LocalBinding" && edge.target_kind == "LocalBinding"
         }
@@ -553,6 +556,13 @@ fn validate_local_binding_shape(binding: &LocalBindingRow) -> Result<(), DbError
                 && binding.callee_kind.is_none()
                 && binding.callee_path.is_none()
         }
+        "LocalFunction" => {
+            binding.source_id.is_some()
+                && binding.source_call_kind.is_none()
+                && binding.source_path.is_none()
+                && binding.callee_kind.is_none()
+                && binding.callee_path.is_none()
+        }
         "PathCallResult" => {
             binding.source_id.is_some()
                 && binding.source_call_kind.as_deref() == Some("Path")
@@ -587,6 +597,9 @@ fn validate_local_binding_shape(binding: &LocalBindingRow) -> Result<(), DbError
                         | "PathCallResult"
                         | "DynamicCallResult"
                 )
+        }
+        "LocalFunctionBinding" => {
+            non_empty_string(Some(binding.name.as_str())) && binding.source_kind == "LocalFunction"
         }
         "FieldProjection" => {
             non_empty_string(Some(binding.name.as_str()))

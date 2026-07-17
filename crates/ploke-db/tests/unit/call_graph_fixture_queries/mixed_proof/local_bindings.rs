@@ -863,6 +863,80 @@ fn fixture_projection_stores_let_closure_binding_edges() -> Result<(), DbError> 
 }
 
 #[test]
+fn fixture_projection_stores_local_function_binding_edges() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let owner = function_id_by_name(&db, "local_fn_body_call_is_not_outer_call_site")?;
+    let local_item = local_item_owner_for_parent_with_label(&db, owner, "local_fn:inner")?;
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:1447-1453:
+    // the outer body declares block-local `fn inner()`, then calls `inner()`.
+    // The call edge already resolves to the executable local-item body; this
+    // test pins the durable binding row and source-local-item edge that explain
+    // the visible local function item binding.
+    let context = db.call_context_for_owner(owner)?;
+    let row = row_by_path(&context, &["inner"]);
+    assert_resolved_target(
+        row,
+        local_item,
+        CallRelationKind::LocalFunction,
+        CallSiteKind::Path,
+        CallTargetKind::LocalItem,
+    );
+
+    let bindings = db.local_bindings_for_owner(owner)?;
+    let bindings = bindings
+        .into_iter()
+        .filter(|binding| binding.kind == "LocalFunctionBinding" && binding.name == "inner")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        bindings.len(),
+        1,
+        "outer owner should expose one local function binding: {bindings:#?}"
+    );
+    let binding = &bindings[0];
+    assert_eq!(binding.source_kind, "LocalFunction");
+    assert_eq!(binding.source_id, Some(local_item));
+    assert_eq!(binding.source_call_kind, None);
+    assert_eq!(binding.source_path, None);
+    assert_eq!(binding.callee_kind, None);
+    assert_eq!(binding.callee_path, None);
+    assert!(
+        binding.span.0 < binding.span.1,
+        "local function binding should retain the item span: {binding:#?}"
+    );
+
+    let edges = db.local_binding_edges_for_owner(owner)?;
+    let binding_edges = edges
+        .iter()
+        .filter(|edge| edge.source_id == binding.id || edge.target_id == binding.id)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        binding_edges.len(),
+        2,
+        "local function binding should expose owner and source-local-item edges: {edges:#?}"
+    );
+    assert!(
+        binding_edges.iter().any(|edge| edge.relation
+            == LocalBindingRelationKind::OwnerContainsBinding
+            && edge.source_id == owner
+            && edge.target_id == binding.id
+            && edge.target_kind == "LocalBinding"),
+        "missing owner-to-local-function-binding edge: {binding_edges:#?}"
+    );
+    assert!(
+        binding_edges.iter().any(|edge| edge.relation
+            == LocalBindingRelationKind::BindingSourceLocalItem
+            && edge.source_id == binding.id
+            && edge.target_id == local_item
+            && edge.source_kind == "LocalBinding"
+            && edge.target_kind == "LocalItem"),
+        "missing local-function-binding-to-local-item edge: {binding_edges:#?}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn fixture_projection_stores_awaited_future_let_call_result_edges() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let owner = function_id_by_name(&db, "call_stored_returned_async_closure")?;

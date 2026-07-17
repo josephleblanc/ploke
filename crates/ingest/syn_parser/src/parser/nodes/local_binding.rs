@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt::{self, Display};
 use uuid::Uuid;
 
-use super::{AnyCallSiteId, CallBodyOwnerId, ExecutableBodyId, ToCozoUuid};
+use super::{AnyCallSiteId, CallBodyOwnerId, ExecutableBodyId, LocalItemBodyId, ToCozoUuid};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct LocalBindingId(Uuid);
@@ -61,6 +61,7 @@ pub struct LocalBindingNode {
 pub enum LocalBindingKind {
     ParameterBinding,
     LetBinding,
+    LocalFunctionBinding,
     FieldProjection,
     ReturnExpression,
 }
@@ -70,6 +71,7 @@ impl LocalBindingKind {
         match self {
             Self::ParameterBinding => "ParameterBinding",
             Self::LetBinding => "LetBinding",
+            Self::LocalFunctionBinding => "LocalFunctionBinding",
             Self::FieldProjection => "FieldProjection",
             Self::ReturnExpression => "ReturnExpression",
         }
@@ -99,6 +101,9 @@ pub enum LocalBindingSource {
     AsyncClosure {
         body_id: ExecutableBodyId,
     },
+    LocalFunction {
+        body_id: LocalItemBodyId,
+    },
     PathCallResult {
         call_site_id: AnyCallSiteId,
         path: Vec<String>,
@@ -120,6 +125,7 @@ impl LocalBindingSource {
             Self::FieldProjection { .. } => "FieldProjection",
             Self::Closure { .. } => "Closure",
             Self::AsyncClosure { .. } => "AsyncClosure",
+            Self::LocalFunction { .. } => "LocalFunction",
             Self::PathCallResult { .. } => "PathCallResult",
             Self::DynamicCallResult { .. } => "DynamicCallResult",
         }

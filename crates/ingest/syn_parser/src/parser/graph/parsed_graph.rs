@@ -183,6 +183,10 @@ impl ParsedCodeGraph {
                 LocalBindingRelation::BindingSourceFunction { source, target } => {
                     live_bindings.contains(source) && live_functions.contains(target)
                 }
+                LocalBindingRelation::BindingSourceLocalItem { source, target } => {
+                    live_bindings.contains(source)
+                        && live_owners.contains(&CallBodyOwnerId::Executable((*target).into()))
+                }
                 LocalBindingRelation::BindingProjectsField { source, target } => {
                     live_bindings.contains(source) && live_bindings.contains(target)
                 }

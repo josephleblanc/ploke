@@ -3,7 +3,7 @@ use super::nodes::{AnyNodeId, PrimaryNodeIdTrait};
 use crate::parser::nodes::{
     AnyCallSiteId, AnyGenericParamId, AssociatedItemNodeId, CallBodyOwnerId,
     ConstGenericParamNodeId, DynamicCallSiteId, EnumNodeId, ExecutableBodyId, FieldNodeId,
-    FunctionNodeId, GenericParamOwnerId, ImplNodeId, ImportNodeId, LocalBindingId,
+    FunctionNodeId, GenericParamOwnerId, ImplNodeId, ImportNodeId, LocalBindingId, LocalItemBodyId,
     MethodCallSiteId, MethodNodeId, ModuleNodeId, OrdinaryTypeSourceId, OrdinaryTypeTargetId,
     OrdinaryTypeUseId, PathCallSiteId, PrimaryNodeId, StructNodeId, TraitNodeId, TraitTypeSourceId,
     TraitTypeTargetId, TypeGenericParamNodeId, UnionNodeId, VariantNodeId,
@@ -213,6 +213,15 @@ pub enum LocalBindingRelation {
         source: LocalBindingId,
         target: FunctionNodeId,
     },
+    /// A binding is sourced by a function-local item body.
+    ///
+    /// ```text
+    /// BindingSourceLocalItem ⊆ LocalBindingId × LocalItemBodyId
+    /// ```
+    BindingSourceLocalItem {
+        source: LocalBindingId,
+        target: LocalItemBodyId,
+    },
     /// A binding projects a named field from another local binding.
     ///
     /// The source endpoint is the projected binding. The target endpoint is the
@@ -257,6 +266,7 @@ impl LocalBindingRelation {
             Self::BindingSourceClosure { .. } => "BindingSourceClosure",
             Self::BindingSourceCallResult { .. } => "BindingSourceCallResult",
             Self::BindingSourceFunction { .. } => "BindingSourceFunction",
+            Self::BindingSourceLocalItem { .. } => "BindingSourceLocalItem",
             Self::BindingProjectsField { .. } => "BindingProjectsField",
             Self::BindingAliasesBinding { .. } => "BindingAliasesBinding",
             Self::ArgumentSuppliesParameter { .. } => "ArgumentSuppliesParameter",

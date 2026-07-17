@@ -1151,6 +1151,13 @@ fn local_binding_to_params(binding: &LocalBindingNode) -> BTreeMap<String, cozo:
             cozo::DataValue::Null,
             cozo::DataValue::Null,
         ),
+        LocalBindingSource::LocalFunction { body_id } => (
+            body_id.to_cozo_uuid(),
+            cozo::DataValue::Null,
+            cozo::DataValue::Null,
+            cozo::DataValue::Null,
+            cozo::DataValue::Null,
+        ),
         LocalBindingSource::PathCallResult { call_site_id, path } => (
             call_site_id_to_cozo(*call_site_id),
             cozo::DataValue::from(call_site_kind(*call_site_id)),
@@ -1552,6 +1559,22 @@ impl LocalBindingRelationSchema {
                     ),
                 ])
             }
+            LocalBindingRelation::BindingSourceLocalItem { source, target } => BTreeMap::from([
+                (schema.source_id().to_string(), source.to_cozo_uuid()),
+                (schema.target_id().to_string(), target.to_cozo_uuid()),
+                (
+                    schema.relation_kind().to_string(),
+                    cozo::DataValue::from(relation.kind_str()),
+                ),
+                (
+                    schema.source_kind().to_string(),
+                    cozo::DataValue::from("LocalBinding"),
+                ),
+                (
+                    schema.target_kind().to_string(),
+                    cozo::DataValue::from("LocalItem"),
+                ),
+            ]),
             LocalBindingRelation::BindingProjectsField { source, target } => BTreeMap::from([
                 (schema.source_id().to_string(), source.to_cozo_uuid()),
                 (schema.target_id().to_string(), target.to_cozo_uuid()),

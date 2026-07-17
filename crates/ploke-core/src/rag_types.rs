@@ -631,6 +631,7 @@ pub enum LocalBindingRelationKind {
     BindingSourceClosure,
     BindingSourceCallResult,
     BindingSourceFunction,
+    BindingSourceLocalItem,
     BindingProjectsField,
     BindingAliasesBinding,
     ArgumentSuppliesParameter,

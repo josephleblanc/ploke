@@ -1016,9 +1016,20 @@ impl BodyCallVisitor<'_> {
         let name = item_fn.sig.ident.to_string();
         let label = format!("local_fn:{name}");
         let owner = self.record_local_item_owner(span, &label);
-        let CallBodyOwnerId::Executable(body_id @ ExecutableBodyId::LocalItem(_)) = owner else {
+        let CallBodyOwnerId::Executable(body_id @ ExecutableBodyId::LocalItem(local_item_id)) =
+            owner
+        else {
             unreachable!("record_local_item_owner must return a local-item executable owner")
         };
+
+        self.record_local_binding(
+            &name,
+            span,
+            LocalBindingKind::LocalFunctionBinding,
+            LocalBindingSource::LocalFunction {
+                body_id: local_item_id,
+            },
+        );
 
         if let Some(scope) = self.local_scopes.last_mut() {
             scope.push(LocalBindingProof::LocalFunction {
@@ -1093,6 +1104,12 @@ fn local_binding_source_relation(
         }),
         LocalBindingSource::Closure { body_id } | LocalBindingSource::AsyncClosure { body_id } => {
             Some(LocalBindingRelation::BindingSourceClosure {
+                source,
+                target: *body_id,
+            })
+        }
+        LocalBindingSource::LocalFunction { body_id } => {
+            Some(LocalBindingRelation::BindingSourceLocalItem {
                 source,
                 target: *body_id,
             })

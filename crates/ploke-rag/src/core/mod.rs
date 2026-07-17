@@ -1317,6 +1317,9 @@ fn local_binding_relation_kind(kind: LocalBindingRelationKind) -> RagLocalBindin
         LocalBindingRelationKind::BindingSourceFunction => {
             RagLocalBindingRelationKind::BindingSourceFunction
         }
+        LocalBindingRelationKind::BindingSourceLocalItem => {
+            RagLocalBindingRelationKind::BindingSourceLocalItem
+        }
         LocalBindingRelationKind::BindingProjectsField => {
             RagLocalBindingRelationKind::BindingProjectsField
         }
@@ -1338,6 +1341,7 @@ fn returned_call_source_relation_kind(
         }
         LocalBindingRelationKind::OwnerContainsBinding
         | LocalBindingRelationKind::BindingSourceFunction
+        | LocalBindingRelationKind::BindingSourceLocalItem
         | LocalBindingRelationKind::BindingProjectsField
         | LocalBindingRelationKind::BindingAliasesBinding
         | LocalBindingRelationKind::ArgumentSuppliesParameter => Err(RagError::Db(DbError::Cozo(

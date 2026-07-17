@@ -65,6 +65,70 @@ async fn local_bindings_exact_expose_initialized_path_evidence() -> Result<(), E
 }
 
 #[tokio::test]
+async fn local_bindings_exact_expose_local_function_binding_evidence() -> Result<(), Error> {
+    init_tracing_once();
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let rag = init_test_rag_mock(Arc::clone(&db));
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:1447-1453:
+    // `local_fn_body_call_is_not_outer_call_site` declares block-local
+    // `fn inner()` before calling `inner()`. Exact RAG should expose the
+    // durable local-binding proof that connects the name `inner` to the
+    // executable LocalItem owner.
+    let owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "local_fn_body_call_is_not_outer_call_site"),
+    )?;
+    let local_item = local_item_owner_for_parent_with_label(&db, owner, "local_fn:inner")?;
+    let bindings = rag
+        .exact_local_bindings_for_owner(owner)?
+        .expect("call context is enabled");
+    let binding = bindings
+        .iter()
+        .find(|binding| {
+            binding.owner_id == owner
+                && binding.kind == "LocalFunctionBinding"
+                && binding.name == "inner"
+                && binding.source_kind == "LocalFunction"
+                && binding.source_id == Some(local_item)
+                && binding.source_call_kind.is_none()
+                && binding.source_path.is_none()
+                && binding.callee_kind.is_none()
+                && binding.callee_path.is_none()
+        })
+        .unwrap_or_else(|| {
+            panic!("RAG should expose local function binding `inner`: {bindings:#?}")
+        });
+
+    let edges = rag
+        .exact_local_binding_edges_for_owner(owner)?
+        .expect("call context is enabled");
+    assert!(
+        edges.iter().any(|edge| {
+            edge.source_id == owner
+                && edge.target_id == binding.id
+                && edge.relation == LocalBindingRelationKind::OwnerContainsBinding
+                && edge.target_kind == "LocalBinding"
+        }),
+        "RAG should expose owner-to-local-function binding containment: {edges:#?}"
+    );
+    assert!(
+        edges.iter().any(|edge| {
+            edge.source_id == binding.id
+                && edge.target_id == local_item
+                && edge.relation == LocalBindingRelationKind::BindingSourceLocalItem
+                && edge.source_kind == "LocalBinding"
+                && edge.target_kind == "LocalItem"
+        }),
+        "RAG should expose local-function binding-to-local-item proof: {edges:#?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn local_bindings_exact_expose_aliased_parameter_field_evidence() -> Result<(), Error> {
     init_tracing_once();
     let db = Arc::new(Database::new(setup_db_full_multi_embedding(

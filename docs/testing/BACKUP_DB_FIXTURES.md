@@ -223,6 +223,9 @@ The active fixture set was regenerated with
 `cargo run -p xtask --features call_graph -- fixtures regenerate --active`.
 The regenerated shared call-graph corpus snapshots were copied into
 `tests/backup_dbs/` as committed seed artifacts.
+This refresh covers both the real-target query fixture update and the later
+durable `LocalFunctionBinding` / `BindingSourceLocalItem` projection update for
+block-local function declarations.
 
 Post-regeneration verification:
 
@@ -236,15 +239,19 @@ Post-regeneration verification:
 - `timeout 1200s cargo test -p ploke-db real_target_matrix -- --nocapture`
   passed with 113 tests and 355 filtered out against the refreshed committed
   seed artifacts.
+- `cargo test -p ploke-db fixture_projection_stores_local_function_binding_edges -- --nocapture`
+  passed against the regenerated local fixture projection.
+- `cargo test -p ploke-rag local_bindings_exact_expose_local_function_binding_evidence -- --nocapture`
+  passed against the exact call-context RAG surface.
 - Current committed seed checksums:
   - `corpus_memchr_call_graph_2026-07-15.sqlite`:
-    `503fe619e607f7dddae437ae748698b323dab4a78c4784002eba27fc7df838bf`
+    `0c15b7ccdef0074a2febb04339c06ce71dac3a0949a90498025712729c8d32e5`
   - `corpus_generic_array_call_graph_2026-07-15.sqlite`:
-    `653f2baa9e5433bf7ff935c5b600e1ac7a219add3ba20b7e70e1688d4b24fc66`
+    `9c097af5f8c5ad381e995a8636f41c385eaa353e2be3a3a3422a55c9483406fe`
   - `corpus_chrono_call_graph_2026-07-15.sqlite`:
-    `6aa12edd2b03c3473261c33c4c3627ca46e7da026176b7e517bebf7fc9c86e98`
+    `0348ceb0c1fc85b16df5c9ec7b88d417a9b697d0f393f135ce5fcf47f4c1312b`
   - `corpus_axum_call_graph_2026-07-16.sqlite`:
-    `4ac05d50c7650363badedd1dec953005af979dffdd40f452a3ac94662f3efb39`
+    `644445722a98d735b806b070304df88bc0286cce2824ff1967fcb044e4aa2dfc`
 
 ## 2026-07-16 Active Call-Graph Fixture Refresh
 
