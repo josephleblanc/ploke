@@ -228,7 +228,9 @@ durable `LocalFunctionBinding` / `BindingSourceLocalItem` projection update for
 block-local function declarations. The same active refresh was later repeated
 after adding durable memchr `SelfFieldAssignment` /
 `BindingSourceParameter` evidence for `Runner::fwd` and `Runner::rev` boxed
-`dyn FnMut` setter methods.
+`dyn FnMut` setter methods, and again after preserving targetless callable
+callee evidence for function-pointer parameters, field callable parameters, and
+same-parameter branch/match dynamic calls.
 
 Post-regeneration verification:
 

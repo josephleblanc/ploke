@@ -100,7 +100,14 @@ fn is_returned_callable_evidence(
 ) -> Result<bool, DbError> {
     match evidence.kind.as_str() {
         "ReturnedPathCall" | "AwaitedReturnedPathCall" => Ok(true),
-        "AsyncClosureBinding" | "AwaitedAsyncClosureBinding" => Ok(false),
+        "ValueBinding"
+        | "AsyncClosureBinding"
+        | "AwaitedAsyncClosureBinding"
+        | "FnPointerCastLocalBinding"
+        | "LocalBinding"
+        | "FieldLocalBinding"
+        | "IfBranchParameter"
+        | "MatchArmParameter" => Ok(false),
         other => Err(DbError::Cozo(format!(
             "unknown call_callee_evidence kind {other:?} for call site {site_id}"
         ))),

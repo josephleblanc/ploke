@@ -1,5 +1,49 @@
 use super::*;
+use cozo::{DataValue, UuidWrapper};
 use ploke_db::LocalBindingRelationKind;
+use std::collections::BTreeMap;
+use uuid::Uuid;
+
+struct CalleeEvidence {
+    kind: String,
+    path: Vec<String>,
+}
+
+fn callee_evidence_for_site(db: &Database, site: Uuid) -> Result<CalleeEvidence, DbError> {
+    let mut params = BTreeMap::new();
+    params.insert("site".to_string(), DataValue::Uuid(UuidWrapper(site)));
+
+    let rows = db.raw_query_params(
+        r#"?[callee_kind, callee_path] :=
+            site = $site,
+            *call_callee_evidence {
+                source_id: site,
+                callee_kind,
+                callee_path @ 'NOW'
+            }"#,
+        params,
+    )?;
+    assert_eq!(
+        rows.rows.len(),
+        1,
+        "expected exactly one call_callee_evidence row for {site}: {:#?}",
+        rows.rows
+    );
+    Ok(CalleeEvidence {
+        kind: data_str(&rows.rows[0][0], "call_callee_evidence.callee_kind").to_string(),
+        path: data_string_list(&rows.rows[0][1], "call_callee_evidence.callee_path"),
+    })
+}
+
+fn data_string_list(value: &DataValue, label: &str) -> Vec<String> {
+    let DataValue::List(items) = value else {
+        panic!("{label} should be a string list, got {value:?}");
+    };
+    items
+        .iter()
+        .map(|item| data_str(item, label).to_string())
+        .collect()
+}
 
 #[test]
 fn fixture_projection_stores_parameter_binding_edges() -> Result<(), DbError> {
@@ -91,6 +135,110 @@ fn fixture_projection_stores_parameter_binding_edges() -> Result<(), DbError> {
             && edge.target_kind == "Function"),
         "missing parameter-binding to source-function edge: {binding_edges:#?}"
     );
+
+    Ok(())
+}
+
+#[test]
+fn fixture_projection_stores_targetless_callable_callee_evidence() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+
+    struct Case {
+        owner: &'static str,
+        kind: CallSiteKind,
+        path: &'static [&'static str],
+        callee: &'static str,
+        source: &'static str,
+    }
+
+    let cases = [
+        Case {
+            owner: "call_function_pointer_param",
+            kind: CallSiteKind::Path,
+            path: &["f"],
+            callee: "ValueBinding",
+            source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:683-685 `f()`",
+        },
+        Case {
+            owner: "call_parenthesized_function_pointer_param",
+            kind: CallSiteKind::Dynamic,
+            path: &["f"],
+            callee: "LocalBinding",
+            source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:687-689 `(f)()`",
+        },
+        Case {
+            owner: "call_function_pointer_param_cast",
+            kind: CallSiteKind::Dynamic,
+            path: &["f"],
+            callee: "FnPointerCastLocalBinding",
+            source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:691-693 `(f as fn() -> i32)()`",
+        },
+        Case {
+            owner: "call_field_function_param",
+            kind: CallSiteKind::Dynamic,
+            path: &["holder", "callback"],
+            callee: "FieldLocalBinding",
+            source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:709-711 `(holder.callback)()`",
+        },
+        Case {
+            owner: "call_if_function_pointer_param_branch",
+            kind: CallSiteKind::Dynamic,
+            path: &["f"],
+            callee: "IfBranchParameter",
+            source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:721-723 `(if flag { f } else { f })()`",
+        },
+        Case {
+            owner: "call_match_function_pointer_param_arm",
+            kind: CallSiteKind::Dynamic,
+            path: &["f"],
+            callee: "MatchArmParameter",
+            source: "tests/fixture_crates/fixture_call_graph/src/lib.rs:725-729 `match` arms both yield `f`",
+        },
+    ];
+
+    for case in cases {
+        let owner = function_id_by_name(&db, case.owner)?;
+        let context = db.call_context_for_owner(owner)?;
+        let row = row_by_kind_path(&context, case.kind, case.path);
+
+        assert_eq!(
+            row.status.status,
+            CallStatusKind::Unsupported,
+            "{} remains targetless until caller binding proof identifies the concrete callable: {row:#?}",
+            case.source
+        );
+        assert!(
+            row.targets.is_empty(),
+            "{} must not fabricate a resolved call edge from callee evidence alone: {row:#?}",
+            case.source
+        );
+
+        let evidence = callee_evidence_for_site(&db, row.site.id)?;
+        assert_eq!(
+            evidence.kind, case.callee,
+            "{} should persist parser callee classification",
+            case.source
+        );
+        assert_eq!(
+            evidence.path,
+            path(case.path),
+            "{} should persist the structural callee path",
+            case.source
+        );
+
+        assert!(
+            relations_for_site(&db, row.site.id)?.rows.is_empty(),
+            "{} should remain evidence-only with no call_relation row",
+            case.source
+        );
+        assert_eq!(
+            db.call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?
+                .len(),
+            2,
+            "{} should still project call_site and call_resolution proof facts",
+            case.source
+        );
+    }
 
     Ok(())
 }

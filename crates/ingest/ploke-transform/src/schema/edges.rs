@@ -11,9 +11,9 @@ use cozo::{Db, MemStorage};
 use itertools::Itertools;
 use std::collections::BTreeMap;
 use syn_parser::parser::nodes::{
-    AnyCallSiteId, CallBodyOwnerId, CallNode, DynamicCallCallee, ExecutableBodyKind,
-    ExecutableBodyNode, LocalBindingNode, LocalBindingSource, MethodCallReceiver, PathCallCallee,
-    ToCozoUuid,
+    AnyCallSiteId, CallBodyOwnerId, CallNode, DynamicCallCallee, ExecutableBodyId,
+    ExecutableBodyKind, ExecutableBodyNode, LocalBindingNode, LocalBindingSource,
+    MethodCallReceiver, PathCallCallee, ToCozoUuid,
 };
 use syn_parser::parser::relations::{
     CallRelation, CallResolutionKind, CallResolutionStatus, CallSiteRelation, LocalBindingRelation,
@@ -1222,32 +1222,8 @@ fn local_binding_to_params(binding: &LocalBindingNode) -> BTreeMap<String, cozo:
 
 fn call_callee_evidence_params(call_site: &CallNode) -> Option<BTreeMap<String, cozo::DataValue>> {
     let (kind, path, closure_id) = match call_site {
-        CallNode::PathCall(call) => match &call.callee {
-            PathCallCallee::AsyncClosureBinding { path, closure_id } => {
-                ("AsyncClosureBinding", path, Some(closure_id))
-            }
-            PathCallCallee::AwaitedAsyncClosureBinding { path, closure_id } => {
-                ("AwaitedAsyncClosureBinding", path, Some(closure_id))
-            }
-            _ => return None,
-        },
-        CallNode::DynamicCall(call) => match &call.callee {
-            DynamicCallCallee::AsyncClosureBinding { path, closure_id } => {
-                ("AsyncClosureBinding", path, Some(closure_id))
-            }
-            DynamicCallCallee::AwaitedAsyncClosureBinding { path, closure_id } => {
-                ("AwaitedAsyncClosureBinding", path, Some(closure_id))
-            }
-            DynamicCallCallee::ReturnedPathCall { path, is_awaited } => {
-                let kind = if *is_awaited {
-                    "AwaitedReturnedPathCall"
-                } else {
-                    "ReturnedPathCall"
-                };
-                (kind, path, None)
-            }
-            _ => return None,
-        },
+        CallNode::PathCall(call) => path_call_callee_evidence(&call.callee)?,
+        CallNode::DynamicCall(call) => dynamic_call_callee_evidence(&call.callee)?,
         CallNode::MethodCall(_) | CallNode::MacroCall(_) => return None,
     };
 
@@ -1267,6 +1243,75 @@ fn call_callee_evidence_params(call_site: &CallNode) -> Option<BTreeMap<String, 
             closure_id.map_or(cozo::DataValue::Null, |id| id.to_cozo_uuid()),
         ),
     ]))
+}
+
+fn path_call_callee_evidence(
+    callee: &PathCallCallee,
+) -> Option<(&'static str, &[String], Option<&ExecutableBodyId>)> {
+    match callee {
+        PathCallCallee::ValueBinding { path } => Some(("ValueBinding", path, None)),
+        PathCallCallee::AsyncClosureBinding { path, closure_id } => {
+            Some(("AsyncClosureBinding", path, Some(closure_id)))
+        }
+        PathCallCallee::AwaitedAsyncClosureBinding { path, closure_id } => {
+            Some(("AwaitedAsyncClosureBinding", path, Some(closure_id)))
+        }
+        PathCallCallee::ItemPath
+        | PathCallCallee::ClosureBinding { .. }
+        | PathCallCallee::LocalFunctionBinding { .. }
+        | PathCallCallee::InitializedValueBinding { .. }
+        | PathCallCallee::AmbiguousInitializedValueBinding { .. }
+        | PathCallCallee::SelfFieldBinding { .. }
+        | PathCallCallee::AliasedValueBinding { .. } => None,
+    }
+}
+
+fn dynamic_call_callee_evidence(
+    callee: &DynamicCallCallee,
+) -> Option<(&'static str, &[String], Option<&ExecutableBodyId>)> {
+    match callee {
+        DynamicCallCallee::ReturnedPathCall { path, is_awaited } => {
+            let kind = if *is_awaited {
+                "AwaitedReturnedPathCall"
+            } else {
+                "ReturnedPathCall"
+            };
+            Some((kind, path, None))
+        }
+        DynamicCallCallee::FnPointerCastLocalBinding { path } => {
+            Some(("FnPointerCastLocalBinding", path, None))
+        }
+        DynamicCallCallee::LocalBinding { path } => Some(("LocalBinding", path, None)),
+        DynamicCallCallee::AsyncClosureBinding { path, closure_id } => {
+            Some(("AsyncClosureBinding", path, Some(closure_id)))
+        }
+        DynamicCallCallee::AwaitedAsyncClosureBinding { path, closure_id } => {
+            Some(("AwaitedAsyncClosureBinding", path, Some(closure_id)))
+        }
+        DynamicCallCallee::FieldLocalBinding { path } => Some(("FieldLocalBinding", path, None)),
+        DynamicCallCallee::IfBranchParameter { path } => Some(("IfBranchParameter", path, None)),
+        DynamicCallCallee::MatchArmParameter { path } => Some(("MatchArmParameter", path, None)),
+        DynamicCallCallee::Path { .. }
+        | DynamicCallCallee::FnPointerCastPath { .. }
+        | DynamicCallCallee::FnPointerCastInitializedLocalBinding { .. }
+        | DynamicCallCallee::FnPointerCastAliasedLocalBinding { .. }
+        | DynamicCallCallee::FnPointerCastClosureBinding { .. }
+        | DynamicCallCallee::DereferencedInitializedLocalBinding { .. }
+        | DynamicCallCallee::DereferencedClosureBinding { .. }
+        | DynamicCallCallee::AliasedLocalBinding { .. }
+        | DynamicCallCallee::ClosureBinding { .. }
+        | DynamicCallCallee::ClosureLiteral { .. }
+        | DynamicCallCallee::AwaitedAsyncClosureLiteral { .. }
+        | DynamicCallCallee::InitializedLocalBinding { .. }
+        | DynamicCallCallee::SelfField { .. }
+        | DynamicCallCallee::FieldInitializedLocalBinding { .. }
+        | DynamicCallCallee::IndexedInitializedLocalBinding { .. }
+        | DynamicCallCallee::IfBranchPaths { .. }
+        | DynamicCallCallee::IfBranchTargets { .. }
+        | DynamicCallCallee::MatchArmPaths { .. }
+        | DynamicCallCallee::MatchArmTargets { .. }
+        | DynamicCallCallee::Other => None,
+    }
 }
 
 pub struct TypeContainsSchema;
