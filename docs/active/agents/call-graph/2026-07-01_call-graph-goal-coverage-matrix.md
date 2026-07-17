@@ -84,22 +84,26 @@ that includes the substring `fwd`/`rev` setters plus the separate packedpair
 `Runner::fwd` setter candidate. This remains proof-only: no `dyn FnMut` vtable
 dispatch or traversal edge is admitted.
 
-Latest completed slice: axum `HandleErrorFuture::poll` returned-field
-producer proof payload. The real-corpus oracle is
-`axum/src/error_handling/mod.rs:140`, where `HandleError::call` creates
-`let future = Box::pin(async move { ... })`,
+Latest completed slice: axum returned-field future-poll producer proof
+payloads. The first real-corpus oracle is `axum/src/error_handling/mod.rs:140`,
+where `HandleError::call` creates `let future = Box::pin(async move { ... })`,
 `axum/src/error_handling/mod.rs:147`, where it returns
-`future::HandleErrorFuture { future }`, and
-`axum/src/error_handling/mod.rs:251`, where `HandleErrorFuture::poll` later
-calls `self.project().future.poll(cx)`. DB coverage now exposes an
+`future::HandleErrorFuture { future }`, and `axum/src/error_handling/mod.rs:251`,
+where `HandleErrorFuture::poll` later calls `self.project().future.poll(cx)`.
+The second oracle is the generated `middleware/from_fn.rs` `impl_service!`
+family: `Service::call` creates `let future = Box::pin(async move { ... })`,
+returns `ResponseFuture { inner: future }`, and
+`axum/src/middleware/from_fn.rs:375` later calls
+`self.inner.as_mut().poll(cx).map(Ok)`. DB coverage now exposes an
 owner-scoped `future_poll_field_producer_flows_for_owner` query that ties the
-unsupported dyn `Future::poll` frontier back to the producer-side
-`return.future -> Box::pin(...)` `BindingSourceCallResult` proof while
-preserving zero traversal targets. Exact RAG, `code_item_lookup`, and
-`code_item_edges` surface the same `future_poll_field_producer_flows` payload
-and UI count. The DB query was split into exact segment lookups to avoid a
-broad local-binding join on axum. This is explanatory async-frontier proof,
-not poll/resume traversal, trait-object dispatch, or a new call edge.
+unsupported dyn/boxed `Future::poll` frontiers back to producer-side
+`return.future` / `return.inner -> Box::pin(...)`
+`BindingSourceCallResult` proof while preserving zero traversal targets. Exact
+RAG, `code_item_lookup`, and `code_item_edges` surface the same
+`future_poll_field_producer_flows` payload and UI count. The generated
+`from_fn` case exposes sixteen producer flows, one per bounded arity. This is
+explanatory async-frontier proof, not poll/resume traversal, trait-object
+dispatch, or a new call edge.
 
 Recent completed slice: axum `TapIo::accept` self-field parameter-flow proof
 payload. The real-corpus oracle is
@@ -3871,6 +3875,18 @@ payload tests now include the aliased owner beside the direct and stored
 forwarded-future owners. This does not add general aggregate alias analysis,
 interprocedural future flow, async callable trait-object dispatch, or a
 poll/resume traversal edge.
+
+Update 2026-07-17: the async frontier bucket now includes the generated axum
+`from_fn` returned-field producer proof. The source oracle is
+`axum/src/middleware/from_fn.rs:291-313`, where generated `impl_service!`
+owners create `let future = Box::pin(async move { ... })` and return
+`ResponseFuture { inner: future }`, plus `from_fn.rs:375`, where
+`ResponseFuture::poll` calls `self.inner.as_mut().poll(cx).map(Ok)`. The
+bounded generated-item model now records sixteen producer owners with
+`return.inner -> Box::pin(...)` proof. DB, exact RAG, and exact
+`code_item_lookup` / `code_item_edges` tests expose those
+`future_poll_field_producer_flows` while keeping `BoxFuture::poll` targetless.
+This does not add async poll/resume traversal or runtime trait-object dispatch.
 
 Update 2026-07-17: the callable binding frontier bucket now includes the
 chrono real-corpus typed setter blocker. The source oracle is

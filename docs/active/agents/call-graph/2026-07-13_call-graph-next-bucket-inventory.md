@@ -130,6 +130,18 @@ Current completed checkpoint:
   The exact TUI tools now accept an optional `body_contains` filter so
   owner_trait + owner_type can select the hand-written `HandleError::call`
   owner among generated same-name impls without weakening ambiguity handling.
+- The same returned-field producer carrier now covers the generated axum
+  `middleware/from_fn.rs` `impl_service!` arities. The bounded generated
+  `Service::call` model records `ResponseFuture { inner: future }` with
+  `return.inner -> Box::pin(...)` proof, and the
+  `ResponseFuture::poll` owner at `middleware/from_fn.rs:375` exposes sixteen
+  producer flows while keeping `self.inner.as_mut().poll(cx)` targetless.
+  Verified slice:
+  `cargo test -p ploke-db --features call_graph axum_usage_questions_link_future_poll_to_returned_field_producer -- --nocapture`,
+  `cargo test -p ploke-rag future_poll_field_producer_flows_exact_expose_axum -- --nocapture`,
+  `cargo test -p ploke-tui code_item_lookup_returns_unsupported_receiver_targetless_real_corpus_rows -- --nocapture`,
+  and
+  `cargo test -p ploke-tui code_item_edges_returns_unsupported_receiver_targetless_real_corpus_rows -- --nocapture`.
 - The latest method-callback binding slice adds durable
   `BindingSourceFunction` proof for the fixture oracle
   `call_single_result_callback(f) { Ok::<i32, ()>(1).and_then(f) }` with the
