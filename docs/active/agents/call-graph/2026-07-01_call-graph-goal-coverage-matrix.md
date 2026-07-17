@@ -50,7 +50,24 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current And Recent Buckets
 
-Latest completed slice: axum `TapIo::accept` self-field parameter-flow proof
+Latest completed slice: axum `HandleErrorFuture::poll` returned-field
+producer proof payload. The real-corpus oracle is
+`axum/src/error_handling/mod.rs:140`, where `HandleError::call` creates
+`let future = Box::pin(async move { ... })`,
+`axum/src/error_handling/mod.rs:147`, where it returns
+`future::HandleErrorFuture { future }`, and
+`axum/src/error_handling/mod.rs:251`, where `HandleErrorFuture::poll` later
+calls `self.project().future.poll(cx)`. DB coverage now exposes an
+owner-scoped `future_poll_field_producer_flows_for_owner` query that ties the
+unsupported dyn `Future::poll` frontier back to the producer-side
+`return.future -> Box::pin(...)` `BindingSourceCallResult` proof while
+preserving zero traversal targets. Exact RAG, `code_item_lookup`, and
+`code_item_edges` surface the same `future_poll_field_producer_flows` payload
+and UI count. The DB query was split into exact segment lookups to avoid a
+broad local-binding join on axum. This is explanatory async-frontier proof,
+not poll/resume traversal, trait-object dispatch, or a new call edge.
+
+Recent completed slice: axum `TapIo::accept` self-field parameter-flow proof
 payload. The real-corpus oracle is
 `axum/src/serve/listener.rs:116-123`, where `tap_io<F>(self, tap_fn: F)`
 returns `TapIo { listener: self, tap_fn }`, and

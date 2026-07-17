@@ -15,8 +15,9 @@ use crate::call_graph_tool_support::{
     ReceiverToolFixture, assert_admitted_external_summary_effect,
     assert_admitted_external_summary_proof, assert_admitted_macro_boundary_summary_proof,
     assert_ambiguous_candidate_proof, assert_ambiguous_dynamic_candidates_with_relation,
-    assert_dynamic_context, assert_dynamic_proof, assert_ifunc_context, assert_ifunc_proof,
-    assert_ifunc_unsafe_calls, assert_method_context, assert_method_proof,
+    assert_dynamic_context, assert_dynamic_proof,
+    assert_handle_error_future_poll_producer_flow_payload, assert_ifunc_context,
+    assert_ifunc_proof, assert_ifunc_unsafe_calls, assert_method_context, assert_method_proof,
     assert_path_blocker_proof, assert_path_context, assert_path_context_absent,
     assert_path_resolution_proof, assert_resolved_method_context, assert_resolved_method_proof,
     assert_resolved_path_context_count, assert_resolved_path_context_target,
@@ -57,7 +58,6 @@ async fn code_item_lookup_returns_dynamic_targetless_real_corpus_rows() {
             .get("runtime_dispatch_needs")
             .and_then(serde_json::Value::as_array)
             .expect("runtime_dispatch_needs array");
-
         // Matrix:
         //   docs/active/agents/call-graph/
         //   2026-06-28_real-corpus-call-site-oracle-matrices.md
@@ -558,6 +558,10 @@ async fn code_item_lookup_returns_unsupported_receiver_targetless_real_corpus_ro
             .get("runtime_dispatch_needs")
             .and_then(serde_json::Value::as_array)
             .expect("runtime_dispatch_needs array");
+        let future_poll_flows = payload
+            .get("future_poll_field_producer_flows")
+            .and_then(serde_json::Value::as_array)
+            .expect("future_poll_field_producer_flows array");
 
         // Matrix:
         //   docs/active/agents/call-graph/
@@ -622,6 +626,11 @@ async fn code_item_lookup_returns_unsupported_receiver_targetless_real_corpus_ro
                     "lookup",
                 );
                 assert_runtime_dispatch_need(runtime_needs, site_id, fixture.case.label, "lookup");
+                assert_handle_error_future_poll_producer_flow_payload(
+                    future_poll_flows,
+                    fixture.owner,
+                    "code_item_lookup",
+                );
                 fixture
                     .state
                     .db
@@ -691,6 +700,10 @@ async fn code_item_lookup_returns_unsupported_receiver_targetless_real_corpus_ro
         assert_eq!(
             ui_field(ui, "runtime_dispatch_needs"),
             runtime_needs.len().to_string()
+        );
+        assert_eq!(
+            ui_field(ui, "future_poll_field_producer_flows"),
+            future_poll_flows.len().to_string()
         );
     }
 }
@@ -1403,7 +1416,6 @@ async fn code_item_edges_returns_dynamic_targetless_real_corpus_rows() {
             .and_then(|node| node.get("runtime_dispatch_needs"))
             .and_then(serde_json::Value::as_array)
             .expect("node_info.runtime_dispatch_needs array");
-
         // Same real-corpus dynamic targetless oracle as the lookup test above,
         // exercised through the edge-oriented exact tool payload.
         let site_id = assert_dynamic_context(
@@ -1789,6 +1801,11 @@ async fn code_item_edges_returns_unsupported_receiver_targetless_real_corpus_row
             .and_then(|node| node.get("runtime_dispatch_needs"))
             .and_then(serde_json::Value::as_array)
             .expect("node_info.runtime_dispatch_needs array");
+        let future_poll_flows = payload
+            .get("node_info")
+            .and_then(|node| node.get("future_poll_field_producer_flows"))
+            .and_then(serde_json::Value::as_array)
+            .expect("node_info.future_poll_field_producer_flows array");
 
         // Same receiver source oracles as the lookup test above, exercised
         // through the edge-oriented payload.
@@ -1838,6 +1855,11 @@ async fn code_item_edges_returns_unsupported_receiver_targetless_real_corpus_row
                     "edges",
                 );
                 assert_runtime_dispatch_need(runtime_needs, site_id, fixture.case.label, "edges");
+                assert_handle_error_future_poll_producer_flow_payload(
+                    future_poll_flows,
+                    fixture.owner,
+                    "code_item_edges",
+                );
                 fixture
                     .state
                     .db
@@ -1904,6 +1926,10 @@ async fn code_item_edges_returns_unsupported_receiver_targetless_real_corpus_row
         assert_eq!(
             ui_field(ui, "runtime_dispatch_needs"),
             runtime_needs.len().to_string()
+        );
+        assert_eq!(
+            ui_field(ui, "future_poll_field_producer_flows"),
+            future_poll_flows.len().to_string()
         );
     }
 }

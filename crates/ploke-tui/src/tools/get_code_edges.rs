@@ -353,6 +353,8 @@ for a more fuzzy search."#
             lookup_support::local_binding_edges_for_node(&ctx, resolved_item_id)?;
         let self_field_parameter_flows =
             lookup_support::self_field_parameter_flows_for_node(&ctx, resolved_item_id)?;
+        let future_poll_field_producer_flows =
+            lookup_support::future_poll_field_producer_flows_for_node(&ctx, resolved_item_id)?;
         let awaited_call_sites =
             lookup_support::awaited_call_sites_for_node(&ctx, resolved_item_id)?;
         let returned_call_binding_flows =
@@ -431,6 +433,7 @@ for a more fuzzy search."#
             local_bindings,
             local_binding_edges,
             self_field_parameter_flows,
+            future_poll_field_producer_flows,
             awaited_call_sites,
             returned_call_binding_flows,
             returned_future_flows,
@@ -502,6 +505,7 @@ for a more fuzzy search."#
             &node_edge_info.node_info.local_bindings,
             &node_edge_info.node_info.local_binding_edges,
             &node_edge_info.node_info.self_field_parameter_flows,
+            &node_edge_info.node_info.future_poll_field_producer_flows,
             &node_edge_info.node_info.awaited_call_sites,
             &node_edge_info.node_info.returned_call_binding_flows,
             &node_edge_info.node_info.returned_future_flows,

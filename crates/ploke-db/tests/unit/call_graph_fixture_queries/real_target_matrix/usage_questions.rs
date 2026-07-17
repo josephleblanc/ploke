@@ -2695,6 +2695,106 @@ fn axum_usage_questions_record_returned_future_field_producer() -> Result<(), Db
     Ok(())
 }
 
+#[test]
+fn axum_usage_questions_link_future_poll_to_returned_field_producer() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Debugging / RAG:
+    //   "Which source expression produced the future later polled through this
+    //   runtime-dispatch frontier?"
+    //
+    // Source oracle:
+    //   axum/src/error_handling/mod.rs:140 creates
+    //     `let future = Box::pin(async move { ... })`.
+    //   axum/src/error_handling/mod.rs:147 returns
+    //     `future::HandleErrorFuture { future }`.
+    //   axum/src/error_handling/mod.rs:251 later calls
+    //     `self.project().future.poll(cx)`.
+    // Expected contract: the poll owner exposes the producer-side returned
+    // field binding that stores the `Box::pin(...)` call result, but the dyn
+    // `Future::poll` callsite remains unsupported, targetless, and edge-free.
+    let producer = method_id_by_name_body_and_file_suffix(
+        &db,
+        "call",
+        "Err(err) => Ok(f(err).await.into_response())",
+        "axum/src/error_handling/mod.rs",
+    )?;
+    let poll_owner = FuturePollCase::AXUM[0].owner(&db)?;
+    let context = db.call_context_for_owner(poll_owner)?;
+    let poll = FuturePollCase::AXUM[0].poll_row(&context);
+
+    let flows = db.future_poll_field_producer_flows_for_owner(poll_owner)?;
+    assert_eq!(
+        flows.len(),
+        1,
+        "HandleErrorFuture::poll should expose one producer-side field flow: {flows:#?}"
+    );
+    let flow = &flows[0];
+    assert_eq!(flow.site.id, poll.site.id);
+    assert_eq!(flow.site.owner_id, poll_owner);
+    assert_eq!(flow.status.status, CallStatusKind::Unsupported);
+    assert!(flow.status.resolution.is_none());
+    assert_eq!(flow.poll_owner_type, "HandleErrorFuture");
+    assert_eq!(flow.producer_id, producer);
+    assert!(
+        matches!(
+            flow.site.receiver.as_ref(),
+            Some(CallReceiver::MethodResultField {
+                method_name,
+                field_path,
+                ..
+            }) if method_name == "project" && field_path == &path(&["future"])
+        ),
+        "poll flow should preserve the project().future receiver: {flow:#?}"
+    );
+
+    assert_eq!(flow.return_binding.owner_id, producer);
+    assert_eq!(flow.return_binding.kind, "ReturnExpression");
+    assert_eq!(flow.return_binding.name, "return");
+    assert_eq!(flow.return_binding.source_kind, "Constructed");
+    assert_eq!(
+        flow.return_binding.source_path.as_ref(),
+        Some(&path(&["future", "HandleErrorFuture"]))
+    );
+    assert_eq!(flow.field_binding.owner_id, producer);
+    assert_eq!(flow.field_binding.kind, "LetBinding");
+    assert_eq!(flow.field_binding.name, "return.future");
+    assert_eq!(flow.field_binding.source_kind, "PathCallResult");
+    assert_eq!(flow.field_binding.source_id, Some(flow.source_site.id));
+    assert_eq!(flow.source_site.owner_id, producer);
+    assert_eq!(flow.source_site.kind, CallSiteKind::Path);
+    assert_eq!(flow.source_site.path.as_ref(), Some(&path(&["Box", "pin"])));
+    assert_eq!(
+        flow.source_edge.relation,
+        LocalBindingRelationKind::BindingSourceCallResult
+    );
+    assert_eq!(flow.source_edge.source_id, flow.field_binding.id);
+    assert_eq!(flow.source_edge.target_id, flow.source_site.id);
+
+    assert!(
+        relations_for_site(&db, flow.site.id)?.rows.is_empty(),
+        "poll-to-producer proof must not fabricate a local dyn Future::poll edge"
+    );
+    assert_no_traversal_candidates_for_site(
+        &db,
+        poll_owner,
+        flow.site.id,
+        "axum/src/error_handling/mod.rs:251 poll-to-field-producer proof",
+    )?;
+
+    let unrelated = FuturePollCase::AXUM[1].owner(&db)?;
+    let unrelated_flows = db.future_poll_field_producer_flows_for_owner(unrelated)?;
+    assert!(
+        unrelated_flows.is_empty(),
+        "BoxFuture::as_mut().poll has no returned-field producer proof in the current carrier: {unrelated_flows:#?}"
+    );
+
+    Ok(())
+}
+
 #[derive(Clone, Copy)]
 struct FuturePollCase {
     label: &'static str,

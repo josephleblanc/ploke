@@ -9,9 +9,10 @@ use crate::{
 use super::{
     CallContextRow, CallPathEdge, CallReceiver, CallRelationKind, CallResolutionKind,
     CallResolutionRow, CallSiteKind, CallSiteRow, CallStatusKind, CallTargetKind, CallTargetRow,
-    LocalBindingEdgeRow, LocalBindingRelationKind, LocalBindingRow, ReturnedCallBinding,
-    ReturnedCallBindingFlow, ReturnedCallProducer, ReturnedCallSite, ReturnedCallSource,
-    ReturnedFutureExecutionFlow, ReturnedFutureFlow, ReturnedFutureSite, SelfFieldParameterFlow,
+    FuturePollFieldProducerFlow, LocalBindingEdgeRow, LocalBindingRelationKind, LocalBindingRow,
+    ReturnedCallBinding, ReturnedCallBindingFlow, ReturnedCallProducer, ReturnedCallSite,
+    ReturnedCallSource, ReturnedFutureExecutionFlow, ReturnedFutureFlow, ReturnedFutureSite,
+    SelfFieldParameterFlow,
 };
 
 pub(super) fn decode_site(row: &[DataValue]) -> Result<CallSiteRow, DbError> {
@@ -393,6 +394,81 @@ fn validate_self_field_parameter_flow(flow: &SelfFieldParameterFlow) -> Result<(
     } else {
         Err(DbError::Cozo(format!(
             "malformed self-field parameter flow for call site {}",
+            flow.site.id
+        )))
+    }
+}
+
+pub(super) fn decode_future_poll_field_producer_flow(
+    row: &[DataValue],
+) -> Result<FuturePollFieldProducerFlow, DbError> {
+    let flow = FuturePollFieldProducerFlow {
+        site: decode_site(&row[0..13])?,
+        status: decode_resolution(&row[13..17])?,
+        poll_owner_type: to_string(&row[17])?,
+        producer_id: to_uuid(&row[18])?,
+        return_binding: decode_local_binding(&row[19..32])?,
+        field_binding: decode_local_binding(&row[32..45])?,
+        source_status: decode_resolution(&row[45..49])?,
+        source_site: decode_site(&row[49..62])?,
+        source_edge: decode_local_binding_edge(&row[62..67])?,
+    };
+    validate_future_poll_field_producer_flow(&flow)?;
+    Ok(flow)
+}
+
+fn validate_future_poll_field_producer_flow(
+    flow: &FuturePollFieldProducerFlow,
+) -> Result<(), DbError> {
+    let Some(CallReceiver::MethodResultField { field_path, .. }) = flow.site.receiver.as_ref()
+    else {
+        return Err(DbError::Cozo(format!(
+            "future poll field producer flow {} missing method-result field receiver",
+            flow.site.id
+        )));
+    };
+
+    let field_name = format!("return.{}", field_path.join("."));
+    let return_path = flow
+        .return_binding
+        .source_path
+        .as_deref()
+        .unwrap_or_default();
+
+    let valid = flow.site.kind == CallSiteKind::Method
+        && flow.site.method.as_deref() == Some("poll")
+        && flow.status.site_id == flow.site.id
+        && flow.status.site_kind == CallSiteKind::Method
+        && flow.status.status != CallStatusKind::Resolved
+        && flow.status.resolution.is_none()
+        && !flow.poll_owner_type.is_empty()
+        && return_path
+            .last()
+            .is_some_and(|segment| segment == &flow.poll_owner_type)
+        && flow.return_binding.owner_id == flow.producer_id
+        && flow.return_binding.kind == "ReturnExpression"
+        && flow.return_binding.name == "return"
+        && flow.return_binding.source_kind == "Constructed"
+        && flow.field_binding.owner_id == flow.producer_id
+        && flow.field_binding.kind == "LetBinding"
+        && flow.field_binding.name == field_name
+        && flow.field_binding.source_id == Some(flow.source_site.id)
+        && flow.field_binding.source_call_kind.as_deref() == Some(flow.source_site.kind.as_str())
+        && flow.field_binding.source_kind == "PathCallResult"
+        && flow.source_status.site_id == flow.source_site.id
+        && flow.source_status.site_kind == flow.source_site.kind
+        && flow.source_site.owner_id == flow.producer_id
+        && flow.source_edge.source_id == flow.field_binding.id
+        && flow.source_edge.target_id == flow.source_site.id
+        && flow.source_edge.relation == LocalBindingRelationKind::BindingSourceCallResult
+        && flow.source_edge.source_kind == "LocalBinding"
+        && flow.source_edge.target_kind == flow.source_site.kind.as_str();
+
+    if valid {
+        Ok(())
+    } else {
+        Err(DbError::Cozo(format!(
+            "malformed future poll field producer flow for call site {}",
             flow.site.id
         )))
     }

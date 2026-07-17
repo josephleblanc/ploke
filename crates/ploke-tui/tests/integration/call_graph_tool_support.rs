@@ -10,8 +10,9 @@ use ploke_core::{
     rag_types::{
         AwaitedCallSiteInfo, CallCalleeInfo, CallContextInfo, CallEndpointKind, CallPathInfo,
         CallReachEffectInfo, CallReceiverInfo, CallResolutionKind, CallSiteBucketInfo,
-        CallSiteKind, CallStatusKind, CallTargetKind, CrateBoundaryEdgeInfo, LocalBindingEdgeInfo,
-        LocalBindingInfo, LocalBindingRelationKind, ProofContextInfo, ReturnedCallBindingFlowInfo,
+        CallSiteKind, CallStatusKind, CallTargetKind, CrateBoundaryEdgeInfo,
+        FuturePollFieldProducerFlowInfo, LocalBindingEdgeInfo, LocalBindingInfo,
+        LocalBindingRelationKind, ProofContextInfo, ReturnedCallBindingFlowInfo,
         ReturnedCallSourceKind, ReturnedFutureExecutionFlowInfo, ReturnedFutureFlowInfo,
         SelfFieldParameterFlowInfo, UnsafeBlockCallInfo,
     },
@@ -3894,6 +3895,82 @@ pub(crate) fn assert_handle_error_returned_future_local_binding_payload(
         }),
         "{tool} should expose BindingSourceCallResult for HandleError::call return.future: {edges:#?}"
     );
+}
+
+pub(crate) fn assert_handle_error_future_poll_producer_flow_payload(
+    flows: &[serde_json::Value],
+    owner: Uuid,
+    tool: &str,
+) {
+    let rows = flows
+        .iter()
+        .filter_map(|flow| {
+            serde_json::from_value::<FuturePollFieldProducerFlowInfo>(flow.clone()).ok()
+        })
+        .collect::<Vec<_>>();
+    let flow = rows
+        .iter()
+        .find(|flow| {
+            flow.site.owner_id == owner
+                && flow.site.kind == CallSiteKind::Method
+                && flow.site.status == CallStatusKind::Unsupported
+                && flow.poll_owner_type == "HandleErrorFuture"
+                && matches!(
+                    &flow.site.callee,
+                    CallCalleeInfo::Method {
+                        name,
+                        receiver: Some(CallReceiverInfo::MethodResultField {
+                            method_name,
+                            field_path,
+                            ..
+                        }),
+                    } if name == "poll"
+                        && method_name == "project"
+                        && field_path.iter().map(String::as_str).eq(["future"])
+                )
+        })
+        .unwrap_or_else(|| {
+            panic!("{tool} should expose HandleErrorFuture::poll producer flow: {flows:#?}")
+        });
+
+    assert!(
+        flow.site.targets.is_empty(),
+        "{tool} should keep HandleErrorFuture::poll targetless: {flow:#?}"
+    );
+    assert_eq!(flow.return_binding.owner_id, flow.producer_id);
+    assert_eq!(flow.return_binding.kind, "ReturnExpression");
+    assert_eq!(flow.return_binding.name, "return");
+    assert_eq!(flow.return_binding.source_kind, "Constructed");
+    assert!(
+        flow.return_binding
+            .source_path
+            .as_deref()
+            .is_some_and(|path| path
+                .iter()
+                .map(String::as_str)
+                .eq(["future", "HandleErrorFuture"])),
+        "{tool} should expose the constructed HandleErrorFuture return binding: {flow:#?}"
+    );
+    assert_eq!(flow.field_binding.owner_id, flow.producer_id);
+    assert_eq!(flow.field_binding.kind, "LetBinding");
+    assert_eq!(flow.field_binding.name, "return.future");
+    assert_eq!(flow.field_binding.source_kind, "PathCallResult");
+    assert_eq!(flow.field_binding.source_id, Some(flow.source_site.site_id));
+    assert_eq!(flow.source_site.owner_id, flow.producer_id);
+    assert_eq!(flow.source_site.kind, CallSiteKind::Path);
+    assert!(
+        flow.source_site
+            .path
+            .as_deref()
+            .is_some_and(|path| path.iter().map(String::as_str).eq(["Box", "pin"])),
+        "{tool} should link return.future to the Box::pin source site: {flow:#?}"
+    );
+    assert_eq!(
+        flow.source_edge.relation,
+        LocalBindingRelationKind::BindingSourceCallResult
+    );
+    assert_eq!(flow.source_edge.source_id, flow.field_binding.id);
+    assert_eq!(flow.source_edge.target_id, flow.source_site.site_id);
 }
 
 pub(crate) fn assert_forwarded_async_future_awaited_site(

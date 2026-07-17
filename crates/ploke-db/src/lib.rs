@@ -29,12 +29,13 @@ pub use call_graph::{
     CallReceiver, CallRelationKind, CallResolutionKind, CallResolutionRow, CallSiteBucket,
     CallSiteKind, CallSiteRow, CallStatusKind, CallTargetKind, CallTargetRow, CallTestEntrypoint,
     CallTestSelectionReport, CrateBoundaryEdge, CrateBoundaryPolicyRule,
-    CrateBoundaryPolicyViolation, ExternalSummaryNeed, LocalBindingEdgeRow,
-    LocalBindingRelationKind, LocalBindingRow, ModuleBoundaryEdge, ModuleBoundaryPolicyRule,
-    ModuleBoundaryPolicyViolation, ReturnedCallBinding, ReturnedCallBindingFlow,
-    ReturnedCallProducer, ReturnedCallSite, ReturnedCallSource, ReturnedFutureExecutionFlow,
-    ReturnedFutureFlow, ReturnedFutureSite, RuntimeDispatchNeed, SelfFieldParameterFlow,
-    UnsafeBlockCall, call_target_endpoint_relation, valid_call_target_family,
+    CrateBoundaryPolicyViolation, ExternalSummaryNeed, FuturePollFieldProducerFlow,
+    LocalBindingEdgeRow, LocalBindingRelationKind, LocalBindingRow, ModuleBoundaryEdge,
+    ModuleBoundaryPolicyRule, ModuleBoundaryPolicyViolation, ReturnedCallBinding,
+    ReturnedCallBindingFlow, ReturnedCallProducer, ReturnedCallSite, ReturnedCallSource,
+    ReturnedFutureExecutionFlow, ReturnedFutureFlow, ReturnedFutureSite, RuntimeDispatchNeed,
+    SelfFieldParameterFlow, UnsafeBlockCall, call_target_endpoint_relation,
+    valid_call_target_family,
 };
 pub use database::RestoredEmbeddingSet;
 pub use database::{

@@ -232,6 +232,22 @@ Follow-up downstream checkpoint, 2026-07-16:
   trait-object dispatch, broader public parameter proof, and general
   interprocedural value flow remain outside this slice.
 
+Future-poll producer checkpoint, 2026-07-16:
+
+- Axum `HandleErrorFuture::poll` now has proof-only downstream payload
+  coverage for the reviewed dyn `Future::poll` frontier. The DB query
+  `future_poll_field_producer_flows_for_owner` composes the targetless
+  `self.project().future.poll(cx)` callsite at
+  `axum/src/error_handling/mod.rs:251` with the producer-side
+  `HandleError::call` return/field/source proof from
+  `axum/src/error_handling/mod.rs:140,147`: `return.future` is sourced by
+  `Box::pin(...)` through a `BindingSourceCallResult` edge. Exact RAG,
+  `code_item_lookup`, and `code_item_edges` expose the same
+  `future_poll_field_producer_flows` payload. This keeps dyn `Future::poll`
+  unsupported and targetless; it only records the source-visible returned
+  field producer. General poll/resume traversal, trait-object dispatch, and
+  broader future value flow remain outside this slice.
+
 Local-binding projection checkpoint, 2026-07-14:
 
 - Source oracles:

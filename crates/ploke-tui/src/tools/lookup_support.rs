@@ -5,10 +5,10 @@ use ploke_core::{
         AwaitedCallSiteInfo, CallBuildDomainInfo, CallContextInfo, CallEffectPolicyViolationInfo,
         CallImpactInfo, CallPathInfo, CallProofInvariantFindingInfo, CallReachEffectInfo,
         CallReachInfo, CallTestEntrypointInfo, CallTestSelectionInfo, CrateBoundaryEdgeInfo,
-        ExternalSummaryNeedInfo, LocalBindingEdgeInfo, LocalBindingInfo, ModuleBoundaryEdgeInfo,
-        ProofContextInfo, ReturnedCallBindingFlowInfo, ReturnedFutureExecutionFlowInfo,
-        ReturnedFutureFlowInfo, RuntimeDispatchNeedInfo, SelfFieldParameterFlowInfo,
-        UnsafeBlockCallInfo,
+        ExternalSummaryNeedInfo, FuturePollFieldProducerFlowInfo, LocalBindingEdgeInfo,
+        LocalBindingInfo, ModuleBoundaryEdgeInfo, ProofContextInfo, ReturnedCallBindingFlowInfo,
+        ReturnedFutureExecutionFlowInfo, ReturnedFutureFlowInfo, RuntimeDispatchNeedInfo,
+        SelfFieldParameterFlowInfo, UnsafeBlockCallInfo,
     },
     tool_types::ToolName,
 };
@@ -784,6 +784,25 @@ pub(super) fn self_field_parameter_flows_for_node(
     }
 }
 
+pub(super) fn future_poll_field_producer_flows_for_node(
+    ctx: &super::Ctx,
+    node_id: Uuid,
+) -> Result<Vec<FuturePollFieldProducerFlowInfo>, ploke_error::Error> {
+    use ploke_error::InternalError;
+
+    match ctx.state.rag.as_ref() {
+        Some(rag) if !rag.call_context_degraded() => Ok(rag
+            .exact_future_poll_field_producer_flows_for_owner(node_id)
+            .map_err(|err| {
+                ploke_error::Error::Internal(InternalError::CompilerError(format!(
+                    "failed to collect future poll field producer flows for code item {node_id}: {err}"
+                )))
+            })?
+            .unwrap_or_default()),
+        _ => Ok(Vec::new()),
+    }
+}
+
 pub(super) fn returned_call_binding_flows_for_node(
     ctx: &super::Ctx,
     node_id: Uuid,
@@ -1026,6 +1045,7 @@ pub(super) fn with_call_usage_fields(
     local_bindings: &[LocalBindingInfo],
     local_binding_edges: &[LocalBindingEdgeInfo],
     self_field_flows: &[SelfFieldParameterFlowInfo],
+    future_poll_flows: &[FuturePollFieldProducerFlowInfo],
     awaited_sites: &[AwaitedCallSiteInfo],
     returned_flows: &[ReturnedCallBindingFlowInfo],
     future_flows: &[ReturnedFutureFlowInfo],
@@ -1155,6 +1175,10 @@ pub(super) fn with_call_usage_fields(
         .with_field(
             "self_field_parameter_flows",
             self_field_flows.len().to_string(),
+        )
+        .with_field(
+            "future_poll_field_producer_flows",
+            future_poll_flows.len().to_string(),
         )
         .with_field("awaited_call_sites", awaited_sites.len().to_string())
         .with_field(

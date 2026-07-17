@@ -19,7 +19,7 @@ use ploke_core::rag_types::{
     CallSiteKind as RagCallSiteKind, CallStatusKind as RagCallStatusKind, CallTargetInfo,
     CallTargetKind, CallTestEntrypointInfo, CallTestSelectionInfo, CanonPath,
     CrateBoundaryEdgeInfo, CrateBoundaryPolicyViolationInfo, ExternalSummaryNeedInfo,
-    LocalBindingEdgeInfo, LocalBindingInfo,
+    FuturePollFieldProducerFlowInfo, LocalBindingEdgeInfo, LocalBindingInfo,
     LocalBindingRelationKind as RagLocalBindingRelationKind, ModuleBoundaryEdgeInfo,
     ModuleBoundaryPolicyViolationInfo, NodeFilepath, ProofContextInfo, ReturnedCallBindingFlowInfo,
     ReturnedCallBindingInfo, ReturnedCallProducerInfo, ReturnedCallSiteInfo,
@@ -41,9 +41,10 @@ use ploke_db::{
     CallTestSelectionReport as DbCallTestSelectionReport, CrateBoundaryEdge as DbCrateBoundaryEdge,
     CrateBoundaryPolicyRule as DbCrateBoundaryPolicyRule,
     CrateBoundaryPolicyViolation as DbCrateBoundaryPolicyViolation,
-    ExternalSummaryNeed as DbExternalSummaryNeed, LocalBindingEdgeRow as DbLocalBindingEdgeRow,
-    LocalBindingRelationKind, LocalBindingRow as DbLocalBindingRow,
-    ModuleBoundaryEdge as DbModuleBoundaryEdge,
+    ExternalSummaryNeed as DbExternalSummaryNeed,
+    FuturePollFieldProducerFlow as DbFuturePollFieldProducerFlow,
+    LocalBindingEdgeRow as DbLocalBindingEdgeRow, LocalBindingRelationKind,
+    LocalBindingRow as DbLocalBindingRow, ModuleBoundaryEdge as DbModuleBoundaryEdge,
     ModuleBoundaryPolicyRule as DbModuleBoundaryPolicyRule,
     ModuleBoundaryPolicyViolation as DbModuleBoundaryPolicyViolation, ProofGraphContextRow,
     ProofGraphStore, ReturnedCallBindingFlow as DbReturnedCallBindingFlow,
@@ -686,6 +687,34 @@ fn self_field_parameter_flow_info(
         return_binding: local_binding_info(row.return_binding),
         field_binding: local_binding_info(row.field_binding),
         parameter_binding: local_binding_info(row.parameter_binding),
+    })
+}
+
+fn future_poll_field_producer_flow_info(
+    row: DbFuturePollFieldProducerFlow,
+) -> Result<FuturePollFieldProducerFlowInfo, RagError> {
+    Ok(FuturePollFieldProducerFlowInfo {
+        site: row_to_call_context(
+            CallContextRow {
+                site: row.site,
+                status: row.status,
+                targets: Vec::new(),
+            },
+            usize::MAX,
+        )?,
+        poll_owner_type: row.poll_owner_type,
+        producer_id: row.producer_id,
+        return_binding: local_binding_info(row.return_binding),
+        field_binding: local_binding_info(row.field_binding),
+        source_site: row_to_call_context(
+            CallContextRow {
+                site: row.source_site,
+                status: row.source_status,
+                targets: Vec::new(),
+            },
+            usize::MAX,
+        )?,
+        source_edge: local_binding_edge_info(row.source_edge),
     })
 }
 
@@ -1710,6 +1739,23 @@ impl RagService {
                 .self_field_parameter_flows_for_owner(owner_id)?
                 .into_iter()
                 .map(self_field_parameter_flow_info)
+                .collect::<Result<Vec<_>, RagError>>()?,
+        ))
+    }
+
+    pub fn exact_future_poll_field_producer_flows_for_owner(
+        &self,
+        owner_id: Uuid,
+    ) -> Result<Option<Vec<FuturePollFieldProducerFlowInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .future_poll_field_producer_flows_for_owner(owner_id)?
+                .into_iter()
+                .map(future_poll_field_producer_flow_info)
                 .collect::<Result<Vec<_>, RagError>>()?,
         ))
     }

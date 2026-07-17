@@ -6,11 +6,451 @@ use uuid::Uuid;
 use crate::{Database, DbError};
 
 use super::super::{
-    CallSiteKind, CallStatusKind, SelfFieldParameterFlow, decode::decode_self_field_parameter_flow,
+    CallReceiver, CallSiteKind, CallStatusKind, FuturePollFieldProducerFlow,
+    SelfFieldParameterFlow,
+    decode::{decode_future_poll_field_producer_flow, decode_self_field_parameter_flow},
     families::valid_call_owner_rules,
 };
 
+fn uuid_value(value: &DataValue, label: &str) -> Result<Uuid, DbError> {
+    match value {
+        DataValue::Uuid(value) => Ok(value.0),
+        other => Err(DbError::Cozo(format!(
+            "expected {label} to be a uuid, found {other:?}"
+        ))),
+    }
+}
+
+fn string_value(value: &DataValue, label: &str) -> Result<String, DbError> {
+    match value {
+        DataValue::Str(value) => Ok(value.to_string()),
+        other => Err(DbError::Cozo(format!(
+            "expected {label} to be a string, found {other:?}"
+        ))),
+    }
+}
+
 impl Database {
+    pub fn future_poll_field_producer_flows_for_owner(
+        &self,
+        owner_id: Uuid,
+    ) -> Result<Vec<FuturePollFieldProducerFlow>, DbError> {
+        let owner_types = self.call_owner_self_type_names(owner_id)?;
+        if owner_types.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let candidates = self
+            .call_context_for_owner(owner_id)?
+            .into_iter()
+            .filter_map(|row| {
+                if row.site.kind != CallSiteKind::Method
+                    || row.site.method.as_deref() != Some("poll")
+                    || row.status.status == CallStatusKind::Resolved
+                {
+                    return None;
+                }
+                match row.site.receiver.as_ref()? {
+                    CallReceiver::MethodResultField { field_path, .. } => {
+                        Some((row.site.id, field_path.clone()))
+                    }
+                    _ => None,
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let mut flows = Vec::new();
+        for (site_id, field_path) in candidates {
+            for owner_type in &owner_types {
+                flows.extend(self.future_poll_field_producer_flows_for_site(
+                    site_id,
+                    &field_path,
+                    owner_type,
+                )?);
+            }
+        }
+        Ok(flows)
+    }
+
+    fn call_owner_self_type_names(&self, owner_id: Uuid) -> Result<Vec<String>, DbError> {
+        let mut params = BTreeMap::new();
+        params.insert(
+            "owner_id".to_string(),
+            DataValue::Uuid(UuidWrapper(owner_id)),
+        );
+
+        let rows = self.run_script(
+            r#"
+            ?[type_name] :=
+                owner_id = $owner_id,
+                *method { id: owner_id, owner_id: impl_id @ 'NOW' },
+                *impl { id: impl_id, self_type: self_type_id @ 'NOW' },
+                *type_relation {
+                    source_id: self_type_id,
+                    target_id: self_target_id,
+                    relation_kind: "Ordinary" @ 'NOW'
+                },
+                self_type_target[self_target_id, type_name]
+
+            ?[type_name] :=
+                owner_id = $owner_id,
+                *method { id: owner_id, owner_id: impl_id @ 'NOW' },
+                *impl { id: impl_id, self_type: self_type_id @ 'NOW' },
+                *named_type { type_id: self_type_id, path @ 'NOW' },
+                type_name in path
+
+            self_type_target[id, name] := *struct { id, name @ 'NOW' }
+            self_type_target[id, name] := *enum { id, name @ 'NOW' }
+            self_type_target[id, name] := *union { id, name @ 'NOW' }
+            :sort type_name"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+
+        rows.rows
+            .iter()
+            .map(|row| match &row[0] {
+                DataValue::Str(value) => Ok(value.to_string()),
+                other => Err(DbError::Cozo(format!(
+                    "expected owner self type name, found {other:?}"
+                ))),
+            })
+            .collect()
+    }
+
+    fn future_poll_field_producer_flows_for_site(
+        &self,
+        site_id: Uuid,
+        field_path: &[String],
+        owner_type: &str,
+    ) -> Result<Vec<FuturePollFieldProducerFlow>, DbError> {
+        let field_name = format!("return.{}", field_path.join("."));
+        let owner_type_path = DataValue::List(vec![DataValue::from(owner_type)]);
+        let future_owner_type_path =
+            DataValue::List(vec![DataValue::from("future"), DataValue::from(owner_type)]);
+
+        let Some(poll_segment) = self.future_poll_site_segment(site_id)? else {
+            return Ok(Vec::new());
+        };
+
+        let mut flows = Vec::new();
+        for return_path in [owner_type_path, future_owner_type_path] {
+            let candidates =
+                self.future_poll_return_field_candidates(&field_name, owner_type, return_path)?;
+            for candidate in candidates {
+                let producer_id = uuid_value(&candidate[1], "future poll producer_id")?;
+                let source_id = uuid_value(&candidate[23], "future poll field source_id")?;
+                let source_kind =
+                    string_value(&candidate[24], "future poll field source_call_kind")?;
+                let Some(source_segment) =
+                    self.future_poll_source_site_segment(source_id, producer_id, &source_kind)?
+                else {
+                    continue;
+                };
+                let Some(edge_segment) =
+                    self.future_poll_source_edge_segment(&candidate[15], source_id, &source_kind)?
+                else {
+                    continue;
+                };
+
+                let mut row = poll_segment.clone();
+                row.extend(candidate);
+                row.extend(source_segment);
+                row.extend(edge_segment);
+                flows.push(decode_future_poll_field_producer_flow(&row)?);
+            }
+        }
+
+        Ok(flows)
+    }
+
+    fn future_poll_site_segment(&self, site_id: Uuid) -> Result<Option<Vec<DataValue>>, DbError> {
+        let mut params = BTreeMap::new();
+        params.insert("site_id".to_string(), DataValue::Uuid(UuidWrapper(site_id)));
+
+        let rows = self.run_script(
+            r#"
+            ?[
+                site_id,
+                site_owner_id,
+                site_kind,
+                site_span,
+                site_cfgs,
+                site_unsafe_block,
+                site_path,
+                site_method_name,
+                site_macro_name,
+                site_receiver_kind,
+                site_receiver_path,
+                site_arg_count,
+                site_generic_arg_count,
+                status_site_id,
+                status_source_kind,
+                status_kind,
+                resolution_kind
+            ] :=
+                site_id = $site_id,
+                *call_site {
+                    id: site_id,
+                    owner_id: site_owner_id,
+                    call_kind: site_kind,
+                    span: site_span,
+                    cfgs: site_cfgs,
+                    unsafe_block: site_unsafe_block,
+                    path: site_path,
+                    method_name: site_method_name,
+                    macro_name: site_macro_name,
+                    receiver_kind: site_receiver_kind,
+                    receiver_path: site_receiver_path,
+                    arg_count: site_arg_count,
+                    generic_arg_count: site_generic_arg_count @ 'NOW'
+                },
+                site_kind = "Method",
+                site_method_name = "poll",
+                site_receiver_kind = "MethodResultField",
+                *call_resolution_status {
+                    source_id: status_site_id,
+                    source_kind: status_source_kind,
+                    status_kind,
+                    resolution_kind @ 'NOW'
+                },
+                status_site_id = site_id,
+                status_source_kind = "Method",
+                status_kind != "Resolved""#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+
+        match rows.rows.len() {
+            0 => Ok(None),
+            1 => Ok(rows.rows.into_iter().next()),
+            count => Err(DbError::Cozo(format!(
+                "expected at most one future poll site segment for {site_id}, found {count}"
+            ))),
+        }
+    }
+
+    fn future_poll_return_field_candidates(
+        &self,
+        field_name: &str,
+        owner_type: &str,
+        return_path: DataValue,
+    ) -> Result<Vec<Vec<DataValue>>, DbError> {
+        let mut params = BTreeMap::new();
+        params.insert("field_name".to_string(), DataValue::from(field_name));
+        params.insert("owner_type".to_string(), DataValue::from(owner_type));
+        params.insert("return_path".to_string(), return_path);
+
+        let rows = self.run_script(
+            r#"
+            ?[
+                owner_type,
+                producer_id,
+                return_id,
+                return_owner_id,
+                return_owner_kind,
+                return_kind,
+                return_name,
+                return_span,
+                return_cfgs,
+                return_source_kind,
+                return_source_id,
+                return_source_call_kind,
+                return_source_path,
+                return_callee_kind,
+                return_callee_path,
+                field_id,
+                field_owner_id,
+                field_owner_kind,
+                field_kind,
+                field_name,
+                field_span,
+                field_cfgs,
+                field_source_kind,
+                field_source_id,
+                field_source_call_kind,
+                field_source_path,
+                field_callee_kind,
+                field_callee_path
+            ] :=
+                owner_type = $owner_type,
+                *local_binding {
+                    id: field_id,
+                    owner_id: field_owner_id,
+                    owner_kind: field_owner_kind,
+                    binding_kind: field_kind,
+                    name: field_name,
+                    span: field_span,
+                    cfgs: field_cfgs,
+                    source_kind: field_source_kind,
+                    source_id: field_source_id,
+                    source_call_kind: field_source_call_kind,
+                    source_path: field_source_path,
+                    callee_kind: field_callee_kind,
+                    callee_path: field_callee_path @ 'NOW'
+                },
+                field_name = $field_name,
+                field_kind = "LetBinding",
+                field_source_kind = "PathCallResult",
+                producer_id = field_owner_id,
+                *local_binding {
+                    id: return_id,
+                    owner_id: return_owner_id,
+                    owner_kind: return_owner_kind,
+                    binding_kind: return_kind,
+                    name: return_name,
+                    span: return_span,
+                    cfgs: return_cfgs,
+                    source_kind: return_source_kind,
+                    source_id: return_source_id,
+                    source_call_kind: return_source_call_kind,
+                    source_path: return_source_path,
+                    callee_kind: return_callee_kind,
+                    callee_path: return_callee_path @ 'NOW'
+                },
+                return_owner_id = producer_id,
+                return_kind = "ReturnExpression",
+                return_name = "return",
+                return_source_kind = "Constructed",
+                return_source_path = $return_path
+            :sort return_span, field_span"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+
+        Ok(rows.rows)
+    }
+
+    fn future_poll_source_site_segment(
+        &self,
+        source_id: Uuid,
+        producer_id: Uuid,
+        source_kind: &str,
+    ) -> Result<Option<Vec<DataValue>>, DbError> {
+        let mut params = BTreeMap::new();
+        params.insert(
+            "source_id".to_string(),
+            DataValue::Uuid(UuidWrapper(source_id)),
+        );
+        params.insert(
+            "producer_id".to_string(),
+            DataValue::Uuid(UuidWrapper(producer_id)),
+        );
+        params.insert("source_kind".to_string(), DataValue::from(source_kind));
+
+        let rows = self.run_script(
+            r#"
+            ?[
+                source_status_id,
+                source_status_kind,
+                source_status_state,
+                source_resolution_kind,
+                source_id,
+                source_owner_id,
+                source_kind,
+                source_span,
+                source_cfgs,
+                source_unsafe_block,
+                source_path,
+                source_method_name,
+                source_macro_name,
+                source_receiver_kind,
+                source_receiver_path,
+                source_arg_count,
+                source_generic_arg_count
+            ] :=
+                source_id = $source_id,
+                producer_id = $producer_id,
+                expected_source_kind = $source_kind,
+                *call_site {
+                    id: source_id,
+                    owner_id: source_owner_id,
+                    call_kind: source_kind,
+                    span: source_span,
+                    cfgs: source_cfgs,
+                    unsafe_block: source_unsafe_block,
+                    path: source_path,
+                    method_name: source_method_name,
+                    macro_name: source_macro_name,
+                    receiver_kind: source_receiver_kind,
+                    receiver_path: source_receiver_path,
+                    arg_count: source_arg_count,
+                    generic_arg_count: source_generic_arg_count @ 'NOW'
+                },
+                source_owner_id = producer_id,
+                source_kind = expected_source_kind,
+                *call_resolution_status {
+                    source_id: source_status_id,
+                    source_kind: source_status_kind,
+                    status_kind: source_status_state,
+                    resolution_kind: source_resolution_kind @ 'NOW'
+                },
+                source_status_id = source_id,
+                source_status_kind = source_kind"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+
+        match rows.rows.len() {
+            0 => Ok(None),
+            1 => Ok(rows.rows.into_iter().next()),
+            count => Err(DbError::Cozo(format!(
+                "expected at most one future poll source site segment for {source_id}, found {count}"
+            ))),
+        }
+    }
+
+    fn future_poll_source_edge_segment(
+        &self,
+        field_id: &DataValue,
+        source_id: Uuid,
+        source_kind: &str,
+    ) -> Result<Option<Vec<DataValue>>, DbError> {
+        let mut params = BTreeMap::new();
+        params.insert("field_id".to_string(), field_id.clone());
+        params.insert(
+            "source_id".to_string(),
+            DataValue::Uuid(UuidWrapper(source_id)),
+        );
+        params.insert("source_kind".to_string(), DataValue::from(source_kind));
+
+        let rows = self.run_script(
+            r#"
+            ?[
+                edge_source_id,
+                edge_target_id,
+                edge_relation,
+                edge_source_kind,
+                edge_target_kind
+            ] :=
+                field_id = $field_id,
+                source_id = $source_id,
+                source_kind = $source_kind,
+                *local_binding_edge {
+                    source_id: edge_source_id,
+                    target_id: edge_target_id,
+                    relation_kind: edge_relation,
+                    source_kind: edge_source_kind,
+                    target_kind: edge_target_kind @ 'NOW'
+                },
+                edge_source_id = field_id,
+                edge_target_id = source_id,
+                edge_relation = "BindingSourceCallResult",
+                edge_source_kind = "LocalBinding",
+                edge_target_kind = source_kind"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+
+        match rows.rows.len() {
+            0 => Ok(None),
+            1 => Ok(rows.rows.into_iter().next()),
+            count => Err(DbError::Cozo(format!(
+                "expected at most one future poll source edge for {source_id}, found {count}"
+            ))),
+        }
+    }
+
     pub fn self_field_parameter_flows_for_owner(
         &self,
         owner_id: Uuid,

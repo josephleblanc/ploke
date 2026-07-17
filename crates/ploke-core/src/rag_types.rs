@@ -678,6 +678,17 @@ pub struct SelfFieldParameterFlowInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct FuturePollFieldProducerFlowInfo {
+    pub site: CallContextInfo,
+    pub poll_owner_type: String,
+    pub producer_id: Uuid,
+    pub return_binding: LocalBindingInfo,
+    pub field_binding: LocalBindingInfo,
+    pub source_site: CallContextInfo,
+    pub source_edge: LocalBindingEdgeInfo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum ReturnedCallSourceKind {
     Closure,
@@ -1004,6 +1015,7 @@ impl From<ContextPart> for ConciseContext {
             local_bindings: Vec::new(),
             local_binding_edges: Vec::new(),
             self_field_parameter_flows: Vec::new(),
+            future_poll_field_producer_flows: Vec::new(),
             awaited_call_sites: Vec::new(),
             returned_call_binding_flows: Vec::new(),
             returned_future_flows: Vec::new(),
@@ -1092,6 +1104,8 @@ pub struct ConciseContext {
     pub local_binding_edges: Vec<LocalBindingEdgeInfo>,
     #[serde(default)]
     pub self_field_parameter_flows: Vec<SelfFieldParameterFlowInfo>,
+    #[serde(default)]
+    pub future_poll_field_producer_flows: Vec<FuturePollFieldProducerFlowInfo>,
     #[serde(default)]
     pub awaited_call_sites: Vec<AwaitedCallSiteInfo>,
     #[serde(default)]
