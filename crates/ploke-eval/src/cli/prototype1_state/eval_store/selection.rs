@@ -10,7 +10,7 @@ use crate::cli::prototype1_state::history::{
 use crate::successor_selection::traversal::{Formula, ScoreChildPropFormulaRow};
 
 use super::{
-    cozo_store::{EvalDb, mutate_owner_db},
+    cozo_store::{EvalDb, load_owner_eval_database, mutate_owner_db},
     error::EvalStoreError,
     schema::{EvalRelationSchema, define_eval_schema, put_eval_params},
 };
@@ -29,6 +29,15 @@ define_eval_schema!(SelectionDecisionSchema {
     decision_ref: "String?",
     decision_hash: "String?",
     recorded_at: "String?",
+});
+
+define_eval_schema!(SelectionReceiptSchema {
+    "eval_selection_receipt",
+    decision_id: "String" =>
+    campaign_id: "String",
+    parent_id: "String",
+    decision_hash: "String",
+    entry_json: "String",
 });
 
 define_eval_schema!(SelectionCandidateSchema {
@@ -85,6 +94,7 @@ define_eval_schema!(SelectionProjectionSchema {
 });
 
 pub(crate) const SELECTION_DECISION_REL: &str = SelectionDecisionSchema::RELATION;
+pub(crate) const SELECTION_RECEIPT_REL: &str = SelectionReceiptSchema::RELATION;
 pub(crate) const SELECTION_CANDIDATE_REL: &str = SelectionCandidateSchema::RELATION;
 pub(crate) const SELECTION_FINDING_REL: &str = SelectionFindingSchema::RELATION;
 pub(crate) const SELECTION_SCORE_REL: &str = SelectionScoreSchema::RELATION;
@@ -111,6 +121,7 @@ pub(crate) struct SelectionDecisionReceipt {
 
 struct SelectionRows {
     decision: EvalSelectionDecisionRow,
+    receipt: SelectionReceiptRow,
     oracle: Option<SelectionOracleRow>,
     candidates: Vec<EvalSelectionCandidateRow>,
     findings: Vec<EvalSelectionFindingRow>,
@@ -131,6 +142,14 @@ struct EvalSelectionDecisionRow {
     decision_ref: Option<String>,
     decision_hash: Option<String>,
     recorded_at: Option<String>,
+}
+
+struct SelectionReceiptRow {
+    decision_id: String,
+    campaign_id: String,
+    parent_id: String,
+    decision_hash: String,
+    entry_json: String,
 }
 
 struct EvalSelectionCandidateRow {
@@ -183,6 +202,7 @@ struct SelectionProjectionRow {
 
 pub(super) fn ensure_selection_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(), EvalStoreError> {
     SelectionDecisionSchema::SCHEMA.ensure_installed(db, "schema.eval_selection_decision")?;
+    SelectionReceiptSchema::SCHEMA.ensure_installed(db, "schema.eval_selection_receipt")?;
     SelectionCandidateSchema::SCHEMA.ensure_installed(db, "schema.eval_selection_candidate")?;
     SelectionFindingSchema::SCHEMA.ensure_installed(db, "schema.eval_selection_finding")?;
     SelectionScoreSchema::SCHEMA.ensure_installed(db, "schema.eval_selection_score")?;
@@ -200,6 +220,7 @@ pub(crate) fn write_selection_decision_to_owner_db(
         ensure_selection_schema(db)?;
         let rows = selection_rows(evidence)?;
         put_selection_decision_row(db, &rows.decision)?;
+        put_selection_receipt_row(db, &rows.receipt)?;
         if let Some(oracle) = &rows.oracle {
             put_oracle_row(db, oracle)?;
         }
@@ -215,14 +236,221 @@ pub(crate) fn write_selection_decision_to_owner_db(
         for projection in &rows.projections {
             put_selection_projection_row(db, projection)?;
         }
-        Ok(SelectionDecisionReceipt {
-            decision_id: rows.decision.decision_id,
-            candidate_count: rows.candidates.len(),
-            finding_count: rows.findings.len(),
-            score_count: rows.scores.len(),
-            projection_count: rows.projections.len(),
-        })
+        Ok(receipt_summary(&rows))
     })
+}
+
+pub(crate) fn load_selection_receipt(
+    db_path: &Path,
+    campaign_id: &CampaignId,
+    parent_id: &str,
+) -> Result<Option<SelectionDecisionEntry>, EvalStoreError> {
+    let db = load_owner_eval_database(db_path)?;
+    selection_entry(&db, campaign_id.as_str(), parent_id)
+}
+
+pub(crate) fn load_selection_hash(
+    db_path: &Path,
+    campaign_id: &CampaignId,
+    parent_id: &str,
+) -> Result<Option<String>, EvalStoreError> {
+    let db = load_owner_eval_database(db_path)?;
+    selection_hash(&db, campaign_id.as_str(), parent_id)
+}
+
+fn receipt_summary(rows: &SelectionRows) -> SelectionDecisionReceipt {
+    SelectionDecisionReceipt {
+        decision_id: rows.decision.decision_id.clone(),
+        candidate_count: rows.candidates.len(),
+        finding_count: rows.findings.len(),
+        score_count: rows.scores.len(),
+        projection_count: rows.projections.len(),
+    }
+}
+
+fn selection_entry<D: EvalDb + ?Sized>(
+    db: &D,
+    campaign_id: &str,
+    parent_id: &str,
+) -> Result<Option<SelectionDecisionEntry>, EvalStoreError> {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    params.insert("parent_id".to_string(), parent_id.to_string().into());
+    let result = db
+        .eval_query_params(
+            r#"
+?[decision_id, set_id, procedure_id, entry_json, receipt_hash, decision_hash] :=
+    *eval_selection_receipt {
+        decision_id,
+        campaign_id,
+        parent_id,
+        decision_hash: receipt_hash,
+        entry_json,
+    },
+    *eval_selection_decision {
+        decision_id,
+        campaign_id,
+        parent_id,
+        set_id,
+        procedure_id,
+        decision_hash,
+    },
+    campaign_id = $campaign_id,
+    parent_id = $parent_id
+"#,
+            params,
+        )
+        .map_err(|source| EvalStoreError::Db {
+            phase: "query.eval_selection_receipt.entry",
+            source,
+        })?;
+    let row = match result.rows.as_slice() {
+        [] => return Ok(None),
+        [row] => row,
+        rows => {
+            return Err(EvalStoreError::Validation {
+                field: "selection.parent_id",
+                detail: format!(
+                    "selection receipt for campaign '{campaign_id}' parent '{parent_id}' is ambiguous across {} rows",
+                    rows.len()
+                ),
+            });
+        }
+    };
+    let string_at = |index: usize, field: &'static str| match row.get(index) {
+        Some(DataValue::Str(value)) => Ok(value.to_string()),
+        _ => Err(EvalStoreError::Validation {
+            field,
+            detail: format!(
+                "selection receipt for campaign '{campaign_id}' parent '{parent_id}' has no string {field}"
+            ),
+        }),
+    };
+    let stored_id = string_at(0, "selection.decision_id")?;
+    let set_id = string_at(1, "selection.set_id")?;
+    let procedure_id = string_at(2, "selection.procedure_id")?;
+    let entry_json = string_at(3, "selection.entry_json")?;
+    let receipt_hash = string_at(4, "selection.receipt_hash")?;
+    let decision_hash = string_at(5, "selection.decision_hash")?;
+    if receipt_hash != decision_hash {
+        return Err(EvalStoreError::Validation {
+            field: "selection.decision_hash",
+            detail: format!(
+                "selection receipt hash '{receipt_hash}' does not match normalized decision hash '{decision_hash}'"
+            ),
+        });
+    }
+    let expected_id = decision_id(
+        campaign_id,
+        parent_id,
+        &set_id,
+        &procedure_id,
+        &decision_hash,
+    );
+    if stored_id != expected_id {
+        return Err(EvalStoreError::Validation {
+            field: "selection.decision_id",
+            detail: format!(
+                "selection decision id '{stored_id}' does not match content-addressed id '{expected_id}'"
+            ),
+        });
+    }
+    let entry: SelectionDecisionEntry =
+        serde_json::from_str(&entry_json).map_err(|source| EvalStoreError::Validation {
+            field: "selection.entry_json",
+            detail: source.to_string(),
+        })?;
+    entry
+        .validate_shape()
+        .map_err(|source| EvalStoreError::Validation {
+            field: "selection.entry_json",
+            detail: source.to_string(),
+        })?;
+    let entry_set = entry
+        .candidate_set
+        .as_ref()
+        .map(|set| set.root.as_str())
+        .unwrap_or_else(|| entry.considered_order_hash.as_str());
+    if entry_set != set_id {
+        return Err(EvalStoreError::Validation {
+            field: "selection.set_id",
+            detail: format!(
+                "selection entry set id '{entry_set}' does not match normalized set id '{set_id}'"
+            ),
+        });
+    }
+    if entry.procedure_or_policy.as_str() != procedure_id {
+        return Err(EvalStoreError::Validation {
+            field: "selection.procedure_id",
+            detail: format!(
+                "selection entry procedure '{}' does not match normalized procedure '{procedure_id}'",
+                entry.procedure_or_policy.as_str()
+            ),
+        });
+    }
+    let observed = entry
+        .decision_hash()
+        .map_err(|source| EvalStoreError::Validation {
+            field: "selection.entry_json",
+            detail: source.to_string(),
+        })?;
+    if observed.as_str() != receipt_hash {
+        return Err(EvalStoreError::Validation {
+            field: "selection.entry_json",
+            detail: format!(
+                "selection entry hash '{}' does not match stored receipt hash '{receipt_hash}'",
+                observed.as_str()
+            ),
+        });
+    }
+    Ok(Some(entry))
+}
+
+fn selection_hash<D: EvalDb + ?Sized>(
+    db: &D,
+    campaign_id: &str,
+    parent_id: &str,
+) -> Result<Option<String>, EvalStoreError> {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    params.insert("parent_id".to_string(), parent_id.to_string().into());
+    let result = db
+        .eval_query_params(
+            r#"
+?[decision_hash] :=
+    *eval_selection_decision {
+        campaign_id,
+        parent_id,
+        decision_hash,
+    },
+    campaign_id = $campaign_id,
+    parent_id = $parent_id
+"#,
+            params,
+        )
+        .map_err(|source| EvalStoreError::Db {
+            phase: "query.eval_selection_decision.hash",
+            source,
+        })?;
+    match result.rows.as_slice() {
+        [] => Ok(None),
+        [row] => match row.first() {
+            Some(DataValue::Str(value)) => Ok(Some(value.to_string())),
+            _ => Err(EvalStoreError::Validation {
+                field: "selection.decision_hash",
+                detail: format!(
+                    "selection decision for campaign '{campaign_id}' parent '{parent_id}' has no string receipt hash"
+                ),
+            }),
+        },
+        rows => Err(EvalStoreError::Validation {
+            field: "selection.parent_id",
+            detail: format!(
+                "selection decision for campaign '{campaign_id}' parent '{parent_id}' is ambiguous across {} receipt rows",
+                rows.len()
+            ),
+        }),
+    }
 }
 
 fn selection_rows(evidence: SelectionDecisionEvidence) -> Result<SelectionRows, EvalStoreError> {
@@ -259,8 +487,13 @@ fn selection_rows(evidence: SelectionDecisionEvidence) -> Result<SelectionRows, 
             field: "selection.decision_hash",
             detail: source.to_string(),
         })?;
+    let entry_json =
+        serde_json::to_string(&evidence.entry).map_err(|source| EvalStoreError::Validation {
+            field: "selection.entry_json",
+            detail: source.to_string(),
+        })?;
     let decision_id = decision_id(
-        &evidence.campaign_id,
+        evidence.campaign_id.as_str(),
         &evidence.parent_id,
         &set_id,
         &procedure_id,
@@ -289,9 +522,9 @@ fn selection_rows(evidence: SelectionDecisionEvidence) -> Result<SelectionRows, 
     let projections = selection_projection_rows(&decision_id, &evidence.entry)?;
     Ok(SelectionRows {
         decision: EvalSelectionDecisionRow {
-            decision_id,
+            decision_id: decision_id.clone(),
             campaign_id: evidence.campaign_id.to_string(),
-            parent_id: evidence.parent_id,
+            parent_id: evidence.parent_id.clone(),
             set_id,
             procedure_id,
             selected_node_id,
@@ -299,8 +532,15 @@ fn selection_rows(evidence: SelectionDecisionEvidence) -> Result<SelectionRows, 
             outcome,
             disposition,
             decision_ref: evidence.decision_ref,
-            decision_hash: Some(decision_hash),
+            decision_hash: Some(decision_hash.clone()),
             recorded_at: evidence.recorded_at,
+        },
+        receipt: SelectionReceiptRow {
+            decision_id,
+            campaign_id: evidence.campaign_id.to_string(),
+            parent_id: evidence.parent_id,
+            decision_hash,
+            entry_json,
         },
         oracle,
         candidates,
@@ -630,6 +870,18 @@ fn put_selection_decision_row<D: EvalDb + ?Sized>(
     Ok(())
 }
 
+fn put_selection_receipt_row<D: EvalDb + ?Sized>(
+    db: &D,
+    row: &SelectionReceiptRow,
+) -> Result<(), EvalStoreError> {
+    put_eval_params(
+        db,
+        &SelectionReceiptSchema::SCHEMA,
+        selection_receipt_params(row),
+        "put.eval_selection_receipt",
+    )
+}
+
 fn put_selection_candidate_row<D: EvalDb + ?Sized>(
     db: &D,
     row: &EvalSelectionCandidateRow,
@@ -718,6 +970,19 @@ fn selection_decision_params(row: &EvalSelectionDecisionRow) -> BTreeMap<String,
         option_string(&row.decision_hash),
     );
     params.insert("recorded_at".to_string(), option_string(&row.recorded_at));
+    params
+}
+
+fn selection_receipt_params(row: &SelectionReceiptRow) -> BTreeMap<String, DataValue> {
+    let mut params = BTreeMap::new();
+    params.insert("decision_id".to_string(), row.decision_id.clone().into());
+    params.insert("campaign_id".to_string(), row.campaign_id.clone().into());
+    params.insert("parent_id".to_string(), row.parent_id.clone().into());
+    params.insert(
+        "decision_hash".to_string(),
+        row.decision_hash.clone().into(),
+    );
+    params.insert("entry_json".to_string(), row.entry_json.clone().into());
     params
 }
 
@@ -854,7 +1119,7 @@ fn finding_id(
 }
 
 fn decision_id(
-    campaign_id: &CampaignId,
+    campaign_id: &str,
     parent_id: &str,
     set_id: &str,
     procedure_id: &str,
@@ -862,7 +1127,7 @@ fn decision_id(
 ) -> String {
     hash_parts(&[
         "p1.eval.selection_decision.v1",
-        campaign_id.as_str(),
+        campaign_id,
         parent_id,
         set_id,
         procedure_id,

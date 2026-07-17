@@ -2158,6 +2158,69 @@ pub(crate) enum ParentSelectionOutcome {
 }
 
 impl ParentSelectionOutcome {
+    pub(crate) fn from_entry(entry: SelectionDecisionEntry) -> Result<Self, PrepareError> {
+        entry
+            .validate_shape()
+            .map_err(|error| PrepareError::InvalidBatchSelection {
+                detail: format!("persisted selection receipt is invalid: {error}"),
+            })?;
+        let Some(decision) = entry.decision.clone() else {
+            return Ok(Self::NoSelection { entry });
+        };
+        let selected_candidate = entry.selected_candidate.clone().ok_or_else(|| {
+            PrepareError::InvalidBatchSelection {
+                detail: "persisted selected receipt has no selected candidate".to_string(),
+            }
+        })?;
+        let selected_source = entry
+            .traversal
+            .as_ref()
+            .and_then(|traversal| traversal.selected_source)
+            .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                detail: "persisted selected receipt has no traversal candidate source".to_string(),
+            })?;
+        let material = SelectionSealMaterial {
+            procedure: entry.procedure_or_policy.clone(),
+            scope: entry.scope.clone(),
+            selected_candidate,
+            selected_occurrence_id: entry.selected_occurrence_id.clone(),
+            selected_membership_id: entry.selected_membership_id.clone(),
+            considered: entry.considered.clone(),
+            considered_sources: entry.considered_sources.clone(),
+            projection_failures: entry.projection_failures.clone(),
+            traversal: entry.traversal.clone(),
+            metrics: entry.metrics.clone(),
+            selected_from_generation_outcomes: matches!(
+                selected_source,
+                TraversalCandidateSource::CurrentGeneration
+            ),
+        };
+        let outcome = Self::Selected { decision, material };
+        let rebuilt = outcome.entry()?;
+        if rebuilt != entry {
+            let persisted =
+                entry
+                    .decision_hash()
+                    .map_err(|error| PrepareError::InvalidBatchSelection {
+                        detail: format!("failed to hash persisted selection receipt: {error}"),
+                    })?;
+            let hydrated =
+                rebuilt
+                    .decision_hash()
+                    .map_err(|error| PrepareError::InvalidBatchSelection {
+                        detail: format!("failed to hash hydrated selection receipt: {error}"),
+                    })?;
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "persisted selection receipt cannot be hydrated exactly: persisted={}, hydrated={}",
+                    persisted.as_str(),
+                    hydrated.as_str()
+                ),
+            });
+        }
+        Ok(outcome)
+    }
+
     pub(crate) fn selected(&self) -> Option<(&SuccessorDecision, &SelectionSealMaterial)> {
         match self {
             Self::Selected { decision, material } => Some((decision, material)),

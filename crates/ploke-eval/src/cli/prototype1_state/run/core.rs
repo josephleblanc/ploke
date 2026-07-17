@@ -2091,6 +2091,34 @@ fn selection_available(
     rejected_surface_attempts: &[surface_attempt::Evidence],
 ) -> Result<ParentSelectionOutcome, PrepareError> {
     let child_outcomes = reconstruct_terminal_outcomes(child_snapshots)?;
+    if context.admitted_profile.profile.storage.eval.backend
+        == profile::EvalStorageBackend::DualStrict
+    {
+        let db_path = prototype1_eval_store_db_path(&context.manifest_path);
+        if !db_path.is_file() {
+            return Err(PrepareError::DatabaseSetup {
+                phase: "eval_selection_receipt_db_missing",
+                detail: format!(
+                    "dual-strict selection lookup requires owner eval DB at '{}'",
+                    db_path.display()
+                ),
+            });
+        }
+        if let Some(entry) = crate::cli::prototype1_state::eval_store::load_selection_receipt(
+            &db_path,
+            &context.campaign_id,
+            context.parent_identity.parent_id(),
+        )
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "eval_selection_receipt_read",
+            detail: format!(
+                "failed to load selection receipt from '{}': {source}",
+                db_path.display()
+            ),
+        })? {
+            return ParentSelectionOutcome::from_entry(entry);
+        }
+    }
     selection_outcome_for_profile(
         &context.manifest_path,
         &context.parent_identity,
@@ -2499,14 +2527,7 @@ fn expected_stop(
     {
         return Ok(None);
     }
-    let child_outcomes = reconstruct_terminal_outcomes(child_snapshots)?;
-    let outcome = selection_outcome_for_profile(
-        &context.manifest_path,
-        &context.parent_identity,
-        &child_outcomes,
-        plan.rejected_surface_attempts(),
-        &context.admitted_profile.profile,
-    )?;
+    let outcome = selection_available(context, child_snapshots, plan.rejected_surface_attempts())?;
     let ParentSelectionOutcome::NoSelection { entry } = outcome else {
         return Ok(None);
     };
@@ -3262,17 +3283,14 @@ fn reconstruct_terminal_outcomes(
 }
 
 fn advance_select(diagnosis: Diagnosis) -> Result<(), PrepareError> {
-    let child_outcomes = reconstruct_terminal_outcomes(&diagnosis.child_snapshots)?;
-    let outcome = selection_outcome_for_profile(
-        &diagnosis.context.manifest_path,
-        &diagnosis.context.parent_identity,
-        &child_outcomes,
+    let outcome = selection_available(
+        &diagnosis.context,
+        &diagnosis.child_snapshots,
         diagnosis
             .child_plan
             .as_ref()
             .map(|plan| plan.rejected_surface_attempts())
             .unwrap_or(&[]),
-        &diagnosis.context.admitted_profile.profile,
     )?;
     if matches!(outcome, ParentSelectionOutcome::NoSelection { .. }) {
         return Err(PrepareError::InvalidBatchSelection {
@@ -4194,6 +4212,121 @@ mod tests {
             before,
             "read-only diagnosis must not mint or rewrite selection evidence"
         );
+    }
+
+    #[test]
+    fn dual_strict_selection_available_reuses_persisted_selected_receipt() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let eval_home = temp.path().join("eval-home");
+        let _env = crate::test_support::env_guard_os(vec![(
+            "PLOKE_EVAL_HOME",
+            eval_home.clone().into_os_string(),
+        )]);
+        let world =
+            ChildPlanWorld::mint_at_child_plan_phase_with_profile(&eval_home, 1, 1, |profile| {
+                profile.storage.eval.backend = profile::EvalStorageBackend::DualStrict;
+            });
+        let context = resolve_context(Some(&world.repo_root)).expect("context");
+        let selected_snapshot = phase_test_snapshot(
+            Prototype1NodeStatus::Succeeded,
+            Some(phase_test_evaluation_report()),
+        );
+        let selected_outcomes =
+            reconstruct_terminal_outcomes(std::slice::from_ref(&selected_snapshot))
+                .expect("selected terminal outcome");
+        let selected = crate::cli::prototype1_state::history::SubjectRef::new(
+            "candidate:node-child:plan_index=0",
+        );
+        let payload = crate::cli::prototype1_state::history::EvaluationPayload::builder(
+            selected.clone(),
+            crate::cli::prototype1_state::history::ProcedureRef::new(
+                crate::successor_selection::PROCEDURE_ID,
+            ),
+        )
+        .selection_input(
+            selected_outcomes[0]
+                .selection_input
+                .clone()
+                .expect("terminal selection input"),
+        )
+        .expect("selection input binds")
+        .build();
+        let exact =
+            crate::cli::prototype1_state::history::SelectionDecisionEntry::new_with_traversal(
+                crate::cli::prototype1_state::history::ProcedureRef::new(
+                    crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID,
+                ),
+                crate::cli::prototype1_state::history::SelectionScope::new(
+                    "generation_local:test",
+                ),
+                Some(selected),
+                vec![payload],
+                Vec::new(),
+                Some(crate::cli::prototype1_state::history::TraversalEvidence {
+                    seed: 0,
+                    strategy: crate::successor_selection::traversal::StrategyKind::default(),
+                    oracle_targets: Vec::new(),
+                    selected_source: Some(
+                        crate::cli::prototype1_state::history::TraversalCandidateSource::CurrentGeneration,
+                    ),
+                    child_counts: BTreeMap::new(),
+                }),
+                crate::successor_selection::SuccessorDecision {
+                    procedure_id:
+                        crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID.to_string(),
+                    candidate_node_id: selected_snapshot.node.node_id.clone(),
+                    selected_branch_id: Some(selected_snapshot.node.branch_id.clone()),
+                    branch_disposition: "keep".to_string(),
+                    outcome:
+                        crate::successor_selection::decision::SuccessorOutcome::Accepted,
+                    findings: Vec::new(),
+                    rationale: Vec::new(),
+                },
+            )
+            .expect("selected receipt");
+        let db_path = prototype1_eval_store_db_path(&context.manifest_path);
+        crate::cli::prototype1_state::eval_store::write_selection_decision_to_owner_db(
+            &db_path,
+            crate::cli::prototype1_state::eval_store::SelectionDecisionEvidence {
+                campaign_id: context.campaign_id.clone(),
+                parent_id: context.parent_identity.parent_id().to_string(),
+                entry: exact.clone(),
+                decision_ref: Some("selection:persisted-test".to_string()),
+                recorded_at: Some("2026-07-17T00:00:00Z".to_string()),
+            },
+        )
+        .expect("persist selected receipt");
+
+        let failed_snapshot = phase_test_snapshot(Prototype1NodeStatus::Failed, None);
+        let failed_outcomes = reconstruct_terminal_outcomes(std::slice::from_ref(&failed_snapshot))
+            .expect("failed terminal outcome");
+        assert!(matches!(
+            selection_outcome_for_profile(
+                &context.manifest_path,
+                &context.parent_identity,
+                &failed_outcomes,
+                &[],
+                &context.admitted_profile.profile,
+            )
+            .expect("failed child recomputation"),
+            ParentSelectionOutcome::NoSelection { .. }
+        ));
+        let reused = selection_available(&context, std::slice::from_ref(&failed_snapshot), &[])
+            .expect("persisted selection is available");
+        assert!(matches!(reused, ParentSelectionOutcome::Selected { .. }));
+        assert_eq!(reused.entry().expect("reused selection entry"), exact);
+
+        let missing = phase_test_snapshot(Prototype1NodeStatus::Succeeded, None);
+        match selection_available(&context, &[missing], &[]) {
+            Ok(_) => panic!("persisted receipt must not bypass terminal evidence validation"),
+            Err(PrepareError::InvalidBatchSelection { detail }) => {
+                assert!(
+                    detail.contains("missing branch evaluation report"),
+                    "unexpected terminal evidence error: {detail}"
+                );
+            }
+            Err(other) => panic!("expected invalid terminal evidence, got {other:?}"),
+        }
     }
 
     fn write_parent_workspace_fixture(repo_root: &Path) {

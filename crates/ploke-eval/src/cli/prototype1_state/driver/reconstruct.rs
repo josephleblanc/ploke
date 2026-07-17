@@ -707,14 +707,24 @@ fn reconstruct_after_r8(
         }
     };
     let selection = if parts.run_shape.stop_after == Prototype1StateStopAfter::Complete {
-        match ParentSelection::new(
-            &parts.manifest_path,
-            &parent_identity,
-            &child_outcomes,
-            &rejected_surface_attempts,
-        )
-        .select_successor_attempt(parts.run_shape.successor_selection_seed, selection_strategy)
+        let result = if parts.run_shape.eval_storage_backend
+            == crate::cli::prototype1_state::profile::EvalStorageBackend::DualStrict
         {
+            load_selection_outcome(
+                &parts.manifest_path,
+                &parts.campaign_id,
+                parent_identity.parent_id(),
+            )
+        } else {
+            ParentSelection::new(
+                &parts.manifest_path,
+                &parent_identity,
+                &child_outcomes,
+                &rejected_surface_attempts,
+            )
+            .select_successor_attempt(parts.run_shape.successor_selection_seed, selection_strategy)
+        };
+        match result {
             Ok(selection) => Some(selection),
             Err(error) => {
                 blockers.push(format!(
@@ -729,6 +739,25 @@ fn reconstruct_after_r8(
     } else {
         None
     };
+    if parts.run_shape.eval_storage_backend
+        != crate::cli::prototype1_state::profile::EvalStorageBackend::DualStrict
+        && let Some(outcome) = selection.as_ref()
+        && let Err(error) = validate_selection_hash(
+            &parts.manifest_path,
+            &parts.campaign_id,
+            parent_identity.parent_id(),
+            parts.run_shape.eval_storage_backend,
+            outcome,
+        )
+    {
+        blockers.push(format!(
+            "blocked edge r10 -> r11: reconstructed selection does not match its durable owner-DB receipt: {error}"
+        ));
+        return Ok(EarlyState::R10(typestate::R10::from_collected_parent(
+            parts.into_collected(),
+            parent,
+        )));
+    }
     let outcome_count = child_outcomes.len();
     parts.facts.child_outcomes = Some(child_outcomes);
     parts.facts.selection = selection;
@@ -743,6 +772,102 @@ fn reconstruct_after_r8(
     let r12 = r11_to_r12(typestate::R10FanoutBranch::FanoutComplete(r11))?;
     notes.push("reconstructed R12 report facts from child outcomes".into());
     reconstruct_after_r12(r12, target, notes, blockers, boundary)
+}
+
+fn load_selection_outcome(
+    manifest_path: &Path,
+    campaign_id: &CampaignId,
+    parent_id: &str,
+) -> Result<ParentSelectionOutcome, PrepareError> {
+    let db_path =
+        crate::cli::prototype1_state::eval_store::prototype1_eval_store_db_path(manifest_path);
+    if !db_path.is_file() {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "dual-strict selection reconstruction requires owner eval DB at '{}'",
+                db_path.display()
+            ),
+        });
+    }
+    let entry = crate::cli::prototype1_state::eval_store::load_selection_receipt(
+        &db_path,
+        campaign_id,
+        parent_id,
+    )
+    .map_err(|error| PrepareError::DatabaseSetup {
+        phase: "eval_selection_receipt_read",
+        detail: format!(
+            "failed to load selection receipt for campaign '{campaign_id}' parent '{parent_id}' from '{}': {error}",
+            db_path.display()
+        ),
+    })?
+    .ok_or_else(|| PrepareError::InvalidBatchSelection {
+        detail: format!(
+            "dual-strict selection reconstruction found no typed owner-DB receipt for campaign '{campaign_id}' parent '{parent_id}'"
+        ),
+    })?;
+    ParentSelectionOutcome::from_entry(entry)
+}
+
+fn validate_selection_hash(
+    manifest_path: &Path,
+    campaign_id: &CampaignId,
+    parent_id: &str,
+    backend: crate::cli::prototype1_state::profile::EvalStorageBackend,
+    outcome: &ParentSelectionOutcome,
+) -> Result<(), PrepareError> {
+    if !backend.mirrors_owner_db() {
+        return Ok(());
+    }
+    let db_path =
+        crate::cli::prototype1_state::eval_store::prototype1_eval_store_db_path(manifest_path);
+    if !db_path.is_file() {
+        return Ok(());
+    }
+    let persisted = crate::cli::prototype1_state::eval_store::load_selection_hash(
+        &db_path,
+        campaign_id,
+        parent_id,
+    )
+    .map_err(|error| PrepareError::DatabaseSetup {
+        phase: "eval_selection_decision_read",
+        detail: format!(
+            "failed to load selection receipt for campaign '{campaign_id}' parent '{parent_id}' from '{}': {error}",
+            db_path.display()
+        ),
+    })?;
+    let Some(persisted) = persisted else {
+        return Ok(());
+    };
+    let reconstructed =
+        outcome
+            .entry()?
+            .decision_hash()
+            .map_err(|error| PrepareError::InvalidBatchSelection {
+                detail: format!("failed to hash reconstructed selection receipt: {error}"),
+            })?;
+    if persisted != reconstructed.as_str() {
+        let replayed = outcome.selected().map_or_else(
+            || "no_selection".to_string(),
+            |(decision, _)| {
+                format!(
+                    "node={},outcome={:?},disposition={}",
+                    decision.candidate_node_id,
+                    decision.outcome,
+                    decision
+                        .selected_branch_disposition()
+                        .unwrap_or("<not-selected>")
+                )
+            },
+        );
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "selection receipt hash mismatch for campaign '{campaign_id}' parent '{parent_id}': persisted={persisted}, reconstructed={}, replayed={replayed}",
+                reconstructed.as_str()
+            ),
+        });
+    }
+    Ok(())
 }
 
 fn reconstruct_after_r12(

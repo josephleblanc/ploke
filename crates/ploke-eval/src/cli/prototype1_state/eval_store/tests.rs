@@ -35,7 +35,8 @@ use super::{
     RUNNER_REQUEST_REL, RUNNER_REQUEST_TARGET_REL, RUNNER_RESULT_REL, SCHEDULER_NODE_REL,
     SCHEDULER_NODE_STATUS_REL, SCHEDULER_NODE_TARGET_REL, SELECTION_CANDIDATE_REL,
     SELECTION_DECISION_REL, SELECTION_FINDING_REL, SELECTION_ORACLE_REL, SELECTION_PROJECTION_REL,
-    SELECTION_SCORE_REL, TOOL_EVENT_REL, WALK_EVENT_REL, WALK_EVENT_TRANSITION_REL,
+    SELECTION_RECEIPT_REL, SELECTION_SCORE_REL, TOOL_EVENT_REL, WALK_EVENT_REL,
+    WALK_EVENT_TRANSITION_REL,
     api::EvalStorageMode,
     cozo_schema::eval_relation_exists,
     error::EvalStoreError,
@@ -1120,6 +1121,9 @@ fn prototype1_eval_store_parent_start_db_schema_installs_idempotently() {
         eval_relation_exists(&db, SELECTION_DECISION_REL).expect("selection decision rel exists")
     );
     assert!(
+        eval_relation_exists(&db, SELECTION_RECEIPT_REL).expect("selection receipt rel exists")
+    );
+    assert!(
         eval_relation_exists(&db, SELECTION_CANDIDATE_REL).expect("selection candidate rel exists")
     );
     assert!(
@@ -1242,6 +1246,24 @@ fn selection_oracle_schema_installs_additively() {
 }
 
 #[test]
+fn selection_receipt_schema_installs_additively() {
+    let db = Database::new_init().expect("db");
+    let store = DbEvalStore::new(&db);
+    store.install_schema().expect("current schema installs");
+    db.raw_query_mut_params("::remove eval_selection_receipt", BTreeMap::new())
+        .expect("remove additive selection receipt relation");
+
+    assert!(eval_relation_exists(&db, SELECTION_DECISION_REL).expect("selection decision exists"));
+    assert!(!eval_relation_exists(&db, SELECTION_RECEIPT_REL).expect("selection receipt absent"));
+
+    store
+        .install_schema()
+        .expect("selection receipt relation installs without rewriting decision schema");
+
+    assert!(eval_relation_exists(&db, SELECTION_RECEIPT_REL).expect("selection receipt restored"));
+}
+
+#[test]
 fn selection_projection_schema_installs_additively() {
     let db = Database::new_init().expect("db");
     let store = DbEvalStore::new(&db);
@@ -1266,6 +1288,137 @@ fn selection_projection_schema_installs_additively() {
         eval_relation_exists(&db, SELECTION_PROJECTION_REL)
             .expect("selection projection failure restored")
     );
+}
+
+fn empty_selection(scope: &str) -> crate::cli::prototype1_state::history::SelectionDecisionEntry {
+    let considered = Vec::new();
+    let sources = Vec::new();
+    let metrics = crate::successor_selection::metrics::Set::from_considered(
+        crate::successor_selection::metrics::Policy::default(),
+        &considered,
+        &sources,
+    )
+    .expect("empty selection metric set");
+    crate::cli::prototype1_state::history::SelectionDecisionEntry::new_no_selection_with_traversal_metrics(
+        crate::cli::prototype1_state::history::ProcedureRef::new(
+            crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID,
+        ),
+        crate::cli::prototype1_state::history::SelectionScope::new(scope),
+        considered,
+        sources,
+        Vec::new(),
+        None,
+        metrics,
+    )
+    .expect("empty no-selection entry")
+}
+
+#[test]
+fn selection_hash_loader_rejects_ambiguous_parent_receipts() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let db_path = tmp.path().join("prototype1/eval-store.cozo.sqlite");
+    let campaign = CampaignId::from("campaign-selection-attempts");
+    let parent = "parent-selection-attempts";
+    let first = empty_selection("attempt-a");
+    let exact = first.clone();
+    let first_hash = first
+        .decision_hash()
+        .expect("first decision hash")
+        .as_str()
+        .to_string();
+    let first_receipt = write_selection_decision_to_owner_db(
+        &db_path,
+        SelectionDecisionEvidence {
+            campaign_id: campaign.clone(),
+            parent_id: parent.to_string(),
+            entry: first,
+            decision_ref: Some("selection:attempt-a".to_string()),
+            recorded_at: Some("2026-07-17T00:00:00Z".to_string()),
+        },
+    )
+    .expect("first selection decision writes");
+
+    assert_eq!(
+        load_selection_hash(&db_path, &campaign, parent).expect("single selection hash loads"),
+        Some(first_hash.clone())
+    );
+    assert_eq!(
+        load_selection_receipt(&db_path, &campaign, parent)
+            .expect("single selection receipt loads"),
+        Some(exact)
+    );
+
+    let second = empty_selection("attempt-b");
+    let second_hash = second
+        .decision_hash()
+        .expect("second decision hash")
+        .as_str()
+        .to_string();
+    assert_ne!(first_hash, second_hash);
+    let second_receipt = write_selection_decision_to_owner_db(
+        &db_path,
+        SelectionDecisionEvidence {
+            campaign_id: campaign.clone(),
+            parent_id: parent.to_string(),
+            entry: second,
+            decision_ref: Some("selection:attempt-b".to_string()),
+            recorded_at: Some("2026-07-17T00:00:01Z".to_string()),
+        },
+    )
+    .expect("second selection decision writes");
+    assert_ne!(first_receipt.decision_id, second_receipt.decision_id);
+
+    let db = load_owner_eval_database(&db_path).expect("owner db loads");
+    let decisions = db
+        .raw_query_params(
+            r#"
+?[decision_id, decision_hash] :=
+    *eval_selection_decision {
+        decision_id: decision_id,
+        decision_hash: decision_hash,
+    }
+"#,
+            BTreeMap::new(),
+        )
+        .expect("selection decision query");
+    let rows = decisions
+        .row_refs()
+        .map(|row| {
+            (
+                row.get::<String>("decision_id").expect("decision id"),
+                row.get::<String>("decision_hash").expect("decision hash"),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(rows.len(), 2);
+    assert!(rows.contains(&(first_receipt.decision_id, first_hash)));
+    assert!(rows.contains(&(second_receipt.decision_id, second_hash)));
+
+    match load_selection_receipt(&db_path, &campaign, parent)
+        .expect_err("multiple parent entries must be ambiguous")
+    {
+        EvalStoreError::Validation { field, detail } => {
+            assert_eq!(field, "selection.parent_id");
+            assert!(
+                detail.contains("ambiguous across 2 rows"),
+                "unexpected entry ambiguity detail: {detail}"
+            );
+        }
+        other => panic!("expected selection parent validation error, got {other:?}"),
+    }
+
+    match load_selection_hash(&db_path, &campaign, parent)
+        .expect_err("multiple parent receipts must be ambiguous")
+    {
+        EvalStoreError::Validation { field, detail } => {
+            assert_eq!(field, "selection.parent_id");
+            assert!(
+                detail.contains("ambiguous across 2 receipt rows"),
+                "unexpected ambiguity detail: {detail}"
+            );
+        }
+        other => panic!("expected selection parent validation error, got {other:?}"),
+    }
 }
 
 #[test]

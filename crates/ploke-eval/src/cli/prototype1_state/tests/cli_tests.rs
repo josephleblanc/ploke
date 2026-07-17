@@ -389,6 +389,75 @@ fn successor_decision_for(node: &Prototype1NodeRecord) -> SuccessorDecision {
     }
 }
 
+#[test]
+fn parent_selection_outcome_hydrates_current_generation_entry_exactly() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let node = test_node(
+        tmp.path(),
+        "node-current",
+        "branch-current",
+        "candidate-current",
+    );
+    let selected = SubjectRef::new("candidate:node-current:plan_index=0");
+    let payload = EvaluationPayload::builder(
+        selected.clone(),
+        ProcedureRef::new(crate::successor_selection::PROCEDURE_ID),
+    )
+    .selection_input(selection_input_from_child_report(
+        &node,
+        &test_evaluation_report(&node),
+    ))
+    .expect("selection input binds")
+    .build();
+    let sources = vec![TraversalCandidateSource::CurrentGeneration];
+    let mut material = selection_material_from_current_generation();
+    material.selected_candidate = selected;
+    material.considered = vec![payload.clone()];
+    material.considered_sources = sources.clone();
+    material.metrics = selection_metrics_for(std::slice::from_ref(&payload), &sources);
+    material
+        .traversal
+        .as_mut()
+        .expect("traversal evidence")
+        .selected_source = Some(TraversalCandidateSource::CurrentGeneration);
+    let original = ParentSelectionOutcome::Selected {
+        decision: successor_decision_for(&node),
+        material,
+    }
+    .entry()
+    .expect("selected entry");
+
+    let hydrated =
+        ParentSelectionOutcome::from_entry(original.clone()).expect("selected entry hydrates");
+    assert_eq!(hydrated.entry().expect("hydrated entry rebuilds"), original);
+    let (_, material) = hydrated.selected().expect("hydrated selected outcome");
+    assert!(material.selected_from_generation_outcomes);
+    assert_eq!(
+        material
+            .traversal
+            .as_ref()
+            .and_then(|traversal| traversal.selected_source),
+        Some(TraversalCandidateSource::CurrentGeneration)
+    );
+
+    let mut missing = original;
+    missing
+        .traversal
+        .as_mut()
+        .expect("traversal evidence")
+        .selected_source = None;
+    match ParentSelectionOutcome::from_entry(missing) {
+        Ok(_) => panic!("selected receipt without selected_source must fail closed"),
+        Err(PrepareError::InvalidBatchSelection { detail }) => {
+            assert!(
+                detail.contains("persisted selected receipt has no traversal candidate source"),
+                "unexpected hydration error: {detail}"
+            );
+        }
+        Err(other) => panic!("expected invalid selection error, got {other:?}"),
+    }
+}
+
 fn persisted_continuation_decision(
     manifest_path: &Path,
     parent: &ParentIdentity,
