@@ -790,8 +790,10 @@ async fn call_context_collection_reads_axum_route_oneshot_receiver_gaps() -> Res
             body: "self.0.clone().oneshot(req)",
             callee: CallCalleeInfo::Method {
                 name: "oneshot".to_string(),
-                receiver: Some(CallReceiverInfo::MethodCallResult {
+                receiver: Some(CallReceiverInfo::MethodResultField {
                     method_name: "clone".to_string(),
+                    method_span: (0, 0),
+                    field_path: vec!["0".to_string()],
                 }),
             },
             status: CallStatusKind::External,
@@ -818,7 +820,10 @@ async fn call_context_collection_reads_axum_route_oneshot_receiver_gaps() -> Res
             .unwrap_or_else(|| panic!("{} should receive outgoing call context", case.label));
         let matching = context
             .iter()
-            .filter(|call| call.kind == CallSiteKind::Method && call.callee == case.callee)
+            .filter(|call| {
+                call.kind == CallSiteKind::Method
+                    && callee_shape_matches(&call.callee, &case.callee)
+            })
             .collect::<Vec<_>>();
         assert_eq!(
             matching.len(),

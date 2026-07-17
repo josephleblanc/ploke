@@ -140,29 +140,46 @@ fn axum_route_oneshot_external_summary_covers_receiver_frontiers() -> Result<(),
     // Current contract: both receiver rows remain targetless external
     // frontiers, but an admitted summary can discharge the missing-summary
     // proof need and expose a proof-derived effect without adding call edges.
+    enum RouteReceiver {
+        MethodResultField {
+            method_name: &'static str,
+            field_path: &'static [&'static str],
+        },
+        Exact(CallReceiver),
+    }
+
     let cases = [
         (
-            "Route::oneshot_inner method-call-result receiver",
+            "Route::oneshot_inner method-result-field receiver",
             "oneshot_inner",
             "self.0.clone().oneshot(req)",
-            CallReceiver::MethodCallResult {
-                method_name: "clone".to_string(),
+            RouteReceiver::MethodResultField {
+                method_name: "clone",
+                field_path: &["0"],
             },
         ),
         (
             "Route::oneshot_inner_owned tuple-field receiver",
             "oneshot_inner_owned",
             "self.0.oneshot(req)",
-            CallReceiver::SelfField {
+            RouteReceiver::Exact(CallReceiver::SelfField {
                 path: vec!["0".to_string()],
-            },
+            }),
         ),
     ];
 
     for (label, method, body, receiver) in cases {
         let owner = method_id_by_name_and_body_substring(&db, method, body)?;
         let context = db.call_context_for_owner(owner)?;
-        let row = row_by_method_receiver(&context, "oneshot", &receiver);
+        let row = match receiver {
+            RouteReceiver::MethodResultField {
+                method_name,
+                field_path,
+            } => row_by_method_result_field_receiver(&context, "oneshot", method_name, field_path),
+            RouteReceiver::Exact(receiver) => {
+                row_by_method_receiver(&context, "oneshot", &receiver)
+            }
+        };
         assert_external_targetless(row);
         assert_eq!(row.site.kind, CallSiteKind::Method);
         assert_eq!(row.site.arg_count, Some(1));

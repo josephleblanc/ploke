@@ -266,7 +266,10 @@ impl ReceiverToolCase {
             file_suffix: "axum/src/routing/route.rs",
             body: "self.0.clone().oneshot(req)",
             generic_arg_count: None,
-            receiver: ReceiverShape::MethodResult { method: "clone" },
+            receiver: ReceiverShape::MethodResultField {
+                method_name: "clone",
+                field_path: &["0"],
+            },
         },
         Self {
             label: "axum/src/routing/route.rs:57 Route::oneshot_inner_owned",

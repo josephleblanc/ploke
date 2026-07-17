@@ -40,6 +40,36 @@ pub(in crate::unit) fn row_by_method_receiver<'a>(
     matches[0]
 }
 
+pub(in crate::unit) fn row_by_method_result_field_receiver<'a>(
+    context: &'a [CallContextRow],
+    method: &str,
+    receiver_method: &str,
+    field_path: &[&str],
+) -> &'a CallContextRow {
+    let matches = context
+        .iter()
+        .filter(|row| {
+            row.site.kind == CallSiteKind::Method
+                && row.site.method.as_deref() == Some(method)
+                && matches!(
+                    row.site.receiver.as_ref(),
+                    Some(CallReceiver::MethodResultField {
+                        method_name,
+                        field_path: actual,
+                        ..
+                    }) if method_name == receiver_method
+                        && actual.iter().map(String::as_str).eq(field_path.iter().copied())
+                )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matches.len(),
+        1,
+        "expected exactly one method row {method} with MethodResultField({receiver_method:?}, {field_path:?}); context rows: {context:#?}"
+    );
+    matches[0]
+}
+
 pub(in crate::unit) fn row_by_owner_method_receiver<'a>(
     context: &'a [CallContextRow],
     owner: Uuid,

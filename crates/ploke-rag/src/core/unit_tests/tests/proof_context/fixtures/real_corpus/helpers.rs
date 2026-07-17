@@ -337,7 +337,7 @@ pub(super) fn targetless_method_site_with_status(
         .filter(|call| {
             call.owner_id == owner
                 && call.kind == CallSiteKind::Method
-                && &call.callee == callee
+                && callee_shape_matches(&call.callee, callee)
                 && call.status == status
                 && call.resolution.is_none()
                 && call.targets.is_empty()

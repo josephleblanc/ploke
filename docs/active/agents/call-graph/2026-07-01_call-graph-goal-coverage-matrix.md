@@ -2524,8 +2524,8 @@ Completed evidence:
   call edges after proof admission.
 - RAG proof-context and exact reachable-effects coverage now preserve the same
   admitted-summary transition while keeping the original
-  `MethodCallResult(clone)` and `SelfField(["0"])` receiver payloads and zero
-  target rows.
+  `MethodResultField(clone, ["0"])` and `SelfField(["0"])` receiver payloads
+  and zero target rows.
 - Exact TUI `code_item_lookup` and `code_item_edges` route-oneshot tests now
   admit the same summary in fixture setup and assert cleared
   `external_summary_needs` rows plus summary-derived reach effects.

@@ -288,6 +288,26 @@ pub(super) fn assert_owner_method_targetless(
     Ok(sites[0])
 }
 
+pub(super) fn assert_owner_method_result_field_targetless(
+    db: &Database,
+    owner: Uuid,
+    method: &str,
+    receiver_method: &str,
+    field_path: &[&str],
+    status: CallStatusKind,
+    label: &str,
+) -> Result<Uuid, DbError> {
+    let context = db.call_context_for_owner(owner)?;
+    let row = row_by_method_result_field_receiver(&context, method, receiver_method, field_path);
+    assert_targetless_status(row, status);
+    assert!(
+        relations_for_site(db, row.site.id)?.rows.is_empty(),
+        "{label} should not have raw call_relation targets"
+    );
+    assert_no_traversal_candidates_for_sites(db, &[(owner, row.site.id)], label)?;
+    Ok(row.site.id)
+}
+
 pub(super) fn assert_owner_method_targetless_count(
     db: &Database,
     owner: Uuid,
@@ -886,6 +906,72 @@ pub(super) fn assert_targetless_method_rows(
     Ok(())
 }
 
+pub(super) fn assert_targetless_method_result_field_rows(
+    db: &Database,
+    method: &str,
+    receiver_method: &str,
+    field_path: &[&str],
+    status: CallStatusKind,
+    expected_count: usize,
+) -> Result<(), DbError> {
+    let mut params = BTreeMap::new();
+    params.insert("method".to_string(), DataValue::from(method));
+    params.insert("status".to_string(), DataValue::from(format!("{status:?}")));
+
+    let rows = db.raw_query_params(
+        r#"?[site_id, owner_id, resolution_kind, receiver_path] :=
+            *call_site {
+                id: site_id,
+                owner_id,
+                call_kind: "Method",
+                method_name: $method,
+                receiver_kind: "MethodResultField",
+                receiver_path @ 'NOW'
+            },
+            *call_resolution_status {
+                source_id: site_id,
+                source_kind: "Method",
+                status_kind: $status,
+                resolution_kind @ 'NOW'
+            }"#,
+        params,
+    )?;
+    let rows = rows
+        .rows
+        .iter()
+        .filter(|row| {
+            method_result_field_receiver_path_matches(&row[3], receiver_method, field_path)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        rows.len(),
+        expected_count,
+        "expected {expected_count} {status:?} targetless method rows for {method}.MethodResultField({receiver_method:?}, {field_path:?}): {:#?}",
+        rows
+    );
+
+    let mut sites = Vec::new();
+    for row in rows {
+        assert_eq!(row[2], DataValue::Null);
+        let site_id = to_uuid(&row[0])?;
+        let owner = to_uuid(&row[1])?;
+        assert!(
+            relations_for_site(db, site_id)?.rows.is_empty(),
+            "{method}.MethodResultField({receiver_method:?}, {field_path:?}) row should not have call_relation targets"
+        );
+        sites.push((owner, site_id));
+    }
+    assert_no_traversal_candidates_for_sites(
+        db,
+        &sites,
+        &format!(
+            "{status:?} method rows for {method}.MethodResultField({receiver_method:?}, {field_path:?})"
+        ),
+    )?;
+
+    Ok(())
+}
+
 pub(super) fn assert_no_dynamic_rows_by_method_name(
     db: &Database,
     method: &str,
@@ -906,6 +992,39 @@ pub(super) fn assert_no_dynamic_rows_by_method_name(
     );
 
     Ok(())
+}
+
+pub(super) fn method_result_field_receiver_path_matches(
+    value: &DataValue,
+    receiver_method: &str,
+    field_path: &[&str],
+) -> bool {
+    let DataValue::List(items) = value else {
+        return false;
+    };
+    if items.len() < 3 {
+        return false;
+    }
+    let Some(method_name) = data_value_str(&items[0]) else {
+        return false;
+    };
+    if method_name != receiver_method {
+        return false;
+    }
+
+    let actual_field_path = items[3..]
+        .iter()
+        .filter_map(data_value_str)
+        .collect::<Vec<_>>();
+    actual_field_path.len() == items.len().saturating_sub(3)
+        && actual_field_path.as_slice() == field_path
+}
+
+fn data_value_str(value: &DataValue) -> Option<&str> {
+    match value {
+        DataValue::Str(value) => Some(value.as_str()),
+        _ => None,
+    }
 }
 
 fn path_value(path_parts: &[&str]) -> DataValue {

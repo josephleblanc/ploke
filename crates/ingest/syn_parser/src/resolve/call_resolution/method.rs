@@ -233,6 +233,16 @@ impl CallRelationResolver<'_> {
                 *method_span,
                 type_relations,
             ),
+            MethodCallReceiver::MethodResultField {
+                method_name,
+                field_path,
+                ..
+            } => self.is_external_method_result_field_method(
+                call,
+                method_name,
+                field_path,
+                type_relations,
+            ),
             MethodCallReceiver::TypedLocalBinding { type_path, .. }
             | MethodCallReceiver::BorrowedTypedLocalBinding { type_path, .. } => {
                 self.is_external_type_path_method(call.owner, type_path, &call.method_name)
@@ -254,7 +264,6 @@ impl CallRelationResolver<'_> {
             | MethodCallReceiver::TryMethodCallResult { .. }
             | MethodCallReceiver::IfBranchPaths { .. }
             | MethodCallReceiver::EnumVariantBinding { .. }
-            | MethodCallReceiver::MethodResultField { .. }
             | MethodCallReceiver::FieldTypedLocalBinding { .. }
             | MethodCallReceiver::FieldInitializedLocalBinding { .. }
             | MethodCallReceiver::DereferencedLocalBinding { .. }
@@ -272,19 +281,29 @@ impl CallRelationResolver<'_> {
         field_path: &[String],
         type_relations: &[TypeRelation],
     ) -> Result<bool, SynParserError> {
-        if self.is_external_executable_self_field_method(
+        self.is_external_self_field_named_method(
             call.owner,
             field_path,
             &call.method_name,
-        )? {
+            type_relations,
+        )
+    }
+
+    fn is_external_self_field_named_method(
+        &self,
+        owner: CallBodyOwnerId,
+        field_path: &[String],
+        method_name: &str,
+        type_relations: &[TypeRelation],
+    ) -> Result<bool, SynParserError> {
+        if self.is_external_executable_self_field_method(owner, field_path, method_name)? {
             return Ok(true);
         }
 
         let [field_name] = field_path else {
             return Ok(false);
         };
-        let Some(field_type) = self.self_field_type_info(call.owner, field_name, type_relations)?
-        else {
+        let Some(field_type) = self.self_field_type_info(owner, field_name, type_relations)? else {
             return Ok(false);
         };
         let mut candidates = vec![field_type.declared];
@@ -293,21 +312,16 @@ impl CallRelationResolver<'_> {
         }
 
         for field_type in &candidates {
-            if self.is_external_type_method(
-                call.owner,
-                *field_type,
-                &call.method_name,
-                type_relations,
-            )? {
+            if self.is_external_type_method(owner, *field_type, method_name, type_relations)? {
                 return Ok(true);
             }
         }
 
         for field_type in candidates {
             if self.is_external_bound_self_field_method(
-                call.owner,
+                owner,
                 field_type,
-                &call.method_name,
+                method_name,
                 type_relations,
             )? {
                 return Ok(true);
@@ -927,6 +941,29 @@ impl CallRelationResolver<'_> {
         }
 
         Ok(false)
+    }
+
+    fn is_external_method_result_field_method(
+        &self,
+        call: &MethodCallNode,
+        result_method: &str,
+        field_path: &[String],
+        type_relations: &[TypeRelation],
+    ) -> Result<bool, SynParserError> {
+        if result_method != "clone" {
+            return Ok(false);
+        }
+
+        if call.method_name == "acquire_owned" {
+            return self.is_external_self_field_named_method(
+                call.owner,
+                field_path,
+                "clone",
+                type_relations,
+            );
+        }
+
+        self.is_external_self_field_method(call, field_path, type_relations)
     }
 
     fn is_external_await_method_result_method(

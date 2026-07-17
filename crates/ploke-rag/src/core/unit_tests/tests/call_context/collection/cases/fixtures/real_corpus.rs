@@ -3538,39 +3538,81 @@ async fn call_effects_exact_reads_admitted_route_oneshot_summary_effect() -> Res
     // Expected contract: RAG exposes the DB-derived summary effect after the
     // admitted `Route::oneshot` summary is linked, while each callsite stays
     // external, targetless, and edge-free.
+    enum RouteReceiver {
+        MethodResultField {
+            method_name: &'static str,
+            field_path: &'static [&'static str],
+        },
+        Exact {
+            db: CallReceiver,
+            rag: CallReceiverInfo,
+        },
+    }
+
+    let route_receiver_matches =
+        |actual: &Option<CallReceiverInfo>, expected: &RouteReceiver| match expected {
+            RouteReceiver::MethodResultField {
+                method_name,
+                field_path,
+            } => matches!(
+                actual,
+                Some(CallReceiverInfo::MethodResultField {
+                    method_name: actual_method,
+                    field_path: actual_path,
+                    ..
+                }) if actual_method == method_name
+                    && actual_path.iter().map(String::as_str).eq(field_path.iter().copied())
+            ),
+            RouteReceiver::Exact { rag, .. } => actual.as_ref() == Some(rag),
+        };
+
     let cases = [
         (
-            "Route::oneshot_inner method-call-result receiver",
+            "Route::oneshot_inner method-result-field receiver",
             "oneshot_inner",
             "self.0.clone().oneshot(req)",
-            CallReceiver::MethodCallResult {
-                method_name: "clone".to_string(),
-            },
-            CallReceiverInfo::MethodCallResult {
-                method_name: "clone".to_string(),
+            RouteReceiver::MethodResultField {
+                method_name: "clone",
+                field_path: &["0"],
             },
         ),
         (
             "Route::oneshot_inner_owned tuple-field receiver",
             "oneshot_inner_owned",
             "self.0.oneshot(req)",
-            CallReceiver::SelfField {
-                path: vec!["0".to_string()],
-            },
-            CallReceiverInfo::SelfField {
-                path: vec!["0".to_string()],
+            RouteReceiver::Exact {
+                db: CallReceiver::SelfField {
+                    path: vec!["0".to_string()],
+                },
+                rag: CallReceiverInfo::SelfField {
+                    path: vec!["0".to_string()],
+                },
             },
         ),
     ];
 
-    for (label, method, body, db_receiver, rag_receiver) in cases {
+    for (label, method, body, route_receiver) in cases {
         let owner = method_id_by_name_and_body_substring(&db, method, body)?;
         let context = db.call_context_for_owner(owner)?;
         let row = context
             .iter()
             .find(|row| {
                 row.site.method.as_deref() == Some("oneshot")
-                    && row.site.receiver.as_ref() == Some(&db_receiver)
+                    && match &route_receiver {
+                        RouteReceiver::MethodResultField {
+                            method_name,
+                            field_path,
+                        } => matches!(
+                            row.site.receiver.as_ref(),
+                            Some(CallReceiver::MethodResultField {
+                                method_name: actual_method,
+                                field_path: actual_path,
+                                ..
+                            }) if actual_method == method_name
+                                && actual_path.iter().map(String::as_str).eq(field_path.iter().copied())
+                        ),
+                        RouteReceiver::Exact { db, .. } => row.site.receiver.as_ref() == Some(db),
+                    }
             })
             .unwrap_or_else(|| panic!("{label} should expose oneshot call: {context:#?}"));
         assert_eq!(row.status.status, DbCallStatusKind::External);
@@ -3625,7 +3667,7 @@ async fn call_effects_exact_reads_admitted_route_oneshot_summary_effect() -> Res
             matches!(
                 &effect.call_site.callee,
                 CallCalleeInfo::Method { name, receiver }
-                    if name == "oneshot" && receiver.as_ref() == Some(&rag_receiver)
+                    if name == "oneshot" && route_receiver_matches(receiver, &route_receiver)
             ),
             "RAG effect payload should preserve the original Route::oneshot receiver for {label}: {effect:#?}"
         );

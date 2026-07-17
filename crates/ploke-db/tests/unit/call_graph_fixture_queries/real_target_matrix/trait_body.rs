@@ -788,33 +788,29 @@ fn axum_real_target_trait_object_dispatch_rows_are_documented_gaps() -> Result<(
     //   `Pin<Box<dyn Future<...>>>` from error_handling/mod.rs:240.
     //   The semantic target is trait-object `Future::poll`, with no concrete
     //   runtime future available in the current call graph.
-    //   axum/src/serve/mod.rs:485, middleware/from_fn.rs:375,
-    //   middleware/map_request.rs:345, and middleware/map_response.rs:333
-    //   project the current `as_mut().poll(cx)` targetless receiver bucket.
+    //   axum/src/serve/mod.rs:485 projects `self.0.as_mut().poll(cx)`;
+    //   middleware/from_fn.rs:375, middleware/map_request.rs:345, and
+    //   middleware/map_response.rs:333 project `self.inner.as_mut().poll(cx)`.
     //   axum-core/src/body.rs:32 calls
     //   `<dyn std::any::Any>::downcast_mut::<Option<T>>(&mut k)`.
     // Current model split: dyn Future dispatch rows stay targetless; qualified
     // `<dyn Any>::downcast_mut` rows project as std-root external frontiers.
-    assert_targetless_method_rows(
+    assert_targetless_method_result_field_rows(
         &db,
         "poll",
-        "MethodCallResult",
-        Some(&["as_mut"]),
+        "as_mut",
+        &["inner"],
         CallStatusKind::Unsupported,
-        4,
+        3,
     )?;
-    assert_targetless_method_line_fanout(
+    assert_targetless_method_result_field_line_fanout(
         &db,
         &CORPUS_AXUM_CALL_GRAPH,
         "poll",
-        "MethodCallResult",
-        Some(&["as_mut"]),
+        "as_mut",
+        &["inner"],
         CallStatusKind::Unsupported,
         &[
-            SourceLineFanout {
-                file_suffix: "axum/src/serve/mod.rs",
-                lines: &[485],
-            },
             SourceLineFanout {
                 file_suffix: "axum/src/middleware/from_fn.rs",
                 lines: &[375],
@@ -828,6 +824,26 @@ fn axum_real_target_trait_object_dispatch_rows_are_documented_gaps() -> Result<(
                 lines: &[333],
             },
         ],
+    )?;
+    assert_targetless_method_result_field_rows(
+        &db,
+        "poll",
+        "as_mut",
+        &["0"],
+        CallStatusKind::Unsupported,
+        1,
+    )?;
+    assert_targetless_method_result_field_line_fanout(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        "poll",
+        "as_mut",
+        &["0"],
+        CallStatusKind::Unsupported,
+        &[SourceLineFanout {
+            file_suffix: "axum/src/serve/mod.rs",
+            lines: &[485],
+        }],
     )?;
     let owner = method_id_by_name_body_and_file_suffix(
         &db,
@@ -971,10 +987,11 @@ fn axum_real_target_handler_macro_extraction_paths_project_generated_rows() -> R
     // instead of unstable macro metavariables, preserves async-block ownership,
     // and uses the generated impl where-clause proof to reach the
     // `FromRequest` / `FromRequestParts` trait method bindings.
-    let one_param = method_id_by_name_and_body_substring(
+    let one_param = method_id_by_name_body_and_file_suffix(
         &db,
         "call",
         "T1 :: from_request (req , & state) . await",
+        "axum/src/handler/mod.rs",
     )?;
     assert_method_owner_impl_trait(&db, one_param, "Handler", "generated arity-1 Handler::call")?;
     let one_param_body = async_block_owner_for_method_parent(&db, one_param)?;
@@ -1001,10 +1018,11 @@ fn axum_real_target_handler_macro_extraction_paths_project_generated_rows() -> R
         },
     )?;
 
-    let two_param = method_id_by_name_and_body_substring(
+    let two_param = method_id_by_name_body_and_file_suffix(
         &db,
         "call",
         "T2 :: from_request (req , & state) . await",
+        "axum/src/handler/mod.rs",
     )?;
     assert_method_owner_impl_trait(&db, two_param, "Handler", "generated arity-2 Handler::call")?;
     let two_param_body = async_block_owner_for_method_parent(&db, two_param)?;

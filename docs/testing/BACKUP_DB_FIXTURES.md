@@ -278,7 +278,7 @@ Post-regeneration verification:
   - `corpus_chrono_call_graph_2026-07-17.sqlite`:
     `87f2aa5d6907b0f69f26e2d3eb9f69dd0a1490c37e6d06c559ed4e05d8f147d7`
   - `corpus_axum_call_graph_2026-07-17.sqlite`:
-    `f39e97babf9894dc96191cb00f855c69047dbf980778781de8cc25b65ca218a3`
+    `7c446351a750cf7c972cd8ac025fafd0ecb735936c8bca1c048136af6f6813c3`
 
 ## 2026-07-16 Active Call-Graph Fixture Refresh
 

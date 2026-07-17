@@ -95,6 +95,46 @@ mod tests {
         RagService::new(db, embedding_runtime).expect("valid db and RagService constructor args")
     }
 
+    fn callee_shape_matches(actual: &CallCalleeInfo, expected: &CallCalleeInfo) -> bool {
+        match (actual, expected) {
+            (
+                CallCalleeInfo::Method {
+                    name: actual_name,
+                    receiver: actual_receiver,
+                },
+                CallCalleeInfo::Method {
+                    name: expected_name,
+                    receiver: expected_receiver,
+                },
+            ) => {
+                actual_name == expected_name
+                    && receiver_shape_matches(actual_receiver, expected_receiver)
+            }
+            _ => actual == expected,
+        }
+    }
+
+    fn receiver_shape_matches(
+        actual: &Option<CallReceiverInfo>,
+        expected: &Option<CallReceiverInfo>,
+    ) -> bool {
+        match (actual, expected) {
+            (
+                Some(CallReceiverInfo::MethodResultField {
+                    method_name: actual_method,
+                    field_path: actual_path,
+                    ..
+                }),
+                Some(CallReceiverInfo::MethodResultField {
+                    method_name: expected_method,
+                    field_path: expected_path,
+                    ..
+                }),
+            ) => actual_method == expected_method && actual_path == expected_path,
+            _ => actual == expected,
+        }
+    }
+
     async fn init_test_rag_bm25(db: Arc<Database>) -> RagService {
         let rag = init_test_rag(db);
         rag.bm25_rebuild().await.expect("bm25 rebuild must succeed");

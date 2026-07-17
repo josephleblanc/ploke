@@ -5,7 +5,8 @@ use super::common::*;
 use super::source_lines::{
     SourceLineFanout, assert_targetless_method_line_fanout,
     assert_targetless_method_line_fanout_with_needle,
-    assert_targetless_method_owner_kind_line_fanout, assert_targetless_path_line_fanout,
+    assert_targetless_method_owner_kind_line_fanout,
+    assert_targetless_method_result_field_line_fanout, assert_targetless_path_line_fanout,
 };
 
 #[test]
@@ -1419,13 +1420,12 @@ fn axum_real_target_result_receiver_chains_are_documented_gaps() -> Result<(), D
         "self.0.clone().oneshot(req)",
         "axum/src/routing/route.rs",
     )?;
-    assert_owner_method_targetless(
+    assert_owner_method_result_field_targetless(
         &db,
         route_owner,
         "oneshot",
-        &CallReceiver::MethodCallResult {
-            method_name: "clone".to_string(),
-        },
+        "clone",
+        &["0"],
         CallStatusKind::External,
         "axum/src/routing/route.rs:51",
     )?;
@@ -1697,20 +1697,20 @@ fn axum_real_target_result_receiver_chains_are_documented_gaps() -> Result<(), D
         CallStatusKind::Unsupported,
         &[],
     )?;
-    assert_targetless_method_rows(
+    assert_targetless_method_result_field_rows(
         &db,
         "oneshot",
-        "MethodCallResult",
-        Some(&["clone"]),
+        "clone",
+        &["0"],
         CallStatusKind::External,
         1,
     )?;
-    assert_targetless_method_line_fanout(
+    assert_targetless_method_result_field_line_fanout(
         &db,
         &CORPUS_AXUM_CALL_GRAPH,
         "oneshot",
-        "MethodCallResult",
-        Some(&["clone"]),
+        "clone",
+        &["0"],
         CallStatusKind::External,
         &[SourceLineFanout {
             file_suffix: "axum/src/routing/route.rs",

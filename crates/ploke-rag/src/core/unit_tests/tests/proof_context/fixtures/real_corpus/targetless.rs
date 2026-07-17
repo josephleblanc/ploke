@@ -88,13 +88,15 @@ async fn proof_context_collection_preserves_axum_route_oneshot_blockers() -> Res
 
     let cases = [
         MethodCase {
-            label: "Route::oneshot_inner method-call-result receiver",
+            label: "Route::oneshot_inner method-result-field receiver",
             method: "oneshot_inner",
             body: "self.0.clone().oneshot(req)",
             callee: CallCalleeInfo::Method {
                 name: "oneshot".to_string(),
-                receiver: Some(CallReceiverInfo::MethodCallResult {
+                receiver: Some(CallReceiverInfo::MethodResultField {
                     method_name: "clone".to_string(),
+                    method_span: (0, 0),
+                    field_path: vec!["0".to_string()],
                 }),
             },
             status: CallStatusKind::External,

@@ -11,7 +11,9 @@ use ploke_test_utils::{
 };
 
 use super::super::*;
-use super::common::assert_no_traversal_candidates_for_sites;
+use super::common::{
+    assert_no_traversal_candidates_for_sites, method_result_field_receiver_path_matches,
+};
 
 #[derive(Clone, Copy)]
 pub(super) struct SourceLineFanout {
@@ -257,6 +259,72 @@ pub(super) fn assert_targetless_method_line_fanout(
         status,
         expected,
         method,
+    )
+}
+
+pub(super) fn assert_targetless_method_result_field_line_fanout(
+    db: &Database,
+    fixture: &FixtureDb,
+    method: &str,
+    receiver_method: &str,
+    field_path: &[&str],
+    status: CallStatusKind,
+    expected: &[SourceLineFanout],
+) -> Result<(), DbError> {
+    let mut params = BTreeMap::new();
+    params.insert("method".to_string(), DataValue::from(method));
+    params.insert("status".to_string(), DataValue::from(format!("{status:?}")));
+
+    let script = format!(
+        r#"
+{ANCESTOR_RULES_NOW}
+{METHOD_NODE_ANCESTOR_RULE}
+
+module_has_file[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_id] := module_has_file[mod_id], file_id = mod_id
+file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_file[parent], file_id = parent
+
+?[file_path, site_id, owner_id, span, resolution_kind, receiver_path] :=
+    *call_site {{
+        id: site_id,
+        owner_id: owner_id,
+        call_kind: "Method",
+        method_name: $method,
+        receiver_kind: "MethodResultField",
+        receiver_path,
+        span: span @ 'NOW'
+    }},
+    *call_resolution_status {{
+        source_id: site_id,
+        source_kind: "Method",
+        status_kind: $status,
+        resolution_kind: resolution_kind @ 'NOW'
+    }},
+    ancestor[owner_id, module_id],
+    *module {{ id: module_id @ 'NOW' }},
+    file_owner_for_module[module_id, file_id],
+    *file_mod {{ owner_id: file_id, file_path: file_path @ 'NOW' }}
+:sort file_path, span, site_id
+"#
+    );
+
+    let rows = db.raw_query_params(&script, params)?;
+    let rows = rows
+        .rows
+        .into_iter()
+        .filter(|row| {
+            method_result_field_receiver_path_matches(&row[5], receiver_method, field_path)
+        })
+        .collect::<Vec<_>>();
+    assert_targetless_line_rows(
+        db,
+        fixture,
+        &rows,
+        expected,
+        method,
+        &format!(
+            "{status:?} source-line fanout rows for method {method:?}.MethodResultField({receiver_method:?}, {field_path:?})"
+        ),
     )
 }
 
