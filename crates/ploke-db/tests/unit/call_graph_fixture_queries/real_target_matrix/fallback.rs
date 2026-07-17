@@ -341,6 +341,59 @@ fn chrono_try_receiver_method_rows_resolve_option_ok_or_oracles() -> Result<(), 
 }
 
 #[test]
+fn chrono_parse_internal_function_pointer_match_tuple_binding_stays_targetless()
+-> Result<(), DbError> {
+    let db = setup_call_graph_db(&CORPUS_CHRONO_CALL_GRAPH)?;
+
+    // Matrix: `Fallback Source Oracle Matrix`.
+    //
+    // Source chain:
+    //   chrono/src/format/parse.rs:378 defines
+    //   `type Setter = fn(&mut Parsed, i64) -> ParseResult<()>`.
+    //   chrono/src/format/parse.rs:380-405 binds
+    //   `(width, signed, set): (usize, bool, Setter)` from a `match *spec`
+    //   whose tuple arms contain setter function and method items.
+    //   chrono/src/format/parse.rs:421 calls `set(parsed, v)?`.
+    //
+    // Current model gap: the parser preserves the `set(parsed, v)` callsite,
+    // but it does not yet carry per-position candidate evidence out of tuple
+    // match arms. The call therefore remains targetless instead of guessing
+    // which `Setter` branch flows to this invocation.
+    let owner = function_id_by_name(&db, "parse_internal")?;
+    let site = assert_owner_path_targetless(
+        &db,
+        owner,
+        &["set"],
+        CallStatusKind::Unsupported,
+        "chrono/src/format/parse.rs:421 set(parsed, v)",
+    );
+    let site = site?;
+
+    let bindings = db.local_bindings_for_owner(owner)?;
+    assert!(
+        bindings.iter().any(|binding| binding.name == "set"
+            && binding.kind == "LetBinding"
+            && binding.source_kind == "Typed"),
+        "chrono/src/format/parse.rs:380 should preserve the typed tuple binding for `set`: {bindings:#?}"
+    );
+
+    let projected = db.project_call_proof_facts_for_owner(owner, "bd:corpus-chrono-call-graph")?;
+    assert!(
+        projected >= 2,
+        "chrono parse_internal should project node-scoped proof rows for `set`: {projected}"
+    );
+    assert_blocked_resolution_proof(
+        &db,
+        site,
+        "type_resolution_missing",
+        "src/format/parse.rs",
+        "chrono/src/format/parse.rs:421 set(parsed, v)",
+    )?;
+
+    Ok(())
+}
+
+#[test]
 fn chrono_guarded_match_arm_slice_method_guard_is_external_frontier() -> Result<(), DbError> {
     let db = setup_call_graph_db(&CORPUS_CHRONO_CALL_GRAPH)?;
 

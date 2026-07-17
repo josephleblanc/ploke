@@ -4,7 +4,7 @@
 //! stops at structural facts: no target method/function resolution is attempted
 //! here.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use syn::spanned::Spanned;
 use syn::visit::{self, Visit};
@@ -69,6 +69,7 @@ pub(super) fn extract_body_call_sites(
         executable_bodies: Vec::new(),
         local_bindings: Vec::new(),
         awaited_call_spans: Vec::new(),
+        callee_names: Vec::new(),
         zero_span_keys: BTreeMap::new(),
         unsafe_depth: 0,
     };
@@ -107,6 +108,7 @@ pub(super) fn extract_expr_call_sites(
         executable_bodies: Vec::new(),
         local_bindings: Vec::new(),
         awaited_call_spans: Vec::new(),
+        callee_names: Vec::new(),
         zero_span_keys: BTreeMap::new(),
         unsafe_depth: 0,
     };
@@ -132,6 +134,7 @@ struct BodyCallVisitor<'a> {
     executable_bodies: Vec<ExecutableBodyNode>,
     local_bindings: Vec<LocalBindingNode>,
     awaited_call_spans: Vec<(usize, usize)>,
+    callee_names: Vec<BTreeSet<String>>,
     zero_span_keys: BTreeMap<(CallSiteKind, String), usize>,
     unsafe_depth: usize,
 }
@@ -447,6 +450,19 @@ impl BodyCallVisitor<'_> {
                     init_path: init_path.clone(),
                 }
             }
+            LocalBindingProof::Typed {
+                type_path,
+                init_path,
+                ..
+            } => match init_path {
+                Some(init_path) => LocalBindingSource::InitializedPath {
+                    init_path: init_path.clone(),
+                },
+                None if self.binding_is_called(binding.name()) => LocalBindingSource::Typed {
+                    type_path: type_path.clone(),
+                },
+                None => return,
+            },
             LocalBindingProof::ValueAlias { source_path, .. } => LocalBindingSource::ValueAlias {
                 source_path: source_path.clone(),
             },
@@ -699,6 +715,49 @@ impl BodyCallVisitor<'_> {
         *count += 1;
         key
     }
+
+    fn binding_is_called(&self, name: &str) -> bool {
+        self.callee_names
+            .last()
+            .is_some_and(|names| names.contains(name))
+    }
+}
+
+fn block_callee_names(block: &syn::Block) -> BTreeSet<String> {
+    let mut visitor = PathCalleeVisitor {
+        names: BTreeSet::new(),
+    };
+    for stmt in &block.stmts {
+        visitor.visit_stmt(stmt);
+    }
+    visitor.names
+}
+
+struct PathCalleeVisitor {
+    names: BTreeSet<String>,
+}
+
+impl<'ast> Visit<'ast> for PathCalleeVisitor {
+    fn visit_block(&mut self, _block: &'ast syn::Block) {}
+
+    fn visit_expr_closure(&mut self, _closure: &'ast syn::ExprClosure) {}
+
+    fn visit_expr_async(&mut self, _async_block: &'ast syn::ExprAsync) {}
+
+    fn visit_item_fn(&mut self, _item_fn: &'ast syn::ItemFn) {}
+
+    fn visit_item_impl(&mut self, _item_impl: &'ast syn::ItemImpl) {}
+
+    fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+        if let syn::Expr::Path(path) = call.func.as_ref()
+            && path.qself.is_none()
+            && path.path.segments.len() == 1
+            && let Some(segment) = path.path.segments.first()
+        {
+            self.names.insert(segment.ident.to_string());
+        }
+        visit::visit_expr_call(self, call);
+    }
 }
 
 impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
@@ -706,6 +765,7 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
         self.local_scopes.push(local_function_bindings_in_block(
             block, self.owner, self.cfgs,
         ));
+        self.callee_names.push(block_callee_names(block));
         self.record_tail_binding(block);
         let original_awaits = self.awaited_call_spans.len();
         self.awaited_call_spans.extend(awaited_future_spans(block));
@@ -713,6 +773,7 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
             self.visit_stmt(stmt);
         }
         self.awaited_call_spans.truncate(original_awaits);
+        self.callee_names.pop();
         self.local_scopes.pop();
     }
 
@@ -890,6 +951,7 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
                 executable_bodies: Vec::new(),
                 local_bindings: Vec::new(),
                 awaited_call_spans: Vec::new(),
+                callee_names: Vec::new(),
                 zero_span_keys: BTreeMap::new(),
                 unsafe_depth: 0,
             };
@@ -931,6 +993,7 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
             executable_bodies: Vec::new(),
             local_bindings: Vec::new(),
             awaited_call_spans: Vec::new(),
+            callee_names: Vec::new(),
             zero_span_keys: BTreeMap::new(),
             unsafe_depth: self.unsafe_depth,
         };
@@ -969,6 +1032,7 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
             executable_bodies: Vec::new(),
             local_bindings: Vec::new(),
             awaited_call_spans: Vec::new(),
+            callee_names: Vec::new(),
             zero_span_keys: BTreeMap::new(),
             unsafe_depth: self.unsafe_depth,
         };
@@ -1014,6 +1078,7 @@ impl BodyCallVisitor<'_> {
             executable_bodies: Vec::new(),
             local_bindings: Vec::new(),
             awaited_call_spans: Vec::new(),
+            callee_names: Vec::new(),
             zero_span_keys: BTreeMap::new(),
             unsafe_depth: 0,
         };
@@ -1036,6 +1101,7 @@ impl BodyCallVisitor<'_> {
             executable_bodies: Vec::new(),
             local_bindings: Vec::new(),
             awaited_call_spans: Vec::new(),
+            callee_names: Vec::new(),
             zero_span_keys: BTreeMap::new(),
             unsafe_depth: 0,
         };
@@ -1082,6 +1148,7 @@ impl BodyCallVisitor<'_> {
             executable_bodies: Vec::new(),
             local_bindings: Vec::new(),
             awaited_call_spans: Vec::new(),
+            callee_names: Vec::new(),
             zero_span_keys: BTreeMap::new(),
             unsafe_depth: 0,
         };
@@ -1124,6 +1191,7 @@ fn local_binding_source_relation(
 ) -> Option<LocalBindingRelation> {
     match binding_source {
         LocalBindingSource::Parameter => None,
+        LocalBindingSource::Typed { .. } => None,
         LocalBindingSource::Constructed { .. } => None,
         LocalBindingSource::InitializedPath { .. } => None,
         LocalBindingSource::ValueAlias { .. } => None,

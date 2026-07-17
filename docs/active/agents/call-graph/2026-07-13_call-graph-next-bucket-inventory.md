@@ -531,6 +531,27 @@ Aliased stored forwarded-future checkpoint, 2026-07-17:
   one-hop same-block alias proof for an already source-visible aggregate future
   slot.
 
+## 2026-07-17 Typed Callable Binding Frontier
+
+- Selected source oracle: `chrono/src/format/parse.rs:378-421`.
+  `parse_internal` defines `type Setter = fn(&mut Parsed, i64) ->
+  ParseResult<()>`, binds `(width, signed, set): (usize, bool, Setter)` from a
+  `match *spec` tuple, then calls `set(parsed, v)?`.
+- Expected result: explicit blocker, not a resolved traversal edge. The direct
+  `set(...)` row remains targetless with `Unsupported` status, while
+  `local_binding` preserves a typed `LetBinding` proof frontier for `set` and
+  proof-fact projection records `type_resolution_missing`.
+- Reason for stopping at the blocker: the match tuple arms mix associated
+  method items such as `Parsed::set_year` with free function items such as
+  `set_weekday_with_num_days_from_monday`. Promoting this to candidates needs a
+  separate typed per-position match tuple model and method-item target model.
+- Verification: active fixtures were regenerated with
+  `cargo run -p xtask --features call_graph -- fixtures regenerate --active`,
+  the chrono committed seed was promoted, registry-backed backup verification
+  passed, and
+  `cargo test -p ploke-db --features call_graph real_target_matrix::fallback -- --nocapture`
+  passed with the new chrono fallback case included.
+
 Post-regeneration source-oracle audit, 2026-07-17:
 
 - Rechecked the remaining buckets after active fixture regeneration and the

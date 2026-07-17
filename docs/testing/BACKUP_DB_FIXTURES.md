@@ -230,7 +230,9 @@ after adding durable memchr `SelfFieldAssignment` /
 `BindingSourceParameter` evidence for `Runner::fwd` and `Runner::rev` boxed
 `dyn FnMut` setter methods, and again after preserving targetless callable
 callee evidence for function-pointer parameters, field callable parameters, and
-same-parameter branch/match dynamic calls.
+same-parameter branch/match dynamic calls. The refresh was repeated again after
+adding the chrono `parse_internal` typed local-binding proof frontier; only the
+chrono committed seed artifact needed promotion for that latest slice.
 
 Post-regeneration verification:
 
@@ -258,15 +260,18 @@ Post-regeneration verification:
   and
   `cargo test -p ploke-tui code_item_edges_returns_memchr_runner_setter_assignment_payload -- --nocapture`
   passed against the exact tool payload surfaces.
+- `cargo test -p ploke-db --features call_graph real_target_matrix::fallback -- --nocapture`
+  passed with 10 fallback real-target tests, including the chrono
+  `parse_internal` typed function-pointer tuple-binding blocker case.
 - Current committed seed checksums:
   - `corpus_memchr_call_graph_2026-07-15.sqlite`:
-    `91b60ad53738011106a4a9278d277f05e935e4f80c7542e0479ea38280f5daca`
+    `ae8bd8e7f382e381f8577a88c9a4cfa2cfe5c0303205531495aaf28af85b6371`
   - `corpus_generic_array_call_graph_2026-07-15.sqlite`:
-    `262715a24c8c25d5087ed908cd3e3b5cd7f828138ffc93d3e6b1890c78c997e8`
+    `8065e52d823decdc3eff493b02480c93cecf38dd2316c70c893cf9c2fa5b6c35`
   - `corpus_chrono_call_graph_2026-07-15.sqlite`:
-    `a581439ee759b92e0a8240e26b89492ff29f4b7389a036da37b73bb798cb0070`
+    `19e61239a1638f5254d35140267dd5b9f24f868466f1fda975f4540f4cface57`
   - `corpus_axum_call_graph_2026-07-16.sqlite`:
-    `d167528870a8a9a4c4f23051246cd4ade1f1639d54cd272229d7a61137fff6d5`
+    `9491a9fa0e4efec9fed4c06f11143fb117968c398e24df43fca5f162acf86aea`
 
 ## 2026-07-16 Active Call-Graph Fixture Refresh
 

@@ -620,6 +620,13 @@ fn validate_local_binding_shape(binding: &LocalBindingRow) -> Result<(), DbError
                 && binding.callee_kind.is_none()
                 && binding.callee_path.is_none()
         }
+        "Typed" => {
+            binding.source_id.is_none()
+                && binding.source_call_kind.is_none()
+                && non_empty_path(binding.source_path.as_deref())
+                && binding.callee_kind.is_none()
+                && binding.callee_path.is_none()
+        }
         "Constructed" => {
             binding.source_id.is_none()
                 && binding.source_call_kind.is_none()
@@ -695,7 +702,8 @@ fn validate_local_binding_shape(binding: &LocalBindingRow) -> Result<(), DbError
             non_empty_string(Some(binding.name.as_str()))
                 && matches!(
                     binding.source_kind.as_str(),
-                    "Constructed"
+                    "Typed"
+                        | "Constructed"
                         | "InitializedPath"
                         | "ValueAlias"
                         | "Closure"

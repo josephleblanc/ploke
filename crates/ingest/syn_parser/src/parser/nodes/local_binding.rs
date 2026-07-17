@@ -83,6 +83,9 @@ impl LocalBindingKind {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub enum LocalBindingSource {
     Parameter,
+    Typed {
+        type_path: Vec<String>,
+    },
     Constructed {
         type_path: Vec<String>,
     },
@@ -125,6 +128,7 @@ impl LocalBindingSource {
     pub fn source_kind(&self) -> &'static str {
         match self {
             Self::Parameter => "Parameter",
+            Self::Typed { .. } => "Typed",
             Self::Constructed { .. } => "Constructed",
             Self::InitializedPath { .. } => "InitializedPath",
             Self::ValueAlias { .. } => "ValueAlias",
