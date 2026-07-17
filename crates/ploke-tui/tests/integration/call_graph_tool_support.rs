@@ -1806,6 +1806,15 @@ fn chrono_naive_utc_target(db: &Database) -> TargetInfo {
     method_target_by_body_and_file(db, "naive_utc", "self.datetime", "src/datetime/mod.rs")
 }
 
+fn chrono_parse_internal_target(db: &Database) -> TargetInfo {
+    function_target_by_body_and_file(
+        db,
+        "parse_internal",
+        "set(parsed, v)?",
+        "src/format/parse.rs",
+    )
+}
+
 fn axum_run_ui_tests_target(db: &Database) -> TargetInfo {
     axum_function_target_by_name_and_file(db, "run_ui_tests", "axum-macros/src/lib.rs")
 }
@@ -1908,6 +1917,60 @@ file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_f
         id: to_uuid(&row[0]).unwrap_or_else(|err| panic!("{label} uuid: {err}")),
         file_path: PathBuf::from(data_str(&row[1], "file_path")),
         module_path: data_path(&row[2], "module path"),
+    }
+}
+
+fn function_target_by_body_and_file(
+    db: &Database,
+    function_name: &str,
+    body_needle: &str,
+    file_suffix: &str,
+) -> TargetInfo {
+    let script = format!(
+        r#"
+ancestor[desc, desc] := *module{{ id: desc @ 'NOW' }}
+{ANCESTOR_RULES_NOW}
+
+module_has_file[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_id] := module_has_file[mod_id], file_id = mod_id
+file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_file[parent], file_id = parent
+
+?[id, body, file_path, mod_path] :=
+    *function {{ id, name: $function_name, body, module_id @ 'NOW' }},
+    *module{{ id: module_id, path: mod_path @ 'NOW' }},
+    file_owner_for_module[module_id, file_id],
+    *file_mod{{ owner_id: file_id, file_path @ 'NOW' }}
+"#
+    );
+    let mut params = BTreeMap::new();
+    params.insert("function_name".to_string(), DataValue::from(function_name));
+
+    let rows = db
+        .raw_query_params(&script, params)
+        .unwrap_or_else(|err| panic!("query function {function_name}: {err}"));
+    let matching = rows
+        .rows
+        .iter()
+        .filter(|row| {
+            let DataValue::Str(body) = &row[1] else {
+                return false;
+            };
+            body_key(body).contains(&body_key(body_needle))
+                && data_str(&row[2], "file_path").ends_with(file_suffix)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching.len(),
+        1,
+        "expected exactly one function {function_name:?} in {file_suffix:?} containing {body_needle:?}; rows: {:#?}",
+        rows.rows
+    );
+    let row = matching[0];
+
+    TargetInfo {
+        id: to_uuid(&row[0]).expect("function uuid"),
+        file_path: PathBuf::from(data_str(&row[2], "file_path")),
+        module_path: data_path(&row[3], "module path"),
     }
 }
 
@@ -3684,6 +3747,52 @@ pub(crate) fn assert_local_function_binding_payload(
                 && edge.target_kind == "LocalItem"
         }),
         "{tool} should expose BindingSourceLocalItem for {label}: {edges:#?}"
+    );
+}
+
+pub(crate) fn assert_typed_setter_local_binding_payload(
+    bindings: &[serde_json::Value],
+    edges: &[serde_json::Value],
+    owner: Uuid,
+    label: &str,
+    tool: &str,
+) {
+    let rows = bindings
+        .iter()
+        .filter_map(|binding| serde_json::from_value::<LocalBindingInfo>(binding.clone()).ok())
+        .collect::<Vec<_>>();
+    let binding = rows
+        .iter()
+        .find(|binding| {
+            binding.owner_id == owner
+                && binding.kind == "LetBinding"
+                && binding.name == "set"
+                && binding.source_kind == "Typed"
+                && binding
+                    .source_path
+                    .as_deref()
+                    .is_some_and(|path| path.iter().map(String::as_str).eq(["Setter"]))
+                && binding.source_id.is_none()
+                && binding.source_call_kind.is_none()
+                && binding.callee_kind.is_none()
+                && binding.callee_path.is_none()
+        })
+        .unwrap_or_else(|| {
+            panic!("{tool} should expose typed setter binding for {label}: {bindings:#?}")
+        });
+
+    let edge_rows = edges
+        .iter()
+        .filter_map(|edge| serde_json::from_value::<LocalBindingEdgeInfo>(edge.clone()).ok())
+        .collect::<Vec<_>>();
+    assert!(
+        edge_rows.iter().any(|edge| {
+            edge.source_id == owner
+                && edge.target_id == binding.id
+                && edge.relation == LocalBindingRelationKind::OwnerContainsBinding
+                && edge.target_kind == "LocalBinding"
+        }),
+        "{tool} should expose OwnerContainsBinding for typed setter {label}: {edges:#?}"
     );
 }
 

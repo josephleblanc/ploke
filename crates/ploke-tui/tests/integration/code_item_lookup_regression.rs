@@ -19,23 +19,24 @@ use crate::call_graph_tool_support::{
     AxumRunUiTestsToolFixture, AxumTapIoAcceptToolFixture, AxumTapIoConstructorToolFixture,
     AxumTaskSpawnEffectToolFixture, CallGraphToolFixture, CallableBlockerFixture,
     CallableBlockerShape, CallableParamResolvedFixture, ChronoAliasConstructorToolFixture,
-    ChronoNaiveUtcToolFixture, DirectSelfFieldDispatchFixture, FixtureBranchReceiverToolFixture,
-    FixtureDynamicCallableToolFixture, FixtureMethodCallableArgumentToolFixture,
-    FixtureSelfFieldReceiverToolFixture, MemchrRunnerRunToolFixture, MemchrRunnerSetterToolFixture,
-    ResultCallbackFixture, ReturnedClosureToolFixture,
-    assert_aliased_parameter_local_binding_payload, assert_ambiguous_candidate_proof,
-    assert_ambiguous_dynamic_candidates, assert_ambiguous_dynamic_candidates_with_relation,
-    assert_ambiguous_path_candidates, assert_await_result_unwrap_context,
-    assert_await_result_unwrap_proof, assert_body_empty_dependency_root_proof,
-    assert_body_empty_impact_summary, assert_body_empty_incoming_context,
-    assert_body_new_generated_incoming_context, assert_body_new_impact_summary,
-    assert_body_new_incoming_context, assert_boxed_into_route_incoming_context,
-    assert_branch_receiver_context, assert_branch_receiver_proof, assert_call_path_node,
-    assert_chrono_naive_utc_incoming_context, assert_dynamic_context, assert_dynamic_proof,
-    assert_expected_path_incoming_context, assert_fixture_extern_c_abs_effects,
-    assert_forwarded_async_future_awaited_site, assert_forwarded_async_future_execution_flow,
-    assert_forwarded_async_future_flow, assert_forwarded_returned_closure_binding_flow,
-    assert_from_fn_basic_body_empty_crate_boundary, assert_generated_rejection_outgoing_context,
+    ChronoNaiveUtcToolFixture, ChronoParseInternalToolFixture, DirectSelfFieldDispatchFixture,
+    FixtureBranchReceiverToolFixture, FixtureDynamicCallableToolFixture,
+    FixtureMethodCallableArgumentToolFixture, FixtureSelfFieldReceiverToolFixture,
+    MemchrRunnerRunToolFixture, MemchrRunnerSetterToolFixture, ResultCallbackFixture,
+    ReturnedClosureToolFixture, assert_aliased_parameter_local_binding_payload,
+    assert_ambiguous_candidate_proof, assert_ambiguous_dynamic_candidates,
+    assert_ambiguous_dynamic_candidates_with_relation, assert_ambiguous_path_candidates,
+    assert_await_result_unwrap_context, assert_await_result_unwrap_proof,
+    assert_body_empty_dependency_root_proof, assert_body_empty_impact_summary,
+    assert_body_empty_incoming_context, assert_body_new_generated_incoming_context,
+    assert_body_new_impact_summary, assert_body_new_incoming_context,
+    assert_boxed_into_route_incoming_context, assert_branch_receiver_context,
+    assert_branch_receiver_proof, assert_call_path_node, assert_chrono_naive_utc_incoming_context,
+    assert_dynamic_context, assert_dynamic_proof, assert_expected_path_incoming_context,
+    assert_fixture_extern_c_abs_effects, assert_forwarded_async_future_awaited_site,
+    assert_forwarded_async_future_execution_flow, assert_forwarded_async_future_flow,
+    assert_forwarded_returned_closure_binding_flow, assert_from_fn_basic_body_empty_crate_boundary,
+    assert_generated_rejection_outgoing_context,
     assert_handle_error_returned_future_local_binding_payload,
     assert_handler_call_incoming_context, assert_incoming_context,
     assert_initialized_local_receiver_context, assert_initialized_local_receiver_proof,
@@ -54,7 +55,7 @@ use crate::call_graph_tool_support::{
     assert_tap_io_accept_self_field_parameter_flow_payload,
     assert_tap_io_constructor_local_binding_payload, assert_target_proof,
     assert_task_spawn_effects, assert_task_spawn_policy_violation, assert_two_hop_call_path,
-    ui_field,
+    assert_typed_setter_local_binding_payload, ui_field,
 };
 
 #[tokio::test]
@@ -4334,6 +4335,54 @@ async fn code_item_lookup_returns_real_corpus_chrono_option_ok_or_try_receiver_c
             >= fixture.callers.len(),
         "code_item_lookup should surface real-corpus chrono naive_utc proof rows"
     );
+}
+
+#[tokio::test]
+async fn code_item_lookup_returns_chrono_parse_internal_typed_setter_binding_payload() {
+    let fixture = ChronoParseInternalToolFixture::new().await;
+    let module_path = fixture.module_path_arg();
+    let params = LookupParams {
+        item_name: Cow::Borrowed("parse_internal"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("function"),
+        module_path: Cow::Owned(module_path),
+        owner_trait: None,
+        owner_type: None,
+        parent_name: None,
+        body_contains: Some(Cow::Borrowed("set(parsed, v)?")),
+        allowed_effects: Vec::new(),
+    };
+
+    let result = CodeItemLookup::execute(params, fixture.ctx("chrono-parse-internal-lookup"))
+        .await
+        .expect("chrono parse_internal typed setter binding lookup");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize ConciseContext");
+    let bindings = payload
+        .get("local_bindings")
+        .and_then(serde_json::Value::as_array)
+        .expect("local_bindings array");
+    let edges = payload
+        .get("local_binding_edges")
+        .and_then(serde_json::Value::as_array)
+        .expect("local_binding_edges array");
+
+    // Source oracle:
+    //   chrono/src/format/parse.rs:378-421
+    //   `parse_internal` binds typed tuple field `set: Setter` from a match
+    //   expression, then calls `set(parsed, v)?`. The call remains targetless;
+    //   the tool should still expose the typed local-binding proof frontier.
+    assert_typed_setter_local_binding_payload(
+        bindings,
+        edges,
+        fixture.owner,
+        "chrono parse_internal",
+        "code_item_lookup",
+    );
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert_eq!(ui_field(ui, "local_bindings"), bindings.len().to_string());
+    assert_eq!(ui_field(ui, "local_binding_edges"), edges.len().to_string());
 }
 
 #[tokio::test]

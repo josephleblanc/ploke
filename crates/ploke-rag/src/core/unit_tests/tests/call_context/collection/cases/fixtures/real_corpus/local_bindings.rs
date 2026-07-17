@@ -93,6 +93,64 @@ async fn local_bindings_exact_expose_axum_tap_io_constructor_frontier() -> Resul
 }
 
 #[tokio::test]
+async fn local_bindings_exact_expose_chrono_parse_internal_typed_setter_frontier()
+-> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_chrono_call_graph_rag()?;
+
+    // Source oracle:
+    //   chrono/src/format/parse.rs:378 defines
+    //   `type Setter = fn(&mut Parsed, i64) -> ParseResult<()>`.
+    //   chrono/src/format/parse.rs:380-405 binds
+    //   `(width, signed, set): (usize, bool, Setter)` from `match *spec`.
+    //   chrono/src/format/parse.rs:421 calls `set(parsed, v)?`.
+    //
+    // Contract: exact RAG exposes the typed `set` local-binding frontier while
+    // the callsite remains targetless until per-position match tuple and
+    // method-item target evidence exists.
+    let owner = function_id_by_name_body_and_file_suffix(
+        &db,
+        "parse_internal",
+        "set(parsed, v)?",
+        "src/format/parse.rs",
+    )?;
+    let bindings = rag
+        .exact_local_bindings_for_owner(owner)?
+        .expect("call context is enabled");
+    let binding = bindings
+        .iter()
+        .find(|binding| {
+            binding.owner_id == owner
+                && binding.kind == "LetBinding"
+                && binding.name == "set"
+                && binding.source_kind == "Typed"
+                && matches!(binding.source_path.as_deref(), Some([segment]) if segment == "Setter")
+                && binding.source_id.is_none()
+                && binding.source_call_kind.is_none()
+                && binding.callee_kind.is_none()
+                && binding.callee_path.is_none()
+        })
+        .unwrap_or_else(|| {
+            panic!("RAG should expose chrono parse_internal typed setter binding: {bindings:#?}")
+        });
+
+    let edges = rag
+        .exact_local_binding_edges_for_owner(owner)?
+        .expect("call context is enabled");
+    assert!(
+        edges.iter().any(|edge| {
+            edge.source_id == owner
+                && edge.target_id == binding.id
+                && edge.relation == LocalBindingRelationKind::OwnerContainsBinding
+                && edge.target_kind == "LocalBinding"
+        }),
+        "RAG should expose owner-to-typed setter binding containment: {edges:#?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn local_bindings_exact_expose_memchr_runner_setter_assignment() -> Result<(), Error> {
     init_tracing_once();
     let (db, rag) = setup_memchr_call_graph_rag()?;

@@ -90,6 +90,13 @@ pub(crate) struct ChronoNaiveUtcToolFixture {
     pub(crate) callers: Vec<ExpectedMethodCallSite>,
 }
 
+pub(crate) struct ChronoParseInternalToolFixture {
+    pub(crate) state: Arc<AppState>,
+    pub(crate) file_path: PathBuf,
+    pub(crate) module_path: Vec<String>,
+    pub(crate) owner: Uuid,
+}
+
 pub(crate) struct AxumExpandWithToolFixture {
     pub(crate) state: Arc<AppState>,
     pub(crate) file_path: PathBuf,
@@ -720,6 +727,41 @@ impl ChronoNaiveUtcToolFixture {
             module_path: target.module_path,
             target: target.id,
             callers,
+        }
+    }
+
+    pub(crate) fn module_path_arg(&self) -> String {
+        self.module_path.join("::")
+    }
+
+    pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
+        ctx_for_state(&self.state, call_id)
+    }
+}
+
+impl ChronoParseInternalToolFixture {
+    pub(crate) async fn new() -> Self {
+        let db = chrono_call_graph_db();
+        let owner = chrono_parse_internal_target(&db);
+        assert!(
+            db.project_call_proof_facts_for_node(owner.id, "bd:corpus-chrono-call-graph")
+                .expect("project chrono parse_internal proof facts")
+                >= 2,
+            "chrono parse_internal should project node-scoped typed-setter proof rows"
+        );
+        let state = source_state_for_target_with_rag_config(
+            Arc::clone(&db),
+            &owner,
+            "parse_internal",
+            RagConfig::default(),
+        )
+        .await;
+
+        Self {
+            state,
+            file_path: owner.file_path,
+            module_path: owner.module_path,
+            owner: owner.id,
         }
     }
 
