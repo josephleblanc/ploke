@@ -7,8 +7,11 @@ use crate::{Database, DbError};
 
 use super::super::{
     CallReceiver, CallSiteKind, CallStatusKind, FuturePollFieldProducerFlow,
-    SelfFieldParameterFlow,
-    decode::{decode_future_poll_field_producer_flow, decode_self_field_parameter_flow},
+    SelfFieldAssignmentFlow, SelfFieldParameterFlow,
+    decode::{
+        decode_future_poll_field_producer_flow, decode_self_field_assignment_flow,
+        decode_self_field_parameter_flow,
+    },
     families::valid_call_owner_rules,
 };
 
@@ -459,16 +462,16 @@ impl Database {
             .call_context_for_owner(owner_id)?
             .into_iter()
             .filter_map(|row| {
-                if row.site.kind != CallSiteKind::Dynamic
-                    || row.status.status == CallStatusKind::Resolved
-                {
+                if row.status.status == CallStatusKind::Resolved {
                     return None;
                 }
                 let path = row.site.path.as_ref()?;
-                if path.len() == 2 && path[0] == "self" {
-                    Some((row.site.id, path[1].clone()))
-                } else {
-                    None
+                match row.site.kind {
+                    CallSiteKind::Dynamic if path.len() == 2 && path[0] == "self" => {
+                        Some((row.site.id, path[1].clone()))
+                    }
+                    CallSiteKind::Path if path.len() == 1 => Some((row.site.id, path[0].clone())),
+                    _ => None,
                 }
             })
             .collect::<Vec<_>>();
@@ -572,7 +575,6 @@ impl Database {
                     generic_arg_count: site_generic_arg_count @ 'NOW'
                 },
                 valid_owner[site_owner_id, site_owner_kind],
-                site_kind = "Dynamic",
                 *call_resolution_status {
                     source_id: status_site_id,
                     source_kind: status_source_kind,
@@ -654,6 +656,220 @@ impl Database {
         rows.rows
             .iter()
             .map(|row| decode_self_field_parameter_flow(row))
+            .collect::<Result<Vec<_>, DbError>>()
+    }
+
+    pub fn self_field_assignment_flows_for_owner(
+        &self,
+        owner_id: Uuid,
+    ) -> Result<Vec<SelfFieldAssignmentFlow>, DbError> {
+        let owner_types = self.call_owner_self_type_names(owner_id)?;
+        if owner_types.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let candidates = self
+            .call_context_for_owner(owner_id)?
+            .into_iter()
+            .filter_map(|row| {
+                if row.status.status == CallStatusKind::Resolved {
+                    return None;
+                }
+                let path = row.site.path.as_ref()?;
+                match row.site.kind {
+                    CallSiteKind::Dynamic if path.len() == 2 && path[0] == "self" => {
+                        Some((row.site.id, path[1].clone()))
+                    }
+                    CallSiteKind::Path if path.len() == 1 => Some((row.site.id, path[0].clone())),
+                    _ => None,
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let mut flows = Vec::new();
+        for (site_id, field) in candidates {
+            for owner_type in &owner_types {
+                flows.extend(
+                    self.self_field_assignment_flows_for_site(site_id, &field, owner_type)?,
+                );
+            }
+        }
+        Ok(flows)
+    }
+
+    fn self_field_assignment_flows_for_site(
+        &self,
+        site_id: Uuid,
+        field: &str,
+        owner_type: &str,
+    ) -> Result<Vec<SelfFieldAssignmentFlow>, DbError> {
+        let mut params = BTreeMap::new();
+        params.insert("site_id".to_string(), DataValue::Uuid(UuidWrapper(site_id)));
+        params.insert("owner_type".to_string(), DataValue::from(owner_type));
+        params.insert(
+            "field_path".to_string(),
+            DataValue::List(vec![DataValue::from(field)]),
+        );
+
+        let mut script = valid_call_owner_rules();
+        script.push_str(
+            r#"
+            ?[
+                site_id,
+                site_owner_id,
+                site_kind,
+                site_span,
+                site_cfgs,
+                site_unsafe_block,
+                site_path,
+                site_method_name,
+                site_macro_name,
+                site_receiver_kind,
+                site_receiver_path,
+                site_arg_count,
+                site_generic_arg_count,
+                status_site_id,
+                status_source_kind,
+                status_kind,
+                resolution_kind,
+                owner_type,
+                setter_id,
+                assignment_id,
+                assignment_owner_id,
+                assignment_owner_kind,
+                assignment_kind,
+                assignment_name,
+                assignment_span,
+                assignment_cfgs,
+                assignment_source_kind,
+                assignment_source_id,
+                assignment_source_call_kind,
+                assignment_source_path,
+                assignment_callee_kind,
+                assignment_callee_path,
+                parameter_id,
+                parameter_owner_id,
+                parameter_owner_kind,
+                parameter_kind,
+                parameter_name,
+                parameter_span,
+                parameter_cfgs,
+                parameter_source_kind,
+                parameter_source_id,
+                parameter_source_call_kind,
+                parameter_source_path,
+                parameter_callee_kind,
+                parameter_callee_path,
+                edge_source_id,
+                edge_target_id,
+                edge_relation,
+                edge_source_kind,
+                edge_target_kind
+            ] :=
+                site_id = $site_id,
+                owner_type = $owner_type,
+                *call_site {
+                    id: site_id,
+                    owner_id: site_owner_id,
+                    call_kind: site_kind,
+                    span: site_span,
+                    cfgs: site_cfgs,
+                    unsafe_block: site_unsafe_block,
+                    path: site_path,
+                    method_name: site_method_name,
+                    macro_name: site_macro_name,
+                    receiver_kind: site_receiver_kind,
+                    receiver_path: site_receiver_path,
+                    arg_count: site_arg_count,
+                    generic_arg_count: site_generic_arg_count @ 'NOW'
+                },
+                valid_owner[site_owner_id, site_owner_kind],
+                *call_resolution_status {
+                    source_id: status_site_id,
+                    source_kind: status_source_kind,
+                    status_kind,
+                    resolution_kind @ 'NOW'
+                },
+                status_site_id = site_id,
+                status_source_kind = site_kind,
+                status_kind != "Resolved",
+                setter_self_type[setter_id, owner_type],
+                *local_binding {
+                    id: assignment_id,
+                    owner_id: assignment_owner_id,
+                    owner_kind: assignment_owner_kind,
+                    binding_kind: assignment_kind,
+                    name: assignment_name,
+                    span: assignment_span,
+                    cfgs: assignment_cfgs,
+                    source_kind: assignment_source_kind,
+                    source_id: assignment_source_id,
+                    source_call_kind: assignment_source_call_kind,
+                    source_path: assignment_source_path,
+                    callee_kind: assignment_callee_kind,
+                    callee_path: assignment_callee_path @ 'NOW'
+                },
+                assignment_owner_id = setter_id,
+                assignment_kind = "FieldAssignment",
+                assignment_source_kind = "SelfFieldAssignment",
+                assignment_source_path == $field_path,
+                assignment_callee_kind = "Path",
+                *local_binding_edge {
+                    source_id: edge_source_id,
+                    target_id: edge_target_id,
+                    relation_kind: edge_relation,
+                    source_kind: edge_source_kind,
+                    target_kind: edge_target_kind @ 'NOW'
+                },
+                edge_source_id = assignment_id,
+                edge_relation = "BindingSourceParameter",
+                edge_source_kind = "LocalBinding",
+                edge_target_kind = "LocalBinding",
+                *local_binding {
+                    id: parameter_id,
+                    owner_id: parameter_owner_id,
+                    owner_kind: parameter_owner_kind,
+                    binding_kind: parameter_kind,
+                    name: parameter_name,
+                    span: parameter_span,
+                    cfgs: parameter_cfgs,
+                    source_kind: parameter_source_kind,
+                    source_id: parameter_source_id,
+                    source_call_kind: parameter_source_call_kind,
+                    source_path: parameter_source_path,
+                    callee_kind: parameter_callee_kind,
+                    callee_path: parameter_callee_path @ 'NOW'
+                },
+                parameter_id = edge_target_id,
+                parameter_owner_id = setter_id,
+                parameter_kind = "ParameterBinding",
+                parameter_source_kind = "Parameter"
+
+            setter_self_type[method_id, type_name] :=
+                *method { id: method_id, owner_id: impl_id @ 'NOW' },
+                *impl { id: impl_id, self_type: self_type_id @ 'NOW' },
+                *type_relation {
+                    source_id: self_type_id,
+                    target_id: self_target_id,
+                    relation_kind: "Ordinary" @ 'NOW'
+                },
+                self_type_target[self_target_id, type_name]
+
+            setter_self_type[method_id, type_name] :=
+                *method { id: method_id, owner_id: impl_id @ 'NOW' },
+                *impl { id: impl_id, self_type: self_type_id @ 'NOW' },
+                *named_type { type_id: self_type_id, path @ 'NOW' },
+                type_name in path
+
+            self_type_target[id, name] := *struct { id, name @ 'NOW' }
+            self_type_target[id, name] := *enum { id, name @ 'NOW' }
+            self_type_target[id, name] := *union { id, name @ 'NOW' }
+            :sort site_span, owner_type, assignment_span"#,
+        );
+        let rows = self.run_script(&script, params, ScriptMutability::Immutable)?;
+        rows.rows
+            .iter()
+            .map(|row| decode_self_field_assignment_flow(row))
             .collect::<Result<Vec<_>, DbError>>()
     }
 }

@@ -12,7 +12,7 @@ use super::{
     FuturePollFieldProducerFlow, LocalBindingEdgeRow, LocalBindingRelationKind, LocalBindingRow,
     ReturnedCallBinding, ReturnedCallBindingFlow, ReturnedCallProducer, ReturnedCallSite,
     ReturnedCallSource, ReturnedFutureExecutionFlow, ReturnedFutureFlow, ReturnedFutureSite,
-    SelfFieldParameterFlow,
+    SelfFieldAssignmentFlow, SelfFieldParameterFlow,
 };
 
 pub(super) fn decode_site(row: &[DataValue]) -> Result<CallSiteRow, DbError> {
@@ -394,6 +394,73 @@ fn validate_self_field_parameter_flow(flow: &SelfFieldParameterFlow) -> Result<(
     } else {
         Err(DbError::Cozo(format!(
             "malformed self-field parameter flow for call site {}",
+            flow.site.id
+        )))
+    }
+}
+
+pub(super) fn decode_self_field_assignment_flow(
+    row: &[DataValue],
+) -> Result<SelfFieldAssignmentFlow, DbError> {
+    let flow = SelfFieldAssignmentFlow {
+        site: decode_site(&row[0..13])?,
+        status: decode_resolution(&row[13..17])?,
+        owner_type: to_string(&row[17])?,
+        setter_id: to_uuid(&row[18])?,
+        assignment_binding: decode_local_binding(&row[19..32])?,
+        parameter_binding: decode_local_binding(&row[32..45])?,
+        source_edge: decode_local_binding_edge(&row[45..50])?,
+    };
+    validate_self_field_assignment_flow(&flow)?;
+    Ok(flow)
+}
+
+fn validate_self_field_assignment_flow(flow: &SelfFieldAssignmentFlow) -> Result<(), DbError> {
+    let site_path = flow.site.path.as_deref().unwrap_or_default();
+    let site_field_path = match flow.site.kind {
+        CallSiteKind::Dynamic if site_path.len() == 2 && site_path[0] == "self" => &site_path[1..],
+        CallSiteKind::Path if site_path.len() == 1 => site_path,
+        _ => &[],
+    };
+    let assignment_path = flow
+        .assignment_binding
+        .source_path
+        .as_deref()
+        .unwrap_or_default();
+    let parameter_path = flow
+        .assignment_binding
+        .callee_path
+        .as_deref()
+        .unwrap_or_default();
+
+    let valid = !site_field_path.is_empty()
+        && assignment_path == site_field_path
+        && flow.status.site_id == flow.site.id
+        && flow.status.site_kind == flow.site.kind
+        && flow.status.status != CallStatusKind::Resolved
+        && flow.status.resolution.is_none()
+        && !flow.owner_type.is_empty()
+        && flow.assignment_binding.owner_id == flow.setter_id
+        && flow.assignment_binding.kind == "FieldAssignment"
+        && flow.assignment_binding.source_kind == "SelfFieldAssignment"
+        && flow.assignment_binding.source_id.is_none()
+        && flow.assignment_binding.callee_kind.as_deref() == Some("Path")
+        && flow.parameter_binding.owner_id == flow.setter_id
+        && flow.parameter_binding.kind == "ParameterBinding"
+        && flow.parameter_binding.source_kind == "Parameter"
+        && parameter_path.len() == 1
+        && parameter_path[0] == flow.parameter_binding.name
+        && flow.source_edge.source_id == flow.assignment_binding.id
+        && flow.source_edge.target_id == flow.parameter_binding.id
+        && flow.source_edge.relation == LocalBindingRelationKind::BindingSourceParameter
+        && flow.source_edge.source_kind == "LocalBinding"
+        && flow.source_edge.target_kind == "LocalBinding";
+
+    if valid {
+        Ok(())
+    } else {
+        Err(DbError::Cozo(format!(
+            "malformed self-field assignment flow for call site {}",
             flow.site.id
         )))
     }

@@ -10,7 +10,7 @@ Related planning files:
 - [`2026-06-28_real-corpus-call-site-oracle-matrices.md`](2026-06-28_real-corpus-call-site-oracle-matrices.md)
 - [`2026-07-07_call-graph-usage-question-gap-audit.md`](2026-07-07_call-graph-usage-question-gap-audit.md)
 
-Status date: 2026-07-16
+Status date: 2026-07-17
 Baseline HEAD when created: `19860cc40`
 
 ## Operating Rule
@@ -49,6 +49,20 @@ An unsupported bucket is done for now when it has:
 No bucket should receive more than four consecutive commits without re-checking this matrix and either switching buckets or recording a concrete reason to stay.
 
 ## Current And Recent Buckets
+
+Latest completed slice: memchr `Runner::run` callable field-assignment source
+flow payload. The real-corpus oracle is
+`memchr/src/tests/substring/mod.rs:94,110`, where `Runner::run` calls the local
+path bindings `fwd(...)` and `rev(...)`, and
+`memchr/src/tests/substring/mod.rs:133-154`, where `Runner::{fwd,rev}` assign
+the setter parameter `search` into `self.fwd` / `self.rev`. DB, exact RAG,
+`code_item_lookup`, and `code_item_edges` now expose
+`self_field_assignment_flows` as same-type setter assignment candidates that
+tie targetless boxed callable callsites to setter assignments, setter
+parameters, and `BindingSourceParameter` edges. In the current memchr corpus
+that includes the substring `fwd`/`rev` setters plus the separate packedpair
+`Runner::fwd` setter candidate. This remains proof-only: no `dyn FnMut` vtable
+dispatch or traversal edge is admitted.
 
 Latest completed slice: axum `HandleErrorFuture::poll` returned-field
 producer proof payload. The real-corpus oracle is

@@ -680,6 +680,16 @@ pub struct SelfFieldParameterFlowInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct SelfFieldAssignmentFlowInfo {
+    pub site: CallContextInfo,
+    pub owner_type: String,
+    pub setter_id: Uuid,
+    pub assignment_binding: LocalBindingInfo,
+    pub parameter_binding: LocalBindingInfo,
+    pub source_edge: LocalBindingEdgeInfo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct FuturePollFieldProducerFlowInfo {
     pub site: CallContextInfo,
     pub poll_owner_type: String,
@@ -1017,6 +1027,7 @@ impl From<ContextPart> for ConciseContext {
             local_bindings: Vec::new(),
             local_binding_edges: Vec::new(),
             self_field_parameter_flows: Vec::new(),
+            self_field_assignment_flows: Vec::new(),
             future_poll_field_producer_flows: Vec::new(),
             awaited_call_sites: Vec::new(),
             returned_call_binding_flows: Vec::new(),
@@ -1106,6 +1117,8 @@ pub struct ConciseContext {
     pub local_binding_edges: Vec<LocalBindingEdgeInfo>,
     #[serde(default)]
     pub self_field_parameter_flows: Vec<SelfFieldParameterFlowInfo>,
+    #[serde(default)]
+    pub self_field_assignment_flows: Vec<SelfFieldAssignmentFlowInfo>,
     #[serde(default)]
     pub future_poll_field_producer_flows: Vec<FuturePollFieldProducerFlowInfo>,
     #[serde(default)]

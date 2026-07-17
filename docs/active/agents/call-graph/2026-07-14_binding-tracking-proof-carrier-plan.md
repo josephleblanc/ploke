@@ -1007,6 +1007,31 @@ What remains:
   callable value; it does not add vtable dispatch, public caller proof, or a
   traversal edge to arbitrary setter arguments.
 
+## 2026-07-17 Self-Field Assignment Flow Payload Checkpoint
+
+Implemented slice: memchr boxed callable run-owner source-flow payload.
+
+What is complete:
+
+- DB now exposes an owner-scoped `self_field_assignment_flows_for_owner` query
+  for targetless local path or `self.field` callable rows whose field name can
+  be tied to same-type setter-side `FieldAssignment` candidates and persisted
+  `BindingSourceParameter` edges.
+- The real-corpus source oracle is
+  `memchr/src/tests/substring/mod.rs:94,110`, where `Runner::run` calls
+  `fwd(...)` and `rev(...)`, plus `:133-154`, where `Runner::{fwd,rev}` store
+  `search` into `self.fwd` / `self.rev`.
+- Exact RAG and exact `code_item_lookup` / `code_item_edges` payloads now expose
+  `self_field_assignment_flows` for the `Runner::run` owner. The current memchr
+  corpus includes the substring `fwd`/`rev` setters and a separate packedpair
+  `Runner::fwd` setter candidate.
+
+What remains:
+
+- This is a source-flow explanation for the fail-closed boxed `dyn FnMut`
+  frontier. It does not resolve callable trait-object dispatch, infer runtime
+  setter arguments, or admit a local traversal edge.
+
 ## Exit Criteria
 
 For the first carrier slice:

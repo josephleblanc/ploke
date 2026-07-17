@@ -8,7 +8,7 @@ use ploke_core::{
         ExternalSummaryNeedInfo, FuturePollFieldProducerFlowInfo, LocalBindingEdgeInfo,
         LocalBindingInfo, ModuleBoundaryEdgeInfo, ProofContextInfo, ReturnedCallBindingFlowInfo,
         ReturnedFutureExecutionFlowInfo, ReturnedFutureFlowInfo, RuntimeDispatchNeedInfo,
-        SelfFieldParameterFlowInfo, UnsafeBlockCallInfo,
+        SelfFieldAssignmentFlowInfo, SelfFieldParameterFlowInfo, UnsafeBlockCallInfo,
     },
     tool_types::ToolName,
 };
@@ -784,6 +784,25 @@ pub(super) fn self_field_parameter_flows_for_node(
     }
 }
 
+pub(super) fn self_field_assignment_flows_for_node(
+    ctx: &super::Ctx,
+    node_id: Uuid,
+) -> Result<Vec<SelfFieldAssignmentFlowInfo>, ploke_error::Error> {
+    use ploke_error::InternalError;
+
+    match ctx.state.rag.as_ref() {
+        Some(rag) if !rag.call_context_degraded() => Ok(rag
+            .exact_self_field_assignment_flows_for_owner(node_id)
+            .map_err(|err| {
+                ploke_error::Error::Internal(InternalError::CompilerError(format!(
+                    "failed to collect self-field assignment flows for code item {node_id}: {err}"
+                )))
+            })?
+            .unwrap_or_default()),
+        _ => Ok(Vec::new()),
+    }
+}
+
 pub(super) fn future_poll_field_producer_flows_for_node(
     ctx: &super::Ctx,
     node_id: Uuid,
@@ -1045,6 +1064,7 @@ pub(super) fn with_call_usage_fields(
     local_bindings: &[LocalBindingInfo],
     local_binding_edges: &[LocalBindingEdgeInfo],
     self_field_flows: &[SelfFieldParameterFlowInfo],
+    self_assignment_flows: &[SelfFieldAssignmentFlowInfo],
     future_poll_flows: &[FuturePollFieldProducerFlowInfo],
     awaited_sites: &[AwaitedCallSiteInfo],
     returned_flows: &[ReturnedCallBindingFlowInfo],
@@ -1175,6 +1195,10 @@ pub(super) fn with_call_usage_fields(
         .with_field(
             "self_field_parameter_flows",
             self_field_flows.len().to_string(),
+        )
+        .with_field(
+            "self_field_assignment_flows",
+            self_assignment_flows.len().to_string(),
         )
         .with_field(
             "future_poll_field_producer_flows",

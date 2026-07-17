@@ -25,7 +25,7 @@ use ploke_core::rag_types::{
     ReturnedCallBindingInfo, ReturnedCallProducerInfo, ReturnedCallSiteInfo,
     ReturnedCallSourceInfo, ReturnedCallSourceKind, ReturnedFutureExecutionFlowInfo,
     ReturnedFutureFlowInfo, ReturnedFutureSiteInfo, RuntimeDispatchNeedInfo,
-    SelfFieldParameterFlowInfo, UnsafeBlockCallInfo,
+    SelfFieldAssignmentFlowInfo, SelfFieldParameterFlowInfo, UnsafeBlockCallInfo,
 };
 use ploke_db::{
     CallBuildDomain as DbCallBuildDomain, CallContextCandidate, CallContextOptions,
@@ -50,6 +50,7 @@ use ploke_db::{
     ProofGraphStore, ReturnedCallBindingFlow as DbReturnedCallBindingFlow,
     ReturnedFutureExecutionFlow as DbReturnedFutureExecutionFlow,
     ReturnedFutureFlow as DbReturnedFutureFlow, RuntimeDispatchNeed as DbRuntimeDispatchNeed,
+    SelfFieldAssignmentFlow as DbSelfFieldAssignmentFlow,
     SelfFieldParameterFlow as DbSelfFieldParameterFlow, UnsafeBlockCall as DbUnsafeBlockCall,
 };
 use ploke_embed::indexer::EmbeddingProcessor;
@@ -687,6 +688,26 @@ fn self_field_parameter_flow_info(
         return_binding: local_binding_info(row.return_binding),
         field_binding: local_binding_info(row.field_binding),
         parameter_binding: local_binding_info(row.parameter_binding),
+    })
+}
+
+fn self_field_assignment_flow_info(
+    row: DbSelfFieldAssignmentFlow,
+) -> Result<SelfFieldAssignmentFlowInfo, RagError> {
+    Ok(SelfFieldAssignmentFlowInfo {
+        site: row_to_call_context(
+            CallContextRow {
+                site: row.site,
+                status: row.status,
+                targets: Vec::new(),
+            },
+            usize::MAX,
+        )?,
+        owner_type: row.owner_type,
+        setter_id: row.setter_id,
+        assignment_binding: local_binding_info(row.assignment_binding),
+        parameter_binding: local_binding_info(row.parameter_binding),
+        source_edge: local_binding_edge_info(row.source_edge),
     })
 }
 
@@ -1747,6 +1768,23 @@ impl RagService {
                 .self_field_parameter_flows_for_owner(owner_id)?
                 .into_iter()
                 .map(self_field_parameter_flow_info)
+                .collect::<Result<Vec<_>, RagError>>()?,
+        ))
+    }
+
+    pub fn exact_self_field_assignment_flows_for_owner(
+        &self,
+        owner_id: Uuid,
+    ) -> Result<Option<Vec<SelfFieldAssignmentFlowInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .self_field_assignment_flows_for_owner(owner_id)?
+                .into_iter()
+                .map(self_field_assignment_flow_info)
                 .collect::<Result<Vec<_>, RagError>>()?,
         ))
     }

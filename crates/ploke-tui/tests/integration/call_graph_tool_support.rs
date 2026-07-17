@@ -14,7 +14,7 @@ use ploke_core::{
         FuturePollFieldProducerFlowInfo, LocalBindingEdgeInfo, LocalBindingInfo,
         LocalBindingRelationKind, ProofContextInfo, ReturnedCallBindingFlowInfo,
         ReturnedCallSourceKind, ReturnedFutureExecutionFlowInfo, ReturnedFutureFlowInfo,
-        SelfFieldParameterFlowInfo, UnsafeBlockCallInfo,
+        SelfFieldAssignmentFlowInfo, SelfFieldParameterFlowInfo, UnsafeBlockCallInfo,
     },
 };
 use ploke_db::{
@@ -208,6 +208,13 @@ pub(crate) struct MemchrRunnerSetterToolFixture {
     pub(crate) module_path: Vec<String>,
     pub(crate) owner: Uuid,
     pub(crate) field_name: &'static str,
+}
+
+pub(crate) struct MemchrRunnerRunToolFixture {
+    pub(crate) state: Arc<AppState>,
+    pub(crate) file_path: PathBuf,
+    pub(crate) module_path: Vec<String>,
+    pub(crate) owner: Uuid,
 }
 
 #[derive(Debug)]
@@ -1127,6 +1134,42 @@ impl MemchrRunnerSetterToolFixture {
             module_path: target.module_path,
             owner: target.id,
             field_name: "fwd",
+        }
+    }
+
+    pub(crate) fn module_path_arg(&self) -> String {
+        self.module_path.join("::")
+    }
+
+    pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
+        ctx_for_state(&self.state, call_id)
+    }
+}
+
+impl MemchrRunnerRunToolFixture {
+    pub(crate) async fn new() -> Self {
+        let db = memchr_call_graph_db();
+        let target = method_target_by_body_and_file(
+            db.as_ref(),
+            "run",
+            "fwd(t.haystack.as_bytes(), t.needle.as_bytes())",
+            "src/tests/substring/mod.rs",
+        );
+        let mut rag_config = RagConfig::default();
+        rag_config.proof_context.enabled = false;
+        let state = source_state_for_target_with_rag_config(
+            Arc::clone(&db),
+            &target,
+            "memchr run",
+            rag_config,
+        )
+        .await;
+
+        Self {
+            state,
+            file_path: target.file_path,
+            module_path: target.module_path,
+            owner: target.id,
         }
     }
 
@@ -3979,6 +4022,97 @@ pub(crate) fn assert_memchr_runner_setter_local_binding_payload(
         }),
         "{tool} should expose BindingSourceParameter for memchr Runner::{field_name}: {edges:#?}"
     );
+}
+
+pub(crate) fn assert_memchr_runner_run_assignment_flow_payload(
+    flows: &[serde_json::Value],
+    owner: Uuid,
+    tool: &str,
+) {
+    let rows = flows
+        .iter()
+        .filter_map(|flow| serde_json::from_value::<SelfFieldAssignmentFlowInfo>(flow.clone()).ok())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        rows.len(),
+        3,
+        "{tool} should expose same-type Runner::run assignment flow candidates: {flows:#?}"
+    );
+    let count_for = |field_name: &str| {
+        rows.iter()
+            .filter(|flow| {
+                flow.site.owner_id == owner
+                    && flow.site.kind == CallSiteKind::Path
+                    && flow
+                        .site
+                        .path
+                        .as_deref()
+                        .is_some_and(|path| path.iter().map(String::as_str).eq([field_name]))
+            })
+            .count()
+    };
+    assert_eq!(
+        count_for("fwd"),
+        2,
+        "{tool} should expose the substring and packedpair Runner::fwd candidates: {flows:#?}"
+    );
+    assert_eq!(
+        count_for("rev"),
+        1,
+        "{tool} should expose the substring Runner::rev candidate: {flows:#?}"
+    );
+    for field_name in ["fwd", "rev"] {
+        let flow = rows
+            .iter()
+            .find(|flow| {
+                flow.site.owner_id == owner
+                    && flow.site.kind == CallSiteKind::Path
+                    && flow
+                        .site
+                        .path
+                        .as_deref()
+                        .is_some_and(|path| path.iter().map(String::as_str).eq([field_name]))
+            })
+            .unwrap_or_else(|| {
+                panic!("{tool} should expose the {field_name} assignment flow: {flows:#?}")
+            });
+
+        assert_eq!(flow.site.status, CallStatusKind::Unsupported);
+        assert!(
+            flow.site.targets.is_empty(),
+            "{tool} must keep memchr Runner::{field_name} boxed callable targetless: {flow:#?}"
+        );
+        assert_eq!(flow.owner_type, "Runner");
+        assert_eq!(flow.assignment_binding.owner_id, flow.setter_id);
+        assert_eq!(flow.assignment_binding.kind, "FieldAssignment");
+        assert_eq!(flow.assignment_binding.name, format!("self.{field_name}"));
+        assert_eq!(flow.assignment_binding.source_kind, "SelfFieldAssignment");
+        assert!(
+            flow.assignment_binding
+                .source_path
+                .as_deref()
+                .is_some_and(|path| path.iter().map(String::as_str).eq([field_name])),
+            "{tool} should expose the {field_name} assignment source path: {flow:#?}"
+        );
+        assert_eq!(flow.assignment_binding.callee_kind.as_deref(), Some("Path"));
+        assert!(
+            flow.assignment_binding
+                .callee_path
+                .as_deref()
+                .is_some_and(|path| path.iter().map(String::as_str).eq(["search"])),
+            "{tool} should expose the {field_name} assignment parameter path: {flow:#?}"
+        );
+        assert_eq!(flow.parameter_binding.owner_id, flow.setter_id);
+        assert_eq!(flow.parameter_binding.kind, "ParameterBinding");
+        assert_eq!(flow.parameter_binding.name, "search");
+        assert_eq!(flow.parameter_binding.source_kind, "Parameter");
+        assert_eq!(
+            flow.source_edge.relation,
+            LocalBindingRelationKind::BindingSourceParameter
+        );
+        assert_eq!(flow.source_edge.source_id, flow.assignment_binding.id);
+        assert_eq!(flow.source_edge.target_id, flow.parameter_binding.id);
+    }
 }
 
 pub(crate) fn assert_handle_error_returned_future_local_binding_payload(

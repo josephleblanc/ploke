@@ -166,6 +166,99 @@ async fn local_bindings_exact_expose_memchr_runner_setter_assignment() -> Result
 }
 
 #[tokio::test]
+async fn self_field_assignment_flows_exact_expose_memchr_runner_run_frontier() -> Result<(), Error>
+{
+    init_tracing_once();
+    let (db, rag) = setup_memchr_call_graph_rag()?;
+
+    // Source oracle:
+    //   memchr/src/tests/substring/mod.rs:94 and :110 call local path
+    //   bindings `fwd(...)` and `rev(...)` after reading boxed `dyn FnMut`
+    //   fields.
+    //   memchr/src/tests/substring/mod.rs:133-154 stores the setter
+    //   parameter `search` into `self.fwd` and `self.rev`.
+    //
+    // Contract: exact RAG exposes source-visible setter assignment proof for
+    // the targetless boxed callable field calls without promoting trait-object
+    // dispatch into local traversal edges.
+    let run = method_id_by_name_body_and_file_suffix(
+        &db,
+        "run",
+        "fwd(t.haystack.as_bytes(), t.needle.as_bytes())",
+        "src/tests/substring/mod.rs",
+    )?;
+    let flows = rag
+        .exact_self_field_assignment_flows_for_owner(run)?
+        .expect("call context is enabled");
+    assert_eq!(
+        flows.len(),
+        3,
+        "RAG should expose same-type setter assignment flows for Runner::run, including the extra packedpair Runner::fwd setter candidate: {flows:#?}"
+    );
+
+    for (method_name, assignment, field_name) in [
+        ("fwd", "self.fwd = Some(Box::new(search));", "fwd"),
+        ("rev", "self.rev = Some(Box::new(search));", "rev"),
+    ] {
+        let setter = method_id_by_name_body_and_file_suffix(
+            &db,
+            method_name,
+            assignment,
+            "src/tests/substring/mod.rs",
+        )?;
+        let flow = flows
+            .iter()
+            .find(|flow| {
+                flow.site.owner_id == run
+                    && flow.setter_id == setter
+                    && flow.site.kind == CallSiteKind::Path
+                    && flow
+                        .site
+                        .path
+                        .as_deref()
+                        .is_some_and(|path| path.iter().map(String::as_str).eq([field_name]))
+            })
+            .unwrap_or_else(|| {
+                panic!("RAG should expose the {field_name} assignment flow: {flows:#?}")
+            });
+        assert_eq!(flow.site.status, CallStatusKind::Unsupported);
+        assert!(flow.site.targets.is_empty());
+        assert_eq!(flow.owner_type, "Runner");
+        assert_eq!(flow.setter_id, setter);
+        assert_eq!(flow.assignment_binding.owner_id, setter);
+        assert_eq!(flow.assignment_binding.kind, "FieldAssignment");
+        assert_eq!(flow.assignment_binding.source_kind, "SelfFieldAssignment");
+        assert!(
+            flow.assignment_binding
+                .source_path
+                .as_deref()
+                .is_some_and(|path| path.iter().map(String::as_str).eq([field_name])),
+            "RAG should expose the {field_name} assignment source path: {flow:#?}"
+        );
+        assert_eq!(flow.assignment_binding.callee_kind.as_deref(), Some("Path"));
+        assert!(
+            flow.assignment_binding
+                .callee_path
+                .as_deref()
+                .is_some_and(|path| path.iter().map(String::as_str).eq(["search"])),
+            "RAG should expose the {field_name} assignment parameter path: {flow:#?}"
+        );
+        assert_eq!(flow.parameter_binding.owner_id, setter);
+        assert_eq!(flow.parameter_binding.kind, "ParameterBinding");
+        assert_eq!(flow.parameter_binding.name, "search");
+        assert_eq!(flow.parameter_binding.source_kind, "Parameter");
+        assert_eq!(
+            flow.source_edge.relation,
+            LocalBindingRelationKind::BindingSourceParameter
+        );
+        assert_eq!(flow.source_edge.source_id, flow.assignment_binding.id);
+        assert_eq!(flow.source_edge.target_id, flow.parameter_binding.id);
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn self_field_parameter_flows_exact_expose_axum_tap_io_accept_frontier() -> Result<(), Error>
 {
     init_tracing_once();

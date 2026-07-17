@@ -761,6 +761,73 @@ fn memchr_callable_trait_object_field_calls_are_visible_targetless_path_rows() -
         CallStatusKind::Unsupported,
         "memchr/src/tests/substring/mod.rs:110 boxed rev dyn FnMut local binding",
     )?;
+
+    let flows = db.self_field_assignment_flows_for_owner(owner)?;
+    assert_eq!(
+        flows.len(),
+        3,
+        "Runner::run should expose same-type setter-side source evidence without resolving boxed dyn FnMut dispatch. The current memchr corpus has substring fwd/rev plus packedpair fwd Runner setters: {flows:#?}"
+    );
+    for (site, method_name, assignment, field_name, line) in [
+        (
+            fwd_site,
+            "fwd",
+            "self.fwd = Some(Box::new(search));",
+            "fwd",
+            137,
+        ),
+        (
+            rev_site,
+            "rev",
+            "self.rev = Some(Box::new(search));",
+            "rev",
+            153,
+        ),
+    ] {
+        let setter = method_id_by_name_body_and_file_suffix(
+            &db,
+            method_name,
+            assignment,
+            "src/tests/substring/mod.rs",
+        )?;
+        let flow = flows
+            .iter()
+            .find(|flow| flow.site.id == site && flow.setter_id == setter)
+            .unwrap_or_else(|| {
+                panic!(
+                    "memchr/src/tests/substring/mod.rs:{line} should expose a self-field assignment source flow: {flows:#?}"
+                )
+            });
+        assert_eq!(flow.site.kind, CallSiteKind::Path);
+        assert_eq!(flow.site.path.as_ref(), Some(&path(&[field_name])));
+        assert_eq!(flow.status.status, CallStatusKind::Unsupported);
+        assert!(flow.status.resolution.is_none());
+        assert_eq!(flow.owner_type, "Runner");
+        assert_eq!(flow.setter_id, setter);
+        assert_eq!(flow.assignment_binding.owner_id, setter);
+        assert_eq!(flow.assignment_binding.kind, "FieldAssignment");
+        assert_eq!(flow.assignment_binding.source_kind, "SelfFieldAssignment");
+        assert_eq!(
+            flow.assignment_binding.source_path.as_ref(),
+            Some(&path(&[field_name]))
+        );
+        assert_eq!(flow.assignment_binding.callee_kind.as_deref(), Some("Path"));
+        assert_eq!(
+            flow.assignment_binding.callee_path.as_ref(),
+            Some(&path(&["search"]))
+        );
+        assert_eq!(flow.parameter_binding.owner_id, setter);
+        assert_eq!(flow.parameter_binding.kind, "ParameterBinding");
+        assert_eq!(flow.parameter_binding.name, "search");
+        assert_eq!(flow.parameter_binding.source_kind, "Parameter");
+        assert_eq!(
+            flow.source_edge.relation,
+            LocalBindingRelationKind::BindingSourceParameter
+        );
+        assert_eq!(flow.source_edge.source_id, flow.assignment_binding.id);
+        assert_eq!(flow.source_edge.target_id, flow.parameter_binding.id);
+    }
+
     db.upsert_proof_fact_values(&[
         ploke_test_utils::memchr_callable_trait_object_runtime_dispatch_blocker(fwd_site),
         ploke_test_utils::memchr_callable_trait_object_runtime_dispatch_blocker(rev_site),

@@ -22,6 +22,6 @@ pub use rows::{
     LocalBindingEdgeRow, LocalBindingRow, ModuleBoundaryEdge, ModuleBoundaryPolicyRule,
     ModuleBoundaryPolicyViolation, ReturnedCallBinding, ReturnedCallBindingFlow,
     ReturnedCallProducer, ReturnedCallSite, ReturnedCallSource, ReturnedFutureExecutionFlow,
-    ReturnedFutureFlow, ReturnedFutureSite, RuntimeDispatchNeed, SelfFieldParameterFlow,
-    UnsafeBlockCall,
+    ReturnedFutureFlow, ReturnedFutureSite, RuntimeDispatchNeed, SelfFieldAssignmentFlow,
+    SelfFieldParameterFlow, UnsafeBlockCall,
 };

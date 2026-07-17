@@ -34,8 +34,8 @@ pub use call_graph::{
     ModuleBoundaryPolicyRule, ModuleBoundaryPolicyViolation, ReturnedCallBinding,
     ReturnedCallBindingFlow, ReturnedCallProducer, ReturnedCallSite, ReturnedCallSource,
     ReturnedFutureExecutionFlow, ReturnedFutureFlow, ReturnedFutureSite, RuntimeDispatchNeed,
-    SelfFieldParameterFlow, UnsafeBlockCall, call_target_endpoint_relation,
-    valid_call_target_family,
+    SelfFieldAssignmentFlow, SelfFieldParameterFlow, UnsafeBlockCall,
+    call_target_endpoint_relation, valid_call_target_family,
 };
 pub use database::RestoredEmbeddingSet;
 pub use database::{

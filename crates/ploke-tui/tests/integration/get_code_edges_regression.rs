@@ -40,26 +40,27 @@ use crate::call_graph_tool_support::{
     CallableBlockerShape, CallableParamResolvedFixture, ChronoAliasConstructorToolFixture,
     ChronoNaiveUtcToolFixture, DirectSelfFieldDispatchFixture, FixtureBranchReceiverToolFixture,
     FixtureDynamicCallableToolFixture, FixtureMethodCallableArgumentToolFixture,
-    FixtureSelfFieldReceiverToolFixture, MemchrRunnerSetterToolFixture, ResultCallbackFixture,
-    ReturnedClosureToolFixture, assert_aliased_parameter_local_binding_payload,
-    assert_ambiguous_candidate_proof, assert_ambiguous_dynamic_candidates,
-    assert_ambiguous_dynamic_candidates_with_relation, assert_ambiguous_path_candidates,
-    assert_await_result_unwrap_context, assert_await_result_unwrap_proof,
-    assert_body_empty_dependency_root_proof, assert_body_empty_impact_summary,
-    assert_body_empty_incoming_context, assert_body_new_generated_incoming_context,
-    assert_body_new_impact_summary, assert_body_new_incoming_context,
-    assert_boxed_into_route_incoming_context, assert_branch_receiver_context,
-    assert_branch_receiver_proof, assert_call_path_node, assert_chrono_naive_utc_incoming_context,
-    assert_dynamic_context, assert_dynamic_proof, assert_expected_path_incoming_context,
-    assert_fixture_extern_c_abs_effects, assert_forwarded_async_future_awaited_site,
-    assert_forwarded_async_future_execution_flow, assert_forwarded_async_future_flow,
-    assert_forwarded_returned_closure_binding_flow, assert_from_fn_basic_body_empty_crate_boundary,
-    assert_generated_rejection_outgoing_context,
+    FixtureSelfFieldReceiverToolFixture, MemchrRunnerRunToolFixture, MemchrRunnerSetterToolFixture,
+    ResultCallbackFixture, ReturnedClosureToolFixture,
+    assert_aliased_parameter_local_binding_payload, assert_ambiguous_candidate_proof,
+    assert_ambiguous_dynamic_candidates, assert_ambiguous_dynamic_candidates_with_relation,
+    assert_ambiguous_path_candidates, assert_await_result_unwrap_context,
+    assert_await_result_unwrap_proof, assert_body_empty_dependency_root_proof,
+    assert_body_empty_impact_summary, assert_body_empty_incoming_context,
+    assert_body_new_generated_incoming_context, assert_body_new_impact_summary,
+    assert_body_new_incoming_context, assert_boxed_into_route_incoming_context,
+    assert_branch_receiver_context, assert_branch_receiver_proof, assert_call_path_node,
+    assert_chrono_naive_utc_incoming_context, assert_dynamic_context, assert_dynamic_proof,
+    assert_expected_path_incoming_context, assert_fixture_extern_c_abs_effects,
+    assert_forwarded_async_future_awaited_site, assert_forwarded_async_future_execution_flow,
+    assert_forwarded_async_future_flow, assert_forwarded_returned_closure_binding_flow,
+    assert_from_fn_basic_body_empty_crate_boundary, assert_generated_rejection_outgoing_context,
     assert_handle_error_returned_future_local_binding_payload,
     assert_handler_call_incoming_context, assert_incoming_context,
     assert_initialized_local_receiver_context, assert_initialized_local_receiver_proof,
     assert_initialized_path_local_binding_payload, assert_json_from_bytes_incoming_context,
-    assert_local_function_binding_payload, assert_memchr_runner_setter_local_binding_payload,
+    assert_local_function_binding_payload, assert_memchr_runner_run_assignment_flow_payload,
+    assert_memchr_runner_setter_local_binding_payload,
     assert_method_argument_parameter_local_binding_payload,
     assert_no_external_summary_need_for_site, assert_parse_attrs_incoming_context,
     assert_path_blocker_proof, assert_path_context, assert_path_resolution_proof,
@@ -1115,6 +1116,43 @@ async fn code_item_edges_returns_memchr_runner_setter_assignment_payload() {
     let ui = result.ui_payload.as_ref().expect("ui payload");
     assert_eq!(ui_field(ui, "local_bindings"), bindings.len().to_string());
     assert_eq!(ui_field(ui, "local_binding_edges"), edges.len().to_string());
+}
+
+#[tokio::test]
+async fn code_item_edges_returns_memchr_runner_run_assignment_flow_payload() {
+    let fixture = MemchrRunnerRunToolFixture::new().await;
+    let params = EdgesParams {
+        item_name: Cow::Borrowed("run"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("method"),
+        module_path: Cow::Owned(fixture.module_path_arg()),
+        owner_trait: None,
+        owner_type: Some(Cow::Borrowed("Runner")),
+        parent_name: None,
+        body_contains: Some(Cow::Borrowed(
+            "fwd(t.haystack.as_bytes(), t.needle.as_bytes())",
+        )),
+        allowed_effects: Vec::new(),
+    };
+
+    let result = CodeItemEdges::execute(params, fixture.ctx("memchr-run-assignment-flow-edges"))
+        .await
+        .expect("memchr Runner::run assignment flow edges");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
+    let flows = payload
+        .get("node_info")
+        .and_then(|node| node.get("self_field_assignment_flows"))
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.self_field_assignment_flows array");
+
+    // Same source oracle as lookup: the run method reaches targetless boxed
+    // callable path rows while setter-side assignment evidence remains
+    // proof-only and does not create traversal edges.
+    assert_memchr_runner_run_assignment_flow_payload(flows, fixture.owner, "code_item_edges");
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert_eq!(ui_field(ui, "self_field_assignment_flows"), "3");
 }
 
 #[tokio::test]
