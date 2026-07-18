@@ -1,7 +1,8 @@
 # Prototype 1 Selection Without Candidate Safety Proof
 
 Status: source repaired and historical counterfactual passing; v25 preserved at
-R12; fresh multi-generation live handoff proof pending.
+R12; v26 preserved at an indeterminate R10 candidate-review boundary; fresh
+multi-generation live handoff proof pending.
 
 ## Broken Contract
 
@@ -174,6 +175,39 @@ pre-existing backup fixture that lacks the current `array_type` relation. The
 operator UI currently projects semantic gate/verdict status and counts; a
 future UI slice still needs the complete binding and finding drilldown described
 above.
+
+## V26 Live Blocker and Source Hardening
+
+Campaign
+`p1-v26-strictpatchhandoff-mbe-g35f-direct-3g1x3-p3-obs2400-20260718-041034`
+live-verified the strict review boundary through three generation-one
+candidates. All child evaluation, protocol, comparison, and MBE evidence
+completed. Two exact artifact-bound candidate reviews persisted: one
+`admissible` review for the Keep/all-resolved candidate and one `rejected`
+review for an unsafe cache candidate.
+
+The third Direct Google review exhausted the admitted 4,096-token response
+budget with `finish_reason = "length"` after 3,928 reasoning tokens and 152
+visible completion tokens. Its JSON ended inside the first rationale string.
+Strict decoding rejected the body and no review or selection authority was
+persisted. The controller therefore preserved the R10-to-R11 attempt as
+indeterminate instead of projecting a partial selection.
+
+Current recovery can preserve or abandon the supervising socket job, but it
+cannot reconcile that edge-specific indeterminate controller attempt back into
+a runnable R10 state. V26 remains unchanged as forensic evidence. The fresh V27
+profile raises only `protocol.max_tokens` from 4,096 to the established 8,000
+budget while retaining direct Google, explicit `reasoning.mode = "omit"`, and
+every strict selection and handoff gate.
+
+Source now also retries only EOF-class candidate-review JSON truncation. Each
+retry creates a fresh adjudicator request over the same typed subject. No
+partial provider response becomes a `StepArtifact`, and persistence still
+occurs only after typed decoding and complete binding validation. Non-truncated
+schema errors continue to fail immediately. The focused regressions are:
+
+- `truncated_review_is_retried_with_fresh_adjudication`; and
+- `non_truncated_review_error_is_not_retried`.
 
 ## Required Repro Coverage
 

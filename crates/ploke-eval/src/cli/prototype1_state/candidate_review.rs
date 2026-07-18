@@ -1,12 +1,13 @@
 use std::{
     collections::BTreeSet,
     fs,
+    future::Future,
     path::{Component, Path, PathBuf},
 };
 
 use ploke_protocol::{
     ExecutorKind, JsonAdjudicationSpec, JsonAdjudicator, JsonChatPrompt, JsonLlmConfig,
-    JsonLlmProvenance, StateDisposition, StepArtifact, decode_json_content,
+    JsonLlmProvenance, ProtocolLlmError, StateDisposition, StepArtifact, decode_json_content,
     step::{Step, StepSpec},
 };
 use serde::{Deserialize, Serialize};
@@ -15,7 +16,7 @@ use sha2::{Digest, Sha256};
 use crate::{
     ResolvedCampaignConfig,
     cli::{
-        PROTOCOL_HTTP_MAX_ATTEMPTS,
+        PROTOCOL_HTTP_MAX_ATTEMPTS, PROTOCOL_JSON_REVIEW_MAX_ATTEMPTS,
         handlers::closure::protocol_llm_config,
         prototype1_state::{
             backend::{
@@ -303,6 +304,39 @@ fn project_review(
     })
 }
 
+async fn review_with_retries<F, Fut>(
+    subject: ReviewSubject,
+    mut review: F,
+) -> Result<StepArtifact<ReviewSubject, ReviewOutput, JsonLlmProvenance>, ProtocolLlmError>
+where
+    F: FnMut(ReviewSubject) -> Fut,
+    Fut: Future<
+        Output = Result<
+            StepArtifact<ReviewSubject, ReviewOutput, JsonLlmProvenance>,
+            ProtocolLlmError,
+        >,
+    >,
+{
+    for attempt in 1..=PROTOCOL_JSON_REVIEW_MAX_ATTEMPTS {
+        match review(subject.clone()).await {
+            Ok(artifact) => return Ok(artifact),
+            Err(error)
+                if error.is_truncated_json_parse()
+                    && attempt < PROTOCOL_JSON_REVIEW_MAX_ATTEMPTS =>
+            {
+                tracing::warn!(
+                    node_id = %subject.candidate.node_id,
+                    attempt = attempt + 1,
+                    max_attempts = PROTOCOL_JSON_REVIEW_MAX_ATTEMPTS,
+                    "retrying candidate patch review after truncated adjudication JSON"
+                );
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("bounded review retry loop always returns");
+}
+
 async fn ensure_review(
     manifest_path: &Path,
     outcome: &PlannedChildOutcome,
@@ -316,19 +350,22 @@ async fn ensure_review(
         return Ok(());
     }
 
-    let step = Step::new(
-        ReviewPatch,
-        JsonAdjudicator::new(reqwest::Client::new(), config.clone()),
-    );
-    let artifact =
-        step.run(subject.clone())
-            .await
-            .map_err(|error| PrepareError::InvalidBatchSelection {
-                detail: format!(
-                    "candidate patch review failed for node_id={}: {error}",
-                    subject.candidate.node_id
-                ),
-            })?;
+    let client = reqwest::Client::new();
+    let run_config = config.clone();
+    let artifact = review_with_retries(subject.clone(), move |input| {
+        let step = Step::new(
+            ReviewPatch,
+            JsonAdjudicator::new(client.clone(), run_config.clone()),
+        );
+        async move { step.run(input).await }
+    })
+    .await
+    .map_err(|error| PrepareError::InvalidBatchSelection {
+        detail: format!(
+            "candidate patch review failed for node_id={}: {error}",
+            subject.candidate.node_id
+        ),
+    })?;
     let record = ReviewFile {
         schema_version: REVIEW_SCHEMA.to_string(),
         procedure_id: PATCH_REVIEW_PROCEDURE_ID.to_string(),
@@ -1154,9 +1191,9 @@ fn sha256_hex(content: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::process::Command;
+    use std::{collections::VecDeque, future::ready, process::Command};
 
-    use ploke_protocol::{EvidencePolicy, StepArtifact};
+    use ploke_protocol::{EvidencePolicy, ProtocolLlmError, StepArtifact};
 
     use crate::{
         cli::prototype1_state::{
@@ -1311,6 +1348,78 @@ mod tests {
         assert!(prompt.user.contains("fn before() {}"));
         assert!(prompt.user.contains("fn unsafe_second() {}"));
         assert!(prompt.user.contains("changed_path_count: 2"));
+    }
+
+    // regr:candidatereview:18-07-26_06-21
+    #[tokio::test]
+    async fn truncated_review_is_retried_with_fresh_adjudication() {
+        let config = JsonLlmConfig::default();
+        let subject = test_subject();
+        let artifact = test_record(&config, &subject, &admissible_output()).artifact;
+        let mut outcomes = VecDeque::from([
+            Err(ProtocolLlmError::ParseJson {
+                detail: "EOF while parsing a string at line 9 column 177".to_string(),
+                content: r#"{"verdict":"inconclusive","rationale":["truncated"#.to_string(),
+            }),
+            Ok(artifact.clone()),
+        ]);
+        let mut calls = 0;
+
+        let reviewed = review_with_retries(subject.clone(), |input| {
+            calls += 1;
+            assert_eq!(input, subject);
+            ready(outcomes.pop_front().expect("bounded retry input"))
+        })
+        .await
+        .expect("fresh adjudication should succeed");
+
+        assert_eq!(calls, 2);
+        assert_eq!(reviewed.input, artifact.input);
+        assert_eq!(reviewed.output, artifact.output);
+        assert_eq!(
+            reviewed.provenance.raw_content,
+            artifact.provenance.raw_content
+        );
+    }
+
+    #[tokio::test]
+    async fn non_truncated_review_error_is_not_retried() {
+        let subject = test_subject();
+        let mut calls = 0;
+
+        let error = review_with_retries(subject.clone(), |input| {
+            calls += 1;
+            assert_eq!(input, subject);
+            ready(Err(ProtocolLlmError::ParseJson {
+                detail: "unknown field `unsafe_assumption` at line 1 column 80".to_string(),
+                content: r#"{"verdict":"admissible","unsafe_assumption":true}"#.to_string(),
+            }))
+        })
+        .await
+        .expect_err("semantic schema errors must fail closed");
+
+        assert_eq!(calls, 1);
+        assert!(!error.is_truncated_json_parse());
+    }
+
+    #[tokio::test]
+    async fn truncated_review_stops_at_retry_bound() {
+        let subject = test_subject();
+        let mut calls = 0;
+
+        let error = review_with_retries(subject.clone(), |input| {
+            calls += 1;
+            assert_eq!(input, subject);
+            ready(Err(ProtocolLlmError::ParseJson {
+                detail: format!("EOF while parsing a string on attempt {calls}"),
+                content: r#"{"verdict":"inconclusive","rationale":["truncated"#.to_string(),
+            }))
+        })
+        .await
+        .expect_err("repeated truncation must stop at the shared review bound");
+
+        assert_eq!(calls, PROTOCOL_JSON_REVIEW_MAX_ATTEMPTS);
+        assert!(error.is_truncated_json_parse());
     }
 
     #[test]
