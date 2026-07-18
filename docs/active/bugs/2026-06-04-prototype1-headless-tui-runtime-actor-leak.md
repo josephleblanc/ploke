@@ -1,7 +1,7 @@
 # Prototype 1 Headless TUI Runtime Actor Leak
 
-Status: fixed in source; fresh live-run narrowed memory retention, follow-up
-teardown panic fixed in source pending fresh live-run validation
+Status: reopened by the 2026-07-18 V26 OOM; sparse eval-runtime fix in source,
+pending fresh live-run validation
 
 ## Broken Contract
 
@@ -32,6 +32,22 @@ Each broad headless-TUI patch attempt must release the TUI runtime it created wh
   `crates/ploke-tui/src/llm/manager/session.rs`, followed by
   `INVALID_MODEL_RESPONSE` warnings whose diagnostic was
   `ChatStep Error: Cancelled by user.`
+- Recurrence campaign:
+  `/home/brasides/.ploke-eval/campaigns/p1-v26-strictpatchhandoff-mbe-g35f-direct-3g1x3-p3-obs2400-20260718-041034`.
+- Matching walk-server log:
+  `/home/brasides/.ploke-eval/logs/ploke_eval_20260718_041900_1054149.log`.
+  It contains 627,648 records and stopped at `2026-07-18 05:55:37`.
+- The V26 broad slots started dense indexers over 4,000-5,000 unembedded
+  nodes even though the eval runtime was configured for sparse-strict
+  retrieval. Several remained active after their corresponding
+  `broad_slot_run_headless_tui_done` record; the last two did not stop until
+  about 18 minutes after the final broad slot completed.
+- At `2026-07-18 07:15:15`, the kernel OOM killer terminated V26 PID
+  `1054149` with `10853644kB` anonymous RSS. The process had remained alive as
+  a recovery-required walk server after its effectful job stopped progressing.
+- V27 was advancing a separate R10-to-R12 job in the same terminal scope when
+  V26 exhausted memory. Its interrupted operation has no durable receipt and
+  remains preserved rather than being resumed or rewritten.
 
 ## Source Trace
 
@@ -54,6 +70,14 @@ down, LLM-manager error reporting can still race with state-manager shutdown.
 Those late UI-message sends should be best-effort diagnostics during teardown,
 not panics in `tokio-rt-worker`.
 
+The V26 recurrence exposed a third boundary. The guard owns the six top-level
+actors, but the state manager spawns indexing jobs whose handles are detached
+from that guard. The eval-specific constructor also created an `IndexerTask`
+and its BM25 service while `RagService::new_full` created the sparse BM25
+service actually used by the adapter. Post-apply edits therefore launched
+unnecessary dense indexers that could outlive the top-level actor which
+started them.
+
 ## Docs/Policy Expectation
 
 Prototype 1 broad patch generation intentionally uses parallel parent patch attempts when `patch_generation_parallel_cap > 1`. That parallelism assumes each slot's headless runtime is slot-scoped. The configured cap limits simultaneous active slots; it is not supposed to accumulate prior slot runtimes across completed attempts.
@@ -65,13 +89,22 @@ Prototype 1 broad patch generation intentionally uses parallel parent patch atte
 - A focused harness regression now proves a full-stack `TestRuntime` can transfer ownership of the six expected actor handles to a `TestRuntimeActorGuard`.
 - A focused session regression now proves a closed state-manager channel during
   late chat-session message emission is nonfatal.
+- The sparse headless constructor regression now proves that the eval runtime
+  retains its `RagService` while exposing no dense `IndexerTask`.
+- The production adapter refresh regression now asserts the same constructor
+  invariant before proving post-apply BM25 freshness.
 
 ## Missing Repro / Validation
 
-- Fresh live-run validation should confirm that after a five-slot broad batch finishes, the parent `ploke-eval` RSS drops instead of retaining each completed slot's runtime.
+- Fresh live-run validation should confirm that after a broad batch finishes,
+  the parent `ploke-eval` RSS drops instead of retaining each completed slot's
+  runtime.
 - A fresh run using the follow-up teardown fix should confirm that cancellation
   after broad slot rejection no longer produces `state manager must be running`
   panics.
+- The next run should sample RSS before broad fanout, after each slot
+  completion, and before successor handoff, and should confirm that no
+  `Indexer::run` records are emitted by the sparse headless adapter.
 - Raw tuple eval/replay helpers in `runner.rs` still consume `TestRuntime` through `into_app_with_state_pwd` and should be audited separately if they are used in long-running parallel loops.
 
 ## Fix Direction
@@ -86,8 +119,13 @@ The fix belongs at the runtime ownership boundary:
   stopped before the state manager;
 - treat chat-session UI message emission to a closed state-manager channel as a
   warning, not a panic, during teardown.
+- keep the eval-specific sparse constructor free of the dense `IndexerTask`;
+  its separate `RagService` remains responsible for BM25 readiness and
+  post-apply freshness.
 
-Do not solve this by lowering Prototype 1 parallelism alone. Lower caps reduce pressure but do not restore the runtime lifecycle contract.
+Do not solve this by lowering Prototype 1 parallelism or weakening run
+validation. Lower caps reduce pressure but do not restore the runtime lifecycle
+contract, and the digest/history checks are unrelated correctness guards.
 
 ## Related Bugs
 

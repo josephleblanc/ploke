@@ -691,6 +691,10 @@ async fn sparse_post_apply_refresh_returns_on_bm25_without_dense_index_completio
     let mut runtime = crate::runner::setup_workspace_tui_runtime(&fixture.workspace)
         .await
         .expect("start sparse refresh runtime");
+    assert!(
+        runtime.state.indexer_task.is_none(),
+        "sparse eval runtime must not retain the dense indexer that caused the V26 OOM"
+    );
     runtime.app.pump_pending_events().await;
 
     fs::write(
