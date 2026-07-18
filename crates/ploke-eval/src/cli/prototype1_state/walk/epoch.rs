@@ -71,15 +71,7 @@ impl ServerEpoch {
                 path: repo_root.to_path_buf(),
                 source,
             })?;
-        let exe_path = std::env::current_exe().map_err(|source| PrepareError::DatabaseSetup {
-            phase: "prototype1_state_walk_current_exe",
-            detail: source.to_string(),
-        })?;
-        let exe_modified_unix_ms = std::fs::metadata(&exe_path)
-            .ok()
-            .and_then(|metadata| metadata.modified().ok())
-            .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
-            .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64);
+        let (exe_path, exe_modified_unix_ms) = running_executable()?;
         let git_head = git_output(&repo_root, &["rev-parse", "HEAD"]);
         let active_branch = git_output(&repo_root, &["symbolic-ref", "--short", "HEAD"]);
         let source_status_hash = source_status_hash(&repo_root)?;
@@ -162,6 +154,39 @@ impl ServerEpoch {
         }
         Ok(())
     }
+}
+
+fn running_executable() -> Result<(PathBuf, Option<u64>), PrepareError> {
+    let path = std::env::current_exe().map_err(|source| PrepareError::DatabaseSetup {
+        phase: "prototype1_state_walk_current_exe",
+        detail: source.to_string(),
+    })?;
+    #[cfg(target_os = "linux")]
+    let (path, metadata) = {
+        let (metadata, live_inode) = match fs::metadata("/proc/self/exe") {
+            Ok(metadata) => (Some(metadata), true),
+            Err(_) => (fs::metadata(&path).ok(), false),
+        };
+        let mut path = path;
+        // Cargo replaces the shared output path while the predecessor still
+        // owns its running inode. Normalize only when procfs proves that live
+        // inode and the logical path is provably absent; the inode mtime below
+        // remains the binary-compatibility guard.
+        const DELETED: &[u8] = b" (deleted)";
+        let raw = path.as_os_str().as_bytes();
+        if live_inode && matches!(path.try_exists(), Ok(false)) && raw.ends_with(DELETED) {
+            path = raw_path(&raw[..raw.len() - DELETED.len()]);
+        }
+        (path, metadata)
+    };
+    #[cfg(not(target_os = "linux"))]
+    let metadata = fs::metadata(&path).ok();
+
+    let modified = metadata
+        .and_then(|metadata| metadata.modified().ok())
+        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64);
+    Ok((path, modified))
 }
 
 fn source_status_hash(repo_root: &Path) -> Result<Option<String>, PrepareError> {
@@ -352,6 +377,8 @@ fn stale_error(detail: impl Into<String>) -> PrepareError {
 mod tests {
     use super::*;
 
+    const EXE_HELPER: &str = "PLOKE_EPOCH_EXE_HELPER";
+
     fn run_git(root: &Path, args: &[&str]) {
         let output = Command::new("git")
             .arg("-C")
@@ -427,6 +454,100 @@ mod tests {
         assert!(
             error.to_string().contains("repository root mismatch"),
             "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn deleted_executable_helper() {
+        let Some(repo) = std::env::var_os(EXE_HELPER) else {
+            return;
+        };
+        let repo = PathBuf::from(repo);
+        let ready = repo.join("ready");
+        let go = repo.join("go");
+        let result = repo.join("epoch.json");
+        fs::write(&ready, []).expect("publish helper readiness");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !go.exists() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "parent did not replace the helper executable"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let epoch = ServerEpoch::capture(&repo).expect("capture replaced executable epoch");
+        fs::write(
+            result,
+            serde_json::to_vec(&epoch).expect("encode captured epoch"),
+        )
+        .expect("persist captured epoch");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn epoch_tracks_running_executable_after_path_replacement() {
+        let temp = tempfile::tempdir().expect("epoch replacement tempdir");
+        let repo = temp.path();
+        let source = std::env::current_exe().expect("resolve current test executable");
+        let copied = repo.join("epoch-test");
+        fs::copy(&source, &copied).expect("copy test executable");
+        let modified = fs::metadata(&copied)
+            .expect("copied executable metadata")
+            .modified()
+            .expect("copied executable mtime")
+            .duration_since(UNIX_EPOCH)
+            .expect("copied executable timestamp")
+            .as_millis()
+            .min(u128::from(u64::MAX)) as u64;
+        let mut child = Command::new(&copied)
+            .arg("--exact")
+            .arg("cli::prototype1_state::walk::epoch::tests::deleted_executable_helper")
+            .arg("--nocapture")
+            .env(EXE_HELPER, repo)
+            .spawn()
+            .expect("spawn copied test executable");
+        let ready = repo.join("ready");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !ready.exists() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "copied test executable did not become ready"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        fs::remove_file(&copied).expect("unlink running test executable");
+        fs::write(&copied, b"replacement").expect("replace executable path");
+        fs::write(repo.join("go"), []).expect("release helper capture");
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let status = loop {
+            if let Some(status) = child.try_wait().expect("poll copied test executable") {
+                break status;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "copied test executable did not exit"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        };
+        assert!(status.success(), "copied test executable failed: {status}");
+
+        let epoch: ServerEpoch = serde_json::from_slice(
+            &fs::read(repo.join("epoch.json")).expect("read captured epoch"),
+        )
+        .expect("decode captured epoch");
+        assert_eq!(epoch.exe_path, copied);
+        assert_eq!(epoch.exe_modified_unix_ms, Some(modified));
+
+        let changed_mtime = modified.wrapping_add(1);
+        let mut client = epoch.clone();
+        client.exe_modified_unix_ms = Some(changed_mtime);
+        let error = epoch
+            .ensure_compatible_request(Some(&client))
+            .expect_err("replacement binary must remain incompatible with predecessor");
+        assert!(
+            error.to_string().contains("binary differs"),
+            "unexpected compatibility error: {error}"
         );
     }
 }
