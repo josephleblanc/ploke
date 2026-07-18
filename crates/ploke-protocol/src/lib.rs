@@ -23,7 +23,7 @@ pub use core::{
 pub use llm::{
     JsonAdjudicationSpec, JsonAdjudicator, JsonChatPrompt, JsonLlmConfig, JsonLlmProvenance,
     JsonLlmResult, ProtocolLlmError, ProtocolReasoningMode, ProtocolReasoningPolicy,
-    adjudicate_json,
+    adjudicate_json, decode_json_content,
 };
 pub use procedure::{
     FanOut, FanOutError, Merge, MergeError, NamedProcedure, Procedure, ProcedureExt, Sequence,

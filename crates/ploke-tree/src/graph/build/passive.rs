@@ -635,6 +635,7 @@ mod tests {
                 evidence: SelectionEvidence::OperationalAndProtocol,
                 metrics: ploke_records::run_profile::Metrics::default(),
                 oracle: ploke_records::run_profile::Oracle::default(),
+                patch: Default::default(),
                 seed: 42,
             },
             execution: Execution {

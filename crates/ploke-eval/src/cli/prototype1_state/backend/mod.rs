@@ -1175,6 +1175,9 @@ pub(crate) fn repo_entry_bytes(
 
 mod git_worktree;
 mod harness_ingestion;
+pub(crate) use harness_ingestion::{
+    changed_paths_between_commits, changed_paths_between_roots, repo_entry_bytes_at_commit,
+};
 mod surface_admission;
 
 pub(crate) use git_worktree::*;

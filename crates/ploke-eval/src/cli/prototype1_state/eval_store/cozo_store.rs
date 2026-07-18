@@ -98,6 +98,7 @@ impl<'a, D: EvalDb + ?Sized> DbEvalStore<'a, D> {
         manifest: &CampaignManifest,
         storage_backend: EvalStorageBackend,
         admitted_profile: Option<&AdmittedRunProfile>,
+        review_config_hash: Option<&crate::cli::prototype1_state::history::HistoryHash>,
         closure_path: &Path,
         closure_state: &ClosureState,
     ) -> Result<(), EvalStoreError> {
@@ -120,6 +121,7 @@ impl<'a, D: EvalDb + ?Sized> DbEvalStore<'a, D> {
                 &manifest.campaign_id,
                 profile_ref_id,
                 admitted,
+                review_config_hash,
             )?;
         }
         setup::put_closure_ref(self.db, closure_path, closure_state)?;
@@ -444,6 +446,7 @@ pub(crate) fn write_r0_context_to_owner_db(
     manifest: &CampaignManifest,
     storage_backend: EvalStorageBackend,
     admitted_profile: Option<&AdmittedRunProfile>,
+    review_config_hash: Option<&crate::cli::prototype1_state::history::HistoryHash>,
     closure_path: &Path,
     closure_state: &ClosureState,
 ) -> Result<(), EvalStoreError> {
@@ -454,6 +457,7 @@ pub(crate) fn write_r0_context_to_owner_db(
             manifest,
             storage_backend,
             admitted_profile,
+            review_config_hash,
             closure_path,
             closure_state,
         )
@@ -464,11 +468,19 @@ pub(crate) fn verify_r0_context_in_owner_db(
     db_path: &Path,
     manifest: &CampaignManifest,
     admitted_profile: &AdmittedRunProfile,
+    review_config_hash: Option<&crate::cli::prototype1_state::history::HistoryHash>,
     closure_path: &Path,
     closure_state: &ClosureState,
 ) -> Result<(), EvalStoreError> {
     let db = load_owner_eval_database(db_path)?;
-    setup::verify_r0_context(&db, manifest, admitted_profile, closure_path, closure_state)
+    setup::verify_r0_context(
+        &db,
+        manifest,
+        admitted_profile,
+        review_config_hash,
+        closure_path,
+        closure_state,
+    )
 }
 
 pub(crate) fn write_baseline_to_owner_db(

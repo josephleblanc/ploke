@@ -923,6 +923,7 @@ fn print_selection_show(show: &SelectionShow) {
                 replay.oracle_targets.join(",")
             }
         );
+        println!("  patch: gate={}", replay.patch_gate);
         for row in &replay.rows {
             let oracle = match (row.oracle_resolved, row.oracle_configured) {
                 (Some(resolved), Some(configured)) => format!("{resolved}/{configured}"),

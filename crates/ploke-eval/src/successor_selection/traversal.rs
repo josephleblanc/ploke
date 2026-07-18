@@ -15,8 +15,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::{
-    HISTORY_TRAVERSAL_PROCEDURE_ID, OracleGate, OracleMode, PROCEDURE_ID, SelectionInput,
-    SuccessorDecision, decide as decide_candidate, decision::SuccessorOutcome, disposition_as_str,
+    HISTORY_TRAVERSAL_PROCEDURE_ID, OracleGate, OracleMode, PATCH_REVIEW_PROCEDURE_ID,
+    PATCH_REVIEW_RECORD_NAME, PROCEDURE_ID, PatchGate, PatchReview, PatchVerdict, SelectionInput,
+    SuccessorDecision, candidate_review_ref, decide as decide_candidate,
+    decision::SuccessorOutcome, disposition_as_str, domains::Confidence,
     metrics as selection_metrics,
 };
 use crate::{
@@ -32,6 +34,8 @@ use crate::{
     metric::{self, Summary},
 };
 
+#[cfg(test)]
+use super::PatchChange;
 #[cfg(test)]
 use crate::cli::prototype1_state::history::{
     SealedEvalSetIdentity, SealedEvaluatorIdentity, SealedProtocolArtifactEvidence,
@@ -79,6 +83,8 @@ pub(crate) enum StrategyKind {
         require_evidence: bool,
         #[serde(default)]
         gate: OracleGate,
+        #[serde(default, skip_serializing_if = "PatchGate::is_disabled")]
+        patch_gate: PatchGate,
     },
     ScoreChildProp {
         top_m: usize,
@@ -91,6 +97,8 @@ pub(crate) enum StrategyKind {
         require_evidence: bool,
         #[serde(default)]
         gate: OracleGate,
+        #[serde(default, skip_serializing_if = "PatchGate::is_disabled")]
+        patch_gate: PatchGate,
     },
 }
 
@@ -106,6 +114,7 @@ impl StrategyKind {
                 oracle,
                 require_evidence,
                 gate,
+                patch_gate,
                 ..
             } => Self::FrontierMax {
                 normalize_frontier,
@@ -113,6 +122,7 @@ impl StrategyKind {
                 oracle,
                 require_evidence,
                 gate,
+                patch_gate,
             },
             Self::ScoreChildProp {
                 top_m,
@@ -120,6 +130,7 @@ impl StrategyKind {
                 oracle,
                 require_evidence,
                 gate,
+                patch_gate,
                 ..
             } => Self::ScoreChildProp {
                 top_m,
@@ -128,6 +139,7 @@ impl StrategyKind {
                 oracle,
                 require_evidence,
                 gate,
+                patch_gate,
             },
         }
     }
@@ -138,6 +150,7 @@ impl StrategyKind {
                 normalize_frontier,
                 metrics,
                 gate,
+                patch_gate,
                 ..
             } => Self::FrontierMax {
                 normalize_frontier,
@@ -145,12 +158,14 @@ impl StrategyKind {
                 oracle,
                 require_evidence,
                 gate,
+                patch_gate,
             },
             Self::ScoreChildProp {
                 top_m,
                 lambda_millis,
                 metrics,
                 gate,
+                patch_gate,
                 ..
             } => Self::ScoreChildProp {
                 top_m,
@@ -159,6 +174,7 @@ impl StrategyKind {
                 oracle,
                 require_evidence,
                 gate,
+                patch_gate,
             },
         }
     }
@@ -170,6 +186,7 @@ impl StrategyKind {
                 metrics,
                 oracle,
                 require_evidence,
+                patch_gate,
                 ..
             } => Self::FrontierMax {
                 normalize_frontier,
@@ -177,6 +194,7 @@ impl StrategyKind {
                 oracle,
                 require_evidence,
                 gate,
+                patch_gate,
             },
             Self::ScoreChildProp {
                 top_m,
@@ -184,6 +202,7 @@ impl StrategyKind {
                 metrics,
                 oracle,
                 require_evidence,
+                patch_gate,
                 ..
             } => Self::ScoreChildProp {
                 top_m,
@@ -192,7 +211,53 @@ impl StrategyKind {
                 oracle,
                 require_evidence,
                 gate,
+                patch_gate,
             },
+        }
+    }
+
+    pub(crate) fn with_patch_gate(self, patch_gate: PatchGate) -> Self {
+        match self {
+            Self::FrontierMax {
+                normalize_frontier,
+                metrics,
+                oracle,
+                require_evidence,
+                gate,
+                ..
+            } => Self::FrontierMax {
+                normalize_frontier,
+                metrics,
+                oracle,
+                require_evidence,
+                gate,
+                patch_gate,
+            },
+            Self::ScoreChildProp {
+                top_m,
+                lambda_millis,
+                metrics,
+                oracle,
+                require_evidence,
+                gate,
+                ..
+            } => Self::ScoreChildProp {
+                top_m,
+                lambda_millis,
+                metrics,
+                oracle,
+                require_evidence,
+                gate,
+                patch_gate,
+            },
+        }
+    }
+
+    pub(crate) fn patch_gate(self) -> PatchGate {
+        match self {
+            Self::FrontierMax { patch_gate, .. } | Self::ScoreChildProp { patch_gate, .. } => {
+                patch_gate
+            }
         }
     }
 }
@@ -205,6 +270,7 @@ impl Default for StrategyKind {
             oracle: OracleMode::RecordOnly,
             require_evidence: default_oracle_require_evidence(),
             gate: OracleGate::Disabled,
+            patch_gate: PatchGate::Disabled,
         }
     }
 }
@@ -220,6 +286,7 @@ pub(crate) struct FrontierMax<'a> {
     oracle: OracleMode,
     require_evidence: bool,
     gate: OracleGate,
+    patch_gate: PatchGate,
     oracle_targets: &'a [String],
 }
 
@@ -231,6 +298,7 @@ impl Default for FrontierMax<'static> {
             oracle: OracleMode::RecordOnly,
             require_evidence: default_oracle_require_evidence(),
             gate: OracleGate::Disabled,
+            patch_gate: PatchGate::Disabled,
             oracle_targets: &[],
         }
     }
@@ -244,6 +312,7 @@ pub(crate) struct ScoreChildProp<'a> {
     oracle: OracleMode,
     require_evidence: bool,
     gate: OracleGate,
+    patch_gate: PatchGate,
     oracle_targets: &'a [String],
 }
 
@@ -256,6 +325,7 @@ impl Default for ScoreChildProp<'static> {
             oracle: OracleMode::RecordOnly,
             require_evidence: default_oracle_require_evidence(),
             gate: OracleGate::Disabled,
+            patch_gate: PatchGate::Disabled,
             oracle_targets: &[],
         }
     }
@@ -285,6 +355,7 @@ impl Strategy for FrontierMax<'_> {
             oracle: self.oracle,
             require_evidence: self.require_evidence,
             gate: self.gate,
+            patch_gate: self.patch_gate,
         }
     }
 
@@ -305,6 +376,7 @@ impl Strategy for FrontierMax<'_> {
             self.oracle,
             self.require_evidence,
             self.gate,
+            self.patch_gate,
             self.oracle_targets,
         )
     }
@@ -321,6 +393,7 @@ impl Strategy for ScoreChildProp<'_> {
             oracle: self.oracle,
             require_evidence: self.require_evidence,
             gate: self.gate,
+            patch_gate: self.patch_gate,
         }
     }
 
@@ -342,6 +415,7 @@ impl Strategy for ScoreChildProp<'_> {
             self.oracle,
             self.require_evidence,
             self.gate,
+            self.patch_gate,
             self.oracle_targets,
         )
     }
@@ -475,6 +549,7 @@ pub(crate) fn select_attempt_with_policy(
             oracle,
             require_evidence,
             gate,
+            patch_gate,
         } => candidates.traverse_attempt_with_policy(
             seed,
             FrontierMax {
@@ -483,6 +558,7 @@ pub(crate) fn select_attempt_with_policy(
                 oracle,
                 require_evidence,
                 gate,
+                patch_gate,
                 oracle_targets,
             },
             metrics_policy,
@@ -494,6 +570,7 @@ pub(crate) fn select_attempt_with_policy(
             oracle,
             require_evidence,
             gate,
+            patch_gate,
         } => candidates.traverse_attempt_with_policy(
             seed,
             ScoreChildProp {
@@ -503,6 +580,307 @@ pub(crate) fn select_attempt_with_policy(
                 oracle,
                 require_evidence,
                 gate,
+                patch_gate,
+                oracle_targets,
+            },
+            metrics_policy,
+        ),
+    }
+}
+
+pub(crate) fn validate_patch_replay(entry: &SelectionDecisionEntry) -> Result<(), HistoryError> {
+    let Some(traversal) = entry.traversal.as_ref() else {
+        return Ok(());
+    };
+    if traversal.strategy.patch_gate() == PatchGate::Disabled {
+        return Ok(());
+    }
+    let items = entry_items(
+        entry,
+        "strict patch replay",
+        "persisted strict patch frontier",
+    )?;
+
+    if let Some((node_id, _)) = traversal
+        .child_counts
+        .iter()
+        .find(|(_, count)| **count == 0)
+    {
+        return Err(HistoryError::InvalidSelectionDecision {
+            detail: format!(
+                "persisted strict patch frontier contains zero child count for '{node_id}'"
+            ),
+        });
+    }
+    let frontier_counts = successful_child_counts(&entry.considered);
+    for (node_id, count) in frontier_counts {
+        let committed = traversal
+            .child_counts
+            .get(&node_id)
+            .copied()
+            .unwrap_or_default();
+        if committed < count {
+            return Err(HistoryError::InvalidSelectionDecision {
+                detail: format!(
+                    "persisted strict patch child count understates frontier evidence for '{node_id}': committed={committed}, frontier={count}"
+                ),
+            });
+        }
+    }
+    if let Some(item) = items
+        .iter()
+        .find(|item| candidate_has_successful_children(item, &traversal.child_counts))
+    {
+        return Err(HistoryError::InvalidSelectionDecision {
+            detail: format!(
+                "persisted strict patch considered candidate '{}' is not a frontier leaf",
+                item.payload.candidate.as_str()
+            ),
+        });
+    }
+
+    let replay = replay_frontier(
+        items,
+        entry.projection_failures.clone(),
+        traversal.child_counts.clone(),
+        traversal.seed,
+        traversal.strategy,
+        entry.metrics.policy,
+        &traversal.oracle_targets,
+    )?;
+
+    let mismatch = |detail: String| HistoryError::InvalidSelectionDecision { detail };
+    match (entry.decision.as_ref(), replay) {
+        (Some(decision), SelectionAttempt::Selected(selection)) => {
+            let replay_source = if selection.selected_from_current_generation {
+                TraversalCandidateSource::CurrentGeneration
+            } else {
+                TraversalCandidateSource::History
+            };
+            if &selection.decision != decision
+                || entry.selected_candidate.as_ref() != Some(&selection.selected_payload.candidate)
+                || entry.selected_occurrence_id != selection.selected_occurrence_id()
+                || entry.selected_membership_id != selection.selected_membership_id()
+                || traversal.selected_source != Some(replay_source)
+                || entry.considered != selection.considered
+                || entry.considered_sources != selection.considered_sources
+                || entry.projection_failures != selection.projection_failures
+                || traversal.child_counts != selection.child_counts
+                || entry.metrics != selection.metrics
+            {
+                return Err(mismatch(
+                    "persisted strict patch selection does not match deterministic replay"
+                        .to_string(),
+                ));
+            }
+        }
+        (None, SelectionAttempt::NoSelection(receipt)) => {
+            if entry.considered != receipt.considered
+                || entry.considered_sources != receipt.considered_sources
+                || entry.projection_failures != receipt.projection_failures
+                || traversal.child_counts != receipt.child_counts
+                || entry.metrics != receipt.metrics
+            {
+                return Err(mismatch(
+                    "persisted strict patch no-selection receipt does not match deterministic replay"
+                        .to_string(),
+                ));
+            }
+        }
+        (Some(_), SelectionAttempt::NoSelection(_)) => {
+            return Err(mismatch(
+                "persisted strict patch selection replays to no selection".to_string(),
+            ));
+        }
+        (None, SelectionAttempt::Selected(_)) => {
+            return Err(mismatch(
+                "persisted strict patch no-selection receipt replays to a selected candidate"
+                    .to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_patch_gate(
+    entry: &SelectionDecisionEntry,
+    gate: PatchGate,
+) -> Result<(), HistoryError> {
+    if gate == PatchGate::Disabled {
+        return Ok(());
+    }
+    entry.validate_shape()?;
+    let items = entry_items(entry, "strict patch gate", "strict patch gate")?;
+    let eligibility = patch_eligibility(&items, gate)?;
+    if let Some(selected) = entry.selected_candidate.as_ref() {
+        let index = items
+            .iter()
+            .position(|item| &item.payload.candidate == selected)
+            .ok_or_else(|| HistoryError::InvalidSelectionDecision {
+                detail: format!(
+                    "strict patch gate selected candidate '{}' is not in the considered set",
+                    selected.as_str()
+                ),
+            })?;
+        if !eligibility.admits(index) {
+            return Err(HistoryError::InvalidSelectionDecision {
+                detail: format!(
+                    "strict patch gate rejects selected candidate '{}'",
+                    selected.as_str()
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn entry_items(
+    entry: &SelectionDecisionEntry,
+    source_context: &str,
+    grade_context: &str,
+) -> Result<Vec<Item>, HistoryError> {
+    if entry.considered.len() != entry.considered_sources.len() {
+        return Err(HistoryError::InvalidSelectionDecision {
+            detail: format!(
+                "{source_context} source count mismatch: considered={}, sources={}",
+                entry.considered.len(),
+                entry.considered_sources.len()
+            ),
+        });
+    }
+
+    let root = entry
+        .candidate_set
+        .as_ref()
+        .map(|candidate_set| candidate_set.root.clone());
+    let candidates = entry
+        .considered
+        .iter()
+        .zip(&entry.considered_sources)
+        .enumerate()
+        .map(|(index, (payload, source))| {
+            let membership = entry
+                .candidate_set_membership_for_payload(index, payload)?
+                .cloned();
+            Ok(Candidate {
+                source: match source {
+                    TraversalCandidateSource::CurrentGeneration => Source::CurrentGeneration {
+                        scope: entry.scope.clone(),
+                    },
+                    TraversalCandidateSource::History => Source::SealedDecisionReplay,
+                },
+                decision_scope: entry.scope.clone(),
+                selected_by_decision: *source == TraversalCandidateSource::History,
+                payload: payload.clone(),
+                payload_hash: payload.payload_hash()?,
+                candidate_set_root: root.clone(),
+                candidate_set_membership: membership.map(SourceMembership::new),
+            })
+        })
+        .collect::<Result<Vec<_>, HistoryError>>()?;
+    let mut items = Vec::with_capacity(candidates.len());
+    for candidate in candidates {
+        match decision_grade(candidate)? {
+            CandidateGrade::Eligible(item) => items.push(item),
+            CandidateGrade::Excluded(failure) => {
+                return Err(HistoryError::InvalidSelectionDecision {
+                    detail: format!(
+                        "{grade_context} candidate is no longer decision-grade: {}",
+                        failure.id.0.as_str()
+                    ),
+                });
+            }
+        }
+    }
+    Ok(items)
+}
+
+pub(crate) fn validate_patch_config(
+    entry: &SelectionDecisionEntry,
+    expected: &HistoryHash,
+) -> Result<(), HistoryError> {
+    let strict = entry
+        .traversal
+        .as_ref()
+        .is_some_and(|traversal| traversal.strategy.patch_gate() == PatchGate::ReviewedAdmissible);
+    if !strict {
+        return Ok(());
+    }
+    for payload in &entry.considered {
+        let review = payload.patch_review.as_ref().ok_or_else(|| {
+            HistoryError::InvalidSelectionDecision {
+                detail: format!(
+                    "strict patch receipt has no review for '{}'",
+                    payload.candidate.as_str()
+                ),
+            }
+        })?;
+        if &review.config_hash != expected {
+            return Err(HistoryError::InvalidSelectionDecision {
+                detail: format!(
+                    "candidate patch review config does not match admitted policy for '{}'",
+                    payload.candidate.as_str()
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn replay_frontier(
+    items: Vec<Item>,
+    failures: Vec<SelectionProjectionFailure>,
+    child_counts: BTreeMap<String, usize>,
+    seed: u64,
+    strategy: StrategyKind,
+    metrics_policy: selection_metrics::Policy,
+    oracle_targets: &[String],
+) -> Result<SelectionAttempt, HistoryError> {
+    match strategy {
+        StrategyKind::FrontierMax {
+            normalize_frontier,
+            metrics,
+            oracle,
+            require_evidence,
+            gate,
+            patch_gate,
+        } => select_frontier(
+            items,
+            failures,
+            child_counts,
+            seed,
+            FrontierMax {
+                normalize_frontier,
+                metrics,
+                oracle,
+                require_evidence,
+                gate,
+                patch_gate,
+                oracle_targets,
+            },
+            metrics_policy,
+        ),
+        StrategyKind::ScoreChildProp {
+            top_m,
+            lambda_millis,
+            metrics,
+            oracle,
+            require_evidence,
+            gate,
+            patch_gate,
+        } => select_frontier(
+            items,
+            failures,
+            child_counts,
+            seed,
+            ScoreChildProp {
+                top_m,
+                lambda_millis,
+                metrics,
+                oracle,
+                require_evidence,
+                gate,
+                patch_gate,
                 oracle_targets,
             },
             metrics_policy,
@@ -519,6 +897,7 @@ pub(crate) struct ScoreChildPropReplay {
     pub(crate) oracle_mode: &'static str,
     pub(crate) oracle_require_evidence: bool,
     pub(crate) oracle_gate: &'static str,
+    pub(crate) patch_gate: &'static str,
     pub(crate) oracle_targets: Vec<String>,
     pub(crate) total_weight: f64,
     pub(crate) sample: f64,
@@ -572,6 +951,8 @@ pub(crate) struct ScoreChildPropFormula {
     pub(crate) oracle_require_evidence: bool,
     #[serde(default)]
     pub(crate) oracle_gate: OracleGate,
+    #[serde(default, skip_serializing_if = "PatchGate::is_disabled")]
+    pub(crate) patch_gate: PatchGate,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) oracle_targets: Vec<String>,
     pub(crate) total_weight: f64,
@@ -656,6 +1037,7 @@ pub(crate) fn replay_score_child_prop(
         oracle,
         require_evidence,
         gate,
+        patch_gate,
     } = traversal.strategy
     else {
         return Ok(None);
@@ -682,6 +1064,7 @@ pub(crate) fn replay_score_child_prop(
         oracle,
         require_evidence,
         gate,
+        patch_gate,
         &traversal.oracle_targets,
     )?;
     let weights = &calculation.weights;
@@ -749,6 +1132,7 @@ pub(crate) fn replay_score_child_prop(
         oracle_mode: oracle_mode_name(oracle),
         oracle_require_evidence: require_evidence,
         oracle_gate: oracle_gate_name(gate),
+        patch_gate: patch_gate_name(patch_gate),
         oracle_targets: traversal.oracle_targets.clone(),
         total_weight,
         sample,
@@ -771,6 +1155,7 @@ pub(crate) fn score_child_prop_formula(
         oracle,
         require_evidence,
         gate,
+        patch_gate,
     } = traversal.strategy
     else {
         return Ok(None);
@@ -797,6 +1182,7 @@ pub(crate) fn score_child_prop_formula(
         oracle,
         require_evidence,
         gate,
+        patch_gate,
         &traversal.oracle_targets,
     )?;
     let total_weight = calculation
@@ -917,6 +1303,7 @@ pub(crate) fn score_child_prop_formula(
             oracle_mode: oracle_mode_name(oracle).to_string(),
             oracle_require_evidence: require_evidence,
             oracle_gate: gate,
+            patch_gate,
             oracle_targets: traversal.oracle_targets.clone(),
             total_weight,
             sample,
@@ -988,54 +1375,72 @@ impl Candidates {
             .into_iter()
             .filter(|item| !candidate_has_successful_children(item, &child_counts))
             .collect::<Vec<_>>();
-        let considered = items
-            .iter()
-            .map(|item| item.payload.clone())
-            .collect::<Vec<_>>();
-        let considered_sources = items
-            .iter()
-            .map(|item| item.source.traversal_candidate_source())
-            .collect::<Vec<_>>();
-        let evidence_summary = CandidateCaseEvidenceSummary::from_considered(&considered);
-        let metric_set = selection_metrics::Set::from_considered(
+        select_frontier(
+            items,
+            failures,
+            child_counts,
+            seed,
+            strategy,
             metrics_policy,
-            &considered,
-            &considered_sources,
-        )?;
-        let Some(selection) = strategy.select(&items, &child_counts, &metric_set, seed)? else {
-            return Ok(SelectionAttempt::NoSelection(NoSelection {
-                considered,
-                considered_sources,
-                projection_failures: failures,
-                child_counts,
-                metrics: metric_set,
-            }));
-        };
-        let decision_membership =
-            decision_membership_for_chosen(&considered, &considered_sources, &selection.chosen)?;
+        )
+    }
+}
 
-        let mut decision = selection.chosen.decision;
-        decision.procedure_id = HISTORY_TRAVERSAL_PROCEDURE_ID.to_string();
-        decision.rationale.push(format!(
-            "history traversal selected from {} decision-grade candidates with seed={}",
-            considered.len(),
-            seed
-        ));
-        decision.rationale.push(evidence_summary.rationale());
-        decision.rationale.extend(selection.rationale);
-
-        Ok(SelectionAttempt::Selected(Selection {
-            decision,
-            selected_payload: selection.chosen.payload,
-            selected_decision_membership: decision_membership,
+fn select_frontier<S>(
+    items: Vec<Item>,
+    failures: Vec<SelectionProjectionFailure>,
+    child_counts: BTreeMap<String, usize>,
+    seed: u64,
+    strategy: S,
+    metrics_policy: selection_metrics::Policy,
+) -> Result<SelectionAttempt, HistoryError>
+where
+    S: Strategy<Item = Item>,
+{
+    let considered = items
+        .iter()
+        .map(|item| item.payload.clone())
+        .collect::<Vec<_>>();
+    let considered_sources = items
+        .iter()
+        .map(|item| item.source.traversal_candidate_source())
+        .collect::<Vec<_>>();
+    let evidence_summary = CandidateCaseEvidenceSummary::from_considered(&considered);
+    let metric_set =
+        selection_metrics::Set::from_considered(metrics_policy, &considered, &considered_sources)?;
+    let Some(selection) = strategy.select(&items, &child_counts, &metric_set, seed)? else {
+        return Ok(SelectionAttempt::NoSelection(NoSelection {
             considered,
             considered_sources,
             projection_failures: failures,
             child_counts,
             metrics: metric_set,
-            selected_from_current_generation: selection.chosen.source.is_current_generation(),
-        }))
-    }
+        }));
+    };
+    let decision_membership =
+        decision_membership_for_chosen(&considered, &considered_sources, &selection.chosen)?;
+
+    let mut decision = selection.chosen.decision;
+    decision.procedure_id = HISTORY_TRAVERSAL_PROCEDURE_ID.to_string();
+    decision.rationale.push(format!(
+        "history traversal selected from {} decision-grade candidates with seed={}",
+        considered.len(),
+        seed
+    ));
+    decision.rationale.push(evidence_summary.rationale());
+    decision.rationale.extend(selection.rationale);
+
+    Ok(SelectionAttempt::Selected(Selection {
+        decision,
+        selected_payload: selection.chosen.payload,
+        selected_decision_membership: decision_membership,
+        considered,
+        considered_sources,
+        projection_failures: failures,
+        child_counts,
+        metrics: metric_set,
+        selected_from_current_generation: selection.chosen.source.is_current_generation(),
+    }))
 }
 
 fn decision_membership_for_chosen(
@@ -2066,6 +2471,262 @@ struct ChosenPayload {
     source: Source,
 }
 
+#[derive(Debug, Default)]
+struct PatchEligibility {
+    excluded: BTreeSet<usize>,
+}
+
+impl PatchEligibility {
+    fn admits(&self, index: usize) -> bool {
+        !self.excluded.contains(&index)
+    }
+}
+
+fn patch_eligibility(items: &[Item], gate: PatchGate) -> Result<PatchEligibility, HistoryError> {
+    if gate == PatchGate::Disabled {
+        return Ok(PatchEligibility::default());
+    }
+
+    let mut eligibility = PatchEligibility::default();
+    let mut config_hash = None;
+    for (index, item) in items.iter().enumerate() {
+        let case = CandidateCase::from_payload(&item.payload);
+        let review = item.payload.patch_review.as_ref().ok_or_else(|| {
+            HistoryError::InvalidSelectionDecision {
+                detail: format!(
+                    "reviewed-admissible patch gate requires candidate review for '{}'",
+                    item.payload.candidate.as_str()
+                ),
+            }
+        })?;
+        validate_patch_review(&case, review)?;
+        if config_hash
+            .as_ref()
+            .is_some_and(|expected| expected != &review.config_hash)
+        {
+            return Err(HistoryError::InvalidSelectionDecision {
+                detail: "strict patch reviews do not share one reviewer configuration".to_string(),
+            });
+        }
+        config_hash.get_or_insert_with(|| review.config_hash.clone());
+        if review.verdict != PatchVerdict::Admissible {
+            eligibility.excluded.insert(index);
+        }
+    }
+    Ok(eligibility)
+}
+
+fn validate_patch_review(
+    case: &CandidateCase<'_>,
+    review: &PatchReview,
+) -> Result<(), HistoryError> {
+    let invalid = |detail: String| HistoryError::InvalidSelectionDecision { detail };
+    if review.schema_version != 2 || review.procedure_id != PATCH_REVIEW_PROCEDURE_ID {
+        return Err(invalid(format!(
+            "candidate patch review procedure mismatch for '{}'",
+            case.candidate().as_str()
+        )));
+    }
+    if review.citation.ref_id != candidate_review_ref(&review.candidate.branch_id)
+        || review.citation.content_hash.is_none()
+        || review.citation.record_name.as_deref() != Some(PATCH_REVIEW_RECORD_NAME)
+    {
+        return Err(invalid(format!(
+            "candidate patch review citation is incomplete for '{}'",
+            case.candidate().as_str()
+        )));
+    }
+    let input = case
+        .selection_input()
+        .ok_or_else(|| invalid("candidate patch review requires selection input".to_string()))?;
+    let artifact = case
+        .artifact()
+        .ok_or_else(|| invalid("candidate patch review requires candidate artifact".to_string()))?;
+    if review.candidate != input.candidate
+        || review.candidate.node_id != artifact.node.node_id
+        || review.candidate.branch_id != artifact.node.branch_id
+        || review.candidate.generation != artifact.node.generation
+    {
+        return Err(invalid(format!(
+            "candidate patch review coordinate mismatch for '{}'",
+            case.candidate().as_str()
+        )));
+    }
+    let derived_id = artifact
+        .resolved
+        .branch
+        .derived_artifact_id
+        .as_ref()
+        .ok_or_else(|| {
+            invalid("candidate patch review requires derived artifact id".to_string())
+        })?;
+    let node_id =
+        artifact.node.derived_artifact_id.as_ref().ok_or_else(|| {
+            invalid("candidate patch review requires node artifact id".to_string())
+        })?;
+    if &review.artifact_id != derived_id || &review.artifact_id != node_id || derived_id != node_id
+    {
+        return Err(invalid(format!(
+            "candidate patch review artifact binding mismatch for '{}'",
+            case.candidate().as_str()
+        )));
+    }
+    let surface = artifact
+        .artifact_surface
+        .as_ref()
+        .ok_or_else(|| invalid("candidate patch review requires artifact surface".to_string()))?;
+    let surface_hash =
+        HistoryHash::of_domain_json("prototype1.history.artifact_surface.v1", surface)?;
+    if review.artifact_surface_hash != surface_hash {
+        return Err(invalid(format!(
+            "candidate patch review surface hash mismatch for '{}'",
+            case.candidate().as_str()
+        )));
+    }
+    if review.changes.is_empty() {
+        return Err(invalid(format!(
+            "candidate patch review change set is empty for '{}'",
+            case.candidate().as_str()
+        )));
+    }
+    let mut relpaths = review
+        .changes
+        .iter()
+        .map(|change| change.relpath.clone())
+        .collect::<Vec<_>>();
+    let recorded_paths = relpaths.clone();
+    relpaths.sort();
+    relpaths.dedup();
+    if relpaths != recorded_paths {
+        return Err(invalid(format!(
+            "candidate patch review change paths are not canonical for '{}'",
+            case.candidate().as_str()
+        )));
+    }
+    let change_set_hash = HistoryHash::of_domain_json(
+        "prototype1.history.candidate_patch_change_set.v1",
+        &review.changes,
+    )?;
+    if review.change_set_hash != change_set_hash {
+        return Err(invalid(format!(
+            "candidate patch review change-set hash mismatch for '{}'",
+            case.candidate().as_str()
+        )));
+    }
+    if let Some(harness) = artifact.harness.as_ref() {
+        if harness.changed_paths() != relpaths
+            || harness.artifact_surface() != surface
+            || harness.artifact().is_none_or(|evidence| {
+                &evidence.derived_artifact_id != derived_id
+                    || artifact.node.base_artifact_id.as_ref() != Some(&evidence.base_artifact_id)
+            })
+        {
+            return Err(invalid(format!(
+                "candidate patch review harness change-set binding mismatch for '{}'",
+                case.candidate().as_str()
+            )));
+        }
+    } else {
+        let evidence = artifact.surface.as_ref().ok_or_else(|| {
+            invalid(format!(
+                "candidate patch review requires typed single-file surface evidence for '{}'",
+                case.candidate().as_str()
+            ))
+        })?;
+        evidence.verify_integrity()?;
+        if relpaths.as_slice() != [artifact.resolved.target_relpath.clone()]
+            || evidence.target_relpath != artifact.resolved.target_relpath
+            || evidence.source_content_hash != artifact.resolved.source_content_hash
+            || evidence.proposed_content_hash != artifact.resolved.branch.proposed_content_hash
+        {
+            return Err(invalid(format!(
+                "candidate patch review single-file change-set mismatch for '{}'",
+                case.candidate().as_str()
+            )));
+        }
+    }
+    let primary = review
+        .changes
+        .iter()
+        .find(|change| change.relpath == artifact.resolved.target_relpath)
+        .ok_or_else(|| {
+            invalid(format!(
+                "candidate patch review omits legacy anchor for '{}'",
+                case.candidate().as_str()
+            ))
+        })?;
+    let source_hash = content_sha256(&artifact.resolved.source_content);
+    let proposed_hash = content_sha256(&artifact.resolved.branch.proposed_content);
+    if primary.source_content_hash.as_deref() != Some(source_hash.as_str())
+        || primary.source_content_hash.as_deref()
+            != Some(artifact.resolved.source_content_hash.as_str())
+        || primary.proposed_content_hash.as_deref() != Some(proposed_hash.as_str())
+        || primary.proposed_content_hash.as_deref()
+            != Some(artifact.resolved.branch.proposed_content_hash.as_str())
+    {
+        return Err(invalid(format!(
+            "candidate patch review primary content hash mismatch for '{}'",
+            case.candidate().as_str()
+        )));
+    }
+
+    let sealed = case.sealed_evidence().ok_or_else(|| {
+        invalid("candidate patch review requires sealed evaluation evidence".to_string())
+    })?;
+    let evaluations = sealed
+        .evaluations
+        .iter()
+        .filter(|evaluation| evaluation.branch_id == review.candidate.branch_id)
+        .collect::<Vec<_>>();
+    let [evaluation] = evaluations.as_slice() else {
+        return Err(invalid(format!(
+            "candidate patch review requires exactly one matching evaluation for branch '{}'",
+            review.candidate.branch_id
+        )));
+    };
+    let artifact_hash = evaluation
+        .evaluation_artifact_citation
+        .as_ref()
+        .and_then(|citation| citation.content_hash.as_ref());
+    let report_hash = evaluation.primary_report_citation.content_hash.as_ref();
+    if artifact_hash != Some(&review.evaluation_hash)
+        || report_hash != Some(&review.evaluation_hash)
+    {
+        return Err(invalid(format!(
+            "candidate patch review evaluation hash mismatch for '{}'",
+            case.candidate().as_str()
+        )));
+    }
+
+    let has_empty = review.rationale.is_empty()
+        || review
+            .rationale
+            .iter()
+            .chain(review.blocking_findings.iter())
+            .chain(review.missing_evidence.iter())
+            .any(|value| value.trim().is_empty());
+    let shape_ok = match review.verdict {
+        PatchVerdict::Admissible => {
+            review.confidence != Confidence::Low
+                && review.blocking_findings.is_empty()
+                && review.missing_evidence.is_empty()
+        }
+        PatchVerdict::Rejected => !review.blocking_findings.is_empty(),
+        PatchVerdict::Inconclusive => !review.missing_evidence.is_empty(),
+    };
+    if has_empty || !shape_ok {
+        return Err(invalid(format!(
+            "candidate patch review verdict is contradictory for '{}'",
+            case.candidate().as_str()
+        )));
+    }
+    Ok(())
+}
+
+fn content_sha256(content: &str) -> String {
+    format!("{:x}", Sha256::digest(content.as_bytes()))
+}
+
 fn select_frontier_max(
     items: &[Item],
     child_counts: &BTreeMap<String, usize>,
@@ -2076,12 +2737,15 @@ fn select_frontier_max(
     oracle: OracleMode,
     require_evidence: bool,
     gate: OracleGate,
+    patch_gate: PatchGate,
     oracle_targets: &[String],
 ) -> Result<Option<StrategySelection>, HistoryError> {
+    let patch = patch_eligibility(items, patch_gate)?;
     let max_performance = if normalize_frontier {
         items
             .iter()
             .enumerate()
+            .filter(|(index, _)| patch.admits(*index))
             .map(|(index, item)| (index, CandidateCase::from_payload(&item.payload)))
             .filter_map(|(index, case)| {
                 performance_score_with_set(index, case, metrics, metric_set)
@@ -2093,6 +2757,9 @@ fn select_frontier_max(
 
     let mut best = None::<ScoredPayload>;
     for (index, item) in items.iter().enumerate() {
+        if !patch.admits(index) {
+            continue;
+        }
         let payload = item.payload.clone();
         let case = CandidateCase::from_payload(&payload);
         let Some(selected) = traversal_decision(&case) else {
@@ -2138,6 +2805,9 @@ fn select_frontier_max(
             format!("oracle_require_evidence={require_evidence}"),
             format!("oracle_gate={}", oracle_gate_name(gate)),
         ];
+        if patch_gate != PatchGate::Disabled {
+            rationale.push(format!("patch_gate={}", patch_gate_name(patch_gate)));
+        }
         if let Some(max_performance) = max_performance {
             rationale.push(format!(
                 "frontier_normalization=max_performance_score={}",
@@ -2196,6 +2866,7 @@ fn select_score_child_prop(
     oracle: OracleMode,
     require_evidence: bool,
     gate: OracleGate,
+    patch_gate: PatchGate,
     oracle_targets: &[String],
 ) -> Result<Option<StrategySelection>, HistoryError> {
     let calculation = score_child_prop_calculation_with_set(
@@ -2208,6 +2879,7 @@ fn select_score_child_prop(
         oracle,
         require_evidence,
         gate,
+        patch_gate,
         oracle_targets,
     )?;
     let weights = &calculation.weights;
@@ -2238,6 +2910,11 @@ fn select_score_child_prop(
         format!("oracle_mode={}", oracle_mode_name(oracle)),
         format!("oracle_require_evidence={require_evidence}"),
         format!("oracle_gate={}", oracle_gate_name(gate)),
+    ];
+    if patch_gate != PatchGate::Disabled {
+        rationale.push(format!("patch_gate={}", patch_gate_name(patch_gate)));
+    }
+    rationale.extend([
         format!("score_child_prop_total_weight={total_weight:.9}"),
         format!("score_child_prop_sample={sample:.9}"),
         format!("score_child_prop_selected_weight={:.9}", weight.weight),
@@ -2249,7 +2926,7 @@ fn select_score_child_prop(
             weight.exploitation,
             weight.exploration
         ),
-    ];
+    ]);
     if let Some(oracle_score) = calculation.resolutions.get(&selected) {
         rationale.push(format!("oracle_resolved_rate={}", oracle_score.summary()));
     }
@@ -2278,6 +2955,7 @@ fn score_child_prop_weights(
         oracle,
         require_evidence,
         OracleGate::Disabled,
+        PatchGate::Disabled,
         &[],
     )
 }
@@ -2292,6 +2970,7 @@ fn score_child_prop_weights_with_set(
     oracle: OracleMode,
     require_evidence: bool,
     gate: OracleGate,
+    patch_gate: PatchGate,
     oracle_targets: &[String],
 ) -> Result<Vec<ScoreChildPropWeight>, HistoryError> {
     score_child_prop_calculation_with_set(
@@ -2304,6 +2983,7 @@ fn score_child_prop_weights_with_set(
         oracle,
         require_evidence,
         gate,
+        patch_gate,
         oracle_targets,
     )
     .map(|calculation| calculation.weights)
@@ -2319,13 +2999,19 @@ fn score_child_prop_calculation_with_set(
     oracle: OracleMode,
     require_evidence: bool,
     gate: OracleGate,
+    patch_gate: PatchGate,
     oracle_targets: &[String],
 ) -> Result<ScoreChildPropCalculation, HistoryError> {
+    let patch = patch_eligibility(items, patch_gate)?;
     let mut selectable = Vec::new();
     let mut resolutions = BTreeMap::new();
     let mut exclusions = BTreeMap::new();
     for (index, item) in items.iter().enumerate() {
         let case = CandidateCase::from_payload(&item.payload);
+        if !patch.admits(index) {
+            exclusions.insert(index, "patch_gate_not_satisfied".to_string());
+            continue;
+        }
         let Some(decision) = traversal_decision(&case) else {
             continue;
         };
@@ -2535,6 +3221,13 @@ fn oracle_gate_name(gate: OracleGate) -> &'static str {
     }
 }
 
+fn patch_gate_name(gate: PatchGate) -> &'static str {
+    match gate {
+        PatchGate::Disabled => "disabled",
+        PatchGate::ReviewedAdmissible => "reviewed-admissible",
+    }
+}
+
 fn sigmoid(x: f64) -> f64 {
     1.0 / (1.0 + (-x).exp())
 }
@@ -2658,15 +3351,17 @@ mod tests {
     use crate::{
         OperationalRunMetrics, PatchApplyState,
         cli::prototype1_state::{
+            edit_surface::harness_request::child::ArtifactEvidence,
             evidence::PROTOTYPE1_BRANCH_EVALUATION_PROCEDURE_ID,
             history::{
-                CHILD_CHANNEL_TERMINAL_RESULT_RECORD, CandidateArtifact, CandidateCoordinate,
-                CandidateLifecycle, HistoryCandidate, HistoryCandidateSource, HistoryCandidates,
-                HistoryHash, LineageId, ProcedureRef, SealedCandidateEvidence,
+                ArtifactSurface, CHILD_CHANNEL_TERMINAL_RESULT_RECORD, CandidateArtifact,
+                CandidateCoordinate, CandidateLifecycle, HistoryCandidate, HistoryCandidateSource,
+                HistoryCandidates, HistoryHash, LineageId, ProcedureRef, SealedCandidateEvidence,
                 SealedComparedRunEvidence, SealedEvaluationEvidence, SealedEvidenceCitation,
                 SealedRuntimeEvidence, SelectionDecisionEntry, SelectionScope, SubjectRef,
                 TraversalEvidence,
             },
+            parent::ChildPlanFiles,
         },
         intervention::{
             Prototype1NodeRecord, Prototype1NodeStatus, ResolvedTreatmentBranch,
@@ -3591,6 +4286,526 @@ mod tests {
     }
 
     #[test]
+    fn patch_gate_excludes_rejected_candidate_before_either_ranking_strategy() {
+        let rejected = candidate_from_payload(with_patch_review(
+            decision_grade_payload(
+                "patch-rejected",
+                "branch-patch-rejected",
+                None,
+                0,
+                BranchDisposition::Keep,
+                metrics(true, true, 0),
+            ),
+            PatchVerdict::Rejected,
+        ));
+        let admissible = candidate_from_payload(with_patch_review(
+            decision_grade_payload(
+                "patch-admissible",
+                "branch-patch-admissible",
+                None,
+                1,
+                BranchDisposition::Keep,
+                metrics(true, true, 5),
+            ),
+            PatchVerdict::Admissible,
+        ));
+        let candidates = HistoryCandidates {
+            scope: SelectionScope::all_admitted_candidates(),
+            candidates: vec![rejected, admissible],
+        };
+
+        for strategy in [StrategyKind::default(), StrategyKind::score_child_prop()] {
+            let selection = select_from_history(
+                candidates.clone(),
+                0,
+                strategy.with_patch_gate(PatchGate::ReviewedAdmissible),
+            )
+            .expect("strict patch review traversal")
+            .expect("admissible candidate remains selectable");
+
+            assert_eq!(selection.decision.candidate_node_id, "patch-admissible");
+            assert_eq!(selection.considered.len(), 2);
+        }
+    }
+
+    #[test]
+    fn patch_gate_preserves_completed_no_selection_and_formula_rows() {
+        let rejected = candidate_from_payload(with_patch_review(
+            decision_grade_payload(
+                "patch-rejected",
+                "branch-patch-rejected",
+                None,
+                0,
+                BranchDisposition::Keep,
+                metrics(true, true, 0),
+            ),
+            PatchVerdict::Rejected,
+        ));
+        let inconclusive = candidate_from_payload(with_patch_review(
+            decision_grade_payload(
+                "patch-inconclusive",
+                "branch-patch-inconclusive",
+                None,
+                1,
+                BranchDisposition::Keep,
+                metrics(true, true, 0),
+            ),
+            PatchVerdict::Inconclusive,
+        ));
+        let strategy =
+            StrategyKind::score_child_prop().with_patch_gate(PatchGate::ReviewedAdmissible);
+
+        let attempt = select_attempt_with_policy(
+            Candidates::from_history(HistoryCandidates {
+                scope: SelectionScope::all_admitted_candidates(),
+                candidates: vec![rejected, inconclusive],
+            }),
+            0,
+            strategy,
+            selection_metrics::Policy::default(),
+            &[],
+        )
+        .expect("valid negative patch reviews complete selection");
+        let SelectionAttempt::NoSelection(receipt) = attempt else {
+            panic!("rejected and inconclusive reviews must not select a successor")
+        };
+        assert_eq!(receipt.considered.len(), 2);
+
+        let entry = SelectionDecisionEntry::new_no_selection_with_traversal_metrics(
+            ProcedureRef::new(HISTORY_TRAVERSAL_PROCEDURE_ID),
+            SelectionScope::all_admitted_candidates(),
+            receipt.considered,
+            receipt.considered_sources,
+            receipt.projection_failures,
+            Some(TraversalEvidence {
+                seed: 0,
+                strategy,
+                oracle_targets: Vec::new(),
+                selected_source: None,
+                child_counts: receipt.child_counts,
+            }),
+            receipt.metrics,
+        )
+        .expect("construct strict patch no-selection receipt");
+        let Formula::ScoreChildProp(formula) = &entry
+            .formula
+            .as_ref()
+            .expect("score-child-prop formula")
+            .formula;
+        assert_eq!(formula.patch_gate, PatchGate::ReviewedAdmissible);
+        assert_eq!(formula.rows.len(), 2);
+        assert!(formula.rows.iter().all(|row| !row.selectable));
+        assert!(
+            formula
+                .rows
+                .iter()
+                .all(|row| { row.exclusion_reason.as_deref() == Some("patch_gate_not_satisfied") })
+        );
+
+        let replay = replay_score_child_prop(&entry)
+            .expect("strict patch replay")
+            .expect("score-child-prop replay");
+        assert_eq!(replay.patch_gate, "reviewed-admissible");
+        assert!(replay.rows.iter().all(|row| !row.selectable));
+        assert!(
+            replay
+                .rows
+                .iter()
+                .all(|row| { row.exclusion_reason.as_deref() == Some("patch_gate_not_satisfied") })
+        );
+    }
+
+    #[test]
+    fn patch_gate_fails_closed_for_missing_or_mismatched_review() {
+        let missing = candidate_from_payload(decision_grade_payload(
+            "patch-missing",
+            "branch-patch-missing",
+            None,
+            0,
+            BranchDisposition::Keep,
+            metrics(true, true, 0),
+        ));
+        let strict = StrategyKind::default().with_patch_gate(PatchGate::ReviewedAdmissible);
+
+        let error = select_from_history(
+            HistoryCandidates {
+                scope: SelectionScope::all_admitted_candidates(),
+                candidates: vec![missing],
+            },
+            0,
+            strict,
+        )
+        .expect_err("strict patch gate requires review evidence");
+        assert!(error.to_string().contains("requires candidate review"));
+
+        let mut mismatched = with_patch_review(
+            decision_grade_payload(
+                "patch-mismatch",
+                "branch-patch-mismatch",
+                None,
+                0,
+                BranchDisposition::Keep,
+                metrics(true, true, 0),
+            ),
+            PatchVerdict::Admissible,
+        );
+        mismatched
+            .patch_review
+            .as_mut()
+            .expect("patch review")
+            .artifact_surface_hash = HistoryHash::of_bytes(b"other-surface");
+        let error = select_from_history(
+            HistoryCandidates {
+                scope: SelectionScope::all_admitted_candidates(),
+                candidates: vec![candidate_from_payload(mismatched)],
+            },
+            0,
+            strict,
+        )
+        .expect_err("strict patch gate validates artifact binding");
+        assert!(error.to_string().contains("surface hash mismatch"));
+    }
+
+    #[test]
+    fn patch_gate_requires_one_reviewer_config() {
+        let first = with_patch_review(
+            decision_grade_payload(
+                "patch-config-a",
+                "branch-patch-config-a",
+                None,
+                0,
+                BranchDisposition::Keep,
+                metrics(true, true, 0),
+            ),
+            PatchVerdict::Admissible,
+        );
+        let mut second = with_patch_review(
+            decision_grade_payload(
+                "patch-config-b",
+                "branch-patch-config-b",
+                None,
+                0,
+                BranchDisposition::Keep,
+                metrics(true, true, 0),
+            ),
+            PatchVerdict::Admissible,
+        );
+        second
+            .patch_review
+            .as_mut()
+            .expect("second patch review")
+            .config_hash = HistoryHash::of_bytes(b"different-review-config");
+
+        let error = select_from_history(
+            HistoryCandidates {
+                scope: SelectionScope::all_admitted_candidates(),
+                candidates: vec![
+                    candidate_from_payload(first),
+                    candidate_from_payload(second),
+                ],
+            },
+            0,
+            StrategyKind::default().with_patch_gate(PatchGate::ReviewedAdmissible),
+        )
+        .expect_err("strict patch gate binds one reviewer config");
+        assert!(
+            error
+                .to_string()
+                .contains("do not share one reviewer configuration")
+        );
+    }
+
+    #[test]
+    fn strict_patch_receipt_replay_rejects_hash_consistent_forced_selection() {
+        for strategy in [StrategyKind::default(), StrategyKind::score_child_prop()] {
+            let payload = with_patch_review(
+                decision_grade_payload(
+                    "patch-forced",
+                    "branch-patch-forced",
+                    None,
+                    0,
+                    BranchDisposition::Keep,
+                    metrics(true, true, 0),
+                ),
+                PatchVerdict::Rejected,
+            );
+            let considered = vec![payload.clone()];
+            let sources = vec![TraversalCandidateSource::History];
+            let metrics = selection_metrics::Set::from_considered(
+                selection_metrics::Policy::default(),
+                &considered,
+                &sources,
+            )
+            .expect("selection metrics");
+            let strategy = strategy.with_patch_gate(PatchGate::ReviewedAdmissible);
+            let entry = SelectionDecisionEntry::new_with_traversal_identity_metrics(
+                ProcedureRef::new(HISTORY_TRAVERSAL_PROCEDURE_ID),
+                SelectionScope::all_admitted_candidates(),
+                Some(payload.candidate.clone()),
+                None,
+                None,
+                considered,
+                sources,
+                Vec::new(),
+                Some(TraversalEvidence {
+                    seed: 0,
+                    strategy,
+                    oracle_targets: Vec::new(),
+                    selected_source: Some(TraversalCandidateSource::History),
+                    child_counts: BTreeMap::new(),
+                }),
+                metrics,
+                SuccessorDecision {
+                    procedure_id: HISTORY_TRAVERSAL_PROCEDURE_ID.to_string(),
+                    candidate_node_id: "patch-forced".to_string(),
+                    selected_branch_id: Some("branch-patch-forced".to_string()),
+                    branch_disposition: "keep".to_string(),
+                    outcome: SuccessorOutcome::Accepted,
+                    findings: Vec::new(),
+                    rationale: Vec::new(),
+                },
+            )
+            .expect("hash-consistent forced receipt can be represented");
+
+            let error = validate_patch_replay(&entry)
+                .expect_err("strict receipt must reauthorize recorded selection");
+            assert!(error.to_string().contains("replays to no selection"));
+        }
+    }
+
+    #[test]
+    fn strict_patch_replay_uses_committed_counts_after_frontier_pruning() {
+        for strategy in [StrategyKind::default(), StrategyKind::score_child_prop()] {
+            let parent = candidate_from_payload(with_patch_review(
+                decision_grade_payload(
+                    "patch-parent",
+                    "branch-patch-parent",
+                    None,
+                    0,
+                    BranchDisposition::Keep,
+                    metrics(true, true, 0),
+                ),
+                PatchVerdict::Admissible,
+            ));
+            let middle = candidate_from_payload(with_patch_review(
+                decision_grade_payload(
+                    "patch-middle",
+                    "branch-patch-middle",
+                    Some("patch-parent"),
+                    1,
+                    BranchDisposition::Keep,
+                    metrics(true, true, 0),
+                ),
+                PatchVerdict::Admissible,
+            ));
+            let leaf = candidate_from_payload(with_patch_review(
+                decision_grade_payload(
+                    "patch-leaf",
+                    "branch-patch-leaf",
+                    Some("patch-middle"),
+                    2,
+                    BranchDisposition::Keep,
+                    metrics(true, true, 0),
+                ),
+                PatchVerdict::Admissible,
+            ));
+            let strategy = strategy.with_patch_gate(PatchGate::ReviewedAdmissible);
+            let attempt = select_attempt_with_policy(
+                Candidates::from_history(HistoryCandidates {
+                    scope: SelectionScope::all_admitted_candidates(),
+                    candidates: vec![parent, middle, leaf],
+                }),
+                0,
+                strategy,
+                selection_metrics::Policy::default(),
+                &[],
+            )
+            .expect("strict traversal over a three-level candidate chain");
+            let SelectionAttempt::Selected(selection) = attempt else {
+                panic!("admissible frontier leaf must be selected")
+            };
+            assert_eq!(selection.considered.len(), 1);
+            assert_eq!(
+                selection
+                    .selected_payload
+                    .selection_input
+                    .as_ref()
+                    .expect("selected input")
+                    .candidate
+                    .node_id,
+                "patch-leaf"
+            );
+            assert_eq!(
+                selection.child_counts,
+                BTreeMap::from([
+                    ("patch-middle".to_string(), 1),
+                    ("patch-parent".to_string(), 1),
+                ])
+            );
+
+            let entry = SelectionDecisionEntry::new_with_traversal_identity_metrics(
+                ProcedureRef::new(HISTORY_TRAVERSAL_PROCEDURE_ID),
+                SelectionScope::all_admitted_candidates(),
+                Some(selection.selected_payload.candidate.clone()),
+                selection.selected_occurrence_id(),
+                selection.selected_membership_id(),
+                selection.considered,
+                selection.considered_sources,
+                selection.projection_failures,
+                Some(TraversalEvidence {
+                    seed: 0,
+                    strategy,
+                    oracle_targets: Vec::new(),
+                    selected_source: Some(TraversalCandidateSource::History),
+                    child_counts: selection.child_counts,
+                }),
+                selection.metrics,
+                selection.decision,
+            )
+            .expect("strict pruned-frontier receipt");
+
+            validate_patch_replay(&entry)
+                .expect("strict replay reuses the committed pre-pruning child counts");
+            let config_hash = entry.considered[0]
+                .patch_review
+                .as_ref()
+                .expect("strict review")
+                .config_hash
+                .clone();
+            validate_patch_config(&entry, &config_hash)
+                .expect("strict replay accepts the admitted reviewer config");
+            let error = validate_patch_config(&entry, &HistoryHash::of_bytes(b"other-config"))
+                .expect_err("strict replay rejects a different admitted reviewer config");
+            assert!(error.to_string().contains("does not match admitted policy"));
+
+            let mut wrong_source = entry.clone();
+            wrong_source
+                .traversal
+                .as_mut()
+                .expect("strict traversal")
+                .selected_source = Some(TraversalCandidateSource::CurrentGeneration);
+            let error = validate_patch_replay(&wrong_source)
+                .expect_err("strict replay binds the selected candidate source");
+            assert!(
+                error
+                    .to_string()
+                    .contains("does not match deterministic replay")
+            );
+        }
+    }
+
+    #[test]
+    fn patch_gate_rejects_node_and_resolved_artifact_id_mismatch() {
+        let mut payload = with_patch_review(
+            decision_grade_payload(
+                "patch-artifact-mismatch",
+                "branch-patch-artifact-mismatch",
+                None,
+                0,
+                BranchDisposition::Keep,
+                metrics(true, true, 0),
+            ),
+            PatchVerdict::Admissible,
+        );
+        payload
+            .artifact
+            .as_mut()
+            .expect("candidate artifact")
+            .node
+            .derived_artifact_id = Some(crate::loop_graph::ArtifactId::new("artifact:other"));
+
+        let error = select_from_history(
+            HistoryCandidates {
+                scope: SelectionScope::all_admitted_candidates(),
+                candidates: vec![candidate_from_payload(payload)],
+            },
+            0,
+            StrategyKind::default().with_patch_gate(PatchGate::ReviewedAdmissible),
+        )
+        .expect_err("strict review binds both artifact identity copies");
+        assert!(error.to_string().contains("artifact binding mismatch"));
+    }
+
+    #[test]
+    fn patch_gate_rejects_review_that_omits_admitted_second_file() {
+        let mut payload = with_patch_review(
+            decision_grade_payload(
+                "patch-two-file",
+                "branch-patch-two-file",
+                None,
+                0,
+                BranchDisposition::Keep,
+                metrics(true, true, 0),
+            ),
+            PatchVerdict::Admissible,
+        );
+        let plan: ChildPlanFiles = serde_json::from_str(include_str!(
+            "../tests/fixtures/prototype1-v15-missing-oracle-20260717/child-plan-node-9c9dcbeeb3a4d400.json"
+        ))
+        .expect("historical broad child plan");
+        let mut harness = plan.children()[0]
+            .harness_evidence()
+            .expect("historical broad harness evidence")
+            .clone();
+        let primary = payload
+            .artifact
+            .as_ref()
+            .expect("candidate artifact")
+            .resolved
+            .target_relpath
+            .clone();
+        harness.changed_paths = vec![
+            primary,
+            PathBuf::from("crates/ploke-core/tool_text/write_file.md"),
+        ];
+        payload
+            .artifact
+            .as_mut()
+            .expect("candidate artifact")
+            .harness = Some(harness);
+
+        let error = select_from_history(
+            HistoryCandidates {
+                scope: SelectionScope::all_admitted_candidates(),
+                candidates: vec![candidate_from_payload(payload)],
+            },
+            0,
+            StrategyKind::default().with_patch_gate(PatchGate::ReviewedAdmissible),
+        )
+        .expect_err("strict review must cover every admitted changed path");
+        assert!(
+            error
+                .to_string()
+                .contains("harness change-set binding mismatch")
+        );
+    }
+
+    #[test]
+    fn disabled_patch_gate_preserves_legacy_strategy_serialization() {
+        let json = serde_json::to_value(StrategyKind::default()).expect("serialize strategy");
+        assert!(json.get("patch_gate").is_none());
+
+        let selection = select_from_history(
+            HistoryCandidates {
+                scope: SelectionScope::all_admitted_candidates(),
+                candidates: vec![candidate_from_payload(decision_grade_payload(
+                    "patch-legacy",
+                    "branch-patch-legacy",
+                    None,
+                    0,
+                    BranchDisposition::Keep,
+                    metrics(true, true, 0),
+                ))],
+            },
+            0,
+            StrategyKind::default(),
+        )
+        .expect("disabled patch gate preserves traversal")
+        .expect("legacy candidate remains selectable");
+        assert_eq!(selection.decision.candidate_node_id, "patch-legacy");
+    }
+
+    #[test]
     fn all_resolved_gate_fails_closed_when_oracle_evidence_is_missing() {
         let missing = candidate_from_payload(decision_grade_payload(
             "gate-missing",
@@ -4385,6 +5600,146 @@ mod tests {
                 .expect("hash selection input"),
         );
         payload
+    }
+
+    fn with_patch_review(
+        mut payload: EvaluationPayload,
+        verdict: PatchVerdict,
+    ) -> EvaluationPayload {
+        let candidate = payload
+            .selection_input
+            .as_ref()
+            .expect("selection input")
+            .candidate
+            .clone();
+        let artifact_id =
+            crate::loop_graph::ArtifactId::new(format!("artifact:{}", candidate.branch_id));
+        let surface = ArtifactSurface::test(&candidate.branch_id);
+        let surface_hash =
+            HistoryHash::of_domain_json("prototype1.history.artifact_surface.v1", &surface)
+                .expect("artifact surface hash");
+        let (target_relpath, source_hash, proposed_hash) = {
+            let artifact = payload.artifact.as_mut().expect("candidate artifact");
+            let plan: ChildPlanFiles = serde_json::from_str(include_str!(
+                "../tests/fixtures/prototype1-v15-missing-oracle-20260717/child-plan-node-9c9dcbeeb3a4d400.json"
+            ))
+            .expect("historical harness carrier");
+            let mut harness = plan.children()[0]
+                .harness_evidence()
+                .expect("historical harness evidence")
+                .clone();
+            let base_id = harness
+                .artifact()
+                .expect("historical harness artifact")
+                .base_artifact_id
+                .clone();
+            artifact.node.derived_artifact_id = Some(artifact_id.clone());
+            artifact.node.base_artifact_id = Some(base_id.clone());
+            artifact.resolved.branch.derived_artifact_id = Some(artifact_id.clone());
+            artifact.resolved.source_content_hash =
+                content_sha256(&artifact.resolved.source_content);
+            artifact.resolved.branch.proposed_content_hash =
+                content_sha256(&artifact.resolved.branch.proposed_content);
+            harness.changed_paths = vec![artifact.resolved.target_relpath.clone()];
+            harness.artifact = Some(ArtifactEvidence::new(base_id, artifact_id.clone()));
+            harness.artifact_surface = surface.clone();
+            artifact.artifact_surface = Some(surface);
+            artifact.harness = Some(harness);
+            artifact.schema_version = artifact.schema_version.max(4);
+            (
+                artifact.resolved.target_relpath.clone(),
+                artifact.resolved.source_content_hash.clone(),
+                artifact.resolved.branch.proposed_content_hash.clone(),
+            )
+        };
+        let evaluation_hash = HistoryHash::of_domain_json(
+            "prototype1.test.patch_review.evaluation",
+            &candidate.branch_id,
+        )
+        .expect("evaluation hash");
+        let evaluation = payload
+            .sealed_evidence
+            .as_mut()
+            .expect("sealed evidence")
+            .evaluations
+            .first_mut()
+            .expect("sealed evaluation");
+        evaluation.evaluation_artifact_citation = Some(SealedEvidenceCitation {
+            ref_id: format!("evaluation-artifact:{}", candidate.branch_id),
+            content_hash: Some(evaluation_hash.clone()),
+            record_name: Some("prototype1_branch_evaluation".to_string()),
+        });
+        evaluation.primary_report_citation.content_hash = Some(evaluation_hash.clone());
+
+        let (confidence, blocking_findings, missing_evidence) = match verdict {
+            PatchVerdict::Admissible => (Confidence::High, Vec::new(), Vec::new()),
+            PatchVerdict::Rejected => (
+                Confidence::High,
+                vec!["process-global cache is not safely invalidated".to_string()],
+                Vec::new(),
+            ),
+            PatchVerdict::Inconclusive => (
+                Confidence::Medium,
+                Vec::new(),
+                vec!["bounded concurrency evidence is missing".to_string()],
+            ),
+        };
+        let changes = vec![PatchChange {
+            relpath: target_relpath,
+            source_content_hash: Some(source_hash),
+            proposed_content_hash: Some(proposed_hash),
+        }];
+        let change_set_hash = HistoryHash::of_domain_json(
+            "prototype1.history.candidate_patch_change_set.v1",
+            &changes,
+        )
+        .expect("change-set hash");
+        payload.patch_review = Some(PatchReview {
+            schema_version: 2,
+            procedure_id: PATCH_REVIEW_PROCEDURE_ID.to_string(),
+            candidate,
+            artifact_id,
+            artifact_surface_hash: surface_hash,
+            evaluation_hash,
+            config_hash: HistoryHash::of_bytes(b"review-config"),
+            change_set_hash,
+            changes,
+            verdict,
+            confidence,
+            blocking_findings,
+            missing_evidence,
+            rationale: vec!["reviewed the exact source and proposed content".to_string()],
+            citation: SealedEvidenceCitation {
+                ref_id: candidate_review_ref(
+                    &payload
+                        .selection_input
+                        .as_ref()
+                        .expect("selection input")
+                        .candidate
+                        .branch_id,
+                ),
+                content_hash: Some(
+                    HistoryHash::of_domain_json(
+                        "prototype1.test.candidate_patch_review",
+                        &(candidate_id(&payload), verdict),
+                    )
+                    .expect("review citation hash"),
+                ),
+                record_name: Some(PATCH_REVIEW_RECORD_NAME.to_string()),
+            },
+        });
+        payload.schema_version = payload.schema_version.max(5);
+        payload
+    }
+
+    fn candidate_id(payload: &EvaluationPayload) -> &str {
+        payload
+            .selection_input
+            .as_ref()
+            .expect("selection input")
+            .candidate
+            .node_id
+            .as_str()
     }
 
     fn oracle_evaluation(

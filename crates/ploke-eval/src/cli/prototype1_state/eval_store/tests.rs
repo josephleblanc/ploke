@@ -1,4 +1,8 @@
-use std::{collections::BTreeMap, fs, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use cozo::DataValue;
 use ploke_db::{Database, QueryResult};
@@ -31,12 +35,12 @@ use super::{
     HARNESS_SUBMISSION_CHANGE_REL, HARNESS_SUBMISSION_CHECK_REL, HARNESS_SUBMISSION_CITATION_REL,
     HARNESS_SUBMISSION_REL, HARNESS_WORKSPACE_CHANGE_REL, HARNESS_WORKSPACE_REL, MESSAGE_EVENT_REL,
     MODEL_EXCHANGE_REL, OPERATION_REL, ORACLE_GATE_REL, PARENT_IDENTITY_REL, PARENT_START_REL,
-    PATCH_REL, PROFILE_COMMITMENT_REL, RUN_PROFILE_POLICY_REL, RUNNER_REQUEST_ARG_REL,
-    RUNNER_REQUEST_REL, RUNNER_REQUEST_TARGET_REL, RUNNER_RESULT_REL, SCHEDULER_NODE_REL,
-    SCHEDULER_NODE_STATUS_REL, SCHEDULER_NODE_TARGET_REL, SELECTION_CANDIDATE_REL,
-    SELECTION_DECISION_REL, SELECTION_FINDING_REL, SELECTION_ORACLE_REL, SELECTION_PROJECTION_REL,
-    SELECTION_RECEIPT_REL, SELECTION_SCORE_REL, TOOL_EVENT_REL, WALK_EVENT_REL,
-    WALK_EVENT_TRANSITION_REL,
+    PATCH_CHANGE_REL, PATCH_GATE_REL, PATCH_REL, PATCH_REVIEW_REL, PROFILE_COMMITMENT_REL,
+    RUN_PROFILE_POLICY_REL, RUNNER_REQUEST_ARG_REL, RUNNER_REQUEST_REL, RUNNER_REQUEST_TARGET_REL,
+    RUNNER_RESULT_REL, SCHEDULER_NODE_REL, SCHEDULER_NODE_STATUS_REL, SCHEDULER_NODE_TARGET_REL,
+    SELECTION_CANDIDATE_REL, SELECTION_DECISION_REL, SELECTION_FINDING_REL, SELECTION_ORACLE_REL,
+    SELECTION_PATCH_REL, SELECTION_PROJECTION_REL, SELECTION_RECEIPT_REL, SELECTION_SCORE_REL,
+    TOOL_EVENT_REL, WALK_EVENT_REL, WALK_EVENT_TRANSITION_REL,
     api::EvalStorageMode,
     cozo_schema::eval_relation_exists,
     error::EvalStoreError,
@@ -179,6 +183,14 @@ fn non_agent_schema_scripts() -> Vec<(&'static str, String, String)> {
         },
         {
             let schema = &super::setup::OracleGateSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::setup::PatchGateSchema::SCHEMA;
             (
                 schema.relation(),
                 schema.script_create(),
@@ -626,6 +638,30 @@ fn non_agent_schema_scripts() -> Vec<(&'static str, String, String)> {
             )
         },
         {
+            let schema = &super::selection::PatchGateSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::selection::PatchReviewSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::selection::PatchChangeSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
             let schema = &super::selection::SelectionProjectionSchema::SCHEMA;
             (
                 schema.relation(),
@@ -684,6 +720,11 @@ fn eval_store_non_agent_schema_scripts_are_stable() {
             "eval_oracle_gate",
             r#":create eval_oracle_gate { campaign_id: String => profile_ref_id: String, gate: String, targets: [String], ingested_at: String }"#,
             r#"?[campaign_id, profile_ref_id, gate, targets, ingested_at] <- [[$campaign_id, $profile_ref_id, $gate, $targets, $ingested_at]] :put eval_oracle_gate { campaign_id => profile_ref_id, gate, targets, ingested_at }"#,
+        ),
+        (
+            "eval_patch_gate",
+            r#":create eval_patch_gate { campaign_id: String => profile_ref_id: String, gate: String, review_config_hash: String?, ingested_at: String }"#,
+            r#"?[campaign_id, profile_ref_id, gate, review_config_hash, ingested_at] <- [[$campaign_id, $profile_ref_id, $gate, $review_config_hash, $ingested_at]] :put eval_patch_gate { campaign_id => profile_ref_id, gate, review_config_hash, ingested_at }"#,
         ),
         (
             "eval_closure_ref",
@@ -961,6 +1002,21 @@ fn eval_store_non_agent_schema_scripts_are_stable() {
             r#"?[decision_id, mode, require_evidence, gate, targets, formula_id] <- [[$decision_id, $mode, $require_evidence, $gate, $targets, $formula_id]] :put eval_selection_oracle { decision_id => mode, require_evidence, gate, targets, formula_id }"#,
         ),
         (
+            "eval_selection_patch_gate",
+            r#":create eval_selection_patch_gate { decision_id: String => gate: String }"#,
+            r#"?[decision_id, gate] <- [[$decision_id, $gate]] :put eval_selection_patch_gate { decision_id => gate }"#,
+        ),
+        (
+            "eval_selection_patch_review",
+            r#":create eval_selection_patch_review { decision_id: String, member_id: String => schema_version: Int, procedure_id: String, node_id: String, branch_id: String, generation: Int, artifact_id: String, artifact_surface_hash: String, evaluation_hash: String, config_hash: String, change_set_hash: String, verdict: String, confidence: String, blocking_findings: [String], missing_evidence: [String], rationale: [String], citation_ref: String, citation_hash: String?, record_name: String? }"#,
+            r#"?[decision_id, member_id, schema_version, procedure_id, node_id, branch_id, generation, artifact_id, artifact_surface_hash, evaluation_hash, config_hash, change_set_hash, verdict, confidence, blocking_findings, missing_evidence, rationale, citation_ref, citation_hash, record_name] <- [[$decision_id, $member_id, $schema_version, $procedure_id, $node_id, $branch_id, $generation, $artifact_id, $artifact_surface_hash, $evaluation_hash, $config_hash, $change_set_hash, $verdict, $confidence, $blocking_findings, $missing_evidence, $rationale, $citation_ref, $citation_hash, $record_name]] :put eval_selection_patch_review { decision_id, member_id => schema_version, procedure_id, node_id, branch_id, generation, artifact_id, artifact_surface_hash, evaluation_hash, config_hash, change_set_hash, verdict, confidence, blocking_findings, missing_evidence, rationale, citation_ref, citation_hash, record_name }"#,
+        ),
+        (
+            "eval_selection_patch_change",
+            r#":create eval_selection_patch_change { decision_id: String, member_id: String, change_index: Int => relpath: String, source_content_hash: String?, proposed_content_hash: String? }"#,
+            r#"?[decision_id, member_id, change_index, relpath, source_content_hash, proposed_content_hash] <- [[$decision_id, $member_id, $change_index, $relpath, $source_content_hash, $proposed_content_hash]] :put eval_selection_patch_change { decision_id, member_id, change_index => relpath, source_content_hash, proposed_content_hash }"#,
+        ),
+        (
             "eval_selection_projection_failure",
             r#":create eval_selection_projection_failure { decision_id: String, failure_id: String => candidate_subject: String?, kind: String, message: String? }"#,
             r#"?[decision_id, failure_id, candidate_subject, kind, message] <- [[$decision_id, $failure_id, $candidate_subject, $kind, $message]] :put eval_selection_projection_failure { decision_id, failure_id => candidate_subject, kind, message }"#,
@@ -1082,6 +1138,7 @@ fn prototype1_eval_store_parent_start_db_schema_installs_idempotently() {
         eval_relation_exists(&db, RUN_PROFILE_POLICY_REL).expect("run profile policy rel exists")
     );
     assert!(eval_relation_exists(&db, ORACLE_GATE_REL).expect("oracle gate rel exists"));
+    assert!(eval_relation_exists(&db, PATCH_GATE_REL).expect("patch gate rel exists"));
     assert!(eval_relation_exists(&db, CLOSURE_REF_REL).expect("closure ref rel exists"));
     assert!(eval_relation_exists(&db, CLOSURE_INSTANCE_REL).expect("closure instance rel exists"));
     assert!(
@@ -1131,6 +1188,11 @@ fn prototype1_eval_store_parent_start_db_schema_installs_idempotently() {
     );
     assert!(eval_relation_exists(&db, SELECTION_SCORE_REL).expect("selection score rel exists"));
     assert!(eval_relation_exists(&db, SELECTION_ORACLE_REL).expect("selection oracle rel exists"));
+    assert!(
+        eval_relation_exists(&db, SELECTION_PATCH_REL).expect("selection patch gate rel exists")
+    );
+    assert!(eval_relation_exists(&db, PATCH_REVIEW_REL).expect("patch review rel exists"));
+    assert!(eval_relation_exists(&db, PATCH_CHANGE_REL).expect("patch change rel exists"));
     assert!(
         eval_relation_exists(&db, SELECTION_PROJECTION_REL)
             .expect("selection projection failure rel exists")
@@ -1228,6 +1290,24 @@ fn oracle_gate_schema_installs_additively() {
 }
 
 #[test]
+fn patch_gate_schema_installs_additively() {
+    let db = Database::new_init().expect("db");
+    let store = DbEvalStore::new(&db);
+    store.install_schema().expect("current schema installs");
+    db.raw_query_mut_params("::remove eval_patch_gate", BTreeMap::new())
+        .expect("remove additive patch relation");
+
+    assert!(eval_relation_exists(&db, RUN_PROFILE_POLICY_REL).expect("legacy policy exists"));
+    assert!(!eval_relation_exists(&db, PATCH_GATE_REL).expect("patch gate absent"));
+
+    store
+        .install_schema()
+        .expect("patch gate relation installs without rewriting policy schema");
+
+    assert!(eval_relation_exists(&db, PATCH_GATE_REL).expect("patch gate restored"));
+}
+
+#[test]
 fn selection_oracle_schema_installs_additively() {
     let db = Database::new_init().expect("db");
     let store = DbEvalStore::new(&db);
@@ -1243,6 +1323,32 @@ fn selection_oracle_schema_installs_additively() {
         .expect("selection oracle relation installs without rewriting decision schema");
 
     assert!(eval_relation_exists(&db, SELECTION_ORACLE_REL).expect("selection oracle restored"));
+}
+
+#[test]
+fn selection_patch_schema_installs_additively() {
+    let db = Database::new_init().expect("db");
+    let store = DbEvalStore::new(&db);
+    store.install_schema().expect("current schema installs");
+    db.raw_query_mut_params("::remove eval_selection_patch_gate", BTreeMap::new())
+        .expect("remove additive selection patch gate");
+    db.raw_query_mut_params("::remove eval_selection_patch_review", BTreeMap::new())
+        .expect("remove additive selection patch reviews");
+    db.raw_query_mut_params("::remove eval_selection_patch_change", BTreeMap::new())
+        .expect("remove additive selection patch changes");
+
+    assert!(eval_relation_exists(&db, SELECTION_DECISION_REL).expect("selection decision exists"));
+    assert!(!eval_relation_exists(&db, SELECTION_PATCH_REL).expect("selection patch gate absent"));
+    assert!(!eval_relation_exists(&db, PATCH_REVIEW_REL).expect("patch reviews absent"));
+    assert!(!eval_relation_exists(&db, PATCH_CHANGE_REL).expect("patch changes absent"));
+
+    store
+        .install_schema()
+        .expect("selection patch relations install without rewriting decision schema");
+
+    assert!(eval_relation_exists(&db, SELECTION_PATCH_REL).expect("selection patch gate restored"));
+    assert!(eval_relation_exists(&db, PATCH_REVIEW_REL).expect("patch reviews restored"));
+    assert!(eval_relation_exists(&db, PATCH_CHANGE_REL).expect("patch changes restored"));
 }
 
 #[test]
@@ -1313,6 +1419,301 @@ fn empty_selection(scope: &str) -> crate::cli::prototype1_state::history::Select
     .expect("empty no-selection entry")
 }
 
+fn strict_patch_entry(
+    config_hash: crate::cli::prototype1_state::history::HistoryHash,
+) -> crate::cli::prototype1_state::history::SelectionDecisionEntry {
+    let node_id = "node-strict-policy";
+    let branch_id = "branch-strict-policy";
+    let candidate = crate::successor_selection::CandidateRef {
+        node_id: node_id.to_string(),
+        branch_id: branch_id.to_string(),
+        generation: 1,
+    };
+    let evaluation_hash =
+        crate::cli::prototype1_state::history::HistoryHash::of_bytes(b"strict evaluation");
+    let artifact = strict_candidate_artifact(node_id, branch_id);
+    let target_relpath = artifact.resolved.target_relpath.clone();
+    let source_content_hash = artifact.resolved.source_content_hash.clone();
+    let proposed_content_hash = artifact.resolved.branch.proposed_content_hash.clone();
+    let artifact_id = artifact
+        .node
+        .derived_artifact_id
+        .clone()
+        .expect("strict derived artifact");
+    let surface_hash = crate::cli::prototype1_state::history::HistoryHash::of_domain_json(
+        "prototype1.history.artifact_surface.v1",
+        artifact
+            .artifact_surface
+            .as_ref()
+            .expect("strict artifact surface"),
+    )
+    .expect("strict artifact surface hash");
+    let changes = vec![crate::successor_selection::PatchChange {
+        relpath: target_relpath,
+        source_content_hash: Some(source_content_hash),
+        proposed_content_hash: Some(proposed_content_hash),
+    }];
+    let change_set_hash = crate::cli::prototype1_state::history::HistoryHash::of_domain_json(
+        "prototype1.history.candidate_patch_change_set.v1",
+        &changes,
+    )
+    .expect("strict change set hash");
+    let input = crate::successor_selection::SelectionInput::new(
+        candidate.clone(),
+        crate::BranchDisposition::Keep,
+        PathBuf::from("prototype1/evaluations/branch-strict-policy.json"),
+        Vec::new(),
+    );
+    let payload = crate::cli::prototype1_state::history::EvaluationPayload::builder(
+        crate::cli::prototype1_state::history::SubjectRef::new(
+            "candidate:node-strict-policy:plan_index=0",
+        ),
+        crate::cli::prototype1_state::history::ProcedureRef::new(
+            crate::successor_selection::PROCEDURE_ID,
+        ),
+    )
+    .selection_input(input)
+    .expect("strict selection input")
+    .sealed_candidate_evidence(strict_candidate_evidence(
+        node_id,
+        branch_id,
+        evaluation_hash.clone(),
+    ))
+    .candidate_artifact(artifact)
+    .patch_review(crate::successor_selection::PatchReview {
+        schema_version: 2,
+        procedure_id: crate::successor_selection::PATCH_REVIEW_PROCEDURE_ID.to_string(),
+        candidate,
+        artifact_id,
+        artifact_surface_hash: surface_hash,
+        evaluation_hash,
+        config_hash,
+        change_set_hash,
+        changes,
+        verdict: crate::successor_selection::PatchVerdict::Rejected,
+        confidence: crate::successor_selection::domains::Confidence::High,
+        blocking_findings: vec!["strict fixture blocks selection".to_string()],
+        missing_evidence: Vec::new(),
+        rationale: vec!["reviewed exact source and proposed content".to_string()],
+        citation: crate::cli::prototype1_state::history::SealedEvidenceCitation {
+            ref_id: crate::successor_selection::candidate_review_ref(branch_id),
+            content_hash: Some(
+                crate::cli::prototype1_state::history::HistoryHash::of_bytes(
+                    b"strict review citation",
+                ),
+            ),
+            record_name: Some(crate::successor_selection::PATCH_REVIEW_RECORD_NAME.to_string()),
+        },
+    })
+    .build();
+    let considered = vec![payload];
+    let sources =
+        vec![crate::cli::prototype1_state::history::TraversalCandidateSource::CurrentGeneration];
+    let metrics = crate::successor_selection::metrics::Set::from_considered(
+        crate::successor_selection::metrics::Policy::default(),
+        &considered,
+        &sources,
+    )
+    .expect("strict metric set");
+    let entry =
+        crate::cli::prototype1_state::history::SelectionDecisionEntry::new_no_selection_with_traversal_metrics(
+            crate::cli::prototype1_state::history::ProcedureRef::new(
+                crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID,
+            ),
+            crate::cli::prototype1_state::history::SelectionScope::new("strict-policy"),
+            considered,
+            sources,
+            Vec::new(),
+            Some(crate::cli::prototype1_state::history::TraversalEvidence {
+                seed: 0,
+                strategy: crate::successor_selection::traversal::StrategyKind::default()
+                    .with_patch_gate(
+                        crate::successor_selection::PatchGate::ReviewedAdmissible,
+                    ),
+                oracle_targets: Vec::new(),
+                selected_source: None,
+                child_counts: BTreeMap::new(),
+            }),
+            metrics,
+        )
+        .expect("strict no-selection entry");
+    crate::successor_selection::traversal::validate_patch_replay(&entry)
+        .expect("strict fixture replays");
+    entry
+}
+
+fn strict_candidate_artifact(
+    node_id: &str,
+    branch_id: &str,
+) -> crate::cli::prototype1_state::history::CandidateArtifact {
+    let target_relpath = PathBuf::from("crates/ploke-core/tool_text/read_file.md");
+    let source_content = "pub fn read_file() -> bool { false }\n";
+    let proposed_content = "pub fn read_file() -> bool { true }\n";
+    let source_content_hash = super::operation::content_sha256(source_content);
+    let proposed_content_hash = super::operation::content_sha256(proposed_content);
+    let candidate_id = format!("candidate-{node_id}");
+    let artifact_id = crate::loop_graph::ArtifactId::new(format!("artifact:{branch_id}"));
+    let surface = crate::cli::prototype1_state::history::ArtifactSurface::test(branch_id);
+    let plan: crate::cli::prototype1_state::parent::ChildPlanFiles =
+        serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/tests/fixtures/prototype1-v15-missing-oracle-20260717/child-plan-node-9c9dcbeeb3a4d400.json"
+        )))
+        .expect("historical harness carrier");
+    let mut harness = plan.children()[0]
+        .harness_evidence()
+        .expect("historical harness evidence")
+        .clone();
+    let base_id = harness
+        .artifact()
+        .expect("historical harness artifact")
+        .base_artifact_id
+        .clone();
+    harness.changed_paths = vec![target_relpath.clone()];
+    harness.artifact = Some(
+        crate::cli::prototype1_state::edit_surface::harness_request::child::ArtifactEvidence::new(
+            base_id.clone(),
+            artifact_id.clone(),
+        ),
+    );
+    harness.artifact_surface = surface.clone();
+    let node = crate::intervention::Prototype1NodeRecord {
+        schema_version: "test-node.v1".to_string(),
+        node_id: node_id.to_string(),
+        parent_node_id: None,
+        generation: 1,
+        instance_id: "instance-a".to_string(),
+        source_state_id: "source-a".to_string(),
+        operation_target: None,
+        base_artifact_id: Some(base_id),
+        patch_id: None,
+        derived_artifact_id: Some(artifact_id.clone()),
+        parent_branch_id: None,
+        branch_id: branch_id.to_string(),
+        candidate_id: candidate_id.clone(),
+        target_relpath: target_relpath.clone(),
+        node_dir: PathBuf::from(format!("/tmp/{node_id}")),
+        workspace_root: PathBuf::from(format!("/tmp/{node_id}/worktree")),
+        binary_path: PathBuf::from(format!("/tmp/{node_id}/target/debug/ploke-eval")),
+        runner_request_path: PathBuf::from(format!("/tmp/{node_id}/runner-request.json")),
+        runner_result_path: PathBuf::from(format!("/tmp/{node_id}/runner-result.json")),
+        status: crate::intervention::Prototype1NodeStatus::Succeeded,
+        created_at: "2026-07-18T00:00:00Z".to_string(),
+        updated_at: "2026-07-18T00:00:00Z".to_string(),
+    };
+    let resolved = crate::intervention::ResolvedTreatmentBranch {
+        instance_id: node.instance_id.clone(),
+        source_state_id: node.source_state_id.clone(),
+        parent_branch_id: node.parent_branch_id.clone(),
+        target_relpath,
+        source_content: source_content.to_string(),
+        source_content_hash,
+        selected_branch_id: Some(branch_id.to_string()),
+        branch: crate::intervention::TreatmentBranchNode {
+            branch_id: branch_id.to_string(),
+            candidate_id,
+            patch_id: None,
+            branch_label: "strict policy fixture".to_string(),
+            synthesized_spec_id: "spec".to_string(),
+            proposed_content: proposed_content.to_string(),
+            proposed_content_hash,
+            generation_target: None,
+            generation_coordinate: None,
+            status: crate::intervention::TreatmentBranchStatus::Selected,
+            apply_id: None,
+            applied_content_hash: None,
+            derived_artifact_id: Some(artifact_id),
+        },
+    };
+    crate::cli::prototype1_state::history::CandidateArtifact::new(node, resolved)
+        .with_artifact_surface(surface)
+        .with_harness(harness)
+}
+
+fn strict_candidate_evidence(
+    node_id: &str,
+    branch_id: &str,
+    evaluation_hash: crate::cli::prototype1_state::history::HistoryHash,
+) -> crate::cli::prototype1_state::history::SealedCandidateEvidence {
+    let runtime_id = format!("runtime:{node_id}");
+    let evaluation_citation = crate::cli::prototype1_state::history::SealedEvidenceCitation {
+        ref_id: format!("evaluation:{branch_id}"),
+        content_hash: Some(evaluation_hash),
+        record_name: Some("prototype1_branch_evaluation".to_string()),
+    };
+    crate::cli::prototype1_state::history::SealedCandidateEvidence {
+        schema_version: 2,
+        coordinate: crate::cli::prototype1_state::history::CandidateCoordinate {
+            node_id: node_id.to_string(),
+            parent_node_id: None,
+            branch_id: Some(branch_id.to_string()),
+            generation: Some(1),
+            plan_index: Some(0),
+            primary_runtime_id: Some(runtime_id.clone()),
+        },
+        lifecycle: crate::cli::prototype1_state::history::CandidateLifecycle {
+            planner_outcome: "completed".to_string(),
+            node_status: "completed".to_string(),
+        },
+        evaluations: vec![
+            crate::cli::prototype1_state::history::SealedEvaluationEvidence {
+                branch_id: branch_id.to_string(),
+                evaluation_procedure_id: Some(
+                    crate::cli::prototype1_state::evidence::PROTOTYPE1_BRANCH_EVALUATION_PROCEDURE_ID
+                        .to_string(),
+                ),
+                evaluator_identity: Some(
+                    crate::cli::prototype1_state::history::SealedEvaluatorIdentity {
+                        id: "test".to_string(),
+                        version: "1".to_string(),
+                    },
+                ),
+                eval_set_identity: Some(
+                    crate::cli::prototype1_state::history::SealedEvalSetIdentity {
+                        id: "eval-set".to_string(),
+                        kind: "test".to_string(),
+                        authority: "test-suite".to_string(),
+                        explicit: true,
+                        benchmark_family: Some("multi_swe_bench_rust".to_string()),
+                        dataset_source_count: 1,
+                        instance_ids: vec!["instance-a".to_string()],
+                        missing_treatment_instance_ids: Vec::new(),
+                        note: None,
+                    },
+                ),
+                evaluation_artifact_citation: Some(evaluation_citation.clone()),
+                overall_disposition: Some("keep".to_string()),
+                primary_report_citation: evaluation_citation,
+                compared_runs: Vec::new(),
+            },
+        ],
+        runtimes: vec![crate::cli::prototype1_state::history::SealedRuntimeEvidence {
+            runtime_id: runtime_id.clone(),
+            document_citations: vec![
+                crate::cli::prototype1_state::history::SealedEvidenceCitation {
+                    ref_id: format!(
+                        "channel:child-to-parent:terminal-result:{node_id}:{runtime_id}"
+                    ),
+                    content_hash: Some(
+                        crate::cli::prototype1_state::history::HistoryHash::of_bytes(
+                            b"strict terminal result",
+                        ),
+                    ),
+                    record_name: Some(
+                        crate::cli::prototype1_state::history::CHILD_CHANNEL_TERMINAL_RESULT_RECORD
+                            .to_string(),
+                    ),
+                },
+            ],
+            journal_citations: Vec::new(),
+        }],
+        branches: Vec::new(),
+        extra_document_citations: Vec::new(),
+        extra_journal_citations: Vec::new(),
+        child_diagnostics: Vec::new(),
+    }
+}
+
 #[test]
 fn v22_selection_formula_round_trips_exactly() {
     // Exact `eval_selection_receipt.entry_json.formula` from campaign
@@ -1339,8 +1740,13 @@ fn v22_selection_formula_round_trips_exactly() {
 #[test]
 fn receipt_roundtrip_hash() {
     let tmp = tempfile::tempdir().expect("tmp");
-    let db_path = tmp.path().join("prototype1/eval-store.cozo.sqlite");
     let campaign = CampaignId::from("campaign-v22-float-roundtrip");
+    let (db_path, ..) = seeded_patch_context(
+        tmp.path(),
+        &campaign,
+        ploke_records::run_profile::PatchGate::Disabled,
+        None,
+    );
     let parent = "parent-v22-float-roundtrip";
     let mut formula: crate::successor_selection::traversal::SelectionFormula =
         serde_json::from_str(include_str!(concat!(
@@ -1396,6 +1802,582 @@ fn receipt_roundtrip_hash() {
 }
 
 #[test]
+fn selection_db_rejects_disabled_receipt_for_strict_policy() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let campaign = CampaignId::from("campaign-strict-policy-disabled-receipt");
+    let review_hash =
+        crate::cli::prototype1_state::history::HistoryHash::of_bytes(b"strict review config");
+    let (db_path, ..) = seeded_patch_context(
+        tmp.path(),
+        &campaign,
+        ploke_records::run_profile::PatchGate::ReviewedAdmissible,
+        Some(&review_hash),
+    );
+
+    let error = write_selection_decision_to_owner_db(
+        &db_path,
+        SelectionDecisionEvidence {
+            campaign_id: campaign,
+            parent_id: "parent-disabled-receipt".to_string(),
+            entry: empty_selection("disabled-receipt"),
+            decision_ref: None,
+            recorded_at: None,
+        },
+    )
+    .expect_err("strict setup must reject a disabled receipt");
+    assert!(
+        matches!(
+            error,
+            EvalStoreError::Validation {
+                field: "selection.patch_policy.gate",
+                ..
+            }
+        ),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn selection_db_rejects_strict_receipt_for_disabled_policy() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let campaign = CampaignId::from("campaign-disabled-policy-strict-receipt");
+    let review_hash =
+        crate::cli::prototype1_state::history::HistoryHash::of_bytes(b"strict review config");
+    let (db_path, ..) = seeded_patch_context(
+        tmp.path(),
+        &campaign,
+        ploke_records::run_profile::PatchGate::Disabled,
+        None,
+    );
+
+    let error = write_selection_decision_to_owner_db(
+        &db_path,
+        SelectionDecisionEvidence {
+            campaign_id: campaign,
+            parent_id: "parent-strict-receipt".to_string(),
+            entry: strict_patch_entry(review_hash),
+            decision_ref: None,
+            recorded_at: None,
+        },
+    )
+    .expect_err("disabled setup must reject a strict receipt");
+    assert!(
+        matches!(
+            error,
+            EvalStoreError::Validation {
+                field: "selection.patch_policy.gate",
+                ..
+            }
+        ),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn selection_db_rejects_wrong_review_config() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let campaign = CampaignId::from("campaign-strict-policy-wrong-config");
+    let review_hash =
+        crate::cli::prototype1_state::history::HistoryHash::of_bytes(b"admitted review config");
+    let wrong_hash =
+        crate::cli::prototype1_state::history::HistoryHash::of_bytes(b"different review config");
+    let (db_path, ..) = seeded_patch_context(
+        tmp.path(),
+        &campaign,
+        ploke_records::run_profile::PatchGate::ReviewedAdmissible,
+        Some(&review_hash),
+    );
+
+    let error = write_selection_decision_to_owner_db(
+        &db_path,
+        SelectionDecisionEvidence {
+            campaign_id: campaign,
+            parent_id: "parent-wrong-config".to_string(),
+            entry: strict_patch_entry(wrong_hash),
+            decision_ref: None,
+            recorded_at: None,
+        },
+    )
+    .expect_err("strict setup must reject a different review config");
+    assert!(
+        matches!(
+            error,
+            EvalStoreError::Validation {
+                field: "selection.patch_policy.config",
+                ..
+            }
+        ),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn selection_db_accepts_matching_strict_policy() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let campaign = CampaignId::from("campaign-strict-policy-match");
+    let review_hash =
+        crate::cli::prototype1_state::history::HistoryHash::of_bytes(b"admitted review config");
+    let (db_path, ..) = seeded_patch_context(
+        tmp.path(),
+        &campaign,
+        ploke_records::run_profile::PatchGate::ReviewedAdmissible,
+        Some(&review_hash),
+    );
+
+    let receipt = write_selection_decision_to_owner_db(
+        &db_path,
+        SelectionDecisionEvidence {
+            campaign_id: campaign,
+            parent_id: "parent-strict-match".to_string(),
+            entry: strict_patch_entry(review_hash.clone()),
+            decision_ref: None,
+            recorded_at: None,
+        },
+    )
+    .expect("matching strict receipt persists");
+    assert_eq!(receipt.candidate_count, 1);
+    let db = load_owner_eval_database(&db_path).expect("owner db loads");
+    let rows = db
+        .raw_query_params(
+            "?[config_hash] := *eval_selection_patch_review { config_hash }",
+            BTreeMap::new(),
+        )
+        .expect("strict review rows query");
+    assert_eq!(rows.rows.len(), 1);
+    assert_eq!(
+        rows.row_refs()
+            .next()
+            .expect("strict review row")
+            .get::<String>("config_hash")
+            .expect("strict review config"),
+        review_hash.as_str()
+    );
+}
+
+#[test]
+fn patch_reviews_are_queryable() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let campaign = CampaignId::from("campaign-patch-review");
+    let (db_path, ..) = seeded_patch_context(
+        tmp.path(),
+        &campaign,
+        ploke_records::run_profile::PatchGate::Disabled,
+        None,
+    );
+    let candidate = crate::successor_selection::CandidateRef {
+        node_id: "node-reviewed".to_string(),
+        branch_id: "branch-reviewed".to_string(),
+        generation: 1,
+    };
+    let surface_hash =
+        crate::cli::prototype1_state::history::HistoryHash::of_bytes(b"artifact surface");
+    let eval_hash =
+        crate::cli::prototype1_state::history::HistoryHash::of_bytes(b"evaluation artifact");
+    let citation_hash =
+        crate::cli::prototype1_state::history::HistoryHash::of_bytes(b"candidate review");
+    let config_hash =
+        crate::cli::prototype1_state::history::HistoryHash::of_bytes(b"review config");
+    let changes = vec![
+        crate::successor_selection::PatchChange {
+            relpath: PathBuf::from("crates/ploke-core/tool_text/read_file.md"),
+            source_content_hash: Some("source-sha256".to_string()),
+            proposed_content_hash: Some("proposed-sha256".to_string()),
+        },
+        crate::successor_selection::PatchChange {
+            relpath: PathBuf::from("crates/ploke-core/tool_text/write_file.md"),
+            source_content_hash: Some("second-source-sha256".to_string()),
+            proposed_content_hash: Some("second-proposed-sha256".to_string()),
+        },
+    ];
+    let change_set_hash = crate::cli::prototype1_state::history::HistoryHash::of_domain_json(
+        "prototype1.history.candidate_patch_change_set.v1",
+        &changes,
+    )
+    .expect("change set hash");
+    let input = crate::successor_selection::SelectionInput::new(
+        candidate.clone(),
+        crate::BranchDisposition::Keep,
+        PathBuf::from("prototype1/evaluations/branch-reviewed.json"),
+        Vec::new(),
+    );
+    let payload = crate::cli::prototype1_state::history::EvaluationPayload::builder(
+        crate::cli::prototype1_state::history::SubjectRef::new(
+            "candidate:node-reviewed:plan_index=0",
+        ),
+        crate::cli::prototype1_state::history::ProcedureRef::new(
+            crate::successor_selection::PROCEDURE_ID,
+        ),
+    )
+    .selection_input(input)
+    .expect("selection input")
+    .patch_review(crate::successor_selection::PatchReview {
+        schema_version: 2,
+        procedure_id: crate::successor_selection::PATCH_REVIEW_PROCEDURE_ID.to_string(),
+        candidate,
+        artifact_id: crate::loop_graph::ArtifactId::new("artifact:reviewed"),
+        artifact_surface_hash: surface_hash.clone(),
+        evaluation_hash: eval_hash.clone(),
+        config_hash: config_hash.clone(),
+        change_set_hash: change_set_hash.clone(),
+        changes,
+        verdict: crate::successor_selection::PatchVerdict::Rejected,
+        confidence: crate::successor_selection::domains::Confidence::High,
+        blocking_findings: vec!["process-global cache is not safely invalidated".to_string()],
+        missing_evidence: Vec::new(),
+        rationale: vec!["reviewed exact source and proposed content".to_string()],
+        citation: crate::cli::prototype1_state::history::SealedEvidenceCitation {
+            ref_id: crate::successor_selection::candidate_review_ref("branch-reviewed"),
+            content_hash: Some(citation_hash.clone()),
+            record_name: Some(crate::successor_selection::PATCH_REVIEW_RECORD_NAME.to_string()),
+        },
+    })
+    .build();
+    let considered = vec![payload];
+    let sources =
+        vec![crate::cli::prototype1_state::history::TraversalCandidateSource::CurrentGeneration];
+    let metrics = crate::successor_selection::metrics::Set::from_considered(
+        crate::successor_selection::metrics::Policy::default(),
+        &considered,
+        &sources,
+    )
+    .expect("selection metrics");
+    let entry =
+        crate::cli::prototype1_state::history::SelectionDecisionEntry::new_no_selection_with_traversal_metrics(
+            crate::cli::prototype1_state::history::ProcedureRef::new(
+                crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID,
+            ),
+            crate::cli::prototype1_state::history::SelectionScope::new("patch-review-projection"),
+            considered,
+            sources,
+            Vec::new(),
+            None,
+            metrics,
+        )
+        .expect("selection entry");
+
+    let receipt = write_selection_decision_to_owner_db(
+        &db_path,
+        SelectionDecisionEvidence {
+            campaign_id: campaign,
+            parent_id: "parent-patch-review".to_string(),
+            entry,
+            decision_ref: Some("selection:parent-patch-review:none".to_string()),
+            recorded_at: Some("2026-07-17T00:00:00Z".to_string()),
+        },
+    )
+    .expect("selection evidence writes");
+    assert_eq!(receipt.candidate_count, 1);
+
+    let db = load_owner_eval_database(&db_path).expect("owner db loads");
+    let reviews = db
+        .raw_query_params(
+            r#"
+?[decision_id, member_id, procedure_id, node_id, branch_id, artifact_id, artifact_surface_hash, evaluation_hash, config_hash, change_set_hash, verdict, confidence, blocking_findings, missing_evidence, citation_ref, citation_hash, record_name] :=
+    *eval_selection_patch_review {
+        decision_id,
+        member_id,
+        procedure_id,
+        node_id,
+        branch_id,
+        artifact_id,
+        artifact_surface_hash,
+        evaluation_hash,
+        config_hash,
+        change_set_hash,
+        verdict,
+        confidence,
+        blocking_findings,
+        missing_evidence,
+        citation_ref,
+        citation_hash,
+        record_name,
+    }
+"#,
+            BTreeMap::new(),
+        )
+        .expect("patch review query");
+    assert_eq!(reviews.rows.len(), 1);
+    let review = reviews.row_refs().next().expect("patch review row");
+    assert_eq!(
+        review.get::<String>("decision_id").expect("decision id"),
+        receipt.decision_id
+    );
+    assert_eq!(
+        review.get::<String>("procedure_id").expect("procedure id"),
+        crate::successor_selection::PATCH_REVIEW_PROCEDURE_ID
+    );
+    assert_eq!(
+        review.get::<String>("node_id").expect("node id"),
+        "node-reviewed"
+    );
+    assert_eq!(
+        review.get::<String>("branch_id").expect("branch id"),
+        "branch-reviewed"
+    );
+    assert_eq!(
+        review.get::<String>("artifact_id").expect("artifact id"),
+        "artifact:reviewed"
+    );
+    assert_eq!(
+        review
+            .get::<String>("artifact_surface_hash")
+            .expect("surface hash"),
+        surface_hash.as_str()
+    );
+    assert_eq!(
+        review
+            .get::<String>("evaluation_hash")
+            .expect("evaluation hash"),
+        eval_hash.as_str()
+    );
+    assert_eq!(
+        review.get::<String>("config_hash").expect("config hash"),
+        config_hash.as_str()
+    );
+    assert_eq!(
+        review
+            .get::<String>("change_set_hash")
+            .expect("change set hash"),
+        change_set_hash.as_str()
+    );
+    assert_eq!(
+        review.get::<String>("verdict").expect("verdict"),
+        "rejected"
+    );
+    assert_eq!(
+        review.get::<String>("confidence").expect("confidence"),
+        "high"
+    );
+    assert_eq!(
+        review
+            .get::<Vec<String>>("blocking_findings")
+            .expect("blocking findings"),
+        vec!["process-global cache is not safely invalidated".to_string()]
+    );
+    assert!(
+        review
+            .get::<Vec<String>>("missing_evidence")
+            .expect("missing evidence")
+            .is_empty()
+    );
+    assert_eq!(
+        review.get::<String>("citation_ref").expect("citation ref"),
+        crate::successor_selection::candidate_review_ref("branch-reviewed")
+    );
+    assert_eq!(
+        review
+            .get::<String>("citation_hash")
+            .expect("citation hash"),
+        citation_hash.as_str()
+    );
+    assert_eq!(
+        review.get::<String>("record_name").expect("record name"),
+        crate::successor_selection::PATCH_REVIEW_RECORD_NAME
+    );
+
+    let changes = db
+        .raw_query_params(
+            r#"
+?[change_index, relpath, source_content_hash, proposed_content_hash] :=
+    *eval_selection_patch_change {
+        change_index,
+        relpath,
+        source_content_hash,
+        proposed_content_hash,
+    }
+:sort change_index
+"#,
+            BTreeMap::new(),
+        )
+        .expect("patch change query");
+    assert_eq!(changes.rows.len(), 2);
+    let rows = changes.row_refs().collect::<Vec<_>>();
+    assert_eq!(
+        rows[0].get::<String>("relpath").expect("first relpath"),
+        "crates/ploke-core/tool_text/read_file.md"
+    );
+    assert_eq!(
+        rows[1].get::<String>("relpath").expect("second relpath"),
+        "crates/ploke-core/tool_text/write_file.md"
+    );
+}
+
+#[test]
+fn strict_patch_projection_rejects_non_decision_grade_receipt_before_persistence() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let campaign = CampaignId::from("campaign-frontier-patch");
+    let review_hash =
+        crate::cli::prototype1_state::history::HistoryHash::of_bytes(b"review config");
+    let (db_path, ..) = seeded_patch_context(
+        tmp.path(),
+        &campaign,
+        ploke_records::run_profile::PatchGate::ReviewedAdmissible,
+        Some(&review_hash),
+    );
+    let make_payload = |node_id: &str,
+                        branch_id: &str,
+                        verdict: crate::successor_selection::PatchVerdict| {
+        let candidate = crate::successor_selection::CandidateRef {
+            node_id: node_id.to_string(),
+            branch_id: branch_id.to_string(),
+            generation: 1,
+        };
+        let input = crate::successor_selection::SelectionInput::new(
+            candidate.clone(),
+            crate::BranchDisposition::Keep,
+            PathBuf::from(format!("prototype1/evaluations/{branch_id}.json")),
+            Vec::new(),
+        );
+        let changes = vec![crate::successor_selection::PatchChange {
+            relpath: PathBuf::from(format!("crates/example/{branch_id}.rs")),
+            source_content_hash: Some(format!("source-{branch_id}")),
+            proposed_content_hash: Some(format!("proposed-{branch_id}")),
+        }];
+        let change_set_hash = crate::cli::prototype1_state::history::HistoryHash::of_domain_json(
+            "prototype1.history.candidate_patch_change_set.v1",
+            &changes,
+        )
+        .expect("change set hash");
+        let blocking_findings = (verdict == crate::successor_selection::PatchVerdict::Rejected)
+            .then(|| vec!["unsafe secondary edit".to_string()])
+            .unwrap_or_default();
+        crate::cli::prototype1_state::history::EvaluationPayload::builder(
+            crate::cli::prototype1_state::history::SubjectRef::new(format!(
+                "candidate:{node_id}:plan_index=0"
+            )),
+            crate::cli::prototype1_state::history::ProcedureRef::new(
+                crate::successor_selection::PROCEDURE_ID,
+            ),
+        )
+        .selection_input(input)
+        .expect("selection input")
+        .patch_review(crate::successor_selection::PatchReview {
+            schema_version: 2,
+            procedure_id: crate::successor_selection::PATCH_REVIEW_PROCEDURE_ID.to_string(),
+            candidate,
+            artifact_id: crate::loop_graph::ArtifactId::new(format!("artifact:{branch_id}")),
+            artifact_surface_hash: crate::cli::prototype1_state::history::HistoryHash::of_bytes(
+                format!("surface:{branch_id}").as_bytes(),
+            ),
+            evaluation_hash: crate::cli::prototype1_state::history::HistoryHash::of_bytes(
+                format!("evaluation:{branch_id}").as_bytes(),
+            ),
+            config_hash: crate::cli::prototype1_state::history::HistoryHash::of_bytes(
+                b"review config",
+            ),
+            change_set_hash,
+            changes,
+            verdict,
+            confidence: crate::successor_selection::domains::Confidence::High,
+            blocking_findings,
+            missing_evidence: Vec::new(),
+            rationale: vec!["reviewed every changed file".to_string()],
+            citation: crate::cli::prototype1_state::history::SealedEvidenceCitation {
+                ref_id: crate::successor_selection::candidate_review_ref(branch_id),
+                content_hash: Some(
+                    crate::cli::prototype1_state::history::HistoryHash::of_bytes(
+                        format!("review:{branch_id}").as_bytes(),
+                    ),
+                ),
+                record_name: Some(crate::successor_selection::PATCH_REVIEW_RECORD_NAME.to_string()),
+            },
+        })
+        .build()
+    };
+    let rejected = make_payload(
+        "node-rejected",
+        "branch-rejected",
+        crate::successor_selection::PatchVerdict::Rejected,
+    );
+    let admissible = make_payload(
+        "node-admissible",
+        "branch-admissible",
+        crate::successor_selection::PatchVerdict::Admissible,
+    );
+    let selected_subject = admissible.candidate.clone();
+    let considered = vec![rejected, admissible];
+    let sources = vec![
+        crate::cli::prototype1_state::history::TraversalCandidateSource::CurrentGeneration;
+        considered.len()
+    ];
+    let metrics = crate::successor_selection::metrics::Set::from_considered(
+        crate::successor_selection::metrics::Policy::default(),
+        &considered,
+        &sources,
+    )
+    .expect("selection metrics");
+    let strategy = crate::successor_selection::traversal::StrategyKind::default()
+        .with_patch_gate(crate::successor_selection::PatchGate::ReviewedAdmissible);
+    let entry =
+        crate::cli::prototype1_state::history::SelectionDecisionEntry::new_with_traversal_identity_metrics(
+            crate::cli::prototype1_state::history::ProcedureRef::new(
+                crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID,
+            ),
+            crate::cli::prototype1_state::history::SelectionScope::new("frontier-patch-projection"),
+            Some(selected_subject),
+            None,
+            None,
+            considered,
+            sources,
+            Vec::new(),
+            Some(crate::cli::prototype1_state::history::TraversalEvidence {
+                seed: 0,
+                strategy,
+                oracle_targets: Vec::new(),
+                selected_source: Some(
+                    crate::cli::prototype1_state::history::TraversalCandidateSource::CurrentGeneration,
+                ),
+                child_counts: BTreeMap::new(),
+            }),
+            metrics,
+            crate::successor_selection::SuccessorDecision {
+                procedure_id:
+                    crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID.to_string(),
+                candidate_node_id: "node-admissible".to_string(),
+                selected_branch_id: Some("branch-admissible".to_string()),
+                branch_disposition: "keep".to_string(),
+                outcome: crate::successor_selection::decision::SuccessorOutcome::Accepted,
+                findings: Vec::new(),
+                rationale: vec!["selected reviewed candidate".to_string()],
+            },
+        )
+        .expect("frontier selection entry");
+
+    let error = write_selection_decision_to_owner_db(
+        &db_path,
+        SelectionDecisionEvidence {
+            campaign_id: campaign,
+            parent_id: "parent-frontier-patch".to_string(),
+            entry,
+            decision_ref: None,
+            recorded_at: None,
+        },
+    )
+    .expect_err("semantically invalid strict receipt must fail before persistence");
+    assert!(
+        matches!(
+            error,
+            EvalStoreError::Validation {
+                field: "selection.entry.replay",
+                ..
+            }
+        ),
+        "unexpected error: {error}"
+    );
+    let db = load_owner_eval_database(&db_path).expect("setup database remains readable");
+    let decisions = db
+        .raw_query_params(
+            "?[decision_id] := *eval_selection_decision { decision_id }",
+            BTreeMap::new(),
+        )
+        .expect("selection decision query");
+    assert!(
+        decisions.rows.is_empty(),
+        "failed strict replay validation must not persist selection rows"
+    );
+}
+
+#[test]
 fn stable_json_mismatch() {
     let entry = empty_selection("roundtrip-mismatch");
     let error = super::selection::stable_entry_json(&entry, "not-the-entry-hash")
@@ -1415,8 +2397,13 @@ fn stable_json_mismatch() {
 #[test]
 fn selection_hash_loader_rejects_ambiguous_parent_receipts() {
     let tmp = tempfile::tempdir().expect("tmp");
-    let db_path = tmp.path().join("prototype1/eval-store.cozo.sqlite");
     let campaign = CampaignId::from("campaign-selection-attempts");
+    let (db_path, ..) = seeded_patch_context(
+        tmp.path(),
+        &campaign,
+        ploke_records::run_profile::PatchGate::Disabled,
+        None,
+    );
     let parent = "parent-selection-attempts";
     let first = empty_selection("attempt-a");
     let exact = first.clone();
@@ -1523,7 +2510,13 @@ fn selection_hash_loader_rejects_ambiguous_parent_receipts() {
 #[test]
 fn no_selection_projection_failure_rows_are_queryable() {
     let tmp = tempfile::tempdir().expect("tmp");
-    let db_path = tmp.path().join("prototype1/eval-store.cozo.sqlite");
+    let campaign = CampaignId::from("campaign-projection-only");
+    let (db_path, ..) = seeded_patch_context(
+        tmp.path(),
+        &campaign,
+        ploke_records::run_profile::PatchGate::Disabled,
+        None,
+    );
     let candidate = crate::cli::prototype1_state::history::SubjectRef::new("child-missing-input");
     let failure = crate::cli::prototype1_state::history::SelectionProjectionFailure::committed(
         crate::cli::prototype1_state::history::SelectionProjectionFailureKind::MissingSelectionInput,
@@ -1556,7 +2549,7 @@ fn no_selection_projection_failure_rows_are_queryable() {
     let receipt = write_selection_decision_to_owner_db(
         &db_path,
         SelectionDecisionEvidence {
-            campaign_id: CampaignId::from("campaign-projection-only"),
+            campaign_id: campaign,
             parent_id: "parent-projection-only".to_string(),
             entry,
             decision_ref: Some("selection:parent-projection-only:none".to_string()),
@@ -2199,7 +3192,11 @@ fn prototype1_eval_store_setup_relations_round_trip_actual_loop_types() {
         serde_json::to_vec_pretty(&closure).expect("closure json"),
     )
     .expect("closure file");
-    let admitted = sample_admitted_profile(tmp.path());
+    let mut admitted = sample_admitted_profile(tmp.path());
+    admitted.profile.selection.patch.gate =
+        ploke_records::run_profile::PatchGate::ReviewedAdmissible;
+    let review_hash =
+        crate::cli::prototype1_state::history::HistoryHash::of_bytes(b"review config");
     let baseline = sample_complete_baseline(campaign_id.clone());
     let parent = parent_identity();
     let db = Database::new_init().expect("db");
@@ -2211,6 +3208,7 @@ fn prototype1_eval_store_setup_relations_round_trip_actual_loop_types() {
             &manifest,
             profile::EvalStorageBackend::DualStrict,
             Some(&admitted),
+            Some(&review_hash),
             &closure_path,
             &closure,
         )
@@ -2442,6 +3440,16 @@ fn prototype1_eval_store_setup_relations_round_trip_actual_loop_types() {
             .expect("oracle targets"),
         vec!["BurntSushi__ripgrep-2209".to_string()]
     );
+    assert_eq!(
+        policy_row.get::<String>("patch_gate").expect("patch gate"),
+        "reviewed-admissible"
+    );
+    assert_eq!(
+        policy_row
+            .get::<String>("review_config_hash")
+            .expect("review config hash"),
+        review_hash.as_str()
+    );
     assert_eq!(policy_row.get::<i64>("timeout_secs").expect("timeout"), 300);
     assert_eq!(
         policy_row
@@ -2520,6 +3528,175 @@ fn prototype1_eval_store_setup_relations_round_trip_actual_loop_types() {
         "applied"
     );
     assert!(metrics_row.get::<bool>("valid_patch").expect("valid patch"));
+}
+
+#[test]
+fn completed_setup_rejects_missing_patch_relation() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let campaign = CampaignId::from("campaign-missing-patch-relation");
+    let (db_path, manifest, admitted, closure_path, closure) = seeded_patch_context(
+        tmp.path(),
+        &campaign,
+        ploke_records::run_profile::PatchGate::Disabled,
+        None,
+    );
+    super::cozo_store::mutate_owner_db(&db_path, |db| {
+        db.raw_query_mut_params("::remove eval_patch_gate", BTreeMap::new())
+            .map_err(|source| EvalStoreError::Db {
+                phase: "test.remove_patch_relation",
+                source,
+            })?;
+        Ok(())
+    })
+    .expect("patch relation removed");
+
+    let error = verify_r0_context_in_owner_db(
+        &db_path,
+        &manifest,
+        &admitted,
+        None,
+        &closure_path,
+        &closure,
+    )
+    .expect_err("completed setup must require the patch policy relation");
+    assert!(
+        matches!(
+            error,
+            EvalStoreError::Db {
+                phase: "verify.eval_patch_gate",
+                ..
+            }
+        ),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn completed_setup_rejects_missing_patch_row() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let campaign = CampaignId::from("campaign-missing-patch-row");
+    let (db_path, manifest, admitted, closure_path, closure) = seeded_patch_context(
+        tmp.path(),
+        &campaign,
+        ploke_records::run_profile::PatchGate::Disabled,
+        None,
+    );
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign.to_string().into());
+    super::cozo_store::mutate_owner_db(&db_path, |db| {
+        db.raw_query_mut_params(
+            "?[campaign_id] <- [[$campaign_id]] :rm eval_patch_gate { campaign_id }",
+            params,
+        )
+        .map_err(|source| EvalStoreError::Db {
+            phase: "test.remove_patch_row",
+            source,
+        })?;
+        Ok(())
+    })
+    .expect("patch row removed");
+
+    let error = verify_r0_context_in_owner_db(
+        &db_path,
+        &manifest,
+        &admitted,
+        None,
+        &closure_path,
+        &closure,
+    )
+    .expect_err("completed setup must require exactly one patch policy row");
+    assert!(
+        matches!(
+            error,
+            EvalStoreError::Validation {
+                field: "eval_patch_gate",
+                ..
+            }
+        ),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn completed_setup_rejects_wrong_patch_gate() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let campaign = CampaignId::from("campaign-wrong-patch-gate");
+    let review_hash =
+        crate::cli::prototype1_state::history::HistoryHash::of_bytes(b"admitted review config");
+    let (db_path, manifest, admitted, closure_path, closure) = seeded_patch_context(
+        tmp.path(),
+        &campaign,
+        ploke_records::run_profile::PatchGate::ReviewedAdmissible,
+        Some(&review_hash),
+    );
+    rewrite_patch_policy(
+        &db_path,
+        &campaign,
+        ploke_records::run_profile::PatchGate::Disabled,
+        None,
+    );
+
+    let error = verify_r0_context_in_owner_db(
+        &db_path,
+        &manifest,
+        &admitted,
+        Some(&review_hash),
+        &closure_path,
+        &closure,
+    )
+    .expect_err("completed setup must reject a different stored patch gate");
+    assert!(
+        matches!(
+            error,
+            EvalStoreError::Validation {
+                field: "eval_patch_gate",
+                ..
+            }
+        ),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn completed_setup_rejects_wrong_patch_config() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let campaign = CampaignId::from("campaign-wrong-patch-config");
+    let review_hash =
+        crate::cli::prototype1_state::history::HistoryHash::of_bytes(b"admitted review config");
+    let wrong_hash =
+        crate::cli::prototype1_state::history::HistoryHash::of_bytes(b"different review config");
+    let (db_path, manifest, admitted, closure_path, closure) = seeded_patch_context(
+        tmp.path(),
+        &campaign,
+        ploke_records::run_profile::PatchGate::ReviewedAdmissible,
+        Some(&review_hash),
+    );
+    rewrite_patch_policy(
+        &db_path,
+        &campaign,
+        ploke_records::run_profile::PatchGate::ReviewedAdmissible,
+        Some(&wrong_hash),
+    );
+
+    let error = verify_r0_context_in_owner_db(
+        &db_path,
+        &manifest,
+        &admitted,
+        Some(&review_hash),
+        &closure_path,
+        &closure,
+    )
+    .expect_err("completed setup must reject a different reviewer config");
+    assert!(
+        matches!(
+            error,
+            EvalStoreError::Validation {
+                field: "eval_patch_gate",
+                ..
+            }
+        ),
+        "unexpected error: {error}"
+    );
 }
 
 #[test]
@@ -3359,7 +4536,113 @@ fn sample_admitted_profile(root: &std::path::Path) -> profile::AdmittedRunProfil
     }
 }
 
-fn sample_closure_state(campaign_id: CampaignId) -> crate::closure::ClosureState {
+pub(crate) fn seeded_patch_context(
+    root: &Path,
+    campaign_id: &CampaignId,
+    gate: ploke_records::run_profile::PatchGate,
+    review_config_hash: Option<&crate::cli::prototype1_state::history::HistoryHash>,
+) -> (
+    PathBuf,
+    CampaignManifest,
+    profile::AdmittedRunProfile,
+    PathBuf,
+    crate::closure::ClosureState,
+) {
+    let manifest_path = root.join("campaign.json");
+    let closure_path = root.join("closure-state.json");
+    let manifest = sample_campaign_manifest(campaign_id.clone());
+    let closure = sample_closure_state(campaign_id.clone());
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).expect("manifest json"),
+    )
+    .expect("manifest file");
+    fs::write(
+        &closure_path,
+        serde_json::to_vec_pretty(&closure).expect("closure json"),
+    )
+    .expect("closure file");
+    let mut admitted = sample_admitted_profile(root);
+    admitted.profile.selection.patch.gate = gate;
+    let db_path = prototype1_eval_store_db_path(&manifest_path);
+    write_r0_context_to_owner_db(
+        &db_path,
+        &manifest_path,
+        &manifest,
+        profile::EvalStorageBackend::DualStrict,
+        Some(&admitted),
+        review_config_hash,
+        &closure_path,
+        &closure,
+    )
+    .expect("setup patch policy writes");
+    verify_r0_context_in_owner_db(
+        &db_path,
+        &manifest,
+        &admitted,
+        review_config_hash,
+        &closure_path,
+        &closure,
+    )
+    .expect("setup patch policy verifies");
+    (db_path, manifest, admitted, closure_path, closure)
+}
+
+fn rewrite_patch_policy(
+    db_path: &Path,
+    campaign_id: &CampaignId,
+    gate: ploke_records::run_profile::PatchGate,
+    review_config_hash: Option<&crate::cli::prototype1_state::history::HistoryHash>,
+) {
+    super::cozo_store::mutate_owner_db(db_path, |db| {
+        let mut query_params = BTreeMap::new();
+        query_params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+        let rows = db
+            .raw_query_params(
+                r#"
+?[profile_ref_id, ingested_at] :=
+    *eval_patch_gate { campaign_id, profile_ref_id, ingested_at },
+    campaign_id = $campaign_id
+"#,
+                query_params,
+            )
+            .map_err(|source| EvalStoreError::Db {
+                phase: "test.query_patch_policy",
+                source,
+            })?;
+        let row = rows.row_refs().next().expect("stored patch policy row");
+        let mut params = BTreeMap::new();
+        params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+        params.insert(
+            "profile_ref_id".to_string(),
+            row.get::<String>("profile_ref_id")
+                .expect("stored profile ref")
+                .into(),
+        );
+        params.insert("gate".to_string(), gate.as_str().into());
+        params.insert(
+            "review_config_hash".to_string(),
+            review_config_hash
+                .map(|hash| DataValue::from(hash.as_str().to_string()))
+                .unwrap_or(DataValue::Null),
+        );
+        params.insert(
+            "ingested_at".to_string(),
+            row.get::<String>("ingested_at")
+                .expect("stored ingestion time")
+                .into(),
+        );
+        put_eval_params(
+            db,
+            &super::setup::PatchGateSchema::SCHEMA,
+            params,
+            "test.put_patch_policy",
+        )
+    })
+    .expect("patch policy rewritten");
+}
+
+pub(crate) fn sample_closure_state(campaign_id: CampaignId) -> crate::closure::ClosureState {
     crate::closure::ClosureState {
         schema_version: crate::closure::CLOSURE_STATE_SCHEMA_VERSION.to_string(),
         campaign_id,
@@ -3631,9 +4914,10 @@ fn query_run_profile_policy(db: &Database, campaign_id: &CampaignId) -> QueryRes
     params.insert("campaign_id".to_string(), campaign_id.to_string().into());
     db.raw_query_params(
         r#"
-?[profile_ref_id, max_generations, max_total_nodes, child_min, child_max, parallel_targets, generation_source, oracle_gate, oracle_targets, timeout_secs, control_mode] :=
+?[profile_ref_id, max_generations, max_total_nodes, child_min, child_max, parallel_targets, generation_source, oracle_gate, oracle_targets, patch_gate, review_config_hash, timeout_secs, control_mode] :=
     *eval_run_profile_policy { campaign_id, profile_ref_id, max_generations, max_total_nodes, child_min, child_max, parallel_targets, generation_source, timeout_secs, control_mode },
     *eval_oracle_gate { campaign_id, profile_ref_id, gate: oracle_gate, targets: oracle_targets },
+    *eval_patch_gate { campaign_id, profile_ref_id, gate: patch_gate, review_config_hash },
     campaign_id = $campaign_id
 "#,
         params,

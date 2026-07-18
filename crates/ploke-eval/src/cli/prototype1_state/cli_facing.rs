@@ -1002,6 +1002,7 @@ fn ensure_setup_owner_db(
     let manifest = load_campaign_manifest(&campaign.campaign_id)?;
     let closure = load_closure_state(&campaign.campaign_id)?;
     let db_path = eval_store::prototype1_eval_store_db_path(&campaign.manifest_path);
+    let review_hash = admitted_review_hash(&campaign.manifest_path, admitted)?;
     let result = if db_path.exists() {
         return verify_setup_owner_db(campaign, admitted, closure_path);
     } else {
@@ -1011,6 +1012,7 @@ fn ensure_setup_owner_db(
             &manifest,
             storage,
             Some(admitted),
+            review_hash.as_ref(),
             closure_path,
             &closure,
         )
@@ -1039,10 +1041,32 @@ fn verify_setup_owner_db(
             "completed setup is missing its owner database",
         ));
     }
-    eval_store::verify_r0_context_in_owner_db(&db_path, &manifest, admitted, closure_path, &closure)
-        .map_err(|err| {
-            prototype1_state_transition_error("prototype1_setup_r0_context", err.to_string())
-        })
+    let review_hash = admitted_review_hash(&campaign.manifest_path, admitted)?;
+    eval_store::verify_r0_context_in_owner_db(
+        &db_path,
+        &manifest,
+        admitted,
+        review_hash.as_ref(),
+        closure_path,
+        &closure,
+    )
+    .map_err(|err| {
+        prototype1_state_transition_error("prototype1_setup_r0_context", err.to_string())
+    })
+}
+
+fn admitted_review_hash(
+    manifest_path: &Path,
+    admitted: &profile::AdmittedRunProfile,
+) -> Result<Option<HistoryHash>, PrepareError> {
+    if admitted.profile.selection.patch_gate()
+        == crate::successor_selection::PatchGate::ReviewedAdmissible
+    {
+        crate::cli::prototype1_state::candidate_review::admitted_config_hash(manifest_path)
+            .map(Some)
+    } else {
+        Ok(None)
+    }
 }
 
 fn verify_completed_setup(
@@ -2008,6 +2032,7 @@ pub(crate) struct PlannedChildOutcome {
     pub(crate) evaluation_report: Option<Prototype1BranchEvaluationReport>,
     pub(crate) selection_input: Option<SelectionInput>,
     pub(crate) surface: Option<SurfaceEvidence>,
+    pub(crate) harness: Option<harness_request::child::Evidence>,
     pub(crate) artifact_surface: Option<ArtifactSurface>,
 }
 
@@ -2164,6 +2189,11 @@ impl ParentSelectionOutcome {
             .map_err(|error| PrepareError::InvalidBatchSelection {
                 detail: format!("persisted selection receipt is invalid: {error}"),
             })?;
+        traversal_selection::validate_patch_replay(&entry).map_err(|error| {
+            PrepareError::InvalidBatchSelection {
+                detail: format!("persisted selection receipt failed strict replay: {error}"),
+            }
+        })?;
         let Some(decision) = entry.decision.clone() else {
             return Ok(Self::NoSelection { entry });
         };
@@ -2219,6 +2249,42 @@ impl ParentSelectionOutcome {
             });
         }
         Ok(outcome)
+    }
+
+    pub(crate) fn from_admitted_entry(
+        entry: SelectionDecisionEntry,
+        expected_gate: crate::successor_selection::PatchGate,
+        expected_config: Option<&HistoryHash>,
+    ) -> Result<Self, PrepareError> {
+        let recorded_gate = entry
+            .traversal
+            .as_ref()
+            .map(|traversal| traversal.strategy.patch_gate())
+            .unwrap_or(crate::successor_selection::PatchGate::Disabled);
+        if recorded_gate != expected_gate {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "persisted selection patch gate does not match admitted profile: recorded={}, admitted={}",
+                    serde_name(&recorded_gate),
+                    serde_name(&expected_gate)
+                ),
+            });
+        }
+        if expected_gate == crate::successor_selection::PatchGate::ReviewedAdmissible {
+            let expected_config =
+                expected_config.ok_or_else(|| PrepareError::InvalidBatchSelection {
+                    detail: "strict patch receipt hydration requires admitted reviewer config"
+                        .to_string(),
+                })?;
+            traversal_selection::validate_patch_config(&entry, expected_config).map_err(
+                |error| PrepareError::InvalidBatchSelection {
+                    detail: format!(
+                        "persisted selection reviewer config does not match admitted profile: {error}"
+                    ),
+                },
+            )?;
+        }
+        Self::from_entry(entry)
     }
 
     pub(crate) fn selected(&self) -> Option<(&SuccessorDecision, &SelectionSealMaterial)> {
@@ -2312,6 +2378,7 @@ pub(crate) struct Prototype1StateRunShape {
     pub(crate) successor_oracle_mode: crate::successor_selection::OracleMode,
     pub(crate) successor_oracle_require_evidence: bool,
     pub(crate) successor_oracle_gate: crate::successor_selection::OracleGate,
+    pub(crate) successor_patch_gate: crate::successor_selection::PatchGate,
     pub(crate) successor_oracle_targets: Vec<String>,
     pub(crate) successor_metrics_policy: crate::successor_selection::metrics::Policy,
     pub(crate) eval_storage_backend: profile::EvalStorageBackend,
@@ -2336,6 +2403,7 @@ impl Prototype1StateRunShape {
             successor_oracle_mode: crate::successor_selection::OracleMode::RecordOnly,
             successor_oracle_require_evidence: true,
             successor_oracle_gate: crate::successor_selection::OracleGate::Disabled,
+            successor_patch_gate: crate::successor_selection::PatchGate::Disabled,
             successor_oracle_targets: Vec::new(),
             successor_metrics_policy: crate::successor_selection::metrics::Policy::default(),
             eval_storage_backend: profile::EvalStorageBackend::Fs,
@@ -2356,6 +2424,7 @@ impl Prototype1StateRunShape {
             successor_oracle_mode: profile.selection.oracle_mode(),
             successor_oracle_require_evidence: profile.selection.oracle_require_evidence(),
             successor_oracle_gate: profile.selection.oracle_gate(),
+            successor_patch_gate: profile.selection.patch_gate(),
             successor_oracle_targets: profile.target.eval_instances(),
             successor_metrics_policy: profile.selection.metrics_policy(),
             eval_storage_backend: profile.storage.eval.backend,
@@ -7619,6 +7688,7 @@ pub(crate) fn run_planned_child(
         evaluation_report,
         selection_input,
         surface,
+        harness,
         artifact_surface,
         // Rejected attempts from proposal validation are tracked separately
         // and projected as payload-only candidates.
@@ -7744,6 +7814,7 @@ fn stored_child_outcome(
         evaluation_report: report,
         selection_input,
         surface: child.surface().cloned(),
+        harness: child.harness_evidence().cloned(),
         artifact_surface,
         node: stored,
     }))
@@ -8269,6 +8340,7 @@ fn read_only_child_outcome(
         evaluation_report: report,
         selection_input,
         surface: child.surface().cloned(),
+        harness: child.harness_evidence().cloned(),
         artifact_surface,
         node: stored,
     }))
@@ -8551,6 +8623,7 @@ pub(crate) async fn run_adaptive_child_fanout(
     rejected_surface_attempts: &[surface_attempt::Evidence],
     selection_seed: u64,
     selection_strategy: ActiveSelectionStrategy,
+    review_config: Option<&ploke_protocol::JsonLlmConfig>,
 ) -> Result<(Vec<PlannedChildOutcome>, ParentSelectionOutcome), PrepareError> {
     if children.is_empty() {
         return Err(PrepareError::InvalidBatchSelection {
@@ -8583,6 +8656,14 @@ pub(crate) async fn run_adaptive_child_fanout(
         .await?;
         completed.append(&mut batch_outcomes);
         completed.sort_by_key(|outcome| outcome.plan_index);
+        if let Some(config) = review_config {
+            crate::cli::prototype1_state::candidate_review::ensure_reviews(
+                manifest_path,
+                &completed,
+                config,
+            )
+            .await?;
+        }
 
         let parent_selection = ParentSelection::new(
             manifest_path,
@@ -8928,6 +9009,7 @@ impl Prototype1SuccessorSelection {
         oracle: crate::successor_selection::OracleMode,
         require_evidence: bool,
         gate: crate::successor_selection::OracleGate,
+        patch_gate: crate::successor_selection::PatchGate,
         oracle_targets: Vec<String>,
         metrics_policy: crate::successor_selection::metrics::Policy,
     ) -> ActiveSelectionStrategy {
@@ -8937,7 +9019,8 @@ impl Prototype1SuccessorSelection {
                 traversal: StrategyKind::score_child_prop()
                     .with_metrics(metrics)
                     .with_oracle_policy(oracle, require_evidence)
-                    .with_oracle_gate(gate),
+                    .with_oracle_gate(gate)
+                    .with_patch_gate(patch_gate),
                 oracle_targets,
                 metrics_policy,
             },
@@ -8946,7 +9029,8 @@ impl Prototype1SuccessorSelection {
                 traversal: StrategyKind::default()
                     .with_metrics(metrics)
                     .with_oracle_policy(oracle, require_evidence)
-                    .with_oracle_gate(gate),
+                    .with_oracle_gate(gate)
+                    .with_patch_gate(patch_gate),
                 oracle_targets,
                 metrics_policy,
             },
@@ -8955,7 +9039,8 @@ impl Prototype1SuccessorSelection {
                 traversal: StrategyKind::score_child_prop()
                     .with_metrics(metrics)
                     .with_oracle_policy(oracle, require_evidence)
-                    .with_oracle_gate(gate),
+                    .with_oracle_gate(gate)
+                    .with_patch_gate(patch_gate),
                 oracle_targets,
                 metrics_policy,
             },
@@ -8976,6 +9061,7 @@ pub(crate) fn selection_outcome_for_profile(
         run_profile.selection.oracle_mode(),
         run_profile.selection.oracle_require_evidence(),
         run_profile.selection.oracle_gate(),
+        run_profile.selection.patch_gate(),
         run_profile.target.eval_instances(),
         run_profile.selection.metrics_policy(),
     );
@@ -9396,6 +9482,13 @@ impl<'a> ParentSelection<'a> {
     pub(crate) fn current_generation_candidates(
         &self,
     ) -> Result<GenerationCandidateProjection, PrepareError> {
+        self.project_candidates(crate::successor_selection::PatchGate::Disabled)
+    }
+
+    fn project_candidates(
+        &self,
+        patch_gate: crate::successor_selection::PatchGate,
+    ) -> Result<GenerationCandidateProjection, PrepareError> {
         let mut projection_failures = Vec::new();
         let mut considered = Vec::new();
         for outcome in self.child_outcomes {
@@ -9405,10 +9498,22 @@ impl<'a> ParentSelection<'a> {
             ));
             let procedure = ProcedureRef::new(crate::successor_selection::PROCEDURE_ID);
             let sealed_body = current_generation_candidate_evidence(outcome)?;
-            let artifact = candidate_artifact_from_outcome(outcome)?;
+            let artifact = candidate_artifact_from_outcome(outcome, patch_gate)?;
+            let review = if patch_gate == crate::successor_selection::PatchGate::ReviewedAdmissible
+            {
+                crate::cli::prototype1_state::candidate_review::load_evidence(
+                    self.manifest_path,
+                    outcome,
+                )?
+            } else {
+                None
+            };
             let mut builder = EvaluationPayload::builder(candidate.clone(), procedure)
                 .sealed_candidate_evidence(sealed_body)
                 .candidate_artifact(artifact);
+            if let Some(review) = review {
+                builder = builder.patch_review(review);
+            }
             if let Some(surface) = outcome.surface.as_ref() {
                 builder = builder.surface_attempt_evidence(surface_attempt_from_surface(surface));
             }
@@ -9505,7 +9610,7 @@ impl<'a> ParentSelection<'a> {
                     detail: format!("failed to load History traversal candidates: {err}"),
                 })?;
         let candidates = without_active_parent_candidate(candidates, self.parent_identity);
-        let current = self.current_generation_candidates()?;
+        let current = self.project_candidates(strategy.traversal.patch_gate())?;
         let traversal_candidates = traversal_selection::Candidates::from_history(candidates)
             .with_current_generation(current_scope, current.considered)
             .map_err(|err| PrepareError::InvalidBatchSelection {
@@ -9618,10 +9723,16 @@ impl ScopeFor<Generation> for ParentSelection<'_> {
 
 fn candidate_artifact_from_outcome(
     outcome: &PlannedChildOutcome,
+    patch_gate: crate::successor_selection::PatchGate,
 ) -> Result<CandidateArtifact, PrepareError> {
     let mut artifact = CandidateArtifact::new(outcome.node.clone(), outcome.resolved.clone());
     if let Some(surface) = outcome.artifact_surface.clone() {
         artifact = artifact.with_artifact_surface(surface);
+    }
+    if patch_gate == crate::successor_selection::PatchGate::ReviewedAdmissible
+        && let Some(harness) = outcome.harness.clone()
+    {
+        artifact = artifact.with_harness(harness);
     }
     match outcome.surface.clone() {
         Some(surface) => {

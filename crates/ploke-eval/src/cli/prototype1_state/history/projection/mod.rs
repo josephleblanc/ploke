@@ -2527,6 +2527,8 @@ pub(crate) struct CandidateArtifact {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) surface: Option<SurfaceEvidence>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) harness: Option<super::edit_surface::harness_request::child::Evidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) artifact_surface: Option<ArtifactSurface>,
 }
 
@@ -2540,6 +2542,7 @@ impl CandidateArtifact {
             node,
             resolved,
             surface: None,
+            harness: None,
             artifact_surface: None,
         }
     }
@@ -2561,6 +2564,15 @@ impl CandidateArtifact {
     pub(crate) fn with_artifact_surface(mut self, surface: ArtifactSurface) -> Self {
         self.schema_version = self.schema_version.max(3);
         self.artifact_surface = Some(surface);
+        self
+    }
+
+    pub(crate) fn with_harness(
+        mut self,
+        evidence: super::edit_surface::harness_request::child::Evidence,
+    ) -> Self {
+        self.schema_version = self.schema_version.max(4);
+        self.harness = Some(evidence);
         self
     }
 
@@ -2610,6 +2622,10 @@ pub(crate) struct EvaluationPayload {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) artifact: Option<CandidateArtifact>,
 
+    /// Artifact-bound semantic safety review used by strict patch admission.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) patch_review: Option<crate::successor_selection::PatchReview>,
+
     /// Durable edit-surface attempt evidence visible to parent-time selection
     /// and diagnosis, including rejected/no-artifact apply outcomes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2632,6 +2648,7 @@ impl EvaluationPayload {
             source_hashes: Vec::new(),
             sealed_evidence: None,
             artifact: None,
+            patch_review: None,
             surface_attempt: None,
         }
     }
@@ -3309,6 +3326,7 @@ pub(crate) struct EvaluationPayloadBuilder {
     source_hashes: Vec<HistoryHash>,
     sealed_evidence: Option<SealedCandidateEvidence>,
     artifact: Option<CandidateArtifact>,
+    patch_review: Option<crate::successor_selection::PatchReview>,
     surface_attempt: Option<surface_attempt::Evidence>,
 }
 
@@ -3348,6 +3366,11 @@ impl EvaluationPayloadBuilder {
         self
     }
 
+    pub(crate) fn patch_review(mut self, review: crate::successor_selection::PatchReview) -> Self {
+        self.patch_review = Some(review);
+        self
+    }
+
     pub(crate) fn surface_attempt_evidence(mut self, evidence: surface_attempt::Evidence) -> Self {
         self.surface_attempt = Some(evidence);
         self
@@ -3364,6 +3387,9 @@ impl EvaluationPayloadBuilder {
         if self.surface_attempt.is_some() {
             schema_version = schema_version.max(4);
         }
+        if self.patch_review.is_some() {
+            schema_version = schema_version.max(5);
+        }
 
         if let Some(ref sealed) = self.sealed_evidence {
             append_sealed_evidence_citation_pairs(
@@ -3371,6 +3397,13 @@ impl EvaluationPayloadBuilder {
                 &mut self.source_hashes,
                 sealed,
             );
+        }
+        if let Some(review) = self.patch_review.as_ref()
+            && let Some(hash) = review.citation.content_hash.as_ref()
+        {
+            self.source_refs
+                .push(EvidenceRef::new(review.citation.ref_id.clone()));
+            self.source_hashes.push(hash.clone());
         }
 
         EvaluationPayload {
@@ -3384,6 +3417,7 @@ impl EvaluationPayloadBuilder {
             source_hashes: self.source_hashes,
             sealed_evidence: self.sealed_evidence,
             artifact: self.artifact,
+            patch_review: self.patch_review,
             surface_attempt: self.surface_attempt,
         }
     }

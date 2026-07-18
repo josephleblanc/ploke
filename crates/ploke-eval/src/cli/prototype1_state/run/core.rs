@@ -2116,7 +2116,22 @@ fn selection_available(
                 db_path.display()
             ),
         })? {
-            return ParentSelectionOutcome::from_entry(entry);
+            let patch_gate = context.admitted_profile.profile.selection.patch_gate();
+            let config_hash =
+                if patch_gate == crate::successor_selection::PatchGate::ReviewedAdmissible {
+                    Some(
+                        crate::cli::prototype1_state::candidate_review::admitted_config_hash(
+                            &context.manifest_path,
+                        )?,
+                    )
+                } else {
+                    None
+                };
+            return ParentSelectionOutcome::from_admitted_entry(
+                entry,
+                patch_gate,
+                config_hash.as_ref(),
+            );
         }
     }
     selection_outcome_for_profile(
@@ -3276,6 +3291,7 @@ fn reconstruct_terminal_outcomes(
                     .as_ref()
                     .map(|report| selection_input_from_child_report(&snapshot.node, report)),
                 surface: snapshot.plan_child.surface().cloned(),
+                harness: snapshot.plan_child.harness_evidence().cloned(),
                 artifact_surface: snapshot.artifact_surface.clone(),
             })
         })
@@ -4285,6 +4301,22 @@ mod tests {
             )
             .expect("selected receipt");
         let db_path = prototype1_eval_store_db_path(&context.manifest_path);
+        let manifest =
+            crate::campaign::load_campaign_manifest(&context.campaign_id).expect("load campaign");
+        let closure_path =
+            campaign_closure_state_path(&context.campaign_id).expect("closure state path");
+        let closure = load_closure_state(&context.campaign_id).expect("load closure");
+        crate::cli::prototype1_state::eval_store::write_r0_context_to_owner_db(
+            &db_path,
+            &context.manifest_path,
+            &manifest,
+            profile::EvalStorageBackend::DualStrict,
+            Some(&context.admitted_profile),
+            None,
+            &closure_path,
+            &closure,
+        )
+        .expect("persist admitted setup authority");
         crate::cli::prototype1_state::eval_store::write_selection_decision_to_owner_db(
             &db_path,
             crate::cli::prototype1_state::eval_store::SelectionDecisionEvidence {

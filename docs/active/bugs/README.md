@@ -240,3 +240,8 @@ file and current code before treating a report as still open.
   Source repaired, fresh strict live validation pending: v22 reached R11 but
   default typed JSON decoding moved one selection-formula float by one ULP;
   exact float replay plus a write-side rehash guard preserves the strict loader.
+- [`2026-07-17-prototype1-selection-without-candidate-safety-proof.md`](./2026-07-17-prototype1-selection-without-candidate-safety-proof.md)
+  Source repaired, fresh strict handoff proof pending: v25 reached a valid R12
+  but selected an unsafe candidate; an artifact-bound semantic review gate,
+  exact historical counterfactual, and fail-closed DB/audit bindings now guard
+  selection without modifying the preserved run.

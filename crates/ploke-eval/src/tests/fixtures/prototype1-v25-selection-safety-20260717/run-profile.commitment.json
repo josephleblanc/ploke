@@ -1,0 +1,7 @@
+{
+  "schema_version": "prototype1-run-profile-commitment.v1",
+  "profile_path": "/home/brasides/.ploke-eval/campaigns/p1-v25-strictkeephandoff-mbe-g35f-direct-3g1x3-p3-obs2400-20260717-221126/prototype1/run-profile.toml",
+  "sha256": "c3b2fd9147560917f64bb0d28a833016f0e46080fd9453e73f3883162631b85a",
+  "source_path": "/home/brasides/.ploke-eval/profiles/p1-v25-strictkeephandoff-mbe-g35f-direct-3g1x3-p3-obs2400-20260717-221126.toml",
+  "admitted_at": "2026-07-18T05:12:07.090+00:00"
+}

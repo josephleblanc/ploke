@@ -221,6 +221,8 @@ pub struct Selection {
     pub metrics: Metrics,
     #[serde(default)]
     pub oracle: Oracle,
+    #[serde(default, skip_serializing_if = "Patch::is_disabled")]
+    pub patch: Patch,
     pub seed: u64,
 }
 
@@ -231,6 +233,7 @@ impl Default for Selection {
             evidence: SelectionEvidence::Operational,
             metrics: Metrics::default(),
             oracle: Oracle::default(),
+            patch: Patch::default(),
             seed: 0,
         }
     }
@@ -364,6 +367,40 @@ pub enum OracleGate {
     #[default]
     Disabled,
     AllResolved,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Patch {
+    #[serde(default)]
+    pub gate: PatchGate,
+}
+
+impl Patch {
+    pub fn is_disabled(&self) -> bool {
+        self.gate.is_disabled()
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum PatchGate {
+    #[default]
+    Disabled,
+    ReviewedAdmissible,
+}
+
+impl PatchGate {
+    pub fn is_disabled(&self) -> bool {
+        *self == Self::Disabled
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Disabled => "disabled",
+            Self::ReviewedAdmissible => "reviewed-admissible",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -805,6 +842,41 @@ name = "runtime-defaults"
         assert_eq!(parsed.selection.oracle.mode, OracleMode::RecordOnly);
         assert!(parsed.selection.oracle.require_evidence);
         assert_eq!(parsed.selection.oracle.gate, OracleGate::Disabled);
+    }
+
+    #[test]
+    fn run_profile_toml_defaults_patch_gate_to_disabled() {
+        let parsed: RunProfileRecord = toml::from_str(PROFILE).expect("profile parses");
+
+        assert_eq!(parsed.selection.patch.gate, PatchGate::Disabled);
+    }
+
+    #[test]
+    fn run_profile_toml_roundtrips_reviewed_admissible_patch_gate() {
+        let profile = PROFILE.replace(
+            "[selection.metrics]",
+            "[selection.patch]\ngate = \"reviewed-admissible\"\n\n[selection.metrics]",
+        );
+        let parsed: RunProfileRecord = toml::from_str(&profile).expect("profile parses");
+
+        assert_eq!(parsed.selection.patch.gate, PatchGate::ReviewedAdmissible);
+
+        let encoded = toml::to_string(&parsed).expect("profile serializes");
+        let decoded: RunProfileRecord = toml::from_str(&encoded).expect("roundtrip parses");
+
+        assert_eq!(decoded, parsed);
+    }
+
+    #[test]
+    fn run_profile_toml_rejects_unknown_patch_policy_fields() {
+        let profile = PROFILE.replace(
+            "[selection.metrics]",
+            "[selection.patch]\ngate = \"disabled\"\nunknown = true\n\n[selection.metrics]",
+        );
+        let error =
+            toml::from_str::<RunProfileRecord>(&profile).expect_err("unknown patch field rejected");
+
+        assert!(error.to_string().contains("unknown field `unknown`"));
     }
 
     #[test]

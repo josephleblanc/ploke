@@ -241,12 +241,13 @@ fn response_message(response: &WalkResponse) -> String {
             query.result.row_count
         ),
         WalkResponse::Config { config, .. } => format!(
-            "campaign {}\nsetup plan {}\nsetup receipt {}\nprovider {} (admitted manifest)\nprofile {}\nrun mode {:?}\nparallel cap {} ({:?})\npatch cap {} ({:?})",
+            "campaign {}\nsetup plan {}\nsetup receipt {}\nprovider {} (admitted manifest)\nprofile {}\ncandidate patch gate {}\nrun mode {:?}\nparallel cap {} ({:?})\npatch cap {} ({:?})",
             config.identity.record.campaign_id,
             short_hash(config.campaign.admission.plan_hash.as_str()),
             config.campaign.admission.path.display(),
             config.campaign.provider,
             config.profile.record.name,
+            config.profile.record.selection.patch.gate.as_str(),
             config.control.mode,
             config.control.parallel_cap.value,
             config.control.parallel_cap.source,

@@ -439,6 +439,22 @@ fn parent_selection_outcome_hydrates_current_generation_entry_exactly() {
             .and_then(|traversal| traversal.selected_source),
         Some(TraversalCandidateSource::CurrentGeneration)
     );
+    match ParentSelectionOutcome::from_admitted_entry(
+        original.clone(),
+        crate::successor_selection::PatchGate::ReviewedAdmissible,
+        None,
+    ) {
+        Ok(_) => panic!("receipt admitted under a different patch gate must fail closed"),
+        Err(PrepareError::InvalidBatchSelection { detail }) => {
+            assert!(
+                detail.contains(
+                    "persisted selection patch gate does not match admitted profile: recorded=disabled, admitted=reviewed-admissible"
+                ),
+                "unexpected patch gate mismatch error: {detail}"
+            );
+        }
+        Err(other) => panic!("expected invalid selection error, got {other:?}"),
+    }
 
     let mut missing = original;
     missing
@@ -9161,6 +9177,7 @@ fn test_completed_outcome(
         evaluation_report: Some(report),
         selection_input: Some(selection_input),
         surface: None,
+        harness: None,
         artifact_surface: Some(ArtifactSurface::test(&node.node_id)),
         node,
     }
@@ -9418,6 +9435,7 @@ async fn r12_reject_replay() {
         evaluation_report: Some(report.clone()),
         selection_input: Some(selection_input_from_child_report(&node, &report)),
         surface: child.surface().cloned(),
+        harness: child.harness_evidence().cloned(),
         artifact_surface: Some(
             child
                 .harness_evidence()
@@ -9461,6 +9479,7 @@ async fn r12_reject_replay() {
         successor_oracle_mode: profile.selection.oracle_mode(),
         successor_oracle_require_evidence: profile.selection.oracle_require_evidence(),
         successor_oracle_gate: profile.selection.oracle_gate(),
+        successor_patch_gate: crate::successor_selection::PatchGate::Disabled,
         successor_oracle_targets: profile.target.eval_instances(),
         successor_metrics_policy: profile.selection.metrics_policy(),
         eval_storage_backend: profile.storage.eval.backend,
@@ -9930,6 +9949,7 @@ fn v15_missing_oracle_replay_fails_closed_under_all_resolved_gate() {
         evaluation_report: Some(report.clone()),
         selection_input: Some(selection_input_from_child_report(&node, &report)),
         surface: child.surface().cloned(),
+        harness: child.harness_evidence().cloned(),
         artifact_surface: Some(
             child
                 .harness_evidence()
@@ -9972,6 +9992,562 @@ fn v15_missing_oracle_replay_fails_closed_under_all_resolved_gate() {
     );
     assert!(!fixture.join("prototype1/history").exists());
     assert!(!eval_store::prototype1_eval_store_db_path(&manifest_path).exists());
+}
+
+#[test]
+fn v25_receipt_replay() {
+    const SELECTED_NODE: &str = "node-f4f44e07e0be8caa";
+    const SELECTED_BRANCH: &str = "branch-55892858db150ccd";
+    const OTHER_BLOCKED_NODE: &str = "node-3247ff02a2053a57";
+    const ADMISSIBLE_NODE: &str = "node-2f0b3cda4c2c8d89";
+    const SECOND_PATH: &str = "crates/ploke-tui/src/tools/get_code_edges.rs";
+    const SECOND_SOURCE_HASH: &str =
+        "be0dd87df60e1aa5e1381ad9d9ee7d404863487dd58fa129a3c93a9686e91776";
+    const SECOND_PROPOSED_HASH: &str =
+        "055dd8d3c5a357ca1177b69125eff2dace008cb741b18523f88ad1f6659f6d66";
+    const DECISION_HASH: &str = "26e318146c7ca203b18f924b6b329e96975743dfbe416a92d743730912545de6";
+    const ENTRY_SHA256: &str = "b453ddaf8d0ac90527835568f8ad16ad93a0d84158deb0fc035d082802ff2615";
+    const SET_ROOT: &str = "6632780e126edc069f4b8d103dc36ea33fdc35b77119c1066a8a36a29108cf6c";
+    const PAYLOAD_HASHES: [&str; 3] = [
+        "519cb576045f8236e3cc74a663322d9cabdf2f57990f330b0f83986afd7bf211",
+        "7ebdf2b794704b4952fc54e0040b45ac524793dc059a7236c26bddb76fde4608",
+        "567c194c04882b04c3c7b7cc2f0890086bce94e5e1b5a7bdfe85fb90c060c7fe",
+    ];
+    const FIXTURE_HASHES: [(&str, &str); 14] = [
+        (
+            "branch-269c5d245f354a1e.evaluation.json",
+            "df45a63dd9af27f2061a6fb82f6194c020082cfd32c5ee5bb45e1d38acd6928d",
+        ),
+        (
+            "branch-42f0d2c400a40cee.evaluation.json",
+            "0522142bd9fe8d887fcfda2b52c38bbc47e5b266ce882c7b79318e4f088069b0",
+        ),
+        (
+            "branch-55892858db150ccd.evaluation.json",
+            "93e90a839c12ec8eacb74ebfca53b8a56d815fe98e59d0421d1dea75395e98c9",
+        ),
+        (
+            "campaign.json",
+            "ab21d10c0efdaa003ac49312de5baef0b39fc282640b1808d769a9bce795fec5",
+        ),
+        (
+            "child-plan-node-461dba1909fb6cf7.json",
+            "f68736a57839947494478b10a72dee26da2537e72a1bd34b4d7922e414a4bd64",
+        ),
+        (
+            "node-2f0b3cda4c2c8d89.child-to-parent.jsonl",
+            "dddbc063fd326b505a0f08972fc535f73699c9b31f3617422aba8c38a76a71db",
+        ),
+        (
+            "node-2f0b3cda4c2c8d89.json",
+            "8d50a7cb7b738602fb844a95287151c4132ef410e21ea45a152f825c8db3c562",
+        ),
+        (
+            "node-3247ff02a2053a57.child-to-parent.jsonl",
+            "48c4c039fb5c822bd485a7c46830b18b38a342c9dc4351bb8341cf1c1ad752eb",
+        ),
+        (
+            "node-3247ff02a2053a57.json",
+            "f47153b214ee327afcfd5148763f23f5cb3500e670376ec8b8cbe6e65fa27beb",
+        ),
+        (
+            "node-f4f44e07e0be8caa.child-to-parent.jsonl",
+            "f1cf77fd595316055dfc9f2dd67ddb2240fd1178164749559e0e29f8954b3949",
+        ),
+        (
+            "node-f4f44e07e0be8caa.json",
+            "638c9094635474d7472179499d78549f7a49ac6f926601d1523ed18fa1afec0c",
+        ),
+        (
+            "parent_identity.json",
+            "b000745fed82cc75fdd2b1fdd6c1340f473c1d682d2cde77af7be65ad70ad071",
+        ),
+        (
+            "run-profile.commitment.json",
+            "cb021229bfde16585bb55eedaf62cab3244ac581270efb5e92ef574d6262807c",
+        ),
+        (
+            "run-profile.toml",
+            "c3b2fd9147560917f64bb0d28a833016f0e46080fd9453e73f3883162631b85a",
+        ),
+    ];
+
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("src/tests/fixtures/prototype1-v25-selection-safety-20260717");
+    let manifest_path = fixture.join("campaign.json");
+    let history_dir = fixture.join("prototype1/history");
+    let reviews_dir = fixture.join("prototype1/reviews");
+    let owner_db = eval_store::prototype1_eval_store_db_path(&manifest_path);
+    assert!(!history_dir.exists());
+    assert!(!reviews_dir.exists());
+    assert!(!owner_db.exists());
+    for (name, expected) in FIXTURE_HASHES {
+        let bytes = fs::read(fixture.join(name)).expect("read immutable v25 fixture artifact");
+        assert_eq!(format!("{:x}", Sha256::digest(bytes)), expected, "{name}");
+    }
+
+    let profile_text =
+        fs::read_to_string(fixture.join("run-profile.toml")).expect("read v25 run profile");
+    let profile: profile::Prototype1RunProfile =
+        toml::from_str(&profile_text).expect("parse v25 run profile");
+    profile.validate().expect("v25 profile remains valid");
+    assert_eq!(
+        profile.selection.patch_gate(),
+        crate::successor_selection::PatchGate::Disabled
+    );
+    assert_eq!(
+        profile.selection.oracle_gate(),
+        crate::successor_selection::OracleGate::AllResolved
+    );
+    assert!(profile.execution.mbe.enabled);
+
+    let bytes =
+        fs::read(fixture.join("selection-decision-entry.json")).expect("read exact v25 receipt");
+    assert_eq!(bytes.len(), 573_257);
+    assert_eq!(
+        format!("{:x}", Sha256::digest(&bytes)),
+        ENTRY_SHA256,
+        "exact persisted entry_json bytes"
+    );
+    let entry: SelectionDecisionEntry =
+        serde_json::from_slice(&bytes).expect("decode exact persisted v25 receipt");
+    entry.validate_shape().expect("validate exact v25 receipt");
+    assert_eq!(
+        entry
+            .decision_hash()
+            .expect("hash exact v25 receipt")
+            .as_str(),
+        DECISION_HASH
+    );
+    let decision = entry.decision.as_ref().expect("v25 selected decision");
+    assert_eq!(decision.candidate_node_id, SELECTED_NODE);
+    assert_eq!(
+        decision.selected_branch_id.as_deref(),
+        Some(SELECTED_BRANCH)
+    );
+    let candidate_set = entry.candidate_set.as_ref().expect("v25 candidate set");
+    assert_eq!(candidate_set.root.as_str(), SET_ROOT);
+    assert_eq!(
+        candidate_set
+            .memberships
+            .iter()
+            .map(|membership| membership.payload_hash.as_str())
+            .collect::<Vec<_>>(),
+        PAYLOAD_HASHES
+    );
+    let traversal = entry.traversal.as_ref().expect("v25 traversal");
+    assert_eq!(
+        traversal.strategy.patch_gate(),
+        crate::successor_selection::PatchGate::Disabled
+    );
+
+    let original = traversal_selection::Candidates::from_history(HistoryCandidates {
+        scope: entry.scope.clone(),
+        candidates: Vec::new(),
+    })
+    .with_current_generation(entry.scope.clone(), entry.considered.clone())
+    .expect("bind exact historical V25 candidates");
+    let original = traversal_selection::select_attempt_with_policy(
+        original,
+        traversal.seed,
+        traversal.strategy,
+        entry.metrics.policy.clone(),
+        &traversal.oracle_targets,
+    )
+    .expect("replay original V25 production traversal");
+    let traversal_selection::SelectionAttempt::Selected(original) = original else {
+        panic!("original V25 traversal must reproduce the persisted selection")
+    };
+    assert_eq!(
+        &original.decision,
+        entry.decision.as_ref().expect("v25 selected decision")
+    );
+    assert_eq!(original.decision.candidate_node_id, SELECTED_NODE);
+
+    let outcome =
+        ParentSelectionOutcome::from_entry(entry.clone()).expect("hydrate exact v25 receipt");
+    assert_eq!(
+        outcome.entry().expect("rebuild hydrated v25 receipt"),
+        entry,
+        "typed hydration preserves every persisted field"
+    );
+    traversal_selection::validate_patch_gate(
+        &entry,
+        crate::successor_selection::PatchGate::Disabled,
+    )
+    .expect("historical disabled patch gate remains compatible");
+    let error = traversal_selection::validate_patch_gate(
+        &entry,
+        crate::successor_selection::PatchGate::ReviewedAdmissible,
+    )
+    .expect_err("strict patch gate rejects a receipt without candidate reviews");
+    assert!(
+        error
+            .to_string()
+            .contains("reviewed-admissible patch gate requires candidate review"),
+        "unexpected strict v25 replay error: {error}"
+    );
+
+    let plan_bytes = fs::read(fixture.join("child-plan-node-461dba1909fb6cf7.json"))
+        .expect("read exact v25 child plan");
+    let child_plan: ChildPlanFiles =
+        serde_json::from_slice(&plan_bytes).expect("decode exact v25 child plan");
+    let mut reviewed = entry.considered.clone();
+    for payload in &mut reviewed {
+        let candidate = payload
+            .selection_input
+            .as_ref()
+            .expect("v25 selection input")
+            .candidate
+            .clone();
+        let child = child_plan
+            .children()
+            .iter()
+            .find(|child| child.node_id() == candidate.node_id)
+            .expect("v25 payload has a child-plan carrier");
+        assert_eq!(child.resolved().branch.branch_id, candidate.branch_id);
+        let harness = child
+            .harness_evidence()
+            .expect("v25 broad candidate has typed harness evidence")
+            .clone();
+        let artifact = payload.artifact.as_mut().expect("v25 candidate artifact");
+        assert_eq!(
+            artifact.artifact_surface.as_ref(),
+            Some(harness.artifact_surface()),
+            "receipt and child-plan artifact surfaces agree"
+        );
+        let harness_artifact = harness.artifact().expect("v25 harness artifact binding");
+        assert_eq!(
+            artifact.resolved.branch.derived_artifact_id.as_ref(),
+            Some(&harness_artifact.derived_artifact_id)
+        );
+        assert_eq!(
+            artifact.node.derived_artifact_id.as_ref(),
+            Some(&harness_artifact.derived_artifact_id)
+        );
+        assert_eq!(
+            artifact.node.base_artifact_id.as_ref(),
+            Some(&harness_artifact.base_artifact_id)
+        );
+        artifact.harness = Some(harness);
+        artifact.schema_version = artifact.schema_version.max(4);
+    }
+
+    // V25 predated persisted patch reviews. This post-incident overlay uses the
+    // production reviewer-config identity derived from the exact admitted
+    // profile, but never claims that a provider response existed during the
+    // historical run.
+    let config_tmp = tempfile::tempdir().expect("v25 reviewer config tempdir");
+    let config_manifest = config_tmp.path().join("campaign.json");
+    fs::copy(&manifest_path, &config_manifest).expect("stage v25 reviewer campaign");
+    profile::admit_run_profile(
+        &config_manifest,
+        &profile::OperatorRunProfile {
+            source_path: fixture.join("run-profile.toml"),
+            profile: profile.clone(),
+        },
+    )
+    .expect("admit exact v25 reviewer profile");
+    let config_hash =
+        crate::cli::prototype1_state::candidate_review::admitted_config_hash(&config_manifest)
+            .expect("hash production v25 reviewer config");
+    let attach_review = |payload: &mut EvaluationPayload,
+                         verdict: crate::successor_selection::PatchVerdict,
+                         findings: Vec<String>| {
+        let candidate = payload
+            .selection_input
+            .as_ref()
+            .expect("v25 selection input")
+            .candidate
+            .clone();
+        let artifact = payload.artifact.as_ref().expect("v25 candidate artifact");
+        let harness = artifact
+            .harness
+            .as_ref()
+            .expect("in-memory overlay retains exact harness evidence");
+        let artifact_id = artifact
+            .resolved
+            .branch
+            .derived_artifact_id
+            .as_ref()
+            .expect("v25 derived artifact id")
+            .clone();
+        let surface_hash = HistoryHash::of_domain_json(
+            "prototype1.history.artifact_surface.v1",
+            artifact
+                .artifact_surface
+                .as_ref()
+                .expect("v25 artifact surface"),
+        )
+        .expect("hash v25 artifact surface");
+        assert_eq!(
+            artifact.node.branch_id.as_str(),
+            candidate.branch_id.as_str()
+        );
+        let evaluations = payload
+            .sealed_evidence
+            .as_ref()
+            .expect("v25 sealed evidence")
+            .evaluations
+            .iter()
+            .filter(|item| item.branch_id == candidate.branch_id)
+            .collect::<Vec<_>>();
+        let [evaluation] = evaluations.as_slice() else {
+            panic!("v25 candidate must have exactly one branch evaluation")
+        };
+        let evaluation_hash = evaluation
+            .evaluation_artifact_citation
+            .as_ref()
+            .and_then(|citation| citation.content_hash.as_ref())
+            .expect("v25 evaluation artifact hash")
+            .clone();
+        assert_eq!(
+            evaluation.primary_report_citation.content_hash.as_ref(),
+            Some(&evaluation_hash),
+            "v25 evaluation citations bind the same report"
+        );
+
+        let mut paths = harness.changed_paths().to_vec();
+        let recorded_paths = paths.clone();
+        paths.sort();
+        paths.dedup();
+        assert_eq!(recorded_paths, paths, "v25 change paths are canonical");
+        let changes = paths
+            .into_iter()
+            .map(|relpath| {
+                let (source_hash, proposed_hash) = if relpath == artifact.resolved.target_relpath {
+                    (
+                        artifact.resolved.source_content_hash.clone(),
+                        artifact.resolved.branch.proposed_content_hash.clone(),
+                    )
+                } else {
+                    assert_eq!(candidate.node_id, ADMISSIBLE_NODE);
+                    assert_eq!(relpath, PathBuf::from(SECOND_PATH));
+                    (
+                        SECOND_SOURCE_HASH.to_string(),
+                        SECOND_PROPOSED_HASH.to_string(),
+                    )
+                };
+                crate::successor_selection::PatchChange {
+                    relpath,
+                    source_content_hash: Some(source_hash),
+                    proposed_content_hash: Some(proposed_hash),
+                }
+            })
+            .collect::<Vec<_>>();
+        let change_set_hash = HistoryHash::of_domain_json(
+            "prototype1.history.candidate_patch_change_set.v1",
+            &changes,
+        )
+        .expect("hash exact v25 change set");
+        let citation_hash = HistoryHash::of_domain_json(
+            "prototype1.test.v25_post_incident_patch_review.v1",
+            &(
+                &candidate,
+                &artifact_id,
+                &surface_hash,
+                &evaluation_hash,
+                &config_hash,
+                &change_set_hash,
+                &changes,
+                verdict,
+                &findings,
+            ),
+        )
+        .expect("hash post-incident v25 review");
+        let confidence = crate::successor_selection::domains::Confidence::High;
+        payload.patch_review = Some(crate::successor_selection::PatchReview {
+            schema_version: 2,
+            procedure_id: crate::successor_selection::PATCH_REVIEW_PROCEDURE_ID.to_string(),
+            candidate: candidate.clone(),
+            artifact_id,
+            artifact_surface_hash: surface_hash,
+            evaluation_hash,
+            config_hash: config_hash.clone(),
+            change_set_hash,
+            changes,
+            verdict,
+            confidence,
+            blocking_findings: findings,
+            missing_evidence: Vec::new(),
+            rationale: vec![
+                "post-incident review of the exact V25 artifact and evaluation bindings"
+                    .to_string(),
+            ],
+            citation: SealedEvidenceCitation {
+                ref_id: crate::successor_selection::candidate_review_ref(&candidate.branch_id),
+                content_hash: Some(citation_hash),
+                record_name: Some(crate::successor_selection::PATCH_REVIEW_RECORD_NAME.to_string()),
+            },
+        });
+        payload.schema_version = payload.schema_version.max(5);
+    };
+
+    for payload in &mut reviewed {
+        let node_id = payload
+            .selection_input
+            .as_ref()
+            .expect("v25 selection input")
+            .candidate
+            .node_id
+            .as_str();
+        let (verdict, findings) = match node_id {
+            SELECTED_NODE => (
+                crate::successor_selection::PatchVerdict::Rejected,
+                vec![
+                    "uses a process-global Cargo metadata cache keyed only by the focused manifest modification time"
+                        .to_string(),
+                    "can return stale workspace metadata after workspace-root or sibling-manifest changes"
+                        .to_string(),
+                ],
+            ),
+            OTHER_BLOCKED_NODE => (
+                crate::successor_selection::PatchVerdict::Rejected,
+                vec![
+                    "spawns unbounded nested operating-system thread fanout and unwraps join failures"
+                        .to_string(),
+                    "turns a missing filesystem node into an empty iterator and erases the error"
+                        .to_string(),
+                ],
+            ),
+            ADMISSIBLE_NODE => (
+                crate::successor_selection::PatchVerdict::Admissible,
+                Vec::new(),
+            ),
+            other => panic!("unexpected V25 candidate '{other}'"),
+        };
+        attach_review(payload, verdict, findings);
+    }
+    assert!(reviewed.iter().all(|payload| {
+        payload
+            .patch_review
+            .as_ref()
+            .is_some_and(|review| review.config_hash == config_hash)
+    }));
+
+    let strict_gate = crate::successor_selection::PatchGate::ReviewedAdmissible;
+    let strict_strategy = traversal.strategy.with_patch_gate(strict_gate);
+    let candidates = traversal_selection::Candidates::from_history(HistoryCandidates {
+        scope: entry.scope.clone(),
+        candidates: Vec::new(),
+    })
+    .with_current_generation(entry.scope.clone(), reviewed.clone())
+    .expect("bind reviewed V25 candidates");
+    let attempt = traversal_selection::select_attempt_with_policy(
+        candidates,
+        traversal.seed,
+        strict_strategy,
+        entry.metrics.policy.clone(),
+        &traversal.oracle_targets,
+    )
+    .expect("run production strict traversal over exact V25 payloads");
+    let traversal_selection::SelectionAttempt::Selected(selection) = attempt else {
+        panic!("strict V25 overlay must select the admissible patch")
+    };
+    assert_eq!(selection.decision.candidate_node_id, ADMISSIBLE_NODE);
+    assert_ne!(selection.decision.candidate_node_id, SELECTED_NODE);
+    assert_ne!(selection.decision.candidate_node_id, OTHER_BLOCKED_NODE);
+    assert_eq!(
+        selection
+            .selected_payload
+            .selection_input
+            .as_ref()
+            .expect("selected V25 input")
+            .candidate
+            .node_id,
+        ADMISSIBLE_NODE
+    );
+
+    let mut all_rejected = reviewed;
+    let remaining = all_rejected
+        .iter_mut()
+        .find(|payload| {
+            payload
+                .selection_input
+                .as_ref()
+                .is_some_and(|input| input.candidate.node_id == ADMISSIBLE_NODE)
+        })
+        .expect("v25 admissible overlay");
+    attach_review(
+        remaining,
+        crate::successor_selection::PatchVerdict::Rejected,
+        vec![
+            "the persisted V25 evidence has no focused regression for the cross-file error propagation"
+                .to_string(),
+        ],
+    );
+    let candidates = traversal_selection::Candidates::from_history(HistoryCandidates {
+        scope: entry.scope.clone(),
+        candidates: Vec::new(),
+    })
+    .with_current_generation(entry.scope.clone(), all_rejected)
+    .expect("bind all-rejected V25 candidates");
+    let attempt = traversal_selection::select_attempt_with_policy(
+        candidates,
+        traversal.seed,
+        strict_strategy,
+        entry.metrics.policy.clone(),
+        &traversal.oracle_targets,
+    )
+    .expect("run production traversal for all-rejected V25 overlay");
+    let traversal_selection::SelectionAttempt::NoSelection(receipt) = attempt else {
+        panic!("all-rejected V25 overlay must preserve no selection")
+    };
+    let no_selection = SelectionDecisionEntry::new_no_selection_with_traversal_metrics(
+        ProcedureRef::new(crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID),
+        entry.scope.clone(),
+        receipt.considered,
+        receipt.considered_sources,
+        receipt.projection_failures,
+        Some(TraversalEvidence {
+            seed: traversal.seed,
+            strategy: strict_strategy,
+            oracle_targets: traversal.oracle_targets.clone(),
+            selected_source: None,
+            child_counts: receipt.child_counts,
+        }),
+        receipt.metrics,
+    )
+    .expect("construct in-memory V25 no-selection receipt");
+    traversal_selection::validate_patch_gate(&no_selection, strict_gate)
+        .expect("all V25 reviews satisfy the typed strict gate");
+    traversal_selection::validate_patch_replay(&no_selection)
+        .expect("all-rejected V25 receipt replays through production traversal");
+    let traversal_selection::Formula::ScoreChildProp(formula) = &no_selection
+        .formula
+        .as_ref()
+        .expect("V25 no-selection formula")
+        .formula;
+    assert_eq!(formula.patch_gate, strict_gate);
+    assert_eq!(formula.rows.len(), 3);
+    for node_id in [SELECTED_NODE, OTHER_BLOCKED_NODE, ADMISSIBLE_NODE] {
+        let row = formula
+            .rows
+            .iter()
+            .find(|row| row.node_id.as_deref() == Some(node_id))
+            .expect("V25 exclusion row");
+        assert!(!row.selectable);
+        assert!(!row.selected);
+        assert_eq!(
+            row.exclusion_reason.as_deref(),
+            Some("patch_gate_not_satisfied")
+        );
+    }
+
+    // Selection accepted only deserialized values and paths for diagnostics;
+    // it had no campaign/History/database handle capable of mutation.
+    assert!(!history_dir.exists());
+    assert!(!reviews_dir.exists());
+    assert!(!owner_db.exists());
+    assert_eq!(
+        fs::read(fixture.join("selection-decision-entry.json"))
+            .expect("re-read immutable V25 receipt"),
+        bytes
+    );
+    for (name, expected) in FIXTURE_HASHES {
+        let bytes = fs::read(fixture.join(name)).expect("re-read immutable v25 fixture artifact");
+        assert_eq!(format!("{:x}", Sha256::digest(bytes)), expected, "{name}");
+    }
 }
 
 #[tokio::test]
@@ -10209,6 +10785,7 @@ async fn v16_all_unresolved_replay_persists_no_selection_evidence() {
         evaluation_report: Some(report.clone()),
         selection_input: Some(selection_input_from_child_report(&node, &report)),
         surface: child.surface().cloned(),
+        harness: child.harness_evidence().cloned(),
         artifact_surface: Some(
             child
                 .harness_evidence()
@@ -10221,16 +10798,34 @@ async fn v16_all_unresolved_replay_persists_no_selection_evidence() {
 
     let manifest_path = temp.path().join("campaign.json");
     fs::copy(fixture.join("campaign.json"), &manifest_path).expect("stage v16 campaign manifest");
+    let manifest: crate::campaign::CampaignManifest = json_fixture(
+        &fs::read_to_string(&manifest_path).expect("read staged v16 campaign manifest"),
+    );
+    let operator = profile::OperatorRunProfile {
+        source_path: fixture.join("run-profile.toml"),
+        profile: profile.clone(),
+    };
+    let admitted =
+        profile::admit_run_profile(&manifest_path, &operator).expect("admit v16 replay profile");
+    let setup_closure = eval_store::sample_closure_state(parent.campaign_id().clone());
+    let setup_path = temp.path().join("closure-state.json");
+    fs::write(
+        &setup_path,
+        serde_json::to_vec_pretty(&setup_closure).expect("serialize v16 setup closure"),
+    )
+    .expect("write v16 setup closure");
     let db_path = eval_store::prototype1_eval_store_db_path(&manifest_path);
-    fs::create_dir_all(db_path.parent().expect("v16 eval DB parent"))
-        .expect("create v16 eval DB directory");
-    let seed_db = ploke_db::Database::new_init().expect("empty v16 eval DB");
-    eval_store::DbEvalStore::new(&seed_db)
-        .install_schema()
-        .expect("install current v16 replay schema");
-    seed_db
-        .write_backup_to_path(&db_path)
-        .expect("seed v16 owner eval DB");
+    eval_store::write_r0_context_to_owner_db(
+        &db_path,
+        &manifest_path,
+        &manifest,
+        profile.storage.eval.backend,
+        Some(&admitted),
+        None,
+        &setup_path,
+        &setup_closure,
+    )
+    .expect("seed v16 admitted setup authority");
     let db_before = fs::read(&db_path).expect("read owner DB before pure selection");
 
     let pure_outcome = selection_outcome_for_profile(
@@ -10918,11 +11513,6 @@ fn historical_node_150_channel_treatment_reaches_current_generation_handoff() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("campaign.json");
     let db_path = eval_store::prototype1_eval_store_db_path(&manifest_path);
-    fs::create_dir_all(db_path.parent().expect("eval db parent")).expect("eval db dir");
-    ploke_db::Database::new_init()
-        .expect("empty eval db")
-        .write_backup_to_path(&db_path)
-        .expect("seed owner eval db");
     let parent_identity: ParentIdentity = json_fixture(include_str!(
         "../../../tests/fixtures/prototype1-node-150-handoff/parent_identity.json"
     ));
@@ -11190,6 +11780,7 @@ fn historical_node_150_channel_treatment_reaches_current_generation_handoff() {
         evaluation_report: Some(report.clone()),
         selection_input: Some(selection_input_from_child_report(&node, &report)),
         surface: child.surface().cloned(),
+        harness: child.harness_evidence().cloned(),
         artifact_surface: Some(
             child
                 .harness_evidence()
@@ -11199,8 +11790,7 @@ fn historical_node_150_channel_treatment_reaches_current_generation_handoff() {
         ),
         node,
     };
-    let profile = toml::from_str::<profile::Prototype1RunProfile>(
-        r#"
+    let profile_text = r#"
 schema_version = "prototype1-run-profile.v1"
 name = "historical-node-150-handoff"
 
@@ -11208,10 +11798,43 @@ name = "historical-node-150-handoff"
 strategy = "history-score-child-prop"
 evidence = "operational"
 seed = 0
-"#,
-    )
-    .expect("profile parses");
+"#;
+    let profile =
+        toml::from_str::<profile::Prototype1RunProfile>(profile_text).expect("profile parses");
     profile.validate().expect("profile validates");
+    let manifest = crate::campaign::CampaignManifest::new(parent_identity.campaign_id().clone());
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).expect("serialize node-150 campaign manifest"),
+    )
+    .expect("write node-150 campaign manifest");
+    let source_path = tmp.path().join("historical-node-150.toml");
+    fs::write(&source_path, profile_text).expect("write node-150 operator profile");
+    let admitted = profile::admit_run_profile(
+        &manifest_path,
+        &profile::OperatorRunProfile {
+            source_path,
+            profile: profile.clone(),
+        },
+    )
+    .expect("admit node-150 replay profile");
+    let closure_path = tmp.path().join("closure-state.json");
+    fs::write(
+        &closure_path,
+        serde_json::to_vec_pretty(&closure).expect("serialize node-150 closure"),
+    )
+    .expect("write node-150 closure");
+    eval_store::write_r0_context_to_owner_db(
+        &db_path,
+        &manifest_path,
+        &manifest,
+        profile.storage.eval.backend,
+        Some(&admitted),
+        None,
+        &closure_path,
+        &closure,
+    )
+    .expect("seed node-150 admitted setup authority");
 
     let (decision, material) = select_successor_for_profile(
         &manifest_path,

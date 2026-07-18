@@ -266,6 +266,7 @@ impl Builder {
                     .and_then(|coordinate| coordinate.primary_runtime_id.clone()),
                 artifact_after,
                 patch_id,
+                patch_review: payload.patch_review.clone(),
                 evidence: vec![evidence_id],
             });
         }

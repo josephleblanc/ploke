@@ -30,6 +30,8 @@ mod walk_event;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+pub(crate) use tests::{sample_closure_state, seeded_patch_context};
 
 pub(crate) use agent_turn::AgentTurnBundleEvidence;
 #[cfg(test)]
@@ -109,12 +111,13 @@ pub(crate) use scheduler_node::{
 };
 #[cfg(test)]
 pub(crate) use selection::{
-    SELECTION_CANDIDATE_REL, SELECTION_DECISION_REL, SELECTION_FINDING_REL, SELECTION_ORACLE_REL,
-    SELECTION_PROJECTION_REL, SELECTION_RECEIPT_REL, SELECTION_SCORE_REL,
+    PATCH_CHANGE_REL, PATCH_REVIEW_REL, SELECTION_CANDIDATE_REL, SELECTION_DECISION_REL,
+    SELECTION_FINDING_REL, SELECTION_ORACLE_REL, SELECTION_PATCH_REL, SELECTION_PROJECTION_REL,
+    SELECTION_RECEIPT_REL, SELECTION_SCORE_REL,
 };
 pub(crate) use selection::{
-    SelectionDecisionEvidence, load_selection_hash, load_selection_receipt,
-    write_selection_decision_to_owner_db,
+    SelectionDecisionEvidence, decision_id as selection_decision_id, load_selection_hash,
+    load_selection_receipt, member_id as selection_member_id, write_selection_decision_to_owner_db,
 };
 #[cfg(test)]
 pub(crate) const PARENT_IDENTITY_REL: &str = parent_identity::ParentIdentitySchema::RELATION;
@@ -125,7 +128,8 @@ pub(crate) use setup::{
     BASELINE_INSTANCE_METRICS_REL, BASELINE_INSTANCE_REL, BASELINE_REL, CAMPAIGN_EVAL_BUDGET_REL,
     CAMPAIGN_EVAL_POLICY_REL, CAMPAIGN_PROTOCOL_POLICY_REL, CAMPAIGN_REL, CLOSURE_ARTIFACT_REF_REL,
     CLOSURE_INSTANCE_REL, CLOSURE_PROTOCOL_COUNTS_REL, CLOSURE_PROTOCOL_PROCEDURE_REL,
-    CLOSURE_REF_REL, ORACLE_GATE_REL, PROFILE_COMMITMENT_REL, RUN_PROFILE_POLICY_REL,
+    CLOSURE_REF_REL, ORACLE_GATE_REL, PATCH_GATE_REL, PROFILE_COMMITMENT_REL,
+    RUN_PROFILE_POLICY_REL,
 };
 #[cfg(test)]
 pub(crate) const HARNESS_REQUEST_REL: &str = harness::HarnessRequestSchema::RELATION;

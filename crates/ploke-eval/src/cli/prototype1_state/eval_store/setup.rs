@@ -14,6 +14,7 @@ use crate::{
     CampaignManifest, EvalCampaignPolicy, ProtocolCampaignPolicy,
     campaign::EmbeddingRoute,
     cli::prototype1_state::{
+        history::HistoryHash,
         identity::ParentIdentity,
         profile::{AdmittedRunProfile, EvalStorageBackend},
     },
@@ -177,6 +178,15 @@ define_eval_schema!(OracleGateSchema {
     ingested_at: "String",
 });
 
+define_eval_schema!(PatchGateSchema {
+    "eval_patch_gate",
+    campaign_id: "String" =>
+    profile_ref_id: "String",
+    gate: "String",
+    review_config_hash: "String?",
+    ingested_at: "String",
+});
+
 define_eval_schema!(ClosureRefSchema {
     "eval_closure_ref",
     closure_ref_id: "String" =>
@@ -308,6 +318,7 @@ pub(crate) const CAMPAIGN_PROTOCOL_POLICY_REL: &str = CampaignProtocolPolicySche
 pub(crate) const PROFILE_COMMITMENT_REL: &str = ProfileCommitmentSchema::RELATION;
 pub(crate) const RUN_PROFILE_POLICY_REL: &str = RunProfilePolicySchema::RELATION;
 pub(crate) const ORACLE_GATE_REL: &str = OracleGateSchema::RELATION;
+pub(crate) const PATCH_GATE_REL: &str = PatchGateSchema::RELATION;
 pub(crate) const CLOSURE_REF_REL: &str = ClosureRefSchema::RELATION;
 pub(crate) const CLOSURE_INSTANCE_REL: &str = ClosureInstanceSchema::RELATION;
 pub(crate) const CLOSURE_ARTIFACT_REF_REL: &str = ClosureArtifactRefSchema::RELATION;
@@ -329,6 +340,7 @@ pub(super) fn ensure_setup_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(), Eval
     ProfileCommitmentSchema::SCHEMA.ensure_installed(db, "schema.eval_profile_commitment")?;
     RunProfilePolicySchema::SCHEMA.ensure_installed(db, "schema.eval_run_profile_policy")?;
     OracleGateSchema::SCHEMA.ensure_installed(db, "schema.eval_oracle_gate")?;
+    PatchGateSchema::SCHEMA.ensure_installed(db, "schema.eval_patch_gate")?;
     ClosureRefSchema::SCHEMA.ensure_installed(db, "schema.eval_closure_ref")?;
     ClosureInstanceSchema::SCHEMA.ensure_installed(db, "schema.eval_closure_instance")?;
     ClosureArtifactRefSchema::SCHEMA.ensure_installed(db, "schema.eval_closure_artifact_ref")?;
@@ -516,6 +528,7 @@ pub(super) fn put_run_profile_policy<D: EvalDb + ?Sized>(
     campaign_id: &ploke_records::ids::CampaignId,
     profile_ref_id: &str,
     admitted: &AdmittedRunProfile,
+    review_config_hash: Option<&HistoryHash>,
 ) -> Result<(), EvalStoreError> {
     let profile = &admitted.profile;
     let search = &profile.search;
@@ -709,13 +722,55 @@ pub(super) fn put_run_profile_policy<D: EvalDb + ?Sized>(
         enum_string(&selection.oracle.gate, "eval_oracle_gate.gate")?.into(),
     );
     params.insert("targets".to_string(), string_list_param(&oracle_targets));
-    params.insert("ingested_at".to_string(), ingested_at.into());
+    params.insert("ingested_at".to_string(), ingested_at.clone().into());
     put_eval_params(
         db,
         &OracleGateSchema::SCHEMA,
         params,
         "put.eval_oracle_gate",
-    )
+    )?;
+
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    params.insert(
+        "profile_ref_id".to_string(),
+        profile_ref_id.to_string().into(),
+    );
+    params.insert(
+        "gate".to_string(),
+        enum_string(&selection.patch.gate, "eval_patch_gate.gate")?.into(),
+    );
+    params.insert(
+        "review_config_hash".to_string(),
+        option_string_param(patch_config_hash(selection.patch.gate, review_config_hash)?),
+    );
+    params.insert("ingested_at".to_string(), ingested_at.into());
+    put_eval_params(db, &PatchGateSchema::SCHEMA, params, "put.eval_patch_gate")
+}
+
+fn patch_config_hash(
+    gate: ploke_records::run_profile::PatchGate,
+    review_config_hash: Option<&HistoryHash>,
+) -> Result<Option<String>, EvalStoreError> {
+    match (gate, review_config_hash) {
+        (ploke_records::run_profile::PatchGate::Disabled, None) => Ok(None),
+        (ploke_records::run_profile::PatchGate::ReviewedAdmissible, Some(hash)) => {
+            Ok(Some(hash.as_str().to_string()))
+        }
+        (ploke_records::run_profile::PatchGate::Disabled, Some(_)) => {
+            Err(EvalStoreError::Validation {
+                field: "eval_patch_gate.review_config_hash",
+                detail: "disabled patch policy cannot carry a reviewer config hash".to_string(),
+            })
+        }
+        (ploke_records::run_profile::PatchGate::ReviewedAdmissible, None) => {
+            Err(EvalStoreError::Validation {
+                field: "eval_patch_gate.review_config_hash",
+                detail: "reviewed-admissible patch policy requires a reviewer config hash"
+                    .to_string(),
+            })
+        }
+    }
 }
 
 fn put_campaign_eval_rows<D: EvalDb + ?Sized>(
@@ -1447,6 +1502,7 @@ pub(super) fn verify_r0_context<D: EvalDb + ?Sized>(
     db: &D,
     manifest: &CampaignManifest,
     admitted: &AdmittedRunProfile,
+    review_config_hash: Option<&HistoryHash>,
     closure_path: &Path,
     closure: &ClosureState,
 ) -> Result<(), EvalStoreError> {
@@ -1510,6 +1566,16 @@ pub(super) fn verify_r0_context<D: EvalDb + ?Sized>(
         });
     }
 
+    let expected_gate = admitted.profile.selection.patch.gate;
+    patch_config_hash(expected_gate, review_config_hash)?;
+    let (stored_gate, stored_config) = load_patch_policy(db, &manifest.campaign_id)?;
+    if stored_gate != expected_gate || stored_config.as_ref() != review_config_hash {
+        return Err(EvalStoreError::Validation {
+            field: "eval_patch_gate",
+            detail: "stored patch policy differs from setup admission".to_string(),
+        });
+    }
+
     let closure_hash = file_sha256(closure_path, "eval_closure_ref.source_ref")?;
     let expected_closure =
         closure_ref_id_from_parts(&manifest.campaign_id, closure_path, &closure_hash);
@@ -1547,6 +1613,50 @@ pub(super) fn verify_r0_context<D: EvalDb + ?Sized>(
         });
     }
     Ok(())
+}
+
+pub(super) fn load_patch_policy<D: EvalDb + ?Sized>(
+    db: &D,
+    campaign_id: &ploke_records::ids::CampaignId,
+) -> Result<(ploke_records::run_profile::PatchGate, Option<HistoryHash>), EvalStoreError> {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    let rows = db
+        .eval_query_params(
+            r#"
+?[profile_ref_id, gate, review_config_hash] :=
+    *eval_campaign { campaign_id, profile_ref_id },
+    *eval_profile_commitment { profile_ref_id, campaign_id },
+    *eval_patch_gate { campaign_id, profile_ref_id, gate, review_config_hash },
+    campaign_id = $campaign_id
+"#,
+            params,
+        )
+        .map_err(|source| EvalStoreError::Db {
+            phase: "verify.eval_patch_gate",
+            source,
+        })?;
+    let row = single_row(&rows, "eval_patch_gate")?;
+    let gate_name = read_string(&rows, row, "gate")?;
+    let gate = serde_json::from_value::<ploke_records::run_profile::PatchGate>(
+        serde_json::Value::String(gate_name),
+    )
+    .map_err(|source| EvalStoreError::Validation {
+        field: "eval_patch_gate.gate",
+        detail: source.to_string(),
+    })?;
+    let review_config_hash = read_optional_string(&rows, row, "review_config_hash")?
+        .map(|value| {
+            serde_json::from_value::<HistoryHash>(serde_json::Value::String(value)).map_err(
+                |source| EvalStoreError::Validation {
+                    field: "eval_patch_gate.review_config_hash",
+                    detail: source.to_string(),
+                },
+            )
+        })
+        .transpose()?;
+    patch_config_hash(gate, review_config_hash.as_ref())?;
+    Ok((gate, review_config_hash))
 }
 
 pub(super) fn put_baseline<D: EvalDb + ?Sized>(

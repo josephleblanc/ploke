@@ -2,9 +2,13 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{BranchDisposition, OperationalRunMetrics};
+use crate::{
+    BranchDisposition, OperationalRunMetrics,
+    cli::prototype1_state::history::{HistoryHash, SealedEvidenceCitation},
+    loop_graph::ArtifactId,
+};
 
-use super::CandidateRef;
+use super::{CandidateRef, domains::Confidence};
 
 /// Generation-local evidence bundle available to the current successor selector.
 ///
@@ -35,6 +39,52 @@ impl SelectionInput {
             comparisons,
         }
     }
+}
+
+/// Absolute safety verdict from an artifact-bound candidate patch review.
+///
+/// This is deliberately distinct from the comparative `domains::Verdict`.
+/// A patch can be operationally better than its parent while still being
+/// inadmissible for successor authority.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PatchVerdict {
+    Admissible,
+    Rejected,
+    Inconclusive,
+}
+
+/// One path in the exact change set supplied to the patch adjudicator.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct PatchChange {
+    pub(crate) relpath: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) source_content_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) proposed_content_hash: Option<String>,
+}
+
+/// Compact, hash-bound projection of the persisted candidate patch review.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct PatchReview {
+    pub(crate) schema_version: u32,
+    pub(crate) procedure_id: String,
+    pub(crate) candidate: CandidateRef,
+    pub(crate) artifact_id: ArtifactId,
+    pub(crate) artifact_surface_hash: HistoryHash,
+    pub(crate) evaluation_hash: HistoryHash,
+    pub(crate) config_hash: HistoryHash,
+    pub(crate) change_set_hash: HistoryHash,
+    pub(crate) changes: Vec<PatchChange>,
+    pub(crate) verdict: PatchVerdict,
+    pub(crate) confidence: Confidence,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) blocking_findings: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) missing_evidence: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) rationale: Vec<String>,
+    pub(crate) citation: SealedEvidenceCitation,
 }
 
 /// Parent-vs-child metrics for one benchmark instance.

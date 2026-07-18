@@ -3432,6 +3432,7 @@ mod tests {
                 child_diagnostics: Vec::new(),
             }),
             artifact: None,
+            patch_review: None,
             surface_attempt: None,
         };
         let b = EvaluationPayload {
@@ -3471,6 +3472,7 @@ mod tests {
                 child_diagnostics: Vec::new(),
             }),
             artifact: None,
+            patch_review: None,
             surface_attempt: None,
         };
 
@@ -3768,6 +3770,7 @@ mod tests {
             source_hashes: Vec::new(),
             sealed_evidence: None,
             artifact: None,
+            patch_review: None,
             surface_attempt: None,
         }];
 
@@ -3827,6 +3830,7 @@ mod tests {
                 child_diagnostics: Vec::new(),
             }),
             artifact: None,
+            patch_review: None,
             surface_attempt: None,
         }];
 
@@ -3856,6 +3860,7 @@ mod tests {
             source_hashes: Vec::new(),
             sealed_evidence: None,
             artifact: None,
+            patch_review: None,
             surface_attempt: None,
         };
         let grade = payload.decision_grade_eligibility();

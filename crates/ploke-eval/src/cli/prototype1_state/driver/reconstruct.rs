@@ -42,7 +42,7 @@ use crate::{
                 r9_to_r10, r11_to_r12,
             },
             parent::{Predecessor, Startup},
-            successor,
+            profile, successor,
             typestate::{self, StepInput},
             walk::phase::WalkPhase,
         },
@@ -806,7 +806,18 @@ fn load_selection_outcome(
             "dual-strict selection reconstruction found no typed owner-DB receipt for campaign '{campaign_id}' parent '{parent_id}'"
         ),
     })?;
-    ParentSelectionOutcome::from_entry(entry)
+    let admitted = profile::load_admitted_run_profile(manifest_path)?.ok_or_else(|| {
+        PrepareError::InvalidBatchSelection {
+            detail: "selection reconstruction requires an admitted run profile".to_string(),
+        }
+    })?;
+    let patch_gate = admitted.profile.selection.patch_gate();
+    let config_hash = if patch_gate == crate::successor_selection::PatchGate::ReviewedAdmissible {
+        Some(crate::cli::prototype1_state::candidate_review::admitted_config_hash(manifest_path)?)
+    } else {
+        None
+    };
+    ParentSelectionOutcome::from_admitted_entry(entry, patch_gate, config_hash.as_ref())
 }
 
 fn validate_selection_hash(

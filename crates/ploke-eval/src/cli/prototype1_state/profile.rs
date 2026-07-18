@@ -8,6 +8,7 @@ use std::{
 use chrono::Utc;
 use ploke_llm::{ModelId, ProviderKey, request::models::ModelRouteSource};
 use ploke_protocol::ProtocolReasoningPolicy;
+use ploke_records::run_profile::{Patch, PatchGate};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -477,6 +478,8 @@ pub(crate) struct Selection {
     pub(crate) metrics: Metrics,
     #[serde(default)]
     pub(crate) oracle: Oracle,
+    #[serde(default, skip_serializing_if = "Patch::is_disabled")]
+    pub(crate) patch: Patch,
     pub(crate) seed: u64,
 }
 
@@ -512,6 +515,10 @@ impl Selection {
 
     pub(crate) fn oracle_gate(self) -> OracleGate {
         self.oracle.gate
+    }
+
+    pub(crate) fn patch_gate(self) -> PatchGate {
+        self.patch.gate
     }
 
     pub(crate) fn metrics_policy(self) -> selection_metrics::Policy {
@@ -581,6 +588,7 @@ impl Default for Selection {
             evidence: SelectionEvidence::Operational,
             metrics: Metrics::default(),
             oracle: Oracle::default(),
+            patch: Patch::default(),
             seed: 0,
         }
     }
@@ -2334,6 +2342,30 @@ provider = "google"
 
         assert_eq!(profile.selection.oracle_mode(), OracleMode::RecordOnly);
         assert!(profile.selection.oracle_require_evidence());
+    }
+
+    #[test]
+    fn run_profile_defaults_patch_gate_to_disabled() {
+        let profile = parse_profile(Path::new("profile.toml"), PROFILE).expect("profile parses");
+
+        assert_eq!(profile.selection.patch_gate(), PatchGate::Disabled);
+    }
+
+    #[test]
+    fn run_profile_parses_reviewed_admissible_patch_gate() {
+        let profile = parse_profile(
+            Path::new("profile.toml"),
+            &PROFILE.replace(
+                "[selection.metrics]",
+                "[selection.patch]\ngate = \"reviewed-admissible\"\n\n[selection.metrics]",
+            ),
+        )
+        .expect("profile parses");
+
+        assert_eq!(
+            profile.selection.patch_gate(),
+            PatchGate::ReviewedAdmissible
+        );
     }
 
     #[test]

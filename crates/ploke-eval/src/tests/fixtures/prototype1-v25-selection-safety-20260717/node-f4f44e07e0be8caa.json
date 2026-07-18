@@ -1,0 +1,27 @@
+{
+  "schema_version": "prototype1-treatment-node.v1",
+  "node_id": "node-f4f44e07e0be8caa",
+  "parent_node_id": "node-461dba1909fb6cf7",
+  "generation": 1,
+  "instance_id": "9b501512-bcf6-49a6-93a1-1e9fc6fdaae2",
+  "source_state_id": "prototype1-parent-p1-v25-strictkeephandoff-mbe-g35f-direct-3g1x3-p3-obs2400-20260717-221126-gen0",
+  "operation_target": {
+    "kind": "artifact",
+    "artifact_id": "artifact:git-commit:bbd328f03f3949134d632eceb7d765abd3e5716d"
+  },
+  "base_artifact_id": "artifact:git-commit:bbd328f03f3949134d632eceb7d765abd3e5716d",
+  "patch_id": "broad-harness:broad-harness-request:node-461dba1909fb6cf7",
+  "derived_artifact_id": "artifact:git-commit:a9ca1b93510548958eb062c370e7d92e5142c72e",
+  "parent_branch_id": "prototype1-parent-p1-v25-strictkeephandoff-mbe-g35f-direct-3g1x3-p3-obs2400-20260717-221126-gen0",
+  "branch_id": "branch-55892858db150ccd",
+  "candidate_id": "broad-harness-g1-01",
+  "target_relpath": "crates/ploke-tui/src/tools/cargo.rs",
+  "node_dir": "/home/brasides/.ploke-eval/campaigns/p1-v25-strictkeephandoff-mbe-g35f-direct-3g1x3-p3-obs2400-20260717-221126/prototype1/nodes/node-f4f44e07e0be8caa",
+  "workspace_root": "/home/brasides/.ploke-eval/campaigns/p1-v25-strictkeephandoff-mbe-g35f-direct-3g1x3-p3-obs2400-20260717-221126/prototype1/workspaces/edit-harness/node-461dba1909fb6cf7",
+  "binary_path": "/home/brasides/.ploke-eval/campaigns/p1-v25-strictkeephandoff-mbe-g35f-direct-3g1x3-p3-obs2400-20260717-221126/prototype1/nodes/node-f4f44e07e0be8caa/bin/ploke-eval",
+  "runner_request_path": "/home/brasides/.ploke-eval/campaigns/p1-v25-strictkeephandoff-mbe-g35f-direct-3g1x3-p3-obs2400-20260717-221126/prototype1/nodes/node-f4f44e07e0be8caa/runner-request.json",
+  "runner_result_path": "/home/brasides/.ploke-eval/campaigns/p1-v25-strictkeephandoff-mbe-g35f-direct-3g1x3-p3-obs2400-20260717-221126/prototype1/nodes/node-f4f44e07e0be8caa/runner-result.json",
+  "status": "succeeded",
+  "created_at": "2026-07-18T06:03:34.466446453+00:00",
+  "updated_at": "2026-07-18T06:31:12.983015982+00:00"
+}

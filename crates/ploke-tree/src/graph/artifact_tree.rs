@@ -876,6 +876,7 @@ mod tests {
                     primary_runtime_id: None,
                     artifact_after: Some(ArtifactId("derived".to_owned())),
                     patch_id: None,
+                    patch_review: None,
                     evidence: Vec::new(),
                 }],
                 branches: vec![candidate_branch("successor", "derived")],
@@ -1160,6 +1161,7 @@ mod tests {
                         primary_runtime_id: None,
                         artifact_after: Some(ArtifactId("parent".to_owned())),
                         patch_id: None,
+                        patch_review: None,
                         evidence: Vec::new(),
                     },
                     crate::graph::CandidateNode {
@@ -1178,6 +1180,7 @@ mod tests {
                         primary_runtime_id: None,
                         artifact_after: Some(ArtifactId("selected".to_owned())),
                         patch_id: Some(PatchId("patch-selected".to_owned())),
+                        patch_review: None,
                         evidence: Vec::new(),
                     },
                 ],
@@ -1298,6 +1301,7 @@ mod tests {
                     primary_runtime_id: None,
                     artifact_after: Some(ArtifactId("selected".to_owned())),
                     patch_id: Some(PatchId("patch-selected".to_owned())),
+                    patch_review: None,
                     evidence: Vec::new(),
                 }],
                 ..CandidateIndex::default()

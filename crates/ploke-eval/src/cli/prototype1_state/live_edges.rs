@@ -21,6 +21,7 @@ use crate::{
         },
         prototype1_state::{
             backend::GitWorktreeBackend,
+            candidate_review,
             cli_facing::{
                 ParentSelection, ParentSelectionOutcome, PlannedChildren, Prototype1StateReport,
                 Prototype1StateRunShape, append_parent_target_sample, current_dir_as_repo_root,
@@ -82,12 +83,23 @@ pub(crate) fn r0_to_r1(
         let manifest = load_campaign_manifest(&campaign_id)?;
         let admitted_profile = profile::load_admitted_run_profile(&manifest_path)?;
         let closure_state = load_closure_state(&campaign_id)?;
+        let review_hash = admitted_profile
+            .as_ref()
+            .filter(|admitted| {
+                admitted.profile.selection.patch_gate()
+                    == crate::successor_selection::PatchGate::ReviewedAdmissible
+            })
+            .map(|_| {
+                crate::cli::prototype1_state::candidate_review::admitted_config_hash(&manifest_path)
+            })
+            .transpose()?;
         write_r0_context_to_owner_db(
             &prototype1_eval_store_db_path(&manifest_path),
             &manifest_path,
             &manifest,
             run_shape.eval_storage_backend,
             admitted_profile.as_ref(),
+            review_hash.as_ref(),
             &closure_state_path,
             &closure_state,
         )
@@ -702,6 +714,7 @@ pub(crate) fn r9_to_r10(
         parts.run_shape.successor_oracle_mode,
         parts.run_shape.successor_oracle_require_evidence,
         parts.run_shape.successor_oracle_gate,
+        parts.run_shape.successor_patch_gate,
         parts.run_shape.successor_oracle_targets.clone(),
         parts.run_shape.successor_metrics_policy,
     );
@@ -777,6 +790,17 @@ pub(crate) async fn r10_to_r11(
             typestate::R11aRejectedOnly::from_collected_parent(parts.into_collected(), parent),
         ));
     }
+    let review_config = if parts.run_shape.stop_after == Prototype1StateStopAfter::Complete
+        && parts.run_shape.successor_patch_gate
+            == crate::successor_selection::PatchGate::ReviewedAdmissible
+    {
+        Some(candidate_review::resolve_config(
+            &parts.manifest_path,
+            &parts.campaign_config,
+        )?)
+    } else {
+        None
+    };
 
     let (child_outcomes, outcome) = if parts.run_shape.stop_after
         == Prototype1StateStopAfter::Complete
@@ -795,6 +819,7 @@ pub(crate) async fn r10_to_r11(
             &rejected_surface_attempts,
             parts.run_shape.successor_selection_seed,
             selection_strategy,
+            review_config.as_ref(),
         )
         .await?;
         (child_outcomes, Some(outcome))
@@ -814,6 +839,9 @@ pub(crate) async fn r10_to_r11(
             children,
         )
         .await?;
+        if let Some(config) = review_config.as_ref() {
+            candidate_review::ensure_reviews(&parts.manifest_path, &child_outcomes, config).await?;
+        }
         let parent_selection = ParentSelection::new(
             &parts.manifest_path,
             &parent_identity,

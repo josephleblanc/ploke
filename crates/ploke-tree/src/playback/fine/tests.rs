@@ -295,6 +295,7 @@ fn payload(candidate: &str) -> EvaluationPayloadRecord {
         source_hashes: Vec::new(),
         sealed_evidence: None,
         artifact: None,
+        patch_review: None,
         surface_attempt: None,
     }
 }

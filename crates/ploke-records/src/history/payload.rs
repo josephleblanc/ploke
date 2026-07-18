@@ -573,6 +573,8 @@ pub struct EvaluationPayloadRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub artifact: Option<CandidateArtifactRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch_review: Option<selection::PatchReview>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub surface_attempt: Option<SurfaceAttemptRecord>,
 }
 
@@ -647,6 +649,11 @@ pub enum TraversalStrategyRecord {
         require_evidence: bool,
         #[serde(default)]
         gate: crate::run_profile::OracleGate,
+        #[serde(
+            default,
+            skip_serializing_if = "crate::run_profile::PatchGate::is_disabled"
+        )]
+        patch_gate: crate::run_profile::PatchGate,
     },
     ScoreChildProp {
         top_m: usize,
@@ -659,6 +666,11 @@ pub enum TraversalStrategyRecord {
         require_evidence: bool,
         #[serde(default)]
         gate: crate::run_profile::OracleGate,
+        #[serde(
+            default,
+            skip_serializing_if = "crate::run_profile::PatchGate::is_disabled"
+        )]
+        patch_gate: crate::run_profile::PatchGate,
     },
 }
 
@@ -670,6 +682,7 @@ impl Default for TraversalStrategyRecord {
             oracle: TraversalOracleModeRecord::default(),
             require_evidence: default_oracle_require_evidence(),
             gate: crate::run_profile::OracleGate::Disabled,
+            patch_gate: crate::run_profile::PatchGate::Disabled,
         }
     }
 }
@@ -798,6 +811,7 @@ mod tests {
                 oracle: TraversalOracleModeRecord::RecordOnly,
                 require_evidence: true,
                 gate: crate::run_profile::OracleGate::Disabled,
+                patch_gate: crate::run_profile::PatchGate::Disabled,
             }
         );
         assert_eq!(

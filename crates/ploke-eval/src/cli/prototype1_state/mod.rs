@@ -777,6 +777,7 @@ pub(crate) mod c1;
 pub(crate) mod c2;
 pub(crate) mod c3;
 pub(crate) mod c4;
+pub(crate) mod candidate_review;
 pub(crate) mod channel;
 pub(crate) mod checkpoint;
 pub(crate) mod child;

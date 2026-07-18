@@ -16,8 +16,9 @@ use ploke_records::ids::{
 };
 use ploke_records::scheduler::{NodeRecord, NodeStatusRecord};
 use ploke_records::selection::{
-    Decision, FormulaRecord, MetricCandidate, MetricPolicy, MetricSet, Outcome,
-    ScoreChildPropRecord, ScoreChildPropRowRecord, SelectionFormulaRecord,
+    Confidence, Decision, FormulaRecord, MetricCandidate, MetricPolicy, MetricSet, Outcome,
+    PatchChange, PatchReview, PatchVerdict, ScoreChildPropRecord, ScoreChildPropRowRecord,
+    SelectionFormulaRecord,
 };
 
 use crate::graph::{
@@ -61,6 +62,53 @@ fn ingest_selection_attaches_membership_by_identity_not_index() {
                 && warning.kind != GraphWarningKind::CandidateSetMembershipAmbiguousForPayload
         }),
         "reordered memberships should not be treated as missing or ambiguous"
+    );
+}
+
+#[test]
+fn ingest_selection_preserves_patch_review_by_payload_index() {
+    let mut rejected = payload("candidate:rejected");
+    rejected.patch_review = Some(patch_review(
+        "node-rejected",
+        "branch-rejected",
+        PatchVerdict::Rejected,
+    ));
+    let mut admissible = payload("candidate:admissible");
+    admissible.patch_review = Some(patch_review(
+        "node-admissible",
+        "branch-admissible",
+        PatchVerdict::Admissible,
+    ));
+    let selection = selection(
+        vec![rejected, admissible],
+        vec![
+            membership("candidate:rejected", None, "hash-rejected"),
+            membership("candidate:admissible", None, "hash-admissible"),
+        ],
+    );
+    let admitted_entry = entry(selection.clone());
+    let mut builder = Builder::default();
+
+    builder.ingest_selection(&admitted_entry, &selection);
+
+    let candidates = &builder.graph.candidates.candidates;
+    assert_eq!(candidates[0].payload_index, 0);
+    assert_eq!(
+        candidates[0]
+            .patch_review
+            .as_ref()
+            .expect("rejected review")
+            .verdict,
+        PatchVerdict::Rejected
+    );
+    assert_eq!(candidates[1].payload_index, 1);
+    assert_eq!(
+        candidates[1]
+            .patch_review
+            .as_ref()
+            .expect("admissible review")
+            .verdict,
+        PatchVerdict::Admissible
     );
 }
 
@@ -526,7 +574,42 @@ fn payload(candidate: &str) -> EvaluationPayloadRecord {
         source_hashes: Vec::new(),
         sealed_evidence: None,
         artifact: None,
+        patch_review: None,
         surface_attempt: None,
+    }
+}
+
+fn patch_review(node_id: &str, branch_id: &str, verdict: PatchVerdict) -> PatchReview {
+    PatchReview {
+        schema_version: 2,
+        procedure_id: "prototype1.candidate_patch_review.v2".to_owned(),
+        candidate: ploke_records::selection::CandidateRef {
+            node_id: node_id.to_owned(),
+            branch_id: branch_id.to_owned(),
+            generation: 1,
+        },
+        artifact_id: ArtifactId(format!("artifact:{branch_id}")),
+        artifact_surface_hash: HistoryHash(format!("surface:{branch_id}")),
+        evaluation_hash: HistoryHash(format!("evaluation:{branch_id}")),
+        config_hash: HistoryHash("review-config".to_owned()),
+        change_set_hash: HistoryHash(format!("changes:{branch_id}")),
+        changes: vec![PatchChange {
+            relpath: "src/lib.rs".into(),
+            source_content_hash: Some("source-hash".to_owned()),
+            proposed_content_hash: Some("proposed-hash".to_owned()),
+        }],
+        verdict,
+        confidence: Confidence::High,
+        blocking_findings: (verdict == PatchVerdict::Rejected)
+            .then(|| vec!["unsafe patch".to_owned()])
+            .unwrap_or_default(),
+        missing_evidence: Vec::new(),
+        rationale: vec!["reviewed exact change".to_owned()],
+        citation: EvidenceCitationRecord {
+            ref_id: format!("candidate-review:{branch_id}"),
+            content_hash: Some(HistoryHash(format!("review:{branch_id}"))),
+            record_name: Some("prototype1_candidate_patch_review".to_owned()),
+        },
     }
 }
 
@@ -785,6 +868,7 @@ fn score_child_prop_formula(metric_set_id: HistoryHash) -> SelectionFormulaRecor
             metric_inputs: "operational".to_owned(),
             oracle_mode: "record_only".to_owned(),
             oracle_gate: ploke_records::run_profile::OracleGate::Disabled,
+            patch_gate: ploke_records::run_profile::PatchGate::Disabled,
             oracle_targets: Vec::new(),
             oracle_require_evidence: true,
             total_weight: 0.5,

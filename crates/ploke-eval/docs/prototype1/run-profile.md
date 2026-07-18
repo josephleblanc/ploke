@@ -384,6 +384,34 @@ Operational/protocol metrics determine the candidate disposition and ranking
 inputs. Oracle `mode` controls relative traversal scoring, while oracle `gate`
 separately controls whether a candidate may enter that ranking pool.
 
+## `selection.patch`
+
+```toml
+[selection.patch]
+gate = "reviewed-admissible"
+```
+
+- `gate`: Semantic candidate-admission policy, independent of operational
+  disposition, oracle admission, and ranking. `disabled` preserves legacy
+  selection. `reviewed-admissible` requires an independent LLM adjudication of
+  every admitted changed path, bound to the candidate coordinate, Git artifact,
+  artifact-surface digest, evaluation digest, exact reviewer configuration, and
+  persisted provider response. A missing, stale, malformed, inconclusive, or
+  rejected review excludes the candidate before ranking.
+
+The review receives the complete UTF-8 contents from both sides of every
+admitted path, including added and deleted files. Broad-harness evidence must
+also reproduce the exact source and candidate commits, canonical changed-path
+set, and artifact surface before the request is made. The resulting verdict and
+per-path hashes are sealed in History and projected into the owner database.
+
+For strict successor handoff, use `reviewed-admissible` together with the
+appropriate `selection.oracle.gate`. These gates establish different claims:
+operational/protocol evidence measures observed behavior, the oracle gate
+requires benchmark resolution, and the patch gate establishes semantic safety.
+A `keep` disposition or successful benchmark does not substitute for the patch
+review.
+
 ## `protocol`
 
 ```toml
