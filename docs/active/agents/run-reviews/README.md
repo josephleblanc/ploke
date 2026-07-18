@@ -315,3 +315,11 @@ state without checking newer code, History records, and run artifacts.
   Preserved failed live-run review for the generation-zero post-edit parser
   panic that stranded v20 until its outer timeout, plus the exact historical
   replay and fresh-campaign handoff proof requirements.
+- [`2026-07-17-p1-v21-strict-keep-late-child-timeout.md`](2026-07-17-p1-v21-strict-keep-late-child-timeout.md)
+  Preserved R10 review proving a live strict Keep and resolved MBE evidence,
+  while recording the late third child, indeterminate controller fence, and
+  2,400-second config mitigation used by v22.
+- [`2026-07-17-p1-v22-selection-receipt-float-roundtrip.md`](2026-07-17-p1-v22-selection-receipt-float-roundtrip.md)
+  Preserved R11 review proving the expanded observer timeout and full child
+  fan-in, then the fail-closed typed receipt hash mismatch, all-Reject merit
+  outcome, and read-only post-repair reconstruction.

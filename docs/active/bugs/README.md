@@ -228,3 +228,11 @@ file and current code before treating a report as still open.
   semantic item, then a correct parser invariant panic escaped the post-edit
   task without a terminal tool event; exact historical replay now proves
   durable `PartiallyApplied` failure evidence instead of a hang.
+- [`2026-07-17-prototype1-late-child-observer-timeout.md`](./2026-07-17-prototype1-late-child-observer-timeout.md)
+  Config-mitigated, source recovery open: v21 produced a strict Keep but its
+  third healthy child completed after the 1,200-second parent fence, leaving
+  R10 indeterminate without a safe late-result reconciliation path.
+- [`2026-07-17-prototype1-selection-receipt-float-roundtrip.md`](./2026-07-17-prototype1-selection-receipt-float-roundtrip.md)
+  Source repaired, fresh strict live validation pending: v22 reached R11 but
+  default typed JSON decoding moved one selection-formula float by one ULP;
+  exact float replay plus a write-side rehash guard preserves the strict loader.
