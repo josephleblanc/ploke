@@ -487,11 +487,7 @@ fn selection_rows(evidence: SelectionDecisionEvidence) -> Result<SelectionRows, 
             field: "selection.decision_hash",
             detail: source.to_string(),
         })?;
-    let entry_json =
-        serde_json::to_string(&evidence.entry).map_err(|source| EvalStoreError::Validation {
-            field: "selection.entry_json",
-            detail: source.to_string(),
-        })?;
+    let entry_json = stable_entry_json(&evidence.entry, &decision_hash)?;
     let decision_id = decision_id(
         evidence.campaign_id.as_str(),
         &evidence.parent_id,
@@ -548,6 +544,37 @@ fn selection_rows(evidence: SelectionDecisionEvidence) -> Result<SelectionRows, 
         scores,
         projections,
     })
+}
+
+pub(super) fn stable_entry_json(
+    entry: &SelectionDecisionEntry,
+    decision_hash: &str,
+) -> Result<String, EvalStoreError> {
+    let entry_json = serde_json::to_string(entry).map_err(|source| EvalStoreError::Validation {
+        field: "selection.entry_json",
+        detail: source.to_string(),
+    })?;
+    let replayed: SelectionDecisionEntry =
+        serde_json::from_str(&entry_json).map_err(|source| EvalStoreError::Validation {
+            field: "selection.entry_json",
+            detail: format!("selection entry failed typed round-trip decoding: {source}"),
+        })?;
+    let replayed_hash = replayed
+        .decision_hash()
+        .map_err(|source| EvalStoreError::Validation {
+            field: "selection.entry_json",
+            detail: format!("selection entry failed typed round-trip hashing: {source}"),
+        })?;
+    if replayed_hash.as_str() != decision_hash {
+        return Err(EvalStoreError::Validation {
+            field: "selection.entry_json",
+            detail: format!(
+                "selection entry is not hash-stable across a typed JSON round trip: initial={decision_hash}, replayed={}",
+                replayed_hash.as_str()
+            ),
+        });
+    }
+    Ok(entry_json)
 }
 
 fn selection_projection_rows(

@@ -1314,6 +1314,105 @@ fn empty_selection(scope: &str) -> crate::cli::prototype1_state::history::Select
 }
 
 #[test]
+fn v22_selection_formula_round_trips_exactly() {
+    // Exact `eval_selection_receipt.entry_json.formula` from campaign
+    // p1-v22-strictkeephandoff-mbe-g35f-direct-3g1x3-p3-obs2400-20260717-174349,
+    // parent node-35c3cdbe137b4142, decision
+    // 30114489b9a0d8dfa5e40bdb83c3590cb408646025282d8bbe2062060528a628,
+    // stored hash 80d507d6a28820fad6779151cfbeb19d3138386af7ae0465b048d269e48cdd22.
+    // Its sample token exposed the default serde_json parser's one-ULP drift.
+    let raw = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/prototype1/v22-selection-formula.json"
+    ))
+    .trim_end();
+    let formula: crate::successor_selection::traversal::SelectionFormula =
+        serde_json::from_str(raw).expect("parse preserved v22 selection formula");
+    let replayed = serde_json::to_string(&formula).expect("serialize v22 selection formula");
+
+    assert_eq!(
+        replayed, raw,
+        "selection formula JSON must remain byte-stable across a typed round trip"
+    );
+}
+
+#[test]
+fn receipt_roundtrip_hash() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let db_path = tmp.path().join("prototype1/eval-store.cozo.sqlite");
+    let campaign = CampaignId::from("campaign-v22-float-roundtrip");
+    let parent = "parent-v22-float-roundtrip";
+    let mut formula: crate::successor_selection::traversal::SelectionFormula =
+        serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/prototype1/v22-selection-formula.json"
+        )))
+        .expect("parse preserved v22 selection formula");
+    let crate::successor_selection::traversal::Formula::ScoreChildProp(score) =
+        &mut formula.formula;
+    score.rows.clear();
+    score.selected_index = None;
+    score.selected_candidate = None;
+
+    let mut entry = empty_selection("v22-float-roundtrip");
+    entry.schema_version = 4;
+    entry.formula = Some(formula);
+    entry.decision = Some(crate::successor_selection::SuccessorDecision {
+        procedure_id: crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID.to_string(),
+        candidate_node_id: "node-v22-float-roundtrip".to_string(),
+        selected_branch_id: None,
+        branch_disposition: "reject".to_string(),
+        outcome: crate::successor_selection::decision::SuccessorOutcome::Stop,
+        findings: Vec::new(),
+        rationale: Vec::new(),
+    });
+    entry.validate_shape().expect("synthetic receipt validates");
+    let expected = entry
+        .decision_hash()
+        .expect("synthetic receipt hash")
+        .as_str()
+        .to_string();
+
+    write_selection_decision_to_owner_db(
+        &db_path,
+        SelectionDecisionEvidence {
+            campaign_id: campaign.clone(),
+            parent_id: parent.to_string(),
+            entry: entry.clone(),
+            decision_ref: Some("selection:v22-float-roundtrip".to_string()),
+            recorded_at: Some("2026-07-17T00:00:00Z".to_string()),
+        },
+    )
+    .expect("selection receipt writes");
+
+    assert_eq!(
+        load_selection_hash(&db_path, &campaign, parent).expect("selection hash loads"),
+        Some(expected)
+    );
+    assert_eq!(
+        load_selection_receipt(&db_path, &campaign, parent).expect("selection receipt loads"),
+        Some(entry)
+    );
+}
+
+#[test]
+fn stable_json_mismatch() {
+    let entry = empty_selection("roundtrip-mismatch");
+    let error = super::selection::stable_entry_json(&entry, "not-the-entry-hash")
+        .expect_err("mismatched decision hash must fail closed");
+
+    match error {
+        EvalStoreError::Validation { field, detail } => {
+            assert_eq!(field, "selection.entry_json");
+            assert!(detail.contains("not hash-stable"));
+            assert!(detail.contains("initial=not-the-entry-hash"));
+            assert!(detail.contains("replayed="));
+        }
+        other => panic!("expected selection entry validation error, got {other:?}"),
+    }
+}
+
+#[test]
 fn selection_hash_loader_rejects_ambiguous_parent_receipts() {
     let tmp = tempfile::tempdir().expect("tmp");
     let db_path = tmp.path().join("prototype1/eval-store.cozo.sqlite");
