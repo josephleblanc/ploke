@@ -323,3 +323,9 @@ state without checking newer code, History records, and run artifacts.
   Preserved R11 review proving the expanded observer timeout and full child
   fan-in, then the fail-closed typed receipt hash mismatch, all-Reject merit
   outcome, and read-only post-repair reconstruction.
+- [`2026-07-19-p1-v29-strictpatchhandoff-mbe-g35f-direct-3g1x3-p3-terminal-review.md`](2026-07-19-p1-v29-strictpatchhandoff-mbe-g35f-direct-3g1x3-p3-terminal-review.md)
+  Terminal three-generation live-walk review proving two parent/successor
+  handoffs, strict reviewed-admissible and all-resolved gates, exact ten-node
+  reconstruction, bounded sparse-runtime teardown, and the final
+  selected-Reject R14a stop while preserving protocol and node-status
+  observability gaps.
