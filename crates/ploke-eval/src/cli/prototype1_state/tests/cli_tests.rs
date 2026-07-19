@@ -281,6 +281,28 @@ fn complete_child_budget_rejects_reached_total_node_limit() {
     );
 }
 
+#[test]
+fn replay_node_count_excludes_materialized_children() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = temp.path().join("campaign.json");
+    for generation in 0..=3 {
+        let node_id = format!("node-{generation}");
+        let mut node = test_node(temp.path(), &node_id, "branch", "candidate");
+        node.generation = generation;
+        write_test_node(&manifest_path, &node);
+    }
+
+    assert_eq!(
+        persisted_prototype1_node_count(&manifest_path).expect("all persisted nodes"),
+        4
+    );
+    assert_eq!(
+        node_count_through(&manifest_path, 2).expect("pre-plan generation count"),
+        3,
+        "replay must count the nodes that existed before generation-3 children materialized"
+    );
+}
+
 fn test_manifest_path(root: &Path) -> PathBuf {
     root.join("campaign.toml")
 }

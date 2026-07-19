@@ -8901,10 +8901,84 @@ pub(crate) fn persisted_prototype1_node_count(
     Ok(count)
 }
 
+fn node_count_through(campaign_manifest_path: &Path, generation: u32) -> Result<u32, PrepareError> {
+    let nodes_dir = prototype1_nodes_dir(campaign_manifest_path);
+    let entries = match fs::read_dir(&nodes_dir) {
+        Ok(entries) => entries,
+        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(0),
+        Err(source) => {
+            return Err(PrepareError::ReadManifest {
+                path: nodes_dir,
+                source,
+            });
+        }
+    };
+    let mut count = 0u32;
+    for entry in entries {
+        let entry = entry.map_err(|source| PrepareError::ReadManifest {
+            path: nodes_dir.clone(),
+            source,
+        })?;
+        if !entry
+            .file_type()
+            .map_err(|source| PrepareError::ReadManifest {
+                path: entry.path(),
+                source,
+            })?
+            .is_dir()
+        {
+            continue;
+        }
+        let node_id = entry.file_name().to_string_lossy().into_owned();
+        let record_path = entry.path().join("node.json");
+        if !record_path.exists() {
+            continue;
+        }
+        let node = load_node_record(
+            campaign_manifest_path,
+            &node_id,
+            OperatorProjectionRead::cli_operator(),
+        )?;
+        if node.generation <= generation {
+            count = count.saturating_add(1);
+        }
+    }
+    Ok(count)
+}
+
 pub(crate) fn resolve_parent_policy_budget(
     manifest_path: &Path,
     run_shape: &Prototype1StateRunShape,
     parent_identity: &ParentIdentity,
+) -> Result<(Option<Prototype1SearchPolicy>, Prototype1ChildBudget), PrepareError> {
+    let current_node_count = persisted_prototype1_node_count(manifest_path)?;
+    policy_budget_at(
+        manifest_path,
+        run_shape,
+        parent_identity,
+        current_node_count,
+    )
+}
+
+pub(crate) fn replay_policy_budget(
+    manifest_path: &Path,
+    run_shape: &Prototype1StateRunShape,
+    parent_identity: &ParentIdentity,
+) -> Result<(Option<Prototype1SearchPolicy>, Prototype1ChildBudget), PrepareError> {
+    let plan_path = child_plan_message_path_for_parent(manifest_path, parent_identity);
+    if !plan_path.exists() {
+        return resolve_parent_policy_budget(manifest_path, run_shape, parent_identity);
+    }
+    validate_existing_child_plan_for_id(manifest_path, parent_identity)?;
+    let prior_node_count = node_count_through(manifest_path, parent_identity.generation())?;
+    policy_budget_at(manifest_path, run_shape, parent_identity, prior_node_count)
+}
+
+fn policy_budget_at(
+    manifest_path: &Path,
+    run_shape: &Prototype1StateRunShape,
+    parent_identity: &ParentIdentity,
+    current_node_count: u32,
 ) -> Result<(Option<Prototype1SearchPolicy>, Prototype1ChildBudget), PrepareError> {
     let complete_search_policy = if run_shape.stop_after == Prototype1StateStopAfter::Complete {
         Some(
@@ -8923,7 +8997,6 @@ pub(crate) fn resolve_parent_policy_budget(
             .ensure_live_complete_admitted()?;
     }
     let plan_child_budget = if let Some(policy) = complete_search_policy.as_ref() {
-        let current_node_count = persisted_prototype1_node_count(manifest_path)?;
         if parent_identity.generation() >= policy.max_generations {
             return Err(PrepareError::InvalidBatchSelection {
                 detail: format!(

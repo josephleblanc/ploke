@@ -246,3 +246,8 @@ file and current code before treating a report as still open.
   failed closed on a truncated third review at R10. Exact historical replay,
   bounded fresh-adjudication retry, and fail-closed DB/audit bindings now guard
   selection without modifying either preserved run.
+- [`2026-07-18-prototype1-reconstruct-node-cap-after-plan.md`](./2026-07-18-prototype1-reconstruct-node-cap-after-plan.md)
+  V28 replay blocker: reconstruction reapplied the live pre-planning node-cap
+  check after a legal child plan filled the final node slots. Exact historical
+  replay now passes without weakening live cap admission; fresh strict terminal
+  validation remains.

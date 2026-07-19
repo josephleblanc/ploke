@@ -30,8 +30,8 @@ use crate::{
                 child_plan_message_path_for_parent, load_existing_child_plan_for_id,
                 load_parent_baseline, preview_no_selection_continuation,
                 preview_successor_continuation, prototype1_state_transition_error,
-                reconstruct_child_outcomes_from_store, resolve_parent_policy_budget,
-                same_existing_path, validate_existing_child_plan_for_id,
+                reconstruct_child_outcomes_from_store, replay_policy_budget, same_existing_path,
+                validate_existing_child_plan_for_id,
             },
             history::{ActorRef, BlockStore, FsBlockStore, LineageId, StoreHead},
             identity::{ParentIdentity, load_parent_identity_optional, parent_identity_path},
@@ -466,11 +466,7 @@ fn reconstruct(
                     blockers,
                 ));
             }
-            match resolve_parent_policy_budget(
-                &parts.manifest_path,
-                &parts.run_shape,
-                parent.identity(),
-            ) {
+            match replay_policy_budget(&parts.manifest_path, &parts.run_shape, parent.identity()) {
                 Ok((policy, budget)) => {
                     parts.facts.complete_search_policy = policy;
                     parts.facts.plan_child_budget = Some(budget);
@@ -2112,6 +2108,51 @@ mod tests {
 
     fn runtime(value: u128) -> RuntimeId {
         RuntimeId(Uuid::from_u128(value))
+    }
+
+    #[test]
+    #[ignore = "requires preserved V28 campaign artifacts under ~/.ploke-eval"]
+    fn historical_v28_r8_reconstructs_after_node_cap_fill() {
+        const V28_ROOT: &str = "/home/brasides/.ploke-eval/setup-seeds/p1-v28-strictpatchhandoff-mbe-g35f-direct-3g1x3-p3-obs2400-ptok8k-20260718-123722";
+        const V28_INVOCATION: &str = "/home/brasides/.ploke-eval/campaigns/p1-v28-strictpatchhandoff-mbe-g35f-direct-3g1x3-p3-obs2400-ptok8k-20260718-123722/prototype1/nodes/node-e508c41e6dbf21fe/invocations/8b6a82f6-dfa7-4509-8ec7-42dca59cdfba.json";
+
+        let root = Path::new(V28_ROOT);
+        let invocation = Path::new(V28_INVOCATION);
+        assert!(
+            root.join(".ploke/prototype1/parent_identity.json")
+                .is_file(),
+            "preserved V28 parent identity is required"
+        );
+        assert!(
+            invocation.is_file(),
+            "preserved V28 successor invocation is required"
+        );
+        let _guard = crate::test_support::env_guard_os(vec![(
+            "PLOKE_EVAL_HOME",
+            OsString::from("/home/brasides/.ploke-eval"),
+        )]);
+
+        let snapshot = reconstruct_handoff_at(root, WalkPhase::R8, invocation)
+            .expect("V28 production reconstruction should execute");
+
+        if let Some(blocked) = snapshot.blocked.as_ref() {
+            panic!(
+                "V28 exact R8 replay must not be blocked at {}: {}",
+                blocked.phase, blocked.detail
+            );
+        }
+        assert_eq!(
+            snapshot.state.as_ref().map(EarlyState::phase),
+            Some(WalkPhase::R8),
+            "V28 child-plan evidence should reconstruct its recorded R8 boundary"
+        );
+        assert!(
+            snapshot
+                .notes
+                .iter()
+                .any(|note| note.contains("existing child-plan message evidence")),
+            "V28 replay should consume the persisted child plan"
+        );
     }
 
     #[test]
