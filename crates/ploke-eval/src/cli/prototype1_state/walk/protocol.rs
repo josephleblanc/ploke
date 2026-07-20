@@ -576,6 +576,7 @@ pub enum WalkEventProjection {
 #[serde(rename_all = "snake_case")]
 pub enum WalkAuthority {
     Active,
+    ReadOnly,
     TransferPending,
     JobActive,
     RecoveryRequired,
@@ -587,6 +588,7 @@ pub enum WalkAuthority {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WalkBlockerCode {
+    RunCompleted,
     TransferPending,
     JobActive,
     JobIndeterminate,
@@ -1872,6 +1874,7 @@ pub enum WalkErrorCode {
     OperationRestart,
     RecoveryInProgress,
     RequestFailed,
+    RunCompleted,
     ServerStopping,
     StaleVersion,
     TransferPending,
@@ -1886,6 +1889,7 @@ impl fmt::Display for WalkErrorCode {
             Self::OperationRestart => "operation_restart",
             Self::RecoveryInProgress => "recovery_in_progress",
             Self::RequestFailed => "request_failed",
+            Self::RunCompleted => "run_completed",
             Self::ServerStopping => "server_stopping",
             Self::StaleVersion => "stale_version",
             Self::TransferPending => "transfer_pending",

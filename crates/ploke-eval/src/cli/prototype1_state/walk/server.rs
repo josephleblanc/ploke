@@ -273,18 +273,39 @@ impl PublishedDelta {
 #[derive(Debug, Clone)]
 pub(crate) struct MutationGate {
     open: Arc<AtomicBool>,
+    blocker: Arc<WalkBlocker>,
 }
 
 impl MutationGate {
     pub(crate) fn open() -> Self {
         Self {
             open: Arc::new(AtomicBool::new(true)),
+            blocker: Arc::new(WalkBlocker {
+                code: WalkBlockerCode::TransferPending,
+                detail: "successor endpoint is online, but predecessor controller release is not durable"
+                    .to_string(),
+            }),
         }
     }
 
     pub(crate) fn closed() -> Self {
         Self {
             open: Arc::new(AtomicBool::new(false)),
+            blocker: Arc::new(WalkBlocker {
+                code: WalkBlockerCode::TransferPending,
+                detail: "successor endpoint is online, but predecessor controller release is not durable"
+                    .to_string(),
+            }),
+        }
+    }
+
+    fn read_only(detail: impl Into<String>) -> Self {
+        Self {
+            open: Arc::new(AtomicBool::new(false)),
+            blocker: Arc::new(WalkBlocker {
+                code: WalkBlockerCode::RunCompleted,
+                detail: detail.into(),
+            }),
         }
     }
 
@@ -294,6 +315,10 @@ impl MutationGate {
 
     fn allows_mutation(&self) -> bool {
         self.open.load(Ordering::Acquire)
+    }
+
+    fn blocker(&self) -> Option<WalkBlocker> {
+        (!self.allows_mutation()).then(|| self.blocker.as_ref().clone())
     }
 }
 
@@ -554,6 +579,10 @@ pub(crate) async fn serve(command: Prototype1StateWalkServeCommand) -> Result<()
             gate
         }
         ServerAdmission::Pending => MutationGate::closed(),
+        ServerAdmission::ReadOnly { detail } => {
+            prepared.publish = true;
+            MutationGate::read_only(detail)
+        }
     };
     serve_prepared(prepared, gate).await
 }
@@ -1176,12 +1205,16 @@ impl WalkServer {
     /// Dispatch one decoded request against the in-memory controller.
     async fn handle(&self, request: WalkRequest) -> (WalkResponse, bool) {
         let stop_requested = matches!(request.body, WalkRequestBody::Stop);
-        if !self.gate.allows_mutation() && requires_transfer(&request.body) {
+        if let Some(blocker) = self
+            .gate
+            .blocker()
+            .filter(|_| requires_transfer(&request.body))
+        {
             let phase = self.phase_for_response().await;
             return (
                 WalkResponse::error(
-                    WalkErrorCode::TransferPending,
-                    "successor endpoint is online but predecessor controller release is not yet durable",
+                    gate_error_code(blocker.code),
+                    blocker.detail,
                     Some(phase),
                     self.epoch.clone(),
                 ),
@@ -2937,12 +2970,8 @@ impl WalkServer {
                 )
             };
             Some(WalkBlocker { code, detail })
-        } else if !self.gate.allows_mutation() {
-            Some(WalkBlocker {
-                code: WalkBlockerCode::TransferPending,
-                detail: "successor endpoint is online, but predecessor controller release is not durable"
-                    .to_string(),
-            })
+        } else if let Some(blocker) = self.gate.blocker() {
+            Some(blocker)
         } else if durable.blocker.is_some() {
             durable.blocker.clone()
         } else if controller_blocker.is_some() {
@@ -3067,16 +3096,14 @@ impl WalkServer {
         job: Option<&WalkJobSnapshot>,
         controller_summary: Option<String>,
     ) -> String {
+        let authority = match self.gate.blocker().map(|blocker| blocker.code) {
+            None => "active",
+            Some(WalkBlockerCode::RunCompleted) => "read_only",
+            Some(_) => "transfer_pending",
+        };
         let mut lines = vec![
             format!("server_pid={}", std::process::id()),
-            format!(
-                "mutation_authority={}",
-                if self.gate.allows_mutation() {
-                    "active"
-                } else {
-                    "transfer_pending"
-                }
-            ),
+            format!("mutation_authority={authority}"),
             heading.to_string(),
         ];
         if let Some(job) = job {
@@ -3150,6 +3177,7 @@ fn requires_transfer(request: &WalkRequestBody) -> bool {
 fn authority_for(blocker: Option<&WalkBlocker>) -> WalkAuthority {
     match blocker.map(|blocker| blocker.code) {
         None => WalkAuthority::Active,
+        Some(WalkBlockerCode::RunCompleted) => WalkAuthority::ReadOnly,
         Some(WalkBlockerCode::TransferPending) => WalkAuthority::TransferPending,
         Some(WalkBlockerCode::JobActive) => WalkAuthority::JobActive,
         Some(WalkBlockerCode::SessionAbandoned) => WalkAuthority::Abandoned,
@@ -3161,6 +3189,13 @@ fn authority_for(blocker: Option<&WalkBlocker>) -> WalkAuthority {
             | WalkBlockerCode::AttemptIndeterminate
             | WalkBlockerCode::ControllerBlocked,
         ) => WalkAuthority::RecoveryRequired,
+    }
+}
+
+fn gate_error_code(code: WalkBlockerCode) -> WalkErrorCode {
+    match code {
+        WalkBlockerCode::RunCompleted => WalkErrorCode::RunCompleted,
+        _ => WalkErrorCode::TransferPending,
     }
 }
 
@@ -4951,6 +4986,77 @@ mod tests {
                 assert_eq!(snapshot.authority, WalkAuthority::Stopping);
             }
             other => panic!("closed endpoint did not return local shutdown status: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn terminal_gate_admits_reads_and_rejects_mutation() {
+        let repo = tempdir().expect("repo tempdir");
+        let server = test_server(
+            repo.path(),
+            MutationGate::read_only("runtime lifecycle Completed"),
+        );
+
+        for body in [
+            WalkRequestBody::Health,
+            WalkRequestBody::Show,
+            WalkRequestBody::SessionHistory,
+            WalkRequestBody::EvaluationTraceIndex,
+        ] {
+            let (response, stop) = server.handle(walk_request(body)).await;
+            assert!(!stop, "read-only request must not stop the server");
+            assert_eq!(
+                response.phase(),
+                Some(WalkPhase::Empty),
+                "terminal gate rejected a read-only request: {response:?}"
+            );
+        }
+
+        let (health, _) = server.handle(walk_request(WalkRequestBody::Health)).await;
+        let WalkResponse::Status {
+            message, snapshot, ..
+        } = health
+        else {
+            panic!("terminal Health did not return a session snapshot");
+        };
+        assert!(
+            message.contains("mutation_authority=read_only"),
+            "{message}"
+        );
+        assert_eq!(snapshot.authority, WalkAuthority::ReadOnly);
+        assert_eq!(
+            snapshot.blocker.as_ref().map(|blocker| blocker.code),
+            Some(WalkBlockerCode::RunCompleted)
+        );
+        assert!(
+            snapshot
+                .actions
+                .iter()
+                .any(|action| { action.kind == WalkActionKind::Inspect && action.enabled })
+        );
+        assert!(
+            snapshot
+                .actions
+                .iter()
+                .any(|action| { action.kind == WalkActionKind::Query && action.enabled })
+        );
+
+        for (kind, body) in transfer_cases(repo.path()) {
+            let (response, stop) = server.handle(walk_request(body)).await;
+            assert!(!stop, "{kind} rejection must not stop the server");
+            match response {
+                WalkResponse::Error {
+                    code,
+                    detail,
+                    phase,
+                    ..
+                } => {
+                    assert_eq!(code, WalkErrorCode::RunCompleted);
+                    assert!(detail.contains("Completed"), "{kind}: {detail}");
+                    assert_eq!(phase, Some(WalkPhase::Empty));
+                }
+                other => panic!("{kind} bypassed the terminal gate: {other:?}"),
+            }
         }
     }
 

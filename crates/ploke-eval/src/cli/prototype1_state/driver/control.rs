@@ -451,6 +451,8 @@ pub(crate) enum ServerAdmission {
     Transferred(PredecessorRelease),
     /// This successor remains inspectable, but mutation authority has not moved.
     Pending,
+    /// The runtime is terminal and remains available for inspection only.
+    ReadOnly { detail: String },
 }
 
 /// One explicit production reconciliation admitted by the operator.
@@ -955,6 +957,11 @@ pub(crate) fn walk_server_admission(repo_root: &Path) -> Result<ServerAdmission,
     };
     if matches!(cursor.phase, WalkPhase::R3 | WalkPhase::R4a) {
         return Ok(ServerAdmission::Pending);
+    }
+    let (_, lifecycle) =
+        load_successor_origin(repo_root, &manifest, handoff, &parent, &admitted.commitment)?;
+    if let Some(admission) = terminal_server_admission(&lifecycle) {
+        return Ok(admission);
     }
     match successor_transfer_release(repo_root, admitted.profile.control.mode, handoff)? {
         Some(release) => Ok(ServerAdmission::Transferred(release)),
@@ -1620,6 +1627,17 @@ impl SuccessorLifecycle {
     }
 }
 
+fn terminal_server_admission(lifecycle: &SuccessorLifecycle) -> Option<ServerAdmission> {
+    lifecycle
+        .terminal()
+        .then(|| ServerAdmission::ReadOnly {
+            detail: format!(
+                "runtime lifecycle {} is terminal; persisted inspection remains available but controller mutation cannot reopen",
+                lifecycle.label()
+            ),
+        })
+}
+
 fn successor_lifecycle(
     entries: &[JournalEntry],
     parent: &ParentIdentity,
@@ -2133,6 +2151,50 @@ where
 mod tests {
     use super::*;
     use crate::cli::prototype1_state::invocation::ProcessIncarnation;
+
+    fn decode_hex(path: &Path) -> Vec<u8> {
+        let encoded = std::fs::read_to_string(path).expect("read historical fixture");
+        let encoded: String = encoded
+            .chars()
+            .filter(|value| !value.is_whitespace())
+            .collect();
+        assert_eq!(encoded.len() % 2, 0, "historical fixture hex is complete");
+        (0..encoded.len())
+            .step_by(2)
+            .map(|offset| {
+                u8::from_str_radix(&encoded[offset..offset + 2], 16)
+                    .expect("decode historical fixture")
+            })
+            .collect()
+    }
+
+    #[test]
+    fn v29_completed_runtime_maps_to_read_only_server_admission() {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("src/tests/fixtures/prototype1-v29-terminal-walk-20260720");
+        let parent: ParentIdentity =
+            serde_json::from_slice(&decode_hex(&fixture.join("parent-identity.json.hex")))
+                .expect("decode exact V29 parent identity");
+        let entries = PrototypeJournal::new(&fixture.join("successor-lifecycle.jsonl"))
+            .load_entries()
+            .expect("replay exact V29 successor lifecycle");
+        let runtime = "8bb89724-76d8-4b54-b273-2930a967ec38"
+            .parse()
+            .expect("parse V29 runtime id");
+
+        let (_, _, lifecycle) = successor_lifecycle(&entries, &parent, runtime)
+            .expect("classify exact V29 successor lifecycle");
+        assert_eq!(lifecycle, SuccessorLifecycle::Completed);
+
+        let admission =
+            terminal_server_admission(&lifecycle).expect("Completed is terminal read-only");
+        match admission {
+            ServerAdmission::ReadOnly { detail } => {
+                assert!(detail.contains("Completed"), "{detail}");
+            }
+            _ => panic!("completed V29 runtime did not map to read-only admission"),
+        }
+    }
 
     #[test]
     fn abandonment_checks_incarnation() {

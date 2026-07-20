@@ -6,6 +6,7 @@
 //! it reaches a terminal state.
 
 use std::{
+    fs,
     path::Path,
     process::{Command, Stdio},
     time::Duration,
@@ -712,6 +713,7 @@ fn default_idle_ttl() -> Option<Duration> {
 
 fn use_context(command: Prototype1StateWalkUseCommand) -> Result<(), PrepareError> {
     let repo_root = paths::resolve_use_repo_root(command.repo_root.as_deref())?;
+    validate_context_root(&repo_root)?;
     let socket = paths::socket_path(&repo_root, command.socket.as_deref())?;
     let context = paths::WalkContext {
         repo_root,
@@ -719,6 +721,25 @@ fn use_context(command: Prototype1StateWalkUseCommand) -> Result<(), PrepareErro
     };
     let context_path = paths::save_context(&context)?;
     print_context(&context, &context_path, command.format)
+}
+
+fn validate_context_root(repo_root: &Path) -> Result<(), PrepareError> {
+    let metadata =
+        fs::metadata(repo_root).map_err(|source| PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "walk context root '{}' must be an existing directory: {source}",
+                repo_root.display()
+            ),
+        })?;
+    if !metadata.is_dir() {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "walk context root '{}' is not a directory",
+                repo_root.display()
+            ),
+        });
+    }
+    Ok(())
 }
 
 async fn run_db_query(command: Prototype1StateWalkDbQueryCommand) -> Result<(), PrepareError> {
@@ -937,6 +958,23 @@ fn stop_epoch(repo_root: &Path, response: &WalkResponse) -> Result<ServerEpoch, 
 mod epoch_tests {
     use super::*;
     use crate::cli::prototype1_state::walk::protocol::{WalkPosition, WalkSessionSnapshot};
+
+    #[test]
+    fn walk_context_root_must_be_an_existing_directory() {
+        let root = tempfile::tempdir().expect("context root");
+        validate_context_root(root.path()).expect("existing directory is a valid context root");
+
+        let missing = root.path().join("missing");
+        let error = validate_context_root(&missing)
+            .expect_err("missing context root must fail before persistence");
+        assert!(error.to_string().contains("existing directory"), "{error}");
+
+        let file = root.path().join("regular-file");
+        std::fs::write(&file, b"not a repository root").expect("write regular file");
+        let error =
+            validate_context_root(&file).expect_err("regular file must not become a context root");
+        assert!(error.to_string().contains("not a directory"), "{error}");
+    }
 
     #[test]
     fn fresh_epoch_rejects_socket_for_different_repo() {
