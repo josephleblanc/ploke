@@ -253,8 +253,8 @@ file and current code before treating a report as still open.
   validation remains.
 - [`2026-07-20-walk-terminal-read-only-startup.md`](./2026-07-20-walk-terminal-read-only-startup.md)
   Fixed and live verified: completed V29 now starts a protocol-v11 read-only
-  inspection endpoint while every controller mutation remains rejected with a
-  typed terminal blocker and its run-history hashes remain unchanged.
+  inspection endpoint in under 0.5 seconds with bounded metadata/recovery
+  output, while every mutation remains rejected and run hashes stay unchanged.
 - [`2026-07-20-walk-use-invalid-repo-root.md`](./2026-07-20-walk-use-invalid-repo-root.md)
   Fixed and live verified: `walk use` rejects missing and non-directory roots
   before replacing saved context, while an absolute V29 checkout works for

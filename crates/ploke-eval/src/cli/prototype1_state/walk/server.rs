@@ -137,6 +137,15 @@ impl ControllerObservation {
         }
     }
 
+    fn durable(phase: WalkPhase) -> Self {
+        Self {
+            phase,
+            attached: phase != WalkPhase::Empty,
+            blocker: None,
+            fresh: FreshAdmission::Unchecked,
+        }
+    }
+
     fn unavailable() -> Self {
         Self {
             phase: WalkPhase::Empty,
@@ -319,6 +328,10 @@ impl MutationGate {
 
     fn blocker(&self) -> Option<WalkBlocker> {
         (!self.allows_mutation()).then(|| self.blocker.as_ref().clone())
+    }
+
+    fn is_read_only(&self) -> bool {
+        !self.allows_mutation() && self.blocker.code == WalkBlockerCode::RunCompleted
     }
 }
 
@@ -932,14 +945,25 @@ pub(crate) async fn serve_prepared(
             endpoint.activate()?;
         }
         let repo_root = endpoint.repo_root().to_path_buf();
-        let mut controller = WalkController::new(repo_root.clone());
-        controller.refresh_from_disk()?;
-        let version = durable_version_for(endpoint.repo_root())?;
-        let delta = PublishedDelta::capture(&controller, version.clone(), None)?;
+        let (controller, version, delta, observation) = if gate.is_read_only() {
+            let version = durable_version_for(endpoint.repo_root())?;
+            let (controller, delta, observation) =
+                initialize_controller(endpoint.repo_root(), version.clone(), &gate)?;
+            (controller, version, delta, observation)
+        } else {
+            let mut controller = WalkController::new(repo_root.clone());
+            controller.refresh_from_disk()?;
+            let version = durable_version_for(endpoint.repo_root())?;
+            let delta = PublishedDelta::capture(&controller, version.clone(), None)?;
+            let observation = ControllerObservation::capture(
+                &controller,
+                &repo_root,
+                version.session_id().is_some(),
+            );
+            (controller, version, delta, observation)
+        };
         let operation_root = paths::operation_dir(endpoint.repo_root())?;
         paths::ensure_operation_dir(&operation_root)?;
-        let observation =
-            ControllerObservation::capture(&controller, &repo_root, version.session_id().is_some());
         let observed = Arc::new(ControllerCache::new(observation));
         let jobs = restore_job_registry(&operation_root, &epoch, restore, version.session_id())?;
         let server = WalkServer {
@@ -959,6 +983,25 @@ pub(crate) async fn serve_prepared(
         warn!(error = ?error, socket = %endpoint.socket().display(), "failed to clean owned walk endpoint after server exit");
     }
     result
+}
+
+fn initialize_controller(
+    repo_root: &Path,
+    version: SessionVersion,
+    gate: &MutationGate,
+) -> Result<(WalkController, PublishedDelta, ControllerObservation), PrepareError> {
+    if !gate.is_read_only() {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: "lightweight controller initialization requires terminal read-only authority"
+                .to_string(),
+        });
+    }
+    let mut controller = WalkController::new(repo_root.to_path_buf());
+    controller.track_files()?;
+    let phase = version.phase();
+    let delta = PublishedDelta::not_recorded(phase, version, None);
+    let observation = ControllerObservation::durable(phase);
+    Ok((controller, delta, observation))
 }
 
 fn clear_stale(repo_root: &Path, socket: &Path) -> Result<(), PrepareError> {
@@ -984,7 +1027,20 @@ fn clear_stale(repo_root: &Path, socket: &Path) -> Result<(), PrepareError> {
     #[cfg(not(unix))]
     let _ = metadata;
 
-    if socket_reachable(socket)? {
+    const PROBE_ATTEMPTS: usize = 10;
+    const PROBE_PAUSE: Duration = Duration::from_millis(5);
+
+    // Listener teardown can leave the inode briefly connectable under load.
+    // Remove it only after a bounded re-probe observes it unreachable.
+    let mut reachable = socket_reachable(socket)?;
+    for _ in 1..PROBE_ATTEMPTS {
+        if !reachable {
+            break;
+        }
+        std::thread::sleep(PROBE_PAUSE);
+        reachable = socket_reachable(socket)?;
+    }
+    if reachable {
         return Err(PrepareError::InvalidBatchSelection {
             detail: format!("walk socket '{}' is still reachable", socket.display()),
         });
@@ -1378,6 +1434,7 @@ impl WalkServer {
                 verbose,
                 with_note,
             } => {
+                let durable_phase = self.phase_for_response().await;
                 let mut controller = self.controller.lock().await;
                 if verify {
                     controller.refresh_from_disk().map(|_| {
@@ -1390,11 +1447,14 @@ impl WalkServer {
                         WalkResponse::audit(phase, report, self.epoch.clone())
                     })
                 } else {
-                    let phase = controller.phase();
                     let mut report = controller.audit(scope, campaign, transition);
                     report.verbose = verbose;
                     report.with_note = with_note;
-                    Ok(WalkResponse::audit(phase, report, self.epoch.clone()))
+                    Ok(WalkResponse::audit(
+                        durable_phase,
+                        report,
+                        self.epoch.clone(),
+                    ))
                 }
             }
             WalkRequestBody::LlmLanes { verbose } => {
@@ -1584,22 +1644,22 @@ impl WalkServer {
                 })
             }
             WalkRequestBody::Replay { index, tail } => {
+                let phase = self.phase_for_response().await;
                 let mut controller = self.controller.lock().await;
-                let phase = controller.phase();
                 controller.replay_report(index, tail).map(|message| {
                     WalkResponse::ok(WalkOkKind::Replay, phase, message, self.epoch.clone())
                 })
             }
             WalkRequestBody::ReplayBack { steps, tail } => {
+                let phase = self.phase_for_response().await;
                 let mut controller = self.controller.lock().await;
-                let phase = controller.phase();
                 controller.replay_back(steps, tail).map(|message| {
                     WalkResponse::ok(WalkOkKind::ReplayBack, phase, message, self.epoch.clone())
                 })
             }
             WalkRequestBody::ReplayForward { steps, tail } => {
+                let phase = self.phase_for_response().await;
                 let mut controller = self.controller.lock().await;
-                let phase = controller.phase();
                 controller.replay_forward(steps, tail).map(|message| {
                     WalkResponse::ok(
                         WalkOkKind::ReplayForward,
@@ -1671,8 +1731,8 @@ impl WalkServer {
                     .await
             }
             WalkRequestBody::Files => {
+                let phase = self.phase_for_response().await;
                 let controller = self.controller.lock().await;
-                let phase = controller.phase();
                 Ok(WalkResponse::ok(
                     WalkOkKind::Files,
                     phase,
@@ -2867,6 +2927,12 @@ impl WalkServer {
     }
 
     async fn phase_for_response(&self) -> WalkPhase {
+        if self.gate.is_read_only() {
+            return self
+                .durable_version()
+                .map(|version| version.phase())
+                .unwrap_or_else(|_| self.observed.read().phase);
+        }
         if let Some(job) = self.active_job().await {
             return self
                 .durable_version()
@@ -2887,7 +2953,11 @@ impl WalkServer {
             )
         };
         let session_exists = durable.version.session_id().is_some();
-        let controller = self.controller.try_lock().ok();
+        let controller = if self.gate.is_read_only() {
+            None
+        } else {
+            self.controller.try_lock().ok()
+        };
         let observation = controller.as_ref().map_or_else(
             || self.observed.read(),
             |controller| {
@@ -3043,6 +3113,26 @@ impl WalkServer {
             .is_some_and(|job| job.status.blocks_mutation())
         {
             return self.status_response("walk state").await;
+        }
+        if self.gate.is_read_only() {
+            let phase = self.phase_for_response().await;
+            let blocker = self
+                .gate
+                .blocker()
+                .expect("terminal read-only gate has a blocker");
+            let files = self.controller.lock().await.files_report();
+            let report = format!(
+                "server_pid={}\nphase: {phase} - {}\nmutation_authority=read_only\nsource: durable terminal controller session\nblocker: {}\n{files}",
+                std::process::id(),
+                phase.detail(),
+                blocker.detail,
+            );
+            return Ok(WalkResponse::ok(
+                WalkOkKind::Show,
+                phase,
+                report,
+                self.epoch.clone(),
+            ));
         }
         let mut controller = self.controller.lock().await;
         controller.refresh_from_disk()?;
@@ -5058,6 +5148,24 @@ mod tests {
                 other => panic!("{kind} bypassed the terminal gate: {other:?}"),
             }
         }
+    }
+
+    #[test]
+    fn terminal_startup_uses_durable_cursor_without_reconstruction() {
+        let repo = tempdir().expect("repo tempdir");
+        let version = test_version(WalkPhase::R14a, 29);
+        let gate = MutationGate::read_only("runtime lifecycle Completed");
+
+        let (controller, delta, observation) =
+            initialize_controller(repo.path(), version.clone(), &gate)
+                .expect("initialize terminal inspection controller");
+
+        assert_eq!(controller.phase(), WalkPhase::Empty);
+        assert_eq!(delta.phase, WalkPhase::R14a);
+        assert_eq!(delta.snapshot.version, version);
+        assert_eq!(observation.phase, WalkPhase::R14a);
+        assert!(observation.attached);
+        assert!(controller.files_report().contains("parent_identity"));
     }
 
     #[tokio::test]

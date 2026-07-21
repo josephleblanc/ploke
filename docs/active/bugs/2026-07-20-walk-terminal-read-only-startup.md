@@ -125,6 +125,42 @@ binary. No epoch admission was attempted.
 After validation, the transition journal and all three controller journals had
 the same SHA-256 values recorded above. No walk server process remained.
 
-Two non-correctness sharp edges remain visible: cold terminal reconstruction
-took roughly 15–30 seconds before the endpoint answered, and `files` includes
-up to a 128 KiB prefix of the transition journal in its response.
+## Terminal Inspection Polish
+
+The first repair exposed three non-correctness sharp edges:
+
+- cold terminal startup and each `show` repeated full R0-R14 reconstruction,
+  including digest validation, and took roughly 15-30 seconds on V29;
+- `files` read and embedded up to 128 KiB from every tracked regular file;
+- `recover` rendered the full nested `ServerEpoch` debug value for an
+  `EpochChanged` cause.
+
+CPU sampling localized the startup cost to SHA-256 work reached through
+`WalkController::refresh_from_disk()`. A completed run already has a validated
+terminal lifecycle and a durable controller cursor, so the read-only server now
+starts from that cursor and tracks only file paths and metadata. Live,
+transferred, and pending servers still perform full reconstruction. Explicit
+`audit --verify` also retains full reconstruction and digest validation.
+
+`files` is now metadata-only, and `recover` renders a bounded epoch comparison:
+protocol and transition-graph versions, binary identity, and booleans for Git
+head, branch, and source-status changes. It keeps epoch admission explicit and
+does not mutate a completed run.
+
+On the preserved V29 checkout, a cold `walk show` auto-spawn completed in 153
+ms; an explicitly launched server answered its first health request within 455
+ms, and a warm `show` completed in 20 ms. The JSON `files` response shrank from
+142,531 bytes to 1,347 bytes, and the recovery response was 1,526 bytes while
+still reporting protocol 10 -> 11 and the exact binary change. `status`,
+`show`, `files`, `recover`, and `replay` all reported the durable R14a position.
+
+The live survey ended with `stop`, confirmed that its private socket and process
+were gone, and rechecked all four hashes above unchanged. No epoch admission,
+provider request, controller transition, or campaign-history write occurred.
+
+Focused regressions cover terminal startup without reconstruction,
+metadata-only bounded file reporting, and bounded epoch recovery output. The
+default-parallel walk module suite passed all 179 tests. That pass also covers
+the bounded stale-socket re-probe used during rapid successor teardown: a live
+owner remains rejected, while a listener inode that is only briefly reachable
+during close can be reclaimed after the owner is gone.

@@ -10,7 +10,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
-    io::Read,
     path::{Path, PathBuf},
     process::Command,
     str::FromStr,
@@ -82,7 +81,6 @@ use super::{
 };
 
 const MAX_HISTORY: usize = 80;
-const MAX_FILE_BYTES: usize = 128 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LlmMove {
@@ -366,6 +364,14 @@ impl WalkController {
     /// Render tracked output files for the current walk.
     pub(crate) fn files_report(&self) -> String {
         self.files.render()
+    }
+
+    /// Discover durable file locations without reconstructing typestate.
+    pub(crate) fn track_files(&mut self) -> Result<(), PrepareError> {
+        if let Some(parent) = load_parent_identity_optional(&self.repo_root)? {
+            self.files.remember_campaign(parent.campaign_id());
+        }
+        Ok(())
     }
 
     /// Build a read-only file/database persistence audit for a walk transition.
@@ -4609,8 +4615,12 @@ impl WalkFiles {
         }
         let mut lines = vec!["tracked output files:".to_string()];
         for file in &self.tracked {
-            lines.push(format!("--- {}: {} ---", file.label, file.path.display()));
-            lines.push(preview_file(&file.path));
+            lines.push(format!(
+                "{}: {} ({})",
+                file.label,
+                file.path.display(),
+                file_metadata(&file.path)
+            ));
         }
         lines.join("\n")
     }
@@ -4638,41 +4648,21 @@ fn display_dir(path: &Path) -> String {
     value
 }
 
-fn preview_file(path: &Path) -> String {
+fn file_metadata(path: &Path) -> String {
     let metadata = match fs::metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return "(missing)".to_string();
+            return "missing".to_string();
         }
-        Err(error) => return format!("(metadata error: {error})"),
+        Err(error) => return format!("metadata error: {error}"),
     };
-    if !metadata.is_file() {
-        return format!("(not a regular file; {} bytes)", metadata.len());
+    if metadata.is_file() {
+        format!("{} bytes", metadata.len())
+    } else if metadata.is_dir() {
+        "directory".to_string()
+    } else {
+        format!("non-regular file; {} bytes", metadata.len())
     }
-    let mut file = match fs::File::open(path) {
-        Ok(file) => file,
-        Err(error) => return format!("(open error: {error})"),
-    };
-    let mut bytes = Vec::new();
-    let read = file
-        .by_ref()
-        .take((MAX_FILE_BYTES + 1) as u64)
-        .read_to_end(&mut bytes);
-    if let Err(error) = read {
-        return format!("(read error: {error})");
-    }
-    let truncated = bytes.len() > MAX_FILE_BYTES;
-    if truncated {
-        bytes.truncate(MAX_FILE_BYTES);
-    }
-    let mut header = format!("{} bytes", metadata.len());
-    if truncated {
-        header.push_str(&format!("; showing first {MAX_FILE_BYTES} bytes"));
-    }
-    if bytes.is_empty() {
-        return format!("{header}\n(empty)");
-    }
-    format!("{header}\n{}", String::from_utf8_lossy(&bytes))
 }
 
 #[cfg(test)]
@@ -4707,6 +4697,28 @@ mod tests {
             cursor: Some(Cursor::new(phase, ContentHash::of(phase.as_str())).expect("cursor")),
             journal_revision: 1,
         }
+    }
+
+    #[test]
+    fn files_report_is_metadata_only_and_bounded() {
+        let root = tempfile::tempdir().expect("file report root");
+        let path = root.path().join("large-journal.jsonl");
+        fs::write(&path, vec![b'x'; 256 * 1024]).expect("write large tracked file");
+        let mut files = WalkFiles::default();
+        files.root = Some(root.path().to_path_buf());
+        files.push("transition_journal", path.clone());
+
+        let report = files.render();
+
+        assert!(
+            report.len() < 1_024,
+            "file report was not bounded: {}",
+            report.len()
+        );
+        assert!(report.contains("transition_journal"), "{report}");
+        assert!(report.contains(path.to_string_lossy().as_ref()), "{report}");
+        assert!(report.contains("262144 bytes"), "{report}");
+        assert!(!report.contains(&"x".repeat(128)), "{report}");
     }
 
     #[test]

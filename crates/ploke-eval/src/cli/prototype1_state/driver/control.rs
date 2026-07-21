@@ -635,7 +635,7 @@ fn recover_controller_at(
             detail: "controller recovery lock has no unresolved cause".to_string(),
         })?;
     if directive == RecoveryDirective::Inspect {
-        return Ok(format!("controller recovery required: {cause:?}"));
+        return Ok(render_recovery(&cause));
     }
     let abandon = directive == RecoveryDirective::AbandonSession;
     match directive {
@@ -660,6 +660,41 @@ fn recover_controller_at(
             "controller recovery resolved {cause:?}; retry the original command to claim a new fence"
         ))
     }
+}
+
+fn render_recovery(cause: &RecoveryCause) -> String {
+    let RecoveryCause::EpochChanged {
+        session_id,
+        prior,
+        requested,
+    } = cause
+    else {
+        return format!("controller recovery required: {cause:?}");
+    };
+    format!(
+        "controller recovery required: epoch_changed\n\
+         session_id: {session_id}\n\
+         protocol: {} -> {}\n\
+         transition_graph: {} -> {}\n\
+         binary: {} -> {}\n\
+         binary_modified_ms: {:?} -> {:?}\n\
+         git_head_changed: {}\n\
+         branch_changed: {}\n\
+         source_status_changed: {}\n\
+         meaning: persisted controller authority belongs to an earlier server epoch; read-only inspection remains available\n\
+         next: inspection requires no recovery mutation. Resume a nonterminal run only after reviewing these exact changes, then use `ploke-eval loop walk recover --admit-epoch` to record explicit admission",
+        prior.protocol_version,
+        requested.protocol_version,
+        prior.transition_graph_version,
+        requested.transition_graph_version,
+        prior.exe_path.display(),
+        requested.exe_path.display(),
+        prior.exe_modified_unix_ms,
+        requested.exe_modified_unix_ms,
+        prior.git_head != requested.git_head,
+        prior.active_branch != requested.active_branch,
+        prior.source_status_hash != requested.source_status_hash,
+    )
 }
 
 fn ensure_owner_gone(cause: &RecoveryCause) -> Result<(), PrepareError> {
@@ -2194,6 +2229,45 @@ mod tests {
             }
             _ => panic!("completed V29 runtime did not map to read-only admission"),
         }
+    }
+
+    #[test]
+    fn epoch_recovery_inspection_is_bounded_and_actionable() {
+        let prior = ServerEpoch {
+            protocol_version: 10,
+            transition_graph_version: "walk-r0-r14a-v2".to_string(),
+            repo_root: PathBuf::from("/tmp/parent"),
+            exe_path: PathBuf::from("/tmp/old/ploke-eval"),
+            exe_modified_unix_ms: Some(10),
+            git_head: Some("abc123".to_string()),
+            active_branch: Some("parent".to_string()),
+            source_status_hash: Some("clean".to_string()),
+        };
+        let requested = ServerEpoch {
+            protocol_version: 11,
+            exe_path: PathBuf::from("/tmp/new/ploke-eval"),
+            exe_modified_unix_ms: Some(11),
+            ..prior.clone()
+        };
+        let report = render_recovery(&RecoveryCause::EpochChanged {
+            session_id: SessionId::for_test(29),
+            prior,
+            requested,
+        });
+
+        assert!(
+            report.len() < 1_500,
+            "recovery report was not bounded: {}",
+            report.len()
+        );
+        assert!(report.contains("epoch_changed"), "{report}");
+        assert!(report.contains("protocol: 10 -> 11"), "{report}");
+        assert!(
+            report.contains("inspection requires no recovery mutation"),
+            "{report}"
+        );
+        assert!(report.contains("--admit-epoch"), "{report}");
+        assert!(!report.contains("ServerEpoch {"), "{report}");
     }
 
     #[test]
