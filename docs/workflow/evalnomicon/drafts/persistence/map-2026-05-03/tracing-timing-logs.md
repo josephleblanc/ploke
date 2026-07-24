@@ -36,17 +36,17 @@ jq -c 'select((.campaign_id? // .span.campaign_id? // (.spans[-1].campaign_id?))
 
 ### `chat_http` Provider Attempt Traces
 
-- Path pattern: primarily same observation JSONL when `PLOKE_PROTOTYPE1_TRACE_JSONL` is enabled; also formatted into normal eval logs. If `PLOKE_PROTOCOL_DEBUG` is truthy, compact JSON lines are also written to process stderr, which for child runtimes lands in `prototype1/nodes/<node-id>/streams/<runtime-id>/stderr.log`.
-- Schema/event shape: `chat_http_request_start`, `chat_http_response_headers`, `chat_http_response_body`, `chat_http_response_error_status`, `chat_http_retry_scheduled`, `chat_http_request_completed`, `chat_http_request_error`, `chat_http_retry_suppressed`. Fields include `request_id`, `attempt`, `max_attempts`, `url`, `model`, `timeout_secs`, `status`, `elapsed_ms`, `backoff_ms`, `retry_after_ms`, `request_bytes`, `response_bytes`, `phase`, `failure`, `receive_phase`, `body_failure`, `is_timeout`, `raw_error`.
-- Writer: `crates/ploke-llm/src/manager/session.rs:88`-`:320` wraps chat HTTP attempts; event writers are at `:342`-`:620`. `PLOKE_PROTOCOL_DEBUG` stderr emission is controlled at `:71`-`:85`.
-- Reader/CLI: `prototype1-monitor timing` parses structured observation JSONL into `ProviderHttpEvent` at `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:3560`-`:3588`, then groups attempts by `(source log path, request_id)` around `:3124`-`:3158`. Stderr fallback counters are parsed at `:3338`-`:3419`.
+- Path pattern: primarily the same observation JSONL when `PLOKE_PROTOTYPE1_TRACE_JSONL` is enabled; terminal records are also formatted into normal eval logs. If `PLOKE_PROTOCOL_DEBUG` is truthy, the same terminal timeline is written as compact JSON to process stderr, which for child runtimes lands in `prototype1/nodes/<node-id>/streams/<runtime-id>/stderr.log`.
+- Schema/event shape: one request-level `chat_http_request` TRACE record, one `provider_attempt_started` TRACE record per attempt, and one `provider_attempt` INFO terminal record per attempt. `ProviderAttemptTimeline` supplies request/attempt identity, phase timings, status/bytes, `transport_outcome`, typed send/body failure, `response_outcome`, retry decision/delays, and non-payload error detail.
+- Writer: `crates/ploke-llm/src/manager/session.rs` owns request/retry control flow and updates `AttemptBuilder`; `crates/ploke-llm/src/manager/builders/attempt.rs` finalizes and emits the terminal typed record. Request and response bodies use the separate `api_json` payload target, carry request/attempt correlation comments, and each emit once.
+- Reader: `crates/ploke-eval/src/cli/prototype1_state/eval_store/observation.rs` imports every line as generic `eval_trace_event` evidence and deserializes `provider_attempt` lines through `ProviderAttemptTimeline` into the dedicated `eval_provider_attempt` relation. Historical flat records using `outcome` deserialize as `transport_outcome`, with missing `response_outcome` defaulted to `not_parsed`.
 - Key IDs for joins: `request_id` is only process-local; `attempt` joins attempt events within a request. Reliable campaign/node/branch joins require tracing span fields (`campaign_id`, `node_id`, `branch_id`, `generation`) from the surrounding Prototype 1 span.
 - Classification: diagnostic provider transport evidence. Useful for retry/timeout/backoff proof; not authoritative loop state.
 - Safe bounded inspection:
 
 ```bash
-jq -c 'select((.target? == "chat_http") and ((.campaign_id? // .span.campaign_id? // (.spans[-1].campaign_id?)) == "<campaign>")) | {ts:.timestamp,event,request_id,attempt,max_attempts,status,phase,elapsed_ms,backoff_ms,node_id:(.node_id? // .span.node_id? // .spans[-1].node_id?),branch_id:(.branch_id? // .span.branch_id? // .spans[-1].branch_id?)}' ~/.ploke-eval/logs/prototype1_observation_*.jsonl | head -n 40
-rg -n 'chat_http_(request_error|retry_scheduled|retry_suppressed|request_completed)' ~/.ploke-eval/campaigns/<campaign>/prototype1/nodes/<node-id>/streams/<runtime-id>/stderr.log | head -n 20
+jq -c 'select((.target? == "chat_http") and (.event? == "provider_attempt") and ((.campaign_id? // .span.campaign_id? // (.spans[-1].campaign_id?)) == "<campaign>")) | {ts:.timestamp,request_id,attempt,max_attempts,status,transport_outcome,response_outcome,failure_phase,send_failure,body_failure,retry_decision,retry_after_ms,backoff_ms,elapsed_ms}' ~/.ploke-eval/logs/prototype1_observation_*.jsonl | head -n 40
+rg -n '"event":"provider_attempt"' ~/.ploke-eval/campaigns/<campaign>/prototype1/nodes/<node-id>/streams/<runtime-id>/stderr.log | head -n 20
 ```
 
 ### Timing Spans From `TimingTrace`
@@ -153,7 +153,7 @@ rg -n '<campaign>|<node-id>|chat_http_|prototype1 step' ~/.ploke-eval/logs/ploke
 ## Environment And Feature Switches
 
 - `PLOKE_PROTOTYPE1_TRACE_JSONL`: turns on structured Prototype 1 observation JSONL; default path under `~/.ploke-eval/logs`.
-- `PLOKE_PROTOCOL_DEBUG`: truthy value causes `chat_http` compact JSON events to be emitted to stderr in addition to tracing.
+- `PLOKE_PROTOCOL_DEBUG`: truthy value causes the terminal `chat_http` attempt record to be emitted as compact JSON to stderr in addition to tracing.
 - `--debug-tools`: enables `ploke_exec=debug` in the eval tracing filter and debug console visibility.
 - `RUST_LOG`: honored by the eval tracing `EnvFilter`; default is `info,embed-pipeline=trace`.
 - Cargo feature `demo`: suppresses `TimingTrace` stderr start/end lines and changes some console filtering paths.
@@ -178,7 +178,7 @@ rg -n '<campaign>|<node-id>|chat_http_|prototype1 step' ~/.ploke-eval/logs/ploke
 
 ## Gaps / Unknowns
 
-- Provider HTTP attempt evidence has no durable typed attempt record outside tracing/logs. `request_id` is a process-local counter, not globally unique.
+- Provider HTTP attempt evidence now has a typed diagnostic projection in `eval_provider_attempt`, but it is populated only when an observation JSONL is explicitly imported. `request_id` remains a process-local counter, not a globally unique identity.
 - `PLOKE_PROTOCOL_DEBUG` stderr JSON is useful but duplicates tracing and is not read as structured JSON by the monitor; current stderr reader mostly counts regex patterns.
 - TimingTrace is plain stderr text. It should be replaced or supplemented by a typed timing record with `campaign_id`, `node_id`, `branch_id`, `runtime_id`, phase name, start/end/duration, and outcome.
 - Full-response sidecar usage is structured but known to be a stopgap; usage totals can undercount if final responses are missed.

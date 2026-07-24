@@ -1,12 +1,14 @@
 use std::{
+    env,
     marker::PhantomData,
+    sync::OnceLock,
     time::{Duration, Instant},
 };
 
 use serde::{Deserialize, Serialize};
 
 use crate::Router;
-use crate::error::HttpBodyFailure;
+use crate::error::{HttpBodyFailure, HttpSendFailure};
 
 mod private {
     pub trait Sealed {}
@@ -40,6 +42,16 @@ pub enum ProviderAttemptOutcome {
     Failed,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderResponseOutcome {
+    #[default]
+    NotParsed,
+    Parsed,
+    ProviderError,
+    InvalidResponse,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderRetryDecision {
@@ -64,11 +76,17 @@ pub struct ProviderAttempt {
     pub failed: Option<Duration>,
     pub status: Option<u16>,
     pub response_bytes: Option<usize>,
+    #[serde(alias = "transport_outcome")]
     pub outcome: ProviderAttemptOutcome,
     pub failure_phase: Option<ProviderFailurePhase>,
+    pub send_failure: Option<HttpSendFailure>,
     pub body_failure: Option<HttpBodyFailure>,
+    #[serde(default)]
+    pub response_outcome: ProviderResponseOutcome,
     pub retry_decision: ProviderRetryDecision,
+    pub retry_after: Option<Duration>,
     pub backoff: Option<Duration>,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -85,11 +103,19 @@ pub struct ProviderAttemptTimeline {
     pub failed_ms: Option<u64>,
     pub status: Option<u16>,
     pub response_bytes: Option<usize>,
+    #[serde(rename = "transport_outcome", alias = "outcome")]
     pub outcome: ProviderAttemptOutcome,
     pub failure_phase: Option<ProviderFailurePhase>,
+    #[serde(default, with = "send_failure_serde")]
+    pub send_failure: Option<HttpSendFailure>,
+    #[serde(default, with = "body_failure_serde")]
     pub body_failure: Option<HttpBodyFailure>,
+    #[serde(default)]
+    pub response_outcome: ProviderResponseOutcome,
     pub retry_decision: ProviderRetryDecision,
+    pub retry_after_ms: Option<u64>,
     pub backoff_ms: Option<u64>,
+    pub error: Option<String>,
 }
 
 impl ProviderAttemptTimeline {
@@ -110,9 +136,13 @@ impl ProviderAttemptTimeline {
             response_bytes: attempt.response_bytes,
             outcome: attempt.outcome,
             failure_phase: attempt.failure_phase,
+            send_failure: attempt.send_failure.clone(),
             body_failure: attempt.body_failure.clone(),
+            response_outcome: attempt.response_outcome,
             retry_decision: attempt.retry_decision,
+            retry_after_ms: attempt.retry_after.map(duration_ms),
             backoff_ms: attempt.backoff.map(duration_ms),
+            error: attempt.error.clone(),
         }
     }
 
@@ -133,9 +163,13 @@ impl ProviderAttemptTimeline {
             response_bytes: self.response_bytes,
             outcome: self.outcome,
             failure_phase: self.failure_phase,
+            send_failure: self.send_failure,
             body_failure: self.body_failure,
+            response_outcome: self.response_outcome,
             retry_decision: self.retry_decision,
+            retry_after: self.retry_after_ms.map(Duration::from_millis),
             backoff: self.backoff_ms.map(Duration::from_millis),
+            error: self.error,
         }
     }
 }
@@ -153,9 +187,13 @@ pub struct AttemptBuilder<R: StreamingMarker> {
     status: Option<u16>,
     response_bytes: Option<usize>,
     failure_phase: Option<ProviderFailurePhase>,
+    send_failure: Option<HttpSendFailure>,
     body_failure: Option<HttpBodyFailure>,
+    response_outcome: ProviderResponseOutcome,
     retry_decision: ProviderRetryDecision,
+    retry_after: Option<Duration>,
     backoff: Option<Duration>,
+    error: Option<String>,
     _router: PhantomData<R>,
 }
 
@@ -174,9 +212,13 @@ impl<R: StreamingMarker> AttemptBuilder<R> {
             status: None,
             response_bytes: None,
             failure_phase: None,
+            send_failure: None,
             body_failure: None,
+            response_outcome: ProviderResponseOutcome::NotParsed,
             retry_decision: ProviderRetryDecision::None,
+            retry_after: None,
             backoff: None,
+            error: None,
             _router: PhantomData,
         }
     }
@@ -244,8 +286,20 @@ impl<R: StreamingMarker> AttemptBuilder<R> {
     }
 
     #[must_use]
+    pub fn send_failure(mut self, failure: HttpSendFailure) -> Self {
+        self.send_failure = Some(failure);
+        self
+    }
+
+    #[must_use]
     pub fn body_failure(mut self, failure: HttpBodyFailure) -> Self {
         self.body_failure = Some(failure);
+        self
+    }
+
+    #[must_use]
+    pub fn response_outcome(mut self, outcome: ProviderResponseOutcome) -> Self {
+        self.response_outcome = outcome;
         self
     }
 
@@ -256,8 +310,20 @@ impl<R: StreamingMarker> AttemptBuilder<R> {
     }
 
     #[must_use]
+    pub fn retry_after(mut self, retry_after: Duration) -> Self {
+        self.retry_after = Some(retry_after);
+        self
+    }
+
+    #[must_use]
     pub fn backoff(mut self, backoff: Duration) -> Self {
         self.backoff = Some(backoff);
+        self
+    }
+
+    #[must_use]
+    pub fn error(mut self, error: impl Into<String>) -> Self {
+        self.error = Some(error.into());
         self
     }
 
@@ -357,27 +423,20 @@ impl<R: StreamingMarker> AttemptBuilder<R> {
                 ProviderAttemptOutcome::Completed
             },
             failure_phase: self.failure_phase,
+            send_failure: self.send_failure,
             body_failure: self.body_failure,
+            response_outcome: self.response_outcome,
             retry_decision: self.retry_decision,
+            retry_after: self.retry_after,
             backoff: self.backoff,
+            error: self.error,
         }
-    }
-
-    #[must_use]
-    pub fn finish_traced(
-        self,
-        request_id: u64,
-        attempt: u32,
-        max_attempts: u32,
-    ) -> ProviderAttempt {
-        let attempt = self.finish(request_id, attempt, max_attempts);
-        trace_provider_attempt(&attempt);
-        attempt
     }
 }
 
-fn trace_provider_attempt(attempt: &ProviderAttempt) {
+pub(crate) fn trace_provider_attempt(attempt: &ProviderAttempt) {
     let timeline = ProviderAttemptTimeline::from_attempt(attempt);
+    emit_attempt_stderr(&timeline);
     let elapsed_ms = attempt
         .failed
         .or(attempt.output_completed)
@@ -398,13 +457,46 @@ fn trace_provider_attempt(attempt: &ProviderAttempt) {
         failed_ms = timeline.failed_ms,
         status = timeline.status,
         response_bytes = timeline.response_bytes,
-        outcome = timeline.outcome.as_str(),
+        transport_outcome = timeline.outcome.as_str(),
         failure_phase = timeline.failure_phase.map(ProviderFailurePhase::as_str),
-        body_failure = timeline.body_failure.map(http_body_failure_str),
+        send_failure = timeline.send_failure.as_ref().map(HttpSendFailure::as_str),
+        body_failure = timeline.body_failure.as_ref().map(HttpBodyFailure::as_str),
+        response_outcome = timeline.response_outcome.as_str(),
         retry_decision = timeline.retry_decision.as_str(),
+        retry_after_ms = timeline.retry_after_ms,
         backoff_ms = timeline.backoff_ms,
+        error = timeline.error.as_deref(),
         elapsed_ms,
     );
+}
+
+static CHAT_HTTP_STDERR: OnceLock<bool> = OnceLock::new();
+
+#[derive(Serialize)]
+struct ProviderAttemptObservation<'a> {
+    event: &'static str,
+    #[serde(flatten)]
+    attempt: &'a ProviderAttemptTimeline,
+}
+
+fn emit_attempt_stderr(attempt: &ProviderAttemptTimeline) {
+    if chat_http_stderr_enabled()
+        && let Ok(line) = serde_json::to_string(&ProviderAttemptObservation {
+            event: "provider_attempt",
+            attempt,
+        })
+    {
+        eprintln!("{line}");
+    }
+}
+
+fn chat_http_stderr_enabled() -> bool {
+    *CHAT_HTTP_STDERR.get_or_init(|| {
+        env::var("PLOKE_PROTOCOL_DEBUG").is_ok_and(|value| {
+            let normalized = value.trim().to_ascii_lowercase();
+            !normalized.is_empty() && normalized != "0" && normalized != "false"
+        })
+    })
 }
 
 impl ProviderFailurePhase {
@@ -428,6 +520,18 @@ impl ProviderAttemptOutcome {
     }
 }
 
+impl ProviderResponseOutcome {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NotParsed => "not_parsed",
+            Self::Parsed => "parsed",
+            Self::ProviderError => "provider_error",
+            Self::InvalidResponse => "invalid_response",
+        }
+    }
+}
+
 impl ProviderRetryDecision {
     #[must_use]
     pub fn as_str(self) -> &'static str {
@@ -445,11 +549,72 @@ fn duration_ms(duration: Duration) -> u64 {
     duration.as_millis() as u64
 }
 
-fn http_body_failure_str(failure: HttpBodyFailure) -> &'static str {
-    match failure {
-        HttpBodyFailure::Timeout => "timeout",
-        HttpBodyFailure::ReadFailed => "read_failed",
-        HttpBodyFailure::DecodeFailed => "decode_failed",
+mod send_failure_serde {
+    use serde::{Deserialize, Deserializer, Serializer, de::Error as _};
+
+    use super::HttpSendFailure;
+
+    pub(super) fn serialize<S>(
+        failure: &Option<HttpSendFailure>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match failure {
+            Some(failure) => serializer.serialize_some(failure.as_str()),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<Option<HttpSendFailure>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Option::<String>::deserialize(deserializer)?
+            .map(|failure| match failure.as_str() {
+                "timeout" | "Timeout" => Ok(HttpSendFailure::Timeout),
+                "failed" | "Failed" => Ok(HttpSendFailure::Failed),
+                other => Err(D::Error::custom(format!(
+                    "unknown provider send failure '{other}'"
+                ))),
+            })
+            .transpose()
+    }
+}
+
+mod body_failure_serde {
+    use serde::{Deserialize, Deserializer, Serializer, de::Error as _};
+
+    use super::HttpBodyFailure;
+
+    pub(super) fn serialize<S>(
+        failure: &Option<HttpBodyFailure>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match failure {
+            Some(failure) => serializer.serialize_some(failure.as_str()),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<Option<HttpBodyFailure>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Option::<String>::deserialize(deserializer)?
+            .map(|failure| match failure.as_str() {
+                "timeout" | "Timeout" => Ok(HttpBodyFailure::Timeout),
+                "read_failed" | "ReadFailed" => Ok(HttpBodyFailure::ReadFailed),
+                "decode_failed" | "DecodeFailed" => Ok(HttpBodyFailure::DecodeFailed),
+                other => Err(D::Error::custom(format!(
+                    "unknown provider body failure '{other}'"
+                ))),
+            })
+            .transpose()
     }
 }
 
@@ -601,6 +766,7 @@ mod tests {
                 .with_body_received(Duration::from_secs(17))
                 .status(200)
                 .response_bytes(123)
+                .response_outcome(ProviderResponseOutcome::Parsed)
                 .finish(42, 2, 3);
 
         assert_eq!(attempt.request_id, 42);
@@ -614,6 +780,7 @@ mod tests {
         assert_eq!(attempt.status, Some(200));
         assert_eq!(attempt.response_bytes, Some(123));
         assert_eq!(attempt.outcome, ProviderAttemptOutcome::Completed);
+        assert_eq!(attempt.response_outcome, ProviderResponseOutcome::Parsed);
         assert_eq!(attempt.retry_decision, ProviderRetryDecision::None);
     }
 
@@ -626,7 +793,9 @@ mod tests {
                 .body_failure(HttpBodyFailure::Timeout)
                 .failure_phase(ProviderFailurePhase::Body)
                 .retry_decision(ProviderRetryDecision::Scheduled)
+                .retry_after(Duration::from_millis(125))
                 .backoff(Duration::from_millis(250))
+                .error("response body timed out")
                 .finish(42, 2, 3);
 
         let timeline = ProviderAttemptTimeline::from_attempt(&attempt);
@@ -634,8 +803,41 @@ mod tests {
         assert_eq!(timeline.request_sent_ms, Some(1_000));
         assert_eq!(timeline.headers_received_ms, Some(2_000));
         assert_eq!(timeline.body_failure, Some(HttpBodyFailure::Timeout));
+        assert_eq!(timeline.retry_after_ms, Some(125));
         assert_eq!(timeline.backoff_ms, Some(250));
+        assert_eq!(timeline.error.as_deref(), Some("response body timed out"));
 
-        assert_eq!(timeline.into_attempt(), attempt);
+        let value = serde_json::to_value(&timeline).expect("serialize provider attempt timeline");
+        assert_eq!(value["transport_outcome"], "failed");
+        assert_eq!(value["body_failure"], "timeout");
+        assert!(value.get("outcome").is_none());
+
+        let decoded: ProviderAttemptTimeline =
+            serde_json::from_value(value).expect("deserialize provider attempt timeline");
+        assert_eq!(decoded.into_attempt(), attempt);
+    }
+
+    #[test]
+    fn historical_timeline_defaults_missing_response_outcome() {
+        let value = serde_json::json!({
+            "request_id": 42,
+            "attempt": 1,
+            "max_attempts": 1,
+            "started_at_ms": 0,
+            "status": 200,
+            "response_bytes": 123,
+            "outcome": "completed",
+            "body_failure": "ReadFailed",
+            "retry_decision": "none"
+        });
+
+        let timeline: ProviderAttemptTimeline =
+            serde_json::from_value(value).expect("historical provider attempt");
+
+        assert_eq!(
+            timeline.response_outcome,
+            ProviderResponseOutcome::NotParsed
+        );
+        assert_eq!(timeline.body_failure, Some(HttpBodyFailure::ReadFailed),);
     }
 }

@@ -7,7 +7,6 @@ use ploke_llm::manager::{ChatStepData, RecordedResponse, RecordedResponseTape};
 use ploke_llm::registry::calibration::{AttemptTimeout, RouterCalibration};
 use ploke_llm::response::ToolCall;
 use ploke_llm::{ChatHttpConfig, ChatStepError, ProviderAttempt, ProviderRetryDecision};
-use ploke_test_utils::workspace_root;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -48,9 +47,6 @@ use crate::tools::{
 use ploke_llm::LlmError;
 use tokio::time::sleep;
 
-const OPENROUTER_REQUEST_LOG: &str = "logs/openrouter/session/last_request.json";
-const OPENROUTER_RESPONSE_LOG_PARSED: &str = "logs/openrouter/session/last_parsed.json";
-const OPENROUTER_RESPONSE_LOG_RAW: &str = "logs/openrouter/session/last_response_raw.txt";
 const DEFAULT_REPAIR_ATTEMPTS_PER_SESSION: u32 = 4;
 const REPLAY_LIVE_STEP_LIMIT_REACHED: &str = "replay live step limit reached";
 /// Minimum number of provider HTTP attempts (one retry) for any router. Routers
@@ -2517,40 +2513,6 @@ fn is_pending_edit_payload(payload: &ToolUiPayload) -> bool {
         .fields
         .iter()
         .any(|field| field.name.as_ref() == "status" && field.value.as_ref() == "pending")
-}
-
-use tracing::info;
-
-fn log_api_request_json(url: &str, payload: &str, rel_path: &str) -> color_eyre::Result<()> {
-    info!(target: "api_json", "\n// URL: {url}\n// Request\n{payload}\n");
-    write_payload(rel_path, payload);
-    Ok(())
-}
-
-fn log_api_raw_response(url: &str, status: u16, body: &str) -> color_eyre::Result<()> {
-    info!(target: "api_json", "\n// URL: {url}\n// Status: {status}\n{body}\n");
-    write_payload(OPENROUTER_RESPONSE_LOG_RAW, body);
-    Ok(())
-}
-
-async fn log_api_parsed_json_response(
-    url: &str,
-    status: u16,
-    parsed: &OpenAiResponse,
-) -> color_eyre::Result<()> {
-    let payload: String = serde_json::to_string_pretty(parsed)?;
-    info!(target: "api_json", "\n// URL: {url}\n// Status: {status}\n{payload}\n");
-    write_payload(OPENROUTER_RESPONSE_LOG_PARSED, &payload);
-    Ok(())
-}
-
-fn write_payload(rel_path: &str, payload: &str) {
-    let mut path = workspace_root();
-    path.push(rel_path);
-    if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-    let _ = fs::write(path, payload);
 }
 
 #[tracing::instrument]

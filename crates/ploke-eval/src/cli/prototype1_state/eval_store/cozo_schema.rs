@@ -224,6 +224,36 @@ define_eval_schema!(TraceEventSchema {
     recorded_at: "String?",
 });
 
+define_eval_schema!(ProviderAttemptSchema {
+    "eval_provider_attempt",
+    provider_attempt_id: "String" =>
+    campaign_id: "String?",
+    request_id: "String",
+    attempt: "Int",
+    max_attempts: "Int",
+    started_at_ms: "Int",
+    request_sent_ms: "Int?",
+    headers_received_ms: "Int?",
+    output_started_ms: "Int?",
+    output_progress_ms: "Int?",
+    output_completed_ms: "Int?",
+    failed_ms: "Int?",
+    status: "Int?",
+    response_bytes: "Int?",
+    transport_outcome: "String",
+    failure_phase: "String?",
+    send_failure: "String?",
+    body_failure: "String?",
+    response_outcome: "String",
+    retry_decision: "String",
+    retry_after_ms: "Int?",
+    backoff_ms: "Int?",
+    error: "String?",
+    source_log_ref: "String",
+    source_event_index: "Int",
+    recorded_at: "String?",
+});
+
 pub(super) fn ensure_eval_store_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(), EvalStoreError> {
     let existing = eval_relation_names(db)?;
     reject_unsupported_schema_drift(&existing)?;
@@ -240,6 +270,7 @@ pub(super) fn ensure_eval_store_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(),
     ChannelReceiptSchema::SCHEMA.ensure_installed(db, "schema.eval_channel_receipt")?;
     ImportEventSchema::SCHEMA.ensure_installed(db, "schema.eval_import_event")?;
     TraceEventSchema::SCHEMA.ensure_installed(db, "schema.eval_trace_event")?;
+    ProviderAttemptSchema::SCHEMA.ensure_installed(db, "schema.eval_provider_attempt")?;
 
     ensure_setup_schema(db)?;
     ensure_evaluation_schema(db)?;

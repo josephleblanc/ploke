@@ -334,6 +334,14 @@ fn non_agent_schema_scripts() -> Vec<(&'static str, String, String)> {
             )
         },
         {
+            let schema = &super::cozo_schema::ProviderAttemptSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
             let schema = &super::child_plan::ChildPlanSchema::SCHEMA;
             (
                 schema.relation(),
@@ -810,6 +818,11 @@ fn eval_store_non_agent_schema_scripts_are_stable() {
             "eval_trace_event",
             r#":create eval_trace_event { trace_event_id: String => campaign_id: String?, parent_id: String?, runtime_id: String?, node_id: String?, generation: Int?, branch_id: String?, role: String?, pipeline: String?, stage: String?, authority: String?, transition: String?, event_name: String?, span_name: String?, target: String, level: String, outcome: String?, duration_ms: Int?, record_access: String?, record_kind: String?, record_path: String?, record_index: Int?, record_count: Int?, program: String?, exit_code: Int?, error: String?, source_log_ref: String?, source_event_index: Int?, recorded_at: String? }"#,
             r#"?[trace_event_id, campaign_id, parent_id, runtime_id, node_id, generation, branch_id, role, pipeline, stage, authority, transition, event_name, span_name, target, level, outcome, duration_ms, record_access, record_kind, record_path, record_index, record_count, program, exit_code, error, source_log_ref, source_event_index, recorded_at] <- [[$trace_event_id, $campaign_id, $parent_id, $runtime_id, $node_id, $generation, $branch_id, $role, $pipeline, $stage, $authority, $transition, $event_name, $span_name, $target, $level, $outcome, $duration_ms, $record_access, $record_kind, $record_path, $record_index, $record_count, $program, $exit_code, $error, $source_log_ref, $source_event_index, $recorded_at]] :put eval_trace_event { trace_event_id => campaign_id, parent_id, runtime_id, node_id, generation, branch_id, role, pipeline, stage, authority, transition, event_name, span_name, target, level, outcome, duration_ms, record_access, record_kind, record_path, record_index, record_count, program, exit_code, error, source_log_ref, source_event_index, recorded_at }"#,
+        ),
+        (
+            "eval_provider_attempt",
+            r#":create eval_provider_attempt { provider_attempt_id: String => campaign_id: String?, request_id: String, attempt: Int, max_attempts: Int, started_at_ms: Int, request_sent_ms: Int?, headers_received_ms: Int?, output_started_ms: Int?, output_progress_ms: Int?, output_completed_ms: Int?, failed_ms: Int?, status: Int?, response_bytes: Int?, transport_outcome: String, failure_phase: String?, send_failure: String?, body_failure: String?, response_outcome: String, retry_decision: String, retry_after_ms: Int?, backoff_ms: Int?, error: String?, source_log_ref: String, source_event_index: Int, recorded_at: String? }"#,
+            r#"?[provider_attempt_id, campaign_id, request_id, attempt, max_attempts, started_at_ms, request_sent_ms, headers_received_ms, output_started_ms, output_progress_ms, output_completed_ms, failed_ms, status, response_bytes, transport_outcome, failure_phase, send_failure, body_failure, response_outcome, retry_decision, retry_after_ms, backoff_ms, error, source_log_ref, source_event_index, recorded_at] <- [[$provider_attempt_id, $campaign_id, $request_id, $attempt, $max_attempts, $started_at_ms, $request_sent_ms, $headers_received_ms, $output_started_ms, $output_progress_ms, $output_completed_ms, $failed_ms, $status, $response_bytes, $transport_outcome, $failure_phase, $send_failure, $body_failure, $response_outcome, $retry_decision, $retry_after_ms, $backoff_ms, $error, $source_log_ref, $source_event_index, $recorded_at]] :put eval_provider_attempt { provider_attempt_id => campaign_id, request_id, attempt, max_attempts, started_at_ms, request_sent_ms, headers_received_ms, output_started_ms, output_progress_ms, output_completed_ms, failed_ms, status, response_bytes, transport_outcome, failure_phase, send_failure, body_failure, response_outcome, retry_decision, retry_after_ms, backoff_ms, error, source_log_ref, source_event_index, recorded_at }"#,
         ),
         (
             "eval_child_plan",
@@ -3996,6 +4009,10 @@ fn prototype1_eval_store_trace_observation_jsonl_imports_rows_idempotently() {
                 r#"{"timestamp":"2026-06-23T00:00:00Z","target":"ploke_exec","level":"INFO","event":"typestate_transition","role":"parent","pipeline":"prototype1.child_plan_authority","phase":"typestate_transition","transition":"R7->R8","outcome":"committed","campaign_id":"campaign","parent_id":"parent","node_id":"parent","generation":0,"branch_id":"main","record_access":"write","record_kind":"child_plan_file","record_path":"prototype1/messages/child-plan.json","record_index":0,"record_count":1,"duration_ms":17}"#,
                 "\n",
                 r#"{"timestamp":"2026-06-23T00:00:01Z","target":"ploke_exec","level":"INFO","span":{"name":"child-build"},"outcome":"rejected","program":"cargo","exit_code":101,"duration_ms":22}"#,
+                "\n",
+                r#"{"timestamp":"2026-06-23T00:00:02Z","target":"chat_http","level":"INFO","event":"provider_attempt","request_id":42,"attempt":1,"max_attempts":2,"started_at_ms":0,"request_sent_ms":1,"headers_received_ms":20,"output_started_ms":21,"output_completed_ms":21,"status":200,"response_bytes":321,"outcome":"completed","retry_decision":"none","elapsed_ms":21}"#,
+                "\n",
+                r#"{"timestamp":"2026-06-23T00:00:03Z","target":"chat_http","level":"INFO","event":"provider_attempt","request_id":43,"attempt":2,"max_attempts":2,"started_at_ms":22,"request_sent_ms":1,"headers_received_ms":18,"output_started_ms":19,"output_completed_ms":19,"status":200,"response_bytes":456,"transport_outcome":"completed","response_outcome":"parsed","retry_decision":"none","elapsed_ms":19}"#,
                 "\n"
             ),
         )
@@ -4017,7 +4034,7 @@ fn prototype1_eval_store_trace_observation_jsonl_imports_rows_idempotently() {
     assert_eq!(second, first);
     assert_eq!(query_log_refs(&db).rows.len(), 1);
     let traces = query_trace_events(&db, &first.log_ref_id);
-    assert_eq!(traces.rows.len(), 2);
+    assert_eq!(traces.rows.len(), 4);
     let mut by_index = std::collections::BTreeMap::new();
     for row in traces.row_refs() {
         by_index.insert(
@@ -4053,6 +4070,33 @@ fn prototype1_eval_store_trace_observation_jsonl_imports_rows_idempotently() {
         Some("cargo")
     );
     assert_eq!(by_index.get(&1).expect("second trace").5, Some(101));
+
+    let attempts = query_provider_attempts(&db, &first.log_ref_id);
+    assert_eq!(attempts.rows.len(), 2);
+    let mut by_request = std::collections::BTreeMap::new();
+    for attempt in attempts.row_refs() {
+        by_request.insert(
+            attempt.get::<String>("request_id").expect("request id"),
+            (
+                attempt.get::<i64>("attempt").expect("attempt"),
+                attempt
+                    .get::<String>("transport_outcome")
+                    .expect("transport outcome"),
+                attempt
+                    .get::<String>("response_outcome")
+                    .expect("response outcome"),
+            ),
+        );
+    }
+    let historical = by_request.get("42").expect("historical provider attempt");
+    assert_eq!(historical.0, 1);
+    assert_eq!(historical.1, "completed");
+    assert_eq!(historical.2, "not_parsed");
+    let current = by_request.get("43").expect("current provider attempt");
+    assert_eq!(current.0, 2);
+    assert_eq!(current.1, "completed");
+    assert_eq!(current.2, "parsed");
+    assert_eq!(first.provider_attempt_ids.len(), 2);
 }
 
 #[test]
@@ -5332,6 +5376,30 @@ fn query_trace_events(db: &Database, log_ref_id: &str) -> QueryResult {
             params,
         )
         .expect("query trace events")
+}
+
+fn query_provider_attempts(db: &Database, log_ref_id: &str) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert(
+        "source_log_ref".to_string(),
+        DataValue::from(log_ref_id.to_string()),
+    );
+    db.raw_query_params(
+        r#"
+?[provider_attempt_id, request_id, attempt, transport_outcome, response_outcome] :=
+    *eval_provider_attempt {
+        provider_attempt_id,
+        request_id,
+        attempt,
+        transport_outcome,
+        response_outcome,
+        source_log_ref
+    },
+    source_log_ref = $source_log_ref
+"#,
+        params,
+    )
+    .expect("query provider attempts")
 }
 
 fn query_all_trace_events(db: &Database) -> QueryResult {

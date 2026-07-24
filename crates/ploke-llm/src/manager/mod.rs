@@ -4,7 +4,7 @@ pub mod events;
 mod session;
 pub use builders::attempt::{
     ProviderAttempt, ProviderAttemptOutcome, ProviderAttemptTimeline, ProviderFailurePhase,
-    ProviderRetryDecision,
+    ProviderResponseOutcome, ProviderRetryDecision,
 };
 pub use session::{
     ChatHttpConfig, ChatStepData, ChatStepError, ChatStepOutcome, RecordedResponse,
