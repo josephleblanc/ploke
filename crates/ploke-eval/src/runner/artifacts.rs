@@ -8,8 +8,9 @@ use ploke_core::embeddings::{
     EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape,
 };
 use ploke_db::Database;
-use ploke_embed::config::{OpenRouterConfig, TruncatePolicy};
+use ploke_embed::config::{OpenAIConfig, OpenRouterConfig, TruncatePolicy};
 use ploke_embed::indexer::{EmbeddingProcessor, EmbeddingSource, IndexStatus, IndexingStatus};
+use ploke_embed::providers::openai::OpenAIBackend;
 use ploke_embed::providers::openrouter::OpenRouterBackend;
 use ploke_llm::embeddings::{
     EmbClientConfig, EmbeddingInput, EmbeddingRequest, HasDims, HasEmbeddings,
@@ -53,6 +54,7 @@ use tokio::time::Instant;
 use tracing::{info, warn};
 
 use crate::LlmResponseRecord;
+use crate::campaign::EmbeddingRoute;
 use crate::inner::registry::{RunLifecyclePhase, RunPhaseStatus};
 use crate::layout;
 use crate::record::{
@@ -75,6 +77,8 @@ pub struct RunMsbAgentSingleRequest {
     pub model_id: Option<String>,
     #[serde(default)]
     pub provider: Option<ProviderKey>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
     #[serde(default)]
     pub embedding_model_id: Option<String>,
     #[serde(default)]
@@ -123,6 +127,8 @@ pub struct RunMsbAgentBatchRequest {
     pub model_id: Option<String>,
     #[serde(default)]
     pub provider: Option<ProviderKey>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
     #[serde(default)]
     pub embedding_model_id: Option<String>,
     #[serde(default)]
@@ -521,19 +527,20 @@ pub struct StartingDbCacheMetadata {
 
 #[derive(Debug, Clone)]
 pub(crate) struct EvalEmbeddingSelection {
-    pub(crate) model: ResponseItem,
+    pub(crate) route: EmbeddingRoute,
+    pub(crate) model: ModelId,
     pub(crate) provider: Option<ProviderKey>,
     pub(crate) dimensions: u32,
 }
 
 impl EvalEmbeddingSelection {
-    fn cache_key(&self) -> String {
+    pub(crate) fn cache_key(&self) -> String {
         let provider = self
             .provider
             .as_ref()
             .map(|provider| provider.slug.as_str())
             .unwrap_or("<auto>");
-        format!("{}::{provider}", self.model.id)
+        format!("{}::{}::{provider}", self.route.as_str(), self.model)
     }
 }
 
@@ -1721,6 +1728,89 @@ pub(crate) async fn resolve_eval_embedding_selection(
     requested_model_id: Option<&str>,
     requested_provider: Option<&ProviderKey>,
 ) -> Result<EvalEmbeddingSelection, PrepareError> {
+    resolve_embedding_selection(
+        EmbeddingRoute::OpenRouter,
+        requested_model_id,
+        requested_provider,
+    )
+    .await
+}
+
+pub(crate) async fn resolve_embedding_selection(
+    route: EmbeddingRoute,
+    requested_model_id: Option<&str>,
+    requested_provider: Option<&ProviderKey>,
+) -> Result<EvalEmbeddingSelection, PrepareError> {
+    resolve_embedding_with(
+        route,
+        requested_model_id,
+        requested_provider,
+        PreflightCache::Reuse,
+    )
+    .await
+}
+
+/// Resolve dimensions and force a current provider-readiness request.
+pub(crate) async fn preflight_embedding_selection(
+    route: EmbeddingRoute,
+    requested_model_id: Option<&str>,
+    requested_provider: Option<&ProviderKey>,
+) -> Result<EvalEmbeddingSelection, PrepareError> {
+    resolve_embedding_with(
+        route,
+        requested_model_id,
+        requested_provider,
+        PreflightCache::Refresh,
+    )
+    .await
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum PreflightCache {
+    Reuse,
+    Refresh,
+}
+
+impl PreflightCache {
+    fn can_read(self) -> bool {
+        matches!(self, Self::Reuse)
+    }
+}
+
+pub(crate) fn cached_embedding_dimensions(
+    selection: &EvalEmbeddingSelection,
+    cache: PreflightCache,
+) -> Option<u32> {
+    cache.can_read().then(|| {
+        embedding_preflight_cache()
+            .lock()
+            .expect("embedding preflight cache poisoned")
+            .get(&selection.cache_key())
+            .copied()
+    })?
+}
+
+async fn resolve_embedding_with(
+    route: EmbeddingRoute,
+    requested_model_id: Option<&str>,
+    requested_provider: Option<&ProviderKey>,
+    cache: PreflightCache,
+) -> Result<EvalEmbeddingSelection, PrepareError> {
+    match route {
+        EmbeddingRoute::OpenRouter => {
+            resolve_openrouter_embedding(requested_model_id, requested_provider, cache).await
+        }
+        EmbeddingRoute::DirectOpenAi => {
+            resolve_openai_embedding(requested_model_id, requested_provider, cache).await
+        }
+    }
+}
+
+async fn resolve_openrouter_embedding(
+    requested_model_id: Option<&str>,
+    requested_provider: Option<&ProviderKey>,
+    cache: PreflightCache,
+) -> Result<EvalEmbeddingSelection, PrepareError> {
     let registry_path = eval_embedding_registry_path()?;
     let client = reqwest::Client::new();
     let registry = load_eval_embedding_registry(&client, &registry_path).await?;
@@ -1738,16 +1828,17 @@ pub(crate) async fn resolve_eval_embedding_selection(
                 &registry_path,
                 &resolved.model_id,
             )?;
-            let cache_key = format!("{}::<auto>", model.id);
+            let selection = EvalEmbeddingSelection {
+                route: EmbeddingRoute::OpenRouter,
+                model: model.id,
+                provider: None,
+                dimensions: resolved.dims,
+            };
             embedding_preflight_cache()
                 .lock()
                 .expect("embedding preflight cache poisoned")
-                .insert(cache_key, resolved.dims);
-            return Ok(EvalEmbeddingSelection {
-                model,
-                provider: None,
-                dimensions: resolved.dims,
-            });
+                .insert(selection.cache_key(), resolved.dims);
+            return Ok(selection);
         }
     }
 
@@ -1755,23 +1846,17 @@ pub(crate) async fn resolve_eval_embedding_selection(
         .unwrap_or_else(default_eval_embedding_model_id);
     let model = resolve_embedding_model_from_registry(&registry, &registry_path, &requested_model)?;
 
-    let cache_key = format!(
-        "{}::{}",
-        model.id,
-        requested_provider
-            .map(|provider| provider.slug.as_str())
-            .unwrap_or("<auto>")
-    );
-    if let Some(dimensions) = embedding_preflight_cache()
-        .lock()
-        .expect("embedding preflight cache poisoned")
-        .get(&cache_key)
-        .copied()
-    {
+    let selection = EvalEmbeddingSelection {
+        route: EmbeddingRoute::OpenRouter,
+        model: model.id.clone(),
+        provider: requested_provider.cloned(),
+        dimensions: 0,
+    };
+    let cache_key = selection.cache_key();
+    if let Some(dimensions) = cached_embedding_dimensions(&selection, cache) {
         return Ok(EvalEmbeddingSelection {
-            model,
-            provider: requested_provider.cloned(),
             dimensions,
+            ..selection
         });
     }
 
@@ -1788,9 +1873,8 @@ pub(crate) async fn resolve_eval_embedding_selection(
                 .expect("embedding preflight cache poisoned")
                 .insert(cache_key, dimensions);
             Ok(EvalEmbeddingSelection {
-                model,
-                provider: requested_provider.cloned(),
                 dimensions,
+                ..selection
             })
         }
         Err(err) => {
@@ -1813,9 +1897,129 @@ pub(crate) async fn resolve_eval_embedding_selection(
     }
 }
 
+const OPENAI_EMBED_MODEL: &str = "text-embedding-3-small";
+
+pub(crate) fn default_openai_model() -> ModelId {
+    format!("openai/{OPENAI_EMBED_MODEL}")
+        .parse()
+        .expect("direct OpenAI embedding model id must parse")
+}
+
+fn parse_openai_model(requested: Option<&str>) -> Result<ModelId, PrepareError> {
+    let Some(requested) = requested else {
+        return Ok(default_openai_model());
+    };
+    let qualified = if requested.contains('/') {
+        requested.to_string()
+    } else {
+        format!("openai/{requested}")
+    };
+    let model: ModelId =
+        qualified
+            .parse()
+            .map_err(|err: ploke_llm::IdError| PrepareError::DatabaseSetup {
+                phase: "resolve_embedding_model",
+                detail: err.to_string(),
+            })?;
+    if model.key.author.as_str() != "openai" {
+        return Err(PrepareError::DatabaseSetup {
+            phase: "resolve_embedding_model",
+            detail: format!(
+                "direct OpenAI embedding route requires an OpenAI model, got '{model}'"
+            ),
+        });
+    }
+    Ok(model)
+}
+
+fn openai_key() -> Result<String, PrepareError> {
+    std::env::var("OPENAI_API_KEY")
+        .ok()
+        .filter(|key| !key.trim().is_empty())
+        .ok_or_else(|| PrepareError::DatabaseSetup {
+            phase: "embedding_route",
+            detail: "direct OpenAI embedding route requires non-empty OPENAI_API_KEY".to_string(),
+        })
+}
+
+pub(crate) fn openai_config(
+    model: &ModelId,
+    provider: Option<&ProviderKey>,
+    api_key: Option<String>,
+) -> Result<OpenAIConfig, PrepareError> {
+    if let Some(provider) = provider {
+        return Err(PrepareError::DatabaseSetup {
+            phase: "embedding_route",
+            detail: format!(
+                "direct OpenAI embedding route does not accept OpenRouter provider preference '{}'",
+                provider.slug.as_str()
+            ),
+        });
+    }
+    let api_key = api_key.ok_or_else(|| PrepareError::DatabaseSetup {
+        phase: "embedding_route",
+        detail: "direct OpenAI embedding route requires non-empty OPENAI_API_KEY".to_string(),
+    })?;
+    Ok(OpenAIConfig {
+        api_key,
+        model: model.key.slug.as_str().to_string(),
+    })
+}
+
+async fn resolve_openai_embedding(
+    requested_model_id: Option<&str>,
+    requested_provider: Option<&ProviderKey>,
+    cache: PreflightCache,
+) -> Result<EvalEmbeddingSelection, PrepareError> {
+    let model = parse_openai_model(requested_model_id)?;
+    let config = match requested_provider {
+        Some(provider) => openai_config(&model, Some(provider), None)?,
+        None => openai_config(&model, None, Some(openai_key()?))?,
+    };
+    let mut selection = EvalEmbeddingSelection {
+        route: EmbeddingRoute::DirectOpenAi,
+        model,
+        provider: None,
+        dimensions: 0,
+    };
+    let cache_key = selection.cache_key();
+    if let Some(dimensions) = cached_embedding_dimensions(&selection, cache) {
+        selection.dimensions = dimensions;
+        return Ok(selection);
+    }
+
+    let backend = OpenAIBackend::new(&config);
+    let vectors = backend
+        .compute_batch(vec!["ploke eval embedding preflight".to_string()])
+        .await
+        .map_err(|err| PrepareError::DatabaseSetup {
+            phase: "embedding_model_preflight",
+            detail: format_embedding_preflight_error(&selection.model, None, &err.to_string(), &[]),
+        })?;
+    let dimensions = vectors
+        .first()
+        .map(Vec::len)
+        .ok_or_else(|| PrepareError::DatabaseSetup {
+            phase: "embedding_model_preflight",
+            detail: format!(
+                "embedding preflight returned no vectors for '{}'",
+                selection.model
+            ),
+        })?;
+    selection.dimensions = u32::try_from(dimensions).map_err(|_| PrepareError::DatabaseSetup {
+        phase: "embedding_model_preflight",
+        detail: format!("embedding dimensions {dimensions} do not fit in u32"),
+    })?;
+    embedding_preflight_cache()
+        .lock()
+        .expect("embedding preflight cache poisoned")
+        .insert(cache_key, selection.dimensions);
+    Ok(selection)
+}
+
 pub(crate) fn eval_embedding_config(selection: &EvalEmbeddingSelection) -> OpenRouterConfig {
     OpenRouterConfig {
-        model: selection.model.id.to_string(),
+        model: selection.model.to_string(),
         dimensions: Some(selection.dimensions as usize),
         request_dimensions: None,
         snippet_batch_size: 100,
@@ -1836,27 +2040,50 @@ pub(crate) fn eval_embedding_processor(
     selection: &EvalEmbeddingSelection,
 ) -> Result<EmbeddingProcessor, PrepareError> {
     info!(
-        model = %selection.model.id,
+        route = selection.route.as_str(),
+        model = %selection.model,
         dimensions = selection.dimensions,
         provider = ?selection.provider.as_ref().map(|provider| provider.slug.as_str()),
         "building eval embedding processor"
     );
-    let backend = OpenRouterBackend::new(&eval_embedding_config(selection)).map_err(|err| {
-        PrepareError::DatabaseSetup {
-            phase: "init_codestral_embedder",
-            detail: err.to_string(),
+    let source = match selection.route {
+        EmbeddingRoute::OpenRouter => {
+            let backend =
+                OpenRouterBackend::new(&eval_embedding_config(selection)).map_err(|err| {
+                    PrepareError::DatabaseSetup {
+                        phase: "init_codestral_embedder",
+                        detail: err.to_string(),
+                    }
+                })?;
+            EmbeddingSource::OpenRouter(backend)
         }
-    })?;
+        EmbeddingRoute::DirectOpenAi => {
+            let config = openai_config(
+                &selection.model,
+                selection.provider.as_ref(),
+                Some(openai_key()?),
+            )?;
+            let backend = OpenAIBackend::new(&config);
+            if backend.dimensions != selection.dimensions as usize {
+                return Err(PrepareError::DatabaseSetup {
+                    phase: "init_codestral_embedder",
+                    detail: format!(
+                        "direct OpenAI preflight dimensions {} differ from backend dimensions {}",
+                        selection.dimensions, backend.dimensions
+                    ),
+                });
+            }
+            EmbeddingSource::OpenAI(backend)
+        }
+    };
     info!("eval embedding processor initialized");
-    Ok(EmbeddingProcessor::new(EmbeddingSource::OpenRouter(
-        backend,
-    )))
+    Ok(EmbeddingProcessor::new(source))
 }
 
 pub(crate) fn eval_embedding_set(selection: &EvalEmbeddingSelection) -> EmbeddingSet {
     EmbeddingSet::new(
-        EmbeddingProviderSlug::new_from_str("openrouter"),
-        EmbeddingModelId::new_from_str(&selection.model.id.to_string()),
+        EmbeddingProviderSlug::new_from_str(selection.route.provider_slug()),
+        EmbeddingModelId::new_from_str(&selection.model.to_string()),
         EmbeddingShape::new_dims_default(selection.dimensions),
     )
 }
@@ -1865,7 +2092,11 @@ pub(crate) fn activate_eval_embedding_runtime(
     state: &Arc<AppState>,
     selection: &EvalEmbeddingSelection,
 ) -> Result<(), PrepareError> {
-    info!(model = %selection.model.id, "activating eval embedding set");
+    info!(
+        route = selection.route.as_str(),
+        model = %selection.model,
+        "activating eval embedding set"
+    );
     let processor = Arc::new(eval_embedding_processor(selection)?);
     state
         .embedder

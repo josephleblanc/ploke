@@ -149,3 +149,113 @@ file and current code before treating a report as still open.
   Direct Google Gemini can return `finish_reason: malformed_function_call` with Python-style refusal text; Ploke now deserializes and classifies it as model behavior instead of entering `UNKNOWN_TOOL_NAME` repair. Recurs on `2.5-pro`/`non_semantic_patch` (state6); captured-payload + live eval-shape repro tests added; provider-side multi-line-patch malformation under `tool_choice=auto` remains the open item (ranked fixes A patch-arg shaping / B `tool_choice` required/validated).
 - [`2026-06-12-prototype1-direct-google-gemini-15-flash-404.md`](./2026-06-12-prototype1-direct-google-gemini-15-flash-404.md)
   External provider/config blocker: fresh Prototype 1 setup admitted `google/gemini-1.5-flash` as the direct-Google protocol model, but doctor live preflight blocked with Vertex HTTP 404 before loop advance.
+- [`2026-07-08-prototype1-max-generation-handoff.md`](./2026-07-08-prototype1-max-generation-handoff.md)
+  Source repair restored after rollback: a child at `max_generations` now produces a stopped continuation instead of a successor that immediately fails its parent-turn budget.
+- [`2026-07-08-prototype1-walk-reconstruct-missing-baseline.md`](./2026-07-08-prototype1-walk-reconstruct-missing-baseline.md)
+  Source repair restored after rollback: wholly missing pre-baseline closure evidence reconstructs only through R5 while failed, partial, and inconsistent closure evidence remains strict.
+- [`2026-07-13-prototype1-doctor-headless-preflight-rebuild-hang.md`](./2026-07-13-prototype1-doctor-headless-preflight-rebuild-hang.md)
+  Resolved shared-library contract: BM25 rebuild admission now rejects full/closed mailboxes explicitly, status deadlines cover enqueue plus response, and the apparent live hang was corrected to a roughly two-minute workspace-ingestion run that passed.
+- [`2026-07-13-prototype1-embedding-preflight-after-admission.md`](./2026-07-13-prototype1-embedding-preflight-after-admission.md)
+  Repaired readiness gap plus active external blocker: protocol-v10 doctor now proves direct-Google and headless readiness, but all exported OpenRouter credentials fail and the default key's monthly limit still prevents the multi-generation live walk.
+- [`2026-07-13-walk-summary-pre-child-plan.md`](./2026-07-13-walk-summary-pre-child-plan.md)
+  Open read-model bug: `walk summary` treats a legitimately absent pre-child-plan directory as a malformed run instead of rendering the baseline/pre-plan phase, while later missing authority must still fail closed.
+- [`2026-07-13-prototype1-setup-receipt-recovery.md`](./2026-07-13-prototype1-setup-receipt-recovery.md)
+  Fixed and live verified: receipt-first setup now resumes partial campaign, closure, database, scheduler, branch, and inherited-identity effects, while completed retries are read-only.
+- [`2026-07-13-prototype1-doctor-relative-repo-root.md`](./2026-07-13-prototype1-doctor-relative-repo-root.md)
+  Fixed and live verified: shared Prototype 1 control context canonicalizes `--repo-root .` before absolute-path headless indexing and other driver work.
+- [`2026-07-14-walk-pre-session-phase-and-start.md`](./2026-07-14-walk-pre-session-phase-and-start.md)
+  Fixed and live verified: walk protocol v9 separates strict pre-session reconstruction, cursorless durable sessions, and the committed controller cursor, restores the first guarded Start at R3, and rejects reuse of the old empty guard before persistence.
+- [`2026-07-14-ploke-eval-walk-worker-stack-overflow.md`](./2026-07-14-ploke-eval-walk-worker-stack-overflow.md)
+  Fixed and live verified: the debug R3-to-R4a walk task exceeded Tokio's default 2 MiB worker stack after acquiring its durable fence, so the production binary now owns an explicit worker-stack budget and a fail-before/fix-after worker-capacity regression.
+- [`2026-07-14-walk-until-same-rank-edge-rejection.md`](./2026-07-14-walk-until-same-rank-edge-rejection.md)
+  Fixed and live verified: `walk step --until r4c` rejected the advertised R4b-to-R4c edge because the controller's coarse phase rank grouped two phases connected by a real forward edge.
+- [`2026-07-14-direct-openai-embedding-overlong-snippet.md`](./2026-07-14-direct-openai-embedding-overlong-snippet.md)
+  Open backend-policy gap with config recovery selected: direct OpenAI accepted readiness preflight but rejected a 66,807-byte parsed node at production indexing; the failed run is preserved and the fresh run will use OpenRouter's approved truncation policy.
+- [`2026-07-14-prototype1-parent-patcher-role-not-admitted.md`](./2026-07-14-prototype1-parent-patcher-role-not-admitted.md)
+  Config-mitigated readiness gap: setup and doctor admitted direct-Google eval/protocol settings without surfacing the separate OpenRouter parent-patcher role that later exhausted all broad child slots with HTTP 402.
+- [`2026-07-14-walk-trace-show-tool-arguments-newtype.md`](./2026-07-14-walk-trace-show-tool-arguments-newtype.md)
+  Source-repaired typed IPC bug: completed sealed traces containing `ToolArgumentsJson` failed client decoding when buffered inside the internally tagged trace state.
+- [`2026-07-14-walk-llm-inspection-controller-lock.md`](./2026-07-14-walk-llm-inspection-controller-lock.md)
+  Source-repaired authority-boundary bug: persisted LLM inspector commands waited behind the mutation controller for an entire live typestate edge.
+- [`2026-07-15-prototype1-successor-retirement-before-walk-receipt.md`](./2026-07-15-prototype1-successor-retirement-before-walk-receipt.md)
+  Fixed and live verified: successor retirement now waits through typed active-job
+  drain until the outer R12-to-R13b receipt is terminal; a fresh canary preserved
+  the successor across a 12.65-second projection gap and transferred unpinned
+  status to its R4c endpoint.
+- [`2026-07-15-prototype1-child-runner-processes-not-reaped.md`](./2026-07-15-prototype1-child-runner-processes-not-reaped.md)
+  Source repaired, live revalidation pending: C3 now retains explicit child
+  process ownership through Ready acknowledgement, reaps normal exits, and
+  kills plus waits pre-ack timeout/error paths.
+- [`2026-07-15-prototype1-parallel-trace-capture-cross-talk.md`](./2026-07-15-prototype1-parallel-trace-capture-cross-talk.md)
+  Fixed and live verified: three parallel broad attempts now carry exact
+  session-owned response/debug capture with ordered 46/46, 9/9, and 39/39
+  debug-to-tape joins and no cross-lane response-ID overlap.
+- [`2026-07-15-prototype1-timeout-cancellation-drops-trace-evidence.md`](./2026-07-15-prototype1-timeout-cancellation-drops-trace-evidence.md)
+  Source repaired: timeout cancellation preserves the caller's partial
+  headless run and drains response capture to disconnection; live failure-path
+  persistence is verified, while a post-repair outer-timeout canary remains.
+- [`2026-07-15-walk-llm-corrupt-neighbor-hides-sessions.md`](./2026-07-15-walk-llm-corrupt-neighbor-hides-sessions.md)
+  Fixed and live verified: protocol-v10 typed LLM inventory reports a zero-byte
+  session manifest independently while retaining every healthy lane/session for
+  exact CLI and UI inspection.
+- [`2026-07-16-prototype1-headless-unpersisted-workspace-mutation.md`](./2026-07-16-prototype1-headless-unpersisted-workspace-mutation.md)
+  Open crash-consistency gap: an effectful headless tool can mutate its isolated
+  workspace after the last settled debug step, leaving recovery without durable
+  provider intent for the mutation.
+- [`2026-07-16-prototype1-request-code-context-no-progress-loop.md`](./2026-07-16-prototype1-request-code-context-no-progress-loop.md)
+  Source repaired: a broad-only session guard now stops one-tool no-progress
+  loops after 15 calls, but only after the threshold batch and terminal trace
+  settle; checked-in R2 replay coverage is active in the normal test suite.
+- [`2026-07-16-prototype1-r12-policy-stop-routing.md`](./2026-07-16-prototype1-r12-policy-stop-routing.md)
+  Source repaired, live validation pending: R12 policy stops now route from the
+  continuation disposition instead of treating selected-candidate evidence as
+  successor-handoff authority.
+- [`2026-07-16-walk-until-target-second-claim.md`](./2026-07-16-walk-until-target-second-claim.md)
+  Source repaired, live validation pending: a bounded walk now returns as soon
+  as its committed edge reaches the requested target instead of claiming the
+  transferred successor session a second time.
+- [`2026-07-16-prototype1-post-edit-indexer-stall.md`](./2026-07-16-prototype1-post-edit-indexer-stall.md)
+  Source repaired, live validation pending: an unbounded post-edit scan barrier
+  left one broad lane and the R7-to-R8 walk edge nonterminal while the server
+  remained CPU- and memory-hot; v14 is preserved as abandoned evidence.
+- [`2026-07-17-prototype1-handoff-replaced-executable-epoch.md`](./2026-07-17-prototype1-handoff-replaced-executable-epoch.md)
+  Source repaired, fresh strict live validation pending: a later-generation
+  rebuild replaced the live predecessor binary pathname, so epoch capture now
+  retains the running inode while keeping replacement clients incompatible.
+- [`2026-07-17-prototype1-operational-keep-without-oracle-proof.md`](./2026-07-17-prototype1-operational-keep-without-oracle-proof.md)
+  Source repaired, fresh strict live validation pending: v15 reached R12 with
+  an operationally kept child but no oracle evaluation, so successor admission
+  now has a separate fail-closed `all-resolved` gate bound to exact profile
+  targets without weakening handoff or digest verification.
+- [`2026-07-17-prototype1-post-edit-refresh-panic-hang.md`](./2026-07-17-prototype1-post-edit-refresh-panic-hang.md)
+  Source repaired, fresh strict live validation pending: v20 wrote a duplicate
+  semantic item, then a correct parser invariant panic escaped the post-edit
+  task without a terminal tool event; exact historical replay now proves
+  durable `PartiallyApplied` failure evidence instead of a hang.
+- [`2026-07-17-prototype1-late-child-observer-timeout.md`](./2026-07-17-prototype1-late-child-observer-timeout.md)
+  Config-mitigated, source recovery open: v21 produced a strict Keep but its
+  third healthy child completed after the 1,200-second parent fence, leaving
+  R10 indeterminate without a safe late-result reconciliation path.
+- [`2026-07-17-prototype1-selection-receipt-float-roundtrip.md`](./2026-07-17-prototype1-selection-receipt-float-roundtrip.md)
+  Source repaired, fresh strict live validation pending: v22 reached R11 but
+  default typed JSON decoding moved one selection-formula float by one ULP;
+  exact float replay plus a write-side rehash guard preserves the strict loader.
+- [`2026-07-17-prototype1-selection-without-candidate-safety-proof.md`](./2026-07-17-prototype1-selection-without-candidate-safety-proof.md)
+  Source repaired, fresh strict handoff proof pending: v25 reached a valid R12
+  but selected an unsafe candidate; v26 proved the artifact-bound gate and then
+  failed closed on a truncated third review at R10. Exact historical replay,
+  bounded fresh-adjudication retry, and fail-closed DB/audit bindings now guard
+  selection without modifying either preserved run.
+- [`2026-07-18-prototype1-reconstruct-node-cap-after-plan.md`](./2026-07-18-prototype1-reconstruct-node-cap-after-plan.md)
+  V28 replay blocker: reconstruction reapplied the live pre-planning node-cap
+  check after a legal child plan filled the final node slots. Exact historical
+  replay now passes without weakening live cap admission; fresh strict terminal
+  validation remains.
+- [`2026-07-20-walk-terminal-read-only-startup.md`](./2026-07-20-walk-terminal-read-only-startup.md)
+  Fixed and live verified: completed V29 now starts a protocol-v11 read-only
+  inspection endpoint in under 0.5 seconds with bounded metadata/recovery
+  output, while every mutation remains rejected and run hashes stay unchanged.
+- [`2026-07-20-walk-use-invalid-repo-root.md`](./2026-07-20-walk-use-invalid-repo-root.md)
+  Fixed and live verified: `walk use` rejects missing and non-directory roots
+  before replacing saved context, while an absolute V29 checkout works for
+  subsequent short-form commands.

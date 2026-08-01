@@ -11,7 +11,8 @@ use std::{
 };
 
 use chrono::Utc;
-use cozo::{DataValue, ScriptMutability};
+use cozo::DataValue;
+use ploke_db::Database;
 use ploke_records::ids::CampaignId;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -26,7 +27,19 @@ use crate::{
 };
 
 use super::phase::WalkPhase;
-use crate::cli::prototype1_state::eval_store::prototype1_eval_store_db_path;
+use crate::cli::prototype1_state::{
+    candidate_review,
+    eval_store::{
+        load_owner_eval_database, prototype1_eval_store_db_path, selection_decision_id,
+        selection_member_id,
+    },
+    history::SelectionDecisionEntry,
+    journal::{JournalEntry, PrototypeJournal},
+    successor,
+};
+use crate::successor_selection::{
+    PatchChange, PatchGate, PatchReview, PatchVerdict, domains::Confidence,
+};
 
 const SCHEMA_VERSION: &str = "prototype1.walk.audit.v1";
 
@@ -36,6 +49,7 @@ const EVAL_RELS: &[(&str, &str)] = &[
     ("eval_campaign_eval_budget", "campaign_id"),
     ("eval_campaign_protocol_policy", "campaign_id"),
     ("eval_profile_commitment", "profile_ref_id"),
+    ("eval_patch_gate", "campaign_id"),
     ("eval_closure_ref", "closure_ref_id"),
     ("eval_closure_instance", "closure_ref_id"),
     ("eval_closure_artifact_ref", "closure_ref_id"),
@@ -62,9 +76,15 @@ const EVAL_RELS: &[(&str, &str)] = &[
     ("eval_evaluation_instance", "evaluation_id"),
     ("eval_continuation_decision", "decision_id"),
     ("eval_selection_decision", "decision_id"),
+    ("eval_selection_receipt", "decision_id"),
     ("eval_selection_candidate", "decision_id"),
     ("eval_selection_finding", "finding_id"),
     ("eval_selection_score", "decision_id"),
+    ("eval_selection_oracle", "decision_id"),
+    ("eval_selection_patch_gate", "decision_id"),
+    ("eval_selection_patch_review", "decision_id"),
+    ("eval_selection_patch_change", "decision_id"),
+    ("eval_selection_projection_failure", "decision_id"),
     ("eval_artifact", "artifact_id"),
     ("eval_artifact_surface", "surface_id"),
     ("eval_artifact_ref", "artifact_ref_id"),
@@ -76,56 +96,56 @@ const EVAL_RELS: &[(&str, &str)] = &[
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct WalkAuditReport {
-    pub(crate) schema_version: String,
-    pub(crate) generated_at: String,
-    pub(crate) scope: Prototype1StateWalkAuditScope,
-    pub(crate) transition_filter: Option<Prototype1StateWalkAuditTransition>,
-    pub(crate) phase: WalkPhase,
-    pub(crate) verbose: bool,
-    pub(crate) with_note: bool,
-    pub(crate) repo_root: PathBuf,
-    pub(crate) campaign: CampaignAudit,
-    pub(crate) documents: Vec<DocumentAudit>,
-    pub(crate) database: DatabaseAudit,
-    pub(crate) transition: TransitionAudit,
-    pub(crate) transitions: Vec<TransitionChecklist>,
-    pub(crate) summary: AuditSummary,
-    pub(crate) notes: Vec<String>,
+pub struct WalkAuditReport {
+    pub schema_version: String,
+    pub generated_at: String,
+    pub scope: Prototype1StateWalkAuditScope,
+    pub transition_filter: Option<Prototype1StateWalkAuditTransition>,
+    pub phase: WalkPhase,
+    pub verbose: bool,
+    pub with_note: bool,
+    pub repo_root: PathBuf,
+    pub campaign: CampaignAudit,
+    pub documents: Vec<DocumentAudit>,
+    pub database: DatabaseAudit,
+    pub transition: TransitionAudit,
+    pub transitions: Vec<TransitionChecklist>,
+    pub summary: AuditSummary,
+    pub notes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct TransitionChecklist {
-    pub(crate) transition: String,
-    pub(crate) from: WalkPhase,
-    pub(crate) to: WalkPhase,
-    pub(crate) file_status: PersistenceStatus,
-    pub(crate) db_status: PersistenceStatus,
-    pub(crate) overall_status: PersistenceStatus,
-    pub(crate) items: Vec<PersistenceItemAudit>,
+pub struct TransitionChecklist {
+    pub transition: String,
+    pub from: WalkPhase,
+    pub to: WalkPhase,
+    pub file_status: PersistenceStatus,
+    pub db_status: PersistenceStatus,
+    pub overall_status: PersistenceStatus,
+    pub items: Vec<PersistenceItemAudit>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct PersistenceItemAudit {
-    pub(crate) name: String,
-    pub(crate) file: PersistenceSide,
-    pub(crate) database: PersistenceSide,
-    pub(crate) overall_status: PersistenceStatus,
-    pub(crate) note: String,
+pub struct PersistenceItemAudit {
+    pub name: String,
+    pub file: PersistenceSide,
+    pub database: PersistenceSide,
+    pub overall_status: PersistenceStatus,
+    pub note: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct PersistenceSide {
-    pub(crate) status: PersistenceStatus,
-    pub(crate) count: Option<i64>,
-    pub(crate) path: Option<PathBuf>,
-    pub(crate) relation: Option<String>,
-    pub(crate) detail: Option<String>,
+pub struct PersistenceSide {
+    pub status: PersistenceStatus,
+    pub count: Option<i64>,
+    pub path: Option<PathBuf>,
+    pub relation: Option<String>,
+    pub detail: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum PersistenceStatus {
+pub enum PersistenceStatus {
     Ok,
     Partial,
     None,
@@ -134,36 +154,36 @@ pub(crate) enum PersistenceStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct CampaignAudit {
-    pub(crate) campaign_id: Option<CampaignId>,
-    pub(crate) source: CampaignSource,
-    pub(crate) detail: Option<String>,
+pub struct CampaignAudit {
+    pub campaign_id: Option<CampaignId>,
+    pub source: CampaignSource,
+    pub detail: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum CampaignSource {
+pub enum CampaignSource {
     Explicit,
     ParentIdentity,
     Unresolved,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct DocumentAudit {
-    pub(crate) name: String,
-    pub(crate) path: PathBuf,
-    pub(crate) role: DocumentRole,
-    pub(crate) expectation: DocumentExpectation,
-    pub(crate) expected_at: ExpectedAt,
-    pub(crate) exists: bool,
-    pub(crate) status: DocumentStatus,
-    pub(crate) sha256: Option<String>,
-    pub(crate) detail: Option<String>,
+pub struct DocumentAudit {
+    pub name: String,
+    pub path: PathBuf,
+    pub role: DocumentRole,
+    pub expectation: DocumentExpectation,
+    pub expected_at: ExpectedAt,
+    pub exists: bool,
+    pub status: DocumentStatus,
+    pub sha256: Option<String>,
+    pub detail: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum DocumentRole {
+pub enum DocumentRole {
     Authority,
     Projection,
     DerivedCache,
@@ -172,7 +192,7 @@ pub(crate) enum DocumentRole {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum DocumentExpectation {
+pub enum DocumentExpectation {
     Required,
     Optional,
     DerivedIfMissing,
@@ -182,7 +202,7 @@ pub(crate) enum DocumentExpectation {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum ExpectedAt {
+pub enum ExpectedAt {
     Precondition,
     TransitionOutput,
     TransitionPath,
@@ -190,7 +210,7 @@ pub(crate) enum ExpectedAt {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum DocumentStatus {
+pub enum DocumentStatus {
     Ok,
     Missing,
     ReadError,
@@ -199,17 +219,17 @@ pub(crate) enum DocumentStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct DatabaseAudit {
-    pub(crate) path: Option<PathBuf>,
-    pub(crate) exists: bool,
-    pub(crate) status: DatabaseStatus,
-    pub(crate) relation_counts: Vec<RelationCount>,
-    pub(crate) detail: Option<String>,
+pub struct DatabaseAudit {
+    pub path: Option<PathBuf>,
+    pub exists: bool,
+    pub status: DatabaseStatus,
+    pub relation_counts: Vec<RelationCount>,
+    pub detail: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum DatabaseStatus {
+pub enum DatabaseStatus {
     Ok,
     Missing,
     OpenError,
@@ -217,54 +237,71 @@ pub(crate) enum DatabaseStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct RelationCount {
-    pub(crate) relation: String,
-    pub(crate) exists: bool,
-    pub(crate) count: Option<i64>,
-    pub(crate) detail: Option<String>,
+pub struct RelationCount {
+    pub relation: String,
+    pub exists: bool,
+    pub count: Option<i64>,
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ReviewMirrorAudit {
+    review_file: PersistenceSide,
+    review_db: PersistenceSide,
+    change_file: PersistenceSide,
+    change_db: PersistenceSide,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PatchMirrorCoverage {
+    review_count: usize,
+    change_count: usize,
+    review_rows: usize,
+    change_rows: usize,
+    pending_refs: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct TransitionAudit {
-    pub(crate) transition: String,
-    pub(crate) from: WalkPhase,
-    pub(crate) to: WalkPhase,
-    pub(crate) code_symbol: String,
-    pub(crate) expected_file_writes: Vec<ExpectedPersistence>,
-    pub(crate) expected_db_writes: Vec<ExpectedPersistence>,
+pub struct TransitionAudit {
+    pub transition: String,
+    pub from: WalkPhase,
+    pub to: WalkPhase,
+    pub code_symbol: String,
+    pub expected_file_writes: Vec<ExpectedPersistence>,
+    pub expected_db_writes: Vec<ExpectedPersistence>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct ExpectedPersistence {
-    pub(crate) surface: String,
-    pub(crate) expectation: DocumentExpectation,
-    pub(crate) status: ExpectedStatus,
-    pub(crate) detail: String,
+pub struct ExpectedPersistence {
+    pub surface: String,
+    pub expectation: DocumentExpectation,
+    pub status: ExpectedStatus,
+    pub detail: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum ExpectedStatus {
+pub enum ExpectedStatus {
     Expected,
     NotExpected,
     Conditional,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct AuditSummary {
-    pub(crate) required_documents: usize,
-    pub(crate) required_ok: usize,
-    pub(crate) missing_required: usize,
-    pub(crate) parse_errors: usize,
-    pub(crate) db_rows_total: i64,
-    pub(crate) expected_transition_db_rows: i64,
-    pub(crate) observed_transition_db_rows: i64,
-    pub(crate) verdict: AuditVerdict,
+pub struct AuditSummary {
+    pub required_documents: usize,
+    pub required_ok: usize,
+    pub missing_required: usize,
+    pub parse_errors: usize,
+    pub db_rows_total: i64,
+    pub expected_transition_db_rows: i64,
+    pub observed_transition_db_rows: i64,
+    pub verdict: AuditVerdict,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum AuditVerdict {
+pub enum AuditVerdict {
     Ready,
     MissingPreconditions,
     NeedsReview,
@@ -367,10 +404,16 @@ pub(crate) fn audit_r0_to_r1(
         }
     }
 
-    let database = database_audit(campaign_audit.campaign_id.as_ref());
+    let (database, review_mirror) = database_audit(campaign_audit.campaign_id.as_ref());
     let transition = r0_to_r1_expectations();
-    let mut transitions =
-        transition_checklist(campaign_audit.campaign_id.as_ref(), &docs, &database);
+    let stopped = stopped_reconstruction_side(&repo_root, campaign_audit.campaign_id.as_ref());
+    let mut transitions = transition_checklist(
+        campaign_audit.campaign_id.as_ref(),
+        &docs,
+        &database,
+        &review_mirror,
+        &stopped,
+    );
     if let Some(filter) = transition_filter {
         transitions.retain(|transition| transition.transition == audit_transition_label(filter));
     }
@@ -401,7 +444,7 @@ pub(crate) fn audit_r0_to_r1(
 }
 
 impl WalkAuditReport {
-    pub(crate) fn render_table(&self) -> String {
+    pub fn render_table(&self) -> String {
         let mut lines = Vec::new();
         lines.push("walk audit".to_string());
         lines.push("-".repeat(40));
@@ -598,6 +641,8 @@ fn transition_checklist(
     campaign_id: Option<&CampaignId>,
     docs: &[DocumentAudit],
     database: &DatabaseAudit,
+    reviews: &ReviewMirrorAudit,
+    stopped: &PersistenceSide,
 ) -> Vec<TransitionChecklist> {
     let manifest = campaign_id.and_then(|id| campaign_manifest_path(id).ok());
     let root = manifest.as_ref().map(prototype_root_for_manifest);
@@ -630,6 +675,12 @@ fn transition_checklist(
                         DbCompare::AnyRows,
                     ),
                     "admitted profile file plus profile commitment row",
+                ),
+                item(
+                    "configured patch gate",
+                    doc_side("run_profile", docs),
+                    db_side(database, "eval_patch_gate", None, DbCompare::AnyRows),
+                    "admitted profile patch-safety policy plus its queryable DB projection",
                 ),
                 item(
                     "closure ref",
@@ -673,6 +724,15 @@ fn transition_checklist(
             vec![no_write_item(
                 "resolved parent",
                 "normal startup resolves existing parent identity or successor invocation without new persistence",
+            )],
+        ),
+        checklist_transition(
+            "r2a->r3",
+            WalkPhase::R2a,
+            WalkPhase::R3,
+            vec![no_write_item(
+                "initialized parent",
+                "moves the identity initialized by r1->r2a into the normal parent path without another filesystem read or write",
             )],
         ),
         checklist_transition(
@@ -1141,6 +1201,31 @@ fn transition_checklist(
                     db_side(database, "eval_selection_score", None, DbCompare::AnyRows),
                     "score rows mirror traversal scoring where implemented",
                 ),
+                item(
+                    "applied patch gate",
+                    PersistenceSide::not_applicable(
+                        "the applied gate is sealed in selection receipt authority",
+                    ),
+                    db_side(
+                        database,
+                        "eval_selection_patch_gate",
+                        None,
+                        DbCompare::AnyRows,
+                    ),
+                    "selection records the gate actually applied, separately from the admitted profile",
+                ),
+                item(
+                    "candidate patch reviews",
+                    reviews.review_file.clone(),
+                    reviews.review_db.clone(),
+                    "artifact-bound review files mirror into normalized per-candidate DB rows",
+                ),
+                item(
+                    "reviewed patch changes",
+                    reviews.change_file.clone(),
+                    reviews.change_db.clone(),
+                    "each review exposes every admitted changed path and its before/after hashes",
+                ),
             ],
         ),
         checklist_transition(
@@ -1175,6 +1260,14 @@ fn transition_checklist(
                         "stopped continuation journal is JSONL evidence",
                     ),
                     "stopped/no-successor path appends stopped successor evidence when a selected branch is not handed off",
+                ),
+                item(
+                    "typed stopped reconstruction",
+                    stopped.clone(),
+                    PersistenceSide::not_applicable(
+                        "exact stopped-receipt validation is a typed file/journal reconstruction check",
+                    ),
+                    "the active parent's stopped record advances to R13a only when its continuation and selection receipt reconstruct exactly",
                 ),
                 item(
                     "continuation rows",
@@ -1318,6 +1411,72 @@ fn transition_checklist(
             ],
         ),
         checklist_transition(
+            "r12->r13c",
+            WalkPhase::R12,
+            WalkPhase::R13c,
+            vec![
+                item(
+                    "selected journal",
+                    count_side(journal.clone(), |path| {
+                        count_successor_state(path, "selected")
+                    }),
+                    PersistenceSide::not_applicable("selected successor journal is JSONL evidence"),
+                    "selected successor evidence precedes the incomplete handoff outcome",
+                ),
+                item(
+                    "active checkout advanced",
+                    count_side(journal.clone(), |path| {
+                        count_journal_kind(path, "active_checkout_advanced")
+                    }),
+                    PersistenceSide::not_applicable(
+                        "active checkout advancement is journal/artifact authority",
+                    ),
+                    "R13c retains the already-installed successor checkout rather than restoring R12",
+                ),
+                item(
+                    "history blocks",
+                    count_side(
+                        history
+                            .as_ref()
+                            .map(|root| root.join("blocks/segment-000000.jsonl")),
+                        count_jsonl_rows,
+                    ),
+                    PersistenceSide::not_applicable(
+                        "sealed History blocks are authority, not eval-store rows",
+                    ),
+                    "R13c requires the sealed predecessor History advance",
+                ),
+                item(
+                    "successor invocation",
+                    count_side(nodes.clone(), |path| {
+                        count_files_named(path, "invocations", Some("json"))
+                    }),
+                    db_side_for_file(database, "eval_invocation", &root, |root| {
+                        count_files_named(&root.join("nodes"), "invocations", Some("json"))
+                    }),
+                    "the incomplete attempt remains correlated to its executable invocation",
+                ),
+                item(
+                    "successor spawn journal",
+                    count_side(journal.clone(), |path| {
+                        count_successor_state(path, "spawned")
+                    }),
+                    PersistenceSide::not_applicable("successor spawn journal is JSONL evidence"),
+                    "predecessor retirement is correlated with the spawned runtime",
+                ),
+                item(
+                    "incomplete successor outcome",
+                    count_side(journal.clone(), |path| {
+                        count_latest_outcome(path, &["timed_out", "exited_before_ready"])
+                    }),
+                    PersistenceSide::not_applicable(
+                        "timeout or early exit is successor journal evidence",
+                    ),
+                    "exactly one timeout-or-exit path is sufficient incomplete handoff evidence; neither outcome is committed readiness",
+                ),
+            ],
+        ),
+        checklist_transition(
             "r13a->r14a",
             WalkPhase::R13a,
             WalkPhase::R14a,
@@ -1378,6 +1537,155 @@ fn transition_checklist(
             ],
         ),
     ]
+}
+
+fn stopped_reconstruction_side(
+    repo_root: &Path,
+    campaign_id: Option<&CampaignId>,
+) -> PersistenceSide {
+    let Some(campaign_id) = campaign_id else {
+        return PersistenceSide {
+            status: PersistenceStatus::None,
+            count: None,
+            path: None,
+            relation: None,
+            detail: Some("campaign unresolved".to_string()),
+        };
+    };
+    let Ok(manifest) = campaign_manifest_path(campaign_id) else {
+        return PersistenceSide {
+            status: PersistenceStatus::None,
+            count: None,
+            path: None,
+            relation: None,
+            detail: Some("campaign manifest unresolved".to_string()),
+        };
+    };
+    let path = manifest
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("prototype1")
+        .join("transition-journal.jsonl");
+    let journal = PrototypeJournal::new(&path);
+    let entries = match journal.load_entries() {
+        Ok(entries) => entries,
+        Err(error) => {
+            return PersistenceSide {
+                status: PersistenceStatus::Error,
+                count: None,
+                path: Some(path),
+                relation: None,
+                detail: Some(format!("failed to load transition journal: {error}")),
+            };
+        }
+    };
+    let active = match identity::load_parent_identity_optional(repo_root) {
+        Ok(Some(active)) => active,
+        Ok(None) => {
+            return PersistenceSide {
+                status: PersistenceStatus::None,
+                count: Some(0),
+                path: Some(path),
+                relation: None,
+                detail: Some("active parent identity is unavailable".to_string()),
+            };
+        }
+        Err(error) => {
+            return PersistenceSide {
+                status: PersistenceStatus::Error,
+                count: None,
+                path: Some(path),
+                relation: None,
+                detail: Some(format!("failed to load active parent identity: {error}")),
+            };
+        }
+    };
+    if active.campaign_id() != campaign_id {
+        return PersistenceSide {
+            status: PersistenceStatus::None,
+            count: Some(0),
+            path: Some(path),
+            relation: None,
+            detail: Some(format!(
+                "active parent belongs to campaign '{}', not audited campaign '{}'",
+                active.campaign_id(),
+                campaign_id
+            )),
+        };
+    }
+    if !has_turn_stop(&entries, &active) {
+        return PersistenceSide {
+            status: PersistenceStatus::None,
+            count: Some(0),
+            path: Some(path),
+            relation: None,
+            detail: Some(format!(
+                "active parent '{}' has no stopped continuation",
+                active.node_id()
+            )),
+        };
+    }
+    match crate::cli::prototype1_state::driver::reconstruct::reconstruct_early(repo_root) {
+        Ok(snapshot)
+            if snapshot.campaign_id.as_ref() == Some(campaign_id)
+                && snapshot.blockers.is_empty()
+                && snapshot.state.as_ref().is_some_and(|state| {
+                    matches!(state.phase(), WalkPhase::R13a | WalkPhase::R14a)
+                }) =>
+        {
+            PersistenceSide {
+                status: PersistenceStatus::Ok,
+                count: Some(1),
+                path: Some(path),
+                relation: None,
+                detail: Some(
+                    "active parent stopped continuation passed exact typed reconstruction"
+                        .to_string(),
+                ),
+            }
+        }
+        Ok(snapshot) => PersistenceSide {
+            status: PersistenceStatus::Error,
+            count: Some(1),
+            path: Some(path),
+            relation: None,
+            detail: Some(if snapshot.blockers.is_empty() {
+                "active parent stopped continuation did not reconstruct to R13a/R14a".to_string()
+            } else {
+                snapshot.blockers.join("; ")
+            }),
+        },
+        Err(error) => PersistenceSide {
+            status: PersistenceStatus::Error,
+            count: Some(1),
+            path: Some(path),
+            relation: None,
+            detail: Some(format!("stopped reconstruction failed: {error}")),
+        },
+    }
+}
+
+fn has_turn_stop(entries: &[JournalEntry], active: &identity::ParentIdentity) -> bool {
+    let Some(turn_start) = entries.iter().rposition(|entry| {
+        matches!(
+            entry,
+            JournalEntry::ParentStarted(started)
+                if started.campaign_id == *active.campaign_id()
+                    && started.parent_identity == *active
+        )
+    }) else {
+        return false;
+    };
+    entries
+        .iter()
+        .skip(turn_start + 1)
+        .any(|entry| match entry {
+            JournalEntry::Successor(record) => {
+                record.campaign_id == *active.campaign_id()
+                    && matches!(&record.state, successor::State::Stopped { .. })
+            }
+            _ => false,
+        })
 }
 
 fn checklist_transition(
@@ -1849,6 +2157,59 @@ fn count_successor_state(path: &Path, state: &str) -> Result<i64, String> {
     })
 }
 
+fn count_latest_outcome(path: &Path, outcomes: &[&str]) -> Result<i64, String> {
+    let entries = PrototypeJournal::new(path.to_path_buf())
+        .load_entries()
+        .map_err(|source| source.to_string())?;
+    let Some(node_id) = entries.iter().rev().find_map(|entry| match entry {
+        JournalEntry::ActiveCheckoutAdvanced(entry) => {
+            Some(entry.selected_parent_identity.node_id().to_string())
+        }
+        _ => None,
+    }) else {
+        return Ok(0);
+    };
+
+    let mut attempt = None;
+    let mut incomplete = false;
+    for entry in &entries {
+        let JournalEntry::Successor(record) = entry else {
+            continue;
+        };
+        if record.node_id != node_id {
+            continue;
+        }
+        let key = record
+            .runtime_id
+            .map(|runtime| (runtime, record.node_id.as_str()));
+        match &record.state {
+            successor::State::Spawned { .. } => {
+                attempt = key;
+                incomplete = false;
+            }
+            successor::State::TimedOut { .. } => {
+                if key == attempt {
+                    incomplete = outcomes.contains(&"timed_out");
+                }
+            }
+            successor::State::ExitedBeforeReady { .. } => {
+                if key == attempt {
+                    incomplete = outcomes.contains(&"exited_before_ready");
+                }
+            }
+            successor::State::Ready { .. } | successor::State::Completed { .. } => {
+                if key == attempt && !incomplete {
+                    incomplete = false;
+                }
+            }
+            successor::State::Selected { .. }
+            | successor::State::Stopped { .. }
+            | successor::State::Checkout { .. } => {}
+        }
+    }
+    Ok(i64::from(incomplete))
+}
+
 fn count_resource_phase(path: &Path, expected: &str) -> Result<i64, String> {
     count_journal(path, |value| {
         journal_kind(value) == Some("resource")
@@ -2221,70 +2582,103 @@ fn error_doc(
     }
 }
 
-fn database_audit(campaign_id: Option<&CampaignId>) -> DatabaseAudit {
+fn database_audit(campaign_id: Option<&CampaignId>) -> (DatabaseAudit, ReviewMirrorAudit) {
     let Some(campaign_id) = campaign_id else {
-        return DatabaseAudit {
-            path: None,
-            exists: false,
-            status: DatabaseStatus::CampaignUnresolved,
-            relation_counts: Vec::new(),
-            detail: Some(
-                "campaign unresolved; cannot derive prototype1/eval-store.cozo.sqlite".to_string(),
-            ),
-        };
+        return (
+            DatabaseAudit {
+                path: None,
+                exists: false,
+                status: DatabaseStatus::CampaignUnresolved,
+                relation_counts: Vec::new(),
+                detail: Some(
+                    "campaign unresolved; cannot derive prototype1/eval-store.cozo.sqlite"
+                        .to_string(),
+                ),
+            },
+            unavailable_review_mirror("campaign unresolved"),
+        );
     };
 
     let manifest = match campaign_manifest_path(campaign_id) {
         Ok(path) => path,
         Err(error) => {
-            return DatabaseAudit {
-                path: None,
-                exists: false,
-                status: DatabaseStatus::OpenError,
-                relation_counts: Vec::new(),
-                detail: Some(error.to_string()),
-            };
+            return (
+                DatabaseAudit {
+                    path: None,
+                    exists: false,
+                    status: DatabaseStatus::OpenError,
+                    relation_counts: Vec::new(),
+                    detail: Some(error.to_string()),
+                },
+                unavailable_review_mirror("campaign manifest unresolved"),
+            );
         }
     };
+    let (reviews, mut mirror) = review_file_mirror(&manifest);
     let path = prototype1_eval_store_db_path(&manifest);
     if !path.exists() {
-        return DatabaseAudit {
-            path: Some(path),
-            exists: false,
-            status: DatabaseStatus::Missing,
-            relation_counts: relation_count_missing(),
-            detail: None,
-        };
+        update_missing_db(&mut mirror, &reviews, &path);
+        return (
+            DatabaseAudit {
+                path: Some(path),
+                exists: false,
+                status: DatabaseStatus::Missing,
+                relation_counts: relation_count_missing(),
+                detail: None,
+            },
+            mirror,
+        );
     }
 
-    match load_relation_counts(&path) {
-        Ok(relation_counts) => DatabaseAudit {
-            path: Some(path),
-            exists: true,
-            status: DatabaseStatus::Ok,
-            relation_counts,
-            detail: None,
-        },
-        Err(error) => DatabaseAudit {
-            path: Some(path),
-            exists: true,
-            status: DatabaseStatus::OpenError,
-            relation_counts: Vec::new(),
-            detail: Some(error),
-        },
+    let db = match load_owner_eval_database(&path) {
+        Ok(db) => db,
+        Err(error) => {
+            update_db_error(&mut mirror, &path, error.to_string());
+            return (
+                DatabaseAudit {
+                    path: Some(path),
+                    exists: true,
+                    status: DatabaseStatus::OpenError,
+                    relation_counts: Vec::new(),
+                    detail: Some(error.to_string()),
+                },
+                mirror,
+            );
+        }
+    };
+    match load_relation_counts(&db) {
+        Ok(relation_counts) => {
+            update_db_mirror(&mut mirror, &reviews, &db, &path, &relation_counts);
+            (
+                DatabaseAudit {
+                    path: Some(path),
+                    exists: true,
+                    status: DatabaseStatus::Ok,
+                    relation_counts,
+                    detail: None,
+                },
+                mirror,
+            )
+        }
+        Err(error) => {
+            update_db_error(&mut mirror, &path, error.clone());
+            (
+                DatabaseAudit {
+                    path: Some(path),
+                    exists: true,
+                    status: DatabaseStatus::OpenError,
+                    relation_counts: Vec::new(),
+                    detail: Some(error),
+                },
+                mirror,
+            )
+        }
     }
 }
 
-fn load_relation_counts(path: &std::path::Path) -> Result<Vec<RelationCount>, String> {
-    let db = cozo::new_cozo_mem().map_err(|source| source.to_string())?;
-    db.restore_backup(path)
-        .map_err(|source| source.to_string())?;
+fn load_relation_counts(db: &Database) -> Result<Vec<RelationCount>, String> {
     let relations = db
-        .run_script(
-            "::relations",
-            Default::default(),
-            ScriptMutability::Immutable,
-        )
+        .raw_query_params("::relations", BTreeMap::new())
         .map_err(|source| source.to_string())?;
     let names: BTreeSet<String> = relations
         .rows
@@ -2304,7 +2698,7 @@ fn load_relation_counts(path: &std::path::Path) -> Result<Vec<RelationCount>, St
             continue;
         }
         let query = format!("?[count(x)] := *{rel} {{ {key}: x }}");
-        match db.run_script(&query, Default::default(), ScriptMutability::Immutable) {
+        match db.raw_query_params(&query, BTreeMap::new()) {
             Ok(result) => counts.push(RelationCount {
                 relation: (*rel).to_string(),
                 exists: true,
@@ -2324,6 +2718,925 @@ fn load_relation_counts(path: &std::path::Path) -> Result<Vec<RelationCount>, St
         }
     }
     Ok(counts)
+}
+
+fn review_file_mirror(manifest: &Path) -> (Result<Vec<PatchReview>, String>, ReviewMirrorAudit) {
+    let path = manifest
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("prototype1")
+        .join("reviews");
+    match candidate_review::load_review_inventory(manifest).map_err(|error| error.to_string()) {
+        Ok(reviews) => {
+            let review_count = match i64::try_from(reviews.len()) {
+                Ok(count) => count,
+                Err(error) => {
+                    let detail = format!("candidate review count exceeds audit range: {error}");
+                    return (Err(detail.clone()), review_error_mirror(path, detail));
+                }
+            };
+            let changes = match reviews.iter().try_fold(0_usize, |total, review| {
+                total.checked_add(review.changes.len())
+            }) {
+                Some(count) => count,
+                None => {
+                    let detail = "candidate review change count overflow".to_string();
+                    return (Err(detail.clone()), review_error_mirror(path, detail));
+                }
+            };
+            let change_count = match i64::try_from(changes) {
+                Ok(count) => count,
+                Err(error) => {
+                    let detail =
+                        format!("candidate review change count exceeds audit range: {error}");
+                    return (Err(detail.clone()), review_error_mirror(path, detail));
+                }
+            };
+            let empty = reviews.is_empty();
+            let file_status = if empty {
+                PersistenceStatus::NotApplicable
+            } else {
+                PersistenceStatus::Ok
+            };
+            let file_detail = if empty {
+                "not used when patch review is disabled or no candidate reaches review".to_string()
+            } else {
+                "typed candidate review evidence validated against admitted configuration"
+                    .to_string()
+            };
+            (
+                Ok(reviews),
+                ReviewMirrorAudit {
+                    review_file: PersistenceSide {
+                        status: file_status,
+                        count: Some(review_count),
+                        path: Some(path.clone()),
+                        relation: None,
+                        detail: Some(file_detail.clone()),
+                    },
+                    review_db: PersistenceSide::not_applicable(
+                        "candidate review database mirror not checked",
+                    ),
+                    change_file: PersistenceSide {
+                        status: file_status,
+                        count: Some(change_count),
+                        path: Some(path),
+                        relation: None,
+                        detail: Some(file_detail),
+                    },
+                    change_db: PersistenceSide::not_applicable(
+                        "candidate review database mirror not checked",
+                    ),
+                },
+            )
+        }
+        Err(detail) => (Err(detail.clone()), review_error_mirror(path, detail)),
+    }
+}
+
+fn unavailable_review_mirror(detail: &'static str) -> ReviewMirrorAudit {
+    ReviewMirrorAudit {
+        review_file: PersistenceSide::not_applicable(detail),
+        review_db: PersistenceSide::not_applicable(detail),
+        change_file: PersistenceSide::not_applicable(detail),
+        change_db: PersistenceSide::not_applicable(detail),
+    }
+}
+
+fn review_error_mirror(path: PathBuf, detail: String) -> ReviewMirrorAudit {
+    let file = PersistenceSide {
+        status: PersistenceStatus::Error,
+        count: None,
+        path: Some(path),
+        relation: None,
+        detail: Some(detail.clone()),
+    };
+    ReviewMirrorAudit {
+        review_file: file.clone(),
+        review_db: PersistenceSide {
+            status: PersistenceStatus::Error,
+            count: None,
+            path: None,
+            relation: Some("eval_selection_patch_review".to_string()),
+            detail: Some(format!(
+                "database mirror cannot be verified because file evidence is invalid: {detail}"
+            )),
+        },
+        change_file: file,
+        change_db: PersistenceSide {
+            status: PersistenceStatus::Error,
+            count: None,
+            path: None,
+            relation: Some("eval_selection_patch_change".to_string()),
+            detail: Some(format!(
+                "database mirror cannot be verified because file evidence is invalid: {detail}"
+            )),
+        },
+    }
+}
+
+fn update_missing_db(
+    mirror: &mut ReviewMirrorAudit,
+    reviews: &Result<Vec<PatchReview>, String>,
+    path: &Path,
+) {
+    let Ok(reviews) = reviews else {
+        return;
+    };
+    if reviews.is_empty() {
+        mirror.review_db = PersistenceSide::not_applicable("no candidate review evidence");
+        mirror.change_db = PersistenceSide::not_applicable("no candidate review evidence");
+        return;
+    }
+    let pending = reviews
+        .iter()
+        .map(|review| review.citation.ref_id.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let detail =
+        format!("pending: valid candidate review citations await selection DB linking: {pending}");
+    mirror.review_db = PersistenceSide {
+        status: PersistenceStatus::Partial,
+        count: Some(0),
+        path: Some(path.to_path_buf()),
+        relation: Some("eval_selection_patch_review".to_string()),
+        detail: Some(detail.clone()),
+    };
+    mirror.change_db = PersistenceSide {
+        status: PersistenceStatus::Partial,
+        count: Some(0),
+        path: Some(path.to_path_buf()),
+        relation: Some("eval_selection_patch_change".to_string()),
+        detail: Some(detail),
+    };
+}
+
+fn update_db_error(mirror: &mut ReviewMirrorAudit, path: &Path, detail: String) {
+    mirror.review_db = PersistenceSide {
+        status: PersistenceStatus::Error,
+        count: None,
+        path: Some(path.to_path_buf()),
+        relation: Some("eval_selection_patch_review".to_string()),
+        detail: Some(detail.clone()),
+    };
+    mirror.change_db = PersistenceSide {
+        status: PersistenceStatus::Error,
+        count: None,
+        path: Some(path.to_path_buf()),
+        relation: Some("eval_selection_patch_change".to_string()),
+        detail: Some(detail),
+    };
+}
+
+fn update_db_mirror(
+    mirror: &mut ReviewMirrorAudit,
+    reviews: &Result<Vec<PatchReview>, String>,
+    db: &Database,
+    path: &Path,
+    counts: &[RelationCount],
+) {
+    let Ok(reviews) = reviews else {
+        return;
+    };
+    let relation = |name: &str| counts.iter().find(|row| row.relation == name);
+    let decision_rel = relation("eval_selection_decision");
+    let receipt_rel = relation("eval_selection_receipt");
+    let candidate_rel = relation("eval_selection_candidate");
+    let gate_rel = relation("eval_selection_patch_gate");
+    let review_rel = relation("eval_selection_patch_review");
+    let change_rel = relation("eval_selection_patch_change");
+    let stored = [
+        decision_rel,
+        receipt_rel,
+        candidate_rel,
+        gate_rel,
+        review_rel,
+        change_rel,
+    ]
+    .into_iter()
+    .flatten()
+    .any(|row| row.count.is_some_and(|count| count > 0));
+    if reviews.is_empty() && !stored {
+        mirror.review_db = PersistenceSide::not_applicable("no candidate review evidence");
+        mirror.change_db = PersistenceSide::not_applicable("no candidate review evidence");
+        return;
+    }
+    let relations_ready = [
+        decision_rel,
+        receipt_rel,
+        candidate_rel,
+        gate_rel,
+        review_rel,
+        change_rel,
+    ]
+    .into_iter()
+    .all(|row| row.is_some_and(|row| row.exists && row.count.is_some() && row.detail.is_none()));
+    if !relations_ready {
+        update_db_error(
+            mirror,
+            path,
+            "candidate review normalized relations are missing or unreadable".to_string(),
+        );
+        return;
+    }
+    match verify_review_mirror(db, reviews) {
+        Ok(coverage) => update_db_coverage(mirror, path, &coverage),
+        Err(detail) => {
+            if reviews.is_empty() && stored {
+                let file_detail = format!(
+                    "typed filesystem review evidence is required by selection DB authority: {detail}"
+                );
+                mirror.review_file.status = PersistenceStatus::Error;
+                mirror.review_file.detail = Some(file_detail.clone());
+                mirror.change_file.status = PersistenceStatus::Error;
+                mirror.change_file.detail = Some(file_detail);
+            }
+            update_db_error(mirror, path, detail);
+        }
+    }
+}
+
+fn update_db_coverage(mirror: &mut ReviewMirrorAudit, path: &Path, coverage: &PatchMirrorCoverage) {
+    if coverage.review_count == 0
+        && coverage.change_count == 0
+        && coverage.review_rows == 0
+        && coverage.change_rows == 0
+    {
+        mirror.review_db = PersistenceSide::not_applicable("no candidate review evidence");
+        mirror.change_db = PersistenceSide::not_applicable("no candidate review evidence");
+        return;
+    }
+    let status = if coverage.pending_refs.is_empty() {
+        PersistenceStatus::Ok
+    } else {
+        PersistenceStatus::Partial
+    };
+    let detail = if coverage.pending_refs.is_empty() {
+        format!(
+            "exact typed mirror: reviews={}/{}, review_rows={}, changes={}/{}, change_rows={}",
+            coverage.review_count,
+            coverage.review_count,
+            coverage.review_rows,
+            coverage.change_count,
+            coverage.change_count,
+            coverage.change_rows
+        )
+    } else {
+        format!(
+            "pending: {} valid candidate review citation(s) await selection linking: {}",
+            coverage.pending_refs.len(),
+            coverage.pending_refs.join(", ")
+        )
+    };
+    mirror.review_db = PersistenceSide {
+        status,
+        count: i64::try_from(coverage.review_rows).ok(),
+        path: Some(path.to_path_buf()),
+        relation: Some("eval_selection_patch_review".to_string()),
+        detail: Some(detail.clone()),
+    };
+    mirror.change_db = PersistenceSide {
+        status,
+        count: i64::try_from(coverage.change_rows).ok(),
+        path: Some(path.to_path_buf()),
+        relation: Some("eval_selection_patch_change".to_string()),
+        detail: Some(detail),
+    };
+}
+
+fn verify_review_mirror(
+    db: &Database,
+    reviews: &[PatchReview],
+) -> Result<PatchMirrorCoverage, String> {
+    let mut inventory = BTreeMap::new();
+    let mut change_count = 0_usize;
+    for review in reviews {
+        let citation = review.citation.ref_id.clone();
+        if citation.is_empty() {
+            return Err("candidate review inventory contains an empty citation".to_string());
+        }
+        if inventory.insert(citation.clone(), review).is_some() {
+            return Err(format!(
+                "candidate review inventory contains duplicate citation '{citation}'"
+            ));
+        }
+        change_count = change_count
+            .checked_add(review.changes.len())
+            .ok_or_else(|| "candidate review change count overflow".to_string())?;
+    }
+
+    let receipt_rows = db
+        .raw_query_params(
+            r#"
+?[decision_id, campaign_id, parent_id, decision_hash, entry_json] :=
+    *eval_selection_receipt {
+        decision_id,
+        campaign_id,
+        parent_id,
+        decision_hash,
+        entry_json,
+    }
+"#,
+            BTreeMap::new(),
+        )
+        .map_err(|error| format!("failed to read typed selection receipts: {error}"))?;
+    let mut receipt_ids = BTreeSet::new();
+    let mut bindings = BTreeMap::new();
+    let mut strict_receipts = BTreeSet::new();
+    let mut occurrences = BTreeMap::new();
+    for row in receipt_rows.row_refs() {
+        let decision_id = row
+            .get::<String>("decision_id")
+            .map_err(|error| format!("failed to decode selection receipt decision: {error}"))?;
+        let campaign_id = row
+            .get::<String>("campaign_id")
+            .map_err(|error| format!("failed to decode selection receipt campaign: {error}"))?;
+        let parent_id = row
+            .get::<String>("parent_id")
+            .map_err(|error| format!("failed to decode selection receipt parent: {error}"))?;
+        let decision_hash = row
+            .get::<String>("decision_hash")
+            .map_err(|error| format!("failed to decode selection receipt hash: {error}"))?;
+        let entry_json = row
+            .get::<String>("entry_json")
+            .map_err(|error| format!("failed to decode selection receipt entry: {error}"))?;
+        let entry: SelectionDecisionEntry = serde_json::from_str(&entry_json).map_err(|error| {
+            format!("selection receipt '{decision_id}' is not a typed decision entry: {error}")
+        })?;
+        entry.validate_shape().map_err(|error| {
+            format!("selection receipt '{decision_id}' has an invalid typed shape: {error}")
+        })?;
+        crate::successor_selection::traversal::validate_patch_replay(&entry).map_err(|error| {
+            format!("selection receipt '{decision_id}' fails deterministic replay: {error}")
+        })?;
+        let observed_hash = entry
+            .decision_hash()
+            .map_err(|error| {
+                format!("selection receipt '{decision_id}' cannot be hashed: {error}")
+            })?
+            .as_str()
+            .to_string();
+        if observed_hash != decision_hash {
+            return Err(format!(
+                "selection receipt '{decision_id}' decision hash does not match its typed entry"
+            ));
+        }
+        let set_id = entry
+            .candidate_set
+            .as_ref()
+            .map(|set| set.root.as_str())
+            .unwrap_or_else(|| entry.considered_order_hash.as_str());
+        let expected_id = selection_decision_id(
+            &campaign_id,
+            &parent_id,
+            set_id,
+            entry.procedure_or_policy.as_str(),
+            &decision_hash,
+        );
+        if decision_id != expected_id {
+            return Err(format!(
+                "selection receipt decision id '{decision_id}' does not match production-derived id '{expected_id}'"
+            ));
+        }
+        bindings.insert(
+            decision_id.clone(),
+            (
+                campaign_id.clone(),
+                parent_id.clone(),
+                set_id.to_string(),
+                entry.procedure_or_policy.as_str().to_string(),
+                decision_hash.clone(),
+            ),
+        );
+        receipt_ids.insert(decision_id.clone());
+
+        let gate = entry
+            .traversal
+            .as_ref()
+            .map(|traversal| traversal.strategy.patch_gate())
+            .unwrap_or(PatchGate::Disabled);
+        if gate == PatchGate::ReviewedAdmissible {
+            strict_receipts.insert(decision_id.clone());
+        }
+        for (index, payload) in entry.considered.iter().enumerate() {
+            let Some(review) = payload.patch_review.as_ref() else {
+                continue;
+            };
+            if gate != PatchGate::ReviewedAdmissible {
+                return Err(format!(
+                    "selection receipt '{decision_id}' carries review '{}' without a strict applied patch gate",
+                    review.citation.ref_id
+                ));
+            }
+            let file_review = inventory.get(&review.citation.ref_id).copied().ok_or_else(|| {
+                format!(
+                    "strict selection receipt '{decision_id}' review '{}' has no typed filesystem evidence",
+                    review.citation.ref_id
+                )
+            })?;
+            if file_review != review {
+                return Err(format!(
+                    "strict selection receipt '{decision_id}' review '{}' does not match typed filesystem evidence",
+                    review.citation.ref_id
+                ));
+            }
+            let membership = entry
+                .candidate_set_membership_for_payload(index, payload)
+                .map_err(|error| {
+                    format!(
+                        "selection receipt '{decision_id}' cannot resolve candidate membership: {error}"
+                    )
+                })?;
+            let member_id = selection_member_id(membership, payload).map_err(|error| {
+                format!(
+                    "selection receipt '{decision_id}' cannot derive candidate member id: {error}"
+                )
+            })?;
+            let key = (decision_id.clone(), member_id);
+            if occurrences.insert(key.clone(), review.clone()).is_some() {
+                return Err(format!(
+                    "selection receipt review occurrence is duplicated: decision_id={}, member_id={}",
+                    key.0, key.1
+                ));
+            }
+        }
+    }
+
+    let decision_rows = db
+        .raw_query_params(
+            r#"
+?[decision_id, campaign_id, parent_id, set_id, procedure_id, decision_hash] :=
+    *eval_selection_decision {
+        decision_id,
+        campaign_id,
+        parent_id,
+        set_id,
+        procedure_id,
+        decision_hash,
+    }
+"#,
+            BTreeMap::new(),
+        )
+        .map_err(|error| format!("failed to read normalized selection decisions: {error}"))?;
+    let mut decisions = BTreeSet::new();
+    for row in decision_rows.row_refs() {
+        let decision_id = row
+            .get::<String>("decision_id")
+            .map_err(|error| format!("failed to decode selection decision id: {error}"))?;
+        let Some(binding) = bindings.get(&decision_id) else {
+            return Err(format!(
+                "normalized selection decision has no typed receipt: decision_id={decision_id}"
+            ));
+        };
+        let observed = (
+            row.get::<String>("campaign_id")
+                .map_err(|error| format!("failed to decode selection campaign: {error}"))?,
+            row.get::<String>("parent_id")
+                .map_err(|error| format!("failed to decode selection parent: {error}"))?,
+            row.get::<String>("set_id")
+                .map_err(|error| format!("failed to decode selection set: {error}"))?,
+            row.get::<String>("procedure_id")
+                .map_err(|error| format!("failed to decode selection procedure: {error}"))?,
+            row.get::<Option<String>>("decision_hash")
+                .map_err(|error| format!("failed to decode selection decision hash: {error}"))?,
+        );
+        if observed.0 != binding.0
+            || observed.1 != binding.1
+            || observed.2 != binding.2
+            || observed.3 != binding.3
+            || observed.4.as_deref() != Some(binding.4.as_str())
+        {
+            return Err(format!(
+                "normalized selection decision does not match its typed receipt: decision_id={decision_id}"
+            ));
+        }
+        decisions.insert(decision_id);
+    }
+    for decision_id in bindings.keys() {
+        if !decisions.contains(decision_id) {
+            return Err(format!(
+                "typed selection receipt has no matching normalized decision row: decision_id={decision_id}"
+            ));
+        }
+    }
+
+    if reviews.is_empty() && !strict_receipts.is_empty() {
+        return Err(format!(
+            "strict selection receipt authority exists without typed filesystem review evidence: {}",
+            strict_receipts.into_iter().collect::<Vec<_>>().join(", ")
+        ));
+    }
+
+    let gate_rows = db
+        .raw_query_params(
+            r#"
+?[decision_id, gate] :=
+    *eval_selection_patch_gate {
+        decision_id,
+        gate,
+    }
+"#,
+            BTreeMap::new(),
+        )
+        .map_err(|error| format!("failed to read applied selection patch gates: {error}"))?;
+    let mut gates = BTreeMap::new();
+    for row in gate_rows.row_refs() {
+        let decision_id = row
+            .get::<String>("decision_id")
+            .map_err(|error| format!("failed to decode applied patch-gate decision: {error}"))?;
+        let gate = row
+            .get::<String>("gate")
+            .map_err(|error| format!("failed to decode applied patch gate: {error}"))?;
+        if !receipt_ids.contains(&decision_id) {
+            return Err(format!(
+                "applied patch gate has no typed selection receipt: decision_id={decision_id}"
+            ));
+        }
+        gates.insert(decision_id, gate);
+    }
+    for decision_id in &strict_receipts {
+        if gates.get(decision_id).map(String::as_str)
+            != Some(PatchGate::ReviewedAdmissible.as_str())
+        {
+            return Err(format!(
+                "strict selection receipt has no matching applied patch gate: decision_id={decision_id}"
+            ));
+        }
+    }
+
+    let candidate_rows = db
+        .raw_query_params(
+            r#"
+?[decision_id, member_id, node_id, branch_id] :=
+    *eval_selection_candidate {
+        decision_id,
+        member_id,
+        node_id,
+        branch_id,
+    }
+"#,
+            BTreeMap::new(),
+        )
+        .map_err(|error| format!("failed to read normalized selection candidates: {error}"))?;
+    let mut candidates = BTreeMap::new();
+    for row in candidate_rows.row_refs() {
+        let decision_id = row
+            .get::<String>("decision_id")
+            .map_err(|error| format!("failed to decode selection candidate decision: {error}"))?;
+        let member_id = row
+            .get::<String>("member_id")
+            .map_err(|error| format!("failed to decode selection candidate member: {error}"))?;
+        let node_id = row
+            .get::<String>("node_id")
+            .map_err(|error| format!("failed to decode selection candidate node: {error}"))?;
+        let branch_id = row
+            .get::<String>("branch_id")
+            .map_err(|error| format!("failed to decode selection candidate branch: {error}"))?;
+        candidates.insert((decision_id, member_id), (node_id, branch_id));
+    }
+    for (key, review) in &occurrences {
+        let candidate = candidates.get(key).ok_or_else(|| {
+            format!(
+                "typed receipt review has no matching selection candidate row: decision_id={}, member_id={}",
+                key.0, key.1
+            )
+        })?;
+        if candidate.0 != review.candidate.node_id || candidate.1 != review.candidate.branch_id {
+            return Err(format!(
+                "selection candidate row does not match typed receipt review: decision_id={}, member_id={}",
+                key.0, key.1
+            ));
+        }
+    }
+
+    let review_rows = db
+        .raw_query_params(
+            r#"
+?[decision_id, member_id, schema_version, procedure_id, node_id, branch_id, generation, artifact_id, artifact_surface_hash, evaluation_hash, config_hash, change_set_hash, verdict, confidence, blocking_findings, missing_evidence, rationale, citation_ref, citation_hash, record_name] :=
+    *eval_selection_patch_review {
+        decision_id,
+        member_id,
+        schema_version,
+        procedure_id,
+        node_id,
+        branch_id,
+        generation,
+        artifact_id,
+        artifact_surface_hash,
+        evaluation_hash,
+        config_hash,
+        change_set_hash,
+        verdict,
+        confidence,
+        blocking_findings,
+        missing_evidence,
+        rationale,
+        citation_ref,
+        citation_hash,
+        record_name,
+    }
+"#,
+            BTreeMap::new(),
+        )
+        .map_err(|error| format!("failed to read normalized candidate reviews: {error}"))?;
+    let review_count = review_rows.rows.len();
+    let mut normalized = BTreeSet::new();
+    let mut linked = BTreeSet::new();
+
+    macro_rules! require_review_field {
+        ($row:ident, $ty:ty, $field:literal, $expected:expr, $citation:expr) => {{
+            let actual = $row.get::<$ty>($field).map_err(|error| {
+                format!(
+                    "failed to decode candidate review '{}' field '{}': {error}",
+                    $citation, $field
+                )
+            })?;
+            let expected = $expected;
+            if actual != expected {
+                return Err(format!(
+                    "normalized candidate review '{}' field '{}' does not match typed file evidence",
+                    $citation, $field
+                ));
+            }
+        }};
+    }
+
+    for row in review_rows.row_refs() {
+        let decision_id = row
+            .get::<String>("decision_id")
+            .map_err(|error| format!("failed to decode candidate review decision: {error}"))?;
+        let member_id = row
+            .get::<String>("member_id")
+            .map_err(|error| format!("failed to decode candidate review member: {error}"))?;
+        let citation = row
+            .get::<String>("citation_ref")
+            .map_err(|error| format!("failed to decode candidate review citation: {error}"))?;
+        let key = (decision_id, member_id);
+        let review = occurrences.get(&key).ok_or_else(|| {
+            format!(
+                "normalized candidate review is not authorized by typed receipt membership: decision_id={}, member_id={}",
+                key.0, key.1
+            )
+        })?;
+        if citation != review.citation.ref_id {
+            return Err(format!(
+                "normalized candidate review citation does not match typed receipt membership: decision_id={}, member_id={}",
+                key.0, key.1
+            ));
+        }
+
+        require_review_field!(
+            row,
+            i64,
+            "schema_version",
+            i64::from(review.schema_version),
+            citation
+        );
+        require_review_field!(
+            row,
+            String,
+            "procedure_id",
+            review.procedure_id.clone(),
+            citation
+        );
+        require_review_field!(
+            row,
+            String,
+            "node_id",
+            review.candidate.node_id.clone(),
+            citation
+        );
+        require_review_field!(
+            row,
+            String,
+            "branch_id",
+            review.candidate.branch_id.clone(),
+            citation
+        );
+        require_review_field!(
+            row,
+            i64,
+            "generation",
+            i64::from(review.candidate.generation),
+            citation
+        );
+        require_review_field!(
+            row,
+            String,
+            "artifact_id",
+            review.artifact_id.to_string(),
+            citation
+        );
+        require_review_field!(
+            row,
+            String,
+            "artifact_surface_hash",
+            review.artifact_surface_hash.as_str().to_string(),
+            citation
+        );
+        require_review_field!(
+            row,
+            String,
+            "evaluation_hash",
+            review.evaluation_hash.as_str().to_string(),
+            citation
+        );
+        require_review_field!(
+            row,
+            String,
+            "config_hash",
+            review.config_hash.as_str().to_string(),
+            citation
+        );
+        require_review_field!(
+            row,
+            String,
+            "change_set_hash",
+            review.change_set_hash.as_str().to_string(),
+            citation
+        );
+        require_review_field!(
+            row,
+            String,
+            "verdict",
+            patch_verdict_label(review.verdict).to_string(),
+            citation
+        );
+        require_review_field!(
+            row,
+            String,
+            "confidence",
+            confidence_label(review.confidence).to_string(),
+            citation
+        );
+        require_review_field!(
+            row,
+            Vec<String>,
+            "blocking_findings",
+            review.blocking_findings.clone(),
+            citation
+        );
+        require_review_field!(
+            row,
+            Vec<String>,
+            "missing_evidence",
+            review.missing_evidence.clone(),
+            citation
+        );
+        require_review_field!(
+            row,
+            Vec<String>,
+            "rationale",
+            review.rationale.clone(),
+            citation
+        );
+        require_review_field!(
+            row,
+            Option<String>,
+            "citation_hash",
+            review
+                .citation
+                .content_hash
+                .as_ref()
+                .map(|hash| hash.as_str().to_string()),
+            citation
+        );
+        require_review_field!(
+            row,
+            Option<String>,
+            "record_name",
+            review.citation.record_name.clone(),
+            citation
+        );
+
+        if !normalized.insert(key.clone()) {
+            return Err(format!(
+                "normalized candidate review occurrence is duplicated: decision_id={}, member_id={}",
+                key.0, key.1
+            ));
+        }
+        linked.insert(citation);
+    }
+    for key in occurrences.keys() {
+        if !normalized.contains(key) {
+            return Err(format!(
+                "typed receipt review has no normalized candidate review row: decision_id={}, member_id={}",
+                key.0, key.1
+            ));
+        }
+    }
+
+    let change_rows = db
+        .raw_query_params(
+            r#"
+?[decision_id, member_id, change_index, relpath, source_content_hash, proposed_content_hash] :=
+    *eval_selection_patch_change {
+        decision_id,
+        member_id,
+        change_index,
+        relpath,
+        source_content_hash,
+        proposed_content_hash,
+    }
+"#,
+            BTreeMap::new(),
+        )
+        .map_err(|error| format!("failed to read normalized candidate review changes: {error}"))?;
+    let stored_changes = change_rows.rows.len();
+    let mut changes: BTreeMap<(String, String), Vec<(i64, PatchChange)>> = BTreeMap::new();
+    for row in change_rows.row_refs() {
+        let decision_id = row
+            .get::<String>("decision_id")
+            .map_err(|error| format!("failed to decode patch change decision: {error}"))?;
+        let member_id = row
+            .get::<String>("member_id")
+            .map_err(|error| format!("failed to decode patch change member: {error}"))?;
+        let key = (decision_id, member_id);
+        if !normalized.contains(&key) {
+            return Err(format!(
+                "normalized patch change has no candidate review row: decision_id={}, member_id={}",
+                key.0, key.1
+            ));
+        }
+        let index = row
+            .get::<i64>("change_index")
+            .map_err(|error| format!("failed to decode patch change index: {error}"))?;
+        let change = PatchChange {
+            relpath: PathBuf::from(
+                row.get::<String>("relpath")
+                    .map_err(|error| format!("failed to decode patch change path: {error}"))?,
+            ),
+            source_content_hash: row
+                .get::<Option<String>>("source_content_hash")
+                .map_err(|error| format!("failed to decode patch source hash: {error}"))?,
+            proposed_content_hash: row
+                .get::<Option<String>>("proposed_content_hash")
+                .map_err(|error| format!("failed to decode patch proposed hash: {error}"))?,
+        };
+        changes.entry(key).or_default().push((index, change));
+    }
+
+    for (key, review) in &occurrences {
+        let mut actual = changes.remove(key).unwrap_or_default();
+        actual.sort_by_key(|(index, _)| *index);
+        let expected_changes = review
+            .changes
+            .iter()
+            .cloned()
+            .enumerate()
+            .map(|(index, change)| {
+                i64::try_from(index)
+                    .map(|index| (index, change))
+                    .map_err(|error| {
+                        format!(
+                            "candidate review '{}' change index exceeds DB range: {error}",
+                            review.citation.ref_id
+                        )
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if actual != expected_changes {
+            return Err(format!(
+                "normalized patch changes do not match typed review '{}': decision_id={}, member_id={}",
+                review.citation.ref_id, key.0, key.1
+            ));
+        }
+    }
+    if let Some((key, _)) = changes.first_key_value() {
+        return Err(format!(
+            "normalized patch changes remain without a candidate review occurrence: decision_id={}, member_id={}",
+            key.0, key.1
+        ));
+    }
+
+    let pending_refs = inventory
+        .keys()
+        .filter(|citation| !linked.contains(*citation))
+        .cloned()
+        .collect();
+    Ok(PatchMirrorCoverage {
+        review_count: reviews.len(),
+        change_count,
+        review_rows: review_count,
+        change_rows: stored_changes,
+        pending_refs,
+    })
+}
+
+fn patch_verdict_label(verdict: PatchVerdict) -> &'static str {
+    match verdict {
+        PatchVerdict::Admissible => "admissible",
+        PatchVerdict::Rejected => "rejected",
+        PatchVerdict::Inconclusive => "inconclusive",
+    }
+}
+
+fn confidence_label(confidence: Confidence) -> &'static str {
+    match confidence {
+        Confidence::Low => "low",
+        Confidence::Medium => "medium",
+        Confidence::High => "high",
+    }
 }
 
 fn relation_count_missing() -> Vec<RelationCount> {
@@ -2487,6 +3800,7 @@ fn audit_transition_label(transition: Prototype1StateWalkAuditTransition) -> &'s
         Prototype1StateWalkAuditTransition::R0ToR1 => "r0->r1",
         Prototype1StateWalkAuditTransition::R1ToR2a => "r1->r2a",
         Prototype1StateWalkAuditTransition::R1ToR3 => "r1->r3",
+        Prototype1StateWalkAuditTransition::R2aToR3 => "r2a->r3",
         Prototype1StateWalkAuditTransition::R3ToR4a => "r3->r4a",
         Prototype1StateWalkAuditTransition::R4aToR4b => "r4a->r4b",
         Prototype1StateWalkAuditTransition::R4aToR4c => "r4a->r4c",
@@ -2503,6 +3817,7 @@ fn audit_transition_label(transition: Prototype1StateWalkAuditTransition) -> &'s
         Prototype1StateWalkAuditTransition::R11ToR12 => "r11->r12",
         Prototype1StateWalkAuditTransition::R12ToR13a => "r12->r13a",
         Prototype1StateWalkAuditTransition::R12ToR13b => "r12->r13b",
+        Prototype1StateWalkAuditTransition::R12ToR13c => "r12->r13c",
         Prototype1StateWalkAuditTransition::R13aToR14a => "r13a->r14a",
         Prototype1StateWalkAuditTransition::R13bToR14b => "r13b->r14b",
     }
@@ -2531,6 +3846,716 @@ fn persistence_label(status: PersistenceStatus) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn review_row_count_cannot_cover_later_unlinked_review() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let path = tmp.path().join("prototype1/eval-store.cozo.sqlite");
+        let (_, _, first) =
+            write_test_receipt(&path, "campaign-a", "parent-a", strict_test_entry())
+                .expect("write receipt");
+        let pending = test_patch_review("branch-b", 1);
+        let db = load_owner_eval_database(&path).expect("load owner db");
+
+        let coverage =
+            verify_review_mirror(&db, &[first, pending.clone()]).expect("valid partial mirror");
+
+        assert_eq!(coverage.review_count, 2);
+        assert_eq!(coverage.change_count, 2);
+        assert_eq!(coverage.review_rows, 1);
+        assert_eq!(coverage.change_rows, 1);
+        assert_eq!(coverage.pending_refs, vec![pending.citation.ref_id.clone()]);
+    }
+
+    #[test]
+    fn review_mirror_rejects_orphan_change_rows() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let path = tmp.path().join("prototype1/eval-store.cozo.sqlite");
+        let (_, _, review) =
+            write_test_receipt(&path, "campaign-a", "parent-a", strict_test_entry())
+                .expect("write receipt");
+        let db = load_owner_eval_database(&path).expect("load owner db");
+        insert_patch_change(
+            &db,
+            "decision-orphan",
+            "member-orphan",
+            0,
+            &review.changes[0],
+        );
+
+        let error =
+            verify_review_mirror(&db, &[review]).expect_err("orphan change must fail closed");
+
+        assert!(error.contains("has no candidate review row"));
+    }
+
+    #[test]
+    fn review_mirror_rejects_normalized_field_mismatch() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let path = tmp.path().join("prototype1/eval-store.cozo.sqlite");
+        let (_, _, stored) =
+            write_test_receipt(&path, "campaign-a", "parent-a", strict_test_entry())
+                .expect("write receipt");
+        let db = load_owner_eval_database(&path).expect("load owner db");
+        let mut file = stored;
+        file.evaluation_hash =
+            crate::cli::prototype1_state::history::HistoryHash::of_bytes(b"changed-evaluation");
+
+        let error =
+            verify_review_mirror(&db, &[file]).expect_err("field mismatch must fail closed");
+
+        assert!(error.contains("does not match typed filesystem evidence"));
+    }
+
+    #[test]
+    fn review_mirror_accepts_repeated_exact_occurrences() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let path = tmp.path().join("prototype1/eval-store.cozo.sqlite");
+        let entry = strict_test_entry();
+        let (_, _, review) = write_test_receipt(&path, "campaign-a", "parent-a", entry.clone())
+            .expect("write first receipt");
+        write_test_receipt(&path, "campaign-b", "parent-b", entry).expect("write second receipt");
+        let db = load_owner_eval_database(&path).expect("load owner db");
+
+        let coverage =
+            verify_review_mirror(&db, &[review]).expect("repeated exact evidence is valid");
+
+        assert_eq!(coverage.review_rows, 2);
+        assert_eq!(coverage.change_rows, 2);
+        assert!(coverage.pending_refs.is_empty());
+    }
+
+    #[test]
+    fn review_mirror_rejects_normalized_change_hash_mismatch() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let path = tmp.path().join("prototype1/eval-store.cozo.sqlite");
+        let (decision_id, member_id, review) =
+            write_test_receipt(&path, "campaign-a", "parent-a", strict_test_entry())
+                .expect("write receipt");
+        let db = load_owner_eval_database(&path).expect("load owner db");
+        let mut changed = review.changes[0].clone();
+        changed.proposed_content_hash = Some("different-proposed-hash".to_string());
+        insert_patch_change(&db, &decision_id, &member_id, 0, &changed);
+
+        let error =
+            verify_review_mirror(&db, &[review]).expect_err("changed hash must fail closed");
+
+        assert!(error.contains("normalized patch changes do not match"));
+    }
+
+    #[test]
+    fn review_mirror_rejects_arbitrary_decision_key() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let path = tmp.path().join("prototype1/eval-store.cozo.sqlite");
+        let (_, member_id, review) =
+            write_test_receipt(&path, "campaign-a", "parent-a", strict_test_entry())
+                .expect("write receipt");
+        let db = load_owner_eval_database(&path).expect("load owner db");
+        insert_patch_review(&db, "decision-arbitrary", &member_id, &review);
+
+        let error =
+            verify_review_mirror(&db, &[review]).expect_err("arbitrary decision key must fail");
+        assert!(error.contains("not authorized by typed receipt membership"));
+    }
+
+    #[test]
+    fn review_mirror_rejects_receipt_membership_mismatch() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let path = tmp.path().join("prototype1/eval-store.cozo.sqlite");
+        let (decision_id, _, review) =
+            write_test_receipt(&path, "campaign-a", "parent-a", strict_test_entry())
+                .expect("write receipt");
+        let db = load_owner_eval_database(&path).expect("load owner db");
+        insert_patch_review(&db, &decision_id, "member-arbitrary", &review);
+
+        let error =
+            verify_review_mirror(&db, &[review]).expect_err("wrong receipt member must fail");
+        assert!(error.contains("not authorized by typed receipt membership"));
+    }
+
+    #[test]
+    fn review_mirror_rejects_missing_candidate_occurrence() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let path = tmp.path().join("prototype1/eval-store.cozo.sqlite");
+        let (decision_id, member_id, review) =
+            write_test_receipt(&path, "campaign-a", "parent-a", strict_test_entry())
+                .expect("write receipt");
+        let db = load_owner_eval_database(&path).expect("load owner db");
+        remove_candidate(&db, &decision_id, &member_id);
+
+        let error =
+            verify_review_mirror(&db, &[review]).expect_err("missing candidate row must fail");
+        assert!(error.contains("has no matching selection candidate row"));
+    }
+
+    #[test]
+    fn review_mirror_rejects_fabricated_receipt_decision_id() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let path = tmp.path().join("prototype1/eval-store.cozo.sqlite");
+        let (decision_id, _, review) =
+            write_test_receipt(&path, "campaign-a", "parent-a", strict_test_entry())
+                .expect("write receipt");
+        let db = load_owner_eval_database(&path).expect("load owner db");
+        rekey_receipt(&db, &decision_id, "decision-fabricated");
+
+        let error =
+            verify_review_mirror(&db, &[review]).expect_err("fabricated receipt id must fail");
+        assert!(error.contains("does not match production-derived id"));
+    }
+
+    #[test]
+    fn review_mirror_rejects_missing_decision_row() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let path = tmp.path().join("prototype1/eval-store.cozo.sqlite");
+        let (decision_id, _, review) =
+            write_test_receipt(&path, "campaign-a", "parent-a", strict_test_entry())
+                .expect("write receipt");
+        let db = load_owner_eval_database(&path).expect("load owner db");
+        remove_decision(&db, &decision_id);
+
+        let error =
+            verify_review_mirror(&db, &[review]).expect_err("missing decision row must fail");
+        assert!(error.contains("has no matching normalized decision row"));
+    }
+
+    #[test]
+    fn strict_db_authority_requires_nonempty_file_inventory() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let path = tmp.path().join("prototype1/eval-store.cozo.sqlite");
+        write_test_receipt(&path, "campaign-a", "parent-a", strict_test_entry())
+            .expect("write receipt");
+        let db = load_owner_eval_database(&path).expect("load owner db");
+
+        let error =
+            verify_review_mirror(&db, &[]).expect_err("strict receipt requires file evidence");
+        assert!(error.contains("has no typed filesystem evidence"));
+
+        let empty = PersistenceSide::not_applicable("empty inventory");
+        let mut mirror = ReviewMirrorAudit {
+            review_file: empty.clone(),
+            review_db: empty.clone(),
+            change_file: empty.clone(),
+            change_db: empty,
+        };
+        let counts = load_relation_counts(&db).expect("relation counts");
+        update_db_mirror(&mut mirror, &Ok(Vec::new()), &db, &path, &counts);
+        assert_eq!(mirror.review_file.status, PersistenceStatus::Error);
+        assert_eq!(mirror.change_file.status, PersistenceStatus::Error);
+        assert_eq!(mirror.review_db.status, PersistenceStatus::Error);
+        assert_eq!(mirror.change_db.status, PersistenceStatus::Error);
+    }
+
+    #[test]
+    fn strict_receipt_only_fails_closed() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let path = tmp.path().join("prototype1/eval-store.cozo.sqlite");
+        write_test_receipt(&path, "campaign-a", "parent-a", strict_test_entry())
+            .expect("write receipt");
+        let db = load_owner_eval_database(&path).expect("load owner db");
+        clear_patch_rows(&db);
+
+        let empty = PersistenceSide::not_applicable("empty inventory");
+        let mut mirror = ReviewMirrorAudit {
+            review_file: empty.clone(),
+            review_db: empty.clone(),
+            change_file: empty.clone(),
+            change_db: empty,
+        };
+        let counts = load_relation_counts(&db).expect("relation counts");
+        update_db_mirror(&mut mirror, &Ok(Vec::new()), &db, &path, &counts);
+
+        assert_eq!(mirror.review_file.status, PersistenceStatus::Error);
+        assert_eq!(mirror.change_file.status, PersistenceStatus::Error);
+        assert_eq!(mirror.review_db.status, PersistenceStatus::Error);
+        assert_eq!(mirror.change_db.status, PersistenceStatus::Error);
+    }
+
+    fn strict_test_entry() -> SelectionDecisionEntry {
+        use crate::cli::prototype1_state::{
+            history::{
+                HistoryCandidates, HistoryHash, ProcedureRef, SealedEvidenceCitation,
+                TraversalCandidateSource, TraversalEvidence,
+            },
+            parent::ChildPlanFiles,
+        };
+        use crate::successor_selection::traversal as traversal_selection;
+
+        let source: SelectionDecisionEntry = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/prototype1-v25-selection-safety-20260717/selection-decision-entry.json"
+        ))
+        .expect("decode historical selection receipt");
+        let plan: ChildPlanFiles = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/prototype1-v25-selection-safety-20260717/child-plan-node-461dba1909fb6cf7.json"
+        ))
+        .expect("decode historical child plan");
+        let mut payload = source.considered[0].clone();
+        let candidate = payload
+            .selection_input
+            .as_ref()
+            .expect("selection input")
+            .candidate
+            .clone();
+        let harness = plan
+            .children()
+            .iter()
+            .find(|child| child.node_id() == candidate.node_id)
+            .and_then(|child| child.harness_evidence())
+            .expect("typed harness evidence")
+            .clone();
+        {
+            let artifact = payload.artifact.as_mut().expect("candidate artifact");
+            assert_eq!(
+                artifact.artifact_surface.as_ref(),
+                Some(harness.artifact_surface())
+            );
+            artifact.harness = Some(harness);
+            artifact.schema_version = artifact.schema_version.max(4);
+        }
+        let artifact = payload.artifact.as_ref().expect("candidate artifact");
+        let harness = artifact.harness.as_ref().expect("attached harness");
+        assert_eq!(
+            harness.changed_paths(),
+            [artifact.resolved.target_relpath.clone()]
+        );
+        let artifact_id = artifact
+            .resolved
+            .branch
+            .derived_artifact_id
+            .as_ref()
+            .expect("derived artifact")
+            .clone();
+        let surface_hash = HistoryHash::of_domain_json(
+            "prototype1.history.artifact_surface.v1",
+            artifact
+                .artifact_surface
+                .as_ref()
+                .expect("artifact surface"),
+        )
+        .expect("surface hash");
+        let evaluation = payload
+            .sealed_evidence
+            .as_ref()
+            .expect("sealed evidence")
+            .evaluations
+            .iter()
+            .find(|evaluation| evaluation.branch_id == candidate.branch_id)
+            .expect("matching evaluation");
+        let evaluation_hash = evaluation
+            .evaluation_artifact_citation
+            .as_ref()
+            .and_then(|citation| citation.content_hash.as_ref())
+            .expect("evaluation hash")
+            .clone();
+        assert_eq!(
+            evaluation.primary_report_citation.content_hash.as_ref(),
+            Some(&evaluation_hash)
+        );
+        let changes = vec![PatchChange {
+            relpath: artifact.resolved.target_relpath.clone(),
+            source_content_hash: Some(artifact.resolved.source_content_hash.clone()),
+            proposed_content_hash: Some(artifact.resolved.branch.proposed_content_hash.clone()),
+        }];
+        let change_set_hash = HistoryHash::of_domain_json(
+            "prototype1.history.candidate_patch_change_set.v1",
+            &changes,
+        )
+        .expect("change set hash");
+        let citation_hash =
+            HistoryHash::of_domain_json("prototype1.test.walk_audit_patch_review.v1", &candidate)
+                .expect("review citation hash");
+        payload.patch_review = Some(PatchReview {
+            schema_version: 2,
+            procedure_id: crate::successor_selection::PATCH_REVIEW_PROCEDURE_ID.to_string(),
+            candidate: candidate.clone(),
+            artifact_id,
+            artifact_surface_hash: surface_hash,
+            evaluation_hash,
+            config_hash: HistoryHash::of_bytes(b"walk-audit-review-config"),
+            change_set_hash,
+            changes,
+            verdict: PatchVerdict::Admissible,
+            confidence: Confidence::High,
+            blocking_findings: Vec::new(),
+            missing_evidence: Vec::new(),
+            rationale: vec!["typed audit receipt test evidence".to_string()],
+            citation: SealedEvidenceCitation {
+                ref_id: crate::successor_selection::candidate_review_ref(&candidate.branch_id),
+                content_hash: Some(citation_hash),
+                record_name: Some(crate::successor_selection::PATCH_REVIEW_RECORD_NAME.to_string()),
+            },
+        });
+        payload.schema_version = payload.schema_version.max(5);
+
+        let traversal = source.traversal.clone().expect("traversal evidence");
+        let strategy = traversal
+            .strategy
+            .with_patch_gate(PatchGate::ReviewedAdmissible);
+        let candidates = traversal_selection::Candidates::from_history(HistoryCandidates {
+            scope: source.scope.clone(),
+            candidates: Vec::new(),
+        })
+        .with_current_generation(source.scope.clone(), vec![payload])
+        .expect("bind current candidate");
+        let attempt = traversal_selection::select_attempt_with_policy(
+            candidates,
+            traversal.seed,
+            strategy,
+            source.metrics.policy.clone(),
+            &traversal.oracle_targets,
+        )
+        .expect("strict traversal");
+        let traversal_selection::SelectionAttempt::Selected(selection) = attempt else {
+            panic!("admissible review must select the only candidate")
+        };
+        let entry = SelectionDecisionEntry::new_with_traversal_identity_metrics(
+            ProcedureRef::new(crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID),
+            source.scope,
+            Some(selection.selected_payload.candidate.clone()),
+            selection.selected_occurrence_id(),
+            selection.selected_membership_id(),
+            selection.considered,
+            selection.considered_sources,
+            selection.projection_failures,
+            Some(TraversalEvidence {
+                seed: traversal.seed,
+                strategy,
+                oracle_targets: traversal.oracle_targets,
+                selected_source: Some(TraversalCandidateSource::CurrentGeneration),
+                child_counts: selection.child_counts,
+            }),
+            selection.metrics,
+            selection.decision,
+        )
+        .expect("strict selection entry");
+        traversal_selection::validate_patch_replay(&entry).expect("strict receipt replay");
+        entry
+    }
+
+    fn write_test_receipt(
+        path: &Path,
+        campaign: &str,
+        parent: &str,
+        entry: SelectionDecisionEntry,
+    ) -> Result<(String, String, PatchReview), String> {
+        let payload = entry
+            .considered
+            .first()
+            .ok_or_else(|| "strict test receipt has no payload".to_string())?;
+        let review = payload
+            .patch_review
+            .clone()
+            .ok_or_else(|| "strict test receipt has no review".to_string())?;
+        let membership = entry
+            .candidate_set_membership_for_payload(0, payload)
+            .map_err(|error| error.to_string())?;
+        let member_id =
+            selection_member_id(membership, payload).map_err(|error| error.to_string())?;
+        let campaign_id = CampaignId::from(campaign);
+        let campaign_root = path.parent().and_then(Path::parent).ok_or_else(|| {
+            format!(
+                "test eval-store path has no campaign root: {}",
+                path.display()
+            )
+        })?;
+        let (seeded_path, ..) = crate::cli::prototype1_state::eval_store::seeded_patch_context(
+            campaign_root,
+            &campaign_id,
+            PatchGate::ReviewedAdmissible,
+            Some(&review.config_hash),
+        );
+        if seeded_path != path {
+            return Err(format!(
+                "seeded test eval-store path '{}' differs from receipt path '{}'",
+                seeded_path.display(),
+                path.display()
+            ));
+        }
+        let receipt =
+            crate::cli::prototype1_state::eval_store::write_selection_decision_to_owner_db(
+                path,
+                crate::cli::prototype1_state::eval_store::SelectionDecisionEvidence {
+                    campaign_id,
+                    parent_id: parent.to_string(),
+                    entry,
+                    decision_ref: None,
+                    recorded_at: None,
+                },
+            )
+            .map_err(|error| error.to_string())?;
+        Ok((receipt.decision_id, member_id, review))
+    }
+
+    fn remove_candidate(db: &Database, decision_id: &str, member_id: &str) {
+        let params = BTreeMap::from([
+            ("decision_id".to_string(), decision_id.to_string().into()),
+            ("member_id".to_string(), member_id.to_string().into()),
+        ]);
+        db.raw_query_mut_params(
+            "?[decision_id, member_id] <- [[$decision_id, $member_id]] :rm eval_selection_candidate { decision_id, member_id }",
+            params,
+        )
+        .expect("remove candidate");
+    }
+
+    fn remove_decision(db: &Database, decision_id: &str) {
+        let params = BTreeMap::from([("decision_id".to_string(), decision_id.to_string().into())]);
+        db.raw_query_mut_params(
+            "?[decision_id] <- [[$decision_id]] :rm eval_selection_decision { decision_id }",
+            params,
+        )
+        .expect("remove decision");
+    }
+
+    fn clear_patch_rows(db: &Database) {
+        for script in [
+            "?[decision_id, member_id, change_index] := *eval_selection_patch_change { decision_id, member_id, change_index } :rm eval_selection_patch_change { decision_id, member_id, change_index }",
+            "?[decision_id, member_id] := *eval_selection_patch_review { decision_id, member_id } :rm eval_selection_patch_review { decision_id, member_id }",
+            "?[decision_id] := *eval_selection_patch_gate { decision_id } :rm eval_selection_patch_gate { decision_id }",
+        ] {
+            db.raw_query_mut_params(script, BTreeMap::new())
+                .expect("clear normalized patch rows");
+        }
+    }
+
+    fn rekey_receipt(db: &Database, decision_id: &str, replacement: &str) {
+        let params = BTreeMap::from([("decision_id".to_string(), decision_id.to_string().into())]);
+        let result = db
+            .raw_query_params(
+                "?[campaign_id, parent_id, decision_hash, entry_json] := *eval_selection_receipt { decision_id: $decision_id, campaign_id, parent_id, decision_hash, entry_json }",
+                params.clone(),
+            )
+            .expect("query receipt");
+        let row = result.row_refs().next().expect("receipt row");
+        let campaign_id = row.get::<String>("campaign_id").expect("campaign id");
+        let parent_id = row.get::<String>("parent_id").expect("parent id");
+        let decision_hash = row.get::<String>("decision_hash").expect("decision hash");
+        let entry_json = row.get::<String>("entry_json").expect("entry json");
+        db.raw_query_mut_params(
+            "?[decision_id] <- [[$decision_id]] :rm eval_selection_receipt { decision_id }",
+            params,
+        )
+        .expect("remove receipt");
+        let params = BTreeMap::from([
+            ("decision_id".to_string(), replacement.to_string().into()),
+            ("campaign_id".to_string(), campaign_id.into()),
+            ("parent_id".to_string(), parent_id.into()),
+            ("decision_hash".to_string(), decision_hash.into()),
+            ("entry_json".to_string(), entry_json.into()),
+        ]);
+        db.raw_query_mut_params(
+            "?[decision_id, campaign_id, parent_id, decision_hash, entry_json] <- [[$decision_id, $campaign_id, $parent_id, $decision_hash, $entry_json]] :put eval_selection_receipt { decision_id => campaign_id, parent_id, decision_hash, entry_json }",
+            params,
+        )
+        .expect("insert fabricated receipt");
+    }
+
+    fn test_patch_review(branch: &str, change_count: usize) -> PatchReview {
+        let changes = (0..change_count)
+            .map(|index| PatchChange {
+                relpath: PathBuf::from(format!("src/{branch}-{index}.rs")),
+                source_content_hash: Some(format!("source-{branch}-{index}")),
+                proposed_content_hash: Some(format!("proposed-{branch}-{index}")),
+            })
+            .collect::<Vec<_>>();
+        PatchReview {
+            schema_version: 2,
+            procedure_id: crate::successor_selection::PATCH_REVIEW_PROCEDURE_ID.to_string(),
+            candidate: crate::successor_selection::CandidateRef {
+                node_id: format!("node-{branch}"),
+                branch_id: branch.to_string(),
+                generation: 2,
+            },
+            artifact_id: crate::loop_graph::ArtifactId::new(format!("artifact:{branch}")),
+            artifact_surface_hash: crate::cli::prototype1_state::history::HistoryHash::of_bytes(
+                format!("surface-{branch}").as_bytes(),
+            ),
+            evaluation_hash: crate::cli::prototype1_state::history::HistoryHash::of_bytes(
+                format!("evaluation-{branch}").as_bytes(),
+            ),
+            config_hash: crate::cli::prototype1_state::history::HistoryHash::of_bytes(
+                b"review-config",
+            ),
+            change_set_hash: crate::cli::prototype1_state::history::HistoryHash::of_domain_json(
+                "prototype1.history.candidate_patch_change_set.v1",
+                &changes,
+            )
+            .expect("change set hash"),
+            changes,
+            verdict: PatchVerdict::Admissible,
+            confidence: Confidence::High,
+            blocking_findings: Vec::new(),
+            missing_evidence: Vec::new(),
+            rationale: vec!["exact patch is admissible".to_string()],
+            citation: crate::cli::prototype1_state::history::SealedEvidenceCitation {
+                ref_id: crate::successor_selection::candidate_review_ref(branch),
+                content_hash: Some(
+                    crate::cli::prototype1_state::history::HistoryHash::of_bytes(
+                        format!("review-{branch}").as_bytes(),
+                    ),
+                ),
+                record_name: Some(crate::successor_selection::PATCH_REVIEW_RECORD_NAME.to_string()),
+            },
+        }
+    }
+
+    fn insert_patch_review(
+        db: &Database,
+        decision_id: &str,
+        member_id: &str,
+        review: &PatchReview,
+    ) {
+        let mut params = BTreeMap::new();
+        params.insert("decision_id".to_string(), decision_id.to_string().into());
+        params.insert("member_id".to_string(), member_id.to_string().into());
+        params.insert(
+            "schema_version".to_string(),
+            i64::from(review.schema_version).into(),
+        );
+        params.insert(
+            "procedure_id".to_string(),
+            review.procedure_id.clone().into(),
+        );
+        params.insert(
+            "node_id".to_string(),
+            review.candidate.node_id.clone().into(),
+        );
+        params.insert(
+            "branch_id".to_string(),
+            review.candidate.branch_id.clone().into(),
+        );
+        params.insert(
+            "generation".to_string(),
+            i64::from(review.candidate.generation).into(),
+        );
+        params.insert(
+            "artifact_id".to_string(),
+            review.artifact_id.to_string().into(),
+        );
+        params.insert(
+            "artifact_surface_hash".to_string(),
+            review.artifact_surface_hash.as_str().to_string().into(),
+        );
+        params.insert(
+            "evaluation_hash".to_string(),
+            review.evaluation_hash.as_str().to_string().into(),
+        );
+        params.insert(
+            "config_hash".to_string(),
+            review.config_hash.as_str().to_string().into(),
+        );
+        params.insert(
+            "change_set_hash".to_string(),
+            review.change_set_hash.as_str().to_string().into(),
+        );
+        params.insert(
+            "verdict".to_string(),
+            patch_verdict_label(review.verdict).to_string().into(),
+        );
+        params.insert(
+            "confidence".to_string(),
+            confidence_label(review.confidence).to_string().into(),
+        );
+        params.insert(
+            "blocking_findings".to_string(),
+            DataValue::List(
+                review
+                    .blocking_findings
+                    .iter()
+                    .cloned()
+                    .map(DataValue::from)
+                    .collect(),
+            ),
+        );
+        params.insert(
+            "missing_evidence".to_string(),
+            DataValue::List(
+                review
+                    .missing_evidence
+                    .iter()
+                    .cloned()
+                    .map(DataValue::from)
+                    .collect(),
+            ),
+        );
+        params.insert(
+            "rationale".to_string(),
+            DataValue::List(
+                review
+                    .rationale
+                    .iter()
+                    .cloned()
+                    .map(DataValue::from)
+                    .collect(),
+            ),
+        );
+        params.insert(
+            "citation_ref".to_string(),
+            review.citation.ref_id.clone().into(),
+        );
+        params.insert(
+            "citation_hash".to_string(),
+            option_value(
+                review
+                    .citation
+                    .content_hash
+                    .as_ref()
+                    .map(|hash| hash.as_str().to_string()),
+            ),
+        );
+        params.insert(
+            "record_name".to_string(),
+            option_value(review.citation.record_name.clone()),
+        );
+        db.raw_query_mut_params(
+            r#"?[decision_id, member_id, schema_version, procedure_id, node_id, branch_id, generation, artifact_id, artifact_surface_hash, evaluation_hash, config_hash, change_set_hash, verdict, confidence, blocking_findings, missing_evidence, rationale, citation_ref, citation_hash, record_name] <- [[$decision_id, $member_id, $schema_version, $procedure_id, $node_id, $branch_id, $generation, $artifact_id, $artifact_surface_hash, $evaluation_hash, $config_hash, $change_set_hash, $verdict, $confidence, $blocking_findings, $missing_evidence, $rationale, $citation_ref, $citation_hash, $record_name]] :put eval_selection_patch_review { decision_id, member_id => schema_version, procedure_id, node_id, branch_id, generation, artifact_id, artifact_surface_hash, evaluation_hash, config_hash, change_set_hash, verdict, confidence, blocking_findings, missing_evidence, rationale, citation_ref, citation_hash, record_name }"#,
+            params,
+        )
+        .expect("insert review");
+        for (index, change) in review.changes.iter().enumerate() {
+            insert_patch_change(
+                db,
+                decision_id,
+                member_id,
+                i64::try_from(index).expect("change index"),
+                change,
+            );
+        }
+    }
+
+    fn insert_patch_change(
+        db: &Database,
+        decision_id: &str,
+        member_id: &str,
+        change_index: i64,
+        change: &PatchChange,
+    ) {
+        let params = BTreeMap::from([
+            ("decision_id".to_string(), decision_id.to_string().into()),
+            ("member_id".to_string(), member_id.to_string().into()),
+            ("change_index".to_string(), change_index.into()),
+            (
+                "relpath".to_string(),
+                change.relpath.display().to_string().into(),
+            ),
+            (
+                "source_content_hash".to_string(),
+                option_value(change.source_content_hash.clone()),
+            ),
+            (
+                "proposed_content_hash".to_string(),
+                option_value(change.proposed_content_hash.clone()),
+            ),
+        ]);
+        db.raw_query_mut_params(
+            r#"?[decision_id, member_id, change_index, relpath, source_content_hash, proposed_content_hash] <- [[$decision_id, $member_id, $change_index, $relpath, $source_content_hash, $proposed_content_hash]] :put eval_selection_patch_change { decision_id, member_id, change_index => relpath, source_content_hash, proposed_content_hash }"#,
+            params,
+        )
+        .expect("insert change");
+    }
+
+    fn option_value(value: Option<String>) -> DataValue {
+        value.map(DataValue::from).unwrap_or(DataValue::Null)
+    }
 
     #[test]
     fn channel_counter_ignores_nested_child_worktree_fixtures() {
@@ -2568,5 +4593,228 @@ mod tests {
         .expect("journal");
 
         assert_eq!(count_continuation(&journal).expect("count continuation"), 2);
+    }
+
+    #[test]
+    fn runtime_completion_does_not_hide_active_stop() {
+        use crate::{
+            cli::prototype1_state::event::{RecordedAt, RuntimeId},
+            intervention::{Prototype1ContinuationDecision, Prototype1ContinuationDisposition},
+        };
+
+        let campaign_id = CampaignId::from("campaign");
+        let active = identity::ParentIdentity::root_bootstrap(
+            campaign_id.clone(),
+            "node-parent",
+            "instance-parent",
+            "branch-parent",
+            None,
+        );
+        let decision = Prototype1ContinuationDecision {
+            disposition: Prototype1ContinuationDisposition::StopNoSelectedBranch,
+            selected_next_branch_id: None,
+            selected_branch_disposition: None,
+            next_generation: 2,
+            total_nodes_after_continue: 2,
+        };
+        let stopped = JournalEntry::Successor(successor::Record::stopped_without_attempt(
+            campaign_id.clone(),
+            "node-parent".to_string(),
+            decision,
+        ));
+        let completed = JournalEntry::Successor(successor::Record {
+            runtime_id: Some(RuntimeId(uuid::Uuid::from_u128(1))),
+            recorded_at: RecordedAt(2),
+            campaign_id: campaign_id.clone(),
+            node_id: "node-parent".to_string(),
+            state: successor::State::Completed {
+                status:
+                    crate::cli::prototype1_state::invocation::SuccessorCompletionStatus::Succeeded,
+                completion_path: PathBuf::from("/tmp/completion.json"),
+                trace_path: None,
+                detail: None,
+            },
+        });
+        let started = JournalEntry::ParentStarted(
+            crate::cli::prototype1_state::journal::ParentStartedEntry {
+                recorded_at: RecordedAt(1),
+                campaign_id: campaign_id.clone(),
+                parent_identity: active.clone(),
+                repo_root: PathBuf::from("/tmp/repo"),
+                handoff_runtime_id: Some(RuntimeId(uuid::Uuid::from_u128(1))),
+                pid: 42,
+            },
+        );
+        let entries = vec![started, stopped, completed];
+
+        assert!(has_turn_stop(&entries, &active));
+        assert!(!has_turn_stop(
+            &entries,
+            &identity::ParentIdentity::root_bootstrap(
+                campaign_id,
+                "node-other",
+                "instance-other",
+                "branch-other",
+                None,
+            )
+        ));
+    }
+
+    #[test]
+    fn incomplete_outcome_accepts_timeout_or_exit() {
+        use crate::cli::prototype1_state::{
+            event::{RecordedAt, RuntimeId},
+            identity::ParentIdentity,
+            journal::{ActiveCheckoutAdvancedEntry, Streams},
+        };
+
+        let tmp = tempfile::tempdir().expect("tmp");
+        let journal = tmp.path().join("transition-journal.jsonl");
+        let campaign_id = CampaignId::from("campaign");
+        let predecessor = ParentIdentity::root_bootstrap(
+            campaign_id.clone(),
+            "node-parent",
+            "instance",
+            "branch-parent",
+            None,
+        );
+        let selected = ParentIdentity::root_bootstrap(
+            campaign_id.clone(),
+            "node-successor",
+            "instance",
+            "branch-successor",
+            None,
+        );
+        let checkout = JournalEntry::ActiveCheckoutAdvanced(ActiveCheckoutAdvancedEntry {
+            recorded_at: RecordedAt(1),
+            campaign_id: campaign_id.clone(),
+            previous_parent_identity: Some(predecessor),
+            selected_parent_identity: selected,
+            active_parent_root: PathBuf::from("/tmp/repo"),
+            selected_branch: "branch-successor".to_string(),
+            installed_commit: "abc123".to_string(),
+        });
+        let runtime = RuntimeId(uuid::Uuid::from_u128(1));
+        let spawned = |node: &str, runtime_id| {
+            JournalEntry::Successor(successor::Record {
+                runtime_id: Some(runtime_id),
+                recorded_at: RecordedAt(2),
+                campaign_id: campaign_id.clone(),
+                node_id: node.to_string(),
+                state: successor::State::Spawned {
+                    pid: 42,
+                    incarnation: None,
+                    active_parent_root: PathBuf::from("/tmp/repo"),
+                    binary_path: PathBuf::from("/tmp/ploke-eval"),
+                    invocation_path: PathBuf::from("/tmp/invocation.json"),
+                    ready_path: PathBuf::from("/tmp/ready.jsonl"),
+                    streams: Streams {
+                        stdout: PathBuf::from("/tmp/stdout"),
+                        stderr: PathBuf::from("/tmp/stderr"),
+                    },
+                },
+            })
+        };
+        let successor_outcome = |node: &str, runtime_id, state| {
+            JournalEntry::Successor(successor::Record {
+                runtime_id: Some(runtime_id),
+                recorded_at: RecordedAt(3),
+                campaign_id: campaign_id.clone(),
+                node_id: node.to_string(),
+                state,
+            })
+        };
+        let write_entries = |entries: &[JournalEntry]| {
+            let text = entries
+                .iter()
+                .map(|entry| serde_json::to_string(entry).expect("serialize journal entry"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            fs::write(&journal, format!("{text}\n")).expect("journal");
+        };
+
+        for label in ["timed_out", "exited_before_ready"] {
+            let state = match label {
+                "timed_out" => successor::State::TimedOut {
+                    waited_ms: 1,
+                    ready_path: PathBuf::from("/tmp/ready.jsonl"),
+                },
+                "exited_before_ready" => successor::State::ExitedBeforeReady { exit_code: Some(1) },
+                _ => unreachable!(),
+            };
+            write_entries(&[
+                checkout.clone(),
+                spawned("node-successor", runtime),
+                successor_outcome("node-successor", runtime, state),
+            ]);
+
+            assert_eq!(
+                count_latest_outcome(&journal, &["timed_out", "exited_before_ready"])
+                    .expect("count incomplete outcome"),
+                1,
+                "{label} alone must satisfy the alternative terminal evidence"
+            );
+        }
+
+        let timed_out = successor_outcome(
+            "node-successor",
+            runtime,
+            successor::State::TimedOut {
+                waited_ms: 1,
+                ready_path: PathBuf::from("/tmp/ready.jsonl"),
+            },
+        );
+        let unrelated = RuntimeId(uuid::Uuid::from_u128(2));
+        write_entries(&[
+            checkout.clone(),
+            spawned("node-successor", runtime),
+            timed_out,
+            spawned("node-unrelated", unrelated),
+            successor_outcome(
+                "node-unrelated",
+                unrelated,
+                successor::State::Ready {
+                    pid: 43,
+                    ready_path: PathBuf::from("/tmp/unrelated-ready.jsonl"),
+                    controller: None,
+                },
+            ),
+        ]);
+        assert_eq!(
+            count_latest_outcome(&journal, &["timed_out", "exited_before_ready"])
+                .expect("count latest outcome"),
+            1,
+            "an unrelated later attempt must not replace the selected successor outcome"
+        );
+
+        let retry = RuntimeId(uuid::Uuid::from_u128(3));
+        write_entries(&[
+            checkout,
+            spawned("node-successor", runtime),
+            successor_outcome(
+                "node-successor",
+                runtime,
+                successor::State::TimedOut {
+                    waited_ms: 1,
+                    ready_path: PathBuf::from("/tmp/ready.jsonl"),
+                },
+            ),
+            spawned("node-successor", retry),
+            successor_outcome(
+                "node-successor",
+                retry,
+                successor::State::Ready {
+                    pid: 44,
+                    ready_path: PathBuf::from("/tmp/retry-ready.jsonl"),
+                    controller: None,
+                },
+            ),
+        ]);
+        assert_eq!(
+            count_latest_outcome(&journal, &["timed_out", "exited_before_ready"])
+                .expect("count retry outcome"),
+            0,
+            "a newer attempt for the selected node owns the audit outcome"
+        );
     }
 }

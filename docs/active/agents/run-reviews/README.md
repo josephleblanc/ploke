@@ -297,3 +297,35 @@ state without checking newer code, History records, and run artifacts.
   ripgrep targets versus gen-1 baseline, operational `keep` on 2209 same-file
   retry improvement, alternate-shape patches, test-expectation tampering on 2209,
   and no campaign blockers.
+- [`2026-07-16-p1-v13-walktargetfix-keeponly-g35f-oropenai-3g1x3-p3-20260716-214818-terminal-review.md`](2026-07-16-p1-v13-walktargetfix-keeponly-g35f-oropenai-3g1x3-p3-20260716-214818-terminal-review.md)
+  Terminal live-walk review proving the repaired R3-to-R14a controller path,
+  persistence-audit readiness, and correct rejected-child stop while preserving
+  the remaining multi-generation handoff, final-message projection, protocol
+  semantics, and candidate causal-attribution gaps.
+- [`2026-07-17-p1-v15-oracle-gap-r12-review.md`](2026-07-17-p1-v15-oracle-gap-r12-review.md)
+  Preserved R12 review proving the bounded scan barrier and child treatment
+  path while rejecting v15 as a handoff proof because an operational `keep`
+  had no MBE oracle evaluation; records the strict gate repair and remaining
+  no-selection observability gaps.
+- [`2026-07-17-p1-v16-oraclegate-mbe-g35f-direct-3g1x3-p3-20260717-020840.md`](2026-07-17-p1-v16-oraclegate-mbe-g35f-direct-3g1x3-p3-20260717-020840.md)
+  Preserved negative live proof that `all-resolved` excludes the only
+  operationally kept child when its MBE verdict remains unresolved, plus the
+  durable schema-v5 no-selection receipt and R12 stopped-record regression.
+- [`2026-07-17-p1-v20-strictkeephandoff-refresh-panic.md`](2026-07-17-p1-v20-strictkeephandoff-refresh-panic.md)
+  Preserved failed live-run review for the generation-zero post-edit parser
+  panic that stranded v20 until its outer timeout, plus the exact historical
+  replay and fresh-campaign handoff proof requirements.
+- [`2026-07-17-p1-v21-strict-keep-late-child-timeout.md`](2026-07-17-p1-v21-strict-keep-late-child-timeout.md)
+  Preserved R10 review proving a live strict Keep and resolved MBE evidence,
+  while recording the late third child, indeterminate controller fence, and
+  2,400-second config mitigation used by v22.
+- [`2026-07-17-p1-v22-selection-receipt-float-roundtrip.md`](2026-07-17-p1-v22-selection-receipt-float-roundtrip.md)
+  Preserved R11 review proving the expanded observer timeout and full child
+  fan-in, then the fail-closed typed receipt hash mismatch, all-Reject merit
+  outcome, and read-only post-repair reconstruction.
+- [`2026-07-19-p1-v29-strictpatchhandoff-mbe-g35f-direct-3g1x3-p3-terminal-review.md`](2026-07-19-p1-v29-strictpatchhandoff-mbe-g35f-direct-3g1x3-p3-terminal-review.md)
+  Terminal three-generation live-walk review proving two parent/successor
+  handoffs, strict reviewed-admissible and all-resolved gates, exact ten-node
+  reconstruction, bounded sparse-runtime teardown, and the final
+  selected-Reject R14a stop while preserving protocol and node-status
+  observability gaps.

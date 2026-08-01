@@ -2,6 +2,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use crate::loop_graph::ArtifactId;
 
@@ -265,6 +266,100 @@ pub(crate) fn changed_paths_between_roots(
         }
     }
     Ok(changed)
+}
+
+pub(crate) fn changed_paths_between_commits(
+    repo_root: &Path,
+    before: &GitCommit,
+    after: &GitCommit,
+) -> Result<Vec<PathBuf>, BackendError> {
+    let output = Command::new("git")
+        .current_dir(repo_root)
+        .args([
+            "diff",
+            "--name-only",
+            "--no-renames",
+            "-z",
+            before.as_str(),
+            after.as_str(),
+            "--",
+        ])
+        .output()
+        .map_err(|source| BackendError::GitCommand {
+            command: format!("git diff --name-only {} {}", before, after),
+            source,
+        })?;
+    if !output.status.success() {
+        return Err(BackendError::GitCommandStatus {
+            command: format!("git diff --name-only {} {}", before, after),
+            status: output.status.code().unwrap_or(-1),
+            stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        });
+    }
+    let stdout = String::from_utf8(output.stdout).map_err(|source| {
+        BackendError::ArtifactSurfaceMeasurement {
+            detail: format!("git diff returned a non-UTF-8 path: {source}"),
+        }
+    })?;
+    let mut paths = stdout
+        .split_terminator('\0')
+        .map(PathBuf::from)
+        .collect::<Vec<_>>();
+    for path in &paths {
+        validate_normal_repo_relpath(path)?;
+    }
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
+}
+
+pub(crate) fn repo_entry_bytes_at_commit(
+    repo_root: &Path,
+    commit: &GitCommit,
+    relpath: &Path,
+) -> Result<Option<Vec<u8>>, BackendError> {
+    validate_normal_repo_relpath(relpath)?;
+    let relpath = relpath
+        .to_str()
+        .ok_or_else(|| BackendError::NonUtf8SurfacePath {
+            path: relpath.to_path_buf(),
+        })?;
+    let listing = Command::new("git")
+        .current_dir(repo_root)
+        .args(["ls-tree", "-z", commit.as_str(), "--", relpath])
+        .output()
+        .map_err(|source| BackendError::GitCommand {
+            command: format!("git ls-tree {} -- {relpath}", commit),
+            source,
+        })?;
+    if !listing.status.success() {
+        return Err(BackendError::GitCommandStatus {
+            command: format!("git ls-tree {} -- {relpath}", commit),
+            status: listing.status.code().unwrap_or(-1),
+            stderr: String::from_utf8_lossy(&listing.stderr).trim().to_string(),
+        });
+    }
+    if listing.stdout.is_empty() {
+        return Ok(None);
+    }
+
+    let object = format!("{}:{relpath}", commit.as_str());
+    let content = Command::new("git")
+        .current_dir(repo_root)
+        .args(["show", &object])
+        .output()
+        .map_err(|source| BackendError::GitCommand {
+            command: format!("git show {object}"),
+            source,
+        })?;
+    if !content.status.success() {
+        return Err(BackendError::GitCommandStatus {
+            command: format!("git show {object}"),
+            status: content.status.code().unwrap_or(-1),
+            stderr: String::from_utf8_lossy(&content.stderr).trim().to_string(),
+        });
+    }
+    Ok(Some(content.stdout))
 }
 
 fn artifact_id_from_git_commit(commit: &GitCommit) -> ArtifactId {

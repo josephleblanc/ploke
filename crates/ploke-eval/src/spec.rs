@@ -8,6 +8,7 @@ pub enum OutputMode {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EvalBudget {
     pub max_turns: u32,
     pub max_tool_calls: u32,
@@ -25,12 +26,14 @@ impl Default for EvalBudget {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FrameworkConfig {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub tools: BTreeMap<String, FrameworkToolConfig>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FrameworkToolConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
@@ -42,7 +45,11 @@ pub struct PreparedCampaignContext {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route_source: Option<ploke_llm::request::models::ModelRouteSource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_slug: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
     #[serde(default, skip_serializing_if = "FrameworkConfig::is_default")]
     pub framework: FrameworkConfig,
 }
@@ -373,6 +380,8 @@ pub enum PrepareError {
     },
     #[error("batch selection is invalid: {detail}")]
     InvalidBatchSelection { detail: String },
+    #[error("controller recovery is already in progress under '{path}'")]
+    RecoveryInProgress { path: PathBuf },
     #[error("MBE submission artifact '{0}' does not exist")]
     MissingMbeSubmission(PathBuf),
     #[error("MBE final report '{0}' does not exist")]

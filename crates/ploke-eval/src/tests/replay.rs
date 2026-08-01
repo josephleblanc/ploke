@@ -161,6 +161,57 @@ fn load_agent_turn_trace_record(path: &Path) -> AgentTurnTraceRecord {
     serde_json::from_str(&text).expect("historical agent turn trace must parse")
 }
 
+#[cfg(feature = "replay_tests")]
+fn persisted_edit_params(
+    state: Arc<AppState>,
+    event_bus: Arc<EventBus>,
+    request: &PersistedToolRequestRecord,
+    source_root: &Path,
+    replay_root: &Path,
+) -> ToolCallParams {
+    let arguments = match request.arguments.decode_for_tool(&request.tool) {
+        PersistedToolCallArguments::Decoded(ToolCallArguments::ApplyCodeEdit(arguments)) => {
+            arguments
+        }
+        other => panic!(
+            "historical apply_code_edit arguments should decode through the typed carrier, got {other:?}"
+        ),
+    };
+    let edits = arguments
+        .edits
+        .into_iter()
+        .map(|edit| {
+            let source_path = Path::new(&edit.file);
+            let relative = source_path.strip_prefix(source_root).unwrap_or_else(|_| {
+                panic!(
+                    "historical edit path {} should be beneath recorded repo root {}",
+                    source_path.display(),
+                    source_root.display()
+                )
+            });
+            Edit::Canonical {
+                file: replay_root.join(relative).display().to_string(),
+                canon: edit.canon,
+                node_type: edit.node_type,
+                code: edit.code,
+            }
+        })
+        .collect();
+
+    ToolCallParams {
+        state,
+        event_bus,
+        request_id: Uuid::parse_str(&request.request_id).expect("request_id should be a uuid"),
+        parent_id: Uuid::parse_str(&request.parent_id).expect("parent_id should be a uuid"),
+        name: ToolName::ApplyCodeEdit,
+        typed_req: ApplyCodeEditRequest {
+            confidence: arguments.confidence,
+            edits,
+        },
+        call_id: ploke_core::ArcStr::from(request.call_id.clone()),
+    }
+}
+
 fn historical_instance_root(instance_id: &str) -> PathBuf {
     PathBuf::from("/home/brasides/.ploke-eval/instances").join(instance_id)
 }
@@ -1652,5 +1703,327 @@ async fn historical_ripgrep_ignore_post_apply_refresh_replays_stale_anchor_recov
     assert!(
         diff.contains("fn regression_1757"),
         "replayed later apply_code_edit diff should include regression_1757:\n{diff}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[cfg(feature = "replay_tests")]
+async fn historical_v20_duplicate_edit_settles_refresh_failure() {
+    init_tracing();
+    const RUN_MANIFEST: &str = "/home/brasides/.ploke-eval/instances/prototype1/p1-v20-strictkeephandoff-mbe-g35f-direct-3g1x3-p3-20260717-214004/BurntSushi__ripgrep-2209/run.json";
+    const RUN_DIR: &str = "/home/brasides/.ploke-eval/instances/prototype1/p1-v20-strictkeephandoff-mbe-g35f-direct-3g1x3-p3-20260717-214004/BurntSushi__ripgrep-2209/runs/run-1784324895421-structured-current-policy-f98eca48";
+    const FIRST_CALL: &str = "function-call-719232cf-a3bc-4957-9e6f-459ecc38ef14";
+    const DUPLICATE_CALL: &str = "function-call-5704a665-4e76-4f86-b03b-8a5eacb11651";
+
+    let run_manifest = PathBuf::from(RUN_MANIFEST);
+    let trace_path = PathBuf::from(RUN_DIR).join("agent-turn-trace.json");
+    assert!(
+        run_manifest.exists(),
+        "expected preserved v20 run manifest at {}",
+        run_manifest.display()
+    );
+    assert!(
+        trace_path.exists(),
+        "expected preserved v20 turn trace at {}",
+        trace_path.display()
+    );
+
+    let historical = load_prepared_single_run(&run_manifest);
+    let trace = load_agent_turn_trace_record(&trace_path);
+    let request_for = |call_id: &str| {
+        trace
+            .0
+            .events
+            .iter()
+            .find_map(|event| match event {
+                ObservedTurnEventRecord::ToolRequested(request) if request.call_id == call_id => {
+                    Some(request.clone())
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("missing preserved v20 request {call_id}"))
+    };
+    let first_request = request_for(FIRST_CALL);
+    let duplicate_request = request_for(DUPLICATE_CALL);
+
+    let temp = tempdir().expect("tempdir");
+    let replay_root = temp.path().join("v20-duplicate-edit-replay");
+    let replay_output = temp.path().join("replay-output");
+    clone_repo_for_replay(&historical.repo_root, &replay_root);
+
+    let mut prepared = historical.clone();
+    prepared.repo_root = replay_root.clone();
+    prepared.output_dir = replay_output;
+    run_git(
+        &prepared.repo_root,
+        &["reset", "--hard"],
+        "git reset --hard",
+    );
+    let base_sha = prepared
+        .base_sha
+        .as_deref()
+        .expect("v20 replay should record a base sha");
+    assert_eq!(
+        base_sha, "4dc6c73c5a9203c5a8a89ce2161feca542329812",
+        "v20 historical replay must remain pinned to the admitted base"
+    );
+    run_git(
+        &prepared.repo_root,
+        &["checkout", "--detach", base_sha],
+        "git checkout --detach v20 base",
+    );
+
+    let (_app, state, _config_guard) = setup_replay_runtime(&prepared)
+        .await
+        .expect("setup v20 replay runtime");
+    {
+        let mut cfg = state.config.write().await;
+        cfg.editing.auto_confirm_edits = true;
+        cfg.chat_policy = benchmark_chat_policy();
+    }
+    let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+
+    let mut first_rx = event_bus.subscribe(EventPriority::Realtime);
+    let first_params = persisted_edit_params(
+        Arc::clone(&state),
+        Arc::clone(&event_bus),
+        &first_request,
+        &historical.repo_root,
+        &prepared.repo_root,
+    );
+    let first_id = apply_code_edit_tool(first_params)
+        .await
+        .expect("first preserved v20 edit should stage");
+    let first_request_id =
+        Uuid::parse_str(&first_request.request_id).expect("first request id uuid");
+    let first_call_id = ploke_core::ArcStr::from(first_request.call_id.clone());
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            match first_rx
+                .recv()
+                .await
+                .expect("v20 first-edit event bus dropped")
+            {
+                AppEvent::System(SystemEvent::ToolCallCompleted {
+                    request_id,
+                    call_id,
+                    content,
+                    ..
+                }) if request_id == first_request_id && call_id == first_call_id => {
+                    let applied = serde_json::from_str::<serde_json::Value>(&content)
+                        .ok()
+                        .and_then(|value| value.get("applied").and_then(|count| count.as_u64()))
+                        .unwrap_or(0);
+                    if applied > 0 {
+                        break;
+                    }
+                }
+                AppEvent::System(SystemEvent::ToolCallFailed {
+                    request_id,
+                    call_id,
+                    error,
+                    ..
+                }) if request_id == first_request_id && call_id == first_call_id => {
+                    panic!("first preserved v20 edit failed before refresh: {error}");
+                }
+                _ => {}
+            }
+        }
+    })
+    .await
+    .expect("first preserved v20 edit should cross its rescan barrier");
+    assert_eq!(
+        wait_for_terminal_proposal_status(&state, first_id).await,
+        ploke_tui::app_state::core::EditProposalStatus::Applied,
+        "the first preserved edit should recreate the pre-incident workspace"
+    );
+
+    let mut event_rx = event_bus.subscribe(EventPriority::Realtime);
+    let duplicate_params = persisted_edit_params(
+        Arc::clone(&state),
+        Arc::clone(&event_bus),
+        &duplicate_request,
+        &historical.repo_root,
+        &prepared.repo_root,
+    );
+    let (request_id, _, call_id) = {
+        let request_id =
+            Uuid::parse_str(&duplicate_request.request_id).expect("duplicate request id uuid");
+        let parent_id =
+            Uuid::parse_str(&duplicate_request.parent_id).expect("duplicate parent id uuid");
+        let call_id = ploke_core::ArcStr::from(duplicate_request.call_id.clone());
+        (request_id, parent_id, call_id)
+    };
+    let proposal_id = match apply_code_edit_tool(duplicate_params).await {
+        Some(proposal_id) => proposal_id,
+        None => {
+            let error = tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    if let AppEvent::System(SystemEvent::ToolCallFailed {
+                        request_id: observed_id,
+                        call_id: observed_call,
+                        error,
+                        ..
+                    }) = event_rx.recv().await.expect("v20 replay event bus dropped")
+                        && observed_id == request_id
+                        && observed_call == call_id
+                    {
+                        break error;
+                    }
+                }
+            })
+            .await
+            .expect("rejected duplicate request should emit ToolCallFailed");
+            let parse_failure = state
+                .with_system_read(|sys| sys.last_parse_failure().cloned())
+                .await;
+            panic!(
+                "duplicate preserved v20 edit should stage; error={error}; parse_failure={parse_failure:?}"
+            );
+        }
+    };
+
+    let mut applied_completion = false;
+    let (error, ui_payload) = tokio::time::timeout(Duration::from_secs(60), async {
+        loop {
+            let event = match event_rx.recv().await {
+                Ok(event) => event,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(err) => panic!("v20 replay event bus failed: {err}"),
+            };
+            match event {
+                AppEvent::System(SystemEvent::ToolCallCompleted {
+                    request_id: observed_id,
+                    call_id: observed_call,
+                    content,
+                    ..
+                }) if observed_id == request_id && observed_call == call_id => {
+                    let applied = serde_json::from_str::<serde_json::Value>(&content)
+                        .ok()
+                        .and_then(|value| value.get("applied").and_then(|count| count.as_u64()))
+                        .unwrap_or(0);
+                    applied_completion |= applied > 0;
+                }
+                AppEvent::System(SystemEvent::ToolCallFailed {
+                    request_id: observed_id,
+                    call_id: observed_call,
+                    error,
+                    ui_payload,
+                    ..
+                }) if observed_id == request_id && observed_call == call_id => {
+                    break (error, ui_payload);
+                }
+                _ => {}
+            }
+        }
+    })
+    .await
+    .expect("duplicate v20 edit should settle with ToolCallFailed instead of hanging");
+
+    assert!(
+        !applied_completion,
+        "refresh failure must not emit an applied ToolCallCompleted"
+    );
+    let status = wait_for_terminal_proposal_status(&state, proposal_id).await;
+    let detail = match status {
+        ploke_tui::app_state::core::EditProposalStatus::PartiallyApplied(detail) => detail,
+        other => panic!("write-plus-refresh failure should be PartiallyApplied, got {other:?}"),
+    };
+    assert!(
+        detail.contains("workspace refresh failed"),
+        "partial status should preserve refresh failure evidence: {detail}"
+    );
+
+    let target_file = prepared.repo_root.join("crates/printer/src/standard.rs");
+    let source = std::fs::read_to_string(&target_file).expect("read replayed standard.rs");
+    assert_eq!(
+        source
+            .matches("fn replacement_multi_line_look_around()")
+            .count(),
+        2,
+        "the exact v20 edit must reach disk before the refresh failure"
+    );
+
+    let parse_failure = state
+        .with_system_read(|sys| sys.last_parse_failure().cloned())
+        .await
+        .expect("parser invariant failure should be recorded");
+    assert!(
+        parse_failure.message.contains("Parser invariant panic")
+            && parse_failure.message.contains("Expected unique relations"),
+        "recorded parse failure should retain the strict invariant panic: {}",
+        parse_failure.message
+    );
+
+    let wire = ToolErrorWire::parse(&error).expect("parse refresh ToolCallFailed wire");
+    assert_eq!(wire.llm.code, ToolErrorCode::Internal);
+    assert!(
+        wire.llm.message.contains("workspace refresh failed"),
+        "model-visible failure should explain the partial mutation: {}",
+        wire.llm.message
+    );
+    let retry_context = wire
+        .llm
+        .retry_context
+        .as_ref()
+        .expect("refresh failure should expose structured mutation context");
+    assert_eq!(
+        retry_context.get("mutation"),
+        Some(&ploke_tui::tools::ToolRetryContextValue::Bool(true))
+    );
+    let applied_files = retry_context
+        .get("applied_files")
+        .and_then(ploke_tui::tools::ToolRetryContextValue::as_string_list)
+        .expect("refresh failure should list applied files");
+    assert_eq!(
+        applied_files,
+        &[target_file.display().to_string()],
+        "retry context should identify the file that changed before refresh failed"
+    );
+    let ui_payload = ui_payload.expect("refresh failure should include UI evidence");
+    assert!(ui_payload.fields.iter().any(|field| {
+        field.name.as_ref() == "status" && field.value.as_ref() == "partially_applied"
+    }));
+    assert!(
+        ui_payload
+            .fields
+            .iter()
+            .any(|field| { field.name.as_ref() == "partial" && field.value.as_ref() == "true" })
+    );
+    let details = ui_payload
+        .details
+        .as_deref()
+        .expect("refresh failure UI should retain exact write receipts");
+    let details: serde_json::Value =
+        serde_json::from_str(details).expect("write receipt details should be valid json");
+    assert_eq!(
+        details["results"][0]["file_path"],
+        target_file.display().to_string()
+    );
+    assert!(
+        details["results"][0]["new_file_hash"].is_string(),
+        "write receipt should retain the post-mutation file hash"
+    );
+
+    let proposals_path = prepared
+        .output_dir
+        .join("config")
+        .join("ploke")
+        .join("proposals.json");
+    let proposals: Vec<ploke_tui::app_state::core::EditProposal> = serde_json::from_str(
+        &std::fs::read_to_string(&proposals_path)
+            .unwrap_or_else(|err| panic!("read {}: {err}", proposals_path.display())),
+    )
+    .expect("persisted proposal list should decode through the production type");
+    let persisted = proposals
+        .iter()
+        .find(|proposal| proposal.proposal_id == proposal_id)
+        .expect("refresh-failed proposal should be durable before terminal event");
+    assert!(
+        matches!(
+            persisted.status,
+            ploke_tui::app_state::core::EditProposalStatus::PartiallyApplied(_)
+        ),
+        "durable proposal must record PartiallyApplied before ToolCallFailed settles the turn"
     );
 }

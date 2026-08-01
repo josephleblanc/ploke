@@ -1,7 +1,7 @@
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **ploke** (59837 symbols, 108839 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **ploke-main** (65931 symbols, 124757 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -24,10 +24,10 @@ This project is indexed by GitNexus as **ploke** (59837 symbols, 108839 relation
 
 | Resource | Use for |
 |----------|---------|
-| `gitnexus://repo/ploke/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/ploke/clusters` | All functional areas |
-| `gitnexus://repo/ploke/processes` | All execution flows |
-| `gitnexus://repo/ploke/process/{name}` | Step-by-step execution trace |
+| `gitnexus://repo/ploke-main/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/ploke-main/clusters` | All functional areas |
+| `gitnexus://repo/ploke-main/processes` | All execution flows |
+| `gitnexus://repo/ploke-main/process/{name}` | Step-by-step execution trace |
 
 ## CLI
 

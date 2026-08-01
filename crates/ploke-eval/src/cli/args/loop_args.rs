@@ -6,8 +6,10 @@ use clap::{ArgAction, Parser, Subcommand};
 use ploke_llm::request::models::ModelRouteSource;
 use serde::{Deserialize, Serialize};
 
-use super::common::{InspectOutputFormat, parse_model_route_source};
-use crate::cli::prototype1_state::walk::phase::WalkPhase;
+use super::common::{InspectOutputFormat, parse_embedding_route, parse_model_route_source};
+use crate::campaign::EmbeddingRoute;
+use crate::cli::prototype1_state::walk::{phase::WalkPhase, protocol::OperationId};
+pub use crate::walk_client::WalkEvidenceQuery;
 
 #[derive(Debug, Parser)]
 #[command(about = "Run higher-level loop wrappers over eval, protocol, and intervention stages")]
@@ -21,24 +23,24 @@ pub enum LoopSubcommand {
     /// Run Prototype 1 through eval configuration, baseline arm, synthesis, treatment, and compare.
     Prototype1(Prototype1LoopCommand),
     /// Create a Prototype 1 campaign and admit the current checkout as Parent(0).
-    Prototype1Setup(Prototype1LoopCommand),
+    Prototype1Setup(Prototype1SetupCommand),
     /// Diagnose the active Prototype 1 parent checkout and print the next exact commands.
     Prototype1Doctor(Prototype1DoctorCommand),
     /// Print the broad-harness prompt for the active Prototype 1 parent checkout.
     Prototype1Prompt(Prototype1PromptCommand),
     /// Resume the active Prototype 1 parent checkout until the current turn completes or hands off.
-    Prototype1Continue(Prototype1ControlCommand),
+    Prototype1Continue(Prototype1AdvanceCommand),
     /// Advance exactly one diagnosed Prototype 1 parent phase.
-    Prototype1Step(Prototype1ControlCommand),
+    Prototype1Step(Prototype1AdvanceCommand),
     /// Drive the typed Prototype 1 parent runtime path.
-    Prototype1State(Prototype1StateCommand),
+    Prototype1State(Prototype1StateAdvanceCommand),
     // ANCHOR: prototype1_walk_command_safety_help
-    /// Debug-only local server for stepping Prototype 1 typestate transitions.
+    /// Operate the live Prototype 1 Step-mode controller through its local server.
     #[command(
         name = "walk",
-        about = "Debug-step Prototype 1 typestate transitions through a local walk server",
-        long_about = "Debug-step Prototype 1 typestate transitions through a local walk server.\n\nThe walk server is a local debugging harness over live Prototype 1 transition edges. It is not production loop authority. By default it uses the active walk context if one was set with `walk use`, otherwise the current directory, and a repo-hashed socket under the runtime directory.",
-        after_help = "Common workflows:\n  Set context:       ploke-eval loop walk use /path/to/parent-worktree\n  Start live walk:   ploke-eval loop walk start\n  Inspect progress:  ploke-eval loop walk summary -v\n  Replay history:    ploke-eval loop walk replay --index 0\n  Query eval DB:     ploke-eval loop walk db_query --script '::relations'\n  Move replay:       ploke-eval loop walk forward --steps 10 --tail 20\n  Live step:         ploke-eval loop walk step --until r6\n\nSafety notes:\n  replay/back/forward and db_query are read-only inspection commands.\n  step drives live typestate edges; long live edges require --watch.\n  R12 -> R13b successor handoff mutates checkout state and requires --allow git-changes.\n  branch-live writes only explicit provenance and requires --allow provenance-record."
+        about = "Operate Prototype 1 typestate transitions through the local walk service",
+        long_about = "Operate Prototype 1 typestate transitions through the local walk service.\n\nThe walk server owns mutation admission for the attached Step-mode controller session; CLI and UI commands are clients of that authority. It is not a durable Continuous-mode scheduler. By default the client uses the active walk context if one was set with `walk use`, otherwise the current directory, and a repo-hashed socket under the runtime directory.\n\nLive start/step requests are submitted as one supervised server job. A second live start/step request returns the active job instead of starting a duplicate attempt. Use `walk status` to query the server while a job is running, and `walk step --watch` to follow the accepted step job until it finishes.",
+        after_help = "Common workflows:\n  Set context:       ploke-eval loop walk use /path/to/parent-worktree\n  Start live walk:   ploke-eval loop walk start\n  Inspect server:    ploke-eval loop walk status\n  Inspect progress:  ploke-eval loop walk summary -v\n  Replay history:    ploke-eval loop walk replay --index 0\n  Query eval DB:     ploke-eval loop walk db_query --view progress\n  Move replay:       ploke-eval loop walk forward --steps 10 --tail 20\n  Live step:         ploke-eval loop walk step --until r6 --allow-live-api\n\nSafety notes:\n  replay/back/forward and db_query are read-only inspection commands.\n  Named db_query views are owner-DB evidence projections, never live mutation authority.\n  step submits a typestate job; --watch only follows that job and never admits provider calls.\n  Provider-backed edges require --allow-live-api.\n  R12 -> R13b successor handoff mutates checkout state and requires --allow git-changes.\n  stop shuts down only an idle server. It never aborts an admitted effectful edge; wait for its receipt, then recover or abandon explicitly if needed.\n  branch-live writes only explicit provenance and requires --allow provenance-record."
     )]
     Prototype1StateWalk(Prototype1StateWalkCommand),
     // ANCHOR_END: prototype1_walk_command_safety_help
@@ -96,7 +98,8 @@ pub struct Prototype1StateCommand {
     #[arg(long)]
     pub campaign: Option<CampaignId>,
 
-    /// Candidate node id to materialize/evaluate. During --init-parent-identity only, this is the generation-0 parent node.
+    /// Legacy inspection target. Live controller runs reject this field in
+    /// favor of the admitted profile and durable child-plan authority.
     #[arg(long)]
     pub node_id: Option<String>,
 
@@ -120,31 +123,42 @@ pub struct Prototype1StateCommand {
     #[arg(long, value_name = "PATH")]
     pub handoff_invocation: Option<PathBuf>,
 
-    #[arg(long, value_enum, default_value_t = Prototype1StateStopAfter::Complete)]
-    pub stop_after: Prototype1StateStopAfter,
+    /// Assert the admitted profile's debug cut. Omit to use profile authority.
+    #[arg(long, value_enum)]
+    pub stop_after: Option<Prototype1StateStopAfter>,
 
     /// Successor-selection strategy. Active selection defaults to History traversal with current-generation candidates appended before scoring.
-    #[arg(long, value_enum, default_value_t = Prototype1SuccessorSelection::HistoryScoreChildProp)]
-    pub successor_selection: Prototype1SuccessorSelection,
+    #[arg(long, value_enum)]
+    pub successor_selection: Option<Prototype1SuccessorSelection>,
 
     /// Replay seed committed by History-backed traversal selection.
-    #[arg(long, default_value_t = 0)]
-    pub successor_selection_seed: u64,
+    #[arg(long)]
+    pub successor_selection_seed: Option<u64>,
 
     /// Metric-bearing states used by History-backed traversal scoring.
-    #[arg(long, value_enum, default_value_t = Prototype1TraversalMetrics::Operational)]
-    pub successor_selection_metrics: Prototype1TraversalMetrics,
+    #[arg(long, value_enum)]
+    pub successor_selection_metrics: Option<Prototype1TraversalMetrics>,
 
     /// Candidate generator used before publishing the child plan.
-    #[arg(long, value_enum, default_value_t = Prototype1CandidateGenerator::BroadHarnessRequest)]
-    pub candidate_generator: Prototype1CandidateGenerator,
+    #[arg(long, value_enum)]
+    pub candidate_generator: Option<Prototype1CandidateGenerator>,
 
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
     pub format: InspectOutputFormat,
 }
 
+/// CLI admission envelope around the unchanged typed Prototype 1 command.
 #[derive(Debug, Parser)]
-#[command(about = "Debug-step Prototype 1 typestate transitions through a local walk server")]
+pub struct Prototype1StateAdvanceCommand {
+    #[command(flatten)]
+    pub state: Prototype1StateCommand,
+
+    #[command(flatten)]
+    pub capabilities: Prototype1MutationCapabilities,
+}
+
+#[derive(Debug, Parser)]
+#[command(about = "Operate Prototype 1 typestate transitions through the local walk service")]
 pub struct Prototype1StateWalkCommand {
     #[command(subcommand)]
     pub command: Prototype1StateWalkSubcommand,
@@ -156,16 +170,24 @@ pub enum Prototype1StateWalkSubcommand {
     Serve(Prototype1StateWalkServeCommand),
     /// Save the active parent checkout for later walk commands.
     Use(Prototype1StateWalkUseCommand),
-    /// Start a new in-memory walk, defaulting to R0.
+    /// Attach to the setup-derived controller session, defaulting to R3.
     Start(Prototype1StateWalkStartCommand),
-    /// Advance the current in-memory walk by one step or until a target phase.
+    /// Submit one live typestate job by one step or until a target phase.
     Step(Prototype1StateWalkStepCommand),
-    /// Reset the current in-memory walk without stopping the server.
-    Reset(Prototype1StateWalkControlCommand),
+    /// Reset the server projection without changing durable session history or stopping the server.
+    Reset(Prototype1StateWalkResetCommand),
+    /// Inspect or explicitly resolve one durable controller recovery cause.
+    Recover(Prototype1StateWalkRecoverCommand),
     /// Print tracked output files for the current walk.
     Files(Prototype1StateWalkControlCommand),
-    /// Show current in-memory walk state or the last step delta.
+    /// Show the admitted campaign, run profile, and effective controller configuration.
+    Config(Prototype1StateWalkControlCommand),
+    /// List or inspect canonical completed evaluation traces.
+    Trace(Prototype1StateWalkTraceCommand),
+    /// Show the reconstructed controller view or the last successful Step delta.
     Show(Prototype1StateWalkShowCommand),
+    /// Show the ordered durable controller-session journal projection.
+    SessionHistory(Prototype1StateWalkControlCommand),
     /// Audit file/database persistence surfaces for a walk transition.
     Audit(Prototype1StateWalkAuditCommand),
     /// Run an immutable CozoScript query against the active loop run eval DB.
@@ -183,9 +205,9 @@ pub enum Prototype1StateWalkSubcommand {
     Forward(Prototype1StateWalkReplayMoveCommand),
     /// Record explicit provenance before branching from replay toward live work.
     BranchLive(Prototype1StateWalkBranchLiveCommand),
-    /// Check whether the local walk server is alive.
+    /// Query server liveness, phase, and active or most recent job.
     Status(Prototype1StateWalkControlCommand),
-    /// Stop the local walk server.
+    /// Stop an idle server; active effectful jobs must reach a durable boundary first.
     Stop(Prototype1StateWalkControlCommand),
 }
 
@@ -244,6 +266,42 @@ pub struct Prototype1StateWalkControlCommand {
     pub with_version: bool,
 }
 
+#[derive(Debug, Clone, Parser)]
+#[command(
+    about = "Inspect canonical evaluation records and protocol reviews",
+    after_help = "Examples:\n  ploke-eval loop walk trace list\n  ploke-eval loop walk trace show --instance BurntSushi__ripgrep-2209 --run-id run-...\n\nCompleted traces are loaded through the global run registry and preserve record, model-response, and protocol-artifact source hashes. Non-completed runs return lifecycle data only; mutable turn traces are not read."
+)]
+pub struct Prototype1StateWalkTraceCommand {
+    #[command(flatten)]
+    pub control: Prototype1StateWalkControlCommand,
+
+    #[command(subcommand)]
+    pub command: Prototype1StateWalkTraceSubcommand,
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum Prototype1StateWalkTraceSubcommand {
+    /// List completed registered runs within the admitted campaign root.
+    List,
+    /// Load one exact registered run by stable campaign-local coordinate.
+    Show(Prototype1StateWalkTraceShowCommand),
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1StateWalkTraceShowCommand {
+    /// Owning campaign from `trace list`; defaults to the admitted root campaign.
+    #[arg(long)]
+    pub campaign: Option<String>,
+
+    /// Benchmark/task instance recorded by the run registration.
+    #[arg(long)]
+    pub instance: String,
+
+    /// Globally registered concrete run identifier.
+    #[arg(long)]
+    pub run_id: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum Prototype1StateWalkAuditScope {
@@ -257,6 +315,7 @@ pub enum Prototype1StateWalkAuditTransition {
     R0ToR1,
     R1ToR2a,
     R1ToR3,
+    R2aToR3,
     R3ToR4a,
     R4aToR4b,
     R4aToR4c,
@@ -273,6 +332,7 @@ pub enum Prototype1StateWalkAuditTransition {
     R11ToR12,
     R12ToR13a,
     R12ToR13b,
+    R12ToR13c,
     R13aToR14a,
     R13bToR14b,
 }
@@ -314,7 +374,7 @@ pub struct Prototype1StateWalkAuditCommand {
 #[derive(Debug, Clone, Parser)]
 #[command(
     about = "Run an immutable CozoScript query against the active loop run eval DB",
-    after_help = "Examples:\n  ploke-eval loop walk db_query --script '::relations'\n  ploke-eval loop walk db_query --script '?[campaign_id, dataset_sources] := *eval_campaign { campaign_id, dataset_sources }'\n  ploke-eval loop walk db_query --repo-root /path/to/parent-worktree --format json --script '::relations'\n\nThis command is read-only: it restores the owner eval DB backup into memory and executes the script with Cozo ScriptMutability::Immutable."
+    after_help = "Examples:\n  ploke-eval loop walk db_query --view relations\n  ploke-eval loop walk db_query --view progress\n  ploke-eval loop walk db_query --view handoff-evidence --format json\n  ploke-eval loop walk db_query --script '?[campaign_id, dataset_sources] := *eval_campaign { campaign_id, dataset_sources }'\n\nNamed views are closed, owner-DB evidence projections. `relations` is the complete installed-relation inventory. `counts` is a curated core operator projection, including critical typed-trace relations, not a complete schema count. None reports controller liveness or mutation authority; use walk status for that. Raw --script remains an expert escape hatch.\n\nEvery query is read-only: the walk service reads one exact owner DB snapshot, reports its content revision, restores it in isolation, and executes the script with Cozo ScriptMutability::Immutable. The response samples server phase/session only after the owner-DB query completes; those observations are non-atomic."
 )]
 pub struct Prototype1StateWalkDbQueryCommand {
     /// Parent checkout root. Defaults to active walk context, then current directory.
@@ -325,9 +385,23 @@ pub struct Prototype1StateWalkDbQueryCommand {
     #[arg(long)]
     pub campaign: Option<CampaignId>,
 
-    /// CozoScript to execute immutably against the loop run owner eval DB.
-    #[arg(long, value_name = "COZOSCRIPT")]
-    pub script: String,
+    /// Closed owner-DB evidence view. This never reports live controller authority.
+    #[arg(
+        long,
+        value_enum,
+        conflicts_with = "script",
+        required_unless_present = "script"
+    )]
+    pub view: Option<WalkEvidenceQuery>,
+
+    /// Expert CozoScript to execute immutably against the loop run owner eval DB.
+    #[arg(
+        long,
+        value_name = "COZOSCRIPT",
+        conflicts_with = "view",
+        required_unless_present = "view"
+    )]
+    pub script: Option<String>,
 
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
     pub format: InspectOutputFormat,
@@ -335,7 +409,7 @@ pub struct Prototype1StateWalkDbQueryCommand {
 
 #[derive(Debug, Clone, Parser)]
 #[command(
-    about = "Show current in-memory walk state or the last step delta",
+    about = "Show the reconstructed controller view or the last successful Step delta",
     after_help = "Examples:\n  ploke-eval loop walk show\n  ploke-eval loop walk show --with-version\n  ploke-eval loop walk show delta --verbose\n\nUse summary/replay for durable historical inspection after a run has completed."
 )]
 pub struct Prototype1StateWalkShowCommand {
@@ -366,7 +440,7 @@ pub struct Prototype1StateWalkShowDeltaCommand {
 #[derive(Debug, Clone, Parser)]
 #[command(
     about = "Inspect nested LLM/tool-loop debugger checkpoints",
-    after_help = "Examples:\n  ploke-eval loop walk llm lanes\n  ploke-eval loop walk llm focus node-...-r2\n  ploke-eval loop walk llm timeline\n  ploke-eval loop walk llm prompt\n  ploke-eval loop walk llm protocol\n  ploke-eval loop walk llm show --lane node-...-r2 --head\n  ploke-eval loop walk llm tool --step 11 --json\n  ploke-eval loop walk llm back --lane node-...-r2 --steps 3\n\nThis surface is read-only unless step/finish says otherwise. Current lane/cursor/timeline/show/prompt/protocol/tool commands do not call providers, execute tools, mutate the checkout, or advance the outer typestate walk."
+    after_help = "Examples:\n  ploke-eval loop walk llm sessions\n  ploke-eval loop walk llm observe --session-id SESSION\n  ploke-eval loop walk llm --format json observe --session-id SESSION --step 2\n  ploke-eval loop walk llm lanes\n  ploke-eval loop walk llm focus node-...-r2\n  ploke-eval loop walk llm timeline\n  ploke-eval loop walk llm prompt\n  ploke-eval loop walk llm protocol\n  ploke-eval loop walk llm show --lane node-...-r2 --head\n  ploke-eval loop walk llm tool --step 11 --json\n  ploke-eval loop walk llm back --lane node-...-r2 --steps 3\n\n`sessions` and `observe` use the typed exact-session read model shared with ploke-walk-ui; malformed siblings remain visible instead of aborting the inventory. This surface is read-only unless step/finish says otherwise. Current sessions/observe/lane/cursor/timeline/show/prompt/protocol/tool commands do not call providers, execute tools, mutate the checkout, or advance the outer typestate walk."
 )]
 pub struct Prototype1StateWalkLlmCommand {
     #[command(flatten)]
@@ -378,6 +452,10 @@ pub struct Prototype1StateWalkLlmCommand {
 
 #[derive(Debug, Clone, Subcommand)]
 pub enum Prototype1StateWalkLlmSubcommand {
+    /// List every exact debugger session and any unreadable or invalid manifests.
+    Sessions,
+    /// Observe one exact debugger session and optional published response step.
+    Observe(Prototype1StateWalkLlmObserveCommand),
     /// List known fanout lanes and their latest checkpoint heads.
     Lanes(Prototype1StateWalkLlmLanesCommand),
     /// Set the default lane for subsequent LLM checkpoint commands on this server.
@@ -402,6 +480,17 @@ pub enum Prototype1StateWalkLlmSubcommand {
     Forward(Prototype1StateWalkLlmMoveCommand),
     /// Jump the focused/read-only lane cursor to the latest checkpoint head.
     Head(Prototype1StateWalkLlmLaneCommand),
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1StateWalkLlmObserveCommand {
+    /// Exact tool-loop session id from `llm sessions`.
+    #[arg(long)]
+    pub session_id: String,
+
+    /// Exact published provider-response checkpoint. Defaults to the resume head.
+    #[arg(long)]
+    pub step: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
@@ -552,6 +641,10 @@ pub struct Prototype1StateWalkLlmToolCommand {
 
 #[derive(Debug, Clone, Parser)]
 pub struct Prototype1StateWalkLlmStepCommand {
+    /// Reuse a prior semantic operation identity to attach to the exact same request.
+    #[arg(long, value_name = "UUID")]
+    pub(crate) operation_id: Option<OperationId>,
+
     /// Lane id, usually the candidate workspace basename. Defaults to current focus.
     #[arg(long)]
     pub lane: Option<String>,
@@ -595,6 +688,10 @@ pub struct Prototype1StateWalkLlmStepCommand {
 
 #[derive(Debug, Clone, Parser)]
 pub struct Prototype1StateWalkLlmFinishCommand {
+    /// Reuse a prior semantic operation identity to attach to the exact same request.
+    #[arg(long, value_name = "UUID")]
+    pub(crate) operation_id: Option<OperationId>,
+
     /// Lane id, usually the candidate workspace basename. Defaults to current focus.
     #[arg(long)]
     pub lane: Option<String>,
@@ -699,6 +796,10 @@ pub struct Prototype1StateWalkBranchLiveCommand {
     #[command(flatten)]
     pub control: Prototype1StateWalkControlCommand,
 
+    /// Reuse a prior semantic operation identity to attach to the exact same request.
+    #[arg(long, value_name = "UUID")]
+    pub(crate) operation_id: Option<OperationId>,
+
     /// Operator reason for leaving read-only historical replay.
     #[arg(long)]
     pub reason: String,
@@ -711,8 +812,8 @@ pub struct Prototype1StateWalkBranchLiveCommand {
 // ANCHOR: prototype1_walk_step_live_edge_admission
 #[derive(Debug, Clone, Parser)]
 #[command(
-    about = "Advance the current in-memory walk by one live typestate edge",
-    after_help = "Examples:\n  ploke-eval loop walk step\n  ploke-eval loop walk step --until r6\n  ploke-eval loop walk step --until r8 --watch\n  ploke-eval loop walk step --until r13b --watch --allow git-changes\n\nUse replay/back/forward for read-only historical inspection. Use step only when you intend to drive live typestate edges. Long live edges require --watch; checkout-mutating successor handoff requires --allow git-changes."
+    about = "Submit one live typestate step job to the walk server",
+    after_help = "Examples:\n  ploke-eval loop walk step\n  ploke-eval loop walk step --until r6 --allow-live-api\n  ploke-eval loop walk step --until r8 --allow-live-api --watch\n  ploke-eval loop walk step --watch --allow git-changes\n\nUse replay/back/forward for read-only historical inspection. Use step only when you intend to drive live typestate edges. Without --watch the command returns after the server accepts the job; with --watch it follows status until the job finishes. The follow flag never admits provider calls; provider-backed edges require --allow-live-api. Checkout-mutating successor handoff requires --allow git-changes. A bounded --until target must post-dominate every possible graph path from the current phase; use one bare Step and inspect its typed receipt at a branch such as R12."
 )]
 pub struct Prototype1StateWalkStepCommand {
     /// Parent checkout root. Defaults to active walk context, then current directory.
@@ -723,13 +824,21 @@ pub struct Prototype1StateWalkStepCommand {
     #[arg(long, value_name = "PATH")]
     pub socket: Option<PathBuf>,
 
-    /// Advance repeatedly until this phase instead of exactly one step.
+    /// Advance to a graph post-dominator instead of taking exactly one Step.
     #[arg(long, value_enum)]
     pub until: Option<WalkPhase>,
 
-    /// Wait for a long live edge instead of returning at the safe boundary.
+    /// Follow the accepted server job until it reaches a terminal state.
     #[arg(long)]
     pub watch: bool,
+
+    /// Admit typestate edges that call a configured live provider.
+    #[arg(long)]
+    pub allow_live_api: bool,
+
+    /// Reuse a prior semantic operation identity to attach to the exact same request.
+    #[arg(long, value_name = "UUID")]
+    pub(crate) operation_id: Option<OperationId>,
 
     /// Admit typed edges that intentionally install the selected successor into
     /// the active checkout. Required for R12 -> R13b handoff.
@@ -747,17 +856,13 @@ pub struct Prototype1StateWalkStepCommand {
 
 #[derive(Debug, Clone, Parser)]
 #[command(
-    about = "Start a live in-memory walk, defaulting to R0",
-    after_help = "Examples:\n  ploke-eval loop walk start\n  ploke-eval loop walk start --until r6\n  ploke-eval loop walk start --no-ttl\n\nStart creates or contacts the local walk server for the selected parent checkout. Use summary/replay when you only need to inspect a completed historical run."
+    about = "Attach to the setup-derived controller session, defaulting to R3",
+    after_help = "Examples:\n  ploke-eval loop walk start\n  ploke-eval loop walk start --until r6 --allow-live-api\n  ploke-eval loop walk start --no-ttl\n\nStart creates or contacts the local walk server for the selected parent checkout, attaches to its completed setup authority, submits one start job, and returns the accepted job. Provider-backed edges require --allow-live-api. A bounded --until target must post-dominate every possible graph path from the attached phase. Use `walk status` to inspect an active or completed server job. Use summary/replay when you only need to inspect a completed historical run."
 )]
 pub struct Prototype1StateWalkStartCommand {
     /// Campaign id. Defaults to parent identity, then active `select campaign`.
     #[arg(long)]
     pub campaign: Option<CampaignId>,
-
-    /// Candidate node id to materialize/evaluate. During --init-parent-identity only, this is the generation-0 parent node.
-    #[arg(long)]
-    pub node_id: Option<String>,
 
     /// Parent checkout root. Defaults to active walk context, then current directory.
     #[arg(long, value_name = "PATH")]
@@ -775,44 +880,21 @@ pub struct Prototype1StateWalkStartCommand {
     #[arg(long)]
     pub no_ttl: bool,
 
-    /// Bootstrap the active checkout by writing and committing parent identity.
-    #[arg(long)]
-    pub init_parent_identity: bool,
-
-    /// Branch to create or switch to before writing initial parent identity.
-    #[arg(long, value_name = "BRANCH", requires = "init_parent_identity")]
-    pub identity_branch: Option<String>,
-
-    /// Prepared instance id for the generation-0 parent identity.
-    #[arg(long, value_name = "INSTANCE", requires = "init_parent_identity")]
-    pub identity_instance: Option<String>,
-
-    /// Successor handoff token written by the previous parent runtime.
-    #[arg(long, value_name = "PATH")]
-    pub handoff_invocation: Option<PathBuf>,
-
-    #[arg(long, value_enum, default_value_t = Prototype1StateStopAfter::Complete)]
-    pub stop_after: Prototype1StateStopAfter,
-
-    /// Successor-selection strategy. Active selection defaults to History traversal with current-generation candidates appended before scoring.
-    #[arg(long, value_enum, default_value_t = Prototype1SuccessorSelection::HistoryScoreChildProp)]
-    pub successor_selection: Prototype1SuccessorSelection,
-
-    /// Replay seed committed by History-backed traversal selection.
-    #[arg(long, default_value_t = 0)]
-    pub successor_selection_seed: u64,
-
-    /// Metric-bearing states used by History-backed traversal scoring.
-    #[arg(long, value_enum, default_value_t = Prototype1TraversalMetrics::Operational)]
-    pub successor_selection_metrics: Prototype1TraversalMetrics,
-
-    /// Candidate generator used before publishing the child plan.
-    #[arg(long, value_enum, default_value_t = Prototype1CandidateGenerator::BroadHarnessRequest)]
-    pub candidate_generator: Prototype1CandidateGenerator,
-
-    /// Stop after this admitted typestate phase. Defaults to R0.
-    #[arg(long, value_enum, default_value_t = WalkPhase::R0)]
+    /// Stop after this admitted typestate phase. Defaults to R3.
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = crate::walk_client::DEFAULT_START_PHASE
+    )]
     pub until: WalkPhase,
+
+    /// Admit typestate edges that call a configured live provider.
+    #[arg(long)]
+    pub allow_live_api: bool,
+
+    /// Reuse a prior semantic operation identity to attach to the exact same request.
+    #[arg(long, value_name = "UUID")]
+    pub(crate) operation_id: Option<OperationId>,
 
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
     pub format: InspectOutputFormat,
@@ -820,6 +902,53 @@ pub struct Prototype1StateWalkStartCommand {
     /// Include protocol and transition-graph versions in table output.
     #[arg(long)]
     pub with_version: bool,
+}
+
+#[derive(Debug, Clone, Parser)]
+#[command(
+    about = "Reset the server projection without changing durable session history or stopping the server"
+)]
+pub struct Prototype1StateWalkResetCommand {
+    #[command(flatten)]
+    pub control: Prototype1StateWalkControlCommand,
+
+    /// Reuse a prior semantic operation identity to attach to the exact same request.
+    #[arg(long, value_name = "UUID")]
+    pub(crate) operation_id: Option<OperationId>,
+}
+
+#[derive(Debug, Clone, Parser)]
+#[command(
+    about = "Inspect or explicitly resolve one durable controller recovery cause",
+    after_help = "Examples:\n  ploke-eval loop walk recover\n  ploke-eval loop walk recover --abandon-job 11111111-1111-4111-8111-111111111111\n  ploke-eval loop walk recover --abandon-owner\n  ploke-eval loop walk recover --abandon-session\n  ploke-eval loop walk recover --admit-epoch\n\nWith no resolution flag this command is read-only. Job abandonment preserves an indeterminate operation as evidence while releasing its mutation blocker; it does not claim that the operation had no effects. Owner abandonment is admitted only for an exact lost-owner cause. Session abandonment permanently terminalizes unresolved pending or indeterminate authority without making the session runnable again; preserve that run as evidence and start fresh. Epoch admission records the exact prior and current source/binary epochs."
+)]
+pub struct Prototype1StateWalkRecoverCommand {
+    #[command(flatten)]
+    pub control: Prototype1StateWalkControlCommand,
+
+    /// Resolve an exact journal owner whose kernel lock and process incarnation are gone.
+    #[arg(long, conflicts_with_all = ["abandon_job", "abandon_session", "admit_epoch"])]
+    pub abandon_owner: bool,
+
+    /// Permanently terminalize an unresolved session without restoring mutation authority.
+    #[arg(long, conflicts_with_all = ["abandon_job", "abandon_owner", "admit_epoch"])]
+    pub abandon_session: bool,
+
+    /// Admit the exact current source/binary epoch over the journal's prior epoch.
+    #[arg(long, conflicts_with_all = ["abandon_job", "abandon_owner", "abandon_session"])]
+    pub admit_epoch: bool,
+
+    /// Preserve one indeterminate operation as abandoned and release its mutation blocker.
+    #[arg(
+        long,
+        value_name = "UUID",
+        conflicts_with_all = ["abandon_owner", "abandon_session", "admit_epoch", "operation_id"]
+    )]
+    pub abandon_job: Option<OperationId>,
+
+    /// Reuse a prior semantic operation identity for the same recovery resolution.
+    #[arg(long, value_name = "UUID", conflicts_with = "abandon_job")]
+    pub(crate) operation_id: Option<OperationId>,
 }
 
 #[derive(Debug, Clone, Parser)]
@@ -836,6 +965,34 @@ pub struct Prototype1ControlCommand {
     pub format: InspectOutputFormat,
 }
 
+/// Explicit mutation capabilities shared by the direct step/continue clients.
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1AdvanceCommand {
+    #[command(flatten)]
+    pub control: Prototype1ControlCommand,
+
+    #[command(flatten)]
+    pub capabilities: Prototype1MutationCapabilities,
+}
+
+/// Explicit effect capabilities shared by every direct mutation client.
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1MutationCapabilities {
+    /// Admit typed edges that call a configured live provider.
+    #[arg(long)]
+    pub allow_live_api: bool,
+
+    /// Admit typed edges that install a successor into the active checkout.
+    #[arg(long = "allow", value_name = "CAPABILITY", value_parser = ["git-changes"])]
+    pub allow: Vec<String>,
+}
+
+impl Prototype1MutationCapabilities {
+    pub(crate) fn allow_git_changes(&self) -> bool {
+        self.allow.iter().any(|value| value == "git-changes")
+    }
+}
+
 #[derive(Debug, Clone, Parser)]
 #[command(about = "Diagnose the active Prototype 1 parent checkout")]
 pub struct Prototype1DoctorCommand {
@@ -845,6 +1002,13 @@ pub struct Prototype1DoctorCommand {
     /// Run a tiny live protocol JSON request using the admitted model/provider/reasoning policy.
     #[arg(long)]
     pub live_protocol_preflight: bool,
+
+    /// Run the production embedding selection and a tiny live embedding request using the admitted model/provider preference.
+    ///
+    /// This may refresh the shared embedding-model registry cache, but it does
+    /// not write campaign closure, run, batch, or typestate evidence.
+    #[arg(long)]
+    pub live_embedding_preflight: bool,
 
     /// Extra setup check: initialize the headless TUI sparse/BM25 runtime for this parent checkout without making model calls.
     #[arg(long)]
@@ -971,11 +1135,46 @@ pub enum Prototype1LoopStopAfter {
     Compare,
 }
 
+#[derive(Debug, Parser)]
+#[command(
+    about = "Plan or admit a Prototype 1 Parent(0) setup",
+    long_about = "Plan or admit a Prototype 1 Parent(0) setup.\n\nSetup requires an explicit run profile. The run profile owns search, generation, selection, execution, storage, and control; legacy prototype1 search and --stop-after flags are not setup authority. With an existing batch, that batch owns its cohort and eval budget, while --instance may select one member as the primary Parent(0) identity. Use --preview first, then --expect-plan-sha256 to bind admission to the reviewed plan."
+)]
+pub struct Prototype1SetupCommand {
+    #[command(flatten)]
+    pub input: Prototype1LoopCommand,
+
+    /// Build a read-only configuration plan without performing admission-time DB, Git, identity, or provider-readiness checks.
+    #[arg(long)]
+    pub preview: bool,
+
+    /// Admit only if a fresh read-only plan matches this SHA-256 from an earlier --preview.
+    #[arg(long, value_name = "SHA256", conflicts_with = "preview")]
+    pub expect_plan_sha256: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, clap::ValueEnum)]
 #[serde(rename_all = "kebab-case")]
 pub enum Prototype1ChildScheduleMode {
     FullBatch,
     AdaptiveBatch,
+}
+
+pub(crate) mod setup_defaults {
+    use super::{Prototype1ChildScheduleMode, Prototype1LoopStopAfter};
+
+    pub const MAX_TURNS: u32 = 40;
+    pub const MAX_TOOL_CALLS: u32 = 200;
+    pub const WALL_CLOCK_SECS: u32 = 1800;
+    pub const EVAL_MAX_TOKENS: u32 = crate::campaign::DEFAULT_EVAL_MAX_TOKENS;
+    pub const MAX_GENERATIONS: u32 = 1;
+    pub const MAX_TOTAL_NODES: u32 = 32;
+    pub const MIN_CHILDREN: u32 = 2;
+    pub const MAX_CHILDREN: u32 = 6;
+    pub const CHILD_SCHEDULE: Prototype1ChildScheduleMode = Prototype1ChildScheduleMode::FullBatch;
+    pub const REQUIRE_KEEP: bool = true;
+    pub const EXPLORE_REJECTED: bool = true;
+    pub const STOP_AFTER: Prototype1LoopStopAfter = Prototype1LoopStopAfter::InterventionApply;
 }
 
 #[derive(Debug, Parser)]
@@ -1051,14 +1250,18 @@ pub struct Prototype1LoopCommand {
     #[arg(long, value_name = "PATH")]
     pub batches_root: Option<PathBuf>,
 
-    #[arg(long, default_value_t = 40)]
+    #[arg(long, default_value_t = setup_defaults::MAX_TURNS)]
     pub max_turns: u32,
 
-    #[arg(long, default_value_t = 200)]
+    #[arg(long, default_value_t = setup_defaults::MAX_TOOL_CALLS)]
     pub max_tool_calls: u32,
 
-    #[arg(long, default_value_t = 1800)]
+    #[arg(long, default_value_t = setup_defaults::WALL_CLOCK_SECS)]
     pub wall_clock_secs: u32,
+
+    /// Maximum completion tokens for each baseline/treatment agent turn.
+    #[arg(long, default_value_t = setup_defaults::EVAL_MAX_TOKENS)]
+    pub eval_max_tokens: u32,
 
     /// Disable eval-only DB checkpoint/failure snapshots during indexing.
     #[arg(long = "no-index-debug-snapshots", action = ArgAction::SetFalse, default_value_t = true)]
@@ -1083,6 +1286,14 @@ pub struct Prototype1LoopCommand {
     /// Explicit embedding model id to use for eval indexing/retrieval.
     #[arg(long)]
     pub embedding_model_id: Option<String>,
+
+    /// Backend route for eval embeddings.
+    #[arg(
+        long,
+        value_name = "ROUTE",
+        value_parser = parse_embedding_route
+    )]
+    pub embedding_route: Option<EmbeddingRoute>,
 
     /// Explicit provider slug to pin for the embedding model.
     #[arg(long, value_name = "PROVIDER")]
@@ -1113,23 +1324,23 @@ pub struct Prototype1LoopCommand {
     pub source_branch_id: Option<String>,
 
     /// Maximum generation index the search controller is allowed to continue to.
-    #[arg(long, default_value_t = 1)]
+    #[arg(long, default_value_t = setup_defaults::MAX_GENERATIONS)]
     pub max_generations: u32,
 
     /// Maximum total staged nodes the search controller may create for this campaign.
-    #[arg(long, default_value_t = 32)]
+    #[arg(long, default_value_t = setup_defaults::MAX_TOTAL_NODES)]
     pub max_total_nodes: u32,
 
     /// Minimum direct child candidates to evaluate before generation-level fallback selection.
-    #[arg(long, default_value_t = 2)]
+    #[arg(long, default_value_t = setup_defaults::MIN_CHILDREN)]
     pub min_children: u32,
 
     /// Maximum direct child candidates to evaluate for one parent generation.
-    #[arg(long, default_value_t = 6)]
+    #[arg(long, default_value_t = setup_defaults::MAX_CHILDREN)]
     pub max_children: u32,
 
     /// Child scheduling mode: run all planned children (`full-batch`) or run in `min-children` batches (`adaptive-batch`).
-    #[arg(long, value_enum, default_value_t = Prototype1ChildScheduleMode::FullBatch)]
+    #[arg(long, value_enum, default_value_t = setup_defaults::CHILD_SCHEDULE)]
     pub child_schedule_mode: Prototype1ChildScheduleMode,
 
     /// Stop search continuation once a keep-worthy branch is found.
@@ -1137,15 +1348,15 @@ pub struct Prototype1LoopCommand {
     pub stop_on_first_keep: bool,
 
     /// Require the selected next branch to have overall disposition=keep before continuation.
-    #[arg(long, action = ArgAction::Set, default_value_t = true)]
+    #[arg(long, action = ArgAction::Set, default_value_t = setup_defaults::REQUIRE_KEEP)]
     pub require_keep_for_continuation: bool,
 
     /// Permit the best rejected child to become the next exploration parent when no child is acceptable.
-    #[arg(long, action = ArgAction::Set, default_value_t = true)]
+    #[arg(long, action = ArgAction::Set, default_value_t = setup_defaults::EXPLORE_REJECTED)]
     pub explore_from_rejected: bool,
 
     /// Stop the wrapper after the selected implemented stage.
-    #[arg(long, value_enum, default_value_t = Prototype1LoopStopAfter::InterventionApply)]
+    #[arg(long, value_enum, default_value_t = setup_defaults::STOP_AFTER)]
     pub stop_after: Prototype1LoopStopAfter,
 
     /// Synthesize/select the intervention candidate, but do not overwrite the target file.
@@ -1155,4 +1366,65 @@ pub struct Prototype1LoopCommand {
     /// Output format: table (default) or json.
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
     pub format: InspectOutputFormat,
+}
+
+pub(crate) fn setup_command(
+    request: &crate::setup_client::RunSetupRequest,
+) -> Result<Prototype1LoopCommand, crate::spec::PrepareError> {
+    use crate::setup_client::RunSetupBatch;
+
+    let (batch, batch_id) = match &request.batch {
+        RunSetupBatch::Manifest(path) => (Some(path.clone()), None),
+        RunSetupBatch::Id(id) => (None, Some(id.clone())),
+    };
+    let profile = crate::setup_client::profile_selector(&request.profile)?;
+
+    Ok(Prototype1LoopCommand {
+        batch,
+        batch_id,
+        dataset: None,
+        dataset_key: None,
+        all: false,
+        instance: request.primary_instance.clone().into_iter().collect(),
+        specific: Vec::new(),
+        limit: None,
+        prepare_batch_id: None,
+        campaign: Some(request.campaign.clone()),
+        profile: Some(profile),
+        repo_cache: None,
+        instances_root: None,
+        batches_root: None,
+        max_turns: setup_defaults::MAX_TURNS,
+        max_tool_calls: setup_defaults::MAX_TOOL_CALLS,
+        wall_clock_secs: setup_defaults::WALL_CLOCK_SECS,
+        eval_max_tokens: request
+            .model
+            .max_tokens
+            .unwrap_or(setup_defaults::EVAL_MAX_TOKENS),
+        index_debug_snapshots: true,
+        use_default_model: request.model.use_default,
+        model_id: request.model.id.clone(),
+        provider: request.model.provider.clone(),
+        route_source: request.model.route,
+        embedding_model_id: request.embedding.id.clone(),
+        embedding_route: request.embedding.route,
+        embedding_provider: request.embedding.provider.clone(),
+        stop_on_error: false,
+        protocol_model_id: request.protocol.id.clone(),
+        protocol_provider: request.protocol.provider.clone(),
+        protocol_route_source: request.protocol.route,
+        source_campaign: None,
+        source_branch_id: None,
+        max_generations: setup_defaults::MAX_GENERATIONS,
+        max_total_nodes: setup_defaults::MAX_TOTAL_NODES,
+        min_children: setup_defaults::MIN_CHILDREN,
+        max_children: setup_defaults::MAX_CHILDREN,
+        child_schedule_mode: setup_defaults::CHILD_SCHEDULE,
+        stop_on_first_keep: false,
+        require_keep_for_continuation: setup_defaults::REQUIRE_KEEP,
+        explore_from_rejected: setup_defaults::EXPLORE_REJECTED,
+        stop_after: setup_defaults::STOP_AFTER,
+        dry_run: false,
+        format: InspectOutputFormat::Table,
+    })
 }

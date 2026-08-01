@@ -70,6 +70,8 @@ pub(crate) struct ReplayStep {
 pub(crate) enum TapeContinuity {
     Present {
         path: PathBuf,
+        /// One-based physical JSONL lines in the same order as `response_indices`.
+        source_lines: Vec<usize>,
         response_indices: Vec<usize>,
         missing_response_indices: Vec<usize>,
     },
@@ -84,6 +86,7 @@ impl TapeContinuity {
         let path = run_dir.join(FULL_RESPONSE_TRACE_FILE);
         match LoadedResponseTape::load_for_inspection(run_dir, assistant_message_id) {
             Ok(tape) => {
+                let source_lines = tape.source_lines().to_vec();
                 let response_indices = tape
                     .records()
                     .iter()
@@ -96,6 +99,7 @@ impl TapeContinuity {
                     .collect();
                 Self::Present {
                     path: tape.path().to_path_buf(),
+                    source_lines,
                     response_indices,
                     missing_response_indices,
                 }
@@ -325,10 +329,12 @@ mod tests {
 
         match step.tape.as_ref().expect("tape") {
             TapeContinuity::Present {
+                source_lines,
                 response_indices,
                 missing_response_indices,
                 ..
             } => {
+                assert_eq!(source_lines, &[1, 2]);
                 assert_eq!(response_indices, &[0, 2]);
                 assert_eq!(missing_response_indices, &[1]);
             }

@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use super::super::harness_request::{EvidenceRoot, contract};
 use super::super::surface_policy::SurfacePolicy;
 use super::{AttemptDriver, AttemptOutcome, Budget, Error, HeadlessRun, ModelSelection};
+use crate::replay::tool_loop::OuterAttemptLink;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Capture {
@@ -32,30 +33,33 @@ pub(crate) struct Attempt {
 }
 
 impl Attempt {
-    pub(crate) async fn run(mut self) -> Result<AttemptOutcome, Error> {
-        // The response tap is process-global; its RAII guard must outlive the
-        // whole attempt run. Binding it in this function scope (not inside the
-        // match arm) keeps it installed across the `.await` below.
-        let (response_rx, _response_tap_guard, _debug_guard) = match self.capture {
-            Capture::Off => (None, None, None),
+    pub(crate) async fn run(self) -> Result<AttemptOutcome, Error> {
+        self.run_with_outer_attempt(OuterAttemptLink::Unlinked)
+            .await
+    }
+
+    pub(crate) async fn run_with_outer_attempt(
+        self,
+        outer_attempt: OuterAttemptLink,
+    ) -> Result<AttemptOutcome, Error> {
+        let (response_rx, session_capture) = match self.capture {
+            Capture::Off => (None, ploke_tui::llm::SessionCapture::default()),
             Capture::Responses => {
                 let (response_tx, response_rx) = std::sync::mpsc::channel();
                 let response_rx = std::sync::Arc::new(std::sync::Mutex::new(response_rx));
-                let guard = ploke_tui::llm::install_response_tap(response_tx);
-                let debug_guard = super::tool_loop_debug::install_for_attempt(
+                let debug_sink = super::tool_loop_debug::sink_for_attempt(
                     &self.workspace,
                     self.model.as_ref(),
                     &self.evidence,
+                    outer_attempt,
                 );
-                (Some(response_rx), Some(guard), debug_guard)
+                let capture = ploke_tui::llm::SessionCapture::new(Some(response_tx), debug_sink);
+                (Some(response_rx), capture)
             }
         };
-        // Capture the suffix via `mem::take` so we can still move the rest of
-        // `self` into `AttemptDriver::new`. The default of `None` after take
-        // does not matter because `self` is consumed.
-        let policy_suffix = self.policy_suffix.take();
-        let driver = AttemptDriver::new(self, response_rx, policy_suffix.as_deref());
-        driver.run().await
+        AttemptDriver::new(self, response_rx, session_capture)
+            .run()
+            .await
     }
 }
 

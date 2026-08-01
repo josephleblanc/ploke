@@ -21,13 +21,13 @@ use crate::{
 use super::{
     cozo_params::{
         attempt_params, channel_message_params, channel_receipt_params, import_event_params,
-        invocation_params, log_ref_params, record_ref_params, trace_event_params,
-        transition_event_params,
+        invocation_params, log_ref_params, provider_attempt_params, record_ref_params,
+        trace_event_params, transition_event_params,
     },
     cozo_schema::{
         AttemptSchema, ChannelMessageSchema, ChannelReceiptSchema, ImportEventSchema,
-        InvocationSchema, LogRefSchema, RecordRefSchema, TraceEventSchema, TransitionEventSchema,
-        ensure_eval_store_schema,
+        InvocationSchema, LogRefSchema, ProviderAttemptSchema, RecordRefSchema, TraceEventSchema,
+        TransitionEventSchema, ensure_eval_store_schema,
     },
     error::EvalStoreError,
     evidence::{
@@ -41,7 +41,8 @@ use super::{
         channel_receipt_row, import_event_row, invocation_row, log_ref_row, parent_started_rows,
         record_ref_row_from_evidence, trace_event_row,
     },
-    observation::{ObservationJsonlImport, parse_observation_jsonl},
+    observation::{ObservationJsonlImport, ProviderAttemptRow, parse_observation_jsonl},
+    parent_identity,
     schema::put_eval_params,
     setup,
 };
@@ -97,6 +98,7 @@ impl<'a, D: EvalDb + ?Sized> DbEvalStore<'a, D> {
         manifest: &CampaignManifest,
         storage_backend: EvalStorageBackend,
         admitted_profile: Option<&AdmittedRunProfile>,
+        review_config_hash: Option<&crate::cli::prototype1_state::history::HistoryHash>,
         closure_path: &Path,
         closure_state: &ClosureState,
     ) -> Result<(), EvalStoreError> {
@@ -111,6 +113,17 @@ impl<'a, D: EvalDb + ?Sized> DbEvalStore<'a, D> {
             storage_backend,
             profile_ref_id.as_deref(),
         )?;
+        if let (Some(admitted), Some(profile_ref_id)) =
+            (admitted_profile, profile_ref_id.as_deref())
+        {
+            setup::put_run_profile_policy(
+                self.db,
+                &manifest.campaign_id,
+                profile_ref_id,
+                admitted,
+                review_config_hash,
+            )?;
+        }
         setup::put_closure_ref(self.db, closure_path, closure_state)?;
         Ok(())
     }
@@ -163,6 +176,7 @@ impl<'a, D: EvalDb + ?Sized> DbEvalStore<'a, D> {
                     attempted_semantic_hash: rows.event.semantic_hash,
                 });
             }
+            parent_identity::put_parent_started_identity_rows(self.db, evidence, &rows)?;
             verify_parent_started_db_rows(self.db, &rows)?;
             return Ok(rows.receipt);
         }
@@ -170,6 +184,7 @@ impl<'a, D: EvalDb + ?Sized> DbEvalStore<'a, D> {
         for record in &rows.records {
             put_record_ref_row(self.db, record)?;
         }
+        parent_identity::put_parent_started_identity_rows(self.db, evidence, &rows)?;
         verify_parent_started_db_rows(self.db, &rows)?;
         Ok(rows.receipt)
     }
@@ -261,12 +276,20 @@ impl<'a, D: EvalDb + ?Sized> DbEvalStore<'a, D> {
         for trace in &parsed.traces {
             put_trace_event_row(self.db, trace)?;
         }
+        for attempt in &parsed.provider_attempts {
+            put_provider_attempt_row(self.db, attempt)?;
+        }
         Ok(TraceImportReceipt {
             log_ref_id: parsed.log.log_ref_id,
             trace_event_ids: parsed
                 .traces
                 .into_iter()
                 .map(|trace| trace.trace_event_id)
+                .collect(),
+            provider_attempt_ids: parsed
+                .provider_attempts
+                .into_iter()
+                .map(|attempt| attempt.provider_attempt_id)
                 .collect(),
         })
     }
@@ -431,6 +454,7 @@ pub(crate) fn write_r0_context_to_owner_db(
     manifest: &CampaignManifest,
     storage_backend: EvalStorageBackend,
     admitted_profile: Option<&AdmittedRunProfile>,
+    review_config_hash: Option<&crate::cli::prototype1_state::history::HistoryHash>,
     closure_path: &Path,
     closure_state: &ClosureState,
 ) -> Result<(), EvalStoreError> {
@@ -441,10 +465,30 @@ pub(crate) fn write_r0_context_to_owner_db(
             manifest,
             storage_backend,
             admitted_profile,
+            review_config_hash,
             closure_path,
             closure_state,
         )
     })
+}
+
+pub(crate) fn verify_r0_context_in_owner_db(
+    db_path: &Path,
+    manifest: &CampaignManifest,
+    admitted_profile: &AdmittedRunProfile,
+    review_config_hash: Option<&crate::cli::prototype1_state::history::HistoryHash>,
+    closure_path: &Path,
+    closure_state: &ClosureState,
+) -> Result<(), EvalStoreError> {
+    let db = load_owner_eval_database(db_path)?;
+    setup::verify_r0_context(
+        &db,
+        manifest,
+        admitted_profile,
+        review_config_hash,
+        closure_path,
+        closure_state,
+    )
 }
 
 pub(crate) fn write_baseline_to_owner_db(
@@ -877,6 +921,19 @@ fn put_trace_event_row<D: EvalDb + ?Sized>(
         &TraceEventSchema::SCHEMA,
         trace_event_params(row),
         "put.eval_trace_event",
+    )?;
+    Ok(())
+}
+
+fn put_provider_attempt_row<D: EvalDb + ?Sized>(
+    db: &D,
+    row: &ProviderAttemptRow,
+) -> Result<(), EvalStoreError> {
+    put_eval_params(
+        db,
+        &ProviderAttemptSchema::SCHEMA,
+        provider_attempt_params(row)?,
+        "put.eval_provider_attempt",
     )?;
     Ok(())
 }

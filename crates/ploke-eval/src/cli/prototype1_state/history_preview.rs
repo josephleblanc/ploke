@@ -645,7 +645,7 @@ struct SelectionShow {
     scope: String,
     selected_candidate: Option<String>,
     traversal: Option<super::history::TraversalEvidence>,
-    decision: crate::successor_selection::SuccessorDecision,
+    decision: Option<crate::successor_selection::SuccessorDecision>,
     considered_total: usize,
     considered_shown: usize,
     considered: Vec<SelectionCandidateShow>,
@@ -711,6 +711,7 @@ fn build_selection_show(
             let Some(selection) = entry.selection_decision() else {
                 continue;
             };
+            selection.validate_sealed_shape()?;
             if seen != request.row {
                 seen += 1;
                 continue;
@@ -846,15 +847,19 @@ fn print_selection_show(show: &SelectionShow) {
             traversal.seed, traversal.strategy, traversal.selected_source
         );
     }
-    println!(
-        "decision: outcome={:?} candidate={} branch={:?} disposition={}",
-        show.decision.outcome,
-        show.decision.candidate_node_id,
-        show.decision.selected_branch_id,
-        show.decision.branch_disposition
-    );
-    for line in &show.decision.rationale {
-        println!("  rationale: {line}");
+    if let Some(decision) = &show.decision {
+        println!(
+            "decision: outcome={:?} candidate={} branch={:?} disposition={}",
+            decision.outcome,
+            decision.candidate_node_id,
+            decision.selected_branch_id,
+            decision.branch_disposition
+        );
+        for line in &decision.rationale {
+            println!("  rationale: {line}");
+        }
+    } else {
+        println!("decision: no admissible candidate");
     }
     for note in &show.projection_failure_notes {
         println!("  seal_gap: {note}");
@@ -907,19 +912,38 @@ fn print_selection_show(show: &SelectionShow) {
             replay.selected_index,
             replay.selected_candidate.as_deref().unwrap_or("-")
         );
+        println!(
+            "  oracle: mode={} require_evidence={} gate={} targets={}",
+            replay.oracle_mode,
+            replay.oracle_require_evidence,
+            replay.oracle_gate,
+            if replay.oracle_targets.is_empty() {
+                "-".to_string()
+            } else {
+                replay.oracle_targets.join(",")
+            }
+        );
+        println!("  patch: gate={}", replay.patch_gate);
         for row in &replay.rows {
+            let oracle = match (row.oracle_resolved, row.oracle_configured) {
+                (Some(resolved), Some(configured)) => format!("{resolved}/{configured}"),
+                _ => "-".to_string(),
+            };
             println!(
-                "  [{}] selected={} candidate={} perf={} children={} alpha={:.6} exploit={:.6} explore={:.6} weight={:.9} base_outcome={:?}",
+                "  [{}] selected={} selectable={} candidate={} perf={} oracle={} children={} alpha={:.6} exploit={:.6} explore={:.6} weight={:.9} base_outcome={:?} excluded={}",
                 row.index,
                 row.selected,
+                row.selectable,
                 row.candidate,
                 row.performance,
+                oracle,
                 row.child_count,
                 row.alpha,
                 row.exploitation,
                 row.exploration,
                 row.weight,
-                row.base_outcome
+                row.base_outcome,
+                row.exclusion_reason.as_deref().unwrap_or("-")
             );
         }
     }

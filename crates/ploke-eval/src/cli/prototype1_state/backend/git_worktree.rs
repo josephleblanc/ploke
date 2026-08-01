@@ -134,6 +134,15 @@ impl GitWorktreeBackend {
         dirty_paths(repo_root)
     }
 
+    /// Check bootstrap branch occupancy without mutating the active checkout.
+    pub(crate) fn parent_branch_exists(
+        &self,
+        repo_root: &Path,
+        branch: &str,
+    ) -> Result<bool, BackendError> {
+        self.branch_exists(repo_root, &GitBranch(branch.to_string()))
+    }
+
     /// Find the git-managed worktree entry, if any, for one expected child
     /// workspace root.
     pub(crate) fn find_worktree(
@@ -186,6 +195,30 @@ impl GitWorktreeBackend {
         ))
     }
 
+    /// Resolve the first parent of the checked-out Git `HEAD`.
+    pub(crate) fn head_parent_commit(&self, repo_root: &Path) -> Result<GitCommit, BackendError> {
+        let output = Command::new("git")
+            .current_dir(repo_root)
+            .args(["rev-parse", "HEAD^"])
+            .output()
+            .map_err(|source| BackendError::GitCommand {
+                command: "git rev-parse HEAD^".to_string(),
+                source,
+            })?;
+
+        if !output.status.success() {
+            return Err(BackendError::GitCommandStatus {
+                command: "git rev-parse HEAD^".to_string(),
+                status: output.status.code().unwrap_or(-1),
+                stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            });
+        }
+
+        Ok(GitCommit(
+            String::from_utf8_lossy(&output.stdout).trim().to_string(),
+        ))
+    }
+
     pub(crate) fn worktree_root(&self, repo_root: &Path) -> Result<PathBuf, BackendError> {
         let output = Command::new("git")
             .current_dir(repo_root)
@@ -207,6 +240,41 @@ impl GitWorktreeBackend {
         Ok(PathBuf::from(
             String::from_utf8_lossy(&output.stdout).trim().to_string(),
         ))
+    }
+
+    /// Stable administrative lock path for setup mutations in this worktree.
+    ///
+    /// `git --git-path` resolves linked worktrees to their own administrative
+    /// directory, so distinct campaigns aimed at the same checkout contend on
+    /// one inode without adding a dirty path to the worktree.
+    pub(crate) fn setup_lock_path(&self, repo_root: &Path) -> Result<PathBuf, BackendError> {
+        let output = Command::new("git")
+            .current_dir(repo_root)
+            .args([
+                "rev-parse",
+                "--git-path",
+                "ploke-eval/prototype1-setup.lock",
+            ])
+            .output()
+            .map_err(|source| BackendError::GitCommand {
+                command: "git rev-parse --git-path ploke-eval/prototype1-setup.lock".to_string(),
+                source,
+            })?;
+
+        if !output.status.success() {
+            return Err(BackendError::GitCommandStatus {
+                command: "git rev-parse --git-path ploke-eval/prototype1-setup.lock".to_string(),
+                status: output.status.code().unwrap_or(-1),
+                stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            });
+        }
+
+        let path = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+        Ok(if path.is_absolute() {
+            path
+        } else {
+            repo_root.join(path)
+        })
     }
 
     fn current_branch(&self, repo_root: &Path) -> Result<String, BackendError> {

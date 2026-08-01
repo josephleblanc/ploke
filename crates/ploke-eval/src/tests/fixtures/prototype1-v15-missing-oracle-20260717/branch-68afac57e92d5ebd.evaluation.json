@@ -1,0 +1,96 @@
+{
+  "baseline_campaign_id": "p1-v15-scanbarrier-livehandoff-keeponly-g35f-oropenai-3g1x3-p3-20260716-234429",
+  "branch_id": "branch-68afac57e92d5ebd",
+  "treatment_campaign_id": "p1-v15-scanbarrier-livehandoff-keeponly-g35f-oropenai-3g1x3-p3-20260716-234429-treatment-branch-68afac57e92d5ebd-1784273097825",
+  "evaluation_procedure_id": "prototype1.branch_evaluation.operational_metrics.v1",
+  "evaluator_identity": {
+    "id": "prototype1.branch_evaluation.mechanized",
+    "version": "v1"
+  },
+  "eval_set_identity": {
+    "id": "prototype1.eval_set.closure_instance_slice.v2:1873f7f8be1ef2fe8bd7993bcfb8aa2e71822cfb94716ba837e6cc9547e8c8d4",
+    "kind": "closure_instance_slice",
+    "authority": "typed_closure_context:prototype1.eval_set.closure_instance_slice.v2:0ceb54a960c513b14f4be52b7e6666549b1b8c895bc71357bc216498dbd23253",
+    "explicit": true,
+    "benchmark_family": "multi_swe_bench_rust",
+    "dataset_sources": [
+      {
+        "path": "/home/brasides/.ploke-eval/campaigns/p1-v15-scanbarrier-livehandoff-keeponly-g35f-oropenai-3g1x3-p3-20260716-234429/slice.jsonl",
+        "label": "prototype1/p1-v15-scanbarrier-livehandoff-keeponly-g35f-oropenai-3g1x3-p3-20260716-234429-setup",
+        "url": "https://huggingface.co/datasets/ByteDance-Seed/Multi-SWE-bench/resolve/main/rust/BurntSushi__ripgrep_dataset.jsonl"
+      }
+    ],
+    "eval_policy": {
+      "include_partial": false,
+      "stop_on_error": false,
+      "budget": {
+        "max_turns": 40,
+        "max_tool_calls": 200,
+        "wall_clock_secs": 1800
+      },
+      "batch_prefix": "p1-v15-scanbarrier-livehandoff-keeponly-g35f-oropenai-3g1x3-p3-20260716-234429-setup",
+      "embedding_model_id": "mistralai/codestral-embed-2505",
+      "embedding_provider_slug": "openrouter",
+      "max_tokens": 32768
+    },
+    "instance_ids": [
+      "BurntSushi__ripgrep-2209"
+    ],
+    "note": "eval set identity is derived from typed closure/campaign context and the compared baseline closure slice"
+  },
+  "branch_registry_path": "/home/brasides/.ploke-eval/campaigns/p1-v15-scanbarrier-livehandoff-keeponly-g35f-oropenai-3g1x3-p3-20260716-234429/prototype1/branches.json",
+  "evaluation_artifact_path": "/home/brasides/.ploke-eval/campaigns/p1-v15-scanbarrier-livehandoff-keeponly-g35f-oropenai-3g1x3-p3-20260716-234429/prototype1/evaluations/branch-68afac57e92d5ebd.json",
+  "treatment_campaign_manifest": "/home/brasides/.ploke-eval/campaigns/p1-v15-scanbarrier-livehandoff-keeponly-g35f-oropenai-3g1x3-p3-20260716-234429-treatment-branch-68afac57e92d5ebd-1784273097825/campaign.json",
+  "treatment_closure_state_path": "/home/brasides/.ploke-eval/campaigns/p1-v15-scanbarrier-livehandoff-keeponly-g35f-oropenai-3g1x3-p3-20260716-234429-treatment-branch-68afac57e92d5ebd-1784273097825/closure-state.json",
+  "overall_disposition": "keep",
+  "reasons": [],
+  "compared_instances": [
+    {
+      "instance_id": "BurntSushi__ripgrep-2209",
+      "baseline_registration_path": "/home/brasides/.ploke-eval/registries/runs/run-1784271118711-structured-current-policy-5b083674.json",
+      "treatment_registration_path": "/home/brasides/.ploke-eval/registries/runs/run-1784273100168-structured-current-policy-8c47c6c5.json",
+      "baseline_record_path": "/home/brasides/.ploke-eval/instances/prototype1/p1-v15-scanbarrier-livehandoff-keeponly-g35f-oropenai-3g1x3-p3-20260716-234429/BurntSushi__ripgrep-2209/runs/run-1784271118711-structured-current-policy-5b083674/record.json.gz",
+      "treatment_record_path": "/home/brasides/.ploke-eval/instances/prototype1/p1-v15-scanbarrier-livehandoff-keeponly-g35f-oropenai-3g1x3-p3-20260716-234429/treatments/branch-68afac57e92d5ebd/instances/BurntSushi__ripgrep-2209/runs/run-1784273100168-structured-current-policy-8c47c6c5/record.json.gz",
+      "baseline_metrics": {
+        "tool_calls_total": 40,
+        "tool_calls_failed": 1,
+        "patch_attempted": true,
+        "patch_apply_state": "applied",
+        "submission_artifact_state": "nonempty",
+        "patch_projection_check_state": "passed",
+        "partial_patch_failures": 0,
+        "same_file_patch_retry_count": 3,
+        "same_file_patch_max_streak": 3,
+        "aborted": false,
+        "aborted_repair_loop": false,
+        "nonempty_valid_patch": true,
+        "convergence": true,
+        "oracle_eligible": true
+      },
+      "treatment_metrics": {
+        "tool_calls_total": 18,
+        "tool_calls_failed": 1,
+        "patch_attempted": true,
+        "patch_apply_state": "applied",
+        "submission_artifact_state": "nonempty",
+        "patch_projection_check_state": "passed",
+        "partial_patch_failures": 0,
+        "same_file_patch_retry_count": 1,
+        "same_file_patch_max_streak": 2,
+        "aborted": false,
+        "aborted_repair_loop": false,
+        "nonempty_valid_patch": true,
+        "convergence": true,
+        "oracle_eligible": true
+      },
+      "evaluation": {
+        "disposition": "keep",
+        "reasons": [
+          "same_file_patch_retry_count improved: 3 -> 1",
+          "same_file_patch_max_streak improved: 3 -> 2"
+        ]
+      },
+      "status": "compared"
+    }
+  ]
+}

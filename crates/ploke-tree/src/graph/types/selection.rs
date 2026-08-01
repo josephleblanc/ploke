@@ -39,6 +39,7 @@ pub struct CandidateNode {
     pub primary_runtime_id: Option<String>,
     pub artifact_after: Option<ArtifactId>,
     pub patch_id: Option<PatchId>,
+    pub patch_review: Option<ploke_records::selection::PatchReview>,
     pub evidence: Vec<EvidenceId>,
 }
 

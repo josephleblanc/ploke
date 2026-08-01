@@ -1417,9 +1417,10 @@ pub struct ToolExecutionRecord {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "status")]
 pub enum ToolResult {
-    /// Tool completed successfully.
+    /// Tool invocation completed and returned a payload. The typed payload may
+    /// still report a semantic failure, such as a cargo process exiting 101.
     Completed(ToolCompletedRecord),
-    /// Tool execution failed.
+    /// Tool invocation failed before normal completion.
     Failed(ToolFailedRecord),
 }
 

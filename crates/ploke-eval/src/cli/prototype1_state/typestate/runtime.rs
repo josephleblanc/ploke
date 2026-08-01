@@ -58,24 +58,24 @@ impl<Kind, State> RuntimeRole<Kind, State> {
 /// Run context axis: command-only first, then collected command-derived inputs.
 #[derive(Debug)]
 pub(crate) struct Context<State> {
-    pub(super) state: State,
+    pub(super) state: Box<State>,
     pub(super) _private: Private,
 }
 
 impl<State> Context<State> {
     pub(super) fn new(state: State) -> Self {
         Self {
-            state,
+            state: Box::new(state),
             _private: Private,
         }
     }
 
     pub(super) fn state(&self) -> &State {
-        &self.state
+        self.state.as_ref()
     }
 
     pub(super) fn into_state(self) -> State {
-        self.state
+        *self.state
     }
 }
 

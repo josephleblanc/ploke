@@ -39,6 +39,7 @@ members = [
     "crates/ploke-protocol",
     "crates/ploke-records",
     "crates/ploke-egui",
+    "crates/ploke-walk-ui",
     "crates/ploke-tree",
     "crates/ploke-tree-browser",
     "crates/ploke-tree-egui",
@@ -113,6 +114,7 @@ tokio = { version = "1.44.1", features = ["full"] }
 dashmap = "6.1.0"
 crossbeam-channel = "0.5.15"
 futures = "0.3"                                     # For .fuse() on streams
+libc = "0.2"
 
 # string interning
 lasso = { version = "0.7.3", features = ["multi-threaded", "serialize"] }

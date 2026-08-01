@@ -5,7 +5,7 @@ pub mod rate_limit;
 mod session;
 pub use builders::attempt::{
     ProviderAttempt, ProviderAttemptOutcome, ProviderAttemptTimeline, ProviderFailurePhase,
-    ProviderRetryDecision,
+    ProviderResponseOutcome, ProviderRetryDecision,
 };
 pub use rate_limit::{Permit, acquire as acquire_rate_limit_permit};
 pub use session::{

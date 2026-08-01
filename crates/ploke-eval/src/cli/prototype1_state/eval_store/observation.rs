@@ -1,5 +1,6 @@
 use std::{fs, path::PathBuf};
 
+use ploke_llm::ProviderAttemptTimeline;
 use ploke_records::ids::CampaignId;
 
 use super::{
@@ -20,6 +21,17 @@ pub(crate) struct ObservationJsonlImport {
 pub(super) struct ParsedObservationJsonl {
     pub(super) log: EvalLogRefRow,
     pub(super) traces: Vec<EvalTraceEventRow>,
+    pub(super) provider_attempts: Vec<ProviderAttemptRow>,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct ProviderAttemptRow {
+    pub(super) provider_attempt_id: String,
+    pub(super) campaign_id: Option<String>,
+    pub(super) timeline: ProviderAttemptTimeline,
+    pub(super) source_log_ref: String,
+    pub(super) source_event_index: i64,
+    pub(super) recorded_at: Option<String>,
 }
 
 pub(super) fn parse_observation_jsonl(
@@ -54,6 +66,7 @@ pub(super) fn parse_observation_jsonl(
 
     let campaign_id = import.campaign_id.as_ref().map(|id| id.to_string());
     let mut traces = Vec::new();
+    let mut provider_attempts = Vec::new();
     for (line_index, line) in text.lines().enumerate() {
         if line.trim().is_empty() {
             return Err(EvalStoreError::Validation {
@@ -75,16 +88,66 @@ pub(super) fn parse_observation_jsonl(
                 ),
             }
         })?;
-        traces.push(trace_event_row_from_value(
+        let trace = trace_event_row_from_value(
             &value,
             campaign_id.as_deref(),
             &log.log_ref_id,
             line_index,
             line,
-        )?);
+        )?;
+        if let Some(provider_attempt) = provider_attempt_row(&value, &trace)? {
+            provider_attempts.push(provider_attempt);
+        }
+        traces.push(trace);
     }
 
-    Ok(ParsedObservationJsonl { log, traces })
+    Ok(ParsedObservationJsonl {
+        log,
+        traces,
+        provider_attempts,
+    })
+}
+
+fn provider_attempt_row(
+    value: &serde_json::Value,
+    trace: &EvalTraceEventRow,
+) -> Result<Option<ProviderAttemptRow>, EvalStoreError> {
+    if trace.target != "chat_http" || trace.event_name.as_deref() != Some("provider_attempt") {
+        return Ok(None);
+    }
+    let timeline =
+        serde_json::from_value::<ProviderAttemptTimeline>(value.clone()).map_err(|source| {
+            EvalStoreError::Validation {
+                field: "observation_jsonl.provider_attempt",
+                detail: format!(
+                    "provider_attempt event {} is not a valid ProviderAttemptTimeline: {source}",
+                    trace.source_event_index.unwrap_or_default()
+                ),
+            }
+        })?;
+    let source_log_ref =
+        trace
+            .source_log_ref
+            .clone()
+            .ok_or_else(|| EvalStoreError::Validation {
+                field: "provider_attempt.source_log_ref",
+                detail: "provider attempt projection requires its source log reference".to_string(),
+            })?;
+    let source_event_index =
+        trace
+            .source_event_index
+            .ok_or_else(|| EvalStoreError::Validation {
+                field: "provider_attempt.source_event_index",
+                detail: "provider attempt projection requires its source event index".to_string(),
+            })?;
+    Ok(Some(ProviderAttemptRow {
+        provider_attempt_id: trace.trace_event_id.clone(),
+        campaign_id: trace.campaign_id.clone(),
+        timeline,
+        source_log_ref,
+        source_event_index,
+        recorded_at: trace.recorded_at.clone(),
+    }))
 }
 
 fn trace_event_row_from_value(
@@ -129,8 +192,10 @@ fn trace_event_row_from_value(
         span_name: span_name_field(object),
         target,
         level,
-        outcome: optional_string_field(object, "outcome"),
-        duration_ms: optional_i64_field(object, "duration_ms"),
+        outcome: optional_string_field(object, "outcome")
+            .or_else(|| optional_string_field(object, "transport_outcome")),
+        duration_ms: optional_i64_field(object, "duration_ms")
+            .or_else(|| optional_i64_field(object, "elapsed_ms")),
         record_access: optional_string_field(object, "record_access"),
         record_kind: optional_string_field(object, "record_kind"),
         record_path: optional_string_field(object, "record_path"),

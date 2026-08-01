@@ -2,6 +2,7 @@ use crate::prelude::*;
 
 use ploke_llm::{ModelId, ProviderKey, request::models::ModelRouteSource};
 use ploke_protocol::ProtocolReasoningPolicy;
+use sha2::{Digest, Sha256};
 
 use crate::closure::ClosureRecomputeRequest;
 use crate::layout::{batches_dir, campaigns_dir, instances_dir};
@@ -23,6 +24,7 @@ const DEFAULT_REQUIRED_PROCEDURES: [&str; 3] = [
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CampaignManifest {
     pub schema_version: String,
     pub campaign_id: CampaignId,
@@ -50,7 +52,35 @@ pub struct CampaignManifest {
     pub framework: FrameworkConfig,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct CampaignManifestPlan {
+    path: PathBuf,
+    manifest: CampaignManifest,
+    sha256: String,
+    #[serde(skip)]
+    normalized_json: String,
+}
+
+impl CampaignManifestPlan {
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub(crate) fn manifest(&self) -> &CampaignManifest {
+        &self.manifest
+    }
+
+    pub(crate) fn sha256(&self) -> &str {
+        &self.sha256
+    }
+
+    pub(crate) fn normalized_json(&self) -> &str {
+        &self.normalized_json
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EvalCampaignPolicy {
     #[serde(default)]
     pub include_partial: bool,
@@ -66,13 +96,101 @@ pub struct EvalCampaignPolicy {
     pub budget: EvalBudget,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub batch_prefix: Option<String>,
+    #[serde(default, skip_serializing_if = "EmbeddingRoute::is_openrouter")]
+    pub embedding_route: EmbeddingRoute,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub embedding_model_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub embedding_provider_slug: Option<String>,
+    /// Maximum completion tokens for each baseline/treatment agent turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EmbeddingRoute {
+    #[default]
+    #[serde(rename = "openrouter")]
+    OpenRouter,
+    #[serde(rename = "direct_openai")]
+    DirectOpenAi,
+}
+
+impl EmbeddingRoute {
+    pub const fn is_openrouter(&self) -> bool {
+        matches!(self, Self::OpenRouter)
+    }
+
+    pub const fn provider_slug(self) -> &'static str {
+        match self {
+            Self::OpenRouter => "openrouter",
+            Self::DirectOpenAi => "openai",
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::OpenRouter => "openrouter",
+            Self::DirectOpenAi => "direct_openai",
+        }
+    }
+}
+
+fn validate_embedding_policy(policy: &EvalCampaignPolicy) -> Result<(), PrepareError> {
+    if policy.embedding_route != EmbeddingRoute::DirectOpenAi {
+        return Ok(());
+    }
+    if let Some(provider) = policy.embedding_provider_slug.as_deref() {
+        return Err(PrepareError::DatabaseSetup {
+            phase: "campaign_embedding_route",
+            detail: format!(
+                "direct OpenAI embedding route does not accept OpenRouter provider preference '{provider}'"
+            ),
+        });
+    }
+    let Some(model) = policy.embedding_model_id.as_deref() else {
+        return Ok(());
+    };
+    if model.trim().is_empty() {
+        return Err(PrepareError::DatabaseSetup {
+            phase: "campaign_embedding_route",
+            detail: "direct OpenAI embedding model must not be empty".to_string(),
+        });
+    }
+    if !model.contains('/') {
+        return Ok(());
+    }
+    let model: ModelId =
+        model
+            .parse()
+            .map_err(|error: ploke_llm::IdError| PrepareError::DatabaseSetup {
+                phase: "campaign_embedding_route",
+                detail: error.to_string(),
+            })?;
+    if model.key.author.as_str() != "openai" {
+        return Err(PrepareError::DatabaseSetup {
+            phase: "campaign_embedding_route",
+            detail: format!(
+                "direct OpenAI embedding route requires an OpenAI model, got '{model}'"
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn validate_eval_policy(policy: &EvalCampaignPolicy) -> Result<(), PrepareError> {
+    validate_embedding_policy(policy)?;
+    if policy.max_tokens == Some(0) {
+        return Err(PrepareError::DatabaseSetup {
+            phase: "campaign_eval_max_tokens",
+            detail: "campaign eval.max_tokens must be greater than zero when set".to_string(),
+        });
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProtocolCampaignPolicy {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_id: Option<String>,
@@ -159,7 +277,8 @@ pub struct CampaignOverrides {
     pub batches_root: Option<PathBuf>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ResolvedCampaignConfig {
     pub campaign_id: CampaignId,
     pub benchmark_family: BenchmarkFamily,
@@ -258,6 +377,12 @@ pub fn default_protocol_tool_review_parallelism() -> usize {
 /// complete.
 pub const PROTOTYPE1_PROTOCOL_MIN_SAFE_MAX_TOKENS: u32 = 4096;
 
+/// Recommended explicit completion cap for fresh Prototype 1 eval campaigns.
+///
+/// This avoids provider/account rejection from an unbounded or excessively
+/// large router default while remaining separate from protocol JSON budgets.
+pub const DEFAULT_EVAL_MAX_TOKENS: u32 = 32_768;
+
 pub fn default_protocol_max_tokens() -> u32 {
     PROTOTYPE1_PROTOCOL_MIN_SAFE_MAX_TOKENS
 }
@@ -351,6 +476,15 @@ pub fn load_campaign_manifest(campaign_id: &CampaignId) -> Result<CampaignManife
             path: path.clone(),
             source,
         })?;
+    if manifest.schema_version != CAMPAIGN_MANIFEST_SCHEMA_VERSION {
+        return Err(PrepareError::DatabaseSetup {
+            phase: "campaign_manifest",
+            detail: format!(
+                "unsupported campaign manifest schema '{}', expected '{}'",
+                manifest.schema_version, CAMPAIGN_MANIFEST_SCHEMA_VERSION
+            ),
+        });
+    }
     if manifest.campaign_id != *campaign_id {
         return Err(PrepareError::DatabaseSetup {
             phase: "campaign_manifest",
@@ -364,18 +498,61 @@ pub fn load_campaign_manifest(campaign_id: &CampaignId) -> Result<CampaignManife
 }
 
 pub fn save_campaign_manifest(manifest: &CampaignManifest) -> Result<PathBuf, PrepareError> {
+    admit_campaign_manifest(plan_campaign_manifest(manifest)?)
+}
+
+pub(crate) fn plan_campaign_manifest(
+    manifest: &CampaignManifest,
+) -> Result<CampaignManifestPlan, PrepareError> {
+    if manifest.schema_version != CAMPAIGN_MANIFEST_SCHEMA_VERSION {
+        return Err(PrepareError::DatabaseSetup {
+            phase: "campaign_manifest",
+            detail: format!(
+                "unsupported campaign manifest schema '{}', expected '{}'",
+                manifest.schema_version, CAMPAIGN_MANIFEST_SCHEMA_VERSION
+            ),
+        });
+    }
+    validate_eval_policy(&manifest.eval)?;
     let path = campaign_manifest_path(&manifest.campaign_id)?;
+    let normalized_json =
+        serde_json::to_string_pretty(manifest).map_err(PrepareError::SerializeCampaignManifest)?;
+    let sha256 = format!("{:x}", Sha256::digest(normalized_json.as_bytes()));
+    Ok(CampaignManifestPlan {
+        path,
+        manifest: manifest.clone(),
+        sha256,
+        normalized_json,
+    })
+}
+
+pub(crate) fn admit_campaign_manifest(plan: CampaignManifestPlan) -> Result<PathBuf, PrepareError> {
+    let CampaignManifestPlan {
+        path,
+        manifest: _,
+        sha256,
+        normalized_json,
+    } = plan;
+    let actual_sha = format!("{:x}", Sha256::digest(normalized_json.as_bytes()));
+    if actual_sha != sha256 {
+        return Err(PrepareError::DatabaseSetup {
+            phase: "campaign_manifest_plan",
+            detail: format!(
+                "campaign manifest plan digest mismatch: recorded '{sha256}', resolved '{actual_sha}'"
+            ),
+        });
+    }
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|source| PrepareError::WriteCampaignManifest {
             path: parent.to_path_buf(),
             source,
         })?;
     }
-    let json =
-        serde_json::to_string_pretty(manifest).map_err(PrepareError::SerializeCampaignManifest)?;
-    fs::write(&path, json).map_err(|source| PrepareError::WriteCampaignManifest {
-        path: path.clone(),
-        source,
+    crate::durable_io::write_atomic(&path, normalized_json.as_bytes()).map_err(|source| {
+        PrepareError::WriteCampaignManifest {
+            path: path.clone(),
+            source,
+        }
     })?;
     Ok(path)
 }
@@ -532,7 +709,132 @@ pub fn resolve_campaign_config(
     overrides: &CampaignOverrides,
 ) -> Result<ResolvedCampaignConfig, PrepareError> {
     let manifest = load_campaign_manifest(campaign_id)?;
+    resolve_manifest_config(manifest, overrides)
+}
 
+/// Resolves a fully explicit manifest without consulting mutable
+/// model, provider-preference, or layout defaults.
+pub(crate) fn resolve_explicit_manifest(
+    manifest: CampaignManifest,
+) -> Result<ResolvedCampaignConfig, PrepareError> {
+    validate_eval_policy(&manifest.eval)?;
+    let mut missing = Vec::new();
+    if manifest.dataset_sources.is_empty() {
+        missing.push("dataset_sources");
+    }
+    if manifest.model_id.is_none() {
+        missing.push("model_id");
+    }
+    if manifest.route_source.is_none() {
+        missing.push("route_source");
+    }
+    if manifest.required_procedures.is_empty() {
+        missing.push("required_procedures");
+    }
+    if manifest.instances_root.is_none() {
+        missing.push("instances_root");
+    }
+    if manifest.batches_root.is_none() {
+        missing.push("batches_root");
+    }
+    if !missing.is_empty() {
+        return Err(PrepareError::DatabaseSetup {
+            phase: "campaign_admitted_config",
+            detail: format!(
+                "admitted campaign must persist stable configuration fields: {}",
+                missing.join(", ")
+            ),
+        });
+    }
+
+    let model_id = manifest
+        .model_id
+        .clone()
+        .ok_or_else(|| PrepareError::DatabaseSetup {
+            phase: "campaign_admitted_config",
+            detail: "admitted campaign is missing model_id".to_string(),
+        })?;
+    let _: ModelId =
+        model_id
+            .parse()
+            .map_err(|error: ploke_llm::IdError| PrepareError::DatabaseSetup {
+                phase: "campaign_model_id",
+                detail: error.to_string(),
+            })?;
+    let route_source = manifest
+        .route_source
+        .ok_or_else(|| PrepareError::DatabaseSetup {
+            phase: "campaign_admitted_config",
+            detail: "admitted campaign is missing route_source".to_string(),
+        })?;
+    let provider_slug = if route_source.is_direct_google() {
+        match manifest.provider_slug.as_deref() {
+            Some("google") | None => None,
+            Some(provider) => {
+                return Err(PrepareError::DatabaseSetup {
+                    phase: "campaign_provider_route",
+                    detail: format!(
+                        "direct Google route does not accept OpenRouter provider '{provider}'"
+                    ),
+                });
+            }
+        }
+    } else {
+        manifest.provider_slug.clone()
+    };
+    let required_procedures = normalize_required_procedures(&manifest.required_procedures)?;
+    let instances_root =
+        manifest
+            .instances_root
+            .clone()
+            .ok_or_else(|| PrepareError::DatabaseSetup {
+                phase: "campaign_admitted_config",
+                detail: "admitted campaign is missing instances_root".to_string(),
+            })?;
+    let batches_root =
+        manifest
+            .batches_root
+            .clone()
+            .ok_or_else(|| PrepareError::DatabaseSetup {
+                phase: "campaign_admitted_config",
+                detail: "admitted campaign is missing batches_root".to_string(),
+            })?;
+
+    Ok(ResolvedCampaignConfig {
+        campaign_id: manifest.campaign_id,
+        benchmark_family: manifest.benchmark_family,
+        dataset_sources: manifest.dataset_sources,
+        model_id,
+        provider_slug,
+        route_source,
+        required_procedures,
+        instances_root,
+        batches_root,
+        eval: manifest.eval,
+        protocol: manifest.protocol,
+        framework: manifest.framework,
+    })
+}
+
+/// Loads one stored campaign using explicit-manifest semantics.
+pub(crate) fn resolve_explicit_campaign(
+    campaign_id: &CampaignId,
+) -> Result<ResolvedCampaignConfig, PrepareError> {
+    resolve_explicit_manifest(load_campaign_manifest(campaign_id)?)
+}
+
+/// Resolves a supplied manifest without reading or writing campaign manifest storage.
+///
+/// This is the legacy/ad-hoc resolver: omitted values can trigger read-only
+/// lookups of active-model, model-registry, provider-preference, and layout
+/// defaults, while overrides can replace stored values. Call
+/// [`resolve_explicit_manifest`] when the manifest itself is the complete
+/// routing authority.
+pub(crate) fn resolve_manifest_config(
+    manifest: CampaignManifest,
+    overrides: &CampaignOverrides,
+) -> Result<ResolvedCampaignConfig, PrepareError> {
+    validate_eval_policy(&manifest.eval)?;
     let dataset_sources = if overrides.dataset_keys.is_empty() && overrides.dataset_files.is_empty()
     {
         manifest.dataset_sources.clone()
@@ -599,19 +901,25 @@ pub fn resolve_campaign_config(
         normalize_required_procedures(&overrides.required_procedures)?
     };
 
-    let instances_root = overrides
+    let instances_root = match overrides
         .instances_root
         .clone()
         .or_else(|| manifest.instances_root.clone())
-        .unwrap_or(instances_dir()?);
-    let batches_root = overrides
+    {
+        Some(path) => path,
+        None => instances_dir()?,
+    };
+    let batches_root = match overrides
         .batches_root
         .clone()
         .or_else(|| manifest.batches_root.clone())
-        .unwrap_or(batches_dir()?);
+    {
+        Some(path) => path,
+        None => batches_dir()?,
+    };
 
     Ok(ResolvedCampaignConfig {
-        campaign_id: campaign_id.clone(),
+        campaign_id: manifest.campaign_id.clone(),
         benchmark_family: manifest.benchmark_family,
         dataset_sources,
         model_id,
@@ -629,6 +937,7 @@ pub fn resolve_campaign_config(
 pub async fn validate_campaign_config(
     config: &ResolvedCampaignConfig,
 ) -> Result<Vec<CampaignValidationCheck>, PrepareError> {
+    validate_eval_policy(&config.eval)?;
     let mut checks = Vec::new();
 
     checks.push(CampaignValidationCheck {
@@ -813,14 +1122,19 @@ pub fn render_resolved_campaign_config(config: &ResolvedCampaignConfig) -> Strin
         config.eval.budget.wall_clock_secs
     ));
     out.push_str(&format!(
-        "  include_partial: {} | stop_on_error: {} | limit: {}\n",
+        "  include_partial: {} | stop_on_error: {} | limit: {} | max_tokens: {}\n",
         config.eval.include_partial,
         config.eval.stop_on_error,
         config
             .eval
             .limit
             .map(|value| value.to_string())
-            .unwrap_or_else(|| "none".to_string())
+            .unwrap_or_else(|| "none".to_string()),
+        config
+            .eval
+            .max_tokens
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "provider-default".to_string())
     ));
     out.push_str(&format!(
         "  include_dataset_labels: {}\n",
@@ -992,7 +1306,262 @@ fn route_source_label(route_source: ModelRouteSource) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsString;
+
     use super::*;
+    use crate::{provider_prefs::set_provider_for_model, test_support::env_guard_os};
+
+    fn manifest_value() -> serde_json::Value {
+        let mut manifest = CampaignManifest::new(CampaignId::from("strict-manifest"));
+        manifest.dataset_sources = vec![RegistryDatasetSource {
+            key: None,
+            path: PathBuf::from("/tmp/dataset.jsonl"),
+            label: "fixture".to_string(),
+            url: None,
+        }];
+        manifest.framework.tools.insert(
+            "list_files".to_string(),
+            crate::spec::FrameworkToolConfig::default(),
+        );
+        serde_json::to_value(manifest).expect("serialize manifest fixture")
+    }
+
+    #[test]
+    fn embedding_route_has_stable_serde_and_openrouter_default() {
+        let default_policy: EvalCampaignPolicy =
+            serde_json::from_str("{}").expect("default eval policy parses");
+        assert_eq!(default_policy.embedding_route, EmbeddingRoute::OpenRouter);
+
+        assert_eq!(
+            serde_json::to_string(&EmbeddingRoute::DirectOpenAi)
+                .expect("direct OpenAI route serializes"),
+            r#""direct_openai""#
+        );
+        assert_eq!(
+            serde_json::from_str::<EmbeddingRoute>(r#""openrouter""#)
+                .expect("OpenRouter route parses"),
+            EmbeddingRoute::OpenRouter
+        );
+    }
+
+    #[test]
+    fn direct_embedding_policy_rejects_openrouter_fields() {
+        let mut policy = EvalCampaignPolicy {
+            embedding_route: EmbeddingRoute::DirectOpenAi,
+            ..EvalCampaignPolicy::default()
+        };
+        policy.embedding_provider_slug = Some("perplexity".to_string());
+        let error = validate_embedding_policy(&policy)
+            .expect_err("direct OpenAI must reject provider preference");
+        assert!(
+            error
+                .to_string()
+                .contains("does not accept OpenRouter provider")
+        );
+
+        policy.embedding_provider_slug = None;
+        policy.embedding_model_id = Some("perplexity/pplx-embed-v1-4b".to_string());
+        let error = validate_embedding_policy(&policy)
+            .expect_err("direct OpenAI must reject a non-OpenAI qualified model");
+        assert!(error.to_string().contains("requires an OpenAI model"));
+    }
+
+    #[test]
+    fn direct_embedding_policy_accepts_default_or_openai_model() {
+        let mut policy = EvalCampaignPolicy {
+            embedding_route: EmbeddingRoute::DirectOpenAi,
+            ..EvalCampaignPolicy::default()
+        };
+        validate_embedding_policy(&policy).expect("default direct OpenAI model is valid");
+
+        policy.embedding_model_id = Some("openai/text-embedding-3-small".to_string());
+        validate_embedding_policy(&policy).expect("qualified OpenAI model is valid");
+    }
+
+    #[test]
+    fn eval_policy_rejects_zero_token_cap() {
+        let policy = EvalCampaignPolicy {
+            max_tokens: Some(0),
+            ..EvalCampaignPolicy::default()
+        };
+
+        let error = validate_eval_policy(&policy).expect_err("zero token cap must fail");
+        assert!(error.to_string().contains("must be greater than zero"));
+    }
+
+    #[test]
+    fn eval_policy_preserves_explicit_token_cap() {
+        let policy = EvalCampaignPolicy {
+            max_tokens: Some(DEFAULT_EVAL_MAX_TOKENS),
+            ..EvalCampaignPolicy::default()
+        };
+
+        let encoded = serde_json::to_value(&policy).expect("eval policy serializes");
+        assert_eq!(
+            encoded
+                .get("max_tokens")
+                .and_then(serde_json::Value::as_u64),
+            Some(u64::from(DEFAULT_EVAL_MAX_TOKENS))
+        );
+        let decoded: EvalCampaignPolicy =
+            serde_json::from_value(encoded).expect("eval policy deserializes");
+        assert_eq!(decoded.max_tokens, Some(DEFAULT_EVAL_MAX_TOKENS));
+    }
+
+    #[test]
+    fn campaign_manifest_rejects_unknown_nested_fields() {
+        let mut values = Vec::new();
+
+        let mut top = manifest_value();
+        top["unexpected"] = serde_json::json!(true);
+        values.push((top, "unexpected"));
+
+        let mut eval = manifest_value();
+        eval["eval"]["stop_on_eror"] = serde_json::json!(true);
+        values.push((eval, "stop_on_eror"));
+
+        let mut budget = manifest_value();
+        budget["eval"]["budget"]["max_turrns"] = serde_json::json!(10);
+        values.push((budget, "max_turrns"));
+
+        let mut protocol = manifest_value();
+        protocol["protocol"]["max_token"] = serde_json::json!(4096);
+        values.push((protocol, "max_token"));
+
+        let mut source = manifest_value();
+        source["dataset_sources"][0]["urll"] = serde_json::json!(null);
+        values.push((source, "urll"));
+
+        let mut tool = manifest_value();
+        tool["framework"]["tools"]["list_files"]["versoin"] = serde_json::json!("1");
+        values.push((tool, "versoin"));
+
+        for (value, key) in values {
+            let error = serde_json::from_value::<CampaignManifest>(value)
+                .expect_err("unknown campaign field must fail")
+                .to_string();
+            assert!(error.contains(key), "unexpected error: {error}");
+        }
+    }
+
+    #[test]
+    fn campaign_loader_rejects_unsupported_schema() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _env = crate::test_support::env_guard_os(vec![(
+            "PLOKE_EVAL_HOME",
+            temp.path().as_os_str().to_os_string(),
+        )]);
+        let campaign_id = CampaignId::from("unsupported-manifest-schema");
+        let mut manifest = CampaignManifest::new(campaign_id.clone());
+        manifest.schema_version = "campaign-manifest.v999".to_string();
+        let path = campaign_manifest_path(&campaign_id).expect("resolve campaign path");
+        fs::create_dir_all(path.parent().expect("campaign directory"))
+            .expect("create malformed fixture directory");
+        fs::write(
+            &path,
+            serde_json::to_string_pretty(&manifest).expect("encode malformed fixture"),
+        )
+        .expect("write malformed fixture");
+
+        let error = load_campaign_manifest(&campaign_id)
+            .expect_err("unsupported campaign schema must fail")
+            .to_string();
+
+        assert!(error.contains("campaign-manifest.v999"));
+        assert!(error.contains(CAMPAIGN_MANIFEST_SCHEMA_VERSION));
+    }
+
+    #[test]
+    fn campaign_writer_rejects_unsupported_schema() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _env = crate::test_support::env_guard_os(vec![(
+            "PLOKE_EVAL_HOME",
+            temp.path().as_os_str().to_os_string(),
+        )]);
+        let campaign_id = CampaignId::from("unsupported-writer-schema");
+        let mut manifest = CampaignManifest::new(campaign_id.clone());
+        manifest.schema_version = "campaign-manifest.v999".to_string();
+
+        let error = save_campaign_manifest(&manifest)
+            .expect_err("writer must reject unsupported schema")
+            .to_string();
+
+        assert!(error.contains("campaign-manifest.v999"));
+        assert!(error.contains(CAMPAIGN_MANIFEST_SCHEMA_VERSION));
+        assert!(
+            !campaign_manifest_path(&campaign_id)
+                .expect("resolve campaign path")
+                .exists()
+        );
+    }
+
+    #[test]
+    fn supplied_manifest_matches_stored_resolution() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _env = crate::test_support::env_guard_os(vec![(
+            "PLOKE_EVAL_HOME",
+            temp.path().as_os_str().to_os_string(),
+        )]);
+        let campaign_id = CampaignId::from("manifest-resolution-parity");
+        let mut manifest = CampaignManifest::new(campaign_id.clone());
+        manifest.dataset_sources = vec![RegistryDatasetSource {
+            key: None,
+            path: temp.path().join("dataset.jsonl"),
+            label: "fixture".to_string(),
+            url: None,
+        }];
+        manifest.model_id = Some("x-ai/grok-4-fast".to_string());
+        manifest.provider_slug = Some("xai".to_string());
+        manifest.route_source = Some(ModelRouteSource::OpenRouter);
+        manifest.instances_root = Some(temp.path().join("instances"));
+        manifest.batches_root = Some(temp.path().join("batches"));
+        save_campaign_manifest(&manifest).expect("save manifest");
+
+        let supplied = resolve_manifest_config(manifest, &CampaignOverrides::default())
+            .expect("resolve supplied manifest");
+        let stored = resolve_campaign_config(&campaign_id, &CampaignOverrides::default())
+            .expect("resolve stored manifest");
+
+        assert_eq!(
+            serde_json::to_value(supplied).expect("serialize supplied config"),
+            serde_json::to_value(stored).expect("serialize stored config")
+        );
+    }
+
+    #[test]
+    fn explicit_openrouter_manifest_preserves_route_default() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _env = env_guard_os(vec![(
+            "PLOKE_EVAL_HOME",
+            OsString::from(temp.path().as_os_str()),
+        )]);
+        let model: ModelId = "x-ai/grok-4-fast".parse().expect("model id");
+        set_provider_for_model(
+            &model,
+            ploke_llm::ProviderKey::new("mutable-preference").expect("provider key"),
+        )
+        .expect("persist mutable preference");
+        let mut manifest = CampaignManifest::new(CampaignId::from("frozen-route-default"));
+        manifest.dataset_sources = vec![RegistryDatasetSource {
+            key: None,
+            path: temp.path().join("dataset.jsonl"),
+            label: "fixture".to_string(),
+            url: None,
+        }];
+        manifest.model_id = Some(model.to_string());
+        manifest.route_source = Some(ModelRouteSource::OpenRouter);
+        manifest.provider_slug = None;
+        manifest.instances_root = Some(temp.path().join("instances"));
+        manifest.batches_root = Some(temp.path().join("batches"));
+
+        let resolved =
+            resolve_explicit_manifest(manifest.clone()).expect("resolve explicit manifest");
+        let ad_hoc = resolve_manifest_config(manifest, &CampaignOverrides::default())
+            .expect("resolve ad hoc manifest");
+
+        assert_eq!(resolved.provider_slug, None);
+        assert_eq!(ad_hoc.provider_slug.as_deref(), Some("mutable-preference"));
+    }
 
     #[test]
     fn render_handles_empty_framework() {

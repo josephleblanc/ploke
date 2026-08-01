@@ -1642,6 +1642,7 @@ mod tests {
                     primary_runtime_id: None,
                     artifact_after: None,
                     patch_id: None,
+                    patch_review: None,
                     evidence: Vec::new(),
                 });
         }
@@ -1822,6 +1823,7 @@ mod tests {
                 primary_runtime_id: None,
                 artifact_after: Some(ArtifactId("base".to_owned())),
                 patch_id: None,
+                patch_review: None,
                 evidence: Vec::new(),
             });
         graph.child_plans.plans.insert(
@@ -2275,6 +2277,7 @@ mod tests {
                 primary_runtime_id: None,
                 artifact_after: Some(parent_id.clone()),
                 patch_id: None,
+                patch_review: None,
                 evidence: Vec::new(),
             });
         graph
@@ -2294,6 +2297,7 @@ mod tests {
                 primary_runtime_id: None,
                 artifact_after: Some(child_id.clone()),
                 patch_id: None,
+                patch_review: None,
                 evidence: Vec::new(),
             });
         graph
@@ -2315,6 +2319,7 @@ mod tests {
                 primary_runtime_id: None,
                 artifact_after: Some(ArtifactId("artifact:selected".to_owned())),
                 patch_id: Some(PatchId("patch-selected".to_owned())),
+                patch_review: None,
                 evidence: Vec::new(),
             });
         graph.child_plans.plans.insert(
@@ -2387,6 +2392,7 @@ mod tests {
                 primary_runtime_id: None,
                 artifact_after: None,
                 patch_id: None,
+                patch_review: None,
                 evidence: Vec::new(),
             });
         graph
@@ -2409,6 +2415,7 @@ mod tests {
                 primary_runtime_id: None,
                 artifact_after: None,
                 patch_id: None,
+                patch_review: None,
                 evidence: Vec::new(),
             });
         graph.selections.selections.insert(
@@ -2593,6 +2600,7 @@ mod tests {
                 primary_runtime_id: None,
                 artifact_after: Some(parent_id.clone()),
                 patch_id: None,
+                patch_review: None,
                 evidence: Vec::new(),
             });
         graph
@@ -2614,6 +2622,7 @@ mod tests {
                 primary_runtime_id: None,
                 artifact_after: Some(ArtifactId("artifact:selected".to_owned())),
                 patch_id: Some(PatchId("patch-selected".to_owned())),
+                patch_review: None,
                 evidence: Vec::new(),
             });
         graph.child_plans.plans.insert(
@@ -2851,6 +2860,7 @@ mod tests {
                 primary_runtime_id: None,
                 artifact_after: Some(ArtifactId(id.to_owned())),
                 patch_id: None,
+                patch_review: None,
                 evidence: Vec::new(),
             })
             .collect();

@@ -21,8 +21,8 @@ use tokio::time::{Instant, sleep};
 use tracing::{info, warn};
 
 use crate::LlmResponseRecord;
+use crate::campaign::EmbeddingRoute;
 use crate::inner::registry::{RunLifecyclePhase, RunPhaseStatus};
-use crate::model_registry::resolve_model_for_run;
 use crate::record::{
     PackagingPhase, RunRecord, RunRecordBuilder, SubmissionArtifactState, write_compressed_record,
 };
@@ -36,21 +36,34 @@ use super::*;
 
 impl RunMsbSingleRequest {
     pub async fn run(self) -> Result<RunArtifactPaths, PrepareError> {
+        self.run_with_route(EmbeddingRoute::OpenRouter).await
+    }
+
+    pub(crate) async fn run_with_route(
+        self,
+        embedding_route: EmbeddingRoute,
+    ) -> Result<RunArtifactPaths, PrepareError> {
         let run_arm = RunArm::shell_only_control();
         let setup_start_time = chrono::Utc::now();
         let run_start_instant = Instant::now();
         let (manifest_path, prepared) = load_prepared_run(self.run_manifest)?;
-        let embedding_selection = resolve_eval_embedding_selection(
+        let embedding_selection = resolve_embedding_selection(
+            embedding_route,
             self.embedding_model_id.as_deref(),
             self.embedding_provider.as_ref(),
         )
         .await?;
-        let requested_model = parse_requested_model_id(self.model_id.as_deref())?;
-        let selected_model =
-            resolve_model_for_run(requested_model.as_ref(), self.use_default_model)?;
+        let selected_model = select_run_model(
+            self.model_id.as_deref(),
+            self.use_default_model,
+            prepared.campaign.as_ref(),
+        )?;
         let selected_model_id = selected_model.id.clone();
-        let preferred_provider =
-            load_provider_preference_for_selected_model(&selected_model, self.provider.as_ref())?;
+        let preferred_provider = load_provider_preference_for_selected_model(
+            &selected_model,
+            self.provider.as_ref(),
+            prepared.campaign.as_ref(),
+        )?;
         let requested_provider = provider_request_for_selected_model(
             &selected_model,
             self.provider.as_ref(),
@@ -482,29 +495,45 @@ impl RunMsbSingleRequest {
 
 impl RunMsbAgentSingleRequest {
     pub async fn run(self) -> Result<AgentRunArtifactPaths, PrepareError> {
+        self.run_with_route(EmbeddingRoute::OpenRouter).await
+    }
+
+    pub(crate) async fn run_with_route(
+        self,
+        embedding_route: EmbeddingRoute,
+    ) -> Result<AgentRunArtifactPaths, PrepareError> {
+        validate_token_cap(self.max_tokens)?;
         let setup_start_time = chrono::Utc::now();
         let run_start_instant = Instant::now();
         let run_arm = RunArm::structured_current_policy_treatment();
         let (manifest_path, prepared) = load_prepared_run(self.run_manifest)?;
-        let embedding_selection = resolve_eval_embedding_selection(
-            self.embedding_model_id.as_deref(),
-            self.embedding_provider.as_ref(),
-        )
-        .await?;
-        let requested_model = parse_requested_model_id(self.model_id.as_deref())?;
-        let selected_model =
-            resolve_model_for_run(requested_model.as_ref(), self.use_default_model)?;
+        let max_tokens = resolve_token_cap(self.max_tokens, prepared.campaign.as_ref())?;
+        let selected_model = select_run_model(
+            self.model_id.as_deref(),
+            self.use_default_model,
+            prepared.campaign.as_ref(),
+        )?;
         let selected_model_id = selected_model.id.clone();
-        let preferred_provider =
-            load_provider_preference_for_selected_model(&selected_model, self.provider.as_ref())?;
+        let preferred_provider = load_provider_preference_for_selected_model(
+            &selected_model,
+            self.provider.as_ref(),
+            prepared.campaign.as_ref(),
+        )?;
         let requested_provider = provider_request_for_selected_model(
             &selected_model,
             self.provider.as_ref(),
             preferred_provider.as_ref(),
         );
         let route = resolve_route_for_model(&selected_model, requested_provider).await?;
+        validate_route_cap(max_tokens, &route)?;
         let selected_provider = route.selected_provider_slug();
         let selected_endpoint = selected_endpoint_provenance(&route);
+        let embedding_selection = resolve_embedding_selection(
+            embedding_route,
+            self.embedding_model_id.as_deref(),
+            self.embedding_provider.as_ref(),
+        )
+        .await?;
 
         fs::create_dir_all(&prepared.output_dir).map_err(|source| {
             PrepareError::CreateOutputDir {
@@ -660,6 +689,9 @@ impl RunMsbAgentSingleRequest {
             {
                 let mut cfg = state.config.write().await;
                 configure_headless_benchmark_chat(&mut cfg, &route);
+                if let Some(max_tokens) = max_tokens {
+                    cfg.llm_params.max_tokens = Some(max_tokens);
+                }
             }
             info!("runner phase: inspect active embedding set before activation");
             let currently_active_set: EmbeddingSet = runtime_db

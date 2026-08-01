@@ -10,6 +10,7 @@ use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
 use ploke_core::tool_types::ToolName;
+pub(crate) use ploke_records::ids::GitCommit;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -119,16 +120,6 @@ impl SurfaceRoots {
 pub(crate) struct GitBranchRef(String);
 
 impl std::fmt::Display for GitBranchRef {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-/// Git commit id for a checked-out workspace `HEAD`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct GitCommit(pub String);
-
-impl std::fmt::Display for GitCommit {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
     }
@@ -1189,6 +1180,9 @@ pub(crate) fn repo_entry_bytes(
 
 mod git_worktree;
 mod harness_ingestion;
+pub(crate) use harness_ingestion::{
+    changed_paths_between_commits, changed_paths_between_roots, repo_entry_bytes_at_commit,
+};
 mod surface_admission;
 
 pub(crate) use git_worktree::*;

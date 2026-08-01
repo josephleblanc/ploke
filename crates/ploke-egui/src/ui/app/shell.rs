@@ -2023,7 +2023,7 @@ pub(crate) fn render_candidate_comparison_for_inspector(
     egui::ScrollArea::horizontal().show(ui, |ui| {
         egui::Grid::new(("candidate-comparison", slot.parent_node_id.as_str()))
             .striped(true)
-            .num_columns(32)
+            .num_columns(36)
             .show(ui, |ui| {
                 cached_label(ui, render_cache, "selected");
                 cached_label(ui, render_cache, "child");
@@ -2046,6 +2046,10 @@ pub(crate) fn render_candidate_comparison_for_inspector(
                 cached_label(ui, render_cache, "child count");
                 cached_label(ui, render_cache, "selectable");
                 cached_label(ui, render_cache, "exclusion");
+                cached_label(ui, render_cache, "patch review");
+                cached_label(ui, render_cache, "review confidence");
+                cached_label(ui, render_cache, "review blockers");
+                cached_label(ui, render_cache, "review missing");
                 cached_label(ui, render_cache, "improvement");
                 cached_label(ui, render_cache, "baseline");
                 cached_label(ui, render_cache, "best descendant");
@@ -2122,6 +2126,25 @@ fn render_candidate_comparison_formula_summary(
                 "oracle required",
                 bool_label(score.record.oracle_require_evidence),
             );
+            cached_kv_text(
+                ui,
+                render_cache,
+                "oracle gate",
+                match score.record.oracle_gate {
+                    ploke_records::run_profile::OracleGate::Disabled => "disabled",
+                    ploke_records::run_profile::OracleGate::AllResolved => "all resolved",
+                },
+            );
+            cached_kv_text(
+                ui,
+                render_cache,
+                "patch gate",
+                score.record.patch_gate.as_str(),
+            );
+            if !score.record.oracle_targets.is_empty() {
+                let oracle_targets = score.record.oracle_targets.join(", ");
+                cached_kv_text(ui, render_cache, "oracle targets", oracle_targets.as_str());
+            }
             cached_kv_text(
                 ui,
                 render_cache,
@@ -2232,6 +2255,29 @@ fn render_candidate_comparison_candidate(
         row.and_then(|row| row.exclusion_reason.as_deref())
             .or(Some("none")),
     );
+    let review = candidate
+        .candidate
+        .and_then(|candidate| candidate.patch_review.as_ref());
+    render_optional_str_value(
+        ui,
+        render_cache,
+        review.map(|review| patch_verdict_label(review.verdict)),
+    );
+    render_optional_str_value(
+        ui,
+        render_cache,
+        review.map(|review| confidence_label(review.confidence)),
+    );
+    render_optional_usize_value(
+        ui,
+        render_cache,
+        review.map(|review| review.blocking_findings.len()),
+    );
+    render_optional_usize_value(
+        ui,
+        render_cache,
+        review.map(|review| review.missing_evidence.len()),
+    );
     render_optional_i64(
         ui,
         render_cache,
@@ -2311,6 +2357,22 @@ fn outcome_label(outcome: ploke_records::selection::Outcome) -> &'static str {
         ploke_records::selection::Outcome::Accepted => "accepted",
         ploke_records::selection::Outcome::ExploreFrom => "explore_from",
         ploke_records::selection::Outcome::Stop => "stop",
+    }
+}
+
+fn patch_verdict_label(verdict: ploke_records::selection::PatchVerdict) -> &'static str {
+    match verdict {
+        ploke_records::selection::PatchVerdict::Admissible => "admissible",
+        ploke_records::selection::PatchVerdict::Rejected => "rejected",
+        ploke_records::selection::PatchVerdict::Inconclusive => "inconclusive",
+    }
+}
+
+fn confidence_label(confidence: ploke_records::selection::Confidence) -> &'static str {
+    match confidence {
+        ploke_records::selection::Confidence::Low => "low",
+        ploke_records::selection::Confidence::Medium => "medium",
+        ploke_records::selection::Confidence::High => "high",
     }
 }
 

@@ -23,10 +23,12 @@ use tracing_subscriber::{EnvFilter, fmt as tracing_fmt, prelude::*};
 use crate::layout::ploke_eval_home;
 
 const CHAT_HTTP_TARGET: &str = "chat_http";
+const API_PAYLOAD_TARGET: &str = "api_json";
 
 #[allow(dead_code)]
 pub struct LoggingGuards {
     pub main: WorkerGuard,
+    pub api_payload: WorkerGuard,
     pub full_response: WorkerGuard,
     pub prototype1_observation: Option<WorkerGuard>,
 }
@@ -73,6 +75,10 @@ pub fn init_tracing(debug_tools: bool) -> Option<LoggingGuards> {
     let file_appender =
         tracing_appender::rolling::never(&log_dir, format!("ploke_eval_{run_id}.log"));
     let (non_blocking_file, main_guard) = tracing_appender::non_blocking(file_appender);
+    let payload_path = log_dir.join(format!("api_payload_{run_id}.log"));
+    let payload_appender =
+        tracing_appender::rolling::never(&log_dir, format!("api_payload_{run_id}.log"));
+    let (payload_writer, payload_guard) = tracing_appender::non_blocking(payload_appender);
     let full_response_log_file = log_dir.join(format!("llm_full_response_{run_id}.log"));
     let _ = FULL_RESPONSE_LOG_PATH.set(full_response_log_file.clone());
     let full_response_appender =
@@ -90,6 +96,21 @@ pub fn init_tracing(debug_tools: bool) -> Option<LoggingGuards> {
         .with_thread_ids(false)
         .with_ansi(false)
         .with_writer(non_blocking_file);
+    let main_filter = filter::filter_fn(|metadata| {
+        !matches!(metadata.target(), API_PAYLOAD_TARGET | FULL_RESPONSE_TARGET)
+    });
+
+    let api_payload_layer = tracing_fmt::layer()
+        .with_writer(payload_writer)
+        .with_ansi(false)
+        .with_level(false)
+        .with_target(false)
+        .with_thread_ids(false)
+        .with_thread_names(false)
+        .with_file(false)
+        .with_line_number(false)
+        .without_time();
+    let only_api_payload = filter::Targets::new().with_target(API_PAYLOAD_TARGET, Level::TRACE);
 
     // Keep raw response logs parseable as JSONL: readers expect the event body only.
     let full_response_layer = tracing_fmt::layer()
@@ -107,7 +128,7 @@ pub fn init_tracing(debug_tools: bool) -> Option<LoggingGuards> {
     let console_layer = tracing_fmt::layer()
         .event_format(CompactConsoleFormat)
         .with_ansi(true)
-        .with_writer(std::io::stdout);
+        .with_writer(std::io::stderr);
     let console_filter = if cfg!(feature = "demo") {
         filter::Targets::new().with_default(filter::LevelFilter::OFF)
     } else if debug_tools {
@@ -120,7 +141,8 @@ pub fn init_tracing(debug_tools: bool) -> Option<LoggingGuards> {
 
     let registry = tracing_subscriber::registry()
         .with(filter)
-        .with(file_layer)
+        .with(file_layer.with_filter(main_filter))
+        .with(api_payload_layer.with_filter(only_api_payload))
         .with(full_response_layer.with_filter(only_full_response))
         .with(console_layer.with_filter(console_filter));
 
@@ -161,6 +183,7 @@ pub fn init_tracing(debug_tools: bool) -> Option<LoggingGuards> {
             target: "ploke_eval",
             debug_tools,
             log_file = %log_file.display(),
+            api_payload_path = %payload_path.display(),
             full_response_log_file = %full_response_log_file.display(),
             prototype1_observation_log_file = ?prototype1_log_file.as_ref().map(|path| path.display().to_string()),
             "eval tracing initialized"
@@ -176,6 +199,7 @@ pub fn init_tracing(debug_tools: bool) -> Option<LoggingGuards> {
         }
         Some(LoggingGuards {
             main: main_guard,
+            api_payload: payload_guard,
             full_response: full_response_guard,
             prototype1_observation: prototype1_guard,
         })

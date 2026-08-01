@@ -129,6 +129,7 @@ mod tests {
                     node_id: "node-1".to_owned(),
                     runtime_id: runtime_id.clone(),
                     pid: 42,
+                    incarnation: None,
                     recorded_at: "2026-05-11T00:02:00Z".to_owned(),
                 }],
                 successor_completion: vec![SuccessorCompletionRecord {

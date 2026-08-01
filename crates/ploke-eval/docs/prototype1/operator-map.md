@@ -1,9 +1,12 @@
 # Prototype 1 Loop Operator Map
 
 This is the practical map for operating and debugging the Prototype 1 loop.
-It is descriptive, not an authority source. History blocks, typed transitions,
-and admitted profile files are the authority-bearing surfaces; CLI output and
-monitor-style projections are read-only views over those records.
+It is descriptive, not an authority source. The walk server owns the active
+controller lease over the durable session and admits typed transitions. The CLI
+and `ploke-walk-ui` are active sibling clients over that service. History
+blocks, identity, messages/channels, invocation records, artifacts, and
+admitted configuration retain their domain authority; database queries expose
+immutable, revision-tagged snapshots of the evolving evidence projection.
 
 The source-side appendix at
 `src/cli/prototype1_state/PROTOTYPE1_LOOP_OPERATOR.md` is retained only as a
@@ -23,9 +26,57 @@ Keep the campaign root and active parent checkout separate:
   `prototype1/nodes/<node-id>/worktree/`. They are temporary evaluation
   surfaces, not the long-lived parent home after handoff.
 
-For live parent execution, use the `ploke-eval` binary built inside the active
-parent checkout. Do not run a binary from one checkout against another
-checkout's `--repo-root`.
+For the authority-bearing walk server and live parent execution, use the
+`ploke-eval` binary built inside the active parent checkout. A CLI or UI sibling
+client may come from another checkout only when the server accepts its
+protocol, transition-graph, target repository/source, and build-fingerprint
+compatibility. A matching sibling client does not need the same executable
+path as the server. The fingerprint identifies the shared walk contract by
+hashing 15 explicit `ploke-eval` files: `build.rs`, the public setup/walk
+clients, and selected walk boundary modules. It directly excludes
+`ploke-records`, `ploke-protocol`, Cargo/build-environment inputs,
+server/controller implementation, `ploke-tui`, and `ploke-llm`. A transitive
+carrier change outside that list must advance the explicit walk protocol or
+transition-graph version.
+
+## Sibling clients and controller authority
+
+CLI and UI submit the same typed Start/Step requests to one server-owned
+session. Each mutation is guarded by a freshly observed server epoch, exact
+durable session version, and operation id. Jobs, terminal receipts, blockers,
+and allowed actions are returned as typed carriers; neither client parses log
+messages to decide whether a mutation succeeded.
+
+The UI currently provides:
+
+- a typed run-profile editor with canonical defaults, production validation,
+  and create-only hash-bound save;
+- canonical fresh-run preview and hash-bound admission from an existing
+  checkout, prepared batch, campaign id, and loaded/saved profile;
+- admitted configuration read-back through `WalkConfigSnapshot`;
+- guarded start/attach and exact single-transition controls;
+- explicit live-provider and Git-change grants;
+- operation polling and typed job/receipt feedback;
+- idle-server Stop.
+
+The UI does not own R-state values, copy transition policy, or execute shell
+commands to advance the loop. Database Query and the named DB views are sibling
+inspection surfaces, not an alternate controller.
+
+For an existing profile, use **Load selected profile**. For a new profile, use
+**Restore canonical defaults**, edit the typed `RunProfileRecord`, then
+**Validate / review profile** and **Save reviewed profile**. Save is atomic,
+hash-bound, create-only, and read-back validated; it never overwrites. Only an
+exact loaded or saved binding can proceed to **Preview setup** and **Admit
+reviewed setup**. Editing a reviewed profile or setup target invalidates the
+corresponding binding and disables downstream admission.
+
+Selector identity is explicit: **Name** accepts one non-`.toml` component in
+the registered profile directory; **Path** remains a path and is made absolute
+from the UI process working directory when relative. Empty/non-UTF-8 paths and
+ambiguous shapes fail closed. The UI does not prepare batches, create
+checkouts/worktrees, run doctor/provider preflights, or watch external file
+changes.
 
 ## Direct Google Manifest Warning
 
@@ -56,19 +107,56 @@ admission are below it.
 
 | Command | Current role |
 | --- | --- |
-| `./target/debug/ploke-eval loop prototype1-setup --profile "${P1_PROFILE:?set P1_PROFILE to a profile name or TOML path}"` | Creates or adopts the campaign, admits `run-profile.toml`, registers the generation-0 parent node, creates the parent branch, writes `.ploke/prototype1/parent_identity.json`, and commits that identity into the active checkout. |
-| `./target/debug/ploke-eval loop prototype1-doctor --repo-root "${P1_PARENT_ROOT:?set P1_PARENT_ROOT to the active parent checkout}"` | Read-only diagnosis of the active parent checkout. It loads parent identity, admitted run profile, prompt preflight, child-plan state, node status, and successor markers, then prints allowed next actions. Add `--live-protocol-preflight` only when you explicitly want a tiny live JSON request against the admitted protocol model/provider/reasoning tuple. |
+| `./target/debug/ploke-eval loop prototype1-setup --preview --batch "${P1_BATCH:?set P1_BATCH}" --campaign "${P1_CAMPAIGN:?set P1_CAMPAIGN}" --profile "${P1_PROFILE:?set P1_PROFILE}"` | Builds a read-only, versioned configuration plan with a plan SHA-256, exact campaign/slice/profile payload digests, resolved values, source authority, and explicitly deferred admission checks. Preview requires an existing prepared batch; it never performs inline dataset preparation or DB/Git/identity/provider-readiness checks. |
+| `./target/debug/ploke-eval loop prototype1-setup --batch "${P1_BATCH:?set P1_BATCH}" --campaign "${P1_CAMPAIGN:?set P1_CAMPAIGN}" --profile "${P1_PROFILE:?set P1_PROFILE}" --expect-plan-sha256 "${P1_PLAN_SHA:?copy plan_sha256 from preview}"` | Rebuilds the configuration plan and fails before admission writes if it differs from the reviewed preview. On a match, creates the campaign, admits the exact run-profile pair, registers Parent(0), creates the parent branch, writes `.ploke/prototype1/parent_identity.json`, and commits that identity into the active checkout. |
+| `./target/debug/ploke-eval loop prototype1-doctor --repo-root "${P1_PARENT_ROOT:?set P1_PARENT_ROOT to the active parent checkout}"` | Read-only diagnosis of the active parent checkout. It loads parent identity, admitted run profile, prompt preflight, child-plan state, node status, and successor markers, then prints allowed next actions. Add `--live-embedding-preflight` to exercise the exact production embedding selection/request without run-evidence writes, and `--live-protocol-preflight` for a tiny request against the admitted protocol tuple. |
 | `./target/debug/ploke-eval loop prototype1-prompt --repo-root "${P1_PARENT_ROOT:?set P1_PARENT_ROOT to the active parent checkout}"` | Prints the current broad-harness prompt for the active parent when the admitted run profile uses the broad-harness request generator. |
 | `./target/debug/ploke-eval loop prototype1-step --repo-root "${P1_PARENT_ROOT:?set P1_PARENT_ROOT to the active parent checkout}"` | Advances exactly one diagnosed parent phase. Child phases run at cap 1. |
 | `./target/debug/ploke-eval loop prototype1-continue --repo-root "${P1_PARENT_ROOT:?set P1_PARENT_ROOT to the active parent checkout}"` | Repeatedly advances diagnosed phases until the current turn is complete, blocked, or hands off. It has a 256-advance guard. |
 | `./target/debug/ploke-eval loop prototype1-state --help` | Typed parent runtime path. It can initialize parent identity, run one parent turn through `driver::advance::run_to_terminal`, or acknowledge a successor handoff with `--handoff-invocation`. |
-| `./target/debug/ploke-eval loop walk --help` | Local operator/debugger surface over the same typestate edges. Use `walk summary -v` for completed-run discovery, `walk replay/back/forward` for read-only historical cursor movement, and `walk step` for live edges. Long live edges require `--watch`; selected-successor handoff requires `--watch --allow git-changes`. |
-| `./target/debug/ploke-eval loop prototype1-runner --invocation "${P1_INVOCATION:?set P1_INVOCATION to an invocation JSON path}" --execute` | Hidden child/successor runner seam for one persisted invocation. It still exists; do not treat it as removed. |
+| `./target/debug/ploke-eval loop walk --help` | Authority-bearing walk-service client over the same typestate edges. Use `walk summary -v` for completed-run discovery, `walk replay/back/forward` for read-only historical cursor movement, and `walk step` for live edges. `--watch` only follows an accepted outer job and is optional even for long edges; it never grants provider authority. Selected-successor handoff requires `--allow git-changes`. Only nested `walk llm --source live` keeps its separate `--watch` admission requirement. |
+| `./target/debug/ploke-eval loop walk status --with-version` | Authoritative live controller snapshot: server epoch, session version and position, attachment/authority, active or latest job, blocker, and currently allowed actions. Start here instead of reading active status from JSON or the owner DB. |
+| `./target/debug/ploke-eval loop walk config --with-version` | Read-back-validated campaign, profile commitment, effective controller values, and explicit/derived provenance for the admitted run. |
+| `./target/debug/ploke-eval loop walk session-history --with-version` | Ordered durable controller attempts, receipts, recovery state, and handoff/session evidence. |
+| `./target/debug/ploke-eval loop walk db_query --view progress` | Immutable, revision-tagged owner-DB evidence. Closed views are `relations`, `counts`, `config-evidence`, `lineage`, `progress`, and `handoff-evidence`; none reports live controller authority. `relations` is the complete inventory; `counts` is a curated core projection, not a count of every relation. `progress` separates `actor_generation`, `subject_generation`, and `successor_generation`; stop rows have no successor generation. The server phase/session fields are sampled after the owner-DB query and are non-atomic with its revision. |
+| `./target/debug/ploke-eval loop prototype1-runner --invocation "${P1_INVOCATION:?set P1_INVOCATION to a child invocation JSON path}" --execute` | Hidden effectful child-runner seam for one persisted child invocation. It currently requires `--execute`; successor invocations use the successor runtime path instead. |
 | `./target/debug/ploke-eval loop prototype1-harness attempt --help` | Hidden broad headless-TUI probe surface. It replays published harness requests outside the full self-propagating parent loop. |
 | `./target/debug/ploke-eval loop prototype1 --help` | Older high-level controller over eval, protocol, intervention, treatment, and compare stages. It still exists, but the typed control path is `doctor` / `step` / `continue` / `prototype1-state`. |
 
 History and metrics inspection live under `ploke-eval history ...`; those
 commands are read-only projections, not active loop authority.
+
+The plan digest binds the exact reviewed configuration and Git base. Matched
+setup admission remains sequential across campaign/profile, closure/DB, node,
+Git, and identity effects, but its receipt-first recovery path and completed
+state verification are the canonical admission boundary. The UI rebuilds the
+plan and supplies the reviewed SHA-256; it does not reinterpret preview JSON or
+copy setup defaults. A successful UI admission is accepted only after the
+resulting `WalkConfigSnapshot` is read back and matches the reviewed plan.
+
+### Setup values: defaults, policy, and admitted effect
+
+Keep three layers separate:
+
+1. CLI/schema defaults fill only omitted canonical setup fields.
+2. The prepared batch owns the cohort and eval budget; the selected run profile
+   owns loop policy.
+3. Setup persists the normalized campaign/profile inputs and receipt hashes.
+   `WalkConfigSnapshot` revalidates those admitted records and deterministically
+   derives effective control values plus their explicit/derived source. Those
+   read-back values reflect the same admitted inputs that govern execution;
+   UI form placeholders do not.
+
+The setup form therefore accepts typed selectors and optional canonical
+overrides, but no raw policy JSON. Search, generation, selection, execution,
+storage, and control policy remain structurally owned by the selected profile.
+Use `walk config --with-version` or the UI Run Config surface to verify what was
+actually admitted.
+
+Canonical profile defaults are `Control { mode: Continuous, parallel_cap:
+None }`. Manual exact Step is still available for an admitted Continuous
+preference, but UI-local auto-advance requires an admitted Step-mode profile;
+restoring defaults does not enable automation.
 
 Source excerpts for the trust-order help, walk-step admission guard, and
 projection-read capability:
@@ -78,6 +166,37 @@ projection-read capability:
 {{#include ../../src/cli/args/loop_args.rs:prototype1_walk_step_live_edge_admission}}
 {{#include ../../src/projection.rs:ploke_eval_operator_projection_read}}
 ```
+
+## UI-local auto-advance semantics
+
+The UI scheduler is labeled **UI-local automation · Step-mode server**. It is a
+convenience loop over the public guarded Step operation, not a second driver and
+not durable continuous mode:
+
+1. submit one exact Step with a new operation id;
+2. poll that operation until its terminal typed receipt;
+3. refresh authoritative status and allowed actions;
+4. submit the next Step only if automation is still enabled.
+
+Pause prevents step 4; it does not cancel the operation already admitted by the
+server. Resume restarts only this UI-local sequence, and closing the UI loses
+the sequence. Active and paused automation retain the selected run/socket;
+**End local automation** explicitly releases that local binding. There is no
+exclusive controller lease between edges, so CLI and UI can alternate only
+through the same version/epoch guards.
+
+After a successful R12-to-R13b receipt, the client waits for the successor
+endpoint and follows it before considering the next edge. It does not drive the
+predecessor's R13b-to-R14b retirement edge. An R12-to-R13c receipt halts local
+automation for operator reconciliation and is never retried as handoff. These
+boundaries are why the UI does not label the feature `Continuous`, call Pause
+`Halt`, or call local resumption a server `Resume`. `Stop` is reserved for
+shutting down an idle walk server.
+
+An explicitly socket-pinned client rejects an advertised Step that can realize
+R12-to-R13b before allocating an operation id; a stop-only R12 Step remains
+available. Manual and automatic handoff therefore require the unpinned
+endpoint-following client.
 
 ## Parent Phase Map
 
@@ -190,7 +309,7 @@ Files outside the `prototype1/` subtree:
 | `src/cli/prototype1_state/driver/advance.rs` | Canonical typed batch driver for one parent turn. |
 | `src/cli/prototype1_state/driver/reconstruct.rs` | Read-only durable reconstruction for `walk` from parent identity, journal, child-plan, channel, evaluation, and handoff evidence. |
 | `src/cli/prototype1_state/driver/replay.rs` | Read-only historical replay cursor used by `walk replay/back/forward`. |
-| `src/cli/prototype1_state/walk/` | Local debug server/client/operator surface over typed driver edges and reconstruction. |
+| `src/cli/prototype1_state/walk/` | Authority-bearing walk service, sibling-client protocol, guarded mutations, durable reconstruction, and replay. |
 | `src/cli/prototype1_process.rs` | Child/successor process seam, child execution, successor install, History seal/append, spawn, and ready wait. |
 | `src/cli/prototype1_state/parent.rs` | Parent role states and the child-plan message box. |
 | `src/cli/prototype1_state/identity.rs` | Parent identity file schema and checkout path helpers. |
@@ -206,6 +325,8 @@ Files outside the `prototype1/` subtree:
 
 ## Authority And Debugging Rules
 
+- Treat `walk status --with-version` as the live controller/session authority
+  view. A DB row, process listing, or artifact timestamp cannot replace it.
 - Treat `history/blocks/*` plus `FsBlockStore::append` as the sealed handoff
   authority boundary.
 - Treat `transition-journal.jsonl` as the append-only transition replay stream,
@@ -216,10 +337,19 @@ Files outside the `prototype1/` subtree:
   projections.
 - Treat invocation, ready, completion, channel, and stream files as
   attempt-scoped transport/debug evidence.
+- Treat named `db_query` views as immutable, revision-tagged owner-DB evidence.
+  They do not grant mutation authority or prove that a server is live.
+  `relations` inventories the complete installed schema; `counts` intentionally
+  covers curated core operator and typed-trace relations only. Server
+  phase/session metadata is observed after the database query and is not an
+  atomic revision join.
 - Do not infer live egui or live runtime behavior from a CLI projection.
 - During routine health checks, start with metadata: node counts, status
   counts, mtimes, byte sizes, and disk free. Read JSONL content only for a
   specific anomaly, with record and width caps.
+- Do not use `jq` over campaign files to infer active loop status. Use `jq`
+  only for bounded JSON/log/artifact forensics after the typed operator surfaces
+  identify the relevant coordinate.
 
 ## Quick Operator Sequence
 
@@ -242,9 +372,20 @@ For typestate/debugger work, prefer the `walk` surface:
 ```bash
 P1_PARENT_ROOT="${P1_PARENT_ROOT:?set P1_PARENT_ROOT to the active parent checkout}"
 ./target/debug/ploke-eval loop walk use "$P1_PARENT_ROOT"
-./target/debug/ploke-eval loop walk summary -v
+./target/debug/ploke-eval loop walk status --with-version
+./target/debug/ploke-eval loop walk config --with-version
+./target/debug/ploke-eval loop walk session-history --with-version
+./target/debug/ploke-eval loop walk summary --verbose
+./target/debug/ploke-eval loop walk db_query --view progress
+./target/debug/ploke-eval loop walk db_query --view handoff-evidence
 ./target/debug/ploke-eval loop walk replay --index 0
-./target/debug/ploke-eval loop walk step --until r6
+./target/debug/ploke-eval loop walk step --until r6 --allow-live-api
 ```
 
-Use `walk replay`, `walk back`, and `walk forward` for read-only historical inspection. Use `walk step` only when you intend to drive live typestate edges. Use `doctor --live-protocol-preflight` when provider request shape is the suspected blocker and a live call is acceptable.
+Use `status` for current controller authority, `config` for admitted values,
+`session-history` for ordered operation evidence, `summary --verbose` for
+durable campaign progress, and the named DB views for normalized evidence.
+Use `walk replay`, `walk back`, and `walk forward` for read-only historical
+inspection. Use `walk step` only when you intend to drive live typestate edges.
+Use `doctor --live-protocol-preflight` when provider request shape is the
+suspected blocker and a live call is acceptable.

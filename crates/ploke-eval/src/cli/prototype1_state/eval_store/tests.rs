@@ -1,9 +1,22 @@
-use std::{collections::BTreeMap, fs, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+    sync::OnceLock,
+};
 
 use cozo::DataValue;
 use ploke_db::{Database, QueryResult};
 
-use ploke_llm::request::models::ModelRouteSource;
+use ploke_llm::{
+    LlmError, ProviderAttemptTimeline,
+    manager::{ChatHttpConfig, chat_step_with_attempts},
+    request::models::ModelRouteSource,
+    router_only::{
+        Router,
+        openrouter::{ChatCompFields, OpenRouterModelId},
+    },
+};
 use ploke_protocol::ProtocolReasoningPolicy;
 use ploke_records::{
     agent_turn::{
@@ -18,6 +31,7 @@ use ploke_records::{
     tool_contracts::ToolArgumentsJson,
 };
 use sha2::{Digest, Sha256};
+use tracing_subscriber::EnvFilter;
 
 use super::*;
 use super::{
@@ -27,9 +41,16 @@ use super::{
     CAMPAIGN_PROTOCOL_POLICY_REL, CAMPAIGN_REL, CHILD_PLAN_CHILD_REL, CHILD_PLAN_REJECTED_REL,
     CHILD_PLAN_REL, CLOSURE_ARTIFACT_REF_REL, CLOSURE_INSTANCE_REL, CLOSURE_PROTOCOL_COUNTS_REL,
     CLOSURE_PROTOCOL_PROCEDURE_REL, CLOSURE_REF_REL, CONTINUATION_DECISION_REL,
-    EVALUATION_INSTANCE_REL, EVALUATION_REL, MESSAGE_EVENT_REL, MODEL_EXCHANGE_REL, OPERATION_REL,
-    PATCH_REL, PROFILE_COMMITMENT_REL, SELECTION_CANDIDATE_REL, SELECTION_DECISION_REL,
-    SELECTION_FINDING_REL, SELECTION_SCORE_REL, TOOL_EVENT_REL,
+    EVALUATION_INSTANCE_REL, EVALUATION_REL, HARNESS_DIAGNOSTIC_REL, HARNESS_REQUEST_REL,
+    HARNESS_SUBMISSION_CHANGE_REL, HARNESS_SUBMISSION_CHECK_REL, HARNESS_SUBMISSION_CITATION_REL,
+    HARNESS_SUBMISSION_REL, HARNESS_WORKSPACE_CHANGE_REL, HARNESS_WORKSPACE_REL, MESSAGE_EVENT_REL,
+    MODEL_EXCHANGE_REL, OPERATION_REL, ORACLE_GATE_REL, PARENT_IDENTITY_REL, PARENT_START_REL,
+    PATCH_CHANGE_REL, PATCH_GATE_REL, PATCH_REL, PATCH_REVIEW_REL, PROFILE_COMMITMENT_REL,
+    RUN_PROFILE_POLICY_REL, RUNNER_REQUEST_ARG_REL, RUNNER_REQUEST_REL, RUNNER_REQUEST_TARGET_REL,
+    RUNNER_RESULT_REL, SCHEDULER_NODE_REL, SCHEDULER_NODE_STATUS_REL, SCHEDULER_NODE_TARGET_REL,
+    SELECTION_CANDIDATE_REL, SELECTION_DECISION_REL, SELECTION_FINDING_REL, SELECTION_ORACLE_REL,
+    SELECTION_PATCH_REL, SELECTION_PROJECTION_REL, SELECTION_RECEIPT_REL, SELECTION_SCORE_REL,
+    TOOL_EVENT_REL, WALK_EVENT_REL, WALK_EVENT_TRANSITION_REL,
     api::EvalStorageMode,
     cozo_schema::eval_relation_exists,
     error::EvalStoreError,
@@ -40,6 +61,7 @@ use super::{
         parent_started_db_receipt,
     },
     schema::{EvalRelationSchema, put_eval_params},
+    setup::{CAMPAIGN_EMBEDDING_ROUTE_REL, CAMPAIGN_EVAL_TOKEN_REL},
 };
 use crate::cli::prototype1_state::{
     event::RecordedAt,
@@ -51,10 +73,41 @@ use crate::intervention::{BaselineInstance, CompleteBaseline, RecordStore};
 use crate::{
     BenchmarkFamily, CampaignManifest, ClosureClass, EvalCampaignPolicy, OperationalRunMetrics,
     PatchApplyState, ProtocolCampaignPolicy,
+    campaign::EmbeddingRoute,
     record::SubmissionArtifactState,
     spec::{EvalBudget, FrameworkConfig, FrameworkToolConfig},
     target_registry::RegistryDatasetSource,
 };
+
+static OBSERVATION_URL: OnceLock<&'static str> = OnceLock::new();
+
+#[derive(
+    Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, serde::Serialize, serde::Deserialize,
+)]
+struct ProviderObservationRouter;
+
+impl Router for ProviderObservationRouter {
+    type CompletionFields = ChatCompFields;
+    type RouterModelId = OpenRouterModelId;
+
+    const BASE_URL: &str = "http://127.0.0.1";
+    const COMPLETION_URL: &str = "http://127.0.0.1/v1/chat/completions";
+    const MODELS_URL: &str = "http://127.0.0.1/v1/models";
+    const ENDPOINTS_TAIL: &str = "endpoints";
+    const API_KEY_NAME: &str = "PLOKE_TEST_API_KEY";
+    const PROVIDERS_URL: &str = "http://127.0.0.1/v1/providers";
+
+    fn resolve_api_key() -> Result<String, LlmError> {
+        Ok("test-key".to_string())
+    }
+
+    fn completion_url() -> Result<&'static str, LlmError> {
+        Ok(OBSERVATION_URL
+            .get()
+            .copied()
+            .expect("observation URL must be set before chat_step"))
+    }
+}
 
 #[test]
 fn eval_store_production_code_uses_schema_generated_cozo_scripts() {
@@ -121,6 +174,22 @@ fn non_agent_schema_scripts() -> Vec<(&'static str, String, String)> {
             )
         },
         {
+            let schema = &super::setup::CampaignEmbeddingRouteSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::setup::CampaignEvalTokenSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
             let schema = &super::setup::CampaignEvalBudgetSchema::SCHEMA;
             (
                 schema.relation(),
@@ -138,6 +207,30 @@ fn non_agent_schema_scripts() -> Vec<(&'static str, String, String)> {
         },
         {
             let schema = &super::setup::ProfileCommitmentSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::setup::RunProfilePolicySchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::setup::OracleGateSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::setup::PatchGateSchema::SCHEMA;
             (
                 schema.relation(),
                 schema.script_create(),
@@ -281,6 +374,14 @@ fn non_agent_schema_scripts() -> Vec<(&'static str, String, String)> {
             )
         },
         {
+            let schema = &super::cozo_schema::ProviderAttemptSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
             let schema = &super::child_plan::ChildPlanSchema::SCHEMA;
             (
                 schema.relation(),
@@ -298,6 +399,158 @@ fn non_agent_schema_scripts() -> Vec<(&'static str, String, String)> {
         },
         {
             let schema = &super::child_plan::ChildPlanRejectedSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::scheduler_node::SchedulerNodeSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::scheduler_node::SchedulerNodeStatusSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::scheduler_node::SchedulerNodeTargetSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::runner_io::RunnerRequestSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::runner_io::RunnerRequestArgSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::runner_io::RunnerRequestTargetSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::runner_io::RunnerResultSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::harness::HarnessRequestSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::harness::HarnessDiagnosticSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::harness::HarnessWorkspaceSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::harness::HarnessWorkspaceChangeSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::harness::HarnessSubmissionSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::harness::HarnessSubmissionChangeSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::harness::HarnessSubmissionCitationSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::harness::HarnessSubmissionCheckSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::walk_event::WalkEventSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::walk_event::WalkEventTransitionSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::parent_identity::ParentIdentitySchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::parent_identity::ParentStartSchema::SCHEMA;
             (
                 schema.relation(),
                 schema.script_create(),
@@ -424,6 +677,46 @@ fn non_agent_schema_scripts() -> Vec<(&'static str, String, String)> {
                 schema.script_put(&eval_schema_params(schema)),
             )
         },
+        {
+            let schema = &super::selection::SelectionOracleSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::selection::PatchGateSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::selection::PatchReviewSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::selection::PatchChangeSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::selection::SelectionProjectionSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
     ]
 }
 
@@ -442,6 +735,16 @@ fn eval_store_non_agent_schema_scripts_are_stable() {
             r#"?[campaign_id, include_partial, stop_on_error, limit_count, include_dataset_labels, exclude_dataset_labels, batch_prefix, embedding_model_id, embedding_provider_slug, ingested_at] <- [[$campaign_id, $include_partial, $stop_on_error, $limit_count, $include_dataset_labels, $exclude_dataset_labels, $batch_prefix, $embedding_model_id, $embedding_provider_slug, $ingested_at]] :put eval_campaign_eval_policy { campaign_id => include_partial, stop_on_error, limit_count, include_dataset_labels, exclude_dataset_labels, batch_prefix, embedding_model_id, embedding_provider_slug, ingested_at }"#,
         ),
         (
+            "eval_campaign_embedding_route",
+            r#":create eval_campaign_embedding_route { campaign_id: String => embedding_route: String, ingested_at: String }"#,
+            r#"?[campaign_id, embedding_route, ingested_at] <- [[$campaign_id, $embedding_route, $ingested_at]] :put eval_campaign_embedding_route { campaign_id => embedding_route, ingested_at }"#,
+        ),
+        (
+            "eval_campaign_eval_token",
+            r#":create eval_campaign_eval_token { campaign_id: String => max_tokens: Int?, ingested_at: String }"#,
+            r#"?[campaign_id, max_tokens, ingested_at] <- [[$campaign_id, $max_tokens, $ingested_at]] :put eval_campaign_eval_token { campaign_id => max_tokens, ingested_at }"#,
+        ),
+        (
             "eval_campaign_eval_budget",
             r#":create eval_campaign_eval_budget { campaign_id: String => max_turns: Int, max_tool_calls: Int, wall_clock_secs: Int, ingested_at: String }"#,
             r#"?[campaign_id, max_turns, max_tool_calls, wall_clock_secs, ingested_at] <- [[$campaign_id, $max_turns, $max_tool_calls, $wall_clock_secs, $ingested_at]] :put eval_campaign_eval_budget { campaign_id => max_turns, max_tool_calls, wall_clock_secs, ingested_at }"#,
@@ -455,6 +758,21 @@ fn eval_store_non_agent_schema_scripts_are_stable() {
             "eval_profile_commitment",
             r#":create eval_profile_commitment { profile_ref_id: String => campaign_id: String, schema_version: String, profile_name: String, source_ref: String, profile_path: String, content_sha256: String, source_path: String?, admitted_at: String, storage_ref: String, ingested_at: String }"#,
             r#"?[profile_ref_id, campaign_id, schema_version, profile_name, source_ref, profile_path, content_sha256, source_path, admitted_at, storage_ref, ingested_at] <- [[$profile_ref_id, $campaign_id, $schema_version, $profile_name, $source_ref, $profile_path, $content_sha256, $source_path, $admitted_at, $storage_ref, $ingested_at]] :put eval_profile_commitment { profile_ref_id => campaign_id, schema_version, profile_name, source_ref, profile_path, content_sha256, source_path, admitted_at, storage_ref, ingested_at }"#,
+        ),
+        (
+            "eval_run_profile_policy",
+            r#":create eval_run_profile_policy { campaign_id: String => profile_ref_id: String, schema_version: String, max_generations: Int, max_total_nodes: Int, child_min: Int, child_max: Int, parallel_targets: Int?, schedule_mode: String, stop_first_keep: Bool, require_keep: Bool, explore_rejected: Bool, generation_source: String, selection_strategy: String, selection_evidence: String, selection_seed: Int, metrics_persist: Bool, score_profile: String, imp_enabled: Bool, imp_budget_k: Int, imp_archive: String, imp_score_points: Int, imp_required: Bool, oracle_mode: String, oracle_required: Bool, stop_after: String, observe_stale_secs: Int, trace_jsonl: String, debug_tools: Bool, broad_max_attempts: Int?, fresh_slots: Int?, graph_nearest: Int?, timeout_secs: Int?, control_mode: String, parallel_cap: Int?, ingested_at: String }"#,
+            r#"?[campaign_id, profile_ref_id, schema_version, max_generations, max_total_nodes, child_min, child_max, parallel_targets, schedule_mode, stop_first_keep, require_keep, explore_rejected, generation_source, selection_strategy, selection_evidence, selection_seed, metrics_persist, score_profile, imp_enabled, imp_budget_k, imp_archive, imp_score_points, imp_required, oracle_mode, oracle_required, stop_after, observe_stale_secs, trace_jsonl, debug_tools, broad_max_attempts, fresh_slots, graph_nearest, timeout_secs, control_mode, parallel_cap, ingested_at] <- [[$campaign_id, $profile_ref_id, $schema_version, $max_generations, $max_total_nodes, $child_min, $child_max, $parallel_targets, $schedule_mode, $stop_first_keep, $require_keep, $explore_rejected, $generation_source, $selection_strategy, $selection_evidence, $selection_seed, $metrics_persist, $score_profile, $imp_enabled, $imp_budget_k, $imp_archive, $imp_score_points, $imp_required, $oracle_mode, $oracle_required, $stop_after, $observe_stale_secs, $trace_jsonl, $debug_tools, $broad_max_attempts, $fresh_slots, $graph_nearest, $timeout_secs, $control_mode, $parallel_cap, $ingested_at]] :put eval_run_profile_policy { campaign_id => profile_ref_id, schema_version, max_generations, max_total_nodes, child_min, child_max, parallel_targets, schedule_mode, stop_first_keep, require_keep, explore_rejected, generation_source, selection_strategy, selection_evidence, selection_seed, metrics_persist, score_profile, imp_enabled, imp_budget_k, imp_archive, imp_score_points, imp_required, oracle_mode, oracle_required, stop_after, observe_stale_secs, trace_jsonl, debug_tools, broad_max_attempts, fresh_slots, graph_nearest, timeout_secs, control_mode, parallel_cap, ingested_at }"#,
+        ),
+        (
+            "eval_oracle_gate",
+            r#":create eval_oracle_gate { campaign_id: String => profile_ref_id: String, gate: String, targets: [String], ingested_at: String }"#,
+            r#"?[campaign_id, profile_ref_id, gate, targets, ingested_at] <- [[$campaign_id, $profile_ref_id, $gate, $targets, $ingested_at]] :put eval_oracle_gate { campaign_id => profile_ref_id, gate, targets, ingested_at }"#,
+        ),
+        (
+            "eval_patch_gate",
+            r#":create eval_patch_gate { campaign_id: String => profile_ref_id: String, gate: String, review_config_hash: String?, ingested_at: String }"#,
+            r#"?[campaign_id, profile_ref_id, gate, review_config_hash, ingested_at] <- [[$campaign_id, $profile_ref_id, $gate, $review_config_hash, $ingested_at]] :put eval_patch_gate { campaign_id => profile_ref_id, gate, review_config_hash, ingested_at }"#,
         ),
         (
             "eval_closure_ref",
@@ -542,6 +860,11 @@ fn eval_store_non_agent_schema_scripts_are_stable() {
             r#"?[trace_event_id, campaign_id, parent_id, runtime_id, node_id, generation, branch_id, role, pipeline, stage, authority, transition, event_name, span_name, target, level, outcome, duration_ms, record_access, record_kind, record_path, record_index, record_count, program, exit_code, error, source_log_ref, source_event_index, recorded_at] <- [[$trace_event_id, $campaign_id, $parent_id, $runtime_id, $node_id, $generation, $branch_id, $role, $pipeline, $stage, $authority, $transition, $event_name, $span_name, $target, $level, $outcome, $duration_ms, $record_access, $record_kind, $record_path, $record_index, $record_count, $program, $exit_code, $error, $source_log_ref, $source_event_index, $recorded_at]] :put eval_trace_event { trace_event_id => campaign_id, parent_id, runtime_id, node_id, generation, branch_id, role, pipeline, stage, authority, transition, event_name, span_name, target, level, outcome, duration_ms, record_access, record_kind, record_path, record_index, record_count, program, exit_code, error, source_log_ref, source_event_index, recorded_at }"#,
         ),
         (
+            "eval_provider_attempt",
+            r#":create eval_provider_attempt { provider_attempt_id: String => campaign_id: String?, request_id: String, attempt: Int, max_attempts: Int, started_at_ms: Int, request_sent_ms: Int?, headers_received_ms: Int?, output_started_ms: Int?, output_progress_ms: Int?, output_completed_ms: Int?, failed_ms: Int?, status: Int?, response_bytes: Int?, transport_outcome: String, failure_phase: String?, send_failure: String?, body_failure: String?, response_outcome: String, retry_decision: String, retry_after_ms: Int?, backoff_ms: Int?, error: String?, source_log_ref: String, source_event_index: Int, recorded_at: String? }"#,
+            r#"?[provider_attempt_id, campaign_id, request_id, attempt, max_attempts, started_at_ms, request_sent_ms, headers_received_ms, output_started_ms, output_progress_ms, output_completed_ms, failed_ms, status, response_bytes, transport_outcome, failure_phase, send_failure, body_failure, response_outcome, retry_decision, retry_after_ms, backoff_ms, error, source_log_ref, source_event_index, recorded_at] <- [[$provider_attempt_id, $campaign_id, $request_id, $attempt, $max_attempts, $started_at_ms, $request_sent_ms, $headers_received_ms, $output_started_ms, $output_progress_ms, $output_completed_ms, $failed_ms, $status, $response_bytes, $transport_outcome, $failure_phase, $send_failure, $body_failure, $response_outcome, $retry_decision, $retry_after_ms, $backoff_ms, $error, $source_log_ref, $source_event_index, $recorded_at]] :put eval_provider_attempt { provider_attempt_id => campaign_id, request_id, attempt, max_attempts, started_at_ms, request_sent_ms, headers_received_ms, output_started_ms, output_progress_ms, output_completed_ms, failed_ms, status, response_bytes, transport_outcome, failure_phase, send_failure, body_failure, response_outcome, retry_decision, retry_after_ms, backoff_ms, error, source_log_ref, source_event_index, recorded_at }"#,
+        ),
+        (
             "eval_child_plan",
             r#":create eval_child_plan { plan_id: String => campaign_id: String, schema_version: String, parent_node_id: String, child_generation: Int, message_path: String, message_sha256: String, child_count: Int, rejected_count: Int, recorded_at: String, ingested_at: String }"#,
             r#"?[plan_id, campaign_id, schema_version, parent_node_id, child_generation, message_path, message_sha256, child_count, rejected_count, recorded_at, ingested_at] <- [[$plan_id, $campaign_id, $schema_version, $parent_node_id, $child_generation, $message_path, $message_sha256, $child_count, $rejected_count, $recorded_at, $ingested_at]] :put eval_child_plan { plan_id => campaign_id, schema_version, parent_node_id, child_generation, message_path, message_sha256, child_count, rejected_count, recorded_at, ingested_at }"#,
@@ -555,6 +878,101 @@ fn eval_store_non_agent_schema_scripts_are_stable() {
             "eval_child_plan_rejected_attempt",
             r#":create eval_child_plan_rejected_attempt { plan_id: String, attempt_index: Int => campaign_id: String, parent_node_id: String, producer_id: String, proposal_id: String, run_id: String, policy: String, target_relpath: String, outcome: String, reason: String? }"#,
             r#"?[plan_id, attempt_index, campaign_id, parent_node_id, producer_id, proposal_id, run_id, policy, target_relpath, outcome, reason] <- [[$plan_id, $attempt_index, $campaign_id, $parent_node_id, $producer_id, $proposal_id, $run_id, $policy, $target_relpath, $outcome, $reason]] :put eval_child_plan_rejected_attempt { plan_id, attempt_index => campaign_id, parent_node_id, producer_id, proposal_id, run_id, policy, target_relpath, outcome, reason }"#,
+        ),
+        (
+            "eval_scheduler_node",
+            r#":create eval_scheduler_node { campaign_id: String, node_id: String => projection_schema_version: String, node_schema_version: String, parent_node_id: String?, generation: Int, instance_id: String, source_state_id: String, operation_target_kind: String?, base_artifact_id: String?, patch_id: String?, derived_artifact_id: String?, parent_branch_id: String?, branch_id: String, candidate_id: String, target_relpath: String, node_path: String, node_dir: String, workspace_root: String, binary_path: String, runner_request_path: String, runner_result_path: String, status: String, created_at: String, updated_at: String, content_sha256: String, ingested_at: String }"#,
+            r#"?[campaign_id, node_id, projection_schema_version, node_schema_version, parent_node_id, generation, instance_id, source_state_id, operation_target_kind, base_artifact_id, patch_id, derived_artifact_id, parent_branch_id, branch_id, candidate_id, target_relpath, node_path, node_dir, workspace_root, binary_path, runner_request_path, runner_result_path, status, created_at, updated_at, content_sha256, ingested_at] <- [[$campaign_id, $node_id, $projection_schema_version, $node_schema_version, $parent_node_id, $generation, $instance_id, $source_state_id, $operation_target_kind, $base_artifact_id, $patch_id, $derived_artifact_id, $parent_branch_id, $branch_id, $candidate_id, $target_relpath, $node_path, $node_dir, $workspace_root, $binary_path, $runner_request_path, $runner_result_path, $status, $created_at, $updated_at, $content_sha256, $ingested_at]] :put eval_scheduler_node { campaign_id, node_id => projection_schema_version, node_schema_version, parent_node_id, generation, instance_id, source_state_id, operation_target_kind, base_artifact_id, patch_id, derived_artifact_id, parent_branch_id, branch_id, candidate_id, target_relpath, node_path, node_dir, workspace_root, binary_path, runner_request_path, runner_result_path, status, created_at, updated_at, content_sha256, ingested_at }"#,
+        ),
+        (
+            "eval_scheduler_node_status_event",
+            r#":create eval_scheduler_node_status_event { status_event_id: String => campaign_id: String, node_id: String, projection_schema_version: String, node_schema_version: String, generation: Int, branch_id: String, candidate_id: String, target_relpath: String, status: String, node_path: String, content_sha256: String, recorded_at: String, ingested_at: String }"#,
+            r#"?[status_event_id, campaign_id, node_id, projection_schema_version, node_schema_version, generation, branch_id, candidate_id, target_relpath, status, node_path, content_sha256, recorded_at, ingested_at] <- [[$status_event_id, $campaign_id, $node_id, $projection_schema_version, $node_schema_version, $generation, $branch_id, $candidate_id, $target_relpath, $status, $node_path, $content_sha256, $recorded_at, $ingested_at]] :put eval_scheduler_node_status_event { status_event_id => campaign_id, node_id, projection_schema_version, node_schema_version, generation, branch_id, candidate_id, target_relpath, status, node_path, content_sha256, recorded_at, ingested_at }"#,
+        ),
+        (
+            "eval_scheduler_node_target_part",
+            r#":create eval_scheduler_node_target_part { campaign_id: String, node_id: String, content_sha256: String, target_part: String, target_index: Int => projection_schema_version: String, target_kind: String, artifact_id: String?, patch_id: String?, base_artifact_id: String? }"#,
+            r#"?[campaign_id, node_id, content_sha256, target_part, target_index, projection_schema_version, target_kind, artifact_id, patch_id, base_artifact_id] <- [[$campaign_id, $node_id, $content_sha256, $target_part, $target_index, $projection_schema_version, $target_kind, $artifact_id, $patch_id, $base_artifact_id]] :put eval_scheduler_node_target_part { campaign_id, node_id, content_sha256, target_part, target_index => projection_schema_version, target_kind, artifact_id, patch_id, base_artifact_id }"#,
+        ),
+        (
+            "eval_runner_request",
+            r#":create eval_runner_request { campaign_id: String, node_id: String => projection_schema_version: String, request_schema_version: String, generation: Int, instance_id: String, source_state_id: String, operation_target_kind: String?, base_artifact_id: String?, patch_id: String?, derived_artifact_id: String?, branch_id: String, target_relpath: String, workspace_root: String, binary_path: String, request_path: String, stop_on_error: Bool, runner_arg_count: Int, content_sha256: String, ingested_at: String }"#,
+            r#"?[campaign_id, node_id, projection_schema_version, request_schema_version, generation, instance_id, source_state_id, operation_target_kind, base_artifact_id, patch_id, derived_artifact_id, branch_id, target_relpath, workspace_root, binary_path, request_path, stop_on_error, runner_arg_count, content_sha256, ingested_at] <- [[$campaign_id, $node_id, $projection_schema_version, $request_schema_version, $generation, $instance_id, $source_state_id, $operation_target_kind, $base_artifact_id, $patch_id, $derived_artifact_id, $branch_id, $target_relpath, $workspace_root, $binary_path, $request_path, $stop_on_error, $runner_arg_count, $content_sha256, $ingested_at]] :put eval_runner_request { campaign_id, node_id => projection_schema_version, request_schema_version, generation, instance_id, source_state_id, operation_target_kind, base_artifact_id, patch_id, derived_artifact_id, branch_id, target_relpath, workspace_root, binary_path, request_path, stop_on_error, runner_arg_count, content_sha256, ingested_at }"#,
+        ),
+        (
+            "eval_runner_request_arg",
+            r#":create eval_runner_request_arg { campaign_id: String, node_id: String, content_sha256: String, arg_index: Int => projection_schema_version: String, arg_value: String }"#,
+            r#"?[campaign_id, node_id, content_sha256, arg_index, projection_schema_version, arg_value] <- [[$campaign_id, $node_id, $content_sha256, $arg_index, $projection_schema_version, $arg_value]] :put eval_runner_request_arg { campaign_id, node_id, content_sha256, arg_index => projection_schema_version, arg_value }"#,
+        ),
+        (
+            "eval_runner_request_target_part",
+            r#":create eval_runner_request_target_part { campaign_id: String, node_id: String, content_sha256: String, target_part: String, target_index: Int => projection_schema_version: String, target_kind: String, artifact_id: String?, patch_id: String?, base_artifact_id: String? }"#,
+            r#"?[campaign_id, node_id, content_sha256, target_part, target_index, projection_schema_version, target_kind, artifact_id, patch_id, base_artifact_id] <- [[$campaign_id, $node_id, $content_sha256, $target_part, $target_index, $projection_schema_version, $target_kind, $artifact_id, $patch_id, $base_artifact_id]] :put eval_runner_request_target_part { campaign_id, node_id, content_sha256, target_part, target_index => projection_schema_version, target_kind, artifact_id, patch_id, base_artifact_id }"#,
+        ),
+        (
+            "eval_runner_result",
+            r#":create eval_runner_result { campaign_id: String, node_id: String, result_path: String => projection_schema_version: String, result_schema_version: String, generation: Int, branch_id: String, status: String, disposition: String, treatment_campaign_id: String?, evaluation_artifact_path: String?, detail: String?, exit_code: Int?, stdout_excerpt: String?, stderr_excerpt: String?, runtime_id: String?, path_kind: String, content_sha256: String, recorded_at: String, ingested_at: String }"#,
+            r#"?[campaign_id, node_id, result_path, projection_schema_version, result_schema_version, generation, branch_id, status, disposition, treatment_campaign_id, evaluation_artifact_path, detail, exit_code, stdout_excerpt, stderr_excerpt, runtime_id, path_kind, content_sha256, recorded_at, ingested_at] <- [[$campaign_id, $node_id, $result_path, $projection_schema_version, $result_schema_version, $generation, $branch_id, $status, $disposition, $treatment_campaign_id, $evaluation_artifact_path, $detail, $exit_code, $stdout_excerpt, $stderr_excerpt, $runtime_id, $path_kind, $content_sha256, $recorded_at, $ingested_at]] :put eval_runner_result { campaign_id, node_id, result_path => projection_schema_version, result_schema_version, generation, branch_id, status, disposition, treatment_campaign_id, evaluation_artifact_path, detail, exit_code, stdout_excerpt, stderr_excerpt, runtime_id, path_kind, content_sha256, recorded_at, ingested_at }"#,
+        ),
+        (
+            "eval_harness_request",
+            r#":create eval_harness_request { request_id: String => campaign_id: String, schema_version: String, request_hash: String, parent_node_id: String, request_path: String, prompt_path: String, submitted_path: String, workspace_path: String, source_repo: String, child_min: Int, child_max: Int, graph_nearest: Int, edit_policy: String, admission_policy: String, request_sha256: String, prompt_sha256: String, ingested_at: String }"#,
+            r#"?[request_id, campaign_id, schema_version, request_hash, parent_node_id, request_path, prompt_path, submitted_path, workspace_path, source_repo, child_min, child_max, graph_nearest, edit_policy, admission_policy, request_sha256, prompt_sha256, ingested_at] <- [[$request_id, $campaign_id, $schema_version, $request_hash, $parent_node_id, $request_path, $prompt_path, $submitted_path, $workspace_path, $source_repo, $child_min, $child_max, $graph_nearest, $edit_policy, $admission_policy, $request_sha256, $prompt_sha256, $ingested_at]] :put eval_harness_request { request_id => campaign_id, schema_version, request_hash, parent_node_id, request_path, prompt_path, submitted_path, workspace_path, source_repo, child_min, child_max, graph_nearest, edit_policy, admission_policy, request_sha256, prompt_sha256, ingested_at }"#,
+        ),
+        (
+            "eval_harness_diagnostic",
+            r#":create eval_harness_diagnostic { request_id: String, diagnostics_path: String => campaign_id: String, schema_version: String, terminal_kind: String?, terminal_detail: String?, attempts: Int, events: Int, validations: Int, prompts: Int, tool_requests: Int, tool_completed: Int, tool_failed: Int, turns: Int, proposals: Int, assistants: Int, outcomes: Int, first_tool: String?, last_tool: String?, content_sha256: String, ingested_at: String }"#,
+            r#"?[request_id, diagnostics_path, campaign_id, schema_version, terminal_kind, terminal_detail, attempts, events, validations, prompts, tool_requests, tool_completed, tool_failed, turns, proposals, assistants, outcomes, first_tool, last_tool, content_sha256, ingested_at] <- [[$request_id, $diagnostics_path, $campaign_id, $schema_version, $terminal_kind, $terminal_detail, $attempts, $events, $validations, $prompts, $tool_requests, $tool_completed, $tool_failed, $turns, $proposals, $assistants, $outcomes, $first_tool, $last_tool, $content_sha256, $ingested_at]] :put eval_harness_diagnostic { request_id, diagnostics_path => campaign_id, schema_version, terminal_kind, terminal_detail, attempts, events, validations, prompts, tool_requests, tool_completed, tool_failed, turns, proposals, assistants, outcomes, first_tool, last_tool, content_sha256, ingested_at }"#,
+        ),
+        (
+            "eval_harness_workspace",
+            r#":create eval_harness_workspace { request_id: String, diagnostics_path: String => campaign_id: String, schema_version: String, workspace_path: String, source_repo: String, exists: Bool, git_status_ok: Bool, status_error: String?, change_count: Int, ingested_at: String }"#,
+            r#"?[request_id, diagnostics_path, campaign_id, schema_version, workspace_path, source_repo, exists, git_status_ok, status_error, change_count, ingested_at] <- [[$request_id, $diagnostics_path, $campaign_id, $schema_version, $workspace_path, $source_repo, $exists, $git_status_ok, $status_error, $change_count, $ingested_at]] :put eval_harness_workspace { request_id, diagnostics_path => campaign_id, schema_version, workspace_path, source_repo, exists, git_status_ok, status_error, change_count, ingested_at }"#,
+        ),
+        (
+            "eval_harness_workspace_change",
+            r#":create eval_harness_workspace_change { request_id: String, diagnostics_path: String, change_index: Int => campaign_id: String, schema_version: String, status_code: String, path: String, original_path: String? }"#,
+            r#"?[request_id, diagnostics_path, change_index, campaign_id, schema_version, status_code, path, original_path] <- [[$request_id, $diagnostics_path, $change_index, $campaign_id, $schema_version, $status_code, $path, $original_path]] :put eval_harness_workspace_change { request_id, diagnostics_path, change_index => campaign_id, schema_version, status_code, path, original_path }"#,
+        ),
+        (
+            "eval_harness_submission",
+            r#":create eval_harness_submission { request_id: String => campaign_id: String, schema_version: String, request_hash: String, parent_node_id: String, workspace_path: String, submitted_path: String, result_sha256: String, changed_file_count: Int, citation_count: Int, check_count: Int, hypothesis: String, expected_effect: String, ingested_at: String }"#,
+            r#"?[request_id, campaign_id, schema_version, request_hash, parent_node_id, workspace_path, submitted_path, result_sha256, changed_file_count, citation_count, check_count, hypothesis, expected_effect, ingested_at] <- [[$request_id, $campaign_id, $schema_version, $request_hash, $parent_node_id, $workspace_path, $submitted_path, $result_sha256, $changed_file_count, $citation_count, $check_count, $hypothesis, $expected_effect, $ingested_at]] :put eval_harness_submission { request_id => campaign_id, schema_version, request_hash, parent_node_id, workspace_path, submitted_path, result_sha256, changed_file_count, citation_count, check_count, hypothesis, expected_effect, ingested_at }"#,
+        ),
+        (
+            "eval_harness_submission_change",
+            r#":create eval_harness_submission_change { request_id: String, change_index: Int => campaign_id: String, schema_version: String, workspace_relpath: String, summary: String }"#,
+            r#"?[request_id, change_index, campaign_id, schema_version, workspace_relpath, summary] <- [[$request_id, $change_index, $campaign_id, $schema_version, $workspace_relpath, $summary]] :put eval_harness_submission_change { request_id, change_index => campaign_id, schema_version, workspace_relpath, summary }"#,
+        ),
+        (
+            "eval_harness_submission_citation",
+            r#":create eval_harness_submission_citation { request_id: String, citation_index: Int => campaign_id: String, schema_version: String, kind: String, location: String, summary: String }"#,
+            r#"?[request_id, citation_index, campaign_id, schema_version, kind, location, summary] <- [[$request_id, $citation_index, $campaign_id, $schema_version, $kind, $location, $summary]] :put eval_harness_submission_citation { request_id, citation_index => campaign_id, schema_version, kind, location, summary }"#,
+        ),
+        (
+            "eval_harness_submission_check",
+            r#":create eval_harness_submission_check { request_id: String, check_index: Int => campaign_id: String, schema_version: String, label: String, command: String, success_signal: String }"#,
+            r#"?[request_id, check_index, campaign_id, schema_version, label, command, success_signal] <- [[$request_id, $check_index, $campaign_id, $schema_version, $label, $command, $success_signal]] :put eval_harness_submission_check { request_id, check_index => campaign_id, schema_version, label, command, success_signal }"#,
+        ),
+        (
+            "eval_walk_event",
+            r#":create eval_walk_event { event_id: String => campaign_id: String, schema_version: String, node_id: String, parent_id: String, generation: Int, branch_id: String, command: String, status: String, phase_before: String?, phase_after: String, target_phase: String?, watch: Bool?, allow_live_api: Bool?, allow_git_changes: Bool?, transition_count: Int, protocol_version: Int, transition_graph_version: String, repo_root: String, exe_path: String, exe_sha256: String, exe_modified_unix_ms: Int?, git_head: String?, source_status_hash: String?, recorded_at: String, ingested_at: String }"#,
+            r#"?[event_id, campaign_id, schema_version, node_id, parent_id, generation, branch_id, command, status, phase_before, phase_after, target_phase, watch, allow_live_api, allow_git_changes, transition_count, protocol_version, transition_graph_version, repo_root, exe_path, exe_sha256, exe_modified_unix_ms, git_head, source_status_hash, recorded_at, ingested_at] <- [[$event_id, $campaign_id, $schema_version, $node_id, $parent_id, $generation, $branch_id, $command, $status, $phase_before, $phase_after, $target_phase, $watch, $allow_live_api, $allow_git_changes, $transition_count, $protocol_version, $transition_graph_version, $repo_root, $exe_path, $exe_sha256, $exe_modified_unix_ms, $git_head, $source_status_hash, $recorded_at, $ingested_at]] :put eval_walk_event { event_id => campaign_id, schema_version, node_id, parent_id, generation, branch_id, command, status, phase_before, phase_after, target_phase, watch, allow_live_api, allow_git_changes, transition_count, protocol_version, transition_graph_version, repo_root, exe_path, exe_sha256, exe_modified_unix_ms, git_head, source_status_hash, recorded_at, ingested_at }"#,
+        ),
+        (
+            "eval_walk_event_transition",
+            r#":create eval_walk_event_transition { event_id: String, transition_index: Int => campaign_id: String, schema_version: String, transition_label: String }"#,
+            r#"?[event_id, transition_index, campaign_id, schema_version, transition_label] <- [[$event_id, $transition_index, $campaign_id, $schema_version, $transition_label]] :put eval_walk_event_transition { event_id, transition_index => campaign_id, schema_version, transition_label }"#,
+        ),
+        (
+            "eval_parent_identity",
+            r#":create eval_parent_identity { campaign_id: String, parent_id: String => schema_version: String, identity_schema_version: String, node_id: String, generation: Int, branch_id: String, artifact_branch: String?, instance_id: String?, previous_parent_id: String?, parent_node_id: String?, identity_created_at: String, semantic_hash: String, ingested_at: String }"#,
+            r#"?[campaign_id, parent_id, schema_version, identity_schema_version, node_id, generation, branch_id, artifact_branch, instance_id, previous_parent_id, parent_node_id, identity_created_at, semantic_hash, ingested_at] <- [[$campaign_id, $parent_id, $schema_version, $identity_schema_version, $node_id, $generation, $branch_id, $artifact_branch, $instance_id, $previous_parent_id, $parent_node_id, $identity_created_at, $semantic_hash, $ingested_at]] :put eval_parent_identity { campaign_id, parent_id => schema_version, identity_schema_version, node_id, generation, branch_id, artifact_branch, instance_id, previous_parent_id, parent_node_id, identity_created_at, semantic_hash, ingested_at }"#,
+        ),
+        (
+            "eval_parent_start",
+            r#":create eval_parent_start { start_event_id: String => campaign_id: String, schema_version: String, parent_id: String, node_id: String, generation: Int, branch_id: String, repo_root: String, startup_kind: String, handoff_runtime_id: String?, pid: Int, source_stream_id: String, source_event_index: Int, source_line: Int, parent_recorded_at: Int, resource_recorded_at: Int, semantic_hash: String, ingested_at: String }"#,
+            r#"?[start_event_id, campaign_id, schema_version, parent_id, node_id, generation, branch_id, repo_root, startup_kind, handoff_runtime_id, pid, source_stream_id, source_event_index, source_line, parent_recorded_at, resource_recorded_at, semantic_hash, ingested_at] <- [[$start_event_id, $campaign_id, $schema_version, $parent_id, $node_id, $generation, $branch_id, $repo_root, $startup_kind, $handoff_runtime_id, $pid, $source_stream_id, $source_event_index, $source_line, $parent_recorded_at, $resource_recorded_at, $semantic_hash, $ingested_at]] :put eval_parent_start { start_event_id => campaign_id, schema_version, parent_id, node_id, generation, branch_id, repo_root, startup_kind, handoff_runtime_id, pid, source_stream_id, source_event_index, source_line, parent_recorded_at, resource_recorded_at, semantic_hash, ingested_at }"#,
         ),
         (
             "eval_artifact",
@@ -630,6 +1048,31 @@ fn eval_store_non_agent_schema_scripts_are_stable() {
             "eval_selection_score",
             r#":create eval_selection_score { decision_id: String, member_id: String => formula_id: String, score_json: String, weight: Float?, rank: Int?, selected: Bool }"#,
             r#"?[decision_id, member_id, formula_id, score_json, weight, rank, selected] <- [[$decision_id, $member_id, $formula_id, $score_json, $weight, $rank, $selected]] :put eval_selection_score { decision_id, member_id => formula_id, score_json, weight, rank, selected }"#,
+        ),
+        (
+            "eval_selection_oracle",
+            r#":create eval_selection_oracle { decision_id: String => mode: String, require_evidence: Bool, gate: String, targets: [String], formula_id: String? }"#,
+            r#"?[decision_id, mode, require_evidence, gate, targets, formula_id] <- [[$decision_id, $mode, $require_evidence, $gate, $targets, $formula_id]] :put eval_selection_oracle { decision_id => mode, require_evidence, gate, targets, formula_id }"#,
+        ),
+        (
+            "eval_selection_patch_gate",
+            r#":create eval_selection_patch_gate { decision_id: String => gate: String }"#,
+            r#"?[decision_id, gate] <- [[$decision_id, $gate]] :put eval_selection_patch_gate { decision_id => gate }"#,
+        ),
+        (
+            "eval_selection_patch_review",
+            r#":create eval_selection_patch_review { decision_id: String, member_id: String => schema_version: Int, procedure_id: String, node_id: String, branch_id: String, generation: Int, artifact_id: String, artifact_surface_hash: String, evaluation_hash: String, config_hash: String, change_set_hash: String, verdict: String, confidence: String, blocking_findings: [String], missing_evidence: [String], rationale: [String], citation_ref: String, citation_hash: String?, record_name: String? }"#,
+            r#"?[decision_id, member_id, schema_version, procedure_id, node_id, branch_id, generation, artifact_id, artifact_surface_hash, evaluation_hash, config_hash, change_set_hash, verdict, confidence, blocking_findings, missing_evidence, rationale, citation_ref, citation_hash, record_name] <- [[$decision_id, $member_id, $schema_version, $procedure_id, $node_id, $branch_id, $generation, $artifact_id, $artifact_surface_hash, $evaluation_hash, $config_hash, $change_set_hash, $verdict, $confidence, $blocking_findings, $missing_evidence, $rationale, $citation_ref, $citation_hash, $record_name]] :put eval_selection_patch_review { decision_id, member_id => schema_version, procedure_id, node_id, branch_id, generation, artifact_id, artifact_surface_hash, evaluation_hash, config_hash, change_set_hash, verdict, confidence, blocking_findings, missing_evidence, rationale, citation_ref, citation_hash, record_name }"#,
+        ),
+        (
+            "eval_selection_patch_change",
+            r#":create eval_selection_patch_change { decision_id: String, member_id: String, change_index: Int => relpath: String, source_content_hash: String?, proposed_content_hash: String? }"#,
+            r#"?[decision_id, member_id, change_index, relpath, source_content_hash, proposed_content_hash] <- [[$decision_id, $member_id, $change_index, $relpath, $source_content_hash, $proposed_content_hash]] :put eval_selection_patch_change { decision_id, member_id, change_index => relpath, source_content_hash, proposed_content_hash }"#,
+        ),
+        (
+            "eval_selection_projection_failure",
+            r#":create eval_selection_projection_failure { decision_id: String, failure_id: String => candidate_subject: String?, kind: String, message: String? }"#,
+            r#"?[decision_id, failure_id, candidate_subject, kind, message] <- [[$decision_id, $failure_id, $candidate_subject, $kind, $message]] :put eval_selection_projection_failure { decision_id, failure_id => candidate_subject, kind, message }"#,
         ),
     ];
 
@@ -730,6 +1173,10 @@ fn prototype1_eval_store_parent_start_db_schema_installs_idempotently() {
             .expect("campaign eval policy rel exists")
     );
     assert!(
+        eval_relation_exists(&db, CAMPAIGN_EMBEDDING_ROUTE_REL)
+            .expect("campaign embedding route rel exists")
+    );
+    assert!(
         eval_relation_exists(&db, CAMPAIGN_EVAL_BUDGET_REL)
             .expect("campaign eval budget rel exists")
     );
@@ -740,6 +1187,11 @@ fn prototype1_eval_store_parent_start_db_schema_installs_idempotently() {
     assert!(
         eval_relation_exists(&db, PROFILE_COMMITMENT_REL).expect("profile commitment rel exists")
     );
+    assert!(
+        eval_relation_exists(&db, RUN_PROFILE_POLICY_REL).expect("run profile policy rel exists")
+    );
+    assert!(eval_relation_exists(&db, ORACLE_GATE_REL).expect("oracle gate rel exists"));
+    assert!(eval_relation_exists(&db, PATCH_GATE_REL).expect("patch gate rel exists"));
     assert!(eval_relation_exists(&db, CLOSURE_REF_REL).expect("closure ref rel exists"));
     assert!(eval_relation_exists(&db, CLOSURE_INSTANCE_REL).expect("closure instance rel exists"));
     assert!(
@@ -779,12 +1231,25 @@ fn prototype1_eval_store_parent_start_db_schema_installs_idempotently() {
         eval_relation_exists(&db, SELECTION_DECISION_REL).expect("selection decision rel exists")
     );
     assert!(
+        eval_relation_exists(&db, SELECTION_RECEIPT_REL).expect("selection receipt rel exists")
+    );
+    assert!(
         eval_relation_exists(&db, SELECTION_CANDIDATE_REL).expect("selection candidate rel exists")
     );
     assert!(
         eval_relation_exists(&db, SELECTION_FINDING_REL).expect("selection finding rel exists")
     );
     assert!(eval_relation_exists(&db, SELECTION_SCORE_REL).expect("selection score rel exists"));
+    assert!(eval_relation_exists(&db, SELECTION_ORACLE_REL).expect("selection oracle rel exists"));
+    assert!(
+        eval_relation_exists(&db, SELECTION_PATCH_REL).expect("selection patch gate rel exists")
+    );
+    assert!(eval_relation_exists(&db, PATCH_REVIEW_REL).expect("patch review rel exists"));
+    assert!(eval_relation_exists(&db, PATCH_CHANGE_REL).expect("patch change rel exists"));
+    assert!(
+        eval_relation_exists(&db, SELECTION_PROJECTION_REL)
+            .expect("selection projection failure rel exists")
+    );
     assert!(eval_relation_exists(&db, ARTIFACT_REL).expect("artifact rel exists"));
     assert!(eval_relation_exists(&db, ARTIFACT_SURFACE_REL).expect("artifact surface rel exists"));
     assert!(eval_relation_exists(&db, ARTIFACT_REF_REL).expect("artifact ref rel exists"));
@@ -801,11 +1266,1416 @@ fn prototype1_eval_store_parent_start_db_schema_installs_idempotently() {
     assert!(
         eval_relation_exists(&db, CHILD_PLAN_REJECTED_REL).expect("child plan rejected rel exists")
     );
+    assert!(eval_relation_exists(&db, SCHEDULER_NODE_REL).expect("scheduler node rel exists"));
+    assert!(
+        eval_relation_exists(&db, SCHEDULER_NODE_STATUS_REL)
+            .expect("scheduler node status rel exists")
+    );
+    assert!(
+        eval_relation_exists(&db, SCHEDULER_NODE_TARGET_REL)
+            .expect("scheduler node target rel exists")
+    );
+    assert!(eval_relation_exists(&db, RUNNER_REQUEST_REL).expect("runner request rel exists"));
+    assert!(
+        eval_relation_exists(&db, RUNNER_REQUEST_ARG_REL).expect("runner request arg rel exists")
+    );
+    assert!(
+        eval_relation_exists(&db, RUNNER_REQUEST_TARGET_REL)
+            .expect("runner request target rel exists")
+    );
+    assert!(eval_relation_exists(&db, RUNNER_RESULT_REL).expect("runner result rel exists"));
+    assert!(eval_relation_exists(&db, HARNESS_REQUEST_REL).expect("harness request rel exists"));
+    assert!(
+        eval_relation_exists(&db, HARNESS_DIAGNOSTIC_REL).expect("harness diagnostic rel exists")
+    );
+    assert!(
+        eval_relation_exists(&db, HARNESS_WORKSPACE_REL).expect("harness workspace rel exists")
+    );
+    assert!(
+        eval_relation_exists(&db, HARNESS_WORKSPACE_CHANGE_REL)
+            .expect("harness workspace change rel exists")
+    );
+    assert!(
+        eval_relation_exists(&db, HARNESS_SUBMISSION_REL).expect("harness submission rel exists")
+    );
+    assert!(
+        eval_relation_exists(&db, HARNESS_SUBMISSION_CHANGE_REL)
+            .expect("harness submission change rel exists")
+    );
+    assert!(
+        eval_relation_exists(&db, HARNESS_SUBMISSION_CITATION_REL)
+            .expect("harness submission citation rel exists")
+    );
+    assert!(
+        eval_relation_exists(&db, HARNESS_SUBMISSION_CHECK_REL)
+            .expect("harness submission check rel exists")
+    );
+    assert!(eval_relation_exists(&db, PARENT_IDENTITY_REL).expect("parent identity rel exists"));
+    assert!(eval_relation_exists(&db, PARENT_START_REL).expect("parent start rel exists"));
+    assert!(eval_relation_exists(&db, WALK_EVENT_REL).expect("walk event rel exists"));
+    assert!(
+        eval_relation_exists(&db, WALK_EVENT_TRANSITION_REL)
+            .expect("walk event transition rel exists")
+    );
     assert!(eval_relation_exists(&db, AGENT_TURN_REL).expect("agent turn rel exists"));
     assert!(eval_relation_exists(&db, AGENT_TURN_EVENT_REL).expect("agent turn event rel exists"));
     assert!(eval_relation_exists(&db, MODEL_EXCHANGE_REL).expect("model exchange rel exists"));
     assert!(eval_relation_exists(&db, MESSAGE_EVENT_REL).expect("message event rel exists"));
     assert!(eval_relation_exists(&db, TOOL_EVENT_REL).expect("tool event rel exists"));
+}
+
+#[test]
+fn oracle_gate_schema_installs_additively() {
+    let db = Database::new_init().expect("db");
+    let store = DbEvalStore::new(&db);
+    store.install_schema().expect("current schema installs");
+    db.raw_query_mut_params("::remove eval_oracle_gate", BTreeMap::new())
+        .expect("remove additive oracle relation");
+
+    assert!(eval_relation_exists(&db, RUN_PROFILE_POLICY_REL).expect("legacy policy exists"));
+    assert!(!eval_relation_exists(&db, ORACLE_GATE_REL).expect("oracle gate absent"));
+
+    store
+        .install_schema()
+        .expect("oracle gate relation installs without rewriting policy schema");
+
+    assert!(eval_relation_exists(&db, ORACLE_GATE_REL).expect("oracle gate restored"));
+}
+
+#[test]
+fn patch_gate_schema_installs_additively() {
+    let db = Database::new_init().expect("db");
+    let store = DbEvalStore::new(&db);
+    store.install_schema().expect("current schema installs");
+    db.raw_query_mut_params("::remove eval_patch_gate", BTreeMap::new())
+        .expect("remove additive patch relation");
+
+    assert!(eval_relation_exists(&db, RUN_PROFILE_POLICY_REL).expect("legacy policy exists"));
+    assert!(!eval_relation_exists(&db, PATCH_GATE_REL).expect("patch gate absent"));
+
+    store
+        .install_schema()
+        .expect("patch gate relation installs without rewriting policy schema");
+
+    assert!(eval_relation_exists(&db, PATCH_GATE_REL).expect("patch gate restored"));
+}
+
+#[test]
+fn selection_oracle_schema_installs_additively() {
+    let db = Database::new_init().expect("db");
+    let store = DbEvalStore::new(&db);
+    store.install_schema().expect("current schema installs");
+    db.raw_query_mut_params("::remove eval_selection_oracle", BTreeMap::new())
+        .expect("remove additive selection oracle relation");
+
+    assert!(eval_relation_exists(&db, SELECTION_DECISION_REL).expect("selection decision exists"));
+    assert!(!eval_relation_exists(&db, SELECTION_ORACLE_REL).expect("selection oracle absent"));
+
+    store
+        .install_schema()
+        .expect("selection oracle relation installs without rewriting decision schema");
+
+    assert!(eval_relation_exists(&db, SELECTION_ORACLE_REL).expect("selection oracle restored"));
+}
+
+#[test]
+fn selection_patch_schema_installs_additively() {
+    let db = Database::new_init().expect("db");
+    let store = DbEvalStore::new(&db);
+    store.install_schema().expect("current schema installs");
+    db.raw_query_mut_params("::remove eval_selection_patch_gate", BTreeMap::new())
+        .expect("remove additive selection patch gate");
+    db.raw_query_mut_params("::remove eval_selection_patch_review", BTreeMap::new())
+        .expect("remove additive selection patch reviews");
+    db.raw_query_mut_params("::remove eval_selection_patch_change", BTreeMap::new())
+        .expect("remove additive selection patch changes");
+
+    assert!(eval_relation_exists(&db, SELECTION_DECISION_REL).expect("selection decision exists"));
+    assert!(!eval_relation_exists(&db, SELECTION_PATCH_REL).expect("selection patch gate absent"));
+    assert!(!eval_relation_exists(&db, PATCH_REVIEW_REL).expect("patch reviews absent"));
+    assert!(!eval_relation_exists(&db, PATCH_CHANGE_REL).expect("patch changes absent"));
+
+    store
+        .install_schema()
+        .expect("selection patch relations install without rewriting decision schema");
+
+    assert!(eval_relation_exists(&db, SELECTION_PATCH_REL).expect("selection patch gate restored"));
+    assert!(eval_relation_exists(&db, PATCH_REVIEW_REL).expect("patch reviews restored"));
+    assert!(eval_relation_exists(&db, PATCH_CHANGE_REL).expect("patch changes restored"));
+}
+
+#[test]
+fn selection_receipt_schema_installs_additively() {
+    let db = Database::new_init().expect("db");
+    let store = DbEvalStore::new(&db);
+    store.install_schema().expect("current schema installs");
+    db.raw_query_mut_params("::remove eval_selection_receipt", BTreeMap::new())
+        .expect("remove additive selection receipt relation");
+
+    assert!(eval_relation_exists(&db, SELECTION_DECISION_REL).expect("selection decision exists"));
+    assert!(!eval_relation_exists(&db, SELECTION_RECEIPT_REL).expect("selection receipt absent"));
+
+    store
+        .install_schema()
+        .expect("selection receipt relation installs without rewriting decision schema");
+
+    assert!(eval_relation_exists(&db, SELECTION_RECEIPT_REL).expect("selection receipt restored"));
+}
+
+#[test]
+fn selection_projection_schema_installs_additively() {
+    let db = Database::new_init().expect("db");
+    let store = DbEvalStore::new(&db);
+    store.install_schema().expect("current schema installs");
+    db.raw_query_mut_params(
+        "::remove eval_selection_projection_failure",
+        BTreeMap::new(),
+    )
+    .expect("remove additive selection projection relation");
+
+    assert!(eval_relation_exists(&db, SELECTION_DECISION_REL).expect("selection decision exists"));
+    assert!(
+        !eval_relation_exists(&db, SELECTION_PROJECTION_REL)
+            .expect("selection projection failure absent")
+    );
+
+    store
+        .install_schema()
+        .expect("selection projection relation installs without rewriting decision schema");
+
+    assert!(
+        eval_relation_exists(&db, SELECTION_PROJECTION_REL)
+            .expect("selection projection failure restored")
+    );
+}
+
+fn empty_selection(scope: &str) -> crate::cli::prototype1_state::history::SelectionDecisionEntry {
+    let considered = Vec::new();
+    let sources = Vec::new();
+    let metrics = crate::successor_selection::metrics::Set::from_considered(
+        crate::successor_selection::metrics::Policy::default(),
+        &considered,
+        &sources,
+    )
+    .expect("empty selection metric set");
+    crate::cli::prototype1_state::history::SelectionDecisionEntry::new_no_selection_with_traversal_metrics(
+        crate::cli::prototype1_state::history::ProcedureRef::new(
+            crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID,
+        ),
+        crate::cli::prototype1_state::history::SelectionScope::new(scope),
+        considered,
+        sources,
+        Vec::new(),
+        None,
+        metrics,
+    )
+    .expect("empty no-selection entry")
+}
+
+fn strict_patch_entry(
+    config_hash: crate::cli::prototype1_state::history::HistoryHash,
+) -> crate::cli::prototype1_state::history::SelectionDecisionEntry {
+    let node_id = "node-strict-policy";
+    let branch_id = "branch-strict-policy";
+    let candidate = crate::successor_selection::CandidateRef {
+        node_id: node_id.to_string(),
+        branch_id: branch_id.to_string(),
+        generation: 1,
+    };
+    let evaluation_hash =
+        crate::cli::prototype1_state::history::HistoryHash::of_bytes(b"strict evaluation");
+    let artifact = strict_candidate_artifact(node_id, branch_id);
+    let target_relpath = artifact.resolved.target_relpath.clone();
+    let source_content_hash = artifact.resolved.source_content_hash.clone();
+    let proposed_content_hash = artifact.resolved.branch.proposed_content_hash.clone();
+    let artifact_id = artifact
+        .node
+        .derived_artifact_id
+        .clone()
+        .expect("strict derived artifact");
+    let surface_hash = crate::cli::prototype1_state::history::HistoryHash::of_domain_json(
+        "prototype1.history.artifact_surface.v1",
+        artifact
+            .artifact_surface
+            .as_ref()
+            .expect("strict artifact surface"),
+    )
+    .expect("strict artifact surface hash");
+    let changes = vec![crate::successor_selection::PatchChange {
+        relpath: target_relpath,
+        source_content_hash: Some(source_content_hash),
+        proposed_content_hash: Some(proposed_content_hash),
+    }];
+    let change_set_hash = crate::cli::prototype1_state::history::HistoryHash::of_domain_json(
+        "prototype1.history.candidate_patch_change_set.v1",
+        &changes,
+    )
+    .expect("strict change set hash");
+    let input = crate::successor_selection::SelectionInput::new(
+        candidate.clone(),
+        crate::BranchDisposition::Keep,
+        PathBuf::from("prototype1/evaluations/branch-strict-policy.json"),
+        Vec::new(),
+    );
+    let payload = crate::cli::prototype1_state::history::EvaluationPayload::builder(
+        crate::cli::prototype1_state::history::SubjectRef::new(
+            "candidate:node-strict-policy:plan_index=0",
+        ),
+        crate::cli::prototype1_state::history::ProcedureRef::new(
+            crate::successor_selection::PROCEDURE_ID,
+        ),
+    )
+    .selection_input(input)
+    .expect("strict selection input")
+    .sealed_candidate_evidence(strict_candidate_evidence(
+        node_id,
+        branch_id,
+        evaluation_hash.clone(),
+    ))
+    .candidate_artifact(artifact)
+    .patch_review(crate::successor_selection::PatchReview {
+        schema_version: 2,
+        procedure_id: crate::successor_selection::PATCH_REVIEW_PROCEDURE_ID.to_string(),
+        candidate,
+        artifact_id,
+        artifact_surface_hash: surface_hash,
+        evaluation_hash,
+        config_hash,
+        change_set_hash,
+        changes,
+        verdict: crate::successor_selection::PatchVerdict::Rejected,
+        confidence: crate::successor_selection::domains::Confidence::High,
+        blocking_findings: vec!["strict fixture blocks selection".to_string()],
+        missing_evidence: Vec::new(),
+        rationale: vec!["reviewed exact source and proposed content".to_string()],
+        citation: crate::cli::prototype1_state::history::SealedEvidenceCitation {
+            ref_id: crate::successor_selection::candidate_review_ref(branch_id),
+            content_hash: Some(
+                crate::cli::prototype1_state::history::HistoryHash::of_bytes(
+                    b"strict review citation",
+                ),
+            ),
+            record_name: Some(crate::successor_selection::PATCH_REVIEW_RECORD_NAME.to_string()),
+        },
+    })
+    .build();
+    let considered = vec![payload];
+    let sources =
+        vec![crate::cli::prototype1_state::history::TraversalCandidateSource::CurrentGeneration];
+    let metrics = crate::successor_selection::metrics::Set::from_considered(
+        crate::successor_selection::metrics::Policy::default(),
+        &considered,
+        &sources,
+    )
+    .expect("strict metric set");
+    let entry =
+        crate::cli::prototype1_state::history::SelectionDecisionEntry::new_no_selection_with_traversal_metrics(
+            crate::cli::prototype1_state::history::ProcedureRef::new(
+                crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID,
+            ),
+            crate::cli::prototype1_state::history::SelectionScope::new("strict-policy"),
+            considered,
+            sources,
+            Vec::new(),
+            Some(crate::cli::prototype1_state::history::TraversalEvidence {
+                seed: 0,
+                strategy: crate::successor_selection::traversal::StrategyKind::default()
+                    .with_patch_gate(
+                        crate::successor_selection::PatchGate::ReviewedAdmissible,
+                    ),
+                oracle_targets: Vec::new(),
+                selected_source: None,
+                child_counts: BTreeMap::new(),
+            }),
+            metrics,
+        )
+        .expect("strict no-selection entry");
+    crate::successor_selection::traversal::validate_patch_replay(&entry)
+        .expect("strict fixture replays");
+    entry
+}
+
+fn strict_candidate_artifact(
+    node_id: &str,
+    branch_id: &str,
+) -> crate::cli::prototype1_state::history::CandidateArtifact {
+    let target_relpath = PathBuf::from("crates/ploke-core/tool_text/read_file.md");
+    let source_content = "pub fn read_file() -> bool { false }\n";
+    let proposed_content = "pub fn read_file() -> bool { true }\n";
+    let source_content_hash = super::operation::content_sha256(source_content);
+    let proposed_content_hash = super::operation::content_sha256(proposed_content);
+    let candidate_id = format!("candidate-{node_id}");
+    let artifact_id = crate::loop_graph::ArtifactId::new(format!("artifact:{branch_id}"));
+    let surface = crate::cli::prototype1_state::history::ArtifactSurface::test(branch_id);
+    let plan: crate::cli::prototype1_state::parent::ChildPlanFiles =
+        serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/tests/fixtures/prototype1-v15-missing-oracle-20260717/child-plan-node-9c9dcbeeb3a4d400.json"
+        )))
+        .expect("historical harness carrier");
+    let mut harness = plan.children()[0]
+        .harness_evidence()
+        .expect("historical harness evidence")
+        .clone();
+    let base_id = harness
+        .artifact()
+        .expect("historical harness artifact")
+        .base_artifact_id
+        .clone();
+    harness.changed_paths = vec![target_relpath.clone()];
+    harness.artifact = Some(
+        crate::cli::prototype1_state::edit_surface::harness_request::child::ArtifactEvidence::new(
+            base_id.clone(),
+            artifact_id.clone(),
+        ),
+    );
+    harness.artifact_surface = surface.clone();
+    let node = crate::intervention::Prototype1NodeRecord {
+        schema_version: "test-node.v1".to_string(),
+        node_id: node_id.to_string(),
+        parent_node_id: None,
+        generation: 1,
+        instance_id: "instance-a".to_string(),
+        source_state_id: "source-a".to_string(),
+        operation_target: None,
+        base_artifact_id: Some(base_id),
+        patch_id: None,
+        derived_artifact_id: Some(artifact_id.clone()),
+        parent_branch_id: None,
+        branch_id: branch_id.to_string(),
+        candidate_id: candidate_id.clone(),
+        target_relpath: target_relpath.clone(),
+        node_dir: PathBuf::from(format!("/tmp/{node_id}")),
+        workspace_root: PathBuf::from(format!("/tmp/{node_id}/worktree")),
+        binary_path: PathBuf::from(format!("/tmp/{node_id}/target/debug/ploke-eval")),
+        runner_request_path: PathBuf::from(format!("/tmp/{node_id}/runner-request.json")),
+        runner_result_path: PathBuf::from(format!("/tmp/{node_id}/runner-result.json")),
+        status: crate::intervention::Prototype1NodeStatus::Succeeded,
+        created_at: "2026-07-18T00:00:00Z".to_string(),
+        updated_at: "2026-07-18T00:00:00Z".to_string(),
+    };
+    let resolved = crate::intervention::ResolvedTreatmentBranch {
+        instance_id: node.instance_id.clone(),
+        source_state_id: node.source_state_id.clone(),
+        parent_branch_id: node.parent_branch_id.clone(),
+        target_relpath,
+        source_content: source_content.to_string(),
+        source_content_hash,
+        selected_branch_id: Some(branch_id.to_string()),
+        branch: crate::intervention::TreatmentBranchNode {
+            branch_id: branch_id.to_string(),
+            candidate_id,
+            patch_id: None,
+            branch_label: "strict policy fixture".to_string(),
+            synthesized_spec_id: "spec".to_string(),
+            proposed_content: proposed_content.to_string(),
+            proposed_content_hash,
+            generation_target: None,
+            generation_coordinate: None,
+            status: crate::intervention::TreatmentBranchStatus::Selected,
+            apply_id: None,
+            applied_content_hash: None,
+            derived_artifact_id: Some(artifact_id),
+        },
+    };
+    crate::cli::prototype1_state::history::CandidateArtifact::new(node, resolved)
+        .with_artifact_surface(surface)
+        .with_harness(harness)
+}
+
+fn strict_candidate_evidence(
+    node_id: &str,
+    branch_id: &str,
+    evaluation_hash: crate::cli::prototype1_state::history::HistoryHash,
+) -> crate::cli::prototype1_state::history::SealedCandidateEvidence {
+    let runtime_id = format!("runtime:{node_id}");
+    let evaluation_citation = crate::cli::prototype1_state::history::SealedEvidenceCitation {
+        ref_id: format!("evaluation:{branch_id}"),
+        content_hash: Some(evaluation_hash),
+        record_name: Some("prototype1_branch_evaluation".to_string()),
+    };
+    crate::cli::prototype1_state::history::SealedCandidateEvidence {
+        schema_version: 2,
+        coordinate: crate::cli::prototype1_state::history::CandidateCoordinate {
+            node_id: node_id.to_string(),
+            parent_node_id: None,
+            branch_id: Some(branch_id.to_string()),
+            generation: Some(1),
+            plan_index: Some(0),
+            primary_runtime_id: Some(runtime_id.clone()),
+        },
+        lifecycle: crate::cli::prototype1_state::history::CandidateLifecycle {
+            planner_outcome: "completed".to_string(),
+            node_status: "completed".to_string(),
+        },
+        evaluations: vec![
+            crate::cli::prototype1_state::history::SealedEvaluationEvidence {
+                branch_id: branch_id.to_string(),
+                evaluation_procedure_id: Some(
+                    crate::cli::prototype1_state::evidence::PROTOTYPE1_BRANCH_EVALUATION_PROCEDURE_ID
+                        .to_string(),
+                ),
+                evaluator_identity: Some(
+                    crate::cli::prototype1_state::history::SealedEvaluatorIdentity {
+                        id: "test".to_string(),
+                        version: "1".to_string(),
+                    },
+                ),
+                eval_set_identity: Some(
+                    crate::cli::prototype1_state::history::SealedEvalSetIdentity {
+                        id: "eval-set".to_string(),
+                        kind: "test".to_string(),
+                        authority: "test-suite".to_string(),
+                        explicit: true,
+                        benchmark_family: Some("multi_swe_bench_rust".to_string()),
+                        dataset_source_count: 1,
+                        instance_ids: vec!["instance-a".to_string()],
+                        missing_treatment_instance_ids: Vec::new(),
+                        note: None,
+                    },
+                ),
+                evaluation_artifact_citation: Some(evaluation_citation.clone()),
+                overall_disposition: Some("keep".to_string()),
+                primary_report_citation: evaluation_citation,
+                compared_runs: Vec::new(),
+            },
+        ],
+        runtimes: vec![crate::cli::prototype1_state::history::SealedRuntimeEvidence {
+            runtime_id: runtime_id.clone(),
+            document_citations: vec![
+                crate::cli::prototype1_state::history::SealedEvidenceCitation {
+                    ref_id: format!(
+                        "channel:child-to-parent:terminal-result:{node_id}:{runtime_id}"
+                    ),
+                    content_hash: Some(
+                        crate::cli::prototype1_state::history::HistoryHash::of_bytes(
+                            b"strict terminal result",
+                        ),
+                    ),
+                    record_name: Some(
+                        crate::cli::prototype1_state::history::CHILD_CHANNEL_TERMINAL_RESULT_RECORD
+                            .to_string(),
+                    ),
+                },
+            ],
+            journal_citations: Vec::new(),
+        }],
+        branches: Vec::new(),
+        extra_document_citations: Vec::new(),
+        extra_journal_citations: Vec::new(),
+        child_diagnostics: Vec::new(),
+    }
+}
+
+#[test]
+fn v22_selection_formula_round_trips_exactly() {
+    // Exact `eval_selection_receipt.entry_json.formula` from campaign
+    // p1-v22-strictkeephandoff-mbe-g35f-direct-3g1x3-p3-obs2400-20260717-174349,
+    // parent node-35c3cdbe137b4142, decision
+    // 30114489b9a0d8dfa5e40bdb83c3590cb408646025282d8bbe2062060528a628,
+    // stored hash 80d507d6a28820fad6779151cfbeb19d3138386af7ae0465b048d269e48cdd22.
+    // Its sample token exposed the default serde_json parser's one-ULP drift.
+    let raw = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/prototype1/v22-selection-formula.json"
+    ))
+    .trim_end();
+    let formula: crate::successor_selection::traversal::SelectionFormula =
+        serde_json::from_str(raw).expect("parse preserved v22 selection formula");
+    let replayed = serde_json::to_string(&formula).expect("serialize v22 selection formula");
+
+    assert_eq!(
+        replayed, raw,
+        "selection formula JSON must remain byte-stable across a typed round trip"
+    );
+}
+
+#[test]
+fn receipt_roundtrip_hash() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let campaign = CampaignId::from("campaign-v22-float-roundtrip");
+    let (db_path, ..) = seeded_patch_context(
+        tmp.path(),
+        &campaign,
+        ploke_records::run_profile::PatchGate::Disabled,
+        None,
+    );
+    let parent = "parent-v22-float-roundtrip";
+    let mut formula: crate::successor_selection::traversal::SelectionFormula =
+        serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/prototype1/v22-selection-formula.json"
+        )))
+        .expect("parse preserved v22 selection formula");
+    let crate::successor_selection::traversal::Formula::ScoreChildProp(score) =
+        &mut formula.formula;
+    score.rows.clear();
+    score.selected_index = None;
+    score.selected_candidate = None;
+
+    let mut entry = empty_selection("v22-float-roundtrip");
+    entry.schema_version = 4;
+    entry.formula = Some(formula);
+    entry.decision = Some(crate::successor_selection::SuccessorDecision {
+        procedure_id: crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID.to_string(),
+        candidate_node_id: "node-v22-float-roundtrip".to_string(),
+        selected_branch_id: None,
+        branch_disposition: "reject".to_string(),
+        outcome: crate::successor_selection::decision::SuccessorOutcome::Stop,
+        findings: Vec::new(),
+        rationale: Vec::new(),
+    });
+    entry.validate_shape().expect("synthetic receipt validates");
+    let expected = entry
+        .decision_hash()
+        .expect("synthetic receipt hash")
+        .as_str()
+        .to_string();
+
+    write_selection_decision_to_owner_db(
+        &db_path,
+        SelectionDecisionEvidence {
+            campaign_id: campaign.clone(),
+            parent_id: parent.to_string(),
+            entry: entry.clone(),
+            decision_ref: Some("selection:v22-float-roundtrip".to_string()),
+            recorded_at: Some("2026-07-17T00:00:00Z".to_string()),
+        },
+    )
+    .expect("selection receipt writes");
+
+    assert_eq!(
+        load_selection_hash(&db_path, &campaign, parent).expect("selection hash loads"),
+        Some(expected)
+    );
+    assert_eq!(
+        load_selection_receipt(&db_path, &campaign, parent).expect("selection receipt loads"),
+        Some(entry)
+    );
+}
+
+#[test]
+fn selection_db_rejects_disabled_receipt_for_strict_policy() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let campaign = CampaignId::from("campaign-strict-policy-disabled-receipt");
+    let review_hash =
+        crate::cli::prototype1_state::history::HistoryHash::of_bytes(b"strict review config");
+    let (db_path, ..) = seeded_patch_context(
+        tmp.path(),
+        &campaign,
+        ploke_records::run_profile::PatchGate::ReviewedAdmissible,
+        Some(&review_hash),
+    );
+
+    let error = write_selection_decision_to_owner_db(
+        &db_path,
+        SelectionDecisionEvidence {
+            campaign_id: campaign,
+            parent_id: "parent-disabled-receipt".to_string(),
+            entry: empty_selection("disabled-receipt"),
+            decision_ref: None,
+            recorded_at: None,
+        },
+    )
+    .expect_err("strict setup must reject a disabled receipt");
+    assert!(
+        matches!(
+            error,
+            EvalStoreError::Validation {
+                field: "selection.patch_policy.gate",
+                ..
+            }
+        ),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn selection_db_rejects_strict_receipt_for_disabled_policy() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let campaign = CampaignId::from("campaign-disabled-policy-strict-receipt");
+    let review_hash =
+        crate::cli::prototype1_state::history::HistoryHash::of_bytes(b"strict review config");
+    let (db_path, ..) = seeded_patch_context(
+        tmp.path(),
+        &campaign,
+        ploke_records::run_profile::PatchGate::Disabled,
+        None,
+    );
+
+    let error = write_selection_decision_to_owner_db(
+        &db_path,
+        SelectionDecisionEvidence {
+            campaign_id: campaign,
+            parent_id: "parent-strict-receipt".to_string(),
+            entry: strict_patch_entry(review_hash),
+            decision_ref: None,
+            recorded_at: None,
+        },
+    )
+    .expect_err("disabled setup must reject a strict receipt");
+    assert!(
+        matches!(
+            error,
+            EvalStoreError::Validation {
+                field: "selection.patch_policy.gate",
+                ..
+            }
+        ),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn selection_db_rejects_wrong_review_config() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let campaign = CampaignId::from("campaign-strict-policy-wrong-config");
+    let review_hash =
+        crate::cli::prototype1_state::history::HistoryHash::of_bytes(b"admitted review config");
+    let wrong_hash =
+        crate::cli::prototype1_state::history::HistoryHash::of_bytes(b"different review config");
+    let (db_path, ..) = seeded_patch_context(
+        tmp.path(),
+        &campaign,
+        ploke_records::run_profile::PatchGate::ReviewedAdmissible,
+        Some(&review_hash),
+    );
+
+    let error = write_selection_decision_to_owner_db(
+        &db_path,
+        SelectionDecisionEvidence {
+            campaign_id: campaign,
+            parent_id: "parent-wrong-config".to_string(),
+            entry: strict_patch_entry(wrong_hash),
+            decision_ref: None,
+            recorded_at: None,
+        },
+    )
+    .expect_err("strict setup must reject a different review config");
+    assert!(
+        matches!(
+            error,
+            EvalStoreError::Validation {
+                field: "selection.patch_policy.config",
+                ..
+            }
+        ),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn selection_db_accepts_matching_strict_policy() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let campaign = CampaignId::from("campaign-strict-policy-match");
+    let review_hash =
+        crate::cli::prototype1_state::history::HistoryHash::of_bytes(b"admitted review config");
+    let (db_path, ..) = seeded_patch_context(
+        tmp.path(),
+        &campaign,
+        ploke_records::run_profile::PatchGate::ReviewedAdmissible,
+        Some(&review_hash),
+    );
+
+    let receipt = write_selection_decision_to_owner_db(
+        &db_path,
+        SelectionDecisionEvidence {
+            campaign_id: campaign,
+            parent_id: "parent-strict-match".to_string(),
+            entry: strict_patch_entry(review_hash.clone()),
+            decision_ref: None,
+            recorded_at: None,
+        },
+    )
+    .expect("matching strict receipt persists");
+    assert_eq!(receipt.candidate_count, 1);
+    let db = load_owner_eval_database(&db_path).expect("owner db loads");
+    let rows = db
+        .raw_query_params(
+            "?[config_hash] := *eval_selection_patch_review { config_hash }",
+            BTreeMap::new(),
+        )
+        .expect("strict review rows query");
+    assert_eq!(rows.rows.len(), 1);
+    assert_eq!(
+        rows.row_refs()
+            .next()
+            .expect("strict review row")
+            .get::<String>("config_hash")
+            .expect("strict review config"),
+        review_hash.as_str()
+    );
+}
+
+#[test]
+fn patch_reviews_are_queryable() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let campaign = CampaignId::from("campaign-patch-review");
+    let (db_path, ..) = seeded_patch_context(
+        tmp.path(),
+        &campaign,
+        ploke_records::run_profile::PatchGate::Disabled,
+        None,
+    );
+    let candidate = crate::successor_selection::CandidateRef {
+        node_id: "node-reviewed".to_string(),
+        branch_id: "branch-reviewed".to_string(),
+        generation: 1,
+    };
+    let surface_hash =
+        crate::cli::prototype1_state::history::HistoryHash::of_bytes(b"artifact surface");
+    let eval_hash =
+        crate::cli::prototype1_state::history::HistoryHash::of_bytes(b"evaluation artifact");
+    let citation_hash =
+        crate::cli::prototype1_state::history::HistoryHash::of_bytes(b"candidate review");
+    let config_hash =
+        crate::cli::prototype1_state::history::HistoryHash::of_bytes(b"review config");
+    let changes = vec![
+        crate::successor_selection::PatchChange {
+            relpath: PathBuf::from("crates/ploke-core/tool_text/read_file.md"),
+            source_content_hash: Some("source-sha256".to_string()),
+            proposed_content_hash: Some("proposed-sha256".to_string()),
+        },
+        crate::successor_selection::PatchChange {
+            relpath: PathBuf::from("crates/ploke-core/tool_text/write_file.md"),
+            source_content_hash: Some("second-source-sha256".to_string()),
+            proposed_content_hash: Some("second-proposed-sha256".to_string()),
+        },
+    ];
+    let change_set_hash = crate::cli::prototype1_state::history::HistoryHash::of_domain_json(
+        "prototype1.history.candidate_patch_change_set.v1",
+        &changes,
+    )
+    .expect("change set hash");
+    let input = crate::successor_selection::SelectionInput::new(
+        candidate.clone(),
+        crate::BranchDisposition::Keep,
+        PathBuf::from("prototype1/evaluations/branch-reviewed.json"),
+        Vec::new(),
+    );
+    let payload = crate::cli::prototype1_state::history::EvaluationPayload::builder(
+        crate::cli::prototype1_state::history::SubjectRef::new(
+            "candidate:node-reviewed:plan_index=0",
+        ),
+        crate::cli::prototype1_state::history::ProcedureRef::new(
+            crate::successor_selection::PROCEDURE_ID,
+        ),
+    )
+    .selection_input(input)
+    .expect("selection input")
+    .patch_review(crate::successor_selection::PatchReview {
+        schema_version: 2,
+        procedure_id: crate::successor_selection::PATCH_REVIEW_PROCEDURE_ID.to_string(),
+        candidate,
+        artifact_id: crate::loop_graph::ArtifactId::new("artifact:reviewed"),
+        artifact_surface_hash: surface_hash.clone(),
+        evaluation_hash: eval_hash.clone(),
+        config_hash: config_hash.clone(),
+        change_set_hash: change_set_hash.clone(),
+        changes,
+        verdict: crate::successor_selection::PatchVerdict::Rejected,
+        confidence: crate::successor_selection::domains::Confidence::High,
+        blocking_findings: vec!["process-global cache is not safely invalidated".to_string()],
+        missing_evidence: Vec::new(),
+        rationale: vec!["reviewed exact source and proposed content".to_string()],
+        citation: crate::cli::prototype1_state::history::SealedEvidenceCitation {
+            ref_id: crate::successor_selection::candidate_review_ref("branch-reviewed"),
+            content_hash: Some(citation_hash.clone()),
+            record_name: Some(crate::successor_selection::PATCH_REVIEW_RECORD_NAME.to_string()),
+        },
+    })
+    .build();
+    let considered = vec![payload];
+    let sources =
+        vec![crate::cli::prototype1_state::history::TraversalCandidateSource::CurrentGeneration];
+    let metrics = crate::successor_selection::metrics::Set::from_considered(
+        crate::successor_selection::metrics::Policy::default(),
+        &considered,
+        &sources,
+    )
+    .expect("selection metrics");
+    let entry =
+        crate::cli::prototype1_state::history::SelectionDecisionEntry::new_no_selection_with_traversal_metrics(
+            crate::cli::prototype1_state::history::ProcedureRef::new(
+                crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID,
+            ),
+            crate::cli::prototype1_state::history::SelectionScope::new("patch-review-projection"),
+            considered,
+            sources,
+            Vec::new(),
+            None,
+            metrics,
+        )
+        .expect("selection entry");
+
+    let receipt = write_selection_decision_to_owner_db(
+        &db_path,
+        SelectionDecisionEvidence {
+            campaign_id: campaign,
+            parent_id: "parent-patch-review".to_string(),
+            entry,
+            decision_ref: Some("selection:parent-patch-review:none".to_string()),
+            recorded_at: Some("2026-07-17T00:00:00Z".to_string()),
+        },
+    )
+    .expect("selection evidence writes");
+    assert_eq!(receipt.candidate_count, 1);
+
+    let db = load_owner_eval_database(&db_path).expect("owner db loads");
+    let reviews = db
+        .raw_query_params(
+            r#"
+?[decision_id, member_id, procedure_id, node_id, branch_id, artifact_id, artifact_surface_hash, evaluation_hash, config_hash, change_set_hash, verdict, confidence, blocking_findings, missing_evidence, citation_ref, citation_hash, record_name] :=
+    *eval_selection_patch_review {
+        decision_id,
+        member_id,
+        procedure_id,
+        node_id,
+        branch_id,
+        artifact_id,
+        artifact_surface_hash,
+        evaluation_hash,
+        config_hash,
+        change_set_hash,
+        verdict,
+        confidence,
+        blocking_findings,
+        missing_evidence,
+        citation_ref,
+        citation_hash,
+        record_name,
+    }
+"#,
+            BTreeMap::new(),
+        )
+        .expect("patch review query");
+    assert_eq!(reviews.rows.len(), 1);
+    let review = reviews.row_refs().next().expect("patch review row");
+    assert_eq!(
+        review.get::<String>("decision_id").expect("decision id"),
+        receipt.decision_id
+    );
+    assert_eq!(
+        review.get::<String>("procedure_id").expect("procedure id"),
+        crate::successor_selection::PATCH_REVIEW_PROCEDURE_ID
+    );
+    assert_eq!(
+        review.get::<String>("node_id").expect("node id"),
+        "node-reviewed"
+    );
+    assert_eq!(
+        review.get::<String>("branch_id").expect("branch id"),
+        "branch-reviewed"
+    );
+    assert_eq!(
+        review.get::<String>("artifact_id").expect("artifact id"),
+        "artifact:reviewed"
+    );
+    assert_eq!(
+        review
+            .get::<String>("artifact_surface_hash")
+            .expect("surface hash"),
+        surface_hash.as_str()
+    );
+    assert_eq!(
+        review
+            .get::<String>("evaluation_hash")
+            .expect("evaluation hash"),
+        eval_hash.as_str()
+    );
+    assert_eq!(
+        review.get::<String>("config_hash").expect("config hash"),
+        config_hash.as_str()
+    );
+    assert_eq!(
+        review
+            .get::<String>("change_set_hash")
+            .expect("change set hash"),
+        change_set_hash.as_str()
+    );
+    assert_eq!(
+        review.get::<String>("verdict").expect("verdict"),
+        "rejected"
+    );
+    assert_eq!(
+        review.get::<String>("confidence").expect("confidence"),
+        "high"
+    );
+    assert_eq!(
+        review
+            .get::<Vec<String>>("blocking_findings")
+            .expect("blocking findings"),
+        vec!["process-global cache is not safely invalidated".to_string()]
+    );
+    assert!(
+        review
+            .get::<Vec<String>>("missing_evidence")
+            .expect("missing evidence")
+            .is_empty()
+    );
+    assert_eq!(
+        review.get::<String>("citation_ref").expect("citation ref"),
+        crate::successor_selection::candidate_review_ref("branch-reviewed")
+    );
+    assert_eq!(
+        review
+            .get::<String>("citation_hash")
+            .expect("citation hash"),
+        citation_hash.as_str()
+    );
+    assert_eq!(
+        review.get::<String>("record_name").expect("record name"),
+        crate::successor_selection::PATCH_REVIEW_RECORD_NAME
+    );
+
+    let changes = db
+        .raw_query_params(
+            r#"
+?[change_index, relpath, source_content_hash, proposed_content_hash] :=
+    *eval_selection_patch_change {
+        change_index,
+        relpath,
+        source_content_hash,
+        proposed_content_hash,
+    }
+:sort change_index
+"#,
+            BTreeMap::new(),
+        )
+        .expect("patch change query");
+    assert_eq!(changes.rows.len(), 2);
+    let rows = changes.row_refs().collect::<Vec<_>>();
+    assert_eq!(
+        rows[0].get::<String>("relpath").expect("first relpath"),
+        "crates/ploke-core/tool_text/read_file.md"
+    );
+    assert_eq!(
+        rows[1].get::<String>("relpath").expect("second relpath"),
+        "crates/ploke-core/tool_text/write_file.md"
+    );
+}
+
+#[test]
+fn strict_patch_projection_rejects_non_decision_grade_receipt_before_persistence() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let campaign = CampaignId::from("campaign-frontier-patch");
+    let review_hash =
+        crate::cli::prototype1_state::history::HistoryHash::of_bytes(b"review config");
+    let (db_path, ..) = seeded_patch_context(
+        tmp.path(),
+        &campaign,
+        ploke_records::run_profile::PatchGate::ReviewedAdmissible,
+        Some(&review_hash),
+    );
+    let make_payload = |node_id: &str,
+                        branch_id: &str,
+                        verdict: crate::successor_selection::PatchVerdict| {
+        let candidate = crate::successor_selection::CandidateRef {
+            node_id: node_id.to_string(),
+            branch_id: branch_id.to_string(),
+            generation: 1,
+        };
+        let input = crate::successor_selection::SelectionInput::new(
+            candidate.clone(),
+            crate::BranchDisposition::Keep,
+            PathBuf::from(format!("prototype1/evaluations/{branch_id}.json")),
+            Vec::new(),
+        );
+        let changes = vec![crate::successor_selection::PatchChange {
+            relpath: PathBuf::from(format!("crates/example/{branch_id}.rs")),
+            source_content_hash: Some(format!("source-{branch_id}")),
+            proposed_content_hash: Some(format!("proposed-{branch_id}")),
+        }];
+        let change_set_hash = crate::cli::prototype1_state::history::HistoryHash::of_domain_json(
+            "prototype1.history.candidate_patch_change_set.v1",
+            &changes,
+        )
+        .expect("change set hash");
+        let blocking_findings = (verdict == crate::successor_selection::PatchVerdict::Rejected)
+            .then(|| vec!["unsafe secondary edit".to_string()])
+            .unwrap_or_default();
+        crate::cli::prototype1_state::history::EvaluationPayload::builder(
+            crate::cli::prototype1_state::history::SubjectRef::new(format!(
+                "candidate:{node_id}:plan_index=0"
+            )),
+            crate::cli::prototype1_state::history::ProcedureRef::new(
+                crate::successor_selection::PROCEDURE_ID,
+            ),
+        )
+        .selection_input(input)
+        .expect("selection input")
+        .patch_review(crate::successor_selection::PatchReview {
+            schema_version: 2,
+            procedure_id: crate::successor_selection::PATCH_REVIEW_PROCEDURE_ID.to_string(),
+            candidate,
+            artifact_id: crate::loop_graph::ArtifactId::new(format!("artifact:{branch_id}")),
+            artifact_surface_hash: crate::cli::prototype1_state::history::HistoryHash::of_bytes(
+                format!("surface:{branch_id}").as_bytes(),
+            ),
+            evaluation_hash: crate::cli::prototype1_state::history::HistoryHash::of_bytes(
+                format!("evaluation:{branch_id}").as_bytes(),
+            ),
+            config_hash: crate::cli::prototype1_state::history::HistoryHash::of_bytes(
+                b"review config",
+            ),
+            change_set_hash,
+            changes,
+            verdict,
+            confidence: crate::successor_selection::domains::Confidence::High,
+            blocking_findings,
+            missing_evidence: Vec::new(),
+            rationale: vec!["reviewed every changed file".to_string()],
+            citation: crate::cli::prototype1_state::history::SealedEvidenceCitation {
+                ref_id: crate::successor_selection::candidate_review_ref(branch_id),
+                content_hash: Some(
+                    crate::cli::prototype1_state::history::HistoryHash::of_bytes(
+                        format!("review:{branch_id}").as_bytes(),
+                    ),
+                ),
+                record_name: Some(crate::successor_selection::PATCH_REVIEW_RECORD_NAME.to_string()),
+            },
+        })
+        .build()
+    };
+    let rejected = make_payload(
+        "node-rejected",
+        "branch-rejected",
+        crate::successor_selection::PatchVerdict::Rejected,
+    );
+    let admissible = make_payload(
+        "node-admissible",
+        "branch-admissible",
+        crate::successor_selection::PatchVerdict::Admissible,
+    );
+    let selected_subject = admissible.candidate.clone();
+    let considered = vec![rejected, admissible];
+    let sources = vec![
+        crate::cli::prototype1_state::history::TraversalCandidateSource::CurrentGeneration;
+        considered.len()
+    ];
+    let metrics = crate::successor_selection::metrics::Set::from_considered(
+        crate::successor_selection::metrics::Policy::default(),
+        &considered,
+        &sources,
+    )
+    .expect("selection metrics");
+    let strategy = crate::successor_selection::traversal::StrategyKind::default()
+        .with_patch_gate(crate::successor_selection::PatchGate::ReviewedAdmissible);
+    let entry =
+        crate::cli::prototype1_state::history::SelectionDecisionEntry::new_with_traversal_identity_metrics(
+            crate::cli::prototype1_state::history::ProcedureRef::new(
+                crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID,
+            ),
+            crate::cli::prototype1_state::history::SelectionScope::new("frontier-patch-projection"),
+            Some(selected_subject),
+            None,
+            None,
+            considered,
+            sources,
+            Vec::new(),
+            Some(crate::cli::prototype1_state::history::TraversalEvidence {
+                seed: 0,
+                strategy,
+                oracle_targets: Vec::new(),
+                selected_source: Some(
+                    crate::cli::prototype1_state::history::TraversalCandidateSource::CurrentGeneration,
+                ),
+                child_counts: BTreeMap::new(),
+            }),
+            metrics,
+            crate::successor_selection::SuccessorDecision {
+                procedure_id:
+                    crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID.to_string(),
+                candidate_node_id: "node-admissible".to_string(),
+                selected_branch_id: Some("branch-admissible".to_string()),
+                branch_disposition: "keep".to_string(),
+                outcome: crate::successor_selection::decision::SuccessorOutcome::Accepted,
+                findings: Vec::new(),
+                rationale: vec!["selected reviewed candidate".to_string()],
+            },
+        )
+        .expect("frontier selection entry");
+
+    let error = write_selection_decision_to_owner_db(
+        &db_path,
+        SelectionDecisionEvidence {
+            campaign_id: campaign,
+            parent_id: "parent-frontier-patch".to_string(),
+            entry,
+            decision_ref: None,
+            recorded_at: None,
+        },
+    )
+    .expect_err("semantically invalid strict receipt must fail before persistence");
+    assert!(
+        matches!(
+            error,
+            EvalStoreError::Validation {
+                field: "selection.entry.replay",
+                ..
+            }
+        ),
+        "unexpected error: {error}"
+    );
+    let db = load_owner_eval_database(&db_path).expect("setup database remains readable");
+    let decisions = db
+        .raw_query_params(
+            "?[decision_id] := *eval_selection_decision { decision_id }",
+            BTreeMap::new(),
+        )
+        .expect("selection decision query");
+    assert!(
+        decisions.rows.is_empty(),
+        "failed strict replay validation must not persist selection rows"
+    );
+}
+
+#[test]
+fn stable_json_mismatch() {
+    let entry = empty_selection("roundtrip-mismatch");
+    let error = super::selection::stable_entry_json(&entry, "not-the-entry-hash")
+        .expect_err("mismatched decision hash must fail closed");
+
+    match error {
+        EvalStoreError::Validation { field, detail } => {
+            assert_eq!(field, "selection.entry_json");
+            assert!(detail.contains("not hash-stable"));
+            assert!(detail.contains("initial=not-the-entry-hash"));
+            assert!(detail.contains("replayed="));
+        }
+        other => panic!("expected selection entry validation error, got {other:?}"),
+    }
+}
+
+#[test]
+fn selection_hash_loader_rejects_ambiguous_parent_receipts() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let campaign = CampaignId::from("campaign-selection-attempts");
+    let (db_path, ..) = seeded_patch_context(
+        tmp.path(),
+        &campaign,
+        ploke_records::run_profile::PatchGate::Disabled,
+        None,
+    );
+    let parent = "parent-selection-attempts";
+    let first = empty_selection("attempt-a");
+    let exact = first.clone();
+    let first_hash = first
+        .decision_hash()
+        .expect("first decision hash")
+        .as_str()
+        .to_string();
+    let first_receipt = write_selection_decision_to_owner_db(
+        &db_path,
+        SelectionDecisionEvidence {
+            campaign_id: campaign.clone(),
+            parent_id: parent.to_string(),
+            entry: first,
+            decision_ref: Some("selection:attempt-a".to_string()),
+            recorded_at: Some("2026-07-17T00:00:00Z".to_string()),
+        },
+    )
+    .expect("first selection decision writes");
+
+    assert_eq!(
+        load_selection_hash(&db_path, &campaign, parent).expect("single selection hash loads"),
+        Some(first_hash.clone())
+    );
+    assert_eq!(
+        load_selection_receipt(&db_path, &campaign, parent)
+            .expect("single selection receipt loads"),
+        Some(exact)
+    );
+
+    let second = empty_selection("attempt-b");
+    let second_hash = second
+        .decision_hash()
+        .expect("second decision hash")
+        .as_str()
+        .to_string();
+    assert_ne!(first_hash, second_hash);
+    let second_receipt = write_selection_decision_to_owner_db(
+        &db_path,
+        SelectionDecisionEvidence {
+            campaign_id: campaign.clone(),
+            parent_id: parent.to_string(),
+            entry: second,
+            decision_ref: Some("selection:attempt-b".to_string()),
+            recorded_at: Some("2026-07-17T00:00:01Z".to_string()),
+        },
+    )
+    .expect("second selection decision writes");
+    assert_ne!(first_receipt.decision_id, second_receipt.decision_id);
+
+    let db = load_owner_eval_database(&db_path).expect("owner db loads");
+    let decisions = db
+        .raw_query_params(
+            r#"
+?[decision_id, decision_hash] :=
+    *eval_selection_decision {
+        decision_id: decision_id,
+        decision_hash: decision_hash,
+    }
+"#,
+            BTreeMap::new(),
+        )
+        .expect("selection decision query");
+    let rows = decisions
+        .row_refs()
+        .map(|row| {
+            (
+                row.get::<String>("decision_id").expect("decision id"),
+                row.get::<String>("decision_hash").expect("decision hash"),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(rows.len(), 2);
+    assert!(rows.contains(&(first_receipt.decision_id, first_hash)));
+    assert!(rows.contains(&(second_receipt.decision_id, second_hash)));
+
+    match load_selection_receipt(&db_path, &campaign, parent)
+        .expect_err("multiple parent entries must be ambiguous")
+    {
+        EvalStoreError::Validation { field, detail } => {
+            assert_eq!(field, "selection.parent_id");
+            assert!(
+                detail.contains("ambiguous across 2 rows"),
+                "unexpected entry ambiguity detail: {detail}"
+            );
+        }
+        other => panic!("expected selection parent validation error, got {other:?}"),
+    }
+
+    match load_selection_hash(&db_path, &campaign, parent)
+        .expect_err("multiple parent receipts must be ambiguous")
+    {
+        EvalStoreError::Validation { field, detail } => {
+            assert_eq!(field, "selection.parent_id");
+            assert!(
+                detail.contains("ambiguous across 2 receipt rows"),
+                "unexpected ambiguity detail: {detail}"
+            );
+        }
+        other => panic!("expected selection parent validation error, got {other:?}"),
+    }
+}
+
+#[test]
+fn no_selection_projection_failure_rows_are_queryable() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let campaign = CampaignId::from("campaign-projection-only");
+    let (db_path, ..) = seeded_patch_context(
+        tmp.path(),
+        &campaign,
+        ploke_records::run_profile::PatchGate::Disabled,
+        None,
+    );
+    let candidate = crate::cli::prototype1_state::history::SubjectRef::new("child-missing-input");
+    let failure = crate::cli::prototype1_state::history::SelectionProjectionFailure::committed(
+        crate::cli::prototype1_state::history::SelectionProjectionFailureKind::MissingSelectionInput,
+        Some(candidate.clone()),
+        Some("rejected_surface_attempt_without_child_runtime".to_string()),
+    )
+    .expect("projection failure");
+    let failure_id = failure.id.0.as_str().to_string();
+    let considered = Vec::new();
+    let sources = Vec::new();
+    let metrics = crate::successor_selection::metrics::Set::from_considered(
+        crate::successor_selection::metrics::Policy::default(),
+        &considered,
+        &sources,
+    )
+    .expect("empty metric set");
+    let entry = crate::cli::prototype1_state::history::SelectionDecisionEntry::new_no_selection_with_traversal_metrics(
+        crate::cli::prototype1_state::history::ProcedureRef::new(
+            crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID,
+        ),
+        crate::cli::prototype1_state::history::SelectionScope::new("projection-only"),
+        considered,
+        sources,
+        vec![failure],
+        None,
+        metrics,
+    )
+    .expect("no-selection entry");
+
+    let receipt = write_selection_decision_to_owner_db(
+        &db_path,
+        SelectionDecisionEvidence {
+            campaign_id: campaign,
+            parent_id: "parent-projection-only".to_string(),
+            entry,
+            decision_ref: Some("selection:parent-projection-only:none".to_string()),
+            recorded_at: Some("2026-07-17T00:00:00Z".to_string()),
+        },
+    )
+    .expect("selection evidence writes");
+
+    assert_eq!(receipt.candidate_count, 0);
+    assert_eq!(receipt.finding_count, 0);
+    assert_eq!(receipt.score_count, 0);
+    assert_eq!(receipt.projection_count, 1);
+
+    let db = load_owner_eval_database(&db_path).expect("owner db loads");
+    let decisions = db
+        .raw_query_params(
+            r#"
+?[decision_id, outcome] :=
+    *eval_selection_decision { decision_id: decision_id, outcome: outcome }
+"#,
+            BTreeMap::new(),
+        )
+        .expect("selection decision query");
+    let decision = decisions.row_refs().next().expect("decision row");
+    assert_eq!(
+        decision.get::<String>("decision_id").expect("decision id"),
+        receipt.decision_id
+    );
+    assert_eq!(
+        decision.get::<String>("outcome").expect("outcome"),
+        "no_selection"
+    );
+
+    let projections = db
+        .raw_query_params(
+            r#"
+?[decision_id, failure_id, candidate_subject, kind, message] :=
+    *eval_selection_projection_failure {
+        decision_id: decision_id,
+        failure_id: failure_id,
+        candidate_subject: candidate_subject,
+        kind: kind,
+        message: message,
+    }
+"#,
+            BTreeMap::new(),
+        )
+        .expect("selection projection query");
+    let projection = projections.row_refs().next().expect("projection row");
+    assert_eq!(
+        projection
+            .get::<String>("decision_id")
+            .expect("projection decision id"),
+        receipt.decision_id
+    );
+    assert_eq!(
+        projection.get::<String>("failure_id").expect("failure id"),
+        failure_id
+    );
+    assert_eq!(
+        projection
+            .get::<String>("candidate_subject")
+            .expect("candidate subject"),
+        candidate.as_str()
+    );
+    assert_eq!(
+        projection.get::<String>("kind").expect("failure kind"),
+        "missing_selection_input"
+    );
+    assert_eq!(
+        projection.get::<String>("message").expect("message"),
+        "rejected_surface_attempt_without_child_runtime"
+    );
 }
 
 #[test]
@@ -1082,6 +2952,282 @@ fn prototype1_eval_store_owner_db_serializes_parallel_agent_turn_writes() {
 }
 
 #[test]
+fn prototype1_eval_store_walk_event_rows_capture_epoch_and_phase() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let db_path = tmp.path().join("prototype1/eval-store.cozo.sqlite");
+    let db = Database::new_init().expect("db");
+    DbEvalStore::new(&db).install_schema().expect("schema");
+    super::cozo_store::persist_owner_eval_database(&db, &db_path).expect("persist owner db");
+
+    let exe_path = std::env::current_exe().expect("current exe");
+    write_walk_event_to_owner_db(
+        &db_path,
+        WalkEventEvidence {
+            campaign_id: "campaign".to_string(),
+            node_id: "node-parent".to_string(),
+            parent_id: "node-parent".to_string(),
+            generation: 0,
+            branch_id: "branch-parent".to_string(),
+            command: "step".to_string(),
+            status: "ok".to_string(),
+            phase_before: Some("r7".to_string()),
+            phase_after: "r8".to_string(),
+            target_phase: Some("r8".to_string()),
+            watch: Some(true),
+            allow_live_api: Some(true),
+            allow_git_changes: Some(false),
+            transitions: vec!["r7->r8:r7_to_r8".to_string()],
+            protocol_version: 3,
+            transition_graph_version: "walk-r0-r14a-v1".to_string(),
+            repo_root: tmp.path().display().to_string(),
+            exe_path: exe_path.display().to_string(),
+            exe_modified_unix_ms: Some(42),
+            git_head: Some("abc123".to_string()),
+            source_status_hash: Some("hash".to_string()),
+            recorded_at: "2026-06-28T00:00:00Z".to_string(),
+        },
+    )
+    .expect("walk event write");
+
+    let db = load_owner_eval_database(&db_path).expect("owner db loads");
+    let rows = query_walk_events(&db, &CampaignId::from("campaign"));
+    assert_eq!(rows.rows.len(), 1);
+    let row = rows.row_refs().next().expect("walk row");
+    assert_eq!(row.get::<String>("command").expect("command"), "step");
+    assert_eq!(
+        row.get::<String>("phase_before").expect("phase before"),
+        "r7"
+    );
+    assert_eq!(row.get::<String>("phase_after").expect("phase after"), "r8");
+    assert!(row.get::<bool>("allow_live_api").expect("live capability"));
+    assert_eq!(row.get::<i64>("transition_count").expect("count"), 1);
+    assert!(!row.get::<String>("exe_sha256").expect("exe sha").is_empty());
+    let transitions = query_walk_event_transitions(&db, &CampaignId::from("campaign"));
+    assert_eq!(transitions.rows.len(), 1);
+    let transition = transitions.row_refs().next().expect("transition row");
+    assert_eq!(
+        transition
+            .get::<String>("transition_label")
+            .expect("transition label"),
+        "r7->r8:r7_to_r8"
+    );
+}
+
+#[test]
+fn prototype1_eval_store_harness_rows_capture_request_diagnostics_and_workspace_changes() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let campaign_id = CampaignId::from("campaign");
+    let prototype = tmp.path().join("prototype1");
+    fs::create_dir_all(&prototype).expect("prototype dir");
+    let db_path = prototype.join("eval-store.cozo.sqlite");
+    let db = Database::new_init().expect("db");
+    DbEvalStore::new(&db).install_schema().expect("schema");
+    super::cozo_store::persist_owner_eval_database(&db, &db_path).expect("persist owner db");
+
+    let repo_root = tmp.path().join("repo");
+    fs::create_dir_all(&repo_root).expect("repo dir");
+    let request_path = prototype.join("messages/edit-harness-request/node-parent.json");
+    let prompt_path = prototype.join("messages/edit-harness-request/node-parent.md");
+    let submitted_path = prototype.join("messages/edit-harness-result/node-parent.json");
+    let artifact_id = crate::loop_graph::ArtifactId::new("artifact:harness-base");
+    let binding =
+        crate::cli::prototype1_state::edit_surface::harness_request::RequestAdmissionBinding::new(
+            crate::loop_graph::Coordinate {
+                runtime_id: crate::loop_graph::RuntimeId::new(),
+                target: crate::loop_graph::OperationTarget::Artifact {
+                    artifact_id: artifact_id.clone(),
+                },
+            },
+            artifact_id,
+            "policy:harness",
+        )
+        .expect("admission binding");
+    let published = crate::cli::prototype1_state::edit_surface::harness_request::PublishedBroadHarnessRequest::prototype1_workspace(
+        "node-parent".to_string(),
+        repo_root,
+        crate::cli::prototype1_state::edit_surface::harness_request::HarnessChildBudget {
+            min_children: 1,
+            max_children: 1,
+        },
+        &prototype,
+        request_path,
+        prompt_path,
+        submitted_path,
+        binding,
+    );
+    fs::create_dir_all(published.request_path().parent().expect("request parent"))
+        .expect("request parent dir");
+    fs::create_dir_all(
+        published
+            .submitted_result_path()
+            .parent()
+            .expect("result parent"),
+    )
+    .expect("result parent dir");
+    fs::write(
+        published.request_path(),
+        serde_json::to_vec_pretty(&published).expect("request json"),
+    )
+    .expect("write request");
+    fs::write(published.prompt_path(), published.request().render_prompt()).expect("write prompt");
+
+    write_harness_request_to_owner_db(&campaign_id, &published).expect("request row write");
+
+    fs::create_dir_all(published.workspace_path()).expect("workspace dir");
+    let git_init = std::process::Command::new("git")
+        .arg("init")
+        .arg(published.workspace_path())
+        .output()
+        .expect("git init command");
+    assert!(
+        git_init.status.success(),
+        "git init failed: {}",
+        String::from_utf8_lossy(&git_init.stderr)
+    );
+    fs::write(published.workspace_path().join("changed.txt"), "dirty\n").expect("dirty file");
+    let submitted = sample_submitted_harness_result(&published);
+    fs::write(
+        published.submitted_result_path(),
+        serde_json::to_vec_pretty(&submitted).expect("submitted result json"),
+    )
+    .expect("write submitted result");
+    let run =
+        crate::cli::prototype1_state::edit_surface::tui_adapter::HeadlessRun::setup_unavailable(
+            "test_setup",
+            "unavailable for unit test",
+        );
+    let diagnostics_path = published
+        .submitted_result_path()
+        .with_extension("headless-tui.json");
+    fs::write(
+        &diagnostics_path,
+        serde_json::to_vec_pretty(&run.evidence()).expect("diagnostics json"),
+    )
+    .expect("write diagnostics");
+    write_harness_diagnostic_to_owner_db(&campaign_id, &published, &diagnostics_path, &run)
+        .expect("diagnostic row write");
+
+    let db = load_owner_eval_database(&db_path).expect("owner db loads");
+    let rows = query_harness_request(&db, &campaign_id);
+    assert_eq!(rows.rows.len(), 1);
+    let row = rows.row_refs().next().expect("request row");
+    assert_eq!(row.get::<i64>("child_min").expect("child min"), 1);
+    assert_eq!(
+        row.get::<String>("admission_policy").expect("admission"),
+        "policy:harness"
+    );
+
+    let rows = query_harness_diagnostic(&db, &campaign_id);
+    assert_eq!(rows.rows.len(), 1);
+    let row = rows.row_refs().next().expect("diagnostic row");
+    assert_eq!(
+        row.get::<String>("terminal_kind").expect("terminal kind"),
+        "setup_unavailable"
+    );
+    assert_eq!(row.get::<i64>("attempts").expect("attempts"), 0);
+
+    let rows = query_harness_workspace(&db, &campaign_id);
+    assert_eq!(rows.rows.len(), 1);
+    let row = rows.row_refs().next().expect("workspace row");
+    assert!(row.get::<bool>("exists").expect("exists"));
+    assert!(row.get::<bool>("git_status_ok").expect("git ok"));
+    assert_eq!(row.get::<i64>("change_count").expect("changes"), 1);
+
+    let rows = query_harness_workspace_change(&db, &campaign_id);
+    assert_eq!(rows.rows.len(), 1);
+    let row = rows.row_refs().next().expect("workspace change row");
+    assert_eq!(row.get::<String>("status_code").expect("status"), "??");
+    assert_eq!(row.get::<String>("path").expect("path"), "changed.txt");
+
+    let rows = query_harness_submission(&db, &campaign_id);
+    assert_eq!(rows.rows.len(), 1);
+    let row = rows.row_refs().next().expect("submission row");
+    assert_eq!(row.get::<i64>("changed_file_count").expect("changes"), 1);
+    assert_eq!(row.get::<i64>("citation_count").expect("citations"), 1);
+    assert_eq!(row.get::<i64>("check_count").expect("checks"), 1);
+    assert_eq!(
+        row.get::<String>("hypothesis").expect("hypothesis"),
+        "separate submitted evidence from authority"
+    );
+    assert_eq!(
+        row.get::<String>("expected_effect").expect("effect"),
+        "future descendants admit typed evidence without reading harness files"
+    );
+
+    let rows = query_harness_submission_changes(&db, &campaign_id);
+    assert_eq!(rows.rows.len(), 1);
+    let row = rows.row_refs().next().expect("submission change row");
+    assert_eq!(
+        row.get::<String>("workspace_relpath").expect("relpath"),
+        "changed.txt"
+    );
+    assert_eq!(row.get::<String>("summary").expect("summary"), "dirty file");
+
+    let rows = query_harness_submission_citations(&db, &campaign_id);
+    assert_eq!(rows.rows.len(), 1);
+    let row = rows.row_refs().next().expect("submission citation row");
+    assert_eq!(row.get::<String>("kind").expect("kind"), "HistoryBlocks");
+    assert_eq!(
+        row.get::<String>("summary").expect("summary"),
+        "history says keep authority separate"
+    );
+
+    let rows = query_harness_submission_checks(&db, &campaign_id);
+    assert_eq!(rows.rows.len(), 1);
+    let row = rows.row_refs().next().expect("submission check row");
+    assert_eq!(row.get::<String>("label").expect("label"), "unit");
+    assert_eq!(
+        row.get::<String>("command").expect("command"),
+        "cargo test -p ploke-eval eval_store"
+    );
+}
+
+fn sample_submitted_harness_result(
+    published: &crate::cli::prototype1_state::edit_surface::harness_request::PublishedBroadHarnessRequest,
+) -> crate::cli::prototype1_state::edit_surface::harness_result::SubmittedBroadHarnessResult {
+    use crate::cli::prototype1_state::edit_surface::harness_request::{
+        EvidenceRootKind, EvidenceRootLocation, SubmissionAuthorityBoundary,
+    };
+    use crate::cli::prototype1_state::edit_surface::harness_result::{
+        SubmittedBroadHarnessResult, SubmittedChangeSummary, SubmittedCheckRecommendation,
+        SubmittedEvidenceCitation, SubmittedFileChange, SubmittedHarnessReturnEvidence,
+        SubmittedImprovementRationale,
+    };
+
+    SubmittedBroadHarnessResult::bind(
+        published,
+        SubmittedHarnessReturnEvidence {
+            authority_boundary: SubmissionAuthorityBoundary::submitted_evidence_only(),
+            change_summary: SubmittedChangeSummary {
+                changed_files: vec![SubmittedFileChange {
+                    workspace_relpath: PathBuf::from("changed.txt"),
+                    summary: "dirty file".to_string(),
+                }],
+            },
+            guiding_evidence: vec![SubmittedEvidenceCitation {
+                kind: EvidenceRootKind::HistoryBlocks,
+                location: EvidenceRootLocation::Directory {
+                    path: PathBuf::from("/tmp/history/blocks"),
+                },
+                summary: "history says keep authority separate".to_string(),
+            }],
+            rationale: SubmittedImprovementRationale {
+                hypothesis: "separate submitted evidence from authority".to_string(),
+                expected_descendant_effect:
+                    "future descendants admit typed evidence without reading harness files"
+                        .to_string(),
+            },
+            checks: vec![SubmittedCheckRecommendation {
+                label: "unit".to_string(),
+                command: "cargo test -p ploke-eval eval_store".to_string(),
+                success_signal: "eval-store rows are queryable".to_string(),
+            }],
+        },
+    )
+    .expect("submitted result binds published request")
+}
+
+#[test]
 fn prototype1_eval_store_setup_relations_round_trip_actual_loop_types() {
     let tmp = tempfile::tempdir().expect("tmp");
     let campaign_id = CampaignId::from("campaign");
@@ -1099,7 +3245,11 @@ fn prototype1_eval_store_setup_relations_round_trip_actual_loop_types() {
         serde_json::to_vec_pretty(&closure).expect("closure json"),
     )
     .expect("closure file");
-    let admitted = sample_admitted_profile(tmp.path());
+    let mut admitted = sample_admitted_profile(tmp.path());
+    admitted.profile.selection.patch.gate =
+        ploke_records::run_profile::PatchGate::ReviewedAdmissible;
+    let review_hash =
+        crate::cli::prototype1_state::history::HistoryHash::of_bytes(b"review config");
     let baseline = sample_complete_baseline(campaign_id.clone());
     let parent = parent_identity();
     let db = Database::new_init().expect("db");
@@ -1111,6 +3261,7 @@ fn prototype1_eval_store_setup_relations_round_trip_actual_loop_types() {
             &manifest,
             profile::EvalStorageBackend::DualStrict,
             Some(&admitted),
+            Some(&review_hash),
             &closure_path,
             &closure,
         )
@@ -1196,6 +3347,20 @@ fn prototype1_eval_store_setup_relations_round_trip_actual_loop_types() {
             .expect("embedding model"),
         "text-embedding-3-small"
     );
+    let route = query_campaign_embedding_route(&db, &campaign_id);
+    let route_row = route
+        .row_refs()
+        .next()
+        .expect("campaign embedding route row");
+    assert_eq!(
+        route_row
+            .get::<String>("embedding_route")
+            .expect("embedding route"),
+        "direct_openai"
+    );
+    let tokens = query_campaign_tokens(&db, &campaign_id);
+    let token_row = tokens.row_refs().next().expect("campaign eval token row");
+    assert_eq!(token_row.get::<i64>("max_tokens").expect("tokens"), 32_768);
 
     let budget = query_campaign_budget(&db, &campaign_id);
     assert_eq!(budget.rows.len(), 1);
@@ -1275,11 +3440,75 @@ fn prototype1_eval_store_setup_relations_round_trip_actual_loop_types() {
     let profiles = query_profile_commitments(&db, &campaign_id);
     assert_eq!(profiles.rows.len(), 1);
     let profile_row = profiles.row_refs().next().expect("profile row");
+    let profile_ref_id = profile_row
+        .get::<String>("profile_ref_id")
+        .expect("profile ref id");
     assert_eq!(
         profile_row
             .get::<String>("profile_name")
             .expect("profile name"),
         admitted.profile.name
+    );
+
+    let policy = query_run_profile_policy(&db, &campaign_id);
+    assert_eq!(policy.rows.len(), 1);
+    let policy_row = policy.row_refs().next().expect("policy row");
+    assert_eq!(
+        policy_row
+            .get::<String>("profile_ref_id")
+            .expect("policy profile ref"),
+        profile_ref_id
+    );
+    assert_eq!(
+        policy_row.get::<i64>("max_generations").expect("max gen"),
+        3
+    );
+    assert_eq!(
+        policy_row.get::<i64>("max_total_nodes").expect("max nodes"),
+        9
+    );
+    assert_eq!(policy_row.get::<i64>("child_min").expect("child min"), 1);
+    assert_eq!(policy_row.get::<i64>("child_max").expect("child max"), 2);
+    assert_eq!(
+        policy_row
+            .get::<i64>("parallel_targets")
+            .expect("parallel targets"),
+        1
+    );
+    assert_eq!(
+        policy_row
+            .get::<String>("generation_source")
+            .expect("generation source"),
+        "broad-harness-request"
+    );
+    assert_eq!(
+        policy_row
+            .get::<String>("oracle_gate")
+            .expect("oracle gate"),
+        "disabled"
+    );
+    assert_eq!(
+        policy_row
+            .get::<Vec<String>>("oracle_targets")
+            .expect("oracle targets"),
+        vec!["BurntSushi__ripgrep-2209".to_string()]
+    );
+    assert_eq!(
+        policy_row.get::<String>("patch_gate").expect("patch gate"),
+        "reviewed-admissible"
+    );
+    assert_eq!(
+        policy_row
+            .get::<String>("review_config_hash")
+            .expect("review config hash"),
+        review_hash.as_str()
+    );
+    assert_eq!(policy_row.get::<i64>("timeout_secs").expect("timeout"), 300);
+    assert_eq!(
+        policy_row
+            .get::<String>("control_mode")
+            .expect("control mode"),
+        "continuous"
     );
 
     let closures = query_closure_refs(&db, &campaign_id);
@@ -1355,6 +3584,175 @@ fn prototype1_eval_store_setup_relations_round_trip_actual_loop_types() {
 }
 
 #[test]
+fn completed_setup_rejects_missing_patch_relation() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let campaign = CampaignId::from("campaign-missing-patch-relation");
+    let (db_path, manifest, admitted, closure_path, closure) = seeded_patch_context(
+        tmp.path(),
+        &campaign,
+        ploke_records::run_profile::PatchGate::Disabled,
+        None,
+    );
+    super::cozo_store::mutate_owner_db(&db_path, |db| {
+        db.raw_query_mut_params("::remove eval_patch_gate", BTreeMap::new())
+            .map_err(|source| EvalStoreError::Db {
+                phase: "test.remove_patch_relation",
+                source,
+            })?;
+        Ok(())
+    })
+    .expect("patch relation removed");
+
+    let error = verify_r0_context_in_owner_db(
+        &db_path,
+        &manifest,
+        &admitted,
+        None,
+        &closure_path,
+        &closure,
+    )
+    .expect_err("completed setup must require the patch policy relation");
+    assert!(
+        matches!(
+            error,
+            EvalStoreError::Db {
+                phase: "verify.eval_patch_gate",
+                ..
+            }
+        ),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn completed_setup_rejects_missing_patch_row() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let campaign = CampaignId::from("campaign-missing-patch-row");
+    let (db_path, manifest, admitted, closure_path, closure) = seeded_patch_context(
+        tmp.path(),
+        &campaign,
+        ploke_records::run_profile::PatchGate::Disabled,
+        None,
+    );
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign.to_string().into());
+    super::cozo_store::mutate_owner_db(&db_path, |db| {
+        db.raw_query_mut_params(
+            "?[campaign_id] <- [[$campaign_id]] :rm eval_patch_gate { campaign_id }",
+            params,
+        )
+        .map_err(|source| EvalStoreError::Db {
+            phase: "test.remove_patch_row",
+            source,
+        })?;
+        Ok(())
+    })
+    .expect("patch row removed");
+
+    let error = verify_r0_context_in_owner_db(
+        &db_path,
+        &manifest,
+        &admitted,
+        None,
+        &closure_path,
+        &closure,
+    )
+    .expect_err("completed setup must require exactly one patch policy row");
+    assert!(
+        matches!(
+            error,
+            EvalStoreError::Validation {
+                field: "eval_patch_gate",
+                ..
+            }
+        ),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn completed_setup_rejects_wrong_patch_gate() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let campaign = CampaignId::from("campaign-wrong-patch-gate");
+    let review_hash =
+        crate::cli::prototype1_state::history::HistoryHash::of_bytes(b"admitted review config");
+    let (db_path, manifest, admitted, closure_path, closure) = seeded_patch_context(
+        tmp.path(),
+        &campaign,
+        ploke_records::run_profile::PatchGate::ReviewedAdmissible,
+        Some(&review_hash),
+    );
+    rewrite_patch_policy(
+        &db_path,
+        &campaign,
+        ploke_records::run_profile::PatchGate::Disabled,
+        None,
+    );
+
+    let error = verify_r0_context_in_owner_db(
+        &db_path,
+        &manifest,
+        &admitted,
+        Some(&review_hash),
+        &closure_path,
+        &closure,
+    )
+    .expect_err("completed setup must reject a different stored patch gate");
+    assert!(
+        matches!(
+            error,
+            EvalStoreError::Validation {
+                field: "eval_patch_gate",
+                ..
+            }
+        ),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn completed_setup_rejects_wrong_patch_config() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let campaign = CampaignId::from("campaign-wrong-patch-config");
+    let review_hash =
+        crate::cli::prototype1_state::history::HistoryHash::of_bytes(b"admitted review config");
+    let wrong_hash =
+        crate::cli::prototype1_state::history::HistoryHash::of_bytes(b"different review config");
+    let (db_path, manifest, admitted, closure_path, closure) = seeded_patch_context(
+        tmp.path(),
+        &campaign,
+        ploke_records::run_profile::PatchGate::ReviewedAdmissible,
+        Some(&review_hash),
+    );
+    rewrite_patch_policy(
+        &db_path,
+        &campaign,
+        ploke_records::run_profile::PatchGate::ReviewedAdmissible,
+        Some(&wrong_hash),
+    );
+
+    let error = verify_r0_context_in_owner_db(
+        &db_path,
+        &manifest,
+        &admitted,
+        Some(&review_hash),
+        &closure_path,
+        &closure,
+    )
+    .expect_err("completed setup must reject a different reviewer config");
+    assert!(
+        matches!(
+            error,
+            EvalStoreError::Validation {
+                field: "eval_patch_gate",
+                ..
+            }
+        ),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
 fn prototype1_eval_store_campaign_manifest_fixture_round_trips_through_schema() {
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(
         "src/tests/fixtures/prototype1-campaign-manifest/p1-walk-dbmanifest-20260626-214948.campaign.json",
@@ -1390,6 +3788,85 @@ fn prototype1_eval_store_campaign_manifest_fixture_round_trips_through_schema() 
             .expect("procedure list"),
         manifest.required_procedures
     );
+}
+
+#[test]
+fn prototype1_eval_store_missing_token_relation_reads_as_historical_none() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = temp.path().join("campaign.json");
+    let campaign_id = CampaignId::from("historical-token-policy");
+    let manifest = sample_campaign_manifest(campaign_id.clone());
+    let db = Database::new_init().expect("db");
+    let store = DbEvalStore::new(&db);
+    store.install_schema().expect("schema install");
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).expect("manifest serializes"),
+    )
+    .expect("write manifest");
+    manifest
+        .put_into_eval_db(
+            &db,
+            &manifest_path,
+            profile::EvalStorageBackend::DualStrict,
+            None,
+        )
+        .expect("campaign manifest writes");
+
+    db.raw_query_mut_params("::remove eval_campaign_eval_token", BTreeMap::new())
+        .expect("remove token relation to model a pre-cap owner DB");
+    assert!(
+        !eval_relation_exists(&db, CAMPAIGN_EVAL_TOKEN_REL)
+            .expect("token relation absence is queryable")
+    );
+
+    let loaded =
+        CampaignManifest::read_from_eval_db(&db, &campaign_id).expect("historical campaign reads");
+    assert_eq!(loaded.eval.max_tokens, None);
+    assert_eq!(loaded.campaign_id, manifest.campaign_id);
+    assert_eq!(loaded.eval.budget, manifest.eval.budget);
+}
+
+#[test]
+fn prototype1_eval_store_malformed_token_relation_still_errors() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = temp.path().join("campaign.json");
+    let campaign_id = CampaignId::from("malformed-token-policy");
+    let manifest = sample_campaign_manifest(campaign_id.clone());
+    let db = Database::new_init().expect("db");
+    let store = DbEvalStore::new(&db);
+    store.install_schema().expect("schema install");
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).expect("manifest serializes"),
+    )
+    .expect("write manifest");
+    manifest
+        .put_into_eval_db(
+            &db,
+            &manifest_path,
+            profile::EvalStorageBackend::DualStrict,
+            None,
+        )
+        .expect("campaign manifest writes");
+
+    db.raw_query_mut_params("::remove eval_campaign_eval_token", BTreeMap::new())
+        .expect("remove current token relation");
+    db.raw_query_mut_params(
+        ":create eval_campaign_eval_token { campaign_id: String => legacy_value: String }",
+        BTreeMap::new(),
+    )
+    .expect("create malformed token relation");
+
+    let error = CampaignManifest::read_from_eval_db(&db, &campaign_id)
+        .expect_err("present but malformed token relation must fail closed");
+    assert!(matches!(
+        error,
+        EvalStoreError::Db {
+            phase: "read.eval_campaign_eval_token",
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -1572,6 +4049,10 @@ fn prototype1_eval_store_trace_observation_jsonl_imports_rows_idempotently() {
                 r#"{"timestamp":"2026-06-23T00:00:00Z","target":"ploke_exec","level":"INFO","event":"typestate_transition","role":"parent","pipeline":"prototype1.child_plan_authority","phase":"typestate_transition","transition":"R7->R8","outcome":"committed","campaign_id":"campaign","parent_id":"parent","node_id":"parent","generation":0,"branch_id":"main","record_access":"write","record_kind":"child_plan_file","record_path":"prototype1/messages/child-plan.json","record_index":0,"record_count":1,"duration_ms":17}"#,
                 "\n",
                 r#"{"timestamp":"2026-06-23T00:00:01Z","target":"ploke_exec","level":"INFO","span":{"name":"child-build"},"outcome":"rejected","program":"cargo","exit_code":101,"duration_ms":22}"#,
+                "\n",
+                r#"{"timestamp":"2026-06-23T00:00:02Z","target":"chat_http","level":"INFO","event":"provider_attempt","request_id":42,"attempt":1,"max_attempts":2,"started_at_ms":0,"request_sent_ms":1,"headers_received_ms":20,"output_started_ms":21,"output_completed_ms":21,"status":200,"response_bytes":321,"outcome":"completed","retry_decision":"none","elapsed_ms":21}"#,
+                "\n",
+                r#"{"timestamp":"2026-06-23T00:00:03Z","target":"chat_http","level":"INFO","event":"provider_attempt","request_id":43,"attempt":2,"max_attempts":2,"started_at_ms":22,"request_sent_ms":1,"headers_received_ms":18,"output_started_ms":19,"output_completed_ms":19,"status":200,"response_bytes":456,"transport_outcome":"completed","response_outcome":"parsed","retry_decision":"none","elapsed_ms":19}"#,
                 "\n"
             ),
         )
@@ -1593,7 +4074,7 @@ fn prototype1_eval_store_trace_observation_jsonl_imports_rows_idempotently() {
     assert_eq!(second, first);
     assert_eq!(query_log_refs(&db).rows.len(), 1);
     let traces = query_trace_events(&db, &first.log_ref_id);
-    assert_eq!(traces.rows.len(), 2);
+    assert_eq!(traces.rows.len(), 4);
     let mut by_index = std::collections::BTreeMap::new();
     for row in traces.row_refs() {
         by_index.insert(
@@ -1629,6 +4110,308 @@ fn prototype1_eval_store_trace_observation_jsonl_imports_rows_idempotently() {
         Some("cargo")
     );
     assert_eq!(by_index.get(&1).expect("second trace").5, Some(101));
+
+    let attempts = query_provider_attempts(&db, &first.log_ref_id);
+    assert_eq!(attempts.rows.len(), 2);
+    let mut by_request = std::collections::BTreeMap::new();
+    for attempt in attempts.row_refs() {
+        by_request.insert(
+            attempt.get::<String>("request_id").expect("request id"),
+            (
+                attempt.get::<i64>("attempt").expect("attempt"),
+                attempt
+                    .get::<String>("transport_outcome")
+                    .expect("transport outcome"),
+                attempt
+                    .get::<String>("response_outcome")
+                    .expect("response outcome"),
+            ),
+        );
+    }
+    let historical = by_request.get("42").expect("historical provider attempt");
+    assert_eq!(historical.0, 1);
+    assert_eq!(historical.1, "completed");
+    assert_eq!(historical.2, "not_parsed");
+    let current = by_request.get("43").expect("current provider attempt");
+    assert_eq!(current.0, 2);
+    assert_eq!(current.1, "completed");
+    assert_eq!(current.2, "parsed");
+    assert_eq!(first.provider_attempt_ids.len(), 2);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn prototype1_eval_store_imports_emitted_provider_attempt_json() {
+    use std::time::Duration;
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let tmp = tempfile::tempdir().expect("tmp");
+    let log_path = tmp.path().join("provider-attempt.jsonl");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind observation provider");
+    let address = listener.local_addr().expect("observation provider address");
+    let provider = tokio::spawn(async move {
+        let responses = [
+            (
+                "429 Too Many Requests",
+                "Retry-After: 0\r\n",
+                r#"{"error":{"message":"rate limited","code":429}}"#,
+            ),
+            (
+                "200 OK",
+                "",
+                r#"{"id":"provider-observation","object":"chat.completion","created":0,"model":"test/model","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}"#,
+            ),
+        ];
+        for (status, extra_headers, body) in responses {
+            let (mut socket, _) = listener.accept().await.expect("accept provider request");
+            let mut request = Vec::new();
+            loop {
+                let mut chunk = [0_u8; 4 * 1024];
+                let received = socket
+                    .read(&mut chunk)
+                    .await
+                    .expect("read provider request");
+                assert!(received > 0, "provider request must not end early");
+                request.extend_from_slice(&chunk[..received]);
+                let Some(header_end) = request.windows(4).position(|part| part == b"\r\n\r\n")
+                else {
+                    continue;
+                };
+                let header_text = std::str::from_utf8(&request[..header_end])
+                    .expect("provider request headers are UTF-8");
+                let body_len = header_text
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length").then(|| {
+                            value
+                                .trim()
+                                .parse::<usize>()
+                                .expect("content length is usize")
+                        })
+                    })
+                    .unwrap_or_default();
+                if request.len() >= header_end + 4 + body_len {
+                    break;
+                }
+            }
+            let response = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\n{extra_headers}Connection: close\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            );
+            socket
+                .write_all(response.as_bytes())
+                .await
+                .expect("write provider response");
+        }
+    });
+    let url = Box::leak(format!("http://{address}/v1/chat/completions").into_boxed_str());
+    OBSERVATION_URL
+        .set(url)
+        .expect("observation URL is only initialized by this test");
+
+    let output = fs::File::create(&log_path).expect("create observation JSONL");
+    let subscriber = tracing_subscriber::fmt()
+        .json()
+        .flatten_event(true)
+        .with_current_span(true)
+        .with_span_list(true)
+        .with_target(true)
+        .with_level(true)
+        .with_file(true)
+        .with_line_number(true)
+        .without_time()
+        .with_env_filter(EnvFilter::new("off,chat_http=trace"))
+        .with_writer(move || output.try_clone().expect("clone observation writer"))
+        .finish();
+    let trace_guard = tracing::subscriber::set_default(subscriber);
+    let request = ProviderObservationRouter::default_chat_completion()
+        .with_model_str("test/model")
+        .expect("valid model");
+    let mut config = ChatHttpConfig::default();
+    config.max_attempts = 2;
+    config.initial_backoff = Duration::from_millis(1);
+    config.max_backoff = Duration::from_millis(1);
+    config.max_total_elapsed = Some(Duration::from_secs(1));
+
+    let result = chat_step_with_attempts(&reqwest::Client::new(), &request, &config)
+        .await
+        .expect("429 retry reaches parsed success");
+    provider.await.expect("observation provider completes");
+    assert_eq!(result.full_response.id, "provider-observation");
+    assert_eq!(result.provider_attempts.len(), 2);
+    let first = &result.provider_attempts[0];
+    assert_eq!(first.status, Some(429));
+    assert_eq!(
+        first.failure_phase.map(|phase| phase.as_str()),
+        Some("status")
+    );
+    assert_eq!(first.retry_decision.as_str(), "scheduled");
+    assert_eq!(first.retry_after, Some(Duration::ZERO));
+    assert_eq!(first.backoff, Some(Duration::ZERO));
+    let second = &result.provider_attempts[1];
+    assert_eq!(second.status, Some(200));
+    assert_eq!(second.outcome.as_str(), "completed");
+    assert_eq!(second.response_outcome.as_str(), "parsed");
+    assert_eq!(second.retry_decision.as_str(), "none");
+    let emitted = result
+        .provider_attempts
+        .iter()
+        .map(ProviderAttemptTimeline::from_attempt)
+        .collect::<Vec<_>>();
+    drop(trace_guard);
+
+    let db = Database::new_init().expect("db");
+    let store = DbEvalStore::new(&db);
+    let imported = store
+        .import_observation_jsonl(ObservationJsonlImport {
+            campaign_id: Some(CampaignId::from("campaign")),
+            path: log_path,
+        })
+        .expect("import emitted provider attempt");
+    let attempts = query_provider_attempts(&db, &imported.log_ref_id);
+
+    assert_eq!(imported.provider_attempt_ids.len(), emitted.len());
+    assert_eq!(attempts.rows.len(), emitted.len());
+    let int = |value: u64| i64::try_from(value).expect("provider timeline fits Cozo Int");
+    let opt_int = |value: Option<u64>| value.map(int);
+    for row in attempts.row_refs() {
+        let attempt = row.get::<i64>("attempt").expect("attempt");
+        let index = usize::try_from(attempt - 1).expect("positive attempt number");
+        let expected = emitted.get(index).expect("emitted attempt at row index");
+        let row_id = row
+            .get::<String>("provider_attempt_id")
+            .expect("provider attempt id");
+
+        assert!(imported.provider_attempt_ids.contains(&row_id));
+        assert_eq!(
+            row.get::<Option<String>>("campaign_id")
+                .expect("campaign id")
+                .as_deref(),
+            Some("campaign")
+        );
+        assert_eq!(
+            row.get::<String>("request_id").expect("request id"),
+            expected.request_id.to_string()
+        );
+        assert_eq!(attempt, i64::from(expected.attempt));
+        assert_eq!(
+            row.get::<i64>("max_attempts").expect("max attempts"),
+            i64::from(expected.max_attempts)
+        );
+        assert_eq!(
+            row.get::<i64>("started_at_ms").expect("started at"),
+            int(expected.started_at_ms)
+        );
+        assert_eq!(
+            row.get::<Option<i64>>("request_sent_ms")
+                .expect("request sent"),
+            opt_int(expected.request_sent_ms)
+        );
+        assert_eq!(
+            row.get::<Option<i64>>("headers_received_ms")
+                .expect("headers received"),
+            opt_int(expected.headers_received_ms)
+        );
+        assert_eq!(
+            row.get::<Option<i64>>("output_started_ms")
+                .expect("output started"),
+            opt_int(expected.output_started_ms)
+        );
+        assert_eq!(
+            row.get::<Option<i64>>("output_progress_ms")
+                .expect("output progress"),
+            opt_int(expected.output_progress_ms)
+        );
+        assert_eq!(
+            row.get::<Option<i64>>("output_completed_ms")
+                .expect("output completed"),
+            opt_int(expected.output_completed_ms)
+        );
+        assert_eq!(
+            row.get::<Option<i64>>("failed_ms").expect("failed"),
+            opt_int(expected.failed_ms)
+        );
+        assert_eq!(
+            row.get::<Option<i64>>("status").expect("status"),
+            expected.status.map(i64::from)
+        );
+        assert_eq!(
+            row.get::<Option<i64>>("response_bytes")
+                .expect("response bytes"),
+            expected
+                .response_bytes
+                .map(|value| i64::try_from(value).expect("response bytes fit Cozo Int"))
+        );
+        assert_eq!(
+            row.get::<String>("transport_outcome")
+                .expect("transport outcome"),
+            expected.outcome.as_str()
+        );
+        assert_eq!(
+            row.get::<Option<String>>("failure_phase")
+                .expect("failure phase")
+                .as_deref(),
+            expected.failure_phase.map(|phase| phase.as_str())
+        );
+        assert_eq!(
+            row.get::<Option<String>>("send_failure")
+                .expect("send failure")
+                .as_deref(),
+            expected
+                .send_failure
+                .as_ref()
+                .map(|failure| failure.as_str())
+        );
+        assert_eq!(
+            row.get::<Option<String>>("body_failure")
+                .expect("body failure")
+                .as_deref(),
+            expected
+                .body_failure
+                .as_ref()
+                .map(|failure| failure.as_str())
+        );
+        assert_eq!(
+            row.get::<String>("response_outcome")
+                .expect("response outcome"),
+            expected.response_outcome.as_str()
+        );
+        assert_eq!(
+            row.get::<String>("retry_decision").expect("retry decision"),
+            expected.retry_decision.as_str()
+        );
+        assert_eq!(
+            row.get::<Option<i64>>("retry_after_ms")
+                .expect("retry after"),
+            opt_int(expected.retry_after_ms)
+        );
+        assert_eq!(
+            row.get::<Option<i64>>("backoff_ms").expect("backoff"),
+            opt_int(expected.backoff_ms)
+        );
+        assert_eq!(
+            row.get::<Option<String>>("error").expect("error"),
+            expected.error
+        );
+        assert_eq!(
+            row.get::<String>("source_log_ref")
+                .expect("source log reference"),
+            imported.log_ref_id
+        );
+        assert!(
+            row.get::<i64>("source_event_index")
+                .expect("source event index")
+                >= 0
+        );
+        assert_eq!(
+            row.get::<Option<String>>("recorded_at")
+                .expect("recorded at"),
+            None
+        );
+    }
 }
 
 #[test]
@@ -1749,6 +4532,49 @@ fn prototype1_eval_store_parent_start_db_round_trips_rows() {
             .1,
         receipt.resource.content_sha256
     );
+
+    let identities = query_parent_identities(&db, &evidence.campaign_id);
+    assert_eq!(identities.rows.len(), 1);
+    let identity = identities.row_refs().next().expect("identity row");
+    assert_eq!(
+        identity.get::<String>("parent_id").expect("parent"),
+        "parent"
+    );
+    assert_eq!(identity.get::<String>("node_id").expect("node"), "parent");
+    assert_eq!(identity.get::<i64>("generation").expect("generation"), 0);
+    assert_eq!(
+        identity.get::<String>("branch_id").expect("branch"),
+        "branch-parent"
+    );
+    assert_eq!(
+        identity
+            .get::<String>("artifact_branch")
+            .expect("artifact branch"),
+        "artifact-parent"
+    );
+    assert_eq!(
+        identity.get::<String>("instance_id").expect("instance"),
+        "instance"
+    );
+
+    let starts = query_parent_starts(&db, &evidence.campaign_id);
+    assert_eq!(starts.rows.len(), 1);
+    let start = starts.row_refs().next().expect("parent start row");
+    assert_eq!(
+        start
+            .get::<String>("start_event_id")
+            .expect("start event id"),
+        db_receipt.event_id
+    );
+    assert_eq!(
+        start.get::<String>("startup_kind").expect("startup kind"),
+        "genesis"
+    );
+    assert_eq!(start.get::<i64>("pid").expect("pid"), 42);
+    assert_eq!(
+        start.get::<i64>("source_event_index").expect("event index"),
+        receipt.parent.source_event_index as i64
+    );
 }
 
 #[test]
@@ -1768,6 +4594,16 @@ fn prototype1_eval_store_parent_start_db_duplicate_identical_is_idempotent() {
     assert_eq!(second, first);
     assert_eq!(query_transition_event(&db, &first.event_id).rows.len(), 1);
     assert_eq!(query_record_refs(&db, &evidence.campaign_id).rows.len(), 2);
+    assert_eq!(
+        query_parent_identities(&db, &evidence.campaign_id)
+            .rows
+            .len(),
+        1
+    );
+    assert_eq!(
+        query_parent_starts(&db, &evidence.campaign_id).rows.len(),
+        1
+    );
 }
 
 #[test]
@@ -1800,6 +4636,16 @@ fn prototype1_eval_store_parent_start_db_duplicate_semantic_mismatch_fails() {
     }
     assert_eq!(query_transition_event(&db, &first.event_id).rows.len(), 1);
     assert_eq!(query_record_refs(&db, &evidence.campaign_id).rows.len(), 2);
+    assert_eq!(
+        query_parent_identities(&db, &evidence.campaign_id)
+            .rows
+            .len(),
+        1
+    );
+    assert_eq!(
+        query_parent_starts(&db, &evidence.campaign_id).rows.len(),
+        1
+    );
 }
 
 #[test]
@@ -1824,6 +4670,16 @@ fn prototype1_eval_store_parent_start_db_missing_required_hash_fails_before_rows
     assert!(query_all_transition_events(&db).rows.is_empty());
     assert!(
         query_record_refs(&db, &evidence.campaign_id)
+            .rows
+            .is_empty()
+    );
+    assert!(
+        query_parent_identities(&db, &evidence.campaign_id)
+            .rows
+            .is_empty()
+    );
+    assert!(
+        query_parent_starts(&db, &evidence.campaign_id)
             .rows
             .is_empty()
     );
@@ -1853,6 +4709,16 @@ fn prototype1_eval_store_parent_start_dual_strict_persists_owner_db() {
         1
     );
     assert_eq!(query_record_refs(&db, &evidence.campaign_id).rows.len(), 2);
+    assert_eq!(
+        query_parent_identities(&db, &evidence.campaign_id)
+            .rows
+            .len(),
+        1
+    );
+    assert_eq!(
+        query_parent_starts(&db, &evidence.campaign_id).rows.len(),
+        1
+    );
 }
 
 #[test]
@@ -1910,6 +4776,16 @@ fn prototype1_eval_store_parent_start_dual_strict_failure_keeps_repairable_journ
         1
     );
     assert_eq!(query_record_refs(&db, &evidence.campaign_id).rows.len(), 2);
+    assert_eq!(
+        query_parent_identities(&db, &evidence.campaign_id)
+            .rows
+            .len(),
+        1
+    );
+    assert_eq!(
+        query_parent_starts(&db, &evidence.campaign_id).rows.len(),
+        1
+    );
 }
 
 fn sample_campaign_manifest(campaign_id: CampaignId) -> CampaignManifest {
@@ -1941,8 +4817,10 @@ fn sample_campaign_manifest(campaign_id: CampaignId) -> CampaignManifest {
                 wall_clock_secs: 13,
             },
             batch_prefix: Some("ripgrep".to_string()),
+            embedding_route: EmbeddingRoute::DirectOpenAi,
             embedding_model_id: Some("text-embedding-3-small".to_string()),
-            embedding_provider_slug: Some("openai".to_string()),
+            embedding_provider_slug: None,
+            max_tokens: Some(32_768),
         },
         protocol: ProtocolCampaignPolicy {
             model_id: Some("google/gemini-2.5-flash".to_string()),
@@ -1970,6 +4848,41 @@ fn sample_campaign_manifest(campaign_id: CampaignId) -> CampaignManifest {
 }
 
 fn sample_admitted_profile(root: &std::path::Path) -> profile::AdmittedRunProfile {
+    let mut run_profile = profile::Prototype1RunProfile {
+        schema_version: profile::RUN_PROFILE_SCHEMA_VERSION.to_string(),
+        name: "test-profile".to_string(),
+        storage: profile::Storage {
+            worktree_root: root.join("worktrees"),
+            eval: profile::EvalStorage {
+                backend: profile::EvalStorageBackend::DualStrict,
+            },
+        },
+        target: profile::Target {
+            dataset_key: Some("ripgrep".to_string()),
+            instance: Some("BurntSushi__ripgrep-2209".to_string()),
+            instances: Vec::new(),
+        },
+        model: profile::ModelDefaults::default(),
+        search: profile::Search::default(),
+        generation: profile::Generation::default(),
+        selection: profile::Selection::default(),
+        protocol: profile::Protocol::default(),
+        execution: profile::Execution::default(),
+        control: profile::Control::default(),
+    };
+    run_profile.search.max_generations = 3;
+    run_profile.search.max_total_nodes = 9;
+    run_profile.search.children =
+        crate::intervention::Prototype1ChildBudget::new(1, 2).with_parallel_targets(1);
+    run_profile.selection.seed = 42;
+    run_profile.execution.broad_tui = profile::BroadTui {
+        max_attempts: Some(1),
+        fresh_slots_per_child: Some(1),
+        graph_nearest: Some(5),
+        timeout_secs: Some(300),
+    };
+    run_profile.control.parallel_cap = Some(1);
+
     profile::AdmittedRunProfile {
         commitment: profile::RunProfileCommitment {
             schema_version: profile::RUN_PROFILE_COMMITMENT_SCHEMA_VERSION.to_string(),
@@ -1978,28 +4891,117 @@ fn sample_admitted_profile(root: &std::path::Path) -> profile::AdmittedRunProfil
             source_path: Some(root.join("operator-profile.toml")),
             admitted_at: "2026-06-23T00:00:00Z".to_string(),
         },
-        profile: profile::Prototype1RunProfile {
-            schema_version: profile::RUN_PROFILE_SCHEMA_VERSION.to_string(),
-            name: "test-profile".to_string(),
-            storage: profile::Storage {
-                worktree_root: root.join("worktrees"),
-                eval: profile::EvalStorage {
-                    backend: profile::EvalStorageBackend::DualStrict,
-                },
-            },
-            target: profile::Target::default(),
-            model: profile::ModelDefaults::default(),
-            search: profile::Search::default(),
-            generation: profile::Generation::default(),
-            selection: profile::Selection::default(),
-            protocol: profile::Protocol::default(),
-            execution: profile::Execution::default(),
-            control: profile::Control::default(),
-        },
+        profile: run_profile,
     }
 }
 
-fn sample_closure_state(campaign_id: CampaignId) -> crate::closure::ClosureState {
+pub(crate) fn seeded_patch_context(
+    root: &Path,
+    campaign_id: &CampaignId,
+    gate: ploke_records::run_profile::PatchGate,
+    review_config_hash: Option<&crate::cli::prototype1_state::history::HistoryHash>,
+) -> (
+    PathBuf,
+    CampaignManifest,
+    profile::AdmittedRunProfile,
+    PathBuf,
+    crate::closure::ClosureState,
+) {
+    let manifest_path = root.join("campaign.json");
+    let closure_path = root.join("closure-state.json");
+    let manifest = sample_campaign_manifest(campaign_id.clone());
+    let closure = sample_closure_state(campaign_id.clone());
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).expect("manifest json"),
+    )
+    .expect("manifest file");
+    fs::write(
+        &closure_path,
+        serde_json::to_vec_pretty(&closure).expect("closure json"),
+    )
+    .expect("closure file");
+    let mut admitted = sample_admitted_profile(root);
+    admitted.profile.selection.patch.gate = gate;
+    let db_path = prototype1_eval_store_db_path(&manifest_path);
+    write_r0_context_to_owner_db(
+        &db_path,
+        &manifest_path,
+        &manifest,
+        profile::EvalStorageBackend::DualStrict,
+        Some(&admitted),
+        review_config_hash,
+        &closure_path,
+        &closure,
+    )
+    .expect("setup patch policy writes");
+    verify_r0_context_in_owner_db(
+        &db_path,
+        &manifest,
+        &admitted,
+        review_config_hash,
+        &closure_path,
+        &closure,
+    )
+    .expect("setup patch policy verifies");
+    (db_path, manifest, admitted, closure_path, closure)
+}
+
+fn rewrite_patch_policy(
+    db_path: &Path,
+    campaign_id: &CampaignId,
+    gate: ploke_records::run_profile::PatchGate,
+    review_config_hash: Option<&crate::cli::prototype1_state::history::HistoryHash>,
+) {
+    super::cozo_store::mutate_owner_db(db_path, |db| {
+        let mut query_params = BTreeMap::new();
+        query_params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+        let rows = db
+            .raw_query_params(
+                r#"
+?[profile_ref_id, ingested_at] :=
+    *eval_patch_gate { campaign_id, profile_ref_id, ingested_at },
+    campaign_id = $campaign_id
+"#,
+                query_params,
+            )
+            .map_err(|source| EvalStoreError::Db {
+                phase: "test.query_patch_policy",
+                source,
+            })?;
+        let row = rows.row_refs().next().expect("stored patch policy row");
+        let mut params = BTreeMap::new();
+        params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+        params.insert(
+            "profile_ref_id".to_string(),
+            row.get::<String>("profile_ref_id")
+                .expect("stored profile ref")
+                .into(),
+        );
+        params.insert("gate".to_string(), gate.as_str().into());
+        params.insert(
+            "review_config_hash".to_string(),
+            review_config_hash
+                .map(|hash| DataValue::from(hash.as_str().to_string()))
+                .unwrap_or(DataValue::Null),
+        );
+        params.insert(
+            "ingested_at".to_string(),
+            row.get::<String>("ingested_at")
+                .expect("stored ingestion time")
+                .into(),
+        );
+        put_eval_params(
+            db,
+            &super::setup::PatchGateSchema::SCHEMA,
+            params,
+            "test.put_patch_policy",
+        )
+    })
+    .expect("patch policy rewritten");
+}
+
+pub(crate) fn sample_closure_state(campaign_id: CampaignId) -> crate::closure::ClosureState {
     crate::closure::ClosureState {
         schema_version: crate::closure::CLOSURE_STATE_SCHEMA_VERSION.to_string(),
         campaign_id,
@@ -2196,6 +5198,34 @@ fn query_campaign_eval(db: &Database, campaign_id: &CampaignId) -> QueryResult {
     .expect("query campaign eval policy")
 }
 
+fn query_campaign_embedding_route(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    db.raw_query_params(
+        r#"
+?[embedding_route] :=
+    *eval_campaign_embedding_route { campaign_id, embedding_route },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query campaign embedding route")
+}
+
+fn query_campaign_tokens(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    db.raw_query_params(
+        r#"
+?[max_tokens] :=
+    *eval_campaign_eval_token { campaign_id, max_tokens },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query campaign eval tokens")
+}
+
 fn query_campaign_budget(db: &Database, campaign_id: &CampaignId) -> QueryResult {
     let mut params = BTreeMap::new();
     params.insert("campaign_id".to_string(), campaign_id.to_string().into());
@@ -2236,6 +5266,162 @@ fn query_profile_commitments(db: &Database, campaign_id: &CampaignId) -> QueryRe
         params,
     )
     .expect("query profile commitments")
+}
+
+fn query_run_profile_policy(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    db.raw_query_params(
+        r#"
+?[profile_ref_id, max_generations, max_total_nodes, child_min, child_max, parallel_targets, generation_source, oracle_gate, oracle_targets, patch_gate, review_config_hash, timeout_secs, control_mode] :=
+    *eval_run_profile_policy { campaign_id, profile_ref_id, max_generations, max_total_nodes, child_min, child_max, parallel_targets, generation_source, timeout_secs, control_mode },
+    *eval_oracle_gate { campaign_id, profile_ref_id, gate: oracle_gate, targets: oracle_targets },
+    *eval_patch_gate { campaign_id, profile_ref_id, gate: patch_gate, review_config_hash },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query run profile policy")
+}
+
+fn query_walk_events(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    db.raw_query_params(
+        r#"
+?[command, phase_before, phase_after, allow_live_api, transition_count, exe_sha256] :=
+    *eval_walk_event { campaign_id, command, phase_before, phase_after, allow_live_api, transition_count, exe_sha256 },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query walk events")
+}
+
+fn query_walk_event_transitions(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    db.raw_query_params(
+        r#"
+?[transition_label] :=
+    *eval_walk_event_transition { campaign_id, transition_label },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query walk event transitions")
+}
+
+fn query_harness_request(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    db.raw_query_params(
+        r#"
+?[request_id, child_min, admission_policy] :=
+    *eval_harness_request { campaign_id, request_id, child_min, admission_policy },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query harness request")
+}
+
+fn query_harness_diagnostic(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    db.raw_query_params(
+        r#"
+?[request_id, terminal_kind, attempts] :=
+    *eval_harness_diagnostic { campaign_id, request_id, terminal_kind, attempts },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query harness diagnostic")
+}
+
+fn query_harness_workspace(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    db.raw_query_params(
+        r#"
+?[request_id, exists, git_status_ok, change_count] :=
+    *eval_harness_workspace { campaign_id, request_id, exists, git_status_ok, change_count },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query harness workspace")
+}
+
+fn query_harness_workspace_change(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    db.raw_query_params(
+        r#"
+?[request_id, status_code, path] :=
+    *eval_harness_workspace_change { campaign_id, request_id, status_code, path },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query harness workspace change")
+}
+
+fn query_harness_submission(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    db.raw_query_params(
+        r#"
+?[request_id, changed_file_count, citation_count, check_count, hypothesis, expected_effect] :=
+    *eval_harness_submission { campaign_id, request_id, changed_file_count, citation_count, check_count, hypothesis, expected_effect },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query harness submission")
+}
+
+fn query_harness_submission_changes(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    db.raw_query_params(
+        r#"
+?[request_id, workspace_relpath, summary] :=
+    *eval_harness_submission_change { campaign_id, request_id, workspace_relpath, summary },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query harness submission changes")
+}
+
+fn query_harness_submission_citations(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    db.raw_query_params(
+        r#"
+?[request_id, kind, location, summary] :=
+    *eval_harness_submission_citation { campaign_id, request_id, kind, location, summary },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query harness submission citations")
+}
+
+fn query_harness_submission_checks(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    db.raw_query_params(
+        r#"
+?[request_id, label, command, success_signal] :=
+    *eval_harness_submission_check { campaign_id, request_id, label, command, success_signal },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query harness submission checks")
 }
 
 fn query_closure_refs(db: &Database, campaign_id: &CampaignId) -> QueryResult {
@@ -2352,6 +5538,66 @@ fn query_transition_event(db: &Database, event_id: &str) -> QueryResult {
         .expect("query transition event")
 }
 
+fn query_parent_identities(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert(
+        "campaign_id".to_string(),
+        DataValue::from(campaign_id.to_string()),
+    );
+    db.raw_query_params(
+        r#"
+?[parent_id, node_id, generation, branch_id, artifact_branch, instance_id, previous_parent_id, parent_node_id, identity_created_at, semantic_hash] :=
+    *eval_parent_identity {
+        campaign_id,
+        parent_id,
+        node_id,
+        generation,
+        branch_id,
+        artifact_branch,
+        instance_id,
+        previous_parent_id,
+        parent_node_id,
+        identity_created_at,
+        semantic_hash
+    },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query parent identities")
+}
+
+fn query_parent_starts(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert(
+        "campaign_id".to_string(),
+        DataValue::from(campaign_id.to_string()),
+    );
+    db.raw_query_params(
+        r#"
+?[start_event_id, parent_id, node_id, generation, branch_id, repo_root, startup_kind, handoff_runtime_id, pid, source_event_index, source_line, semantic_hash] :=
+    *eval_parent_start {
+        start_event_id,
+        campaign_id,
+        parent_id,
+        node_id,
+        generation,
+        branch_id,
+        repo_root,
+        startup_kind,
+        handoff_runtime_id,
+        pid,
+        source_event_index,
+        source_line,
+        semantic_hash
+    },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query parent starts")
+}
+
 fn query_all_transition_events(db: &Database) -> QueryResult {
     db.raw_query_params(
         r#"
@@ -2445,6 +5691,50 @@ fn query_trace_events(db: &Database, log_ref_id: &str) -> QueryResult {
             params,
         )
         .expect("query trace events")
+}
+
+fn query_provider_attempts(db: &Database, log_ref_id: &str) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert(
+        "source_log_ref".to_string(),
+        DataValue::from(log_ref_id.to_string()),
+    );
+    db.raw_query_params(
+        r#"
+?[provider_attempt_id, campaign_id, request_id, attempt, max_attempts, started_at_ms, request_sent_ms, headers_received_ms, output_started_ms, output_progress_ms, output_completed_ms, failed_ms, status, response_bytes, transport_outcome, failure_phase, send_failure, body_failure, response_outcome, retry_decision, retry_after_ms, backoff_ms, error, source_log_ref, source_event_index, recorded_at] :=
+    *eval_provider_attempt {
+        provider_attempt_id,
+        campaign_id,
+        request_id,
+        attempt,
+        max_attempts,
+        started_at_ms,
+        request_sent_ms,
+        headers_received_ms,
+        output_started_ms,
+        output_progress_ms,
+        output_completed_ms,
+        failed_ms,
+        status,
+        response_bytes,
+        transport_outcome,
+        failure_phase,
+        send_failure,
+        body_failure,
+        response_outcome,
+        retry_decision,
+        retry_after_ms,
+        backoff_ms,
+        error,
+        source_log_ref,
+        source_event_index,
+        recorded_at
+    },
+    source_log_ref = $source_log_ref
+"#,
+        params,
+    )
+    .expect("query provider attempts")
 }
 
 fn query_all_trace_events(db: &Database) -> QueryResult {

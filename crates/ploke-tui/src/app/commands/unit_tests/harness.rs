@@ -111,7 +111,7 @@ use crate::{
     chat_history::ChatHistory,
     context_plan,
     file_man::FileManager,
-    llm::manager::llm_manager,
+    llm::manager::{SessionCapture, captured_llm_manager, llm_manager},
     observability, run_event_bus,
     user_config::{EmbeddingConfig, UserConfig},
 };
@@ -1163,7 +1163,10 @@ impl TestRuntime<NotSpawned, NotSpawned, NotSpawned, NotSpawned, NotSpawned> {
         )
     }
 
-    /// Create a lightweight runtime with a caller-supplied BM25 timeout.
+    /// Create a sparse headless runtime with a caller-supplied BM25 timeout.
+    ///
+    /// `RagService` owns this runtime's BM25 lifecycle. Keeping the separate
+    /// dense indexer would let post-apply jobs outlive the eval attempt.
     pub fn new_with_embedding_processor_and_bm25_timeout(
         fixture_db: &Arc<ploke_db::Database>,
         processor: EmbeddingProcessor,
@@ -1172,7 +1175,14 @@ impl TestRuntime<NotSpawned, NotSpawned, NotSpawned, NotSpawned, NotSpawned> {
         let mut rag_config = RagConfig::default();
         rag_config.bm25_timeout_ms = bm25_timeout_ms;
         rag_config.strict_bm25_by_default = true;
-        Self::new_with_embedding_processor_and_rag_config(fixture_db, processor, rag_config)
+        let mut runtime =
+            Self::new_with_embedding_processor_and_rag_config(fixture_db, processor, rag_config);
+        let inner = Arc::get_mut(&mut runtime.inner)
+            .expect("new headless runtime must have unique inner ownership");
+        let state =
+            Arc::get_mut(&mut inner.state).expect("new headless runtime must own its state");
+        state.indexer_task = None;
+        runtime
     }
 
     /// Create a lightweight runtime with caller-supplied embedding and RAG settings.
@@ -1380,6 +1390,21 @@ impl<F, S, E, L, O> TestRuntime<F, S, E, L, O> {
         self._cast()
     }
 
+    pub fn spawn_captured_llm(self, capture: SessionCapture) -> TestRuntime<F, S, E, Spawned, O> {
+        let cancel_rx = self.inner.cancel_tx.subscribe();
+        let handle = tokio::spawn(captured_llm_manager(
+            self.inner.event_bus.subscribe(EventPriority::Realtime),
+            self.inner.event_bus.subscribe(EventPriority::Background),
+            Arc::clone(&self.inner.state),
+            self.inner.cmd_tx.clone(),
+            Arc::clone(&self.inner.event_bus),
+            cancel_rx,
+            capture,
+        ));
+        self.retain_actor_handle(handle);
+        self._cast()
+    }
+
     pub fn spawn_observability(self) -> TestRuntime<F, S, E, L, Spawned> {
         let handle = tokio::spawn(observability::run_observability(
             Arc::clone(&self.inner.event_bus),
@@ -1491,6 +1516,10 @@ mod tests {
         assert!(
             state.rag.is_some(),
             "headless sparse TestRuntime must expose RagService; eval setup depends on bm25_ready"
+        );
+        assert!(
+            state.indexer_task.is_none(),
+            "headless sparse TestRuntime must not launch dense indexing alongside its BM25 service"
         );
     }
 

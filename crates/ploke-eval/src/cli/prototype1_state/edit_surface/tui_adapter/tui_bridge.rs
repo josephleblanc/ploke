@@ -14,11 +14,14 @@ use ploke_llm::{
 };
 use ploke_records::llm_response::RawFullResponseRecord;
 use ploke_tui::app::commands::harness::TestAppAccessor;
+use ploke_tui::llm::{FullResponseTraceRecord, SessionCapture};
 use serde::Deserialize;
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
-use crate::cli::prototype1_state::edit_surface::tui_adapter::harness;
+use crate::{
+    cli::prototype1_state::edit_surface::tui_adapter::harness, replay::tool_loop::OuterAttemptLink,
+};
 
 use super::super::harness_request::{
     EvidenceRoot, EvidenceRootKind, EvidenceRootLocation, contract,
@@ -133,8 +136,12 @@ pub(crate) async fn run_llm_debug_step(
         &timeouts,
     )
     .await?;
-    let _debug_guard =
-        super::tool_loop_debug::install_for_attempt(workspace_path, model.as_ref(), evidence_roots);
+    let debug_sink = super::tool_loop_debug::sink_for_attempt(
+        workspace_path,
+        model.as_ref(),
+        evidence_roots,
+        OuterAttemptLink::Unlinked,
+    );
     match source {
         LlmDebugStepSource::Recorded(record) => {
             ploke_tui::llm::install_recorded_response_tape(RecordedResponseTape::new(vec![
@@ -157,6 +164,7 @@ pub(crate) async fn run_llm_debug_step(
         assistant_message_id: Uuid::new_v4(),
         parent_id: Uuid::new_v4(),
         cmd_tx: runtime.app.state_cmd_tx(),
+        capture: SessionCapture::new(None, debug_sink),
     })
     .await;
     runtime.app.pump_pending_events().await;
@@ -236,11 +244,54 @@ pub(super) async fn start_attempt_runtime(
     model: Option<&ModelSelection>,
     timeouts: &harness::Timeouts,
 ) -> Result<(crate::runner::WorkspaceTuiRuntime, Uuid), Error> {
-    let runtime = crate::runner::setup_workspace_tui_runtime_with_read_roots(
+    start_runtime(
         workspace_path,
         extra_read_roots,
+        prompt,
+        surface,
+        model,
+        timeouts,
+        SessionCapture::default(),
     )
     .await
+}
+
+pub(super) async fn start_captured_runtime(
+    workspace_path: &Path,
+    extra_read_roots: &[PathBuf],
+    prompt: String,
+    surface: &SurfacePolicy,
+    model: Option<&ModelSelection>,
+    timeouts: &harness::Timeouts,
+    capture: SessionCapture,
+) -> Result<(crate::runner::WorkspaceTuiRuntime, Uuid), Error> {
+    start_runtime(
+        workspace_path,
+        extra_read_roots,
+        prompt,
+        surface,
+        model,
+        timeouts,
+        capture,
+    )
+    .await
+}
+
+async fn start_runtime(
+    workspace_path: &Path,
+    extra_read_roots: &[PathBuf],
+    prompt: String,
+    surface: &SurfacePolicy,
+    model: Option<&ModelSelection>,
+    timeouts: &harness::Timeouts,
+    capture: SessionCapture,
+) -> Result<(crate::runner::WorkspaceTuiRuntime, Uuid), Error> {
+    let runtime = if capture.uses_legacy_fallback() {
+        crate::runner::setup_workspace_tui_runtime_with_read_roots(workspace_path, extra_read_roots)
+            .await
+    } else {
+        crate::runner::setup_captured_runtime(workspace_path, extra_read_roots, capture).await
+    }
     .map_err(Error::from_headless_start)?;
 
     let write_scope = surface.write_scope();
@@ -258,6 +309,7 @@ pub(super) async fn start_attempt_runtime(
     {
         let mut cfg = runtime.state.config.write().await;
         cfg.context_management.mode = ploke_tui::user_config::CtxMode::Off;
+        cfg.chat_policy.tool_streak_limit = Some(harness::TOOL_STREAK_LIMIT);
         cfg.tooling.cargo_check_timeout_secs = timeouts.validation_cargo_check_secs;
         cfg.tooling.cargo_test_timeout_secs = timeouts.validation_cargo_test_secs;
         if let Some(model) = model {
@@ -277,6 +329,10 @@ pub(super) async fn start_attempt_runtime(
 pub(super) enum AttemptEnd {
     Terminal(HeadlessTerminal),
     RetryFailure(String),
+    RetryValidation {
+        feedback: String,
+        terminal: HeadlessTerminal,
+    },
     RetryNoEdit {
         feedback: String,
         outcome: String,
@@ -387,17 +443,16 @@ pub(super) async fn run_attempt(
     run: &mut HeadlessRun,
     observer: &LiveObserver,
     validation_commands: &[contract::Command],
-    response_rx: Option<Arc<Mutex<Receiver<RecordedResponse>>>>,
+    response_rx: Option<Arc<Mutex<Receiver<FullResponseTraceRecord>>>>,
     timeouts: harness::Timeouts,
 ) -> Result<(AttemptEnd, crate::runner::WorkspaceTuiRuntime), Error> {
     let spec = harness::SessionSpec {
         workspace_path: workspace_path.to_path_buf(),
         timeouts,
     };
-    let owned_run = std::mem::replace(run, HeadlessRun::new());
     let mut harness = harness::TuiHarness::attach(
         runtime,
-        owned_run,
+        run,
         spec,
         active_parent_id,
         turn,
@@ -407,8 +462,7 @@ pub(super) async fn run_attempt(
     );
     let end = harness.drive_to_attempt_end(surface).await;
     harness.finalize().await;
-    let (restored_run, runtime) = harness.into_parts();
-    *run = restored_run;
+    let runtime = harness.into_runtime();
     end.map(|end| (end, runtime))
 }
 
@@ -430,60 +484,6 @@ pub(super) fn applied_edit_from_terminal_items(
         proposal_ids,
         changed_paths: changed_paths.to_vec(),
     })
-}
-
-/// Run request-declared validation against the candidate as soon as a tool
-/// batch settles with at least one allowed applied edit, then classify the
-/// applied candidate.
-///
-/// The harness runs the declared validation itself, so admission does not
-/// depend on the model issuing the exact declared cargo commands; those harness
-/// observations are the most recent for each command, so
-/// `classify_applied_terminal` consults the harness run rather than any earlier
-/// model-issued cargo call.
-///
-/// This returns the classified terminal but does not decide whether to stop.
-/// The caller finalizes the attempt only when validation is satisfied
-/// (`HeadlessTerminal::Applied`). When validation is not yet satisfied the
-/// caller keeps the attempt running so the model can repair the candidate
-/// across later turns, which preserves multi-turn repair flows while still
-/// letting a passing candidate stop immediately instead of burning the slot
-/// wall-clock on further tool calls.
-pub(super) async fn validate_applied_batch(
-    runtime: &crate::runner::WorkspaceTuiRuntime,
-    active_parent_id: Uuid,
-    request_id: Uuid,
-    turn: u32,
-    run: &mut HeadlessRun,
-    observer: &LiveObserver,
-    validation_commands: &[contract::Command],
-    applied: &[AppliedItem],
-    changed_paths: &[PathBuf],
-) -> Option<HeadlessTerminal> {
-    let applied_edit = applied_edit_from_terminal_items(applied, changed_paths)?;
-    observer.emit(format!(
-        "attempt {turn} validate_applied_batch proposals={} changed_paths={}",
-        applied_edit.proposal_ids().len(),
-        changed_paths.len()
-    ));
-    if !validation_commands.is_empty() {
-        run_contract_validations(
-            runtime,
-            active_parent_id,
-            request_id,
-            turn,
-            run,
-            observer,
-            validation_commands,
-        )
-        .await;
-    }
-    Some(classify_applied_terminal(
-        run,
-        validation_commands,
-        request_id,
-        applied_edit,
-    ))
 }
 
 pub(super) fn timeout_terminal_for_run(run: &HeadlessRun, secs: u64) -> HeadlessTerminal {
@@ -834,21 +834,25 @@ fn record_validation_failure(run: &mut HeadlessRun, call_id: &str, command: &con
 
 pub(super) fn drain_response_records(
     run: &mut HeadlessRun,
-    assistant_message_id: Uuid,
-    response_rx: Option<&Mutex<Receiver<RecordedResponse>>>,
-) {
+    response_rx: Option<&Mutex<Receiver<FullResponseTraceRecord>>>,
+) -> bool {
     let Some(response_rx) = response_rx else {
-        return;
+        return true;
     };
     let Ok(response_rx) = response_rx.lock() else {
-        return;
+        return false;
     };
-    for recorded_response in response_rx.try_iter() {
-        let response_index = run.next_response_index;
+    loop {
+        let trace = match response_rx.try_recv() {
+            Ok(trace) => trace,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return false,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => return true,
+        };
+        let index = run.next_response_index;
         run.next_response_index = run.next_response_index.saturating_add(1);
         run.full_response_records.push(RawFullResponseRecord {
-            assistant_message_id,
-            recorded_response: RecordedResponse::new(response_index, recorded_response.response),
+            assistant_message_id: trace.assistant_message_id,
+            recorded_response: RecordedResponse::new(index, trace.recorded_response.response),
         });
     }
 }
@@ -1397,25 +1401,57 @@ pub(super) async fn wait_for_refresh(
     timeouts: &harness::Timeouts,
     changed_paths: &[PathBuf],
 ) -> Result<(), Error> {
+    use ploke_tui::app_state::StateCommand;
+
     if changed_paths.is_empty() {
         return Err(Error::HeadlessEvent(
             "post-apply refresh requires at least one changed path".to_string(),
         ));
     }
 
+    let refresh_started = Instant::now();
+    tracing::info!(
+        target: "ploke_eval::post_apply_refresh",
+        turn,
+        path_count = changed_paths.len(),
+        remaining_ms = deadline.saturating_duration_since(Instant::now()).as_millis() as u64,
+        "post_apply_scan_paths_send_start"
+    );
+    observer.emit(format!(
+        "attempt {turn} post_apply_scan_paths_send_start paths={}",
+        changed_paths.len()
+    ));
+
     let (scan_tx, scan_rx) = oneshot::channel();
-    ploke_tui::app_state::scan_paths_for_change_for_test(
-        &runtime.state,
-        &runtime.event_bus,
-        changed_paths.to_vec(),
-        scan_tx,
+    let send_started = Instant::now();
+    send_state(
+        &runtime.app.state_cmd_tx(),
+        StateCommand::ScanPathsForChange {
+            paths: changed_paths.to_vec(),
+            scan_tx,
+        },
     )
-    .await
-    .map_err(|source| Error::HeadlessEvent(format!("targeted scan failed: {source}")))?;
-    let changed = scan_rx
-        .await
-        .map_err(|source| Error::HeadlessEvent(format!("scan barrier failed: {source}")))?;
+    .await?;
+    tracing::info!(
+        target: "ploke_eval::post_apply_refresh",
+        turn,
+        send_ms = send_started.elapsed().as_millis() as u64,
+        "post_apply_scan_paths_send_done"
+    );
+
+    let scan_wait_started = Instant::now();
+    let changed = await_scan_barrier(scan_rx, deadline).await?;
+    let scan_wait_ms = scan_wait_started.elapsed().as_millis() as u64;
     runtime.app.pump_pending_events().await;
+    tracing::info!(
+        target: "ploke_eval::post_apply_refresh",
+        turn,
+        scan_wait_ms,
+        total_ms = refresh_started.elapsed().as_millis() as u64,
+        changed_count = changed.as_ref().map(|paths| paths.len()).unwrap_or(0),
+        changed = changed.is_some(),
+        "post_apply_scan_barrier_done"
+    );
     observer.emit(format!(
         "attempt {turn} scan_barrier changed={}",
         changed
@@ -1433,8 +1469,22 @@ pub(super) async fn wait_for_refresh(
     )
     .await?
     {
+        tracing::info!(
+            target: "ploke_eval::post_apply_refresh",
+            turn,
+            changed = changed.is_some(),
+            elapsed_ms = refresh_started.elapsed().as_millis() as u64,
+            "post_apply_refresh_sparse_gate_satisfied_skipping_dense_wait"
+        );
         return Ok(());
     }
+    tracing::info!(
+        target: "ploke_eval::post_apply_refresh",
+        turn,
+        changed = changed.is_some(),
+        elapsed_ms = refresh_started.elapsed().as_millis() as u64,
+        "post_apply_refresh_dense_wait_start"
+    );
     wait_for_index_output(
         runtime,
         pending_events,
@@ -1445,6 +1495,27 @@ pub(super) async fn wait_for_refresh(
         timeouts,
     )
     .await
+}
+
+pub(super) async fn await_scan_barrier(
+    scan_rx: oneshot::Receiver<Option<Vec<PathBuf>>>,
+    deadline: Instant,
+) -> Result<Option<Vec<PathBuf>>, Error> {
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        return Err(Error::HeadlessEvent(
+            "timed out waiting for scan barrier before post-apply refresh deadline".to_string(),
+        ));
+    }
+
+    tokio::time::timeout(remaining, scan_rx)
+        .await
+        .map_err(|_| {
+            Error::HeadlessEvent(
+                "timed out waiting for scan barrier before post-apply refresh deadline".to_string(),
+            )
+        })?
+        .map_err(|source| Error::HeadlessEvent(format!("scan barrier failed: {source}")))
 }
 
 async fn wait_for_sparse_search_refresh(
@@ -1471,35 +1542,96 @@ async fn wait_for_sparse_search_refresh(
         ));
     };
 
+    let sparse_started = Instant::now();
+    tracing::info!(
+        target: "ploke_eval::post_apply_refresh",
+        turn,
+        changed,
+        remaining_ms = deadline.saturating_duration_since(Instant::now()).as_millis() as u64,
+        "post_apply_sparse_refresh_start"
+    );
+
     if changed {
-        observer.emit(format!("attempt {turn} sparse_refresh bm25_rebuild"));
+        observer.emit(format!(
+            "attempt {turn} sparse_refresh bm25_rebuild_send_start"
+        ));
+        tracing::info!(
+            target: "ploke_eval::post_apply_refresh",
+            turn,
+            "post_apply_bm25_rebuild_send_start"
+        );
+        let rebuild_send_started = Instant::now();
         rag.bm25_rebuild()
             .await
             .map_err(|source| Error::HeadlessEvent(format!("BM25 rebuild failed: {source}")))?;
+        tracing::info!(
+            target: "ploke_eval::post_apply_refresh",
+            turn,
+            enqueue_ms = rebuild_send_started.elapsed().as_millis() as u64,
+            "post_apply_bm25_rebuild_send_done"
+        );
+        observer.emit(format!(
+            "attempt {turn} sparse_refresh bm25_rebuild_send_done enqueue_ms={}",
+            rebuild_send_started.elapsed().as_millis()
+        ));
     } else {
         observer.emit(format!("attempt {turn} sparse_refresh bm25_status"));
     }
 
+    let mut status_polls = 0_u32;
     loop {
         runtime.app.pump_pending_events().await;
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
+            tracing::info!(
+                target: "ploke_eval::post_apply_refresh",
+                turn,
+                elapsed_ms = sparse_started.elapsed().as_millis() as u64,
+                status_polls,
+                "post_apply_bm25_ready_timeout"
+            );
             return Err(Error::HeadlessEvent(format!(
                 "timed out waiting for BM25 readiness after applying proposal batch after {}s",
                 timeouts.post_apply_index_secs
             )));
         }
 
+        status_polls = status_polls.saturating_add(1);
+        let status_started = Instant::now();
+        tracing::info!(
+            target: "ploke_eval::post_apply_refresh",
+            turn,
+            poll = status_polls,
+            remaining_ms = remaining.as_millis() as u64,
+            "post_apply_bm25_status_start"
+        );
         let status = rag
             .bm25_status_with_timeout(remaining)
             .await
             .map_err(|source| Error::HeadlessEvent(format!("BM25 status failed: {source}")))?;
+        tracing::info!(
+            target: "ploke_eval::post_apply_refresh",
+            turn,
+            poll = status_polls,
+            status_ms = status_started.elapsed().as_millis() as u64,
+            status = ?status,
+            "post_apply_bm25_status_done"
+        );
         match status {
             Bm25Status::Ready { docs } => {
                 if docs > 0 {
                     runtime.app.pump_pending_events().await;
+                    tracing::info!(
+                        target: "ploke_eval::post_apply_refresh",
+                        turn,
+                        docs,
+                        elapsed_ms = sparse_started.elapsed().as_millis() as u64,
+                        status_polls,
+                        "post_apply_bm25_ready"
+                    );
                     observer.emit(format!(
-                        "attempt {turn} sparse_refresh bm25_ready docs={docs}"
+                        "attempt {turn} sparse_refresh bm25_ready docs={docs} elapsed_ms={} polls={status_polls}",
+                        sparse_started.elapsed().as_millis()
                     ));
                     return Ok(true);
                 }

@@ -1,0 +1,34 @@
+?[node_id, branch_id, result_path, path_kind, runtime_id, runner_status, runner_disposition, treatment_campaign_id, exit_code, runner_recorded_at, evaluation_id, eval_disposition, instance_id, eval_status, eval_outcome, selected_node_id, selection_outcome, selection_disposition, decision_ref, decision_hash] :=
+  *eval_runner_result{
+    campaign_id,
+    node_id,
+    result_path,
+    branch_id,
+    status: runner_status,
+    disposition: runner_disposition,
+    treatment_campaign_id,
+    exit_code,
+    runtime_id,
+    path_kind,
+    recorded_at: runner_recorded_at
+  },
+  *eval_evaluation{
+    campaign_id,
+    evaluation_id,
+    branch_id,
+    disposition: eval_disposition
+  },
+  *eval_evaluation_instance{
+    evaluation_id,
+    instance_id,
+    status: eval_status,
+    outcome: eval_outcome
+  },
+  *eval_selection_decision{
+    campaign_id,
+    selected_node_id,
+    outcome: selection_outcome,
+    disposition: selection_disposition,
+    decision_ref,
+    decision_hash
+  }

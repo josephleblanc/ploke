@@ -73,6 +73,7 @@ pub fn init_tracing() -> LoggingGuards {
         .with_target("ploke_transform", level)
         .with_target("ploke_rag", level)
         .with_target("chat-loop", Level::TRACE)
+        .with_target("chat_http", level)
         .with_target(CHAT_TARGET, Level::TRACE)
         .with_target(MESSAGE_UPDATE_TARGET, Level::TRACE)
         .with_target("api_json", Level::TRACE)
@@ -222,11 +223,13 @@ pub fn init_tracing() -> LoggingGuards {
         .with_timer(WallAndElapsedTimer);
     let only_tokens = filter::Targets::new().with_target(TOKENS_TARGET, Level::TRACE);
 
+    let main_filter = targets.or(filter).and(filter::filter_fn(|metadata| {
+        !matches!(metadata.target(), "api_json" | FULL_RESPONSE_TARGET)
+    }));
+
     // Install both layers on the global registry
     let _ = tracing_subscriber::registry()
-        // .with(filter) // env filter for the main layer
-        .with(targets)
-        .with(main_layer) // normal app logs -> ploke.log
+        .with(main_layer.with_filter(main_filter)) // normal app logs -> ploke.log
         .with(embed_pipeline_layer.with_filter(only_embed_pipeline))
         .with(api_layer.with_filter(only_api_json)) // api_json events -> api_responses.log
         .with(chat_layer.with_filter(only_chat)) // chat events -> chat_*.log

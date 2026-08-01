@@ -1,0 +1,27 @@
+{
+  "schema_version": "prototype1-treatment-node.v1",
+  "node_id": "node-0d80c1aeea697e6b",
+  "parent_node_id": "node-e4ecdce2d6ee1098",
+  "generation": 1,
+  "instance_id": "be9d6944-37ac-43c4-89f4-dc440d8ae657",
+  "source_state_id": "prototype1-parent-p1-v16-oraclegate-mbe-g35f-direct-3g1x3-p3-20260717-020840-gen0",
+  "operation_target": {
+    "kind": "artifact",
+    "artifact_id": "artifact:git-commit:1daeb15e3496461d3762084d869685f5444e23b9"
+  },
+  "base_artifact_id": "artifact:git-commit:1daeb15e3496461d3762084d869685f5444e23b9",
+  "patch_id": "broad-harness:broad-harness-request:node-e4ecdce2d6ee1098",
+  "derived_artifact_id": "artifact:git-commit:48315c6abbe081d8da3bbe7df5c79e9afe37425a",
+  "parent_branch_id": "prototype1-parent-p1-v16-oraclegate-mbe-g35f-direct-3g1x3-p3-20260717-020840-gen0",
+  "branch_id": "branch-652e6dab480c355a",
+  "candidate_id": "broad-harness-g1-01",
+  "target_relpath": "crates/ploke-ty-mcp/src/manager.rs",
+  "node_dir": "/home/brasides/.ploke-eval/campaigns/p1-v16-oraclegate-mbe-g35f-direct-3g1x3-p3-20260717-020840/prototype1/nodes/node-0d80c1aeea697e6b",
+  "workspace_root": "/home/brasides/.ploke-eval/campaigns/p1-v16-oraclegate-mbe-g35f-direct-3g1x3-p3-20260717-020840/prototype1/workspaces/edit-harness/node-e4ecdce2d6ee1098",
+  "binary_path": "/home/brasides/.ploke-eval/campaigns/p1-v16-oraclegate-mbe-g35f-direct-3g1x3-p3-20260717-020840/prototype1/nodes/node-0d80c1aeea697e6b/bin/ploke-eval",
+  "runner_request_path": "/home/brasides/.ploke-eval/campaigns/p1-v16-oraclegate-mbe-g35f-direct-3g1x3-p3-20260717-020840/prototype1/nodes/node-0d80c1aeea697e6b/runner-request.json",
+  "runner_result_path": "/home/brasides/.ploke-eval/campaigns/p1-v16-oraclegate-mbe-g35f-direct-3g1x3-p3-20260717-020840/prototype1/nodes/node-0d80c1aeea697e6b/runner-result.json",
+  "status": "succeeded",
+  "created_at": "2026-07-17T09:44:28.974208126+00:00",
+  "updated_at": "2026-07-17T09:54:25.643498285+00:00"
+}

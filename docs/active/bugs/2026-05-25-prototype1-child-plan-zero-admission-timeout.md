@@ -1,6 +1,6 @@
 # Prototype 1 Broad-Harness Zero-Admission Child Plan
 
-Status: source fixed; fresh live handoff verification still pending
+Status: zero-admission persistence live verified; successful handoff still pending
 Discovered: 2026-05-25
 Fixed: 2026-05-25
 
@@ -139,7 +139,15 @@ slots. That was the actual regression signal.
 ## Remaining Risk
 
 This source fix proves the controller can persist and reuse failed
-zero-admission child-plan evidence. It does not prove a fresh live Prototype 1
-run can complete a successful parent/child handoff; that still requires a fresh
-run or a stronger historical handoff replay using the relevant parent/child
-transition artifacts.
+zero-admission child-plan evidence. The fresh 2026-07-14 Stage 5 campaign live
+verified that contract: three broad calls rejected before editing, the R7-to-R8
+transition failed below minimum, and the campaign retained one rejected-only
+child plan with all three attempt diagnostics rather than publishing fresh
+slots.
+
+That run did not verify a successful parent/child handoff. Its separate
+machine-global parent-patcher role still selected an unaffordable OpenRouter
+model and all three calls failed with HTTP 402. See
+`2026-07-14-prototype1-parent-patcher-role-not-admitted.md`. A fresh campaign
+with the corrected parent-patcher role is still required for successful
+handoff evidence.

@@ -6,10 +6,13 @@ use std::time::Instant;
 use ploke_protocol::tool_calls::trace;
 use ploke_protocol::tool_calls::trace::NeighborhoodSource;
 use ploke_protocol::tool_calls::{review, segment};
-use ploke_records::llm_response::{FULL_RESPONSE_TRACE_FILE, RawFullResponseRecord};
+use ploke_records::llm_response::{
+    FULL_RESPONSE_TRACE_FILE, RawFullResponseRecord, decode_full_response_records,
+};
 use ploke_records::tool_contracts::{
-    PersistedToolCallArguments, ToolArgumentDecodeError, ToolArgumentParseFailure,
-    ToolArgumentsJson, ToolCallArguments,
+    PersistedToolCallArguments, PersistedToolResultContent, ToolArgumentDecodeError,
+    ToolArgumentParseFailure, ToolArgumentsJson, ToolCallArguments, ToolResultDecodeError,
+    decode_tool_result_content,
 };
 
 use crate::cli::record::{print_record_resolution_footer, resolve_record_path};
@@ -3178,7 +3181,7 @@ pub(crate) fn build_tool_call_sequence_subject(
         .map(|turn| trace::TurnContext {
             turn: turn.turn_number,
             tool_count: turn.tool_calls().len(),
-            failed_tool_count: failed_tool_count(turn),
+            failed_tool_count: protocol_failed_count(turn),
             patch_proposed: turn
                 .tool_calls()
                 .iter()
@@ -3269,7 +3272,7 @@ impl trace::NeighborhoodSource for RecordToolCallNeighborhoodAdapter<'_> {
             turn: trace::TurnContext {
                 turn: focal_turn,
                 tool_count: turn_record.tool_calls().len(),
-                failed_tool_count: failed_tool_count(turn_record),
+                failed_tool_count: protocol_failed_count(turn_record),
                 patch_proposed: turn_record
                     .tool_calls()
                     .iter()
@@ -3329,7 +3332,7 @@ fn summarize_neighborhood_call(
         turn,
         tool_name: call.request.tool.clone(),
         tool_kind: classify_tool_kind(&call.request.tool),
-        failed: matches!(call.result, crate::record::ToolResult::Failed(_)),
+        failed: protocol_tool_failed(call),
         latency_ms: call.latency_ms,
         summary: tool_call_summary_line(call),
         args_preview: truncate_middle(call.request.arguments.as_str(), 96),
@@ -3383,20 +3386,46 @@ pub(crate) fn extract_argument_string(
 
 fn tool_call_summary_line(call: &crate::record::ToolExecutionRecord) -> String {
     match &call.result {
-        crate::record::ToolResult::Completed(completed) => format!(
-            "tool={} status=completed latency_ms={} args={} result={}",
-            call.request.tool,
-            call.latency_ms,
-            truncate_middle(call.request.arguments.as_str(), 96),
-            truncate_middle(&completed.content, 96),
-        ),
+        crate::record::ToolResult::Completed(completed) => {
+            let semantic_failed = completed_semantic_failure(completed)
+                .map(|failed| failed.to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+            format!(
+                "tool={} lifecycle=completed semantic_failed={} latency_ms={} args={} result={}",
+                call.request.tool,
+                semantic_failed,
+                call.latency_ms,
+                truncate_middle(call.request.arguments.as_str(), 96),
+                truncate_middle(&completed.content, 96),
+            )
+        }
         crate::record::ToolResult::Failed(failed) => format!(
-            "tool={} status=failed latency_ms={} args={} error={}",
+            "tool={} lifecycle=failed semantic_failed=true latency_ms={} args={} error={}",
             call.request.tool,
             call.latency_ms,
             truncate_middle(call.request.arguments.as_str(), 96),
             truncate_middle(&failed.error, 96),
         ),
+    }
+}
+
+fn protocol_tool_failed(call: &crate::record::ToolExecutionRecord) -> bool {
+    match &call.result {
+        crate::record::ToolResult::Completed(completed) => {
+            completed_semantic_failure(completed).unwrap_or(false)
+        }
+        crate::record::ToolResult::Failed(_) => true,
+    }
+}
+
+fn completed_semantic_failure(completed: &crate::runner::ToolCompletedRecord) -> Option<bool> {
+    match decode_tool_result_content(&completed.tool, &completed.content) {
+        PersistedToolResultContent::Decoded(result) => result.semantic_ok().map(|ok| !ok),
+        PersistedToolResultContent::ParseFailure(failure) => match failure.error {
+            ToolResultDecodeError::InvalidJson { .. } => failure.reported_ok().map(|ok| !ok),
+            ToolResultDecodeError::UnknownTool { .. }
+            | ToolResultDecodeError::UnsupportedToolResult { .. } => None,
+        },
     }
 }
 
@@ -3464,6 +3493,13 @@ fn failed_tool_count(turn: &crate::record::TurnRecord) -> usize {
     turn.tool_calls()
         .iter()
         .filter(|call| matches!(call.result, crate::record::ToolResult::Failed(_)))
+        .count()
+}
+
+fn protocol_failed_count(turn: &crate::record::TurnRecord) -> usize {
+    turn.tool_calls()
+        .iter()
+        .filter(|call| protocol_tool_failed(call))
         .count()
 }
 
@@ -3560,21 +3596,17 @@ fn load_full_response_records_for_turn(
         path: path.to_path_buf(),
         source,
     })?;
-    let mut responses = Vec::new();
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let record: RawFullResponseRecord =
-            serde_json::from_str(trimmed).map_err(|source| PrepareError::ParseManifest {
-                path: path.to_path_buf(),
-                source,
-            })?;
-        if record.matches_assistant_message(assistant_message_id) {
-            responses.push(record);
-        }
-    }
+    let mut responses = decode_full_response_records(&text)
+        .map_err(|error| PrepareError::DatabaseSetup {
+            phase: "inspect_turn",
+            detail: format!(
+                "parse provider response sidecar '{}': {error}",
+                path.display()
+            ),
+        })?
+        .into_iter()
+        .filter(|record| record.matches_assistant_message(assistant_message_id))
+        .collect::<Vec<_>>();
     responses.sort_by_key(|record| record.response_index());
     Ok(responses)
 }
@@ -3586,19 +3618,14 @@ fn load_all_full_response_records(
         path: path.to_path_buf(),
         source,
     })?;
-    let mut responses = Vec::new();
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let record: RawFullResponseRecord =
-            serde_json::from_str(trimmed).map_err(|source| PrepareError::ParseManifest {
-                path: path.to_path_buf(),
-                source,
-            })?;
-        responses.push(record);
-    }
+    let mut responses =
+        decode_full_response_records(&text).map_err(|error| PrepareError::DatabaseSetup {
+            phase: "inspect_turn",
+            detail: format!(
+                "parse provider response sidecar '{}': {error}",
+                path.display()
+            ),
+        })?;
     responses.sort_by_key(|record| record.response_index());
     Ok(responses)
 }

@@ -1,0 +1,43 @@
+?[baseline_id, campaign_id, parent_id, parent_node_id, parent_branch_id, source_kind, eval_set_id, status, closure_ref_id, closure_source_ref, closure_sha256, instance_id, registration_path, record_path, tool_calls_total, tool_calls_failed, patch_attempted, apply_state, submission_state, projection_state, aborted, valid_patch, convergence, oracle_eligible, eval_status, protocol_status] :=
+  *eval_baseline{
+    baseline_id,
+    campaign_id,
+    parent_id,
+    parent_node_id,
+    parent_branch_id,
+    source_kind,
+    closure_ref_id,
+    eval_set_id,
+    status
+  },
+  *eval_baseline_instance{
+    baseline_id,
+    instance_id,
+    registration_path,
+    record_path
+  },
+  *eval_baseline_instance_metrics{
+    baseline_id,
+    instance_id,
+    tool_calls_total,
+    tool_calls_failed,
+    patch_attempted,
+    apply_state,
+    submission_state,
+    projection_state,
+    aborted,
+    valid_patch,
+    convergence,
+    oracle_eligible
+  },
+  *eval_closure_ref{
+    closure_ref_id,
+    source_ref: closure_source_ref,
+    content_sha256: closure_sha256
+  },
+  *eval_closure_instance{
+    closure_ref_id,
+    instance_id,
+    eval_status,
+    protocol_status
+  }

@@ -64,6 +64,7 @@ impl JsonLlmConfig {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProtocolReasoningPolicy {
     #[serde(default)]
     pub mode: ProtocolReasoningMode,
@@ -312,6 +313,12 @@ fn parse_protocol_json_content<T: DeserializeOwned>(content: &str) -> Result<T, 
             })
         }
     }
+}
+
+/// Replays the same bounded JSON decoding and repair policy used by
+/// [`adjudicate_json`] against persisted provider content.
+pub fn decode_json_content<T: DeserializeOwned>(content: &str) -> Result<T, ProtocolLlmError> {
+    parse_protocol_json_content(content)
 }
 
 fn parse_protocol_json_content_once<T: DeserializeOwned>(content: &str) -> Result<T, String> {

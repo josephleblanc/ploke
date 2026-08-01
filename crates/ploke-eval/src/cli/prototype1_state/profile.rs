@@ -8,6 +8,7 @@ use std::{
 use chrono::Utc;
 use ploke_llm::{ModelId, ProviderKey, request::models::ModelRouteSource};
 use ploke_protocol::ProtocolReasoningPolicy;
+use ploke_records::run_profile::{AntiAttractorPolicy, Patch, PatchGate};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -23,7 +24,7 @@ use crate::{
     intervention::{Prototype1ChildBudget, Prototype1ChildScheduleMode, Prototype1SearchPolicy},
     layout::ploke_eval_home,
     spec::PrepareError,
-    successor_selection::{OracleMode, metrics as selection_metrics},
+    successor_selection::{OracleGate, OracleMode, metrics as selection_metrics},
 };
 
 pub(crate) const RUN_PROFILE_SCHEMA_VERSION: &str = "prototype1-run-profile.v1";
@@ -35,6 +36,7 @@ const RUN_PROFILE_FILE: &str = "run-profile.toml";
 const RUN_PROFILE_COMMITMENT_FILE: &str = "run-profile.commitment.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Prototype1RunProfile {
     pub(crate) schema_version: String,
     pub(crate) name: String,
@@ -128,6 +130,7 @@ impl Prototype1RunProfile {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Storage {
     #[serde(default = "default_worktree_root")]
     pub(crate) worktree_root: PathBuf,
@@ -155,6 +158,7 @@ impl Storage {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct EvalStorage {
     #[serde(default)]
     pub(crate) backend: EvalStorageBackend,
@@ -213,6 +217,7 @@ impl Default for EvalStorageBackend {
 
 // ANCHOR: prototype1_model_defaults
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ModelDefaults {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) id: Option<String>,
@@ -310,6 +315,7 @@ mod optional_profile_route_source {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Target {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) dataset_key: Option<String>,
@@ -369,6 +375,7 @@ impl Target {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Search {
     pub(crate) max_generations: u32,
     pub(crate) max_total_nodes: u32,
@@ -425,10 +432,15 @@ impl Default for Search {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Generation {
     pub(crate) source: GenerationSource,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "AntiAttractorPolicy::is_none")]
     pub(crate) anti_attractor_policy: AntiAttractorPolicy,
+    /// Preserved only so historical v1 commitments retain their known wire
+    /// shape. Fresh operator admission rejects this retired selector.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) surface: Option<ploke_records::run_profile::GenerationSurface>,
 }
 
 impl Generation {
@@ -454,49 +466,9 @@ impl Default for Generation {
         Self {
             source: GenerationSource::BroadHarnessRequest,
             anti_attractor_policy: AntiAttractorPolicy::default(),
+            surface: None,
         }
     }
-}
-
-/// Anti-attractor policy for the candidate-generation step.
-///
-/// **Read-side / prompt-side only.** This mechanism exists to inject a prompt
-/// suffix that nudges the LLM away from recently-touched edit surfaces, in
-/// response to the surface/skeleton attractor pattern observed in
-/// `Mutation Without Variation` (arXiv 2606.05408) and in our own
-/// `target/test-output/lmca-batch-projection-2026-06-09/` panel.
-///
-/// It must never influence selection, admission, replay, oracle, protocol,
-/// History, or Crown authority. The only public surface of the policy is
-/// [`prompt_suffix_for`], which is a pure function returning `Option<String>`.
-///
-/// The first variant is a no-op default. The `SurfaceFreshness` variant
-/// encodes the surface-freshness bias: ask the model to target a different
-/// region than the last `recent_surface_window` successful candidates
-/// touched, with at least `min_target_surface_skew` distinct surfaces among
-/// the last K attempts.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(tag = "policy", rename_all = "kebab-case")]
-pub(crate) enum AntiAttractorPolicy {
-    /// No-op default. [`prompt_suffix_for`] returns `None` for any input.
-    #[default]
-    None,
-    /// Surface-freshness bias: ask the model to target a different region
-    /// than the recent successful candidates touched.
-    SurfaceFreshness {
-        #[serde(default = "default_recent_surface_window")]
-        recent_surface_window: u32,
-        #[serde(default = "default_min_target_surface_skew")]
-        min_target_surface_skew: u32,
-    },
-}
-
-fn default_recent_surface_window() -> u32 {
-    2
-}
-
-fn default_min_target_surface_skew() -> u32 {
-    2
 }
 
 /// Pure function: take a slice of recent successful edit-surface paths and
@@ -546,6 +518,7 @@ pub(crate) enum GenerationSource {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Selection {
     pub(crate) strategy: SelectionStrategy,
     pub(crate) evidence: SelectionEvidence,
@@ -553,6 +526,8 @@ pub(crate) struct Selection {
     pub(crate) metrics: Metrics,
     #[serde(default)]
     pub(crate) oracle: Oracle,
+    #[serde(default, skip_serializing_if = "Patch::is_disabled")]
+    pub(crate) patch: Patch,
     pub(crate) seed: u64,
 }
 
@@ -584,6 +559,14 @@ impl Selection {
 
     pub(crate) fn oracle_require_evidence(self) -> bool {
         self.oracle.require_evidence
+    }
+
+    pub(crate) fn oracle_gate(self) -> OracleGate {
+        self.oracle.gate
+    }
+
+    pub(crate) fn patch_gate(self) -> PatchGate {
+        self.patch.gate
     }
 
     pub(crate) fn metrics_policy(self) -> selection_metrics::Policy {
@@ -625,6 +608,23 @@ impl Selection {
                 ));
             }
         }
+        if self.oracle.gate == OracleGate::AllResolved {
+            if !self.oracle.require_evidence {
+                return Err(profile_error(
+                    "selection.oracle.gate = \"all-resolved\" requires selection.oracle.require_evidence = true",
+                ));
+            }
+            if !execution.mbe.enabled {
+                return Err(profile_error(
+                    "selection.oracle.gate = \"all-resolved\" requires execution.mbe.enabled = true",
+                ));
+            }
+            if target.eval_instances().is_empty() {
+                return Err(profile_error(
+                    "selection.oracle.gate = \"all-resolved\" requires target.instance or target.instances",
+                ));
+            }
+        }
         Ok(())
     }
 }
@@ -636,6 +636,7 @@ impl Default for Selection {
             evidence: SelectionEvidence::Operational,
             metrics: Metrics::default(),
             oracle: Oracle::default(),
+            patch: Patch::default(),
             seed: 0,
         }
     }
@@ -657,6 +658,7 @@ pub(crate) enum SelectionEvidence {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Metrics {
     #[serde(default = "default_metrics_persist")]
     pub(crate) persist: bool,
@@ -707,6 +709,7 @@ pub(crate) enum ScoreProfile {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ImpAtK {
     #[serde(default = "default_imp_at_k_enabled")]
     pub(crate) enabled: bool,
@@ -748,6 +751,7 @@ pub(crate) enum ArchiveScope {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Protocol {
     #[serde(default, skip_serializing_if = "ModelDefaults::is_empty")]
     pub(crate) model: ModelDefaults,
@@ -791,11 +795,14 @@ impl Default for Protocol {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Oracle {
     #[serde(default)]
     pub(crate) mode: OracleMode,
     #[serde(default = "default_oracle_require_evidence")]
     pub(crate) require_evidence: bool,
+    #[serde(default)]
+    pub(crate) gate: OracleGate,
 }
 
 impl Default for Oracle {
@@ -803,6 +810,7 @@ impl Default for Oracle {
         Self {
             mode: OracleMode::RecordOnly,
             require_evidence: default_oracle_require_evidence(),
+            gate: OracleGate::Disabled,
         }
     }
 }
@@ -812,6 +820,7 @@ fn default_oracle_require_evidence() -> bool {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Execution {
     pub(crate) stop_after: ExecutionStopAfter,
     #[serde(default = "default_observe_child_stale_after_secs")]
@@ -869,6 +878,7 @@ fn default_observe_child_stale_after_secs() -> u64 {
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct BroadTui {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) max_attempts: Option<u32>,
@@ -907,6 +917,7 @@ impl BroadTui {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Mbe {
     #[serde(default)]
     pub(crate) enabled: bool,
@@ -966,6 +977,7 @@ impl Default for TraceJsonl {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Control {
     #[serde(default)]
     pub(crate) mode: RunMode,
@@ -1036,6 +1048,75 @@ pub(crate) struct OperatorRunProfile {
     pub(crate) profile: Prototype1RunProfile,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct RunProfilePlan {
+    source_path: PathBuf,
+    profile_path: PathBuf,
+    profile: Prototype1RunProfile,
+    #[serde(skip)]
+    normalized_toml: String,
+    sha256: String,
+}
+
+impl RunProfilePlan {
+    pub(crate) fn source_path(&self) -> &Path {
+        &self.source_path
+    }
+
+    pub(crate) fn profile_path(&self) -> &Path {
+        &self.profile_path
+    }
+
+    pub(crate) fn profile(&self) -> &Prototype1RunProfile {
+        &self.profile
+    }
+
+    pub(crate) fn sha256(&self) -> &str {
+        &self.sha256
+    }
+
+    #[cfg(test)]
+    pub(crate) fn normalized_toml(&self) -> &str {
+        &self.normalized_toml
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct EffectiveRunControl {
+    pub(crate) path: PathBuf,
+    pub(crate) mode: RunMode,
+    pub(crate) parallel_cap: u32,
+    pub(crate) patch_generation_parallel_cap: u32,
+    pub(crate) defaulted_from_profile: bool,
+    pub(crate) patch_generation_defaulted_from_profile: bool,
+}
+
+pub(crate) fn resolve_effective_control(
+    path: PathBuf,
+    profile: &Prototype1RunProfile,
+) -> Result<EffectiveRunControl, PrepareError> {
+    let derived_parallel_cap = profile.default_parallel_cap();
+    let parallel_cap = profile.control.parallel_cap.unwrap_or(derived_parallel_cap);
+    if parallel_cap == 0 || parallel_cap > derived_parallel_cap {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "profile control.parallel_cap {} widens admitted fanout {} at '{}'",
+                parallel_cap,
+                derived_parallel_cap,
+                path.display()
+            ),
+        });
+    }
+    Ok(EffectiveRunControl {
+        path,
+        mode: profile.control.mode,
+        parallel_cap,
+        patch_generation_parallel_cap: profile.patch_generation_parallel_cap(),
+        defaulted_from_profile: profile.control.parallel_cap.is_none(),
+        patch_generation_defaulted_from_profile: profile.search.children.parallel_targets.is_none(),
+    })
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct AdmittedRunProfile {
     pub(crate) commitment: RunProfileCommitment,
@@ -1050,10 +1131,26 @@ pub(crate) fn load_operator_profile(
         path: source_path.clone(),
         source,
     })?;
-    let profile = parse_profile(&source_path, &text)?;
+    let profile = parse_operator_profile(&source_path, &text)?;
     Ok(OperatorRunProfile {
         source_path,
         profile,
+    })
+}
+
+pub(crate) fn plan_run_profile(
+    campaign_manifest_path: &Path,
+    operator: &OperatorRunProfile,
+) -> Result<RunProfilePlan, PrepareError> {
+    validate_operator_profile(&operator.profile)?;
+    let normalized_toml =
+        toml::to_string_pretty(&operator.profile).map_err(|err| profile_error(err.to_string()))?;
+    Ok(RunProfilePlan {
+        source_path: operator.source_path.clone(),
+        profile_path: run_profile_path(campaign_manifest_path),
+        profile: operator.profile.clone(),
+        sha256: sha256_hex(&normalized_toml),
+        normalized_toml,
     })
 }
 
@@ -1061,30 +1158,176 @@ pub(crate) fn admit_run_profile(
     campaign_manifest_path: &Path,
     operator: &OperatorRunProfile,
 ) -> Result<AdmittedRunProfile, PrepareError> {
-    let profile_path = run_profile_path(campaign_manifest_path);
-    let text =
-        toml::to_string_pretty(&operator.profile).map_err(|err| profile_error(err.to_string()))?;
+    admit_run_profile_plan(plan_run_profile(campaign_manifest_path, operator)?)
+}
+
+pub(crate) fn admit_run_profile_plan(
+    plan: RunProfilePlan,
+) -> Result<AdmittedRunProfile, PrepareError> {
+    let RunProfilePlan {
+        source_path,
+        profile_path,
+        profile,
+        normalized_toml,
+        sha256,
+    } = plan;
+    let actual_sha = sha256_hex(&normalized_toml);
+    if actual_sha != sha256 {
+        return Err(profile_error(format!(
+            "run profile plan digest mismatch: recorded '{}', resolved '{}'",
+            sha256, actual_sha
+        )));
+    }
     if let Some(parent) = profile_path.parent() {
         fs::create_dir_all(parent).map_err(|source| PrepareError::WriteManifest {
             path: parent.to_path_buf(),
             source,
         })?;
     }
-    fs::write(&profile_path, text.as_bytes()).map_err(|source| PrepareError::WriteManifest {
-        path: profile_path.clone(),
-        source,
-    })?;
+    let stored_path = profile_path.with_file_name(RUN_PROFILE_COMMITMENT_FILE);
+    if profile_path.exists() || stored_path.exists() {
+        return Err(profile_error(format!(
+            "run profile admission requires new profile and commitment paths; found existing state under '{}'",
+            profile_path
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .display()
+        )));
+    }
     let commitment = RunProfileCommitment {
         schema_version: RUN_PROFILE_COMMITMENT_SCHEMA_VERSION.to_string(),
         profile_path: profile_path.clone(),
-        sha256: sha256_hex(&text),
-        source_path: Some(operator.source_path.clone()),
+        sha256,
+        source_path: Some(source_path),
         admitted_at: Utc::now().to_rfc3339(),
     };
-    write_commitment(campaign_manifest_path, &commitment)?;
+    let commitment_bytes =
+        serde_json::to_vec_pretty(&commitment).map_err(PrepareError::Serialize)?;
+    if let Err(source) = crate::durable_io::write_atomic(&profile_path, normalized_toml.as_bytes())
+    {
+        let _ = fs::remove_file(&profile_path);
+        return Err(PrepareError::WriteManifest {
+            path: profile_path.clone(),
+            source,
+        });
+    }
+    if let Err(error) = write_commitment(&profile_path, &commitment_bytes) {
+        let _ = fs::remove_file(&profile_path);
+        let _ = fs::remove_file(&stored_path);
+        return Err(error);
+    }
     Ok(AdmittedRunProfile {
         commitment,
-        profile: operator.profile.clone(),
+        profile,
+    })
+}
+
+/// Reconcile a setup-owned profile plan without accepting divergent or
+/// commitment-first partial state.
+pub(crate) fn ensure_run_profile_plan(
+    plan: RunProfilePlan,
+    admitted_at: &str,
+) -> Result<AdmittedRunProfile, PrepareError> {
+    let RunProfilePlan {
+        source_path,
+        profile_path,
+        profile,
+        normalized_toml,
+        sha256,
+    } = plan;
+    let actual_sha = sha256_hex(&normalized_toml);
+    if actual_sha != sha256 {
+        return Err(profile_error(format!(
+            "run profile plan digest mismatch: recorded '{}', resolved '{}'",
+            sha256, actual_sha
+        )));
+    }
+    let stored_path = profile_path.with_file_name(RUN_PROFILE_COMMITMENT_FILE);
+    let commitment = RunProfileCommitment {
+        schema_version: RUN_PROFILE_COMMITMENT_SCHEMA_VERSION.to_string(),
+        profile_path: profile_path.clone(),
+        sha256,
+        source_path: Some(source_path),
+        admitted_at: admitted_at.to_string(),
+    };
+
+    let profile_exists = profile_path.exists();
+    let commitment_exists = stored_path.exists();
+    if profile_exists {
+        let observed =
+            fs::read_to_string(&profile_path).map_err(|source| PrepareError::ReadManifest {
+                path: profile_path.clone(),
+                source,
+            })?;
+        if observed != normalized_toml {
+            return Err(profile_error(format!(
+                "setup profile reconciliation conflict at '{}': stored profile differs from the admitted plan",
+                profile_path.display()
+            )));
+        }
+    }
+    if commitment_exists {
+        let observed = load_commitment_from_path(&stored_path)?.ok_or_else(|| {
+            profile_error(format!(
+                "setup profile reconciliation could not read commitment '{}'",
+                stored_path.display()
+            ))
+        })?;
+        if observed != commitment {
+            return Err(profile_error(format!(
+                "setup profile reconciliation conflict at '{}': stored commitment differs from the admission receipt",
+                stored_path.display()
+            )));
+        }
+    }
+    if !profile_exists && commitment_exists {
+        return Err(profile_error(format!(
+            "setup profile reconciliation found commitment '{}' without profile '{}'; automatic recovery is unsafe",
+            stored_path.display(),
+            profile_path.display()
+        )));
+    }
+
+    if let Some(parent) = profile_path.parent() {
+        fs::create_dir_all(parent).map_err(|source| PrepareError::WriteManifest {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    if !profile_exists {
+        crate::durable_io::write_atomic(&profile_path, normalized_toml.as_bytes()).map_err(
+            |source| PrepareError::WriteManifest {
+                path: profile_path.clone(),
+                source,
+            },
+        )?;
+    }
+    if !commitment_exists {
+        let bytes = serde_json::to_vec_pretty(&commitment).map_err(PrepareError::Serialize)?;
+        write_commitment(&profile_path, &bytes)?;
+    }
+
+    let stored_profile =
+        fs::read_to_string(&profile_path).map_err(|source| PrepareError::ReadManifest {
+            path: profile_path.clone(),
+            source,
+        })?;
+    let observed_profile = parse_profile(&profile_path, &stored_profile)?;
+    let observed_commitment = load_commitment_from_path(&stored_path)?.ok_or_else(|| {
+        profile_error(format!(
+            "setup profile reconciliation did not produce commitment '{}'",
+            stored_path.display()
+        ))
+    })?;
+    if observed_commitment != commitment || observed_profile != profile {
+        return Err(profile_error(format!(
+            "setup profile reconciliation read-back mismatch at '{}'",
+            profile_path.display()
+        )));
+    }
+    Ok(AdmittedRunProfile {
+        commitment: observed_commitment,
+        profile: observed_profile,
     })
 }
 
@@ -1092,33 +1335,54 @@ pub(crate) fn load_admitted_run_profile(
     campaign_manifest_path: &Path,
 ) -> Result<Option<AdmittedRunProfile>, PrepareError> {
     let profile_path = run_profile_path(campaign_manifest_path);
+    let commitment = load_commitment(campaign_manifest_path)?;
     let text = match fs::read_to_string(&profile_path) {
-        Ok(text) => text,
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Ok(text) => Some(text),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => None,
         Err(source) => {
             return Err(PrepareError::ReadManifest {
-                path: profile_path,
+                path: profile_path.clone(),
                 source,
             });
         }
     };
-    let profile = parse_profile(&profile_path, &text)?;
-    let commitment = match load_commitment(campaign_manifest_path)? {
-        Some(commitment) => commitment,
-        None => RunProfileCommitment {
-            schema_version: RUN_PROFILE_COMMITMENT_SCHEMA_VERSION.to_string(),
-            profile_path: profile_path.clone(),
-            sha256: sha256_hex(&text),
-            source_path: None,
-            admitted_at: String::new(),
-        },
+    let (text, commitment) = match (text, commitment) {
+        (None, None) => return Ok(None),
+        (Some(_), None) => {
+            return Err(profile_error(format!(
+                "campaign run profile '{}' has no admission commitment",
+                profile_path.display()
+            )));
+        }
+        (None, Some(_)) => {
+            return Err(profile_error(format!(
+                "campaign run profile commitment exists but '{}' is missing",
+                profile_path.display()
+            )));
+        }
+        (Some(text), Some(commitment)) => (text, commitment),
     };
+    if commitment.schema_version != RUN_PROFILE_COMMITMENT_SCHEMA_VERSION {
+        return Err(profile_error(format!(
+            "campaign run profile commitment at '{}' has unsupported schema '{}'",
+            commitment_path(campaign_manifest_path).display(),
+            commitment.schema_version
+        )));
+    }
+    if commitment.profile_path != profile_path {
+        return Err(profile_error(format!(
+            "campaign run profile commitment path '{}' does not match expected '{}'",
+            commitment.profile_path.display(),
+            profile_path.display()
+        )));
+    }
     if commitment.sha256 != sha256_hex(&text) {
         return Err(profile_error(format!(
             "campaign run profile digest mismatch for '{}'",
             profile_path.display()
         )));
     }
+    let profile = parse_profile(&profile_path, &text)?;
     Ok(Some(AdmittedRunProfile {
         commitment,
         profile,
@@ -1142,7 +1406,25 @@ fn parse_profile(path: &Path, text: &str) -> Result<Prototype1RunProfile, Prepar
     Ok(profile)
 }
 
-fn resolve_operator_profile_path(name_or_path: &str) -> Result<PathBuf, PrepareError> {
+pub(crate) fn parse_operator_profile(
+    path: &Path,
+    text: &str,
+) -> Result<Prototype1RunProfile, PrepareError> {
+    let profile = parse_profile(path, text)?;
+    validate_operator_profile(&profile)?;
+    Ok(profile)
+}
+
+fn validate_operator_profile(profile: &Prototype1RunProfile) -> Result<(), PrepareError> {
+    if profile.generation.surface.is_some() {
+        return Err(profile_error(
+            "profile.generation.surface is retired; remove it from profiles used for new runs",
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn resolve_operator_profile_path(name_or_path: &str) -> Result<PathBuf, PrepareError> {
     let path = Path::new(name_or_path);
     if path.is_absolute() || path.components().count() > 1 || name_or_path.ends_with(".toml") {
         return Ok(path.to_path_buf());
@@ -1168,13 +1450,10 @@ fn prototype1_root(campaign_manifest_path: &Path) -> PathBuf {
         .join("prototype1")
 }
 
-fn write_commitment(
-    campaign_manifest_path: &Path,
-    commitment: &RunProfileCommitment,
-) -> Result<(), PrepareError> {
-    let path = commitment_path(campaign_manifest_path);
-    let bytes = serde_json::to_vec_pretty(commitment).map_err(PrepareError::Serialize)?;
-    fs::write(&path, bytes).map_err(|source| PrepareError::WriteManifest { path, source })
+fn write_commitment(profile_path: &Path, bytes: &[u8]) -> Result<(), PrepareError> {
+    let path = profile_path.with_file_name(RUN_PROFILE_COMMITMENT_FILE);
+    crate::durable_io::write_atomic(&path, bytes)
+        .map_err(|source| PrepareError::WriteManifest { path, source })
 }
 
 fn load_commitment(
@@ -1305,6 +1584,7 @@ graph_nearest = 13
         assert_eq!(profile.selection.metrics.imp_at_k.budget_k, 50);
         assert_eq!(profile.selection.oracle_mode(), OracleMode::RecordOnly);
         assert!(profile.selection.oracle_require_evidence());
+        assert_eq!(profile.selection.oracle_gate(), OracleGate::Disabled);
         assert_eq!(profile.protocol_policy().max_tokens, 4096);
         assert_eq!(profile.protocol_policy().tool_review_parallelism, 2);
         assert_eq!(
@@ -1497,6 +1777,473 @@ graph_nearest = 13
     }
 
     #[test]
+    fn shared_passive_run_profile_matches_runtime_wire_shape() {
+        let text = PROFILE
+            .replace(
+                "children = { min = 6, max = 6 }",
+                "children = { min = 6, max = 6, parallel_targets = 3 }",
+            )
+            .replace(
+                "tool_review_parallelism = 2\n\n[protocol.reasoning]",
+                "tool_review_parallelism = 2\n\n[protocol.model]\nid = \"openai/gpt-5.1\"\nroute_source = \"openrouter\"\nprovider = \"openai\"\n\n[protocol.reasoning]",
+            );
+        let runtime = parse_profile(Path::new("profile.toml"), &text).expect("runtime parses");
+        let passive: ploke_records::run_profile::RunProfileRecord =
+            toml::from_str(&text).expect("passive record parses");
+        let runtime_wire: toml::Value =
+            toml::from_str(&toml::to_string(&runtime).expect("runtime profile serializes"))
+                .expect("runtime wire parses");
+        let passive_wire: toml::Value =
+            toml::from_str(&toml::to_string(&passive).expect("passive profile serializes"))
+                .expect("passive wire parses");
+
+        assert_eq!(runtime_wire, passive_wire);
+    }
+
+    #[test]
+    fn shared_passive_run_profile_matches_runtime_defaults() {
+        let text = r#"
+schema_version = "prototype1-run-profile.v1"
+name = "runtime-defaults"
+"#;
+        let runtime = parse_profile(Path::new("profile.toml"), text).expect("runtime parses");
+        let passive: ploke_records::run_profile::RunProfileRecord =
+            toml::from_str(text).expect("passive record parses");
+        let runtime_wire: toml::Value =
+            toml::from_str(&toml::to_string(&runtime).expect("runtime profile serializes"))
+                .expect("runtime wire parses");
+        let passive_wire: toml::Value =
+            toml::from_str(&toml::to_string(&passive).expect("passive profile serializes"))
+                .expect("passive wire parses");
+
+        assert_eq!(runtime_wire, passive_wire);
+    }
+
+    #[test]
+    fn passive_profile_preserves_retired_token_and_protocol_routing_fields() {
+        let text = r#"
+schema_version = "prototype1-run-profile.v1"
+name = "historical-profile"
+
+[model]
+max_tokens = 32768
+
+[protocol]
+model_id = "google/gemini-2.5-pro"
+route_source = "direct-google"
+provider = "google"
+"#;
+        let passive: ploke_records::run_profile::RunProfileRecord =
+            toml::from_str(text).expect("passive history parses legacy fields");
+
+        assert_eq!(passive.model.legacy_max_tokens, Some(32_768));
+        assert_eq!(
+            passive.protocol.legacy_model_id.as_deref(),
+            Some("google/gemini-2.5-pro")
+        );
+        assert_eq!(passive.protocol.legacy_provider.as_deref(), Some("google"));
+        assert_eq!(
+            passive.protocol.legacy_route_source,
+            Some(ploke_records::run_profile::ModelRouteSource::DirectGoogle)
+        );
+        let encoded = toml::to_string(&passive).expect("passive history serializes");
+        assert!(encoded.contains("max_tokens = 32768"));
+        assert!(encoded.contains("model_id = \"google/gemini-2.5-pro\""));
+    }
+
+    #[test]
+    fn runtime_profile_rejects_retired_eval_and_flat_protocol_authority() {
+        for (table, key) in [
+            ("[model]\nmax_tokens = 32768", "max_tokens"),
+            (
+                "[protocol]\nmodel_id = \"google/gemini-2.5-pro\"",
+                "model_id",
+            ),
+        ] {
+            let text = format!(
+                "schema_version = \"prototype1-run-profile.v1\"\nname = \"retired-authority\"\n\n{table}\n"
+            );
+            let error = parse_profile(Path::new("profile.toml"), &text)
+                .expect_err("runtime profile must reject retired authority")
+                .to_string();
+            assert!(error.contains(key), "unexpected error: {error}");
+        }
+    }
+
+    #[test]
+    fn admitted_runtime_profile_rejects_hash_committed_legacy_authority() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest = temp.path().join("campaign.json");
+        let profile_path = run_profile_path(&manifest);
+        let text = r#"
+schema_version = "prototype1-run-profile.v1"
+name = "historical-profile"
+
+[protocol]
+model_id = "google/gemini-2.5-pro"
+route_source = "direct-google"
+provider = "google"
+"#;
+        let commitment = RunProfileCommitment {
+            schema_version: RUN_PROFILE_COMMITMENT_SCHEMA_VERSION.to_string(),
+            profile_path: profile_path.clone(),
+            sha256: sha256_hex(text),
+            source_path: Some(PathBuf::from("/historical/profile.toml")),
+            admitted_at: "2026-06-25T12:00:00Z".to_string(),
+        };
+        fs::create_dir_all(profile_path.parent().expect("profile parent"))
+            .expect("create profile parent");
+        fs::write(&profile_path, text).expect("write historical profile");
+        fs::write(
+            commitment_path(&manifest),
+            serde_json::to_vec_pretty(&commitment).expect("serialize commitment"),
+        )
+        .expect("write commitment");
+
+        let error = load_admitted_run_profile(&manifest)
+            .expect_err("legacy fields cannot become runtime authority")
+            .to_string();
+        assert!(error.contains("model_id"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn runtime_rejects_sources_that_passive_history_preserves() {
+        for (source, expected) in [
+            (
+                "edit-surface",
+                ploke_records::run_profile::GenerationSource::EditSurface,
+            ),
+            (
+                "broad-harness",
+                ploke_records::run_profile::GenerationSource::BroadHarness,
+            ),
+        ] {
+            let text = PROFILE.replace("broad-harness-request", source);
+            let runtime_error = parse_profile(Path::new("profile.toml"), &text)
+                .expect_err("runtime must reject retired generation source")
+                .to_string();
+            let passive: ploke_records::run_profile::RunProfileRecord = toml::from_str(&text)
+                .expect("passive history must preserve a known v1 generation source");
+
+            assert!(runtime_error.contains(source));
+            assert_eq!(passive.generation.source, expected);
+        }
+    }
+
+    #[test]
+    fn shared_passive_run_profile_preserves_historical_generation_surface() {
+        let text = PROFILE.replace(
+            "source = \"broad-harness-request\"",
+            "source = \"broad-harness-request\"\nsurface = \"workspace-except-ploke-eval\"",
+        );
+        let runtime = parse_profile(Path::new("profile.toml"), &text)
+            .expect("runtime must preserve a known historical surface");
+        let passive: ploke_records::run_profile::RunProfileRecord =
+            toml::from_str(&text).expect("passive record must preserve a known historical surface");
+        let runtime_wire = toml::to_string(&runtime).expect("runtime profile serializes");
+        let passive_wire = toml::to_string(&passive).expect("passive profile serializes");
+
+        assert!(runtime.generation.surface.is_some());
+        assert_eq!(runtime_wire, passive_wire);
+        assert!(runtime_wire.contains("surface = \"workspace-except-ploke-eval\""));
+    }
+
+    #[test]
+    fn operator_profile_rejects_historical_generation_surface() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let text = PROFILE.replace(
+            "source = \"broad-harness-request\"",
+            "source = \"broad-harness-request\"\nsurface = \"workspace-except-ploke-eval\"",
+        );
+        let path = temp.path().join("operator.toml");
+        fs::write(&path, &text).expect("write operator profile");
+        let error = load_operator_profile(path.to_str().expect("utf-8 test path"))
+            .expect_err("new operator admission must reject a retired generation surface")
+            .to_string();
+
+        assert!(error.contains("profile.generation.surface is retired"));
+    }
+
+    #[test]
+    fn plan_run_profile_rejects_constructed_operator_with_retired_surface() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let text = PROFILE.replace(
+            "source = \"broad-harness-request\"",
+            "source = \"broad-harness-request\"\nsurface = \"workspace-except-ploke-eval\"",
+        );
+        let operator = OperatorRunProfile {
+            source_path: temp.path().join("operator.toml"),
+            profile: parse_profile(Path::new("historical.toml"), &text)
+                .expect("historical profile remains structurally readable"),
+        };
+        let plan_error = plan_run_profile(&temp.path().join("campaign.json"), &operator)
+            .expect_err("plan boundary must reject a directly constructed legacy operator")
+            .to_string();
+        assert!(plan_error.contains("profile.generation.surface is retired"));
+    }
+
+    #[test]
+    fn admitted_profile_preserves_historical_surface_commitment() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest = temp.path().join("campaign.json");
+        let profile_path = run_profile_path(&manifest);
+        let text = PROFILE.replace(
+            "source = \"broad-harness-request\"",
+            "source = \"broad-harness-request\"\nsurface = \"workspace-except-ploke-eval\"",
+        );
+        let digest = sha256_hex(&text);
+        let commitment = RunProfileCommitment {
+            schema_version: RUN_PROFILE_COMMITMENT_SCHEMA_VERSION.to_string(),
+            profile_path: profile_path.clone(),
+            sha256: digest.clone(),
+            source_path: Some(PathBuf::from("/historical/operator.toml")),
+            admitted_at: "2026-06-25T12:00:00Z".to_string(),
+        };
+        fs::create_dir_all(profile_path.parent().expect("profile directory"))
+            .expect("create profile directory");
+        fs::write(&profile_path, &text).expect("write historical profile bytes");
+        fs::write(
+            commitment_path(&manifest),
+            serde_json::to_vec_pretty(&commitment).expect("encode commitment"),
+        )
+        .expect("write commitment");
+
+        let admitted = load_admitted_run_profile(&manifest)
+            .expect("load historical commitment")
+            .expect("admitted profile");
+
+        assert_eq!(admitted.commitment.sha256, digest);
+        assert!(admitted.profile.generation.surface.is_some());
+        assert_eq!(
+            fs::read_to_string(&profile_path).expect("read preserved profile"),
+            text
+        );
+    }
+
+    #[test]
+    fn shared_passive_run_profile_rejects_current_key_typos() {
+        for (valid, typo, key) in [
+            (
+                "worktree_root = \"~/.ploke-eval/worktrees\"",
+                "worktree_rooot = \"~/.ploke-eval/worktrees\"",
+                "worktree_rooot",
+            ),
+            (
+                "dataset_key = \"ripgrep\"",
+                "dataset_keey = \"ripgrep\"",
+                "dataset_keey",
+            ),
+            (
+                "route_source = \"direct-google\"",
+                "route_soruce = \"direct-google\"",
+                "route_soruce",
+            ),
+            (
+                "max_generations = 15",
+                "max_generatons = 15",
+                "max_generatons",
+            ),
+            (
+                "children = { min = 6, max = 6 }",
+                "children = { min = 6, max = 6, parallel_targtes = 3 }",
+                "parallel_targtes",
+            ),
+            (
+                "strategy = \"history-score-child-prop\"",
+                "stratgey = \"history-score-child-prop\"",
+                "stratgey",
+            ),
+            ("persist = true", "perist = true", "perist"),
+            ("budget_k = 50", "budget_kk = 50", "budget_kk"),
+            (
+                "require_evidence = true",
+                "require_evidnce = true",
+                "require_evidnce",
+            ),
+            (
+                "tool_review_parallelism = 2",
+                "tool_review_parallellism = 2",
+                "tool_review_parallellism",
+            ),
+            ("mode = \"omit\"", "modde = \"omit\"", "modde"),
+            (
+                "observe_child_stale_after_secs = 1200",
+                "observe_child_stale_after_sec = 1200",
+                "observe_child_stale_after_sec",
+            ),
+            (
+                "mbe = { enabled = true, python = \"python3\", workers = 2 }",
+                "mbe = { enabled = true, python = \"python3\", wokers = 2 }",
+                "wokers",
+            ),
+            ("max_attempts = 2", "max_atempts = 2", "max_atempts"),
+        ] {
+            let text = PROFILE.replacen(valid, typo, 1);
+            let runtime_error = parse_profile(Path::new("profile.toml"), &text)
+                .expect_err("runtime must reject misspelled current key")
+                .to_string();
+            let passive_error =
+                toml::from_str::<ploke_records::run_profile::RunProfileRecord>(&text)
+                    .expect_err("passive record must reject misspelled current key")
+                    .to_string();
+
+            assert!(runtime_error.contains(key));
+            assert!(passive_error.contains(key));
+        }
+
+        for (table, key) in [
+            ("[storage.eval]\nbackned = \"fs\"", "backned"),
+            ("[control]\nparallell_cap = 1", "parallell_cap"),
+        ] {
+            let text = format!("{PROFILE}\n{table}\n");
+            let runtime_error = parse_profile(Path::new("profile.toml"), &text)
+                .expect_err("runtime must reject misspelled nested key")
+                .to_string();
+            let passive_error =
+                toml::from_str::<ploke_records::run_profile::RunProfileRecord>(&text)
+                    .expect_err("passive record must reject misspelled nested key")
+                    .to_string();
+
+            assert!(runtime_error.contains(key));
+            assert!(passive_error.contains(key));
+        }
+    }
+
+    #[test]
+    fn plan_is_non_writing() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let campaign_root = tmp.path().join("campaign");
+        let manifest_path = campaign_root.join("campaign.json");
+        let source_path = tmp.path().join("profiles").join("overnight.toml");
+        let operator = OperatorRunProfile {
+            source_path: source_path.clone(),
+            profile: parse_profile(Path::new("profile.toml"), PROFILE).expect("profile parses"),
+        };
+
+        let plan = plan_run_profile(&manifest_path, &operator).expect("plan profile");
+
+        assert_eq!(plan.source_path, source_path);
+        assert_eq!(
+            plan.profile_path,
+            campaign_root.join("prototype1").join(RUN_PROFILE_FILE)
+        );
+        assert_eq!(plan.profile, operator.profile);
+        assert_eq!(plan.sha256, sha256_hex(&plan.normalized_toml));
+        assert!(!campaign_root.exists());
+        assert_eq!(fs::read_dir(tmp.path()).expect("read tempdir").count(), 0);
+    }
+
+    #[test]
+    fn plan_admits_exact_bytes() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = tmp.path().join("campaign.json");
+        let operator = OperatorRunProfile {
+            source_path: tmp.path().join("profiles").join("overnight.toml"),
+            profile: parse_profile(Path::new("profile.toml"), PROFILE).expect("profile parses"),
+        };
+        let plan = plan_run_profile(&manifest_path, &operator).expect("plan profile");
+        let profile_path = plan.profile_path.clone();
+        let normalized_toml = plan.normalized_toml.clone();
+        let planned_sha = plan.sha256.clone();
+
+        let admitted = admit_run_profile_plan(plan).expect("admit planned profile");
+        let admitted_bytes = fs::read(&profile_path).expect("read admitted profile");
+        let stored_commitment = load_commitment(&manifest_path)
+            .expect("load commitment")
+            .expect("commitment exists");
+
+        assert_eq!(admitted_bytes.as_slice(), normalized_toml.as_bytes());
+        assert_eq!(sha256_hex(&normalized_toml), planned_sha);
+        assert_eq!(admitted.commitment.sha256, planned_sha);
+        assert_eq!(stored_commitment.sha256, planned_sha);
+        assert_eq!(stored_commitment, admitted.commitment);
+        let loaded = load_admitted_run_profile(&manifest_path)
+            .expect("strict load")
+            .expect("admitted profile");
+        assert_eq!(loaded.commitment, admitted.commitment);
+        assert_eq!(loaded.profile, admitted.profile);
+    }
+
+    #[test]
+    fn setup_profile_reconciliation_repairs_marker_last_partial_state() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = tmp.path().join("campaign.json");
+        let operator = OperatorRunProfile {
+            source_path: tmp.path().join("operator.toml"),
+            profile: parse_profile(Path::new("profile.toml"), PROFILE).expect("profile parses"),
+        };
+        let plan = plan_run_profile(&manifest_path, &operator).expect("plan profile");
+        let profile_path = plan.profile_path.clone();
+        fs::create_dir_all(profile_path.parent().expect("profile parent"))
+            .expect("create profile parent");
+        fs::write(&profile_path, plan.normalized_toml.as_bytes()).expect("seed exact profile");
+
+        let admitted = ensure_run_profile_plan(plan, "2026-07-13T12:00:00+00:00")
+            .expect("repair missing marker");
+
+        assert_eq!(admitted.commitment.admitted_at, "2026-07-13T12:00:00+00:00");
+        assert_eq!(
+            load_admitted_run_profile(&manifest_path)
+                .expect("load profile")
+                .expect("profile exists")
+                .commitment,
+            admitted.commitment
+        );
+    }
+
+    #[test]
+    fn setup_profile_reconciliation_rejects_commitment_first_state() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = tmp.path().join("campaign.json");
+        let operator = OperatorRunProfile {
+            source_path: tmp.path().join("operator.toml"),
+            profile: parse_profile(Path::new("profile.toml"), PROFILE).expect("profile parses"),
+        };
+        let plan = plan_run_profile(&manifest_path, &operator).expect("plan profile");
+        let commitment = RunProfileCommitment {
+            schema_version: RUN_PROFILE_COMMITMENT_SCHEMA_VERSION.to_string(),
+            profile_path: plan.profile_path.clone(),
+            sha256: plan.sha256.clone(),
+            source_path: Some(plan.source_path.clone()),
+            admitted_at: "2026-07-13T12:00:00+00:00".to_string(),
+        };
+        fs::create_dir_all(
+            commitment_path(&manifest_path)
+                .parent()
+                .expect("commitment parent"),
+        )
+        .expect("create commitment parent");
+        fs::write(
+            commitment_path(&manifest_path),
+            serde_json::to_vec_pretty(&commitment).expect("serialize commitment"),
+        )
+        .expect("seed commitment");
+
+        let error = ensure_run_profile_plan(plan, "2026-07-13T12:00:00+00:00")
+            .expect_err("commitment-first state is unsafe");
+
+        assert!(error.to_string().contains("without profile"));
+        assert!(!run_profile_path(&manifest_path).exists());
+    }
+
+    #[test]
+    fn admission_rejects_inconsistent_profile_plan_before_writes() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = tmp.path().join("campaign/campaign.json");
+        let operator = OperatorRunProfile {
+            source_path: tmp.path().join("operator.toml"),
+            profile: parse_profile(Path::new("profile.toml"), PROFILE).expect("profile parses"),
+        };
+        let mut plan = plan_run_profile(&manifest_path, &operator).expect("plan profile");
+        plan.normalized_toml.push_str("\n# drift\n");
+
+        let error = admit_run_profile_plan(plan).expect_err("inconsistent plan must fail");
+
+        assert!(error.to_string().contains("plan digest mismatch"));
+        assert!(!tmp.path().join("campaign").exists());
+    }
+
+    #[test]
     fn admitted_run_profile_carries_digest() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let manifest_path = tmp.path().join("campaign.json");
@@ -1524,6 +2271,116 @@ graph_nearest = 13
     }
 
     #[test]
+    fn absent_profile_pair_returns_none() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = tmp.path().join("campaign.json");
+
+        assert!(
+            load_admitted_run_profile(&manifest_path)
+                .expect("absent pair is readable")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn partial_profile_pairs_are_rejected() {
+        let profile_only = tempfile::tempdir().expect("profile tempdir");
+        let manifest_path = profile_only.path().join("campaign.json");
+        let profile_path = run_profile_path(&manifest_path);
+        fs::create_dir_all(profile_path.parent().expect("profile parent"))
+            .expect("create profile parent");
+        fs::write(&profile_path, PROFILE).expect("write profile only");
+        let error = load_admitted_run_profile(&manifest_path)
+            .expect_err("profile without commitment must fail");
+        assert!(error.to_string().contains("has no admission commitment"));
+
+        let commitment_only = tempfile::tempdir().expect("commitment tempdir");
+        let manifest_path = commitment_only.path().join("campaign.json");
+        let profile_path = run_profile_path(&manifest_path);
+        fs::create_dir_all(profile_path.parent().expect("commitment parent"))
+            .expect("create commitment parent");
+        let commitment = RunProfileCommitment {
+            schema_version: RUN_PROFILE_COMMITMENT_SCHEMA_VERSION.to_string(),
+            profile_path: profile_path.clone(),
+            sha256: sha256_hex(PROFILE),
+            source_path: None,
+            admitted_at: Utc::now().to_rfc3339(),
+        };
+        let bytes = serde_json::to_vec_pretty(&commitment).expect("serialize commitment");
+        fs::write(commitment_path(&manifest_path), bytes).expect("write commitment only");
+        let error = load_admitted_run_profile(&manifest_path)
+            .expect_err("commitment without profile must fail");
+        assert!(error.to_string().contains("commitment exists"));
+        assert!(error.to_string().contains("is missing"));
+    }
+
+    #[test]
+    fn commitment_schema_path_and_digest_are_authoritative() {
+        for corruption in ["schema", "path", "digest"] {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let manifest_path = tmp.path().join("campaign.json");
+            let operator = OperatorRunProfile {
+                source_path: tmp.path().join("operator.toml"),
+                profile: parse_profile(Path::new("profile.toml"), PROFILE).expect("profile parses"),
+            };
+            admit_run_profile(&manifest_path, &operator).expect("admit profile");
+            let path = commitment_path(&manifest_path);
+            let mut commitment = load_commitment(&manifest_path)
+                .expect("load commitment")
+                .expect("commitment exists");
+            match corruption {
+                "schema" => commitment.schema_version = "unsupported.v0".to_string(),
+                "path" => commitment.profile_path = tmp.path().join("other-profile.toml"),
+                "digest" => commitment.sha256 = "0".repeat(64),
+                _ => unreachable!(),
+            }
+            fs::write(
+                &path,
+                serde_json::to_vec_pretty(&commitment).expect("serialize corruption"),
+            )
+            .expect("write corruption");
+
+            let error = load_admitted_run_profile(&manifest_path)
+                .expect_err("corrupt commitment must fail");
+            assert!(
+                error.to_string().contains(corruption)
+                    || (corruption == "schema" && error.to_string().contains("unsupported schema"))
+            );
+        }
+    }
+
+    #[test]
+    fn second_profile_admission_preserves_existing_pair() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = tmp.path().join("campaign.json");
+        let operator = OperatorRunProfile {
+            source_path: tmp.path().join("operator.toml"),
+            profile: parse_profile(Path::new("profile.toml"), PROFILE).expect("profile parses"),
+        };
+        admit_run_profile(&manifest_path, &operator).expect("first admission");
+        let profile_path = run_profile_path(&manifest_path);
+        let stored_path = commitment_path(&manifest_path);
+        let profile_before = fs::read(&profile_path).expect("read profile");
+        let commitment_before = fs::read(&stored_path).expect("read commitment");
+
+        let error = admit_run_profile(&manifest_path, &operator)
+            .expect_err("second admission must not overwrite authority");
+        assert!(
+            error
+                .to_string()
+                .contains("requires new profile and commitment paths")
+        );
+        assert_eq!(
+            fs::read(profile_path).expect("reread profile"),
+            profile_before
+        );
+        assert_eq!(
+            fs::read(stored_path).expect("reread commitment"),
+            commitment_before
+        );
+    }
+
+    #[test]
     fn run_profile_defaults_oracle_policy_to_record_only() {
         let profile = parse_profile(
             Path::new("profile.toml"),
@@ -1536,6 +2393,30 @@ graph_nearest = 13
 
         assert_eq!(profile.selection.oracle_mode(), OracleMode::RecordOnly);
         assert!(profile.selection.oracle_require_evidence());
+    }
+
+    #[test]
+    fn run_profile_defaults_patch_gate_to_disabled() {
+        let profile = parse_profile(Path::new("profile.toml"), PROFILE).expect("profile parses");
+
+        assert_eq!(profile.selection.patch_gate(), PatchGate::Disabled);
+    }
+
+    #[test]
+    fn run_profile_parses_reviewed_admissible_patch_gate() {
+        let profile = parse_profile(
+            Path::new("profile.toml"),
+            &PROFILE.replace(
+                "[selection.metrics]",
+                "[selection.patch]\ngate = \"reviewed-admissible\"\n\n[selection.metrics]",
+            ),
+        )
+        .expect("profile parses");
+
+        assert_eq!(
+            profile.selection.patch_gate(),
+            PatchGate::ReviewedAdmissible
+        );
     }
 
     #[test]
@@ -1714,6 +2595,34 @@ graph_nearest = 13
     }
 
     #[test]
+    fn all_resolved_oracle_gate_requires_complete_mbe_evidence() {
+        let gated = PROFILE.replace(
+            "require_evidence = true",
+            "require_evidence = true\ngate = \"all-resolved\"",
+        );
+        let profile =
+            parse_profile(Path::new("profile.toml"), &gated).expect("strict oracle gate parses");
+        assert_eq!(profile.selection.oracle_gate(), OracleGate::AllResolved);
+
+        let disabled_mbe = gated.replace("enabled = true", "enabled = false");
+        let err = parse_profile(Path::new("profile.toml"), &disabled_mbe)
+            .expect_err("strict oracle gate requires MBE");
+        assert!(err.to_string().contains("execution.mbe.enabled"));
+
+        let missing_evidence = gated.replace("require_evidence = true", "require_evidence = false");
+        let err = parse_profile(Path::new("profile.toml"), &missing_evidence)
+            .expect_err("strict oracle gate requires complete evidence");
+        assert!(err.to_string().contains("require_evidence = true"));
+
+        let empty_targets = gated
+            .replace("instance = \"BurntSushi__ripgrep-2209\"\n", "")
+            .replace("instances = [\"BurntSushi__ripgrep-2209\"]\n", "");
+        let err = parse_profile(Path::new("profile.toml"), &empty_targets)
+            .expect_err("strict oracle gate requires target set");
+        assert!(err.to_string().contains("target.instance"));
+    }
+
+    #[test]
     fn enabled_mbe_requires_target_set_for_oracle_recording() {
         let empty_targets = PROFILE
             .replace("instance = \"BurntSushi__ripgrep-2209\"\n", "")
@@ -1834,10 +2743,9 @@ instances = ["BurntSushi__ripgrep-2209"]
     fn default_generation_serializes_with_no_policy() {
         let generation = Generation::default();
         let toml = toml::to_string(&generation).expect("serialize generation");
-        // The None variant serializes as `policy = "none"` with no extra fields.
         assert!(
-            toml.contains("anti_attractor_policy") && toml.contains("policy = \"none\""),
-            "expected no-policy serialization, got:\n{toml}"
+            !toml.contains("anti_attractor_policy"),
+            "default policy must be omitted to preserve historical profile wire shape:\n{toml}"
         );
     }
 
@@ -1864,6 +2772,12 @@ min_target_surface_skew = 4
                 min_target_surface_skew: 4,
             }
         );
+        let passive = crate::cli::prototype1_state::walk::config::passive_profile_record(&profile)
+            .expect("explicit anti-attractor policy must project into the passive carrier");
+        assert_eq!(
+            passive.generation.anti_attractor_policy,
+            profile.anti_attractor_policy()
+        );
     }
 
     #[test]
@@ -1883,8 +2797,8 @@ policy = "surface-freshness"
         assert_eq!(
             profile.anti_attractor_policy(),
             AntiAttractorPolicy::SurfaceFreshness {
-                recent_surface_window: default_recent_surface_window(),
-                min_target_surface_skew: default_min_target_surface_skew(),
+                recent_surface_window: 2,
+                min_target_surface_skew: 2,
             }
         );
     }

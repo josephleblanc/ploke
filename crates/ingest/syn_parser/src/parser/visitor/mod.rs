@@ -23,6 +23,8 @@ mod type_processing_syn1;
 pub use code_visitor::CodeVisitor;
 pub use state::VisitorState;
 
+#[cfg(feature = "validate")]
+use crate::parser::{diagnostics::emit_json_diagnostic, graph::GraphAccess};
 use crate::{
     error::SynParserError,
     parser::{

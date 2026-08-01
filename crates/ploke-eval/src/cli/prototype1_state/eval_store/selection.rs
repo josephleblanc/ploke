@@ -10,9 +10,10 @@ use crate::cli::prototype1_state::history::{
 use crate::successor_selection::traversal::{Formula, ScoreChildPropFormulaRow};
 
 use super::{
-    cozo_store::{EvalDb, mutate_owner_db},
+    cozo_store::{EvalDb, load_owner_eval_database, mutate_owner_db},
     error::EvalStoreError,
     schema::{EvalRelationSchema, define_eval_schema, put_eval_params},
+    setup,
 };
 
 define_eval_schema!(SelectionDecisionSchema {
@@ -29,6 +30,15 @@ define_eval_schema!(SelectionDecisionSchema {
     decision_ref: "String?",
     decision_hash: "String?",
     recorded_at: "String?",
+});
+
+define_eval_schema!(SelectionReceiptSchema {
+    "eval_selection_receipt",
+    decision_id: "String" =>
+    campaign_id: "String",
+    parent_id: "String",
+    decision_hash: "String",
+    entry_json: "String",
 });
 
 define_eval_schema!(SelectionCandidateSchema {
@@ -65,10 +75,75 @@ define_eval_schema!(SelectionScoreSchema {
     selected: "Bool",
 });
 
+define_eval_schema!(SelectionOracleSchema {
+    "eval_selection_oracle",
+    decision_id: "String" =>
+    mode: "String",
+    require_evidence: "Bool",
+    gate: "String",
+    targets: "[String]",
+    formula_id: "String?",
+});
+
+define_eval_schema!(PatchGateSchema {
+    "eval_selection_patch_gate",
+    decision_id: "String" =>
+    gate: "String",
+});
+
+define_eval_schema!(PatchReviewSchema {
+    "eval_selection_patch_review",
+    decision_id: "String",
+    member_id: "String" =>
+    schema_version: "Int",
+    procedure_id: "String",
+    node_id: "String",
+    branch_id: "String",
+    generation: "Int",
+    artifact_id: "String",
+    artifact_surface_hash: "String",
+    evaluation_hash: "String",
+    config_hash: "String",
+    change_set_hash: "String",
+    verdict: "String",
+    confidence: "String",
+    blocking_findings: "[String]",
+    missing_evidence: "[String]",
+    rationale: "[String]",
+    citation_ref: "String",
+    citation_hash: "String?",
+    record_name: "String?",
+});
+
+define_eval_schema!(PatchChangeSchema {
+    "eval_selection_patch_change",
+    decision_id: "String",
+    member_id: "String",
+    change_index: "Int" =>
+    relpath: "String",
+    source_content_hash: "String?",
+    proposed_content_hash: "String?",
+});
+
+define_eval_schema!(SelectionProjectionSchema {
+    "eval_selection_projection_failure",
+    decision_id: "String",
+    failure_id: "String" =>
+    candidate_subject: "String?",
+    kind: "String",
+    message: "String?",
+});
+
 pub(crate) const SELECTION_DECISION_REL: &str = SelectionDecisionSchema::RELATION;
+pub(crate) const SELECTION_RECEIPT_REL: &str = SelectionReceiptSchema::RELATION;
 pub(crate) const SELECTION_CANDIDATE_REL: &str = SelectionCandidateSchema::RELATION;
 pub(crate) const SELECTION_FINDING_REL: &str = SelectionFindingSchema::RELATION;
 pub(crate) const SELECTION_SCORE_REL: &str = SelectionScoreSchema::RELATION;
+pub(crate) const SELECTION_ORACLE_REL: &str = SelectionOracleSchema::RELATION;
+pub(crate) const SELECTION_PATCH_REL: &str = PatchGateSchema::RELATION;
+pub(crate) const PATCH_REVIEW_REL: &str = PatchReviewSchema::RELATION;
+pub(crate) const PATCH_CHANGE_REL: &str = PatchChangeSchema::RELATION;
+pub(crate) const SELECTION_PROJECTION_REL: &str = SelectionProjectionSchema::RELATION;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct SelectionDecisionEvidence {
@@ -85,13 +160,20 @@ pub(crate) struct SelectionDecisionReceipt {
     pub(crate) candidate_count: usize,
     pub(crate) finding_count: usize,
     pub(crate) score_count: usize,
+    pub(crate) projection_count: usize,
 }
 
 struct SelectionRows {
     decision: EvalSelectionDecisionRow,
+    receipt: SelectionReceiptRow,
+    oracle: Option<SelectionOracleRow>,
+    patch_gate: Option<PatchGateRow>,
+    patch_reviews: Vec<PatchReviewRow>,
+    patch_changes: Vec<PatchChangeRow>,
     candidates: Vec<EvalSelectionCandidateRow>,
     findings: Vec<EvalSelectionFindingRow>,
     scores: Vec<EvalSelectionScoreRow>,
+    projections: Vec<SelectionProjectionRow>,
 }
 
 struct EvalSelectionDecisionRow {
@@ -107,6 +189,14 @@ struct EvalSelectionDecisionRow {
     decision_ref: Option<String>,
     decision_hash: Option<String>,
     recorded_at: Option<String>,
+}
+
+struct SelectionReceiptRow {
+    decision_id: String,
+    campaign_id: String,
+    parent_id: String,
+    decision_hash: String,
+    entry_json: String,
 }
 
 struct EvalSelectionCandidateRow {
@@ -140,11 +230,72 @@ struct EvalSelectionScoreRow {
     selected: bool,
 }
 
+struct SelectionOracleRow {
+    decision_id: String,
+    mode: String,
+    require_evidence: bool,
+    gate: String,
+    targets: Vec<String>,
+    formula_id: Option<String>,
+}
+
+struct PatchGateRow {
+    decision_id: String,
+    gate: String,
+}
+
+struct PatchReviewRow {
+    decision_id: String,
+    member_id: String,
+    schema_version: i64,
+    procedure_id: String,
+    node_id: String,
+    branch_id: String,
+    generation: i64,
+    artifact_id: String,
+    artifact_surface_hash: String,
+    evaluation_hash: String,
+    config_hash: String,
+    change_set_hash: String,
+    verdict: String,
+    confidence: String,
+    blocking_findings: Vec<String>,
+    missing_evidence: Vec<String>,
+    rationale: Vec<String>,
+    citation_ref: String,
+    citation_hash: Option<String>,
+    record_name: Option<String>,
+}
+
+struct PatchChangeRow {
+    decision_id: String,
+    member_id: String,
+    change_index: i64,
+    relpath: String,
+    source_content_hash: Option<String>,
+    proposed_content_hash: Option<String>,
+}
+
+struct SelectionProjectionRow {
+    decision_id: String,
+    failure_id: String,
+    candidate_subject: Option<String>,
+    kind: String,
+    message: Option<String>,
+}
+
 pub(super) fn ensure_selection_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(), EvalStoreError> {
     SelectionDecisionSchema::SCHEMA.ensure_installed(db, "schema.eval_selection_decision")?;
+    SelectionReceiptSchema::SCHEMA.ensure_installed(db, "schema.eval_selection_receipt")?;
     SelectionCandidateSchema::SCHEMA.ensure_installed(db, "schema.eval_selection_candidate")?;
     SelectionFindingSchema::SCHEMA.ensure_installed(db, "schema.eval_selection_finding")?;
     SelectionScoreSchema::SCHEMA.ensure_installed(db, "schema.eval_selection_score")?;
+    SelectionOracleSchema::SCHEMA.ensure_installed(db, "schema.eval_selection_oracle")?;
+    PatchGateSchema::SCHEMA.ensure_installed(db, "schema.eval_selection_patch_gate")?;
+    PatchReviewSchema::SCHEMA.ensure_installed(db, "schema.eval_selection_patch_review")?;
+    PatchChangeSchema::SCHEMA.ensure_installed(db, "schema.eval_selection_patch_change")?;
+    SelectionProjectionSchema::SCHEMA
+        .ensure_installed(db, "schema.eval_selection_projection_failure")?;
     Ok(())
 }
 
@@ -153,9 +304,23 @@ pub(crate) fn write_selection_decision_to_owner_db(
     evidence: SelectionDecisionEvidence,
 ) -> Result<SelectionDecisionReceipt, EvalStoreError> {
     mutate_owner_db(db_path, |db| {
+        verify_patch_policy(db, &evidence)?;
         ensure_selection_schema(db)?;
         let rows = selection_rows(evidence)?;
         put_selection_decision_row(db, &rows.decision)?;
+        put_selection_receipt_row(db, &rows.receipt)?;
+        if let Some(oracle) = &rows.oracle {
+            put_oracle_row(db, oracle)?;
+        }
+        if let Some(patch_gate) = &rows.patch_gate {
+            put_patch_gate_row(db, patch_gate)?;
+        }
+        for review in &rows.patch_reviews {
+            put_patch_review_row(db, review)?;
+        }
+        for change in &rows.patch_changes {
+            put_patch_change_row(db, change)?;
+        }
         for candidate in &rows.candidates {
             put_selection_candidate_row(db, candidate)?;
         }
@@ -165,17 +330,279 @@ pub(crate) fn write_selection_decision_to_owner_db(
         for score in &rows.scores {
             put_selection_score_row(db, score)?;
         }
-        Ok(SelectionDecisionReceipt {
-            decision_id: rows.decision.decision_id,
-            candidate_count: rows.candidates.len(),
-            finding_count: rows.findings.len(),
-            score_count: rows.scores.len(),
-        })
+        for projection in &rows.projections {
+            put_selection_projection_row(db, projection)?;
+        }
+        Ok(receipt_summary(&rows))
     })
+}
+
+fn verify_patch_policy<D: EvalDb + ?Sized>(
+    db: &D,
+    evidence: &SelectionDecisionEvidence,
+) -> Result<(), EvalStoreError> {
+    let (stored_gate, stored_config) = setup::load_patch_policy(db, &evidence.campaign_id)?;
+    let applied_gate = evidence
+        .entry
+        .traversal
+        .as_ref()
+        .map(|traversal| traversal.strategy.patch_gate())
+        .unwrap_or(crate::successor_selection::PatchGate::Disabled);
+    if applied_gate != stored_gate {
+        return Err(EvalStoreError::Validation {
+            field: "selection.patch_policy.gate",
+            detail: format!(
+                "receipt applied '{}' but campaign setup admitted '{}'",
+                applied_gate.as_str(),
+                stored_gate.as_str()
+            ),
+        });
+    }
+    if stored_gate == crate::successor_selection::PatchGate::ReviewedAdmissible {
+        let config_hash = stored_config
+            .as_ref()
+            .ok_or_else(|| EvalStoreError::Validation {
+                field: "selection.patch_policy.config",
+                detail: "reviewed-admissible campaign setup has no reviewer config hash"
+                    .to_string(),
+            })?;
+        crate::successor_selection::traversal::validate_patch_config(&evidence.entry, config_hash)
+            .map_err(|source| EvalStoreError::Validation {
+                field: "selection.patch_policy.config",
+                detail: source.to_string(),
+            })?;
+    }
+    Ok(())
+}
+
+pub(crate) fn load_selection_receipt(
+    db_path: &Path,
+    campaign_id: &CampaignId,
+    parent_id: &str,
+) -> Result<Option<SelectionDecisionEntry>, EvalStoreError> {
+    let db = load_owner_eval_database(db_path)?;
+    selection_entry(&db, campaign_id.as_str(), parent_id)
+}
+
+pub(crate) fn load_selection_hash(
+    db_path: &Path,
+    campaign_id: &CampaignId,
+    parent_id: &str,
+) -> Result<Option<String>, EvalStoreError> {
+    let db = load_owner_eval_database(db_path)?;
+    selection_hash(&db, campaign_id.as_str(), parent_id)
+}
+
+fn receipt_summary(rows: &SelectionRows) -> SelectionDecisionReceipt {
+    SelectionDecisionReceipt {
+        decision_id: rows.decision.decision_id.clone(),
+        candidate_count: rows.candidates.len(),
+        finding_count: rows.findings.len(),
+        score_count: rows.scores.len(),
+        projection_count: rows.projections.len(),
+    }
+}
+
+fn selection_entry<D: EvalDb + ?Sized>(
+    db: &D,
+    campaign_id: &str,
+    parent_id: &str,
+) -> Result<Option<SelectionDecisionEntry>, EvalStoreError> {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    params.insert("parent_id".to_string(), parent_id.to_string().into());
+    let result = db
+        .eval_query_params(
+            r#"
+?[decision_id, set_id, procedure_id, entry_json, receipt_hash, decision_hash] :=
+    *eval_selection_receipt {
+        decision_id,
+        campaign_id,
+        parent_id,
+        decision_hash: receipt_hash,
+        entry_json,
+    },
+    *eval_selection_decision {
+        decision_id,
+        campaign_id,
+        parent_id,
+        set_id,
+        procedure_id,
+        decision_hash,
+    },
+    campaign_id = $campaign_id,
+    parent_id = $parent_id
+"#,
+            params,
+        )
+        .map_err(|source| EvalStoreError::Db {
+            phase: "query.eval_selection_receipt.entry",
+            source,
+        })?;
+    let row = match result.rows.as_slice() {
+        [] => return Ok(None),
+        [row] => row,
+        rows => {
+            return Err(EvalStoreError::Validation {
+                field: "selection.parent_id",
+                detail: format!(
+                    "selection receipt for campaign '{campaign_id}' parent '{parent_id}' is ambiguous across {} rows",
+                    rows.len()
+                ),
+            });
+        }
+    };
+    let string_at = |index: usize, field: &'static str| match row.get(index) {
+        Some(DataValue::Str(value)) => Ok(value.to_string()),
+        _ => Err(EvalStoreError::Validation {
+            field,
+            detail: format!(
+                "selection receipt for campaign '{campaign_id}' parent '{parent_id}' has no string {field}"
+            ),
+        }),
+    };
+    let stored_id = string_at(0, "selection.decision_id")?;
+    let set_id = string_at(1, "selection.set_id")?;
+    let procedure_id = string_at(2, "selection.procedure_id")?;
+    let entry_json = string_at(3, "selection.entry_json")?;
+    let receipt_hash = string_at(4, "selection.receipt_hash")?;
+    let decision_hash = string_at(5, "selection.decision_hash")?;
+    if receipt_hash != decision_hash {
+        return Err(EvalStoreError::Validation {
+            field: "selection.decision_hash",
+            detail: format!(
+                "selection receipt hash '{receipt_hash}' does not match normalized decision hash '{decision_hash}'"
+            ),
+        });
+    }
+    let expected_id = decision_id(
+        campaign_id,
+        parent_id,
+        &set_id,
+        &procedure_id,
+        &decision_hash,
+    );
+    if stored_id != expected_id {
+        return Err(EvalStoreError::Validation {
+            field: "selection.decision_id",
+            detail: format!(
+                "selection decision id '{stored_id}' does not match content-addressed id '{expected_id}'"
+            ),
+        });
+    }
+    let entry: SelectionDecisionEntry =
+        serde_json::from_str(&entry_json).map_err(|source| EvalStoreError::Validation {
+            field: "selection.entry_json",
+            detail: source.to_string(),
+        })?;
+    entry
+        .validate_shape()
+        .map_err(|source| EvalStoreError::Validation {
+            field: "selection.entry_json",
+            detail: source.to_string(),
+        })?;
+    let entry_set = entry
+        .candidate_set
+        .as_ref()
+        .map(|set| set.root.as_str())
+        .unwrap_or_else(|| entry.considered_order_hash.as_str());
+    if entry_set != set_id {
+        return Err(EvalStoreError::Validation {
+            field: "selection.set_id",
+            detail: format!(
+                "selection entry set id '{entry_set}' does not match normalized set id '{set_id}'"
+            ),
+        });
+    }
+    if entry.procedure_or_policy.as_str() != procedure_id {
+        return Err(EvalStoreError::Validation {
+            field: "selection.procedure_id",
+            detail: format!(
+                "selection entry procedure '{}' does not match normalized procedure '{procedure_id}'",
+                entry.procedure_or_policy.as_str()
+            ),
+        });
+    }
+    let observed = entry
+        .decision_hash()
+        .map_err(|source| EvalStoreError::Validation {
+            field: "selection.entry_json",
+            detail: source.to_string(),
+        })?;
+    if observed.as_str() != receipt_hash {
+        return Err(EvalStoreError::Validation {
+            field: "selection.entry_json",
+            detail: format!(
+                "selection entry hash '{}' does not match stored receipt hash '{receipt_hash}'",
+                observed.as_str()
+            ),
+        });
+    }
+    Ok(Some(entry))
+}
+
+fn selection_hash<D: EvalDb + ?Sized>(
+    db: &D,
+    campaign_id: &str,
+    parent_id: &str,
+) -> Result<Option<String>, EvalStoreError> {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    params.insert("parent_id".to_string(), parent_id.to_string().into());
+    let result = db
+        .eval_query_params(
+            r#"
+?[decision_hash] :=
+    *eval_selection_decision {
+        campaign_id,
+        parent_id,
+        decision_hash,
+    },
+    campaign_id = $campaign_id,
+    parent_id = $parent_id
+"#,
+            params,
+        )
+        .map_err(|source| EvalStoreError::Db {
+            phase: "query.eval_selection_decision.hash",
+            source,
+        })?;
+    match result.rows.as_slice() {
+        [] => Ok(None),
+        [row] => match row.first() {
+            Some(DataValue::Str(value)) => Ok(Some(value.to_string())),
+            _ => Err(EvalStoreError::Validation {
+                field: "selection.decision_hash",
+                detail: format!(
+                    "selection decision for campaign '{campaign_id}' parent '{parent_id}' has no string receipt hash"
+                ),
+            }),
+        },
+        rows => Err(EvalStoreError::Validation {
+            field: "selection.parent_id",
+            detail: format!(
+                "selection decision for campaign '{campaign_id}' parent '{parent_id}' is ambiguous across {} receipt rows",
+                rows.len()
+            ),
+        }),
+    }
 }
 
 fn selection_rows(evidence: SelectionDecisionEvidence) -> Result<SelectionRows, EvalStoreError> {
     require_non_empty("selection.parent_id", &evidence.parent_id)?;
+    evidence
+        .entry
+        .validate_shape()
+        .map_err(|source| EvalStoreError::Validation {
+            field: "selection.entry",
+            detail: source.to_string(),
+        })?;
+    crate::successor_selection::traversal::validate_patch_replay(&evidence.entry).map_err(
+        |source| EvalStoreError::Validation {
+            field: "selection.entry.replay",
+            detail: source.to_string(),
+        },
+    )?;
     let set_id = evidence
         .entry
         .candidate_set
@@ -185,11 +612,13 @@ fn selection_rows(evidence: SelectionDecisionEvidence) -> Result<SelectionRows, 
     require_non_empty("selection.set_id", &set_id)?;
     let procedure_id = evidence.entry.procedure_or_policy.as_str().to_string();
     require_non_empty("selection.procedure_id", &procedure_id)?;
-    let outcome = serde_name(&evidence.entry.decision.outcome)?;
-    let disposition = evidence
-        .entry
-        .decision
-        .selected_branch_disposition()
+    let decision = evidence.entry.decision.as_ref();
+    let outcome = match decision {
+        Some(decision) => serde_name(&decision.outcome)?,
+        None => "no_selection".to_string(),
+    };
+    let disposition = decision
+        .and_then(|decision| decision.selected_branch_disposition())
         .map(ToOwned::to_owned);
     let decision_hash = evidence
         .entry
@@ -199,19 +628,20 @@ fn selection_rows(evidence: SelectionDecisionEvidence) -> Result<SelectionRows, 
             field: "selection.decision_hash",
             detail: source.to_string(),
         })?;
+    let entry_json = stable_entry_json(&evidence.entry, &decision_hash)?;
     let decision_id = decision_id(
-        &evidence.campaign_id,
+        evidence.campaign_id.as_str(),
         &evidence.parent_id,
         &set_id,
         &procedure_id,
         &decision_hash,
     );
-    let selected_node_id = evidence
-        .entry
-        .decision
-        .selected_branch_id
-        .as_ref()
-        .map(|_| evidence.entry.decision.candidate_node_id.clone());
+    let selected_node_id = decision.and_then(|decision| {
+        decision
+            .selected_branch_id
+            .as_ref()
+            .map(|_| decision.candidate_node_id.clone())
+    });
     let selected_artifact_id = selected_artifact_id(&evidence.entry)?;
     let candidates = evidence
         .entry
@@ -225,11 +655,15 @@ fn selection_rows(evidence: SelectionDecisionEvidence) -> Result<SelectionRows, 
     let selected_member_id = selected_member_id(&evidence.entry)?;
     let findings = selection_finding_rows(&decision_id, selected_member_id.as_deref(), &evidence)?;
     let scores = selection_score_rows(&decision_id, &evidence.entry)?;
+    let oracle = selection_oracle_row(&decision_id, &evidence.entry)?;
+    let patch_gate = selection_patch_row(&decision_id, &evidence.entry)?;
+    let (patch_reviews, patch_changes) = patch_review_rows(&decision_id, &evidence.entry)?;
+    let projections = selection_projection_rows(&decision_id, &evidence.entry)?;
     Ok(SelectionRows {
         decision: EvalSelectionDecisionRow {
-            decision_id,
+            decision_id: decision_id.clone(),
             campaign_id: evidence.campaign_id.to_string(),
-            parent_id: evidence.parent_id,
+            parent_id: evidence.parent_id.clone(),
             set_id,
             procedure_id,
             selected_node_id,
@@ -237,13 +671,187 @@ fn selection_rows(evidence: SelectionDecisionEvidence) -> Result<SelectionRows, 
             outcome,
             disposition,
             decision_ref: evidence.decision_ref,
-            decision_hash: Some(decision_hash),
+            decision_hash: Some(decision_hash.clone()),
             recorded_at: evidence.recorded_at,
         },
+        receipt: SelectionReceiptRow {
+            decision_id,
+            campaign_id: evidence.campaign_id.to_string(),
+            parent_id: evidence.parent_id,
+            decision_hash,
+            entry_json,
+        },
+        oracle,
+        patch_gate,
+        patch_reviews,
+        patch_changes,
         candidates,
         findings,
         scores,
+        projections,
     })
+}
+
+pub(super) fn stable_entry_json(
+    entry: &SelectionDecisionEntry,
+    decision_hash: &str,
+) -> Result<String, EvalStoreError> {
+    let entry_json = serde_json::to_string(entry).map_err(|source| EvalStoreError::Validation {
+        field: "selection.entry_json",
+        detail: source.to_string(),
+    })?;
+    let replayed: SelectionDecisionEntry =
+        serde_json::from_str(&entry_json).map_err(|source| EvalStoreError::Validation {
+            field: "selection.entry_json",
+            detail: format!("selection entry failed typed round-trip decoding: {source}"),
+        })?;
+    let replayed_hash = replayed
+        .decision_hash()
+        .map_err(|source| EvalStoreError::Validation {
+            field: "selection.entry_json",
+            detail: format!("selection entry failed typed round-trip hashing: {source}"),
+        })?;
+    if replayed_hash.as_str() != decision_hash {
+        return Err(EvalStoreError::Validation {
+            field: "selection.entry_json",
+            detail: format!(
+                "selection entry is not hash-stable across a typed JSON round trip: initial={decision_hash}, replayed={}",
+                replayed_hash.as_str()
+            ),
+        });
+    }
+    Ok(entry_json)
+}
+
+fn selection_projection_rows(
+    decision_id: &str,
+    entry: &SelectionDecisionEntry,
+) -> Result<Vec<SelectionProjectionRow>, EvalStoreError> {
+    entry
+        .projection_failures
+        .iter()
+        .map(|failure| {
+            Ok(SelectionProjectionRow {
+                decision_id: decision_id.to_string(),
+                failure_id: failure.id.0.as_str().to_string(),
+                candidate_subject: failure
+                    .candidate
+                    .as_ref()
+                    .map(|candidate| candidate.as_str().to_string()),
+                kind: serde_name(&failure.kind)?,
+                message: failure.committed_message.clone(),
+            })
+        })
+        .collect()
+}
+
+fn selection_oracle_row(
+    decision_id: &str,
+    entry: &SelectionDecisionEntry,
+) -> Result<Option<SelectionOracleRow>, EvalStoreError> {
+    let Some(traversal) = entry.traversal.as_ref() else {
+        return Ok(None);
+    };
+    let (mode, require_evidence, gate) = match traversal.strategy {
+        crate::successor_selection::traversal::StrategyKind::FrontierMax {
+            oracle,
+            require_evidence,
+            gate,
+            ..
+        }
+        | crate::successor_selection::traversal::StrategyKind::ScoreChildProp {
+            oracle,
+            require_evidence,
+            gate,
+            ..
+        } => (oracle, require_evidence, gate),
+    };
+    Ok(Some(SelectionOracleRow {
+        decision_id: decision_id.to_string(),
+        mode: serde_name(&mode)?,
+        require_evidence,
+        gate: serde_name(&gate)?,
+        targets: traversal.oracle_targets.clone(),
+        formula_id: entry
+            .formula
+            .as_ref()
+            .map(|formula| format!("score_child_prop:{}", formula.metric_set_id.as_str())),
+    }))
+}
+
+fn selection_patch_row(
+    decision_id: &str,
+    entry: &SelectionDecisionEntry,
+) -> Result<Option<PatchGateRow>, EvalStoreError> {
+    let Some(traversal) = entry.traversal.as_ref() else {
+        return Ok(None);
+    };
+    Ok(Some(PatchGateRow {
+        decision_id: decision_id.to_string(),
+        gate: serde_name(&traversal.strategy.patch_gate())?,
+    }))
+}
+
+fn patch_review_rows(
+    decision_id: &str,
+    entry: &SelectionDecisionEntry,
+) -> Result<(Vec<PatchReviewRow>, Vec<PatchChangeRow>), EvalStoreError> {
+    let mut reviews = Vec::new();
+    let mut changes = Vec::new();
+    for (index, payload) in entry.considered.iter().enumerate() {
+        let Some(review) = payload.patch_review.as_ref() else {
+            continue;
+        };
+        let membership = entry
+            .candidate_set_membership_for_payload(index, payload)
+            .map_err(|source| EvalStoreError::Validation {
+                field: "selection_patch_review.membership",
+                detail: source.to_string(),
+            })?;
+        let member_id = member_id(membership, payload)?;
+        reviews.push(PatchReviewRow {
+            decision_id: decision_id.to_string(),
+            member_id: member_id.clone(),
+            schema_version: i64::from(review.schema_version),
+            procedure_id: review.procedure_id.clone(),
+            node_id: review.candidate.node_id.clone(),
+            branch_id: review.candidate.branch_id.clone(),
+            generation: i64::from(review.candidate.generation),
+            artifact_id: review.artifact_id.to_string(),
+            artifact_surface_hash: review.artifact_surface_hash.as_str().to_string(),
+            evaluation_hash: review.evaluation_hash.as_str().to_string(),
+            config_hash: review.config_hash.as_str().to_string(),
+            change_set_hash: review.change_set_hash.as_str().to_string(),
+            verdict: serde_name(&review.verdict)?,
+            confidence: serde_name(&review.confidence)?,
+            blocking_findings: review.blocking_findings.clone(),
+            missing_evidence: review.missing_evidence.clone(),
+            rationale: review.rationale.clone(),
+            citation_ref: review.citation.ref_id.clone(),
+            citation_hash: review
+                .citation
+                .content_hash
+                .as_ref()
+                .map(|hash| hash.as_str().to_string()),
+            record_name: review.citation.record_name.clone(),
+        });
+        for (change_index, change) in review.changes.iter().enumerate() {
+            changes.push(PatchChangeRow {
+                decision_id: decision_id.to_string(),
+                member_id: member_id.clone(),
+                change_index: i64::try_from(change_index).map_err(|source| {
+                    EvalStoreError::Validation {
+                        field: "selection_patch_change.change_index",
+                        detail: source.to_string(),
+                    }
+                })?,
+                relpath: change.relpath.display().to_string(),
+                source_content_hash: change.source_content_hash.clone(),
+                proposed_content_hash: change.proposed_content_hash.clone(),
+            });
+        }
+    }
+    Ok((reviews, changes))
 }
 
 fn selection_candidate_row(
@@ -260,14 +868,51 @@ fn selection_candidate_row(
         })?;
     let member_id = member_id(membership, payload)?;
     let (node_id, branch_id) = candidate_coordinate(payload)?;
+    let formula_row = entry
+        .formula
+        .as_ref()
+        .and_then(|formula| match &formula.formula {
+            crate::successor_selection::traversal::Formula::ScoreChildProp(formula) => {
+                formula.rows.iter().find(|row| row.payload_index == index)
+            }
+        });
+    let patch_exclusion = entry
+        .traversal
+        .as_ref()
+        .filter(|traversal| {
+            traversal.strategy.patch_gate()
+                == crate::successor_selection::PatchGate::ReviewedAdmissible
+        })
+        .and_then(
+            |_| match payload.patch_review.as_ref().map(|review| review.verdict) {
+                Some(crate::successor_selection::PatchVerdict::Admissible) => None,
+                Some(crate::successor_selection::PatchVerdict::Rejected) => {
+                    Some("patch_gate_rejected".to_string())
+                }
+                Some(crate::successor_selection::PatchVerdict::Inconclusive) => {
+                    Some("patch_gate_inconclusive".to_string())
+                }
+                None => Some("patch_review_missing".to_string()),
+            },
+        );
     Ok(EvalSelectionCandidateRow {
         decision_id: decision_id.to_string(),
         member_id,
         node_id,
         branch_id,
-        selectable: true,
+        selectable: patch_exclusion.is_none()
+            && formula_row
+                .map(|row| row.selectable)
+                .unwrap_or(entry.decision.is_some()),
         selected: payload_selected_by_decision(entry, membership, payload),
-        exclusion_ref: None,
+        exclusion_ref: patch_exclusion
+            .or_else(|| formula_row.and_then(|row| row.exclusion_reason.clone()))
+            .or_else(|| {
+                entry
+                    .decision
+                    .is_none()
+                    .then(|| "selection_procedure_returned_no_candidate".to_string())
+            }),
     })
 }
 
@@ -279,8 +924,8 @@ fn selection_finding_rows(
     evidence
         .entry
         .decision
-        .findings
         .iter()
+        .flat_map(|decision| decision.findings.iter())
         .enumerate()
         .map(|(index, finding)| {
             let domain = serde_name(&finding.domain)?;
@@ -416,7 +1061,7 @@ fn rationale_ref(decision_id: &str, index: usize, rationale: &[String]) -> Strin
     format!("inline:rationale:{index}:sha256:{hash}")
 }
 
-fn member_id(
+pub(crate) fn member_id(
     membership: Option<&CandidateSetMembership>,
     payload: &EvaluationPayload,
 ) -> Result<String, EvalStoreError> {
@@ -493,6 +1138,18 @@ fn put_selection_decision_row<D: EvalDb + ?Sized>(
     Ok(())
 }
 
+fn put_selection_receipt_row<D: EvalDb + ?Sized>(
+    db: &D,
+    row: &SelectionReceiptRow,
+) -> Result<(), EvalStoreError> {
+    put_eval_params(
+        db,
+        &SelectionReceiptSchema::SCHEMA,
+        selection_receipt_params(row),
+        "put.eval_selection_receipt",
+    )
+}
+
 fn put_selection_candidate_row<D: EvalDb + ?Sized>(
     db: &D,
     row: &EvalSelectionCandidateRow,
@@ -532,6 +1189,71 @@ fn put_selection_score_row<D: EvalDb + ?Sized>(
     Ok(())
 }
 
+fn put_oracle_row<D: EvalDb + ?Sized>(
+    db: &D,
+    row: &SelectionOracleRow,
+) -> Result<(), EvalStoreError> {
+    put_eval_params(
+        db,
+        &SelectionOracleSchema::SCHEMA,
+        oracle_params(row),
+        "put.eval_selection_oracle",
+    )?;
+    Ok(())
+}
+
+fn put_patch_gate_row<D: EvalDb + ?Sized>(
+    db: &D,
+    row: &PatchGateRow,
+) -> Result<(), EvalStoreError> {
+    put_eval_params(
+        db,
+        &PatchGateSchema::SCHEMA,
+        patch_gate_params(row),
+        "put.eval_selection_patch_gate",
+    )?;
+    Ok(())
+}
+
+fn put_patch_review_row<D: EvalDb + ?Sized>(
+    db: &D,
+    row: &PatchReviewRow,
+) -> Result<(), EvalStoreError> {
+    put_eval_params(
+        db,
+        &PatchReviewSchema::SCHEMA,
+        patch_review_params(row),
+        "put.eval_selection_patch_review",
+    )?;
+    Ok(())
+}
+
+fn put_patch_change_row<D: EvalDb + ?Sized>(
+    db: &D,
+    row: &PatchChangeRow,
+) -> Result<(), EvalStoreError> {
+    put_eval_params(
+        db,
+        &PatchChangeSchema::SCHEMA,
+        patch_change_params(row),
+        "put.eval_selection_patch_change",
+    )?;
+    Ok(())
+}
+
+fn put_selection_projection_row<D: EvalDb + ?Sized>(
+    db: &D,
+    row: &SelectionProjectionRow,
+) -> Result<(), EvalStoreError> {
+    put_eval_params(
+        db,
+        &SelectionProjectionSchema::SCHEMA,
+        selection_projection_params(row),
+        "put.eval_selection_projection_failure",
+    )?;
+    Ok(())
+}
+
 fn selection_decision_params(row: &EvalSelectionDecisionRow) -> BTreeMap<String, DataValue> {
     let mut params = BTreeMap::new();
     params.insert("decision_id".to_string(), row.decision_id.clone().into());
@@ -555,6 +1277,19 @@ fn selection_decision_params(row: &EvalSelectionDecisionRow) -> BTreeMap<String,
         option_string(&row.decision_hash),
     );
     params.insert("recorded_at".to_string(), option_string(&row.recorded_at));
+    params
+}
+
+fn selection_receipt_params(row: &SelectionReceiptRow) -> BTreeMap<String, DataValue> {
+    let mut params = BTreeMap::new();
+    params.insert("decision_id".to_string(), row.decision_id.clone().into());
+    params.insert("campaign_id".to_string(), row.campaign_id.clone().into());
+    params.insert("parent_id".to_string(), row.parent_id.clone().into());
+    params.insert(
+        "decision_hash".to_string(),
+        row.decision_hash.clone().into(),
+    );
+    params.insert("entry_json".to_string(), row.entry_json.clone().into());
     params
 }
 
@@ -601,6 +1336,107 @@ fn selection_candidate_params(row: &EvalSelectionCandidateRow) -> BTreeMap<Strin
         "exclusion_ref".to_string(),
         option_string(&row.exclusion_ref),
     );
+    params
+}
+
+fn oracle_params(row: &SelectionOracleRow) -> BTreeMap<String, DataValue> {
+    let mut params = BTreeMap::new();
+    params.insert("decision_id".to_string(), row.decision_id.clone().into());
+    params.insert("mode".to_string(), row.mode.clone().into());
+    params.insert(
+        "require_evidence".to_string(),
+        DataValue::Bool(row.require_evidence),
+    );
+    params.insert("gate".to_string(), row.gate.clone().into());
+    params.insert(
+        "targets".to_string(),
+        DataValue::List(row.targets.iter().cloned().map(DataValue::from).collect()),
+    );
+    params.insert("formula_id".to_string(), option_string(&row.formula_id));
+    params
+}
+
+fn patch_gate_params(row: &PatchGateRow) -> BTreeMap<String, DataValue> {
+    BTreeMap::from([
+        ("decision_id".to_string(), row.decision_id.clone().into()),
+        ("gate".to_string(), row.gate.clone().into()),
+    ])
+}
+
+fn patch_review_params(row: &PatchReviewRow) -> BTreeMap<String, DataValue> {
+    let mut params = BTreeMap::new();
+    params.insert("decision_id".to_string(), row.decision_id.clone().into());
+    params.insert("member_id".to_string(), row.member_id.clone().into());
+    params.insert("schema_version".to_string(), row.schema_version.into());
+    params.insert("procedure_id".to_string(), row.procedure_id.clone().into());
+    params.insert("node_id".to_string(), row.node_id.clone().into());
+    params.insert("branch_id".to_string(), row.branch_id.clone().into());
+    params.insert("generation".to_string(), row.generation.into());
+    params.insert("artifact_id".to_string(), row.artifact_id.clone().into());
+    params.insert(
+        "artifact_surface_hash".to_string(),
+        row.artifact_surface_hash.clone().into(),
+    );
+    params.insert(
+        "evaluation_hash".to_string(),
+        row.evaluation_hash.clone().into(),
+    );
+    params.insert("config_hash".to_string(), row.config_hash.clone().into());
+    params.insert(
+        "change_set_hash".to_string(),
+        row.change_set_hash.clone().into(),
+    );
+    params.insert("verdict".to_string(), row.verdict.clone().into());
+    params.insert("confidence".to_string(), row.confidence.clone().into());
+    params.insert(
+        "blocking_findings".to_string(),
+        string_values(&row.blocking_findings),
+    );
+    params.insert(
+        "missing_evidence".to_string(),
+        string_values(&row.missing_evidence),
+    );
+    params.insert("rationale".to_string(), string_values(&row.rationale));
+    params.insert("citation_ref".to_string(), row.citation_ref.clone().into());
+    params.insert(
+        "citation_hash".to_string(),
+        option_string(&row.citation_hash),
+    );
+    params.insert("record_name".to_string(), option_string(&row.record_name));
+    params
+}
+
+fn patch_change_params(row: &PatchChangeRow) -> BTreeMap<String, DataValue> {
+    BTreeMap::from([
+        ("decision_id".to_string(), row.decision_id.clone().into()),
+        ("member_id".to_string(), row.member_id.clone().into()),
+        ("change_index".to_string(), row.change_index.into()),
+        ("relpath".to_string(), row.relpath.clone().into()),
+        (
+            "source_content_hash".to_string(),
+            option_string(&row.source_content_hash),
+        ),
+        (
+            "proposed_content_hash".to_string(),
+            option_string(&row.proposed_content_hash),
+        ),
+    ])
+}
+
+fn string_values(values: &[String]) -> DataValue {
+    DataValue::List(values.iter().cloned().map(DataValue::from).collect())
+}
+
+fn selection_projection_params(row: &SelectionProjectionRow) -> BTreeMap<String, DataValue> {
+    let mut params = BTreeMap::new();
+    params.insert("decision_id".to_string(), row.decision_id.clone().into());
+    params.insert("failure_id".to_string(), row.failure_id.clone().into());
+    params.insert(
+        "candidate_subject".to_string(),
+        option_string(&row.candidate_subject),
+    );
+    params.insert("kind".to_string(), row.kind.clone().into());
+    params.insert("message".to_string(), option_string(&row.message));
     params
 }
 
@@ -660,8 +1496,8 @@ fn finding_id(
     ])
 }
 
-fn decision_id(
-    campaign_id: &CampaignId,
+pub(crate) fn decision_id(
+    campaign_id: &str,
     parent_id: &str,
     set_id: &str,
     procedure_id: &str,
@@ -669,7 +1505,7 @@ fn decision_id(
 ) -> String {
     hash_parts(&[
         "p1.eval.selection_decision.v1",
-        campaign_id.as_str(),
+        campaign_id,
         parent_id,
         set_id,
         procedure_id,

@@ -7,23 +7,26 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use ploke_records::ids::CampaignId;
+use ploke_llm::ModelId;
+use ploke_records::{agent_turn::ModelRouteRecord, ids::CampaignId};
 use serde::{Deserialize, Serialize};
 use tokio::task::JoinSet;
 
 use crate::{
     ClosureClass, ResolvedCampaignConfig,
-    campaign::{PROTOTYPE1_PROTOCOL_MIN_SAFE_MAX_TOKENS, resolve_campaign_config},
+    campaign::{
+        EmbeddingRoute, PROTOTYPE1_PROTOCOL_MIN_SAFE_MAX_TOKENS, resolve_explicit_campaign,
+    },
     campaign_manifest_path,
     cli::{
-        InspectOutputFormat, Prototype1CandidateGenerator, Prototype1ControlCommand,
-        Prototype1DoctorCommand, Prototype1PromptCommand,
+        InspectOutputFormat, Prototype1AdvanceCommand, Prototype1CandidateGenerator,
+        Prototype1ControlCommand, Prototype1DoctorCommand, Prototype1PromptCommand,
     },
     closure::load_closure_state,
     intervention::{
-        CompleteBaseline, Intervention, Prototype1NodeRecord, Prototype1NodeStatus,
-        Prototype1RunnerRequest, RecordStore, load_node_record, load_runner_request,
-        load_runner_result,
+        CompleteBaseline, Intervention, Prototype1ContinuationDecision, Prototype1NodeRecord,
+        Prototype1NodeStatus, Prototype1RunnerRequest, RecordStore, load_node_record,
+        load_runner_request, load_runner_result,
     },
     projection::OperatorProjectionRead,
     run_registry::{RunExecutionStatus, list_registrations_for_instance},
@@ -33,10 +36,7 @@ use crate::{
 use crate::cli::handlers::closure::{
     advance_eval_closure, advance_protocol_or_block, protocol_llm_config,
 };
-use crate::cli::prototype1_process::{
-    SuccessorHandoffMode, persist_prototype1_buildable_child_artifact,
-    spawn_and_handoff_prototype1_successor,
-};
+use crate::cli::prototype1_process::persist_prototype1_buildable_child_artifact;
 use crate::cli::prototype1_state::backend::GitWorktreeBackend;
 use crate::cli::prototype1_state::{
     c1::{
@@ -47,13 +47,15 @@ use crate::cli::prototype1_state::{
     c3::{C4, SpawnChild},
     c4::{ObserveChild, ObservedChild},
     cli_facing::{
-        PlannedChildOutcome, Prototype1BranchEvaluationReport, compare_observed_child_treatment,
+        ParentSelectionOutcome, PlannedChildOutcome, Prototype1BranchEvaluationReport,
+        compare_observed_child_treatment, emit_selection_outcome_for_backend,
         ensure_prototype1_baseline_closure_state, establish_parent_baseline,
-        live_successor_continuation_decision, prototype1_branch_evaluation_path,
+        preview_no_selection_continuation, preview_successor_continuation,
+        prototype1_branch_evaluation_path, record_continuation_decision,
         reserve_profile_child_budget, resolve_profile_child_plan, run_planned_child,
-        select_artifact_for_handoff, select_successor_for_profile,
-        selection_input_from_child_report,
+        selection_input_from_child_report, selection_outcome_for_profile,
     },
+    driver::advance as session_driver,
     edit_surface::harness_request::{
         BroadHarnessRequest, EvidenceRootKind, EvidenceRootLocation, HarnessChildBudget,
         ProtectedCoreAnchor, PublishedBroadHarnessRequest,
@@ -72,19 +74,9 @@ use crate::cli::prototype1_state::{
         Check, ChildFiles, ChildPlanFile, ChildPlanFiles, Genesis, Parent, Predecessor, Ready,
         Startup, Unchecked,
     },
-    profile::{self, AdmittedRunProfile, RunProfileCommitment},
+    profile::{self, AdmittedRunProfile, EffectiveRunControl, RunProfileCommitment},
     successor,
 };
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub(crate) struct EffectiveRunControl {
-    pub(crate) path: PathBuf,
-    pub(crate) mode: profile::RunMode,
-    pub(crate) parallel_cap: u32,
-    pub(crate) patch_generation_parallel_cap: u32,
-    pub(crate) defaulted_from_profile: bool,
-    pub(crate) patch_generation_defaulted_from_profile: bool,
-}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -120,6 +112,8 @@ pub(crate) struct ActiveParentStatus {
     pub(crate) prompt_preflight: PromptPreflight,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) protocol_preflight: Option<ProtocolLivePreflight>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) embedding_preflight: Option<EvalEmbeddingPreflight>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) headless_tui_setup_preflight: Option<HeadlessTuiSetupPreflight>,
     pub(crate) phase: DiagnosedPhase,
@@ -184,9 +178,54 @@ pub(crate) enum ProtocolLivePreflightOutcome {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub(crate) enum EvalEmbeddingPreflight {
+    Passed {
+        model_id: ploke_llm::ModelId,
+        model_request: Option<String>,
+        provider_preference: Option<String>,
+        backend: EmbeddingBackend,
+        dimensions: u32,
+        registry_path: Option<PathBuf>,
+    },
+    Failed {
+        model_request: Option<String>,
+        provider_preference: Option<String>,
+        backend: EmbeddingBackend,
+        registry_path: Option<PathBuf>,
+        phase: String,
+        class: EmbeddingFailureClass,
+        detail: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum EmbeddingBackend {
+    #[serde(rename = "openrouter")]
+    OpenRouter,
+    #[serde(rename = "openai")]
+    DirectOpenAi,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum EmbeddingFailureClass {
+    Configuration,
+    Registry,
+    ProviderEnvironment,
+    ProviderAccount,
+    ProviderRequest,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct HeadlessTuiSetupPreflight {
     pub(crate) outcome: HeadlessTuiSetupPreflightOutcome,
     pub(crate) workspace: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) model: Option<ModelId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) route: Option<ModelRouteRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) phase: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -232,10 +271,17 @@ struct SuccessorMarker {
     state: SuccessorMarkerState,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ExpectedStop {
+    decision: Prototype1ContinuationDecision,
+    receipt: successor::SelectionReceipt,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SuccessorMarkerState {
-    Selected,
-    Terminal,
+    InProgress,
+    Incomplete,
+    Committed,
 }
 
 #[derive(Debug, Clone)]
@@ -260,13 +306,19 @@ pub(crate) async fn doctor(command: Prototype1DoctorCommand) -> Result<(), Prepa
     let mut status = diagnose_command(&command.control)?;
     let repo_root = status.repo_root.clone();
     attach_typed_graph_starting_db_check(&repo_root, &mut status).await;
-    if command.live_protocol_preflight || command.headless_tui_setup_preflight {
+    if command.live_protocol_preflight
+        || command.live_embedding_preflight
+        || command.headless_tui_setup_preflight
+    {
         let context = resolve_context(command.control.repo_root.as_deref())?;
-        if command.headless_tui_setup_preflight {
-            attach_headless_tui_setup_preflight(&context, &mut status).await;
+        if command.live_embedding_preflight {
+            attach_embedding_live_preflight(&context, &mut status).await;
         }
         if command.live_protocol_preflight {
             attach_protocol_live_preflight(&context, &mut status).await;
+        }
+        if command.headless_tui_setup_preflight {
+            attach_headless_tui_setup_preflight(&context, &mut status).await;
         }
     }
     render_status(command.control.format, &status)
@@ -280,30 +332,15 @@ pub(crate) async fn prompt(command: Prototype1PromptCommand) -> Result<(), Prepa
 }
 
 // ANCHOR: prototype1_continue_guard
-pub(crate) async fn resume(command: Prototype1ControlCommand) -> Result<(), PrepareError> {
-    let mut guard = 0usize;
-    loop {
-        guard += 1;
-        if guard > 256 {
-            return Err(PrepareError::InvalidBatchSelection {
-                detail: "prototype1-continue exceeded 256 phase advances without reaching a terminal state".to_string(),
-            });
-        }
-        let diagnosis = diagnose(&resolve_context(command.repo_root.as_deref())?)?;
-        if diagnosis.phase == DiagnosedPhase::Blocked {
-            return Err(PrepareError::InvalidBatchSelection {
-                detail: format!(
-                    "prototype1-continue refused: {}",
-                    diagnosis.blockers.join("; ")
-                ),
-            });
-        }
-        if diagnosis.phase == DiagnosedPhase::Complete {
-            let status = into_status(diagnosis);
-            return render_status(command.format, &status);
-        }
-        advance(diagnosis, ExecuteMode::Continuous).await?;
-    }
+pub(crate) async fn resume(command: Prototype1AdvanceCommand) -> Result<(), PrepareError> {
+    session_driver::continue_session(
+        command.control.repo_root.as_deref(),
+        command.capabilities.allow_live_api,
+        command.capabilities.allow_git_changes(),
+    )
+    .await?;
+    let status = diagnose_command(&command.control)?;
+    render_status(command.control.format, &status)
 }
 // ANCHOR_END: prototype1_continue_guard
 
@@ -315,27 +352,15 @@ pub(crate) async fn resume(command: Prototype1ControlCommand) -> Result<(), Prep
 /// context from the checkout, diagnoses the next admissible phase, advances
 /// that phase at most once, and then diagnoses again so the rendered status is
 /// the post-step state.
-pub(crate) async fn step(command: Prototype1ControlCommand) -> Result<(), PrepareError> {
-    // Resolve from the active parent checkout every time. This keeps the step
-    // command tied to the artifact-carried parent identity and admitted run
-    // profile, not to caller-supplied scheduler coordinates.
-    let diagnosis = diagnose(&resolve_context(command.repo_root.as_deref())?)?;
-    if diagnosis.phase == DiagnosedPhase::Blocked {
-        return Err(PrepareError::InvalidBatchSelection {
-            detail: format!("prototype1-step refused: {}", diagnosis.blockers.join("; ")),
-        });
-    }
-    // A completed parent is already terminal, so step only renders its current
-    // state. Every other phase advances through the same dispatcher, but with
-    // ExecuteMode::Step so child execution phases run at most one child.
-    if diagnosis.phase != DiagnosedPhase::Complete {
-        advance(diagnosis, ExecuteMode::Step).await?;
-    }
-    // Re-diagnose after the mutation. The status printed by prototype1-step is
-    // therefore the state the operator should act on next, not the stale
-    // pre-advance diagnosis.
-    let status = diagnose_command(&command)?;
-    render_status(command.format, &status)
+pub(crate) async fn step(command: Prototype1AdvanceCommand) -> Result<(), PrepareError> {
+    session_driver::step_session(
+        command.control.repo_root.as_deref(),
+        command.capabilities.allow_live_api,
+        command.capabilities.allow_git_changes(),
+    )
+    .await?;
+    let status = diagnose_command(&command.control)?;
+    render_status(command.control.format, &status)
 }
 // ANCHOR_END: prototype1_step_diagnosis_driven
 
@@ -408,12 +433,70 @@ fn render_status(
                     println!("  budget_canary_max_tokens: {max_tokens}");
                 }
             }
+            if let Some(preflight) = status.embedding_preflight.as_ref() {
+                match preflight {
+                    EvalEmbeddingPreflight::Passed {
+                        model_id,
+                        model_request,
+                        provider_preference,
+                        backend,
+                        dimensions,
+                        registry_path,
+                    } => {
+                        println!(
+                            "embedding_live_preflight: passed model={} model_request={} provider_preference={} backend={} dimensions={}",
+                            model_id,
+                            model_request.as_deref().unwrap_or("<auto>"),
+                            provider_preference.as_deref().unwrap_or("<auto>"),
+                            embedding_backend_label(*backend),
+                            dimensions
+                        );
+                        if let Some(path) = registry_path {
+                            println!("  registry_path: {}", path.display());
+                        }
+                    }
+                    EvalEmbeddingPreflight::Failed {
+                        model_request,
+                        provider_preference,
+                        backend,
+                        registry_path,
+                        phase,
+                        class,
+                        detail,
+                    } => {
+                        println!(
+                            "embedding_live_preflight: failed model_request={} provider_preference={} backend={} phase={} class={}",
+                            model_request.as_deref().unwrap_or("<auto>"),
+                            provider_preference.as_deref().unwrap_or("<auto>"),
+                            embedding_backend_label(*backend),
+                            phase,
+                            embedding_failure_label(*class)
+                        );
+                        if let Some(path) = registry_path {
+                            println!("  registry_path: {}", path.display());
+                        }
+                        println!("  detail: {detail}");
+                    }
+                }
+            }
             if let Some(preflight) = status.headless_tui_setup_preflight.as_ref() {
                 println!(
                     "headless_tui_setup_preflight: {} workspace={}",
                     headless_tui_setup_preflight_label(preflight.outcome),
                     preflight.workspace.display()
                 );
+                if let Some(model) = preflight.model.as_ref() {
+                    println!("  parent_patcher_model: {model}");
+                }
+                if let Some(route) = preflight.route.as_ref() {
+                    println!(
+                        "  parent_patcher_route: source={} router={} provider={} endpoint={}",
+                        route.route_source,
+                        route.router,
+                        route.provider_slug.as_deref().unwrap_or("<route-default>"),
+                        route.endpoint_host.as_deref().unwrap_or("<unknown>")
+                    );
+                }
                 if let Some(phase) = preflight.phase.as_deref() {
                     println!("  phase: {phase}");
                 }
@@ -480,6 +563,7 @@ fn resolve_context(repo_root: Option<&Path>) -> Result<RuntimeContext, PrepareEr
                 source,
             })?,
         );
+    let repo_root = canonical_repo_root(repo_root)?;
     // Parent identity links the checkout to its campaign and lineage. Child
     // worktrees are rejected because they do not carry parent control state.
     let Some(parent_identity) = load_parent_identity_optional(&repo_root)? else {
@@ -494,7 +578,7 @@ fn resolve_context(repo_root: Option<&Path>) -> Result<RuntimeContext, PrepareEr
     // Resolve the campaign from the parent identity; step and continue do not
     // accept an independent run root.
     let manifest_path = campaign_manifest_path(&campaign_id)?;
-    let resolved_campaign = resolve_campaign_config(&campaign_id, &Default::default())?;
+    let resolved_campaign = resolve_explicit_campaign(&campaign_id)?;
     // The admitted profile supplies search bounds, control caps, generation
     // source, protocol policy, and successor-selection policy.
     let admitted_profile =
@@ -524,40 +608,17 @@ fn resolve_context(repo_root: Option<&Path>) -> Result<RuntimeContext, PrepareEr
     })
 }
 
+fn canonical_repo_root(repo_root: PathBuf) -> Result<PathBuf, PrepareError> {
+    fs::canonicalize(&repo_root).map_err(|source| PrepareError::ReadManifest {
+        path: repo_root,
+        source,
+    })
+}
+
 fn load_effective_control(
     admitted: &AdmittedRunProfile,
 ) -> Result<EffectiveRunControl, PrepareError> {
-    let path = admitted.commitment.profile_path.clone();
-    let derived_parallel_cap = admitted.profile.default_parallel_cap();
-    let parallel_cap = admitted
-        .profile
-        .control
-        .parallel_cap
-        .unwrap_or(derived_parallel_cap);
-    if parallel_cap == 0 || parallel_cap > derived_parallel_cap {
-        return Err(PrepareError::InvalidBatchSelection {
-            detail: format!(
-                "profile control.parallel_cap {} widens admitted fanout {} at '{}'",
-                parallel_cap,
-                derived_parallel_cap,
-                path.display()
-            ),
-        });
-    }
-    let patch_generation_parallel_cap = admitted.profile.patch_generation_parallel_cap();
-    Ok(EffectiveRunControl {
-        path,
-        mode: admitted.profile.control.mode,
-        parallel_cap,
-        patch_generation_parallel_cap,
-        defaulted_from_profile: admitted.profile.control.parallel_cap.is_none(),
-        patch_generation_defaulted_from_profile: admitted
-            .profile
-            .search
-            .children
-            .parallel_targets
-            .is_none(),
-    })
+    profile::resolve_effective_control(admitted.commitment.profile_path.clone(), &admitted.profile)
 }
 
 fn prompt_text(context: &RuntimeContext) -> Result<String, PrepareError> {
@@ -636,6 +697,7 @@ fn into_status(diagnosis: Diagnosis) -> ActiveParentStatus {
         effective_control: diagnosis.context.effective_control,
         prompt_preflight: diagnosis.prompt_preflight,
         protocol_preflight: None,
+        embedding_preflight: None,
         headless_tui_setup_preflight: None,
         phase: diagnosis.phase,
         current_child: diagnosis.current_child,
@@ -661,6 +723,164 @@ async fn attach_protocol_live_preflight(context: &RuntimeContext, status: &mut A
         status.suggested_commands = suggested_commands(status.phase, &status.repo_root);
     }
     status.protocol_preflight = Some(preflight);
+}
+
+async fn attach_embedding_live_preflight(
+    context: &RuntimeContext,
+    status: &mut ActiveParentStatus,
+) {
+    let preflight = run_embedding_live_preflight(context).await;
+    attach_embedding_preflight_report(status, preflight);
+}
+
+fn attach_embedding_preflight_report(
+    status: &mut ActiveParentStatus,
+    preflight: EvalEmbeddingPreflight,
+) {
+    if let EvalEmbeddingPreflight::Failed {
+        phase,
+        class,
+        detail,
+        ..
+    } = &preflight
+    {
+        status.blockers.push(format!(
+            "embedding live preflight failed during '{phase}' ({}): {detail}",
+            embedding_failure_label(*class)
+        ));
+        status.phase = DiagnosedPhase::Blocked;
+        status.allowed_actions = allowed_actions_for_phase(status.phase);
+        status.suggested_commands = suggested_commands(status.phase, &status.repo_root);
+    }
+    status.embedding_preflight = Some(preflight);
+}
+
+async fn run_embedding_live_preflight(context: &RuntimeContext) -> EvalEmbeddingPreflight {
+    run_embedding_live_preflight_with(context, |route, model, provider| async move {
+        crate::runner::preflight_embedding_selection(route, model.as_deref(), provider.as_ref())
+            .await
+    })
+    .await
+}
+
+async fn run_embedding_live_preflight_with<F, Fut>(
+    context: &RuntimeContext,
+    resolve: F,
+) -> EvalEmbeddingPreflight
+where
+    F: FnOnce(EmbeddingRoute, Option<String>, Option<ploke_llm::ProviderKey>) -> Fut,
+    Fut: std::future::Future<Output = Result<crate::runner::EvalEmbeddingSelection, PrepareError>>,
+{
+    let policy = &context.resolved_campaign.eval;
+    let route = policy.embedding_route;
+    let model_request = policy.embedding_model_id.clone();
+    let provider_preference = policy.embedding_provider_slug.clone();
+    let backend = match route {
+        EmbeddingRoute::OpenRouter => EmbeddingBackend::OpenRouter,
+        EmbeddingRoute::DirectOpenAi => EmbeddingBackend::DirectOpenAi,
+    };
+    let registry_path = match route {
+        EmbeddingRoute::OpenRouter => crate::runner::eval_embedding_registry_path().ok(),
+        EmbeddingRoute::DirectOpenAi => None,
+    };
+    let provider = match crate::cli::provider::parse_provider_key(provider_preference.clone()) {
+        Ok(provider) => provider,
+        Err(error) => {
+            return failed_embedding_preflight(
+                model_request,
+                provider_preference,
+                backend,
+                registry_path,
+                &error,
+            );
+        }
+    };
+
+    match resolve(route, model_request.clone(), provider).await {
+        Ok(selection) => EvalEmbeddingPreflight::Passed {
+            model_id: selection.model,
+            model_request,
+            provider_preference,
+            backend,
+            dimensions: selection.dimensions,
+            registry_path,
+        },
+        Err(error) => failed_embedding_preflight(
+            model_request,
+            provider_preference,
+            backend,
+            registry_path,
+            &error,
+        ),
+    }
+}
+
+fn failed_embedding_preflight(
+    model_request: Option<String>,
+    provider_preference: Option<String>,
+    backend: EmbeddingBackend,
+    registry_path: Option<PathBuf>,
+    error: &PrepareError,
+) -> EvalEmbeddingPreflight {
+    let (phase, class) = classify_embedding_preflight_error(error);
+    EvalEmbeddingPreflight::Failed {
+        model_request,
+        provider_preference,
+        backend,
+        registry_path,
+        phase,
+        class,
+        detail: sanitize_protocol_preflight_detail(&error.to_string()),
+    }
+}
+
+fn classify_embedding_preflight_error(error: &PrepareError) -> (String, EmbeddingFailureClass) {
+    let phase = match error {
+        PrepareError::DatabaseSetup { phase, .. }
+        | PrepareError::ProviderUnavailable { phase, .. }
+        | PrepareError::Timeout { phase, .. }
+        | PrepareError::EventStreamClosed { phase } => (*phase).to_string(),
+        PrepareError::UnknownModelInRegistry { .. }
+        | PrepareError::MissingModelRegistry(_)
+        | PrepareError::ReadModelRegistry { .. }
+        | PrepareError::ParseModelRegistry { .. } => "embedding_model_registry".to_string(),
+        _ => "embedding_preflight".to_string(),
+    };
+    let class = match error {
+        PrepareError::UnknownModelInRegistry { .. } => EmbeddingFailureClass::Configuration,
+        PrepareError::MissingModelRegistry(_)
+        | PrepareError::ReadModelRegistry { .. }
+        | PrepareError::ParseModelRegistry { .. }
+        | PrepareError::DatabaseSetup {
+            phase: "load_embedding_model_registry",
+            ..
+        } => EmbeddingFailureClass::Registry,
+        PrepareError::ProviderUnavailable { .. } => EmbeddingFailureClass::ProviderEnvironment,
+        PrepareError::DatabaseSetup {
+            phase: "embedding_model_preflight",
+            detail,
+        } if provider_account_error(detail) => EmbeddingFailureClass::ProviderAccount,
+        PrepareError::DatabaseSetup {
+            phase: "embedding_model_preflight",
+            ..
+        }
+        | PrepareError::Timeout { .. }
+        | PrepareError::EventStreamClosed { .. } => EmbeddingFailureClass::ProviderRequest,
+        _ => EmbeddingFailureClass::Configuration,
+    };
+    (phase, class)
+}
+
+fn provider_account_error(detail: &str) -> bool {
+    let detail = detail.to_ascii_lowercase();
+    [
+        "key limit",
+        "monthly limit",
+        "credit limit",
+        "insufficient credit",
+    ]
+    .iter()
+    .any(|marker| detail.contains(marker))
 }
 
 async fn attach_headless_tui_setup_preflight(
@@ -696,6 +916,8 @@ async fn run_headless_tui_setup_preflight(context: &RuntimeContext) -> HeadlessT
         return HeadlessTuiSetupPreflight {
             outcome: HeadlessTuiSetupPreflightOutcome::Skipped,
             workspace,
+            model: None,
+            route: None,
             phase: None,
             detail: Some(
                 "run profile does not use broad-harness headless TUI generation".to_string(),
@@ -703,28 +925,52 @@ async fn run_headless_tui_setup_preflight(context: &RuntimeContext) -> HeadlessT
         };
     }
 
+    let selection = match crate::cli::provider::load_parent_patcher_model_selection() {
+        Ok(selection) => selection,
+        Err(error) => {
+            return HeadlessTuiSetupPreflight {
+                outcome: HeadlessTuiSetupPreflightOutcome::Failed,
+                workspace,
+                model: None,
+                route: None,
+                phase: Some("parent_patcher_model".to_string()),
+                detail: Some(error.to_string()),
+            };
+        }
+    };
+    let model = Some(selection.model_id().clone());
+    let route = Some(selection.model_route_record());
+
     match crate::runner::setup_workspace_tui_runtime_with_read_roots(&workspace, &[]).await {
         Ok(_runtime) => HeadlessTuiSetupPreflight {
             outcome: HeadlessTuiSetupPreflightOutcome::Passed,
             workspace,
+            model,
+            route,
             phase: None,
             detail: None,
         },
         Err(PrepareError::DatabaseSetup { phase, detail }) => HeadlessTuiSetupPreflight {
             outcome: HeadlessTuiSetupPreflightOutcome::Failed,
             workspace,
+            model,
+            route,
             phase: Some(phase.to_string()),
             detail: Some(detail),
         },
         Err(PrepareError::Timeout { phase, secs }) => HeadlessTuiSetupPreflight {
             outcome: HeadlessTuiSetupPreflightOutcome::Failed,
             workspace,
+            model,
+            route,
             phase: Some(phase.to_string()),
             detail: Some(format!("timed out after {secs} seconds")),
         },
         Err(error) => HeadlessTuiSetupPreflight {
             outcome: HeadlessTuiSetupPreflightOutcome::Failed,
             workspace,
+            model,
+            route,
             phase: Some("headless_tui_setup".to_string()),
             detail: Some(error.to_string()),
         },
@@ -991,6 +1237,23 @@ fn protocol_live_preflight_label(outcome: ProtocolLivePreflightOutcome) -> &'sta
     }
 }
 
+fn embedding_failure_label(class: EmbeddingFailureClass) -> &'static str {
+    match class {
+        EmbeddingFailureClass::Configuration => "configuration",
+        EmbeddingFailureClass::Registry => "registry",
+        EmbeddingFailureClass::ProviderEnvironment => "provider_environment",
+        EmbeddingFailureClass::ProviderAccount => "provider_account",
+        EmbeddingFailureClass::ProviderRequest => "provider_request",
+    }
+}
+
+fn embedding_backend_label(backend: EmbeddingBackend) -> &'static str {
+    match backend {
+        EmbeddingBackend::OpenRouter => "openrouter",
+        EmbeddingBackend::DirectOpenAi => "openai",
+    }
+}
+
 fn headless_tui_setup_preflight_label(outcome: HeadlessTuiSetupPreflightOutcome) -> &'static str {
     match outcome {
         HeadlessTuiSetupPreflightOutcome::Skipped => "skipped",
@@ -1086,6 +1349,10 @@ fn suggested_commands(phase: DiagnosedPhase, repo_root: &Path) -> Vec<String> {
     match phase {
         DiagnosedPhase::Blocked | DiagnosedPhase::Complete => Vec::new(),
         _ => vec![
+            format!(
+                "cd {} && ./target/debug/ploke-eval loop prototype1-doctor --repo-root . --live-embedding-preflight",
+                repo_root.display()
+            ),
             format!(
                 "cd {} && ./target/debug/ploke-eval loop prototype1-doctor --repo-root . --headless-tui-setup-preflight",
                 repo_root.display()
@@ -1422,7 +1689,6 @@ fn extend_prompt_preflight_blockers(preflight: &PromptPreflight, blockers: &mut 
     }
 }
 
-#[cfg(feature = "typed_type_graph")]
 async fn attach_typed_graph_starting_db_check(repo_root: &Path, status: &mut ActiveParentStatus) {
     if let Some(blocker) = typed_graph_starting_db_cache_blocker(repo_root).await {
         status.blockers.push(blocker);
@@ -1432,18 +1698,12 @@ async fn attach_typed_graph_starting_db_check(repo_root: &Path, status: &mut Act
     }
 }
 
-#[cfg(not(feature = "typed_type_graph"))]
-async fn attach_typed_graph_starting_db_check(_repo_root: &Path, _status: &mut ActiveParentStatus) {
-}
-
-#[cfg(feature = "typed_type_graph")]
 async fn typed_graph_starting_db_cache_blocker(repo_root: &Path) -> Option<String> {
     use crate::layout::starting_db_cache_dir;
     let cache_dir = starting_db_cache_dir().ok()?;
     typed_graph_starting_db_cache_blocker_at(&cache_dir, repo_root).await
 }
 
-#[cfg(feature = "typed_type_graph")]
 async fn typed_graph_starting_db_cache_blocker_at(
     cache_dir: &Path,
     repo_root: &Path,
@@ -1687,7 +1947,12 @@ fn diagnose(context: &RuntimeContext) -> Result<Diagnosis, PrepareError> {
     } else {
         Vec::new()
     };
-    let successor_marker = latest_successor_marker(context, &mut blockers)?;
+    let successor_marker = latest_successor_marker(
+        context,
+        child_plan.as_ref(),
+        &child_snapshots,
+        &mut blockers,
+    )?;
 
     if !blockers.is_empty() {
         return Ok(Diagnosis {
@@ -1766,18 +2031,24 @@ fn diagnose(context: &RuntimeContext) -> Result<Diagnosis, PrepareError> {
 
     let phase = if let Some(marker) = successor_marker.as_ref() {
         terminal_phase_from_marker(marker.state)
-    } else if selection_available(
-        context,
-        &child_snapshots,
-        child_plan
-            .as_ref()
-            .map(|plan| plan.rejected_surface_attempts())
-            .unwrap_or(&[]),
-    )? {
-        DiagnosedPhase::Select
     } else {
-        notes.push("admitted successor selection resolved to none".to_string());
-        DiagnosedPhase::Complete
+        match selection_available(
+            context,
+            &child_snapshots,
+            child_plan
+                .as_ref()
+                .map(|plan| plan.rejected_surface_attempts())
+                .unwrap_or(&[]),
+        )? {
+            ParentSelectionOutcome::Selected { .. } => DiagnosedPhase::Select,
+            ParentSelectionOutcome::NoSelection { .. } => {
+                notes.push(
+                    "successor selection completed with no admissible candidate; a session-backed R12->R13a step must persist the typed stop receipt"
+                        .to_string(),
+                );
+                DiagnosedPhase::Select
+            }
+        }
     };
     Ok(Diagnosis {
         context: context.clone(),
@@ -1801,8 +2072,9 @@ fn phase_or_blocked(phase: DiagnosedPhase, blockers: &[String]) -> DiagnosedPhas
 
 fn terminal_phase_from_marker(marker: SuccessorMarkerState) -> DiagnosedPhase {
     match marker {
-        SuccessorMarkerState::Selected => DiagnosedPhase::Handoff,
-        SuccessorMarkerState::Terminal => DiagnosedPhase::Complete,
+        SuccessorMarkerState::InProgress => DiagnosedPhase::Handoff,
+        SuccessorMarkerState::Incomplete => DiagnosedPhase::Blocked,
+        SuccessorMarkerState::Committed => DiagnosedPhase::Complete,
     }
 }
 
@@ -1810,16 +2082,58 @@ fn selection_available(
     context: &RuntimeContext,
     child_snapshots: &[ChildSnapshot],
     rejected_surface_attempts: &[surface_attempt::Evidence],
-) -> Result<bool, PrepareError> {
+) -> Result<ParentSelectionOutcome, PrepareError> {
     let child_outcomes = reconstruct_terminal_outcomes(child_snapshots)?;
-    Ok(select_successor_for_profile(
+    if context.admitted_profile.profile.storage.eval.backend
+        == profile::EvalStorageBackend::DualStrict
+    {
+        let db_path = prototype1_eval_store_db_path(&context.manifest_path);
+        if !db_path.is_file() {
+            return Err(PrepareError::DatabaseSetup {
+                phase: "eval_selection_receipt_db_missing",
+                detail: format!(
+                    "dual-strict selection lookup requires owner eval DB at '{}'",
+                    db_path.display()
+                ),
+            });
+        }
+        if let Some(entry) = crate::cli::prototype1_state::eval_store::load_selection_receipt(
+            &db_path,
+            &context.campaign_id,
+            context.parent_identity.parent_id(),
+        )
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "eval_selection_receipt_read",
+            detail: format!(
+                "failed to load selection receipt from '{}': {source}",
+                db_path.display()
+            ),
+        })? {
+            let patch_gate = context.admitted_profile.profile.selection.patch_gate();
+            let config_hash =
+                if patch_gate == crate::successor_selection::PatchGate::ReviewedAdmissible {
+                    Some(
+                        crate::cli::prototype1_state::candidate_review::admitted_config_hash(
+                            &context.manifest_path,
+                        )?,
+                    )
+                } else {
+                    None
+                };
+            return ParentSelectionOutcome::from_admitted_entry(
+                entry,
+                patch_gate,
+                config_hash.as_ref(),
+            );
+        }
+    }
+    selection_outcome_for_profile(
         &context.manifest_path,
         &context.parent_identity,
         &child_outcomes,
         rejected_surface_attempts,
         &context.admitted_profile.profile,
-    )?
-    .is_some())
+    )
 }
 
 fn load_child_plan(
@@ -2137,6 +2451,8 @@ fn pid_alive(pid: u32) -> bool {
 
 fn latest_successor_marker(
     context: &RuntimeContext,
+    child_plan: Option<&ChildPlanFiles>,
+    child_snapshots: &[ChildSnapshot],
     blockers: &mut Vec<String>,
 ) -> Result<Option<SuccessorMarker>, PrepareError> {
     let journal = PrototypeJournal::new(prototype1_transition_journal_path(&context.manifest_path));
@@ -2145,61 +2461,343 @@ fn latest_successor_marker(
         .map_err(|err| PrepareError::InvalidBatchSelection {
             detail: format!("failed to read transition journal: {err}"),
         })?;
-    for entry in entries.iter().rev() {
+    if let Some(predecessor) = active_predecessor(&entries, &context.parent_identity) {
+        let relevant = collect_successor_entries(
+            context,
+            &entries,
+            predecessor,
+            Some(context.parent_identity.node_id()),
+            blockers,
+        );
+        let state = classify_successor_entries(&relevant, None);
+        if predecessor_blocks(state) {
+            blockers.push(format!(
+                "active checkout advanced from predecessor '{}' to successor '{}', but predecessor handoff evidence is {:?}; successor mutation remains blocked until a durable same-runtime acknowledgement is committed",
+                predecessor.node_id(),
+                context.parent_identity.node_id(),
+                state
+            ));
+            push_handoff_blocker(blockers);
+            return Ok(Some(SuccessorMarker {
+                state: SuccessorMarkerState::Incomplete,
+            }));
+        }
+    }
+
+    let relevant =
+        collect_successor_entries(context, &entries, &context.parent_identity, None, blockers);
+    let expected = expected_stop(context, child_plan, child_snapshots, &relevant)?;
+    let Some(state) = classify_successor_entries(&relevant, expected.as_ref()) else {
+        return Ok(None);
+    };
+    if state == SuccessorMarkerState::Incomplete {
+        push_handoff_blocker(blockers);
+    }
+    Ok(Some(SuccessorMarker { state }))
+}
+
+fn expected_stop(
+    context: &RuntimeContext,
+    child_plan: Option<&ChildPlanFiles>,
+    child_snapshots: &[ChildSnapshot],
+    entries: &[&JournalEntry],
+) -> Result<Option<ExpectedStop>, PrepareError> {
+    let needs_receipt = entries.iter().any(|entry| {
+        matches!(
+            entry,
+            JournalEntry::Successor(successor::Record {
+                state: successor::State::Stopped {
+                    selection_decision: None,
+                    ..
+                },
+                ..
+            })
+        )
+    });
+    if !needs_receipt {
+        return Ok(None);
+    }
+    let Some(plan) = child_plan else {
+        return Ok(None);
+    };
+    let decision =
+        preview_no_selection_continuation(&context.manifest_path, &context.parent_identity)?;
+    if plan.children().is_empty() && !plan.rejected_surface_attempts().is_empty() {
+        return Ok(Some(ExpectedStop {
+            decision,
+            receipt: successor::SelectionReceipt::NotRun,
+        }));
+    }
+    if child_snapshots.len() != plan.children().len()
+        || child_snapshots.iter().any(|snapshot| {
+            !is_terminal_status(snapshot.node.status) || needs_terminal_observe(snapshot)
+        })
+    {
+        return Ok(None);
+    }
+    let outcome = selection_available(context, child_snapshots, plan.rejected_surface_attempts())?;
+    let ParentSelectionOutcome::NoSelection { entry } = outcome else {
+        return Ok(None);
+    };
+    let hash = entry
+        .receipt_hash()
+        .map_err(|error| PrepareError::InvalidBatchSelection {
+            detail: format!("failed to hash expected no-selection receipt: {error}"),
+        })?;
+    Ok(Some(ExpectedStop {
+        decision,
+        receipt: successor::SelectionReceipt::Completed { hash },
+    }))
+}
+
+fn predecessor_blocks(state: Option<SuccessorMarkerState>) -> bool {
+    !matches!(state, Some(SuccessorMarkerState::Committed))
+}
+
+fn active_predecessor<'a>(
+    entries: &'a [JournalEntry],
+    active: &ParentIdentity,
+) -> Option<&'a ParentIdentity> {
+    entries.iter().rev().find_map(|entry| match entry {
+        JournalEntry::ActiveCheckoutAdvanced(entry)
+            if entry.selected_parent_identity == *active =>
+        {
+            entry.previous_parent_identity.as_ref()
+        }
+        _ => None,
+    })
+}
+
+fn collect_successor_entries<'a>(
+    context: &RuntimeContext,
+    entries: &'a [JournalEntry],
+    parent: &ParentIdentity,
+    selected_node: Option<&str>,
+    blockers: &mut Vec<String>,
+) -> Vec<&'a JournalEntry> {
+    let mut relevant = Vec::new();
+    for entry in entries {
+        let node_id = match entry {
+            JournalEntry::Successor(record) => &record.node_id,
+            JournalEntry::SuccessorHandoff(entry) => &entry.node_id,
+            _ => continue,
+        };
+        if selected_node.is_some_and(|selected| selected != node_id) {
+            continue;
+        }
+        if selected_node.is_none()
+            && node_id == parent.node_id()
+            && matches!(
+                entry,
+                JournalEntry::Successor(successor::Record {
+                    state: successor::State::Stopped {
+                        selection_decision: None,
+                        ..
+                    },
+                    ..
+                })
+            )
+        {
+            relevant.push(entry);
+            continue;
+        }
+        let node = match load_node_record(
+            &context.manifest_path,
+            node_id,
+            OperatorProjectionRead::cli_operator(),
+        ) {
+            Ok(node) => node,
+            Err(_) => {
+                blockers.push(format!(
+                    "successor record for node '{node_id}' cannot be matched to a node record"
+                ));
+                continue;
+            }
+        };
+        if node.parent_node_id.as_deref() == Some(parent.node_id())
+            && node.generation == parent.generation() + 1
+        {
+            relevant.push(entry);
+        }
+    }
+    relevant
+}
+
+fn push_handoff_blocker(blockers: &mut Vec<String>) {
+    blockers.push(
+        "successor handoff is incomplete: spawn/ready evidence requires a durable same-runtime successor_handoff acknowledgement, and timeout/exit evidence cannot complete the parent turn"
+            .to_string(),
+    );
+}
+
+fn classify_successor_entries(
+    entries: &[&JournalEntry],
+    expected_stop: Option<&ExpectedStop>,
+) -> Option<SuccessorMarkerState> {
+    type AttemptKey = (RuntimeId, String);
+
+    let mut spawned = BTreeMap::<AttemptKey, &successor::Record>::new();
+    let mut failed = BTreeSet::<AttemptKey>::new();
+    let mut acknowledgements = BTreeSet::new();
+    let mut saw_process = false;
+    let mut invalid_stop = false;
+    let mut latest = None;
+    for entry in entries {
         match entry {
             JournalEntry::Successor(record) => {
-                let node = match load_node_record(
-                    &context.manifest_path,
-                    &record.node_id,
-                    OperatorProjectionRead::cli_operator(),
-                ) {
-                    Ok(node) => node,
-                    Err(_) => {
-                        blockers.push(format!(
-                            "successor record for node '{}' cannot be matched to a node record",
-                            record.node_id
-                        ));
-                        continue;
+                let state = match &record.state {
+                    successor::State::Selected { .. } | successor::State::Checkout { .. } => {
+                        SuccessorMarkerState::InProgress
+                    }
+                    successor::State::Stopped {
+                        decision,
+                        selection_decision,
+                        selection_receipt,
+                    } => {
+                        let no_selection_valid = selection_decision.is_none()
+                            && expected_stop.is_some_and(|expected| {
+                                decision == &expected.decision
+                                    && selection_receipt.as_ref() == Some(&expected.receipt)
+                            })
+                            && record.runtime_id.is_none();
+                        let selected_stop_valid = selection_decision.is_some()
+                            && selection_receipt.is_none()
+                            && record.runtime_id.is_none();
+                        let valid = !saw_process && (no_selection_valid || selected_stop_valid);
+                        if !valid {
+                            invalid_stop = true;
+                        }
+                        if valid {
+                            SuccessorMarkerState::Committed
+                        } else {
+                            SuccessorMarkerState::Incomplete
+                        }
+                    }
+                    successor::State::Spawned { .. } => {
+                        saw_process = true;
+                        if let Some(runtime) = record.runtime_id {
+                            let attempt = (runtime, record.node_id.clone());
+                            spawned.insert(attempt.clone(), record);
+                            acknowledgements.remove(&attempt);
+                        }
+                        SuccessorMarkerState::Incomplete
+                    }
+                    successor::State::Ready {
+                        pid, ready_path, ..
+                    } => {
+                        saw_process = true;
+                        let Some(attempt) = record
+                            .runtime_id
+                            .map(|runtime| (runtime, record.node_id.clone()))
+                        else {
+                            latest = Some(SuccessorMarkerState::Incomplete);
+                            continue;
+                        };
+                        let ready_matches = spawned
+                            .get(&attempt)
+                            .is_some_and(|spawn| spawn_matches_ready(spawn, *pid, ready_path));
+                        if ready_matches
+                            && !failed.contains(&attempt)
+                            && acknowledgements.contains(&attempt)
+                        {
+                            SuccessorMarkerState::Committed
+                        } else {
+                            SuccessorMarkerState::Incomplete
+                        }
+                    }
+                    successor::State::TimedOut { .. }
+                    | successor::State::ExitedBeforeReady { .. } => {
+                        saw_process = true;
+                        if let Some(runtime) = record.runtime_id {
+                            let attempt = (runtime, record.node_id.clone());
+                            failed.insert(attempt.clone());
+                            acknowledgements.remove(&attempt);
+                        }
+                        SuccessorMarkerState::Incomplete
+                    }
+                    successor::State::Completed { .. } => {
+                        saw_process = true;
+                        let attempt = record
+                            .runtime_id
+                            .map(|runtime| (runtime, record.node_id.clone()));
+                        attempt
+                            .as_ref()
+                            .filter(|attempt| spawned.contains_key(*attempt))
+                            .filter(|attempt| !failed.contains(*attempt))
+                            .filter(|attempt| acknowledgements.contains(*attempt))
+                            .map_or(SuccessorMarkerState::Incomplete, |_| {
+                                SuccessorMarkerState::Committed
+                            })
                     }
                 };
-                if node.parent_node_id.as_deref() != Some(context.parent_identity.node_id())
-                    || node.generation != context.parent_identity.generation() + 1
-                {
-                    continue;
-                }
-                let state = match &record.state {
-                    successor::State::Selected { .. } => SuccessorMarkerState::Selected,
-                    successor::State::Stopped { .. }
-                    | successor::State::Spawned { .. }
-                    | successor::State::Checkout { .. }
-                    | successor::State::Ready { .. }
-                    | successor::State::TimedOut { .. }
-                    | successor::State::ExitedBeforeReady { .. }
-                    | successor::State::Completed { .. } => SuccessorMarkerState::Terminal,
-                };
-                return Ok(Some(SuccessorMarker { state }));
+                latest = Some(state);
             }
             JournalEntry::SuccessorHandoff(entry) => {
-                let node = match load_node_record(
-                    &context.manifest_path,
-                    &entry.node_id,
-                    OperatorProjectionRead::cli_operator(),
-                ) {
-                    Ok(node) => node,
-                    Err(_) => continue,
-                };
-                if node.parent_node_id.as_deref() == Some(context.parent_identity.node_id())
-                    && node.generation == context.parent_identity.generation() + 1
+                let acknowledged = (entry.runtime_id, entry.node_id.clone());
+                if !failed.contains(&acknowledged)
+                    && spawned
+                        .get(&acknowledged)
+                        .is_some_and(|spawn| spawn_matches_handoff(spawn, entry))
                 {
-                    return Ok(Some(SuccessorMarker {
-                        state: SuccessorMarkerState::Terminal,
-                    }));
+                    acknowledgements.insert(acknowledged.clone());
+                    latest = Some(SuccessorMarkerState::Committed);
+                } else {
+                    latest = Some(SuccessorMarkerState::Incomplete);
                 }
             }
             _ => {}
         }
     }
-    Ok(None)
+    if invalid_stop {
+        Some(SuccessorMarkerState::Incomplete)
+    } else {
+        latest
+    }
+}
+
+fn spawn_matches_ready(record: &successor::Record, pid: u32, ready_path: &Path) -> bool {
+    matches!(
+        &record.state,
+        successor::State::Spawned {
+            pid: spawned_pid,
+            ready_path: spawned_path,
+            ..
+        } if *spawned_pid == pid && spawned_path == ready_path
+    )
+}
+
+fn spawn_matches_handoff(
+    record: &successor::Record,
+    handoff: &crate::cli::prototype1_state::journal::SuccessorHandoffEntry,
+) -> bool {
+    if record.campaign_id != handoff.campaign_id
+        || record.node_id != handoff.node_id
+        || record.runtime_id != Some(handoff.runtime_id)
+    {
+        return false;
+    }
+    match &record.state {
+        successor::State::Spawned {
+            pid,
+            incarnation: _,
+            active_parent_root,
+            binary_path,
+            invocation_path,
+            ready_path,
+            streams,
+        } => {
+            *pid == handoff.pid
+                && active_parent_root == &handoff.active_parent_root
+                && binary_path == &handoff.binary_path
+                && invocation_path == &handoff.invocation_path
+                && ready_path == &handoff.ready_path
+                && handoff
+                    .streams
+                    .as_ref()
+                    .is_none_or(|handoff_streams| handoff_streams == streams)
+        }
+        _ => false,
+    }
 }
 
 fn is_terminal_status(status: Prototype1NodeStatus) -> bool {
@@ -2213,6 +2811,7 @@ fn needs_terminal_observe(snapshot: &ChildSnapshot) -> bool {
     snapshot.node.status == Prototype1NodeStatus::Succeeded && snapshot.evaluation_report.is_none()
 }
 
+#[cfg(test)]
 async fn advance(diagnosis: Diagnosis, mode: ExecuteMode) -> Result<(), PrepareError> {
     let _trace_guard = scoped_eval_trace_sink_for_context(&diagnosis.context);
     match diagnosis.phase {
@@ -2685,6 +3284,7 @@ fn reconstruct_terminal_outcomes(
                     .as_ref()
                     .map(|report| selection_input_from_child_report(&snapshot.node, report)),
                 surface: snapshot.plan_child.surface().cloned(),
+                harness: snapshot.plan_child.harness_evidence().cloned(),
                 artifact_surface: snapshot.artifact_surface.clone(),
             })
         })
@@ -2692,124 +3292,81 @@ fn reconstruct_terminal_outcomes(
 }
 
 fn advance_select(diagnosis: Diagnosis) -> Result<(), PrepareError> {
-    let child_outcomes = reconstruct_terminal_outcomes(&diagnosis.child_snapshots)?;
-    let selection = select_successor_for_profile(
-        &diagnosis.context.manifest_path,
-        &diagnosis.context.parent_identity,
-        &child_outcomes,
+    let outcome = selection_available(
+        &diagnosis.context,
+        &diagnosis.child_snapshots,
         diagnosis
             .child_plan
             .as_ref()
             .map(|plan| plan.rejected_surface_attempts())
             .unwrap_or(&[]),
-        &diagnosis.context.admitted_profile.profile,
     )?;
-    if let Some((decision, material)) = selection {
-        let selected = material.selected_artifact()?;
-        let continuation = live_successor_continuation_decision(
-            &diagnosis.context.manifest_path,
-            &diagnosis.context.parent_identity,
-            &diagnosis.context.admitted_profile.profile.search_policy(),
-            &decision,
-            &material,
-            selected.node(),
-        )?;
-        let record = if continuation.disposition.allows_successor() {
-            successor::Record::selected_with_decision(
-                diagnosis.context.campaign_id.clone(),
-                selected.node().node_id.clone(),
-                continuation,
-                decision,
-            )
-        } else {
-            successor::Record::stopped(
-                diagnosis.context.campaign_id.clone(),
-                selected.node().node_id.clone(),
-                continuation,
-                decision,
-            )
-        };
-        let mut journal = PrototypeJournal::new(prototype1_transition_journal_path(
-            &diagnosis.context.manifest_path,
-        ));
-        journal
-            .append(JournalEntry::Successor(record))
-            .map_err(|err| PrepareError::InvalidBatchSelection {
-                detail: format!("failed to append successor selection record: {err}"),
-            })?;
+    if matches!(outcome, ParentSelectionOutcome::NoSelection { .. }) {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: "legacy diagnosis-driven selection cannot mint a no-selection stop receipt; use the session-backed prototype1-state, prototype1-step, or walk driver"
+                .to_string(),
+        });
     }
-    Ok(())
-}
-
-async fn advance_handoff(diagnosis: Diagnosis) -> Result<(), PrepareError> {
-    let child_outcomes = reconstruct_terminal_outcomes(&diagnosis.child_snapshots)?;
-    let Some((selection_decision, material)) = select_successor_for_profile(
+    emit_selection_outcome_for_backend(
         &diagnosis.context.manifest_path,
         &diagnosis.context.parent_identity,
-        &child_outcomes,
+        &outcome,
         diagnosis
-            .child_plan
-            .as_ref()
-            .map(|plan| plan.rejected_surface_attempts())
-            .unwrap_or(&[]),
-        &diagnosis.context.admitted_profile.profile,
-    )?
-    else {
-        return Ok(());
+            .context
+            .admitted_profile
+            .profile
+            .storage
+            .eval
+            .backend,
+    )?;
+    let ParentSelectionOutcome::Selected { decision, material } = outcome else {
+        unreachable!("no-selection outcomes return before persistence")
     };
     let selected = material.selected_artifact()?;
-    let node = selected.node().clone();
-    let decision = live_successor_continuation_decision(
+    let continuation = preview_successor_continuation(
         &diagnosis.context.manifest_path,
         &diagnosis.context.parent_identity,
         &diagnosis.context.admitted_profile.profile.search_policy(),
-        &selection_decision,
+        &decision,
         &material,
-        &node,
+        selected.node(),
     )?;
+    record_continuation_decision(
+        &diagnosis.context.manifest_path,
+        &diagnosis.context.parent_identity,
+        &continuation,
+    )?;
+    let record = if continuation.disposition.allows_successor() {
+        successor::Record::selected_with_decision(
+            diagnosis.context.campaign_id.clone(),
+            selected.node().node_id.clone(),
+            continuation,
+            decision,
+        )
+    } else {
+        successor::Record::stopped(
+            diagnosis.context.campaign_id.clone(),
+            selected.node().node_id.clone(),
+            continuation,
+            decision,
+        )
+    };
     let mut journal = PrototypeJournal::new(prototype1_transition_journal_path(
         &diagnosis.context.manifest_path,
     ));
-    if decision.disposition.allows_successor() {
-        let search_policy = diagnosis.context.admitted_profile.profile.search_policy();
-        let child_budget = reserve_profile_child_budget(
-            &search_policy,
-            persisted_node_count(&diagnosis.context.manifest_path)?,
-        )?;
-        let parent = resolve_profile_child_plan(
-            &diagnosis.context.campaign_id,
-            &diagnosis.context.manifest_path,
-            &diagnosis.context.repo_root,
-            active_parent_ready(&diagnosis.context)?,
-            &diagnosis.context.admitted_profile.profile,
-            child_budget,
-            diagnosis.context.resolved_campaign.route_source,
-        )
-        .await?
-        .parent;
-        let selected_artifact = select_artifact_for_handoff(&selection_decision, &material)?;
-        let selection_entry = material.into_entry(selection_decision)?;
-        let _ = spawn_and_handoff_prototype1_successor(
-            &diagnosis.context.campaign_id,
-            selected_artifact,
-            &diagnosis.context.repo_root,
-            parent,
-            selection_entry,
-            SuccessorHandoffMode::Detached,
-        )?;
-    } else {
-        journal
-            .append(JournalEntry::Successor(successor::Record::stopped(
-                diagnosis.context.campaign_id.clone(),
-                node.node_id.clone(),
-                decision,
-                selection_decision,
-            )))
-            .map_err(|err| PrepareError::InvalidBatchSelection {
-                detail: format!("failed to append stopped successor record: {err}"),
-            })?;
-    }
+    journal
+        .append(JournalEntry::Successor(record))
+        .map_err(|err| PrepareError::InvalidBatchSelection {
+            detail: format!("failed to append successor selection record: {err}"),
+        })?;
     Ok(())
+}
+
+async fn advance_handoff(_diagnosis: Diagnosis) -> Result<(), PrepareError> {
+    Err(PrepareError::InvalidBatchSelection {
+        detail: "legacy diagnosis-driven handoff cannot mint a fenced controller attempt; use the session-backed prototype1-state, prototype1-step, or walk driver"
+            .to_string(),
+    })
 }
 
 fn persisted_node_count(campaign_manifest_path: &Path) -> Result<u32, PrepareError> {
@@ -2859,13 +3416,23 @@ mod tests {
         parent_identity_commit_message, write_parent_identity,
     };
     use crate::cli::prototype1_state::profile::{
-        Control, Execution, Generation, ModelDefaults, Protocol, Prototype1RunProfile, RunMode,
-        Search, Selection, Storage, Target,
+        Control, Execution, Generation, GenerationSource, ModelDefaults, Protocol,
+        Prototype1RunProfile, RunMode, Search, Selection, Storage, Target,
     };
     use crate::intervention::Prototype1ChildScheduleMode;
     use crate::target_registry::RegistryDatasetSource;
     use ploke_core::tool_types::ToolName;
     use ploke_llm::request::models::ModelRouteSource;
+
+    #[test]
+    fn control_repo_root_is_canonical() {
+        let expected = fs::canonicalize(".").expect("canonical current directory");
+
+        assert_eq!(
+            canonical_repo_root(PathBuf::from(".")).expect("canonical control root"),
+            expected
+        );
+    }
 
     fn profile(schedule: Prototype1ChildScheduleMode, min: u32, max: u32) -> Prototype1RunProfile {
         Prototype1RunProfile {
@@ -2914,6 +3481,47 @@ mod tests {
                 .map(|(key, value)| (*key, value.clone().into_os_string()))
                 .collect(),
         )
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct TreeSnapshot {
+        exists: bool,
+        entries: BTreeMap<PathBuf, Option<Vec<u8>>>,
+    }
+
+    fn snapshot_tree(root: &Path) -> std::io::Result<TreeSnapshot> {
+        fn visit(
+            root: &Path,
+            path: &Path,
+            entries: &mut BTreeMap<PathBuf, Option<Vec<u8>>>,
+        ) -> std::io::Result<()> {
+            for entry in fs::read_dir(path)? {
+                let entry = entry?;
+                let path = entry.path();
+                if path.is_dir() {
+                    let relative = path
+                        .strip_prefix(root)
+                        .expect("snapshot path under root")
+                        .to_path_buf();
+                    entries.insert(relative, None);
+                    visit(root, &path, entries)?;
+                } else if path.is_file() {
+                    let relative = path
+                        .strip_prefix(root)
+                        .expect("snapshot path under root")
+                        .to_path_buf();
+                    entries.insert(relative, Some(fs::read(&path)?));
+                }
+            }
+            Ok(())
+        }
+
+        let exists = root.try_exists()?;
+        let mut entries = BTreeMap::new();
+        if exists {
+            visit(root, root, &mut entries)?;
+        }
+        Ok(TreeSnapshot { exists, entries })
     }
 
     fn phase_test_snapshot(
@@ -3091,9 +3699,275 @@ mod tests {
         assert!(
             commands
                 .iter()
+                .any(|command| command.contains("--live-embedding-preflight")),
+            "doctor should advertise embedding readiness before baseline work: {commands:?}"
+        );
+        assert!(
+            commands
+                .iter()
                 .any(|command| command.contains("--headless-tui-setup-preflight")),
             "doctor should advertise the extra setup preflight before broad headless fanout: {commands:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn embedding_preflight_preserves_failed_campaign_and_auto_selection() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let eval_home = temp.path().join("eval-home");
+        let _env = crate::test_support::env_guard_os(vec![(
+            "PLOKE_EVAL_HOME",
+            eval_home.clone().into_os_string(),
+        )]);
+        let world = ChildPlanWorld::mint_at_child_plan_phase(&eval_home);
+        let campaign_id = CampaignId::from("campaign");
+        let closure_path = campaign_closure_state_path(&campaign_id).expect("closure path");
+        let closure = closure_state_for_test(
+            eval_home.join("instances/prototype1/campaign"),
+            "BurntSushi__ripgrep-2209",
+            ClosureClass::Failed,
+        );
+        fs::write(
+            &closure_path,
+            serde_json::to_vec_pretty(&closure).expect("serialize failed closure"),
+        )
+        .expect("write failed closure");
+
+        let campaign_dir = eval_home.join("campaigns/campaign");
+        let instances_dir = eval_home.join("instances");
+        let batches_dir = eval_home.join("batches");
+        let campaign_before = snapshot_tree(&campaign_dir).expect("snapshot campaign");
+        let instances_before = snapshot_tree(&instances_dir).expect("snapshot instances");
+        let batches_before = snapshot_tree(&batches_dir).expect("snapshot batches");
+        let repo_before = snapshot_tree(&world.repo_root).expect("snapshot parent checkout");
+
+        let context = resolve_context(Some(&world.repo_root)).expect("context");
+        let mut status = into_status(diagnose(&context).expect("diagnosis"));
+        assert_eq!(status.phase, DiagnosedPhase::Blocked);
+        let report = run_embedding_live_preflight_with(&context, |route, model, provider| {
+            assert_eq!(route, EmbeddingRoute::OpenRouter);
+            assert_eq!(model, None, "default model must remain auto-selected");
+            assert_eq!(provider, None, "default provider must remain auto-selected");
+            async {
+                Err(PrepareError::DatabaseSetup {
+                    phase: "embedding_model_preflight",
+                    detail: "HTTP 403: Key limit exceeded (monthly limit)".to_string(),
+                })
+            }
+        })
+        .await;
+        attach_embedding_preflight_report(&mut status, report);
+
+        assert_eq!(
+            snapshot_tree(&campaign_dir).expect("resnapshot campaign"),
+            campaign_before
+        );
+        assert_eq!(
+            snapshot_tree(&instances_dir).expect("resnapshot instances"),
+            instances_before
+        );
+        assert_eq!(
+            snapshot_tree(&batches_dir).expect("resnapshot batches"),
+            batches_before
+        );
+        assert_eq!(
+            snapshot_tree(&world.repo_root).expect("resnapshot parent checkout"),
+            repo_before
+        );
+        assert_eq!(status.phase, DiagnosedPhase::Blocked);
+        let report = status
+            .embedding_preflight
+            .as_ref()
+            .expect("embedding report attached");
+        match report {
+            EvalEmbeddingPreflight::Failed {
+                model_request,
+                provider_preference,
+                backend,
+                phase,
+                class,
+                detail,
+                ..
+            } => {
+                assert_eq!(model_request, &None);
+                assert_eq!(provider_preference, &None);
+                assert_eq!(*backend, EmbeddingBackend::OpenRouter);
+                assert_eq!(phase, "embedding_model_preflight");
+                assert_eq!(*class, EmbeddingFailureClass::ProviderAccount);
+                assert!(detail.contains("Key limit exceeded"));
+            }
+            other => panic!("expected failed embedding preflight: {other:?}"),
+        }
+        let value = serde_json::to_value(&status).expect("serialize doctor status");
+        assert_eq!(
+            value["embedding_preflight"]["outcome"],
+            serde_json::json!("failed")
+        );
+        assert_eq!(
+            value["embedding_preflight"]["class"],
+            serde_json::json!("provider_account")
+        );
+    }
+
+    #[tokio::test]
+    async fn embedding_preflight_reports_typed_passed_selection() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let eval_home = temp.path().join("eval-home");
+        let _env = crate::test_support::env_guard_os(vec![(
+            "PLOKE_EVAL_HOME",
+            eval_home.clone().into_os_string(),
+        )]);
+        let world = ChildPlanWorld::mint_at_child_plan_phase(&eval_home);
+        let campaign_id = CampaignId::from("campaign");
+        let mut manifest =
+            crate::campaign::load_campaign_manifest(&campaign_id).expect("load campaign");
+        manifest.eval.embedding_model_id = Some("perplexity/pplx-embed-v1-4b".to_string());
+        manifest.eval.embedding_provider_slug = Some("perplexity".to_string());
+        save_campaign_manifest(&manifest).expect("save embedding policy");
+        let context = resolve_context(Some(&world.repo_root)).expect("context");
+
+        let report = run_embedding_live_preflight_with(&context, |route, model, provider| {
+            assert_eq!(route, EmbeddingRoute::OpenRouter);
+            assert_eq!(model.as_deref(), Some("perplexity/pplx-embed-v1-4b"));
+            assert_eq!(
+                provider.as_ref().map(|provider| provider.slug.as_str()),
+                Some("perplexity")
+            );
+            async move {
+                let model = "perplexity/pplx-embed-v1-4b"
+                    .parse()
+                    .expect("embedding model id");
+                Ok(crate::runner::EvalEmbeddingSelection {
+                    route,
+                    model,
+                    provider,
+                    dimensions: 2560,
+                })
+            }
+        })
+        .await;
+
+        let value = serde_json::to_value(&report).expect("serialize passed preflight");
+        assert_eq!(value["outcome"], serde_json::json!("passed"));
+        assert_eq!(
+            value["model_id"],
+            serde_json::json!("perplexity/pplx-embed-v1-4b")
+        );
+        assert_eq!(value["backend"], serde_json::json!("openrouter"));
+        assert_eq!(value["dimensions"], serde_json::json!(2560));
+    }
+
+    #[tokio::test]
+    async fn embedding_preflight_uses_persisted_direct_openai_route() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let eval_home = temp.path().join("eval-home");
+        let _env = crate::test_support::env_guard_os(vec![(
+            "PLOKE_EVAL_HOME",
+            eval_home.clone().into_os_string(),
+        )]);
+        let world = ChildPlanWorld::mint_at_child_plan_phase(&eval_home);
+        let campaign_id = CampaignId::from("campaign");
+        let mut manifest =
+            crate::campaign::load_campaign_manifest(&campaign_id).expect("load campaign");
+        manifest.eval.embedding_route = EmbeddingRoute::DirectOpenAi;
+        manifest.eval.embedding_model_id = None;
+        manifest.eval.embedding_provider_slug = None;
+        save_campaign_manifest(&manifest).expect("save embedding route");
+        let context = resolve_context(Some(&world.repo_root)).expect("context");
+
+        let report = run_embedding_live_preflight_with(&context, |route, model, provider| {
+            assert_eq!(route, EmbeddingRoute::DirectOpenAi);
+            assert_eq!(model, None);
+            assert_eq!(provider, None);
+            async move {
+                Ok(crate::runner::EvalEmbeddingSelection {
+                    route,
+                    model: "openai/text-embedding-3-small"
+                        .parse()
+                        .expect("embedding model id"),
+                    provider,
+                    dimensions: 1536,
+                })
+            }
+        })
+        .await;
+
+        let value = serde_json::to_value(&report).expect("serialize passed preflight");
+        assert_eq!(value["outcome"], serde_json::json!("passed"));
+        assert_eq!(value["backend"], serde_json::json!("openai"));
+        assert_eq!(
+            value["model_id"],
+            serde_json::json!("openai/text-embedding-3-small")
+        );
+        assert_eq!(value["dimensions"], serde_json::json!(1536));
+        assert_eq!(value["registry_path"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn embedding_preflight_classifies_only_typed_or_specific_failures() {
+        let unknown = PrepareError::UnknownModelInRegistry {
+            model: "missing/model".to_string(),
+            path: PathBuf::from("registry.json"),
+        };
+        let missing = PrepareError::MissingModelRegistry(PathBuf::from("registry.json"));
+        let generic_forbidden = PrepareError::DatabaseSetup {
+            phase: "embedding_model_preflight",
+            detail: "HTTP 403 Forbidden".to_string(),
+        };
+
+        assert_eq!(
+            classify_embedding_preflight_error(&unknown).1,
+            EmbeddingFailureClass::Configuration
+        );
+        assert_eq!(
+            classify_embedding_preflight_error(&missing).1,
+            EmbeddingFailureClass::Registry
+        );
+        assert_eq!(
+            classify_embedding_preflight_error(&generic_forbidden).1,
+            EmbeddingFailureClass::ProviderRequest
+        );
+    }
+
+    fn seed_parent_patcher() {
+        let registry: crate::model_registry::ModelRegistry =
+            serde_json::from_value(serde_json::json!({
+                "data": [{
+                    "id": "google/gemini-3.5-flash",
+                    "name": "gemini-3.5-flash",
+                    "created": 0,
+                    "description": "Direct Google test row",
+                    "architecture": {
+                        "input_modalities": ["text"],
+                        "modality": "text->text",
+                        "output_modalities": ["text"],
+                        "tokenizer": "Gemini"
+                    },
+                    "top_provider": {
+                        "is_moderated": false,
+                        "context_length": null,
+                        "max_completion_tokens": null
+                    },
+                    "pricing": {
+                        "prompt": 0.0,
+                        "completion": 0.0
+                    },
+                    "canonical_slug": "google/gemini-3.5-flash",
+                    "context_length": 1048576,
+                    "hugging_face_id": null,
+                    "per_request_limits": null,
+                    "supported_parameters": ["tools"],
+                    "route_source": "direct_google"
+                }]
+            }))
+            .expect("deserialize model registry");
+        crate::model_registry::save_model_registry(&registry).expect("save model registry");
+
+        let model: ModelId = "google/gemini-3.5-flash".parse().expect("model id");
+        crate::model_registry::save_parent_patcher_model(&model)
+            .expect("save parent patcher model");
+        let provider = ploke_llm::ProviderKey::new("google-ai-studio").expect("provider key");
+        crate::provider_prefs::set_provider_for_model(&model, provider)
+            .expect("save stale OpenRouter preference");
     }
 
     #[tokio::test]
@@ -3107,6 +3981,7 @@ mod tests {
                 OsString::from("1"),
             ),
         ]);
+        seed_parent_patcher();
         let world = ChildPlanWorld::mint_at_child_plan_phase(&eval_home);
         write_parent_workspace_fixture(&world.repo_root);
         let context = resolve_context(Some(&world.repo_root)).expect("context");
@@ -3127,6 +4002,22 @@ mod tests {
                 .is_some_and(|detail| detail.contains("RAG service is unavailable")),
             "detail should preserve the typed RAG/BM25 setup failure: {preflight:?}"
         );
+        assert_eq!(
+            preflight.model.as_ref().map(ToString::to_string).as_deref(),
+            Some("google/gemini-3.5-flash")
+        );
+        let route = preflight.route.as_ref().expect("resolved model route");
+        assert_eq!(route.route_source, "direct_google");
+        assert_eq!(route.router, "google");
+        assert!(route.provider_slug.is_none());
+        assert_eq!(
+            route.endpoint_host.as_deref(),
+            Some("aiplatform.googleapis.com")
+        );
+        let json = serde_json::to_value(preflight).expect("serialize preflight report");
+        assert_eq!(json["model"], "google/gemini-3.5-flash");
+        assert_eq!(json["route"]["route_source"], "direct_google");
+        assert_eq!(json["route"]["router"], "google");
         assert_eq!(status.phase, DiagnosedPhase::Blocked);
         assert!(
             status.blockers.iter().any(|blocker| {
@@ -3135,6 +4026,77 @@ mod tests {
             }),
             "doctor should surface the setup blocker: {:?}",
             status.blockers
+        );
+    }
+
+    #[tokio::test]
+    async fn headless_preflight_blocks_before_runtime_when_selection_is_missing() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let eval_home = temp.path().join("eval-home");
+        let _env = crate::test_support::env_guard_os(vec![
+            ("PLOKE_EVAL_HOME", eval_home.clone().into_os_string()),
+            (
+                "PLOKE_EVAL_FORCE_HEADLESS_TUI_RAG_UNAVAILABLE",
+                OsString::from("1"),
+            ),
+        ]);
+        let world = ChildPlanWorld::mint_at_child_plan_phase(&eval_home);
+        let context = resolve_context(Some(&world.repo_root)).expect("context");
+        let mut status = into_status(diagnose(&context).expect("diagnosis"));
+
+        attach_headless_tui_setup_preflight(&context, &mut status).await;
+
+        let preflight = status
+            .headless_tui_setup_preflight
+            .as_ref()
+            .expect("preflight report attached");
+        assert_eq!(preflight.outcome, HeadlessTuiSetupPreflightOutcome::Failed);
+        assert_eq!(preflight.phase.as_deref(), Some("parent_patcher_model"));
+        assert!(preflight.model.is_none());
+        assert!(preflight.route.is_none());
+        assert!(
+            preflight
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("active model file")),
+            "missing dedicated and fallback selections should remain explicit: {preflight:?}"
+        );
+        assert_eq!(status.phase, DiagnosedPhase::Blocked);
+        assert!(
+            status.blockers.iter().any(|blocker| {
+                blocker.contains("failed during 'parent_patcher_model'")
+                    && blocker.contains("active model file")
+            }),
+            "doctor should block before headless runtime setup: {:?}",
+            status.blockers
+        );
+    }
+
+    #[tokio::test]
+    async fn headless_preflight_skips_non_broad_without_model_configuration() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let eval_home = temp.path().join("eval-home");
+        let _env = crate::test_support::env_guard_os(vec![(
+            "PLOKE_EVAL_HOME",
+            eval_home.clone().into_os_string(),
+        )]);
+        let world =
+            ChildPlanWorld::mint_at_child_plan_phase_with_profile(&eval_home, 2, 3, |profile| {
+                profile.generation.source = GenerationSource::DeterministicTuiTools
+            });
+        let context = resolve_context(Some(&world.repo_root)).expect("context");
+
+        let preflight = run_headless_tui_setup_preflight(&context).await;
+
+        assert_eq!(preflight.outcome, HeadlessTuiSetupPreflightOutcome::Skipped);
+        assert!(preflight.model.is_none());
+        assert!(preflight.route.is_none());
+        assert_eq!(preflight.phase, None);
+        assert!(
+            preflight
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("does not use broad-harness"))
         );
     }
 
@@ -3227,6 +4189,168 @@ mod tests {
                 manifest_path,
                 parent_identity,
             }
+        }
+    }
+
+    #[test]
+    fn doctor_selection_probe_is_read_only_for_no_selection() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let eval_home = temp.path().join("eval-home");
+        let _env = crate::test_support::env_guard_os(vec![(
+            "PLOKE_EVAL_HOME",
+            eval_home.clone().into_os_string(),
+        )]);
+        let world = ChildPlanWorld::mint_at_child_plan_phase_with_budget(&eval_home, 1, 1);
+        let context = resolve_context(Some(&world.repo_root)).expect("context");
+        let fixture: ChildPlanFiles = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/prototype1-v16-all-unresolved-20260717/child-plan-node-e4ecdce2d6ee1098.json"
+        ))
+        .expect("v16 child plan fixture");
+        let campaign_root = world.manifest_path.parent().expect("campaign root");
+        let before = snapshot_tree(campaign_root).expect("snapshot before probe");
+
+        let outcome = selection_available(&context, &[], fixture.rejected_surface_attempts())
+            .expect("doctor selection probe");
+
+        assert!(matches!(
+            outcome,
+            ParentSelectionOutcome::NoSelection { .. }
+        ));
+        assert_eq!(
+            snapshot_tree(campaign_root).expect("snapshot after probe"),
+            before,
+            "read-only diagnosis must not mint or rewrite selection evidence"
+        );
+    }
+
+    #[test]
+    fn dual_strict_selection_available_reuses_persisted_selected_receipt() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let eval_home = temp.path().join("eval-home");
+        let _env = crate::test_support::env_guard_os(vec![(
+            "PLOKE_EVAL_HOME",
+            eval_home.clone().into_os_string(),
+        )]);
+        let world =
+            ChildPlanWorld::mint_at_child_plan_phase_with_profile(&eval_home, 1, 1, |profile| {
+                profile.storage.eval.backend = profile::EvalStorageBackend::DualStrict;
+            });
+        let context = resolve_context(Some(&world.repo_root)).expect("context");
+        let selected_snapshot = phase_test_snapshot(
+            Prototype1NodeStatus::Succeeded,
+            Some(phase_test_evaluation_report()),
+        );
+        let selected_outcomes =
+            reconstruct_terminal_outcomes(std::slice::from_ref(&selected_snapshot))
+                .expect("selected terminal outcome");
+        let selected = crate::cli::prototype1_state::history::SubjectRef::new(
+            "candidate:node-child:plan_index=0",
+        );
+        let payload = crate::cli::prototype1_state::history::EvaluationPayload::builder(
+            selected.clone(),
+            crate::cli::prototype1_state::history::ProcedureRef::new(
+                crate::successor_selection::PROCEDURE_ID,
+            ),
+        )
+        .selection_input(
+            selected_outcomes[0]
+                .selection_input
+                .clone()
+                .expect("terminal selection input"),
+        )
+        .expect("selection input binds")
+        .build();
+        let exact =
+            crate::cli::prototype1_state::history::SelectionDecisionEntry::new_with_traversal(
+                crate::cli::prototype1_state::history::ProcedureRef::new(
+                    crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID,
+                ),
+                crate::cli::prototype1_state::history::SelectionScope::new(
+                    "generation_local:test",
+                ),
+                Some(selected),
+                vec![payload],
+                Vec::new(),
+                Some(crate::cli::prototype1_state::history::TraversalEvidence {
+                    seed: 0,
+                    strategy: crate::successor_selection::traversal::StrategyKind::default(),
+                    oracle_targets: Vec::new(),
+                    selected_source: Some(
+                        crate::cli::prototype1_state::history::TraversalCandidateSource::CurrentGeneration,
+                    ),
+                    child_counts: BTreeMap::new(),
+                }),
+                crate::successor_selection::SuccessorDecision {
+                    procedure_id:
+                        crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID.to_string(),
+                    candidate_node_id: selected_snapshot.node.node_id.clone(),
+                    selected_branch_id: Some(selected_snapshot.node.branch_id.clone()),
+                    branch_disposition: "keep".to_string(),
+                    outcome:
+                        crate::successor_selection::decision::SuccessorOutcome::Accepted,
+                    findings: Vec::new(),
+                    rationale: Vec::new(),
+                },
+            )
+            .expect("selected receipt");
+        let db_path = prototype1_eval_store_db_path(&context.manifest_path);
+        let manifest =
+            crate::campaign::load_campaign_manifest(&context.campaign_id).expect("load campaign");
+        let closure_path =
+            campaign_closure_state_path(&context.campaign_id).expect("closure state path");
+        let closure = load_closure_state(&context.campaign_id).expect("load closure");
+        crate::cli::prototype1_state::eval_store::write_r0_context_to_owner_db(
+            &db_path,
+            &context.manifest_path,
+            &manifest,
+            profile::EvalStorageBackend::DualStrict,
+            Some(&context.admitted_profile),
+            None,
+            &closure_path,
+            &closure,
+        )
+        .expect("persist admitted setup authority");
+        crate::cli::prototype1_state::eval_store::write_selection_decision_to_owner_db(
+            &db_path,
+            crate::cli::prototype1_state::eval_store::SelectionDecisionEvidence {
+                campaign_id: context.campaign_id.clone(),
+                parent_id: context.parent_identity.parent_id().to_string(),
+                entry: exact.clone(),
+                decision_ref: Some("selection:persisted-test".to_string()),
+                recorded_at: Some("2026-07-17T00:00:00Z".to_string()),
+            },
+        )
+        .expect("persist selected receipt");
+
+        let failed_snapshot = phase_test_snapshot(Prototype1NodeStatus::Failed, None);
+        let failed_outcomes = reconstruct_terminal_outcomes(std::slice::from_ref(&failed_snapshot))
+            .expect("failed terminal outcome");
+        assert!(matches!(
+            selection_outcome_for_profile(
+                &context.manifest_path,
+                &context.parent_identity,
+                &failed_outcomes,
+                &[],
+                &context.admitted_profile.profile,
+            )
+            .expect("failed child recomputation"),
+            ParentSelectionOutcome::NoSelection { .. }
+        ));
+        let reused = selection_available(&context, std::slice::from_ref(&failed_snapshot), &[])
+            .expect("persisted selection is available");
+        assert!(matches!(reused, ParentSelectionOutcome::Selected { .. }));
+        assert_eq!(reused.entry().expect("reused selection entry"), exact);
+
+        let missing = phase_test_snapshot(Prototype1NodeStatus::Succeeded, None);
+        match selection_available(&context, &[missing], &[]) {
+            Ok(_) => panic!("persisted receipt must not bypass terminal evidence validation"),
+            Err(PrepareError::InvalidBatchSelection { detail }) => {
+                assert!(
+                    detail.contains("missing branch evaluation report"),
+                    "unexpected terminal evidence error: {detail}"
+                );
+            }
+            Err(other) => panic!("expected invalid terminal evidence, got {other:?}"),
         }
     }
 
@@ -3608,7 +4732,7 @@ Suggested validation after editing: run `cargo test`.
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn step_persists_zero_admission_plan() {
+    async fn legacy_child_plan_persists_zero_admission_plan() {
         let temp = tempfile::tempdir().expect("tempdir");
         let eval_home = temp.path().join("eval-home");
         let summary_fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(
@@ -3624,12 +4748,9 @@ Suggested validation after editing: run `cargo test`.
             .expect("diagnose pre-child-plan world");
         assert_eq!(diagnosis.phase, DiagnosedPhase::ChildPlan);
 
-        let err = step(Prototype1ControlCommand {
-            repo_root: Some(world.repo_root.clone()),
-            format: InspectOutputFormat::Json,
-        })
-        .await
-        .expect_err("zero-admission child planning still returns the below-minimum error");
+        let err = advance(diagnosis, ExecuteMode::Step)
+            .await
+            .expect_err("zero-admission child planning still returns the below-minimum error");
 
         let PrepareError::ChildPlanBelowMinimum {
             runnable_children,
@@ -3739,9 +4860,15 @@ Suggested validation after editing: run `cargo test`.
             assert_eq!(diagnosis.phase, DiagnosedPhase::ChildPlan);
             print_live_step_timing("diagnosed_child_plan", started, &mut previous);
 
-            let step_result = step(Prototype1ControlCommand {
-                repo_root: Some(world.repo_root.clone()),
-                format: InspectOutputFormat::Json,
+            let step_result = step(Prototype1AdvanceCommand {
+                control: Prototype1ControlCommand {
+                    repo_root: Some(world.repo_root.clone()),
+                    format: InspectOutputFormat::Json,
+                },
+                capabilities: crate::cli::Prototype1MutationCapabilities {
+                    allow_live_api: true,
+                    allow: Vec::new(),
+                },
             })
             .await;
             print_live_step_timing("step_returned", started, &mut previous);
@@ -3876,9 +5003,15 @@ Suggested validation after editing: run `cargo test`.
         assert_eq!(diagnosis.phase, DiagnosedPhase::ChildPlan);
         print_live_step_timing("diagnosed_child_plan", started, &mut previous);
 
-        let step_result = step(Prototype1ControlCommand {
-            repo_root: Some(world.repo_root.clone()),
-            format: InspectOutputFormat::Json,
+        let step_result = step(Prototype1AdvanceCommand {
+            control: Prototype1ControlCommand {
+                repo_root: Some(world.repo_root.clone()),
+                format: InspectOutputFormat::Json,
+            },
+            capabilities: crate::cli::Prototype1MutationCapabilities {
+                allow_live_api: true,
+                allow: Vec::new(),
+            },
         })
         .await;
         print_live_step_timing("step_returned", started, &mut previous);
@@ -4062,14 +5195,21 @@ Suggested validation after editing: run `cargo test`.
             identity_branch: None,
             identity_instance: None,
             handoff_invocation: None,
-            stop_after: crate::cli::Prototype1StateStopAfter::Complete,
-            successor_selection: crate::cli::Prototype1SuccessorSelection::HistoryScoreChildProp,
-            successor_selection_seed: 0,
-            successor_selection_metrics: crate::cli::Prototype1TraversalMetrics::Operational,
-            candidate_generator: crate::cli::Prototype1CandidateGenerator::BroadHarnessRequest,
+            stop_after: Some(crate::cli::Prototype1StateStopAfter::Complete),
+            successor_selection: Some(
+                crate::cli::Prototype1SuccessorSelection::HistoryScoreChildProp,
+            ),
+            successor_selection_seed: Some(0),
+            successor_selection_metrics: Some(crate::cli::Prototype1TraversalMetrics::Operational),
+            candidate_generator: Some(
+                crate::cli::Prototype1CandidateGenerator::BroadHarnessRequest,
+            ),
             format: InspectOutputFormat::Json,
         };
-        let state_result = command.run().await;
+        let state_result = crate::cli::prototype1_state::cli_facing::run_prototype1_state_turn(
+            command, true, true,
+        )
+        .await;
         print_live_step_timing("prototype1_state_returned", started, &mut previous);
         state_result
             .as_ref()
@@ -4591,12 +5731,372 @@ Suggested validation after editing: run `cargo test`.
     #[test]
     fn terminal_phase_from_marker_preserves_handoff_and_complete() {
         assert_eq!(
-            terminal_phase_from_marker(SuccessorMarkerState::Selected),
+            terminal_phase_from_marker(SuccessorMarkerState::InProgress),
             DiagnosedPhase::Handoff
         );
         assert_eq!(
-            terminal_phase_from_marker(SuccessorMarkerState::Terminal),
+            terminal_phase_from_marker(SuccessorMarkerState::Incomplete),
+            DiagnosedPhase::Blocked
+        );
+        assert_eq!(
+            terminal_phase_from_marker(SuccessorMarkerState::Committed),
             DiagnosedPhase::Complete
+        );
+    }
+
+    fn successor_entry(runtime_id: Option<RuntimeId>, state: successor::State) -> JournalEntry {
+        JournalEntry::Successor(successor::Record {
+            runtime_id,
+            recorded_at: crate::cli::prototype1_state::event::RecordedAt(1),
+            campaign_id: CampaignId::from("campaign"),
+            node_id: "node-successor".to_string(),
+            state,
+        })
+    }
+
+    fn handoff_entry(runtime_id: RuntimeId) -> JournalEntry {
+        JournalEntry::SuccessorHandoff(
+            crate::cli::prototype1_state::journal::SuccessorHandoffEntry {
+                recorded_at: crate::cli::prototype1_state::event::RecordedAt(2),
+                campaign_id: CampaignId::from("campaign"),
+                node_id: "node-successor".to_string(),
+                runtime_id,
+                active_parent_root: PathBuf::from("/tmp/repo"),
+                binary_path: PathBuf::from("/tmp/ploke-eval"),
+                invocation_path: PathBuf::from("/tmp/invocation.json"),
+                ready_path: PathBuf::from("/tmp/ready.jsonl"),
+                streams: None,
+                pid: 42,
+                acceptance: None,
+            },
+        )
+    }
+
+    fn marker_state(entries: &[JournalEntry]) -> Option<SuccessorMarkerState> {
+        classify_successor_entries(&entries.iter().collect::<Vec<_>>(), None)
+    }
+
+    fn marker_state_with_stop(
+        entries: &[JournalEntry],
+        expected: &ExpectedStop,
+    ) -> Option<SuccessorMarkerState> {
+        classify_successor_entries(&entries.iter().collect::<Vec<_>>(), Some(expected))
+    }
+
+    #[test]
+    fn checkout_advance_recovers_active_predecessor() {
+        let campaign_id = CampaignId::from("campaign");
+        let predecessor = ParentIdentity::root_bootstrap(
+            campaign_id.clone(),
+            "node-predecessor",
+            "instance",
+            "branch-predecessor",
+            None,
+        );
+        let active = ParentIdentity::root_bootstrap(
+            campaign_id.clone(),
+            "node-successor",
+            "instance",
+            "branch-successor",
+            None,
+        );
+        let entries = [JournalEntry::ActiveCheckoutAdvanced(
+            crate::cli::prototype1_state::journal::ActiveCheckoutAdvancedEntry {
+                recorded_at: crate::cli::prototype1_state::event::RecordedAt(1),
+                campaign_id,
+                previous_parent_identity: Some(predecessor.clone()),
+                selected_parent_identity: active.clone(),
+                active_parent_root: PathBuf::from("/tmp/repo"),
+                selected_branch: "branch-successor".to_string(),
+                installed_commit: "abc123".to_string(),
+            },
+        )];
+
+        assert_eq!(active_predecessor(&entries, &active), Some(&predecessor));
+    }
+
+    #[test]
+    fn active_predecessor_requires_committed_handoff() {
+        assert!(predecessor_blocks(None));
+        assert!(predecessor_blocks(Some(SuccessorMarkerState::InProgress)));
+        assert!(predecessor_blocks(Some(SuccessorMarkerState::Incomplete)));
+        assert!(!predecessor_blocks(Some(SuccessorMarkerState::Committed)));
+    }
+
+    #[test]
+    fn no_selection_marker_requires_a_typed_receipt() {
+        use crate::intervention::{
+            Prototype1ContinuationDecision, Prototype1ContinuationDisposition,
+        };
+
+        let decision = Prototype1ContinuationDecision {
+            disposition: Prototype1ContinuationDisposition::StopNoSelectedBranch,
+            selected_next_branch_id: None,
+            selected_branch_disposition: None,
+            next_generation: 1,
+            total_nodes_after_continue: 1,
+        };
+        let completed = JournalEntry::Successor(successor::Record::stopped_without_selection(
+            CampaignId::from("campaign"),
+            "node-parent".to_string(),
+            decision.clone(),
+            crate::cli::prototype1_state::history::HistoryHash::of_bytes(b"selection-receipt"),
+        ));
+        let not_run = JournalEntry::Successor(successor::Record::stopped_without_attempt(
+            CampaignId::from("campaign"),
+            "node-parent".to_string(),
+            decision.clone(),
+        ));
+        let missing = successor_entry(
+            None,
+            successor::State::Stopped {
+                decision: decision.clone(),
+                selection_decision: None,
+                selection_receipt: None,
+            },
+        );
+
+        let completed_stop = ExpectedStop {
+            decision: decision.clone(),
+            receipt: successor::SelectionReceipt::Completed {
+                hash: crate::cli::prototype1_state::history::HistoryHash::of_bytes(
+                    b"selection-receipt",
+                ),
+            },
+        };
+        let not_run_stop = ExpectedStop {
+            decision: decision.clone(),
+            receipt: successor::SelectionReceipt::NotRun,
+        };
+        let wrong_hash = ExpectedStop {
+            decision: decision.clone(),
+            receipt: successor::SelectionReceipt::Completed {
+                hash: crate::cli::prototype1_state::history::HistoryHash::of_bytes(b"wrong"),
+            },
+        };
+        let wrong_record = JournalEntry::Successor(successor::Record::stopped_without_selection(
+            CampaignId::from("campaign"),
+            "node-parent".to_string(),
+            decision,
+            crate::cli::prototype1_state::history::HistoryHash::of_bytes(b"wrong"),
+        ));
+
+        assert_eq!(
+            marker_state_with_stop(&[completed.clone()], &completed_stop),
+            Some(SuccessorMarkerState::Committed)
+        );
+        assert_eq!(
+            marker_state_with_stop(&[completed.clone()], &wrong_hash),
+            Some(SuccessorMarkerState::Incomplete)
+        );
+        assert_eq!(
+            marker_state_with_stop(&[wrong_record, completed], &completed_stop),
+            Some(SuccessorMarkerState::Incomplete)
+        );
+        assert_eq!(
+            marker_state_with_stop(&[not_run], &not_run_stop),
+            Some(SuccessorMarkerState::Committed)
+        );
+        assert_eq!(
+            marker_state(&[missing]),
+            Some(SuccessorMarkerState::Incomplete)
+        );
+    }
+
+    #[test]
+    fn successor_markers_require_same_runtime_handoff() {
+        use crate::intervention::{
+            CommitPhase, Prototype1ContinuationDecision, Prototype1ContinuationDisposition,
+        };
+
+        let runtime_id = RuntimeId(uuid::Uuid::from_u128(1));
+        let other_id = RuntimeId(uuid::Uuid::from_u128(2));
+        let decision = Prototype1ContinuationDecision {
+            disposition: Prototype1ContinuationDisposition::ContinueReady,
+            selected_next_branch_id: Some("branch-successor".to_string()),
+            selected_branch_disposition: Some("keep".to_string()),
+            next_generation: 1,
+            total_nodes_after_continue: 2,
+        };
+        let selected = JournalEntry::Successor(successor::Record::selected(
+            CampaignId::from("campaign"),
+            "node-successor".to_string(),
+            decision.clone(),
+        ));
+        let stopped = successor_entry(
+            None,
+            successor::State::Stopped {
+                decision: decision.clone(),
+                selection_decision: None,
+                selection_receipt: None,
+            },
+        );
+        let checkout = successor_entry(
+            None,
+            successor::State::Checkout {
+                phase: CommitPhase::After,
+                active_parent_root: PathBuf::from("/tmp/repo"),
+                selected_branch: "branch-successor".to_string(),
+                installed_commit: Some("abc123".to_string()),
+            },
+        );
+        assert_eq!(
+            marker_state(&[selected]),
+            Some(SuccessorMarkerState::InProgress)
+        );
+        assert_eq!(
+            marker_state(&[checkout]),
+            Some(SuccessorMarkerState::InProgress)
+        );
+
+        let spawned = successor_entry(
+            Some(runtime_id),
+            successor::State::Spawned {
+                pid: 42,
+                incarnation: None,
+                active_parent_root: PathBuf::from("/tmp/repo"),
+                binary_path: PathBuf::from("/tmp/ploke-eval"),
+                invocation_path: PathBuf::from("/tmp/invocation.json"),
+                ready_path: PathBuf::from("/tmp/ready.jsonl"),
+                streams: crate::cli::prototype1_state::journal::Streams {
+                    stdout: PathBuf::from("/tmp/stdout"),
+                    stderr: PathBuf::from("/tmp/stderr"),
+                },
+            },
+        );
+        let ready = successor_entry(
+            Some(runtime_id),
+            successor::State::Ready {
+                pid: 42,
+                ready_path: PathBuf::from("/tmp/ready.jsonl"),
+                controller: None,
+            },
+        );
+        let timed_out = successor_entry(
+            Some(runtime_id),
+            successor::State::TimedOut {
+                waited_ms: 10_000,
+                ready_path: PathBuf::from("/tmp/ready.jsonl"),
+            },
+        );
+        let exited = successor_entry(
+            Some(runtime_id),
+            successor::State::ExitedBeforeReady { exit_code: Some(1) },
+        );
+        for entry in [
+            spawned.clone(),
+            ready.clone(),
+            timed_out.clone(),
+            exited.clone(),
+        ] {
+            assert_eq!(
+                marker_state(&[entry]),
+                Some(SuccessorMarkerState::Incomplete)
+            );
+        }
+
+        let completion = |runtime_id| {
+            successor_entry(
+                Some(runtime_id),
+                successor::State::Completed {
+                    status: crate::cli::prototype1_state::invocation::SuccessorCompletionStatus::Succeeded,
+                    completion_path: PathBuf::from("/tmp/completion.json"),
+                    trace_path: None,
+                    detail: None,
+                },
+            )
+        };
+        assert_eq!(
+            marker_state(&[handoff_entry(runtime_id), completion(other_id)]),
+            Some(SuccessorMarkerState::Incomplete)
+        );
+        assert_eq!(
+            marker_state(&[spawned.clone(), handoff_entry(other_id)]),
+            Some(SuccessorMarkerState::Incomplete)
+        );
+        assert_eq!(
+            marker_state(&[ready.clone(), handoff_entry(runtime_id)]),
+            Some(SuccessorMarkerState::Incomplete),
+            "ready plus handoff cannot replace missing spawn evidence"
+        );
+        assert_eq!(
+            marker_state(&[
+                spawned.clone(),
+                timed_out.clone(),
+                handoff_entry(runtime_id),
+            ]),
+            Some(SuccessorMarkerState::Incomplete),
+            "timeout permanently dominates a late acknowledgement"
+        );
+        assert_eq!(
+            marker_state(&[spawned.clone(), exited.clone(), handoff_entry(runtime_id),]),
+            Some(SuccessorMarkerState::Incomplete),
+            "early exit permanently dominates a late acknowledgement"
+        );
+        assert_eq!(
+            marker_state(&[spawned.clone(), timed_out, stopped.clone()]),
+            Some(SuccessorMarkerState::Incomplete),
+            "stopped cannot replace a timed-out runtime attempt"
+        );
+        assert_eq!(
+            marker_state(&[spawned.clone(), exited, stopped]),
+            Some(SuccessorMarkerState::Incomplete),
+            "stopped cannot replace an exited runtime attempt"
+        );
+        let malformed_states = [
+            successor::State::Spawned {
+                pid: 42,
+                incarnation: None,
+                active_parent_root: PathBuf::from("/tmp/repo"),
+                binary_path: PathBuf::from("/tmp/ploke-eval"),
+                invocation_path: PathBuf::from("/tmp/invocation.json"),
+                ready_path: PathBuf::from("/tmp/ready.jsonl"),
+                streams: crate::cli::prototype1_state::journal::Streams {
+                    stdout: PathBuf::from("/tmp/stdout"),
+                    stderr: PathBuf::from("/tmp/stderr"),
+                },
+            },
+            successor::State::TimedOut {
+                waited_ms: 10_000,
+                ready_path: PathBuf::from("/tmp/ready.jsonl"),
+            },
+            successor::State::ExitedBeforeReady { exit_code: Some(1) },
+        ];
+        for state in malformed_states {
+            assert_eq!(
+                marker_state(&[
+                    successor_entry(None, state),
+                    successor_entry(
+                        None,
+                        successor::State::Stopped {
+                            decision: decision.clone(),
+                            selection_decision: None,
+                            selection_receipt: None,
+                        },
+                    ),
+                ]),
+                Some(SuccessorMarkerState::Incomplete),
+                "stopped cannot replace malformed process evidence without a runtime id"
+            );
+        }
+        let mut wrong_path = handoff_entry(runtime_id);
+        let JournalEntry::SuccessorHandoff(handoff) = &mut wrong_path else {
+            unreachable!("handoff helper must return handoff evidence")
+        };
+        handoff.binary_path = PathBuf::from("/tmp/wrong-ploke-eval");
+        assert_eq!(
+            marker_state(&[spawned.clone(), wrong_path]),
+            Some(SuccessorMarkerState::Incomplete),
+            "same-id handoff with mismatched process evidence must fail closed"
+        );
+        assert_eq!(
+            marker_state(&[
+                spawned,
+                handoff_entry(runtime_id),
+                ready,
+                completion(runtime_id),
+            ]),
+            Some(SuccessorMarkerState::Committed)
         );
     }
 
@@ -4619,10 +6119,11 @@ Suggested validation after editing: run `cargo test`.
             allowed_actions_for_phase(DiagnosedPhase::Observe),
             vec!["doctor", "continue", "step"]
         );
-        assert_eq!(commands.len(), 3);
-        assert!(commands[0].contains("prototype1-doctor"));
-        assert!(commands[1].contains("prototype1-continue"));
-        assert!(commands[2].contains("prototype1-step"));
+        assert_eq!(commands.len(), 4);
+        assert!(commands[0].contains("--live-embedding-preflight"));
+        assert!(commands[1].contains("--headless-tui-setup-preflight"));
+        assert!(commands[2].contains("prototype1-continue"));
+        assert!(commands[3].contains("prototype1-step"));
     }
 
     #[test]
@@ -4950,13 +6451,13 @@ Suggested validation after editing: run `cargo test`.
             child_lifecycle: ChildRuntimeLifecycle::Acknowledged,
             parent_pid: std::process::id(),
             child_pid: Some(child_pid),
+            incarnation: None,
             argv: vec!["loop".to_string(), "prototype1-runner".to_string()],
             streams: None,
             result: Some(SpawnObservation::Acknowledged),
         })
     }
 
-    #[cfg(feature = "typed_type_graph")]
     #[tokio::test]
     async fn doctor_flags_stale_starting_db_missing_typed_graph_relations() {
         use crate::runner::STARTING_DB_CACHE_VERSION;

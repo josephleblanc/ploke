@@ -192,6 +192,7 @@ impl RunMsbAgentSingleCommand {
             use_default_model: self.use_default_model,
             model_id: self.model_id,
             provider: parse_provider_key(self.provider)?,
+            max_tokens: self.max_tokens,
             embedding_model_id: self.embedding_model_id,
             embedding_provider: parse_provider_key(self.embedding_provider)?,
         }
@@ -223,6 +224,7 @@ impl RunMsbAgentBatchCommand {
             use_default_model: self.use_default_model,
             model_id: self.model_id,
             provider: parse_provider_key(self.provider)?,
+            max_tokens: self.max_tokens,
             embedding_model_id: None,
             embedding_provider: None,
             stop_on_error: self.stop_on_error,

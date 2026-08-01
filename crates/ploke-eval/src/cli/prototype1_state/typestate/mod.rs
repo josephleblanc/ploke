@@ -48,16 +48,17 @@ pub(crate) use aliases::{
     R4C_SHAPE, R4a, R4aParts, R4aStartupBranch, R4bGenesisChecked, R4bParts, R4cParts, R4cReady,
     R5, R5_SHAPE, R6, R6_SHAPE, R7, R7_SHAPE, R8, R8_SHAPE, R9, R9_SHAPE, R10, R10_SHAPE,
     R10FanoutBranch, R11_SHAPE, R11A_SHAPE, R11FanoutComplete, R11aRejectedOnly, R12, R12_SHAPE,
-    R12ContinuationBranch, R13A_SHAPE, R13B_SHAPE, R13aStopped, R13bHandoffCommitted, R14A_SHAPE,
-    R14B_SHAPE, R14FinalBranch, R14aFinalStopped, R14bFinalHandoff, ReadyParts, RetiredParts,
-    SelectableParts,
+    R12ContinuationBranch, R13A_SHAPE, R13B_SHAPE, R13C_SHAPE, R13aStopped, R13bHandoffCommitted,
+    R13cHandoffIncomplete, R14A_SHAPE, R14B_SHAPE, R14FinalBranch, R14aFinalStopped,
+    R14bFinalHandoff, ReadyParts, RetiredParts, SelectableParts,
 };
 pub(crate) use axes::{children, continuation, evidence, history_axis, phase, plan, report, role};
 #[allow(unused_imports)]
 pub(crate) use runtime::{
     Children, Context, Continuation, Evidence, History, Plan, Report, Runtime, RuntimeRole,
 };
-pub(crate) use shape::{RuntimeAxisDelta, RuntimeShape, render_type_expr};
+pub use shape::{RuntimeAxis, RuntimeAxisDelta};
+pub(crate) use shape::{RuntimeShape, render_type_expr};
 #[allow(unused_imports)]
 pub(crate) use transition::{
     AsyncStep, AsyncStepInput, AsyncTransition, Chain, Step, StepInput, Transition,
@@ -93,7 +94,7 @@ pub(in crate::cli::prototype1_state::typestate) struct Private;
 //   record terminal facts.
 // - Selected-successor handoff is represented by R13b/R14b with
 //   `Parent<Retired>` plus History/continuation/handoff axes. The `walk` CLI
-//   admits this path only with `--watch --allow git-changes`.
+//   admits this path only with `--allow git-changes`.
 // - `Prototype1ContinuationDecision` remains a value-level decision carried in
 //   the continuation axis; the authority to mutate checkout/History still comes
 //   from consuming the typed parent state plus the explicit operator gate.

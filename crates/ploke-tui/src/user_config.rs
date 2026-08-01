@@ -578,6 +578,11 @@ pub struct ChatPolicy {
     pub tool_call_timeout_secs: u64,
     #[serde(default = "default_tool_call_chain_limit")]
     pub tool_call_chain_limit: usize,
+    /// Maximum consecutive calls to one tool within a session. `None` disables
+    /// the guard. Calls are counted in provider order, and the batch that
+    /// reaches the limit is allowed to settle before the session exhausts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_streak_limit: Option<usize>,
     #[serde(default)]
     pub tool_loop_mode: ToolLoopMode,
     #[serde(default)]
@@ -607,6 +612,7 @@ impl Default for ChatPolicy {
         Self {
             tool_call_timeout_secs: default_tool_call_timeout_secs(),
             tool_call_chain_limit: default_tool_call_chain_limit(),
+            tool_streak_limit: None,
             tool_loop_mode: ToolLoopMode::default(),
             retry_without_tools_on_404: false,
             timeout_strategy: default_chat_timeout_strategy(),
@@ -627,6 +633,7 @@ impl ChatPolicy {
     pub fn validated(self) -> Self {
         let tool_call_timeout_secs = self.tool_call_timeout_secs.clamp(5, 600);
         let tool_call_chain_limit = self.tool_call_chain_limit.clamp(1, 500);
+        let tool_streak_limit = self.tool_streak_limit.map(|limit| limit.clamp(1, 500));
         let timeout_base_secs = self.timeout_base_secs.clamp(5, 600);
         let error_retry_limit = self.error_retry_limit.min(10);
         let length_retry_limit = self.length_retry_limit.min(5);
@@ -636,6 +643,7 @@ impl ChatPolicy {
         Self {
             tool_call_timeout_secs,
             tool_call_chain_limit,
+            tool_streak_limit,
             tool_loop_mode: self.tool_loop_mode,
             retry_without_tools_on_404: self.retry_without_tools_on_404,
             timeout_strategy,
@@ -1270,5 +1278,39 @@ mod tests {
         }
         .validated();
         assert_eq!(validated.tool_replay.max_file_lines, 2_000);
+    }
+
+    #[test]
+    fn chat_policy_validation_clamps_optional_tool_streak_limit() {
+        let disabled = ChatPolicy::default().validated();
+        assert_eq!(disabled.tool_streak_limit, None);
+
+        let low = ChatPolicy {
+            tool_streak_limit: Some(0),
+            ..ChatPolicy::default()
+        }
+        .validated();
+        assert_eq!(low.tool_streak_limit, Some(1));
+
+        let high = ChatPolicy {
+            tool_streak_limit: Some(1_000),
+            ..ChatPolicy::default()
+        }
+        .validated();
+        assert_eq!(high.tool_streak_limit, Some(500));
+    }
+
+    #[test]
+    fn chat_policy_tool_streak_limit_round_trips_through_toml() {
+        let enabled = ChatPolicy {
+            tool_streak_limit: Some(15),
+            ..ChatPolicy::default()
+        };
+        let text = toml::to_string(&enabled).expect("serialize chat policy");
+        let decoded: ChatPolicy = toml::from_str(&text).expect("deserialize chat policy");
+        assert_eq!(decoded.tool_streak_limit, Some(15));
+
+        let disabled = toml::to_string(&ChatPolicy::default()).expect("serialize default policy");
+        assert!(!disabled.contains("tool_streak_limit"));
     }
 }

@@ -21,6 +21,7 @@ semantics.
 | Channel evidence | Attempt-scoped parent/child runtime messages. | `nodes/<node>/channels/<runtime>/*.jsonl` |
 | Transition evidence | Append-only transition replay/debug events. | `transition-journal.jsonl` |
 | Projections | Mutable or rebuildable views over authority/evidence. | `scheduler.json`, node JSON, `heads.json` |
+| Owner-DB evidence projection | Generated `eval_*` relations containing normalized campaign evidence when an owner-DB mirroring backend is admitted. | `prototype1/eval-store.cozo.sqlite` |
 | Workspace artifacts | Git checkouts, worktrees, branches, commits, build outputs. | active checkout, broad harness worktrees, child `bin/` |
 | Diagnostics | Logs and operator/debug traces. | `~/.ploke-eval/logs`, stream logs, tool-loop debug |
 
@@ -76,6 +77,7 @@ $PLOKE_EVAL_HOME/campaigns/<campaign>/
   prototype1/
     run-profile.toml
     run-profile.commitment.json
+    eval-store.cozo.sqlite  # owner-DB mirroring backends only
     scheduler.json
     branches.json
     transition-journal.jsonl
@@ -117,6 +119,7 @@ $PLOKE_EVAL_HOME/campaigns/<campaign>/
 | `closure-state.json` | Baseline/target closure state. | Medium |
 | `prototype1/run-profile.toml` | Admitted operator policy. | Medium |
 | `prototype1/run-profile.commitment.json` | Digest commitment for the admitted profile. | Medium |
+| `prototype1/eval-store.cozo.sqlite` | Campaign-owner `eval_*` evidence projection when `[storage.eval].backend` is `db-mirror`, `database`, or `dual-strict`; the default `fs` backend does not mirror it. Query it through the walk service; it is not live controller, History, channel/message, artifact, or liveness authority. | High, as normalized evidence |
 | `prototype1/history/blocks/*` | Sealed History authority. | Highest |
 | `prototype1/history/index/*` | Rebuildable History indexes/head projection. | High, as projections |
 | `prototype1/transition-journal.jsonl` | Append-only transition replay evidence. | High |
@@ -147,6 +150,37 @@ $PLOKE_EVAL_HOME/campaigns/<campaign>/
 | `cache/starting-dbs/<key>.sqlite` and `<key>.json` | Starting DB cache. | Cache; not authority. |
 | `last-run.json` | Operator convenience pointer. | Projection only. |
 
+### Operator inspection boundary
+
+Use the typed walk service rather than opening an admitted owner database
+directly. `status` is available independently of the storage backend; named DB
+views apply when an owner-DB mirroring backend is admitted:
+
+```bash
+./target/debug/ploke-eval loop walk status --with-version
+./target/debug/ploke-eval loop walk config --with-version
+./target/debug/ploke-eval loop walk session-history --with-version
+./target/debug/ploke-eval loop walk summary --verbose
+./target/debug/ploke-eval loop walk db_query --view relations
+./target/debug/ploke-eval loop walk db_query --view counts
+./target/debug/ploke-eval loop walk db_query --view config-evidence
+./target/debug/ploke-eval loop walk db_query --view lineage
+./target/debug/ploke-eval loop walk db_query --view progress
+./target/debug/ploke-eval loop walk db_query --view handoff-evidence
+```
+
+`status` is the live controller/session authority view. `config` validates the
+admitted values and provenance, `session-history` reports ordered controller
+attempts/receipts, and `summary --verbose` reports durable campaign progress.
+Named `db_query` views return immutable, revision-tagged owner-DB evidence; they
+do not prove server liveness or mutation authority. The `progress` view exposes distinct
+`actor_generation`, `subject_generation`, and `successor_generation` columns;
+stop decisions leave `successor_generation` null rather than overloading the
+decision's next-generation counter. Evaluation rows keep the parent generation
+as actor and the evaluated scheduler node/generation as subject; unresolved
+joins remain visible with null identity/generation fields. Do not inspect
+SQLite directly or search JSON artifacts with `jq` to infer active status.
+
 ### Runtime and temp writes
 
 | Location | Role |
@@ -174,6 +208,12 @@ Not committed by the loop:
 - `target/` build output and copied `bin/ploke-eval` binaries
 
 ## Cozo schema map
+
+When an owner-DB mirroring backend is admitted, the current campaign-owner
+database uses generated `eval_*` relations. The `p1_*` shapes below remain
+proposed migration vocabulary, not the installed schema or a compatibility
+promise. This planning map does not change import tolerance or any domain
+authority boundary.
 
 ### Migration principles
 
@@ -458,7 +498,7 @@ Large logs, copied binaries, Cargo build output, and Git worktrees should stay a
 file/Git artifacts at first. Store references, hashes, and lifecycle metadata in
 Cozo rather than moving every byte into the database immediately.
 
-## Current file-to-relation map
+## Proposed file-to-relation map
 
 | Current file/prefix | Initial relation(s) | Notes |
 | --- | --- | --- |

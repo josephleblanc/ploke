@@ -10,7 +10,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
-    io::Read,
     path::{Path, PathBuf},
     process::Command,
     str::FromStr,
@@ -37,16 +36,20 @@ use ploke_tui::tools::{
 };
 
 use crate::{
-    ResolvedCampaignConfig, campaign_manifest_path,
+    campaign_manifest_path,
     cli::{
         Prototype1StateWalkAuditScope, Prototype1StateWalkAuditTransition,
         Prototype1StateWalkLlmStepSource,
         prototype1_state::{
-            cli_facing::Prototype1StateRunShape,
             driver::{
-                reconstruct::{self, EarlyState},
+                control::{
+                    ControlAdvance, ControlFailure, ControlState as WalkState, advance_controlled,
+                    claim_controller, claim_controller_version,
+                },
+                reconstruct,
                 replay::ReplayCursor,
             },
+            edge::ControlEdge,
             edit_surface::{
                 harness_request::{
                     EvidenceRootKind, EvidenceRootLocation, PublishedBroadHarnessRequest,
@@ -55,16 +58,9 @@ use crate::{
             },
             identity::{load_parent_identity_optional, parent_identity_path},
             journal::prototype1_transition_journal_path,
-            live_edges::{
-                r0_to_r1, r1_to_r2a_or_r3, r3_to_r4a, r4a_to_r4b_or_r4c, r4b_to_r4c_genesis,
-                r4c_to_r5, r5_to_r6, r6_to_r7, r7_to_r8, r8_to_r9, r9_to_r10, r10_to_r11,
-                r11_to_r12, r12_to_r13, r13_to_r14,
-            },
-            typestate::{
-                self, AsyncStepInput, R0, R1, R2a, R3, R4a, R4bGenesisChecked, R4cReady, R5, R6,
-                R7, R8, R9, R10, R11FanoutComplete, R11aRejectedOnly, R12, R13aStopped,
-                R13bHandoffCommitted, R14aFinalStopped, R14bFinalHandoff, StepInput,
-            },
+            profile::RunMode,
+            session::{Attempt, AttemptResult, Failure, Finished, Idle, Lease, Store},
+            typestate,
         },
         provider::{headless_model_selection, load_parent_patcher_model_selection},
     },
@@ -73,8 +69,8 @@ use crate::{
         StoredProtocolArtifactFile, load_protocol_artifact, protocol_artifact_summary,
     },
     replay::tool_loop::{
-        FsToolLoopStore, ToolLoopOutcome, ToolLoopResult, ToolLoopResume, ToolLoopSession,
-        ToolLoopStatus, ToolLoopStore, WorkspaceState,
+        FsToolLoopStore, OuterAttemptLink, ToolLoopOutcome, ToolLoopResult, ToolLoopResume,
+        ToolLoopSession, ToolLoopStatus, ToolLoopStore, WorkspaceState,
     },
     spec::PrepareError,
 };
@@ -83,14 +79,10 @@ use super::{
     audit::{self, WalkAuditReport},
     paths,
     phase::WalkPhase,
-    protocol::WalkStartConfig,
+    protocol::{SessionVersion, WalkDeltaSnapshot, WalkDeltaState, WalkEdgeDelta, WalkStartConfig},
 };
 
 const MAX_HISTORY: usize = 80;
-const MAX_FILE_BYTES: usize = 128 * 1024;
-
-type RunShape = Prototype1StateRunShape;
-type CampaignConfig = ResolvedCampaignConfig;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LlmMove {
@@ -102,7 +94,7 @@ pub(crate) enum LlmMove {
 /// Single-session in-memory controller for Prototype 1 typestate phases.
 ///
 /// The server admits setup/startup and parent-start phases through live `R7`,
-/// watch-gated `R8`, schedule-ready `R9`, strategy-ready `R10`, watch-gated
+/// live-capability-gated `R8`, schedule-ready `R9`, strategy-ready `R10`, gated
 /// `R11`, report-ready `R12`, guarded handoff-capable `R13`, and final-report
 /// `R14`. Parent/successor handoff remains gated by explicit operator admission
 /// because it mutates the active checkout and spawns the successor runtime.
@@ -115,48 +107,19 @@ pub(crate) struct WalkController {
     last_delta: Option<WalkAdvanceReport>,
     reconstruction: Option<WalkReconstruction>,
     replay: Option<ReplayCursor>,
-    llm_focus: Option<String>,
-    llm_cursors: BTreeMap<String, usize>,
 }
 // ANCHOR_END: prototype1_walk_controller
 
-// ANCHOR: prototype1_walk_state
-/// Owned typestate value currently held by the server.
+/// In-memory navigation for persisted nested LLM/tool-loop evidence.
 ///
-/// The enum is intentionally private: external callers address state through
-/// `WalkPhase`, while only the controller can consume and replace typed values.
-enum WalkState {
-    Empty,
-    R0(R0),
-    R1(R1<RunShape, CampaignConfig>),
-    R2a(R2a<RunShape, CampaignConfig>),
-    R3(R3<RunShape, CampaignConfig>),
-    R4a(R4a<RunShape, CampaignConfig>),
-    R4b(R4bGenesisChecked<RunShape, CampaignConfig>),
-    R4c(R4cReady<RunShape, CampaignConfig>),
-    R5(R5<RunShape, CampaignConfig>),
-    R6(R6<RunShape, CampaignConfig>),
-    R7(R7<RunShape, CampaignConfig>),
-    R8(R8<RunShape, CampaignConfig>),
-    R9(R9<RunShape, CampaignConfig>),
-    R10(R10<RunShape, CampaignConfig>),
-    R11a(R11aRejectedOnly<RunShape, CampaignConfig>),
-    R11(R11FanoutComplete<RunShape, CampaignConfig>),
-    R12(R12<RunShape, CampaignConfig>),
-    R13a(R13aStopped<RunShape, CampaignConfig>),
-    R13b(R13bHandoffCommitted<RunShape, CampaignConfig>),
-    R14a(R14aFinalStopped<RunShape, CampaignConfig>),
-    R14b(R14bFinalHandoff<RunShape, CampaignConfig>),
-    /// A consuming transition failed after the previous typed value was moved.
-    ///
-    /// Rust cannot restore the consumed value after an edge returns `Err`, so
-    /// the server keeps an inspectable failed cursor and requires a fresh walk.
-    Failed {
-        phase: WalkPhase,
-        detail: String,
-    },
+/// This state is deliberately separate from `WalkController`: reading or
+/// positioning durable debugger checkpoints must remain available while the
+/// typestate controller owns a long-running transition.
+pub(crate) struct LlmInspector {
+    repo_root: PathBuf,
+    focus: Option<String>,
+    cursors: BTreeMap<String, usize>,
 }
-// ANCHOR_END: prototype1_walk_state
 
 /// Human-facing summary of one `walk step` request.
 #[derive(Clone)]
@@ -164,6 +127,7 @@ pub(crate) struct WalkAdvanceReport {
     from: WalkPhase,
     to: WalkPhase,
     transitions: Vec<WalkTransition>,
+    version: Option<SessionVersion>,
 }
 
 #[derive(Clone, Copy)]
@@ -179,6 +143,79 @@ pub(crate) struct DeltaRenderStyle {
 }
 
 impl WalkAdvanceReport {
+    pub(crate) fn from(&self) -> WalkPhase {
+        self.from
+    }
+
+    pub(crate) fn to(&self) -> WalkPhase {
+        self.to
+    }
+
+    pub(crate) fn transition_labels(&self) -> Vec<String> {
+        self.transitions
+            .iter()
+            .map(|transition| {
+                format!(
+                    "{}->{}:{}",
+                    transition.from,
+                    transition.to,
+                    transition.edge()
+                )
+            })
+            .collect()
+    }
+
+    pub(crate) fn transition_edges(&self) -> Result<Vec<ControlEdge>, PrepareError> {
+        self.transitions
+            .iter()
+            .map(|transition| {
+                ControlEdge::from_phases(transition.from, transition.to).ok_or_else(|| {
+                    PrepareError::InvalidBatchSelection {
+                        detail: format!(
+                            "walk transition receipt has no admitted edge for {} -> {}",
+                            transition.from, transition.to
+                        ),
+                    }
+                })
+            })
+            .collect()
+    }
+
+    pub(crate) fn exact_version(&self) -> Result<SessionVersion, PrepareError> {
+        self.version
+            .clone()
+            .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                detail: "walk transition report has no exact durable session version".to_string(),
+            })
+    }
+
+    fn delta_snapshot(&self) -> Result<WalkDeltaSnapshot, PrepareError> {
+        let edges =
+            self.transitions
+                .iter()
+                .map(|transition| {
+                    let edge = ControlEdge::from_phases(transition.from, transition.to)
+                        .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                            detail: format!(
+                                "walk transition delta has no admitted edge for {} -> {}",
+                                transition.from, transition.to
+                            ),
+                        })?;
+                    Ok(WalkEdgeDelta {
+                        edge,
+                        axes: transition.to.axis_deltas_from(transition.from),
+                    })
+                })
+                .collect::<Result<Vec<_>, PrepareError>>()?;
+        Ok(WalkDeltaSnapshot {
+            version: self.exact_version()?,
+            state: WalkDeltaState::Recorded {
+                from: self.from,
+                edges,
+            },
+        })
+    }
+
     /// Render from/to, applied edges, typestate deltas, and next admitted steps.
     pub(crate) fn render(&self) -> String {
         let mut lines = Vec::new();
@@ -276,8 +313,6 @@ impl WalkController {
             last_delta: None,
             reconstruction: None,
             replay: None,
-            llm_focus: None,
-            llm_cursors: BTreeMap::new(),
         }
     }
 
@@ -286,11 +321,27 @@ impl WalkController {
         self.state.phase()
     }
 
+    pub(crate) fn blocker_detail(&self) -> Option<String> {
+        match &self.state {
+            WalkState::Blocked { phase, detail } => {
+                Some(format!("controller is blocked at {phase}: {detail}"))
+            }
+            WalkState::Failed { phase, detail } => {
+                Some(format!("controller failed at {phase}: {detail}"))
+            }
+            _ => None,
+        }
+    }
+
     /// Produce a human-readable summary for `show` and `health`.
     pub(crate) fn describe(&self) -> String {
         let phase = self.phase();
         let mut lines = Vec::new();
         match &self.state {
+            WalkState::Blocked { phase, detail } => lines.push(format!(
+                "walk blocked at {phase}; steps={}; detail={detail}",
+                self.steps
+            )),
             WalkState::Failed { phase, detail } => lines.push(format!(
                 "walk failed while advancing from {phase}; steps={}; detail={detail}",
                 self.steps
@@ -317,6 +368,14 @@ impl WalkController {
         self.files.render()
     }
 
+    /// Discover durable file locations without reconstructing typestate.
+    pub(crate) fn track_files(&mut self) -> Result<(), PrepareError> {
+        if let Some(parent) = load_parent_identity_optional(&self.repo_root)? {
+            self.files.remember_campaign(parent.campaign_id());
+        }
+        Ok(())
+    }
+
     /// Build a read-only file/database persistence audit for a walk transition.
     pub(crate) fn audit(
         &self,
@@ -330,6 +389,21 @@ impl WalkController {
             }
         }
     }
+}
+
+impl LlmInspector {
+    pub(crate) fn new(repo_root: PathBuf) -> Self {
+        Self {
+            repo_root,
+            focus: None,
+            cursors: BTreeMap::new(),
+        }
+    }
+
+    pub(crate) fn reset(&mut self) {
+        self.focus = None;
+        self.cursors.clear();
+    }
 
     /// Render known nested LLM/tool-loop fanout lanes without mutating the walk.
     pub(crate) fn llm_lanes_report(&self, verbose: bool) -> Result<String, PrepareError> {
@@ -338,10 +412,7 @@ impl WalkController {
         let mut lines = Vec::new();
         lines.push("llm fanout lanes".to_string());
         lines.push(format!("root: {}", store.root().display()));
-        lines.push(format!(
-            "focus: {}",
-            self.llm_focus.as_deref().unwrap_or("-")
-        ));
+        lines.push(format!("focus: {}", self.focus.as_deref().unwrap_or("-")));
         if lanes.is_empty() {
             lines.push("lanes: (none)".to_string());
             lines.push(
@@ -352,8 +423,8 @@ impl WalkController {
         }
         lines.push("lanes:".to_string());
         for lane in lanes {
-            let marker = if self.llm_focus.as_deref() == Some(lane.lane_id.as_str())
-                || self.llm_focus.as_deref() == Some(lane.session.session_id.as_str())
+            let marker = if self.focus.as_deref() == Some(lane.lane_id.as_str())
+                || self.focus.as_deref() == Some(lane.session.session_id.as_str())
             {
                 "*"
             } else {
@@ -363,7 +434,7 @@ impl WalkController {
                 "{marker} {} status={} cursor={} head={} next_step={} model={}",
                 lane.lane_id,
                 status_label(lane.session.status),
-                self.llm_cursors
+                self.cursors
                     .get(cursor_key(&lane))
                     .map(|value| value.to_string())
                     .unwrap_or_else(|| "-".to_string()),
@@ -397,9 +468,9 @@ impl WalkController {
         } else {
             lane_state.lane_id.clone()
         };
-        self.llm_focus = Some(focus_target);
+        self.focus = Some(focus_target);
         if let Some(head) = lane_state.head {
-            self.llm_cursors
+            self.cursors
                 .entry(cursor_key(&lane_state).to_string())
                 .or_insert(head);
         }
@@ -431,7 +502,7 @@ impl WalkController {
             Some(step) => Some(step),
             None if head => lane_state.head,
             None => self
-                .llm_cursors
+                .cursors
                 .get(cursor_key(&lane_state))
                 .copied()
                 .or(lane_state.head),
@@ -518,7 +589,7 @@ impl WalkController {
             Some(step) => Some(step),
             None if head => lane_state.head,
             None => self
-                .llm_cursors
+                .cursors
                 .get(cursor_key(&lane_state))
                 .copied()
                 .or(lane_state.head),
@@ -575,9 +646,9 @@ impl WalkController {
         store: &FsToolLoopStore,
         session_id: &str,
     ) -> Result<(), PrepareError> {
-        self.llm_focus = Some(session_id.to_string());
+        self.focus = Some(session_id.to_string());
         if let Some(head) = store.latest_step_index(session_id)? {
-            self.llm_cursors.insert(session_id.to_string(), head);
+            self.cursors.insert(session_id.to_string(), head);
         }
         Ok(())
     }
@@ -663,7 +734,7 @@ impl WalkController {
                 ),
             })?;
         let current = self
-            .llm_cursors
+            .cursors
             .get(cursor_key(&lane_state))
             .copied()
             .unwrap_or(head);
@@ -671,7 +742,7 @@ impl WalkController {
             LlmMove::Back => current.saturating_sub(steps),
             LlmMove::Forward => current.saturating_add(steps).min(head),
         };
-        self.llm_cursors
+        self.cursors
             .insert(cursor_key(&lane_state).to_string(), next);
         Ok(format!(
             "llm lane {} cursor={} head={}",
@@ -691,7 +762,7 @@ impl WalkController {
                     lane_state.lane_id
                 ),
             })?;
-        self.llm_cursors
+        self.cursors
             .insert(cursor_key(&lane_state).to_string(), head);
         Ok(format!(
             "llm lane {} cursor=head ({head})",
@@ -705,11 +776,7 @@ impl WalkController {
         lane: LlmLane,
     ) -> Result<String, PrepareError> {
         let indices = store.step_indices(&lane.session.session_id)?;
-        let current = self
-            .llm_cursors
-            .get(cursor_key(&lane))
-            .copied()
-            .or(lane.head);
+        let current = self.cursors.get(cursor_key(&lane)).copied().or(lane.head);
         let mut lines = Vec::new();
         lines.push("llm tool-loop timeline".to_string());
         lines.push(format!("store: {}", timeline_store_label(store.root())));
@@ -865,7 +932,7 @@ impl WalkController {
                 detail: format!("llm lane '{}' has no recorded steps", lane.lane_id),
             })?;
         let selected_step = step
-            .or_else(|| self.llm_cursors.get(cursor_key(lane)).copied())
+            .or_else(|| self.cursors.get(cursor_key(lane)).copied())
             .unwrap_or(head);
         match source {
             Prototype1StateWalkLlmStepSource::Historical => {
@@ -1006,7 +1073,7 @@ impl WalkController {
                 ),
             });
         }
-        let target = requested.or(self.llm_focus.as_deref());
+        let target = requested.or(self.focus.as_deref());
         if let Some(target) = target {
             if let Ok(session) = store.read_session(target) {
                 return self.lane_for_session(store, session);
@@ -1059,6 +1126,17 @@ impl WalkController {
         lines.push(format!("status: {}", status_label(lane.session.status)));
         lines.push(format!("harness: {}", lane.session.harness));
         lines.push(format!("workspace: {}", lane.session.workspace.display()));
+        match lane.session.outer_attempt {
+            OuterAttemptLink::Linked {
+                session_id,
+                transition_id,
+            } => {
+                lines.push(format!("outer_session: {session_id}"));
+                lines.push(format!("outer_transition: {transition_id}"));
+            }
+            OuterAttemptLink::Unlinked => lines.push("outer_attempt: unlinked".to_string()),
+            OuterAttemptLink::Missing => lines.push("outer_attempt: missing".to_string()),
+        }
         lines.extend(render_provenance_lines(
             &self.repo_root,
             &lane.session.workspace,
@@ -1077,7 +1155,7 @@ impl WalkController {
         }
         lines.push(format!(
             "cursor: {}",
-            self.llm_cursors
+            self.cursors
                 .get(cursor_key(&lane))
                 .map(|value| value.to_string())
                 .unwrap_or_else(|| "-".to_string())
@@ -1318,13 +1396,32 @@ impl WalkController {
         lines.push("  walk llm tool --json".to_string());
         Ok(lines.join("\n"))
     }
+}
 
+impl WalkController {
     /// Render the last successful step delta, if any.
     pub(crate) fn delta_report(&self, style: DeltaRenderStyle) -> String {
         self.last_delta
             .as_ref()
             .map(|delta| delta.render_delta(style))
             .unwrap_or_else(|| "no previous step delta; run `walk step` first".to_string())
+    }
+
+    /// Return the typed form of the last successful step request.
+    pub(crate) fn delta_snapshot(
+        &self,
+        observed: SessionVersion,
+    ) -> Result<WalkDeltaSnapshot, PrepareError> {
+        self.last_delta
+            .as_ref()
+            .map(WalkAdvanceReport::delta_snapshot)
+            .transpose()
+            .map(|snapshot| {
+                snapshot.unwrap_or(WalkDeltaSnapshot {
+                    version: observed,
+                    state: WalkDeltaState::NotRecorded,
+                })
+            })
     }
 
     /// Render or position the read-only historical replay cursor.
@@ -1381,19 +1478,49 @@ impl WalkController {
         self.last_delta = None;
         self.reconstruction = None;
         self.replay = None;
-        self.llm_focus = None;
-        self.llm_cursors.clear();
         self.record(format!("reset: cleared in-memory walk from {previous}"));
         self.phase()
     }
 
-    /// Start a new walk from `R0` and optionally advance to an admitted boundary.
+    /// Attach to the completed setup-derived R3 session and optionally advance.
     pub(crate) async fn start(
         &mut self,
         config: WalkStartConfig,
         until: WalkPhase,
-    ) -> Result<WalkPhase, PrepareError> {
-        if !matches!(self.state, WalkState::Empty | WalkState::Failed { .. }) {
+        allow_live_api: bool,
+    ) -> Result<WalkAdvanceReport, PrepareError> {
+        self.start_at(config, until, allow_live_api, None).await
+    }
+
+    /// Start only if the durable controller session is still at the exact
+    /// version admitted by the socket server before this job was queued.
+    pub(crate) async fn start_version(
+        &mut self,
+        config: WalkStartConfig,
+        until: WalkPhase,
+        allow_live_api: bool,
+        expected: &SessionVersion,
+    ) -> Result<WalkAdvanceReport, PrepareError> {
+        self.start_at(config, until, allow_live_api, Some(expected))
+            .await
+    }
+
+    async fn start_at(
+        &mut self,
+        config: WalkStartConfig,
+        until: WalkPhase,
+        allow_live_api: bool,
+        expected: Option<&SessionVersion>,
+    ) -> Result<WalkAdvanceReport, PrepareError> {
+        let pre_session_reconstruction = self.reconstruction.is_some()
+            && expected.is_some_and(|version| version == &SessionVersion::empty())
+            && matches!(
+                self.phase(),
+                WalkPhase::R3 | WalkPhase::R4a | WalkPhase::R4b | WalkPhase::R4c
+            );
+        if !matches!(self.state, WalkState::Empty | WalkState::Failed { .. })
+            && !pre_session_reconstruction
+        {
             return Err(PrepareError::InvalidBatchSelection {
                 detail: format!(
                     "walk is already started at {}; run reset or stop and restart the server to begin a new walk",
@@ -1402,124 +1529,328 @@ impl WalkController {
             });
         }
         ensure_supported_target(until)?;
-        let repo_root = paths::resolve_repo_root(config.repo_root.as_deref())?;
-        let init_parent_identity = config.init_parent_identity;
+        if matches!(
+            until,
+            WalkPhase::Empty | WalkPhase::R0 | WalkPhase::R1 | WalkPhase::R2a
+        ) {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "walk target {until} is setup/bootstrap history; live controller sessions begin at R3"
+                ),
+            });
+        }
+        let repo_root = match config.repo_root.as_deref() {
+            Some(root) => paths::resolve_repo_root(Some(root))?,
+            None => self.repo_root.clone(),
+        };
+        if repo_root != self.repo_root {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "walk start repository root '{}' does not match the server root '{}'",
+                    repo_root.display(),
+                    self.repo_root.display()
+                ),
+            });
+        }
         let requested_campaign = config.campaign.clone();
-        self.repo_root = repo_root.clone();
-        self.files.reset(&repo_root);
-        self.steps = 0;
-        self.last_delta = None;
-        self.reconstruction = None;
-        self.replay = None;
-        self.llm_focus = None;
-        self.llm_cursors.clear();
-
         let reconstruct_matches_request = match requested_campaign.as_ref() {
             Some(campaign_id) => load_parent_identity_optional(&repo_root)?
                 .is_some_and(|identity| identity.campaign_id() == campaign_id),
             None => true,
         };
-        if until != WalkPhase::R0 && !init_parent_identity && reconstruct_matches_request {
-            self.refresh_from_disk()?;
-            let reconstructed = self.phase();
-            if reconstructed != WalkPhase::Empty {
-                if phase_rank(reconstructed) < phase_rank(until) {
-                    self.advance_until(until, false, false).await?;
-                }
-                return Ok(self.phase());
-            }
-            self.state = WalkState::Empty;
-            self.reconstruction = None;
+        if !reconstruct_matches_request {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "requested campaign '{}' does not match the active checkout parent",
+                    requested_campaign.expect("checked requested campaign")
+                ),
+            });
         }
-
-        self.state = WalkState::R0(typestate::R0::new(config.into_state_command()));
-        self.record(format!(
-            "start: created r0 for repo_root '{}'",
-            repo_root.display()
-        ));
-        self.advance_until(until, false, false).await?;
-        Ok(self.phase())
+        if let Some(expected) = expected {
+            ensure_start_bound(expected, until)?;
+        } else {
+            let origin = match self.phase() {
+                WalkPhase::Empty => WalkPhase::R3,
+                phase => phase,
+            };
+            ensure_postdominator(origin, until)?;
+        }
+        let lease = match expected {
+            Some(expected) => claim_controller_version(&repo_root, RunMode::Step, expected)?,
+            None => claim_controller(&repo_root, RunMode::Step)?,
+        };
+        let claimed = lease.cursor().phase;
+        let campaign = lease.campaign_id().clone();
+        if claimed != until
+            && (phase_rank(claimed) > phase_rank(until) || phase_rank(claimed) == phase_rank(until))
+        {
+            let release = release_lease(lease).err();
+            return Err(attach_release(
+                PrepareError::InvalidBatchSelection {
+                    detail: format!(
+                        "durable controller cursor is already at {claimed}, beyond requested start target {until}"
+                    ),
+                },
+                release,
+            ));
+        }
+        let state = match reconstruct_state(&repo_root, claimed, lease.handoff_path()) {
+            Ok(state) => state,
+            Err(source) => {
+                let release = release_lease(lease).err();
+                return Err(attach_release(source, release));
+            }
+        };
+        let version = release_lease_version(lease)?;
+        self.files.reset(&repo_root);
+        self.files.remember_campaign(&campaign);
+        self.steps = 0;
+        self.last_delta = None;
+        self.replay = None;
+        self.state = state;
+        self.reconstruction = None;
+        let reconstructed = claimed;
+        let (transitions, version) = if phase_rank(reconstructed) < phase_rank(until) {
+            self.advance_until(until, allow_live_api, false, Some(version))
+                .await?
+        } else {
+            (Vec::new(), Some(version))
+        };
+        let report = WalkAdvanceReport {
+            from: reconstructed,
+            to: self.phase(),
+            transitions,
+            version,
+        };
+        self.last_delta = Some(report.clone());
+        Ok(report)
     }
 
     /// Advance the current walk by one edge or until a requested phase.
     pub(crate) async fn step(
         &mut self,
         until: Option<WalkPhase>,
-        watch: bool,
+        allow_live_api: bool,
         allow_git_changes: bool,
     ) -> Result<WalkAdvanceReport, PrepareError> {
+        self.step_at(until, allow_live_api, allow_git_changes, None)
+            .await
+    }
+
+    /// Step only if the durable controller session is still at the exact
+    /// version admitted by the socket server before this job was queued.
+    pub(crate) async fn step_version(
+        &mut self,
+        until: Option<WalkPhase>,
+        allow_live_api: bool,
+        allow_git_changes: bool,
+        expected: &SessionVersion,
+    ) -> Result<WalkAdvanceReport, PrepareError> {
+        self.step_at(until, allow_live_api, allow_git_changes, Some(expected))
+            .await
+    }
+
+    async fn step_at(
+        &mut self,
+        until: Option<WalkPhase>,
+        allow_live_api: bool,
+        allow_git_changes: bool,
+        expected: Option<&SessionVersion>,
+    ) -> Result<WalkAdvanceReport, PrepareError> {
         self.refresh_from_disk()?;
+        if let WalkState::Blocked { phase, detail } = &self.state {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!("walk is blocked at {phase}: {detail}"),
+            });
+        }
+        if let WalkState::Failed { phase, detail } = &self.state {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!("walk failed at {phase}: {detail}"),
+            });
+        }
         let from = self.phase();
-        let branch_step = until.is_none() && watch && self.phase() == WalkPhase::R10;
-        let r12_selected =
-            matches!(&self.state, WalkState::R12(r12) if r12.has_successor_selection());
-        let target = until.unwrap_or_else(|| {
-            if watch && self.phase() == WalkPhase::R7 {
-                WalkPhase::R8
-            } else if r12_selected {
-                WalkPhase::R13b
-            } else {
-                self.phase().next().unwrap_or(self.phase())
+        let branch_step = until.is_none() && allow_live_api && self.phase() == WalkPhase::R10;
+        let r12_handoff = match &self.state {
+            WalkState::R12(r12) => r12
+                .preview_continuation()?
+                .is_some_and(|decision| decision.disposition.allows_successor()),
+            _ => false,
+        };
+        let target = step_target(self.phase(), until, allow_live_api, r12_handoff)?;
+        let (transitions, version) = if until.is_none() && self.phase() == target && !branch_step {
+            let (transition, version) = self
+                .step_once(allow_live_api, allow_git_changes, expected)
+                .await?;
+            (vec![transition], Some(version))
+        } else if self.phase() == target && !branch_step {
+            let (transition, version) = self
+                .step_toward(target, allow_live_api, allow_git_changes, expected)
+                .await?;
+            if transition.is_some() {
+                return Err(PrepareError::InvalidBatchSelection {
+                    detail: format!(
+                        "walk no-op claim unexpectedly advanced beyond current target {target}"
+                    ),
+                });
             }
-        });
-        ensure_supported_target(target)?;
-        self.ensure_branch_target(target)?;
-        let transitions = if self.phase() == target && !branch_step {
-            Vec::new()
+            (Vec::new(), Some(version))
         } else if until.is_some() {
-            self.advance_until(target, watch, allow_git_changes).await?
+            self.advance_until(target, allow_live_api, allow_git_changes, expected.cloned())
+                .await?
         } else {
-            vec![self.step_once(watch, allow_git_changes).await?]
+            let (transition, version) = self
+                .step_once(allow_live_api, allow_git_changes, expected)
+                .await?;
+            (vec![transition], Some(version))
         };
         let report = WalkAdvanceReport {
             from,
             to: self.phase(),
             transitions,
+            version,
         };
         self.last_delta = Some(report.clone());
         Ok(report)
     }
 
-    fn ensure_branch_target(&self, target: WalkPhase) -> Result<(), PrepareError> {
-        if let WalkState::R12(r12) = &self.state {
-            let selected = r12.has_successor_selection();
-            if selected && matches!(target, WalkPhase::R13a | WalkPhase::R14a) {
-                return Err(PrepareError::InvalidBatchSelection {
-                    detail: format!(
-                        "target {target} is the stopped/no-selection branch, but R12 has selected-successor evidence; use --until r13b or --until r14b with --watch --allow git-changes"
-                    ),
-                });
-            }
-            if !selected && matches!(target, WalkPhase::R13b | WalkPhase::R14b) {
-                return Err(PrepareError::InvalidBatchSelection {
-                    detail: format!(
-                        "target {target} is the successor-handoff branch, but R12 has no selected-successor evidence; use --until r13a or --until r14a"
-                    ),
-                });
-            }
-        }
-        Ok(())
-    }
-
     pub(crate) fn refresh_from_disk(&mut self) -> Result<(), PrepareError> {
-        if !matches!(self.state, WalkState::Empty) {
-            return Ok(());
-        }
-        let snapshot = reconstruct::reconstruct_early(&self.repo_root)?;
+        let previous = self.phase();
+        let session = match load_parent_identity_optional(&self.repo_root)? {
+            Some(parent) => {
+                self.files.remember_campaign(parent.campaign_id());
+                let manifest = campaign_manifest_path(parent.campaign_id())?;
+                Store::for_manifest(&manifest)
+                    .inspect(&parent)
+                    .map_err(session_error)?
+            }
+            None => None,
+        };
+        let snapshot = if let Some(session) = session {
+            if let Some(damage) = session.damage {
+                let phase = session
+                    .cursor
+                    .as_ref()
+                    .map_or(WalkPhase::Empty, |cursor| cursor.phase);
+                let detail = format!("controller session journal is damaged: {damage:?}");
+                self.state = WalkState::Blocked {
+                    phase,
+                    detail: detail.clone(),
+                };
+                self.reconstruction = Some(WalkReconstruction {
+                    notes: Vec::new(),
+                    blockers: vec![detail.clone()],
+                });
+                if previous != phase {
+                    self.record(format!("reconstruction blocked at {phase}: {detail}"));
+                }
+                return Ok(());
+            }
+            if let Some((phase, detail)) = session.attempts.last().and_then(|attempt| match attempt
+            {
+                Attempt::Pending { intent, .. } => Some((
+                    intent.expected,
+                    format!(
+                        "controller transition {} is durably pending and requires owner recovery",
+                        intent.transition_id
+                    ),
+                )),
+                Attempt::Finished(receipt) | Attempt::Recovered { receipt, .. } => {
+                    match &receipt.result {
+                        AttemptResult::Indeterminate { detail, .. } => Some((
+                            receipt.intent.expected,
+                            format!("controller transition is indeterminate: {detail}"),
+                        )),
+                        AttemptResult::Committed { .. }
+                        | AttemptResult::Rejected { .. }
+                        | AttemptResult::Cancelled { .. } => None,
+                    }
+                }
+            }) {
+                self.state = WalkState::Blocked {
+                    phase,
+                    detail: detail.clone(),
+                };
+                self.reconstruction = Some(WalkReconstruction {
+                    notes: Vec::new(),
+                    blockers: vec![detail.clone()],
+                });
+                if previous != phase {
+                    self.record(format!("reconstruction blocked at {phase}: {detail}"));
+                }
+                return Ok(());
+            }
+            if let Some(owner) = session.active.as_ref() {
+                let phase = session
+                    .cursor
+                    .as_ref()
+                    .map_or(WalkPhase::Empty, |cursor| cursor.phase);
+                let detail = format!(
+                    "controller owner is recorded at fence {} (pid {}); lock-free inspection cannot prove whether it is live or requires recovery",
+                    owner.fence(),
+                    owner.pid()
+                );
+                self.state = WalkState::Blocked {
+                    phase,
+                    detail: detail.clone(),
+                };
+                self.reconstruction = Some(WalkReconstruction {
+                    notes: Vec::new(),
+                    blockers: vec![detail.clone()],
+                });
+                if previous != phase {
+                    self.record(format!("reconstruction blocked at {phase}: {detail}"));
+                }
+                return Ok(());
+            }
+            let handoff = session
+                .created
+                .as_ref()
+                .and_then(|created| created.handoff_path())
+                .map(Path::to_path_buf);
+            let cursor = session
+                .cursor
+                .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                    detail: "controller session has no committed cursor".to_string(),
+                })?;
+            match handoff.as_deref() {
+                Some(path) => {
+                    reconstruct::reconstruct_handoff_at(&self.repo_root, cursor.phase, path)?
+                }
+                None => reconstruct::reconstruct_at(&self.repo_root, cursor.phase)?,
+            }
+        } else {
+            reconstruct::reconstruct_early(&self.repo_root)?
+        };
         let reconstruct::EarlySnapshot {
             state,
+            blocked,
             campaign_id,
+            stop_index: _,
             notes,
             blockers,
         } = snapshot;
+        self.state = WalkState::Empty;
         if let Some(campaign_id) = &campaign_id {
             self.files.remember_campaign(campaign_id);
         }
         self.reconstruction = Some(WalkReconstruction { notes, blockers });
-        if let Some(state) = state {
-            let phase = phase_for_early(&state);
-            self.state = WalkState::from_early(state);
-            self.record(format!("reconstructed durable walk state at {phase}"));
+        if let Some(blocked) = blocked {
+            let phase = blocked.phase;
+            let detail = blocked.detail;
+            self.state = WalkState::Blocked {
+                phase,
+                detail: detail.clone(),
+            };
+            if previous != phase {
+                self.record(format!("reconstruction blocked at {phase}: {detail}"));
+            }
+        } else if let Some(state) = state {
+            let state = WalkState::from_reconstructed(state);
+            let phase = state.phase();
+            self.state = state;
+            if previous != phase {
+                self.record(format!("reconstructed durable walk state at {phase}"));
+            }
         }
         Ok(())
     }
@@ -1527,215 +1858,194 @@ impl WalkController {
     async fn advance_until(
         &mut self,
         target: WalkPhase,
-        watch: bool,
+        allow_live_api: bool,
         allow_git_changes: bool,
-    ) -> Result<Vec<WalkTransition>, PrepareError> {
+        mut expected: Option<SessionVersion>,
+    ) -> Result<(Vec<WalkTransition>, Option<SessionVersion>), PrepareError> {
+        ensure_postdominator(self.phase(), target)?;
         let mut guard = 0_u8;
         let mut transitions = Vec::new();
-        while self.phase() != target {
+        loop {
             guard += 1;
             if guard > 16 {
                 return Err(PrepareError::InvalidBatchSelection {
                     detail: format!("walk exceeded early-step guard while advancing to {target}"),
                 });
             }
-            transitions.push(self.step_once(watch, allow_git_changes).await?);
+            let (transition, version) = self
+                .step_toward(target, allow_live_api, allow_git_changes, expected.as_ref())
+                .await?;
+            expected = Some(version);
+            let Some(transition) = transition else {
+                break;
+            };
+            transitions.push(transition);
             if phase_rank(self.phase()) > phase_rank(target)
                 || (phase_rank(self.phase()) == phase_rank(target) && self.phase() != target)
             {
                 return Err(PrepareError::InvalidBatchSelection {
                     detail: format!(
-                        "walk reached branch {} while advancing to {target}; rerun with the matching --until target",
+                        "walk committed unexpected branch {} while advancing to unconditional target {target}; inspect the typed receipt and operation status before any retry",
                         self.phase()
                     ),
                 });
             }
+            if self.phase() == target {
+                break;
+            }
         }
-        Ok(transitions)
+        Ok((transitions, expected))
     }
 
     async fn step_once(
         &mut self,
-        watch: bool,
+        allow_live_api: bool,
         allow_git_changes: bool,
-    ) -> Result<WalkTransition, PrepareError> {
-        let state = std::mem::replace(&mut self.state, WalkState::Empty);
-        let previous = state.phase();
-        let next = match state {
-            WalkState::Empty => {
-                return Err(PrepareError::InvalidBatchSelection {
-                    detail: "walk has not been started; run start first".to_string(),
-                });
-            }
-            WalkState::Failed { phase, detail } => {
-                self.state = WalkState::Failed { phase, detail };
-                return Err(PrepareError::InvalidBatchSelection {
-                    detail: "walk is failed; start a new walk to continue".to_string(),
-                });
-            }
-            WalkState::R0(r0) => match r0.advance(r0_to_r1) {
-                Ok(r1) => {
-                    self.files.remember_campaign(r1.campaign_id());
-                    Ok(WalkState::R1(r1))
-                }
-                Err(error) => Err(error),
-            },
-            WalkState::R1(r1) => r1.advance(r1_to_r2a_or_r3).map(|branch| match branch {
-                typestate::R1Branch::R2a(r2a) => WalkState::R2a(r2a),
-                typestate::R1Branch::R3(r3) => WalkState::R3(r3),
-            }),
-            WalkState::R2a(r2a) => {
-                self.state = WalkState::R2a(r2a);
-                let detail = "walk reached R2a parent-identity initialization boundary; no next admitted step is defined";
-                self.record(format!("blocked at {previous}: {detail}"));
-                return Err(PrepareError::InvalidBatchSelection {
-                    detail: detail.to_string(),
-                });
-            }
-            WalkState::R3(r3) => r3.advance(r3_to_r4a).map(WalkState::R4a),
-            WalkState::R4a(r4a) => r4a.advance(r4a_to_r4b_or_r4c).map(|branch| match branch {
-                typestate::R4aStartupBranch::GenesisChecked(r4b) => WalkState::R4b(r4b),
-                typestate::R4aStartupBranch::PredecessorReady(r4c) => WalkState::R4c(r4c),
-            }),
-            WalkState::R4b(r4b) => r4b.advance(r4b_to_r4c_genesis).map(WalkState::R4c),
-            WalkState::R4c(r4c) => r4c.advance(r4c_to_r5).map(WalkState::R5),
-            WalkState::R5(r5) => r5.advance_async(r5_to_r6).await.map(WalkState::R6),
-            WalkState::R6(r6) => r6.advance(r6_to_r7).map(WalkState::R7),
-            WalkState::R7(r7) => {
-                if watch {
-                    r7.advance_async(r7_to_r8).await.map(WalkState::R8)
-                } else {
-                    self.state = WalkState::R7(r7);
-                    let detail = "walk reached R7 policy-ready boundary; rerun `walk step --watch` to admit the live R8 child-plan authority edge";
-                    self.record(format!("blocked at {previous}: {detail}"));
-                    return Err(PrepareError::InvalidBatchSelection {
-                        detail: detail.to_string(),
-                    });
-                }
-            }
-            WalkState::R8(r8) => r8.advance(r8_to_r9).map(WalkState::R9),
-            WalkState::R9(r9) => r9.advance(r9_to_r10).map(WalkState::R10),
-            WalkState::R10(r10) => {
-                if watch {
-                    r10.advance_async(r10_to_r11)
-                        .await
-                        .map(|branch| match branch {
-                            typestate::R10FanoutBranch::RejectedOnly(r11a) => WalkState::R11a(r11a),
-                            typestate::R10FanoutBranch::FanoutComplete(r11) => WalkState::R11(r11),
-                        })
-                } else {
-                    self.state = WalkState::R10(r10);
-                    let detail = "walk reached R10 selection-strategy boundary; rerun `walk step --watch` to admit the live R11 rejected-only/fanout edge";
-                    self.record(format!("blocked at {previous}: {detail}"));
-                    return Err(PrepareError::InvalidBatchSelection {
-                        detail: detail.to_string(),
-                    });
-                }
-            }
-            WalkState::R11a(r11a) => {
-                r11_to_r12(typestate::R10FanoutBranch::RejectedOnly(r11a)).map(WalkState::R12)
-            }
-            WalkState::R11(r11) => {
-                r11_to_r12(typestate::R10FanoutBranch::FanoutComplete(r11)).map(WalkState::R12)
-            }
-            WalkState::R12(r12) => {
-                // A selected successor may be a rejected child when traversal
-                // policy admits `explore_from_rejected`; the selected coordinate
-                // is still the handoff target. The extra gates here are about
-                // handoff side effects: active checkout mutation, History seal,
-                // parent retirement, and successor spawn/ready evidence.
-                // See docs/active/agents/2026-06-17_typestate-loop-driver-plan.md
-                // Slice 10 and
-                // docs/workflow/evalnomicon/src/prototype1/selection-and-evaluation.md.
-                if r12.has_successor_selection() && !watch {
-                    self.state = WalkState::R12(r12);
-                    let detail = "walk reached R12 with selected-successor evidence; rerun `walk step --watch --allow git-changes` to admit R13b handoff";
-                    self.record(format!("blocked at {previous}: {detail}"));
-                    return Err(PrepareError::InvalidBatchSelection {
-                        detail: detail.to_string(),
-                    });
-                }
-                if r12.has_successor_selection() && !allow_git_changes {
-                    self.state = WalkState::R12(r12);
-                    let detail = "walk R13b handoff installs the selected successor into the active checkout; rerun with `--allow git-changes`";
-                    self.record(format!("blocked at {previous}: {detail}"));
-                    return Err(PrepareError::InvalidBatchSelection {
-                        detail: detail.to_string(),
-                    });
-                }
-                r12.advance(r12_to_r13).map(|branch| match branch {
-                    typestate::R12ContinuationBranch::Stopped(r13a) => WalkState::R13a(r13a),
-                    typestate::R12ContinuationBranch::HandoffCommitted(r13b) => {
-                        WalkState::R13b(r13b)
+        expected: Option<&SessionVersion>,
+    ) -> Result<(WalkTransition, SessionVersion), PrepareError> {
+        let (transition, version) = self
+            .step_claimed(None, allow_live_api, allow_git_changes, expected)
+            .await?;
+        transition
+            .map(|transition| (transition, version))
+            .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                detail: "unbounded walk step stopped without executing an edge".to_string(),
+            })
+    }
+
+    async fn step_toward(
+        &mut self,
+        target: WalkPhase,
+        allow_live_api: bool,
+        allow_git_changes: bool,
+        expected: Option<&SessionVersion>,
+    ) -> Result<(Option<WalkTransition>, SessionVersion), PrepareError> {
+        self.step_claimed(Some(target), allow_live_api, allow_git_changes, expected)
+            .await
+    }
+
+    async fn step_claimed(
+        &mut self,
+        target: Option<WalkPhase>,
+        allow_live_api: bool,
+        allow_git_changes: bool,
+        expected: Option<&SessionVersion>,
+    ) -> Result<(Option<WalkTransition>, SessionVersion), PrepareError> {
+        let lease = match expected {
+            Some(expected) => claim_controller_version(&self.repo_root, RunMode::Step, expected)?,
+            None => claim_controller(&self.repo_root, RunMode::Step)?,
+        };
+        let claimed = lease.cursor().phase;
+        if let Some(target) = target {
+            if claimed == target {
+                let state = match reconstruct_state(&self.repo_root, claimed, lease.handoff_path())
+                {
+                    Ok(state) => state,
+                    Err(source) => {
+                        let release = release_lease(lease).err();
+                        return Err(attach_release(source, release));
                     }
-                })
+                };
+                let version = release_lease_version(lease)?;
+                self.state = state;
+                self.reconstruction = None;
+                return Ok((None, version));
             }
-            WalkState::R13a(r13a) => r13_to_r14(typestate::R12ContinuationBranch::Stopped(r13a))
-                .map(|branch| match branch {
-                    typestate::R14FinalBranch::Stopped(r14a) => WalkState::R14a(r14a),
-                    typestate::R14FinalBranch::Handoff(_) => {
-                        unreachable!("R13a stopped branch cannot produce handoff final state")
-                    }
-                }),
-            WalkState::R13b(r13b) => {
-                r13_to_r14(typestate::R12ContinuationBranch::HandoffCommitted(r13b)).map(|branch| {
-                    match branch {
-                        typestate::R14FinalBranch::Stopped(_) => {
-                            unreachable!("R13b handoff branch cannot produce stopped final state")
-                        }
-                        typestate::R14FinalBranch::Handoff(r14b) => WalkState::R14b(r14b),
-                    }
-                })
-            }
-            WalkState::R14a(r14a) => {
-                self.state = WalkState::R14a(r14a);
-                let detail = "walk reached R14a final stopped-report boundary";
-                self.record(format!("blocked at {previous}: {detail}"));
+            if phase_rank(claimed) > phase_rank(target)
+                || (phase_rank(claimed) == phase_rank(target) && claimed != target)
+            {
+                release_lease(lease)?;
                 return Err(PrepareError::InvalidBatchSelection {
-                    detail: detail.to_string(),
+                    detail: format!(
+                        "durable controller cursor is already at {claimed}, beyond requested target {target}"
+                    ),
                 });
             }
-            WalkState::R14b(r14b) => {
-                self.state = WalkState::R14b(r14b);
-                let detail = "walk reached R14b final successor-handoff report boundary";
-                self.record(format!("blocked at {previous}: {detail}"));
-                return Err(PrepareError::InvalidBatchSelection {
-                    detail: detail.to_string(),
-                });
+        }
+        if !allow_live_api && phase_requires_live(claimed) {
+            let release = release_lease(lease).err();
+            return Err(attach_release(
+                PrepareError::InvalidBatchSelection {
+                    detail: format!(
+                        "walk edge from {claimed} requires live-provider authority; rerun with --allow-live-api"
+                    ),
+                },
+                release,
+            ));
+        }
+        let intent = match lease.intent_with_live_api(allow_live_api, allow_git_changes) {
+            Ok(intent) => intent,
+            Err(source) => {
+                let release = release_lease(lease).err();
+                return Err(attach_release(session_error(source), release));
             }
         };
-        match next {
-            Ok(state) => {
-                let current = state.phase();
-                self.state = state;
-                self.steps += 1;
-                self.reconstruction = None;
-                self.record(format!("step {}: {previous} -> {current}", self.steps));
-                Ok(WalkTransition {
-                    from: previous,
-                    to: current,
-                })
-            }
-            Err(error) => {
-                let error = if previous == WalkPhase::R4a {
-                    PrepareError::DatabaseSetup {
-                        phase: "prototype1_parent_checkout",
-                        detail: reconstruct::format_r4a_blocker(&self.repo_root, &error),
-                    }
-                } else {
-                    error
-                };
-                let detail = error.to_string();
-                self.state = WalkState::Failed {
-                    phase: previous,
+        let (lease, receipt, committed_state) = match advance_controlled(lease, intent).await {
+            Ok(ControlAdvance::Existing { lease, receipt }) => (lease, receipt, None),
+            Ok(ControlAdvance::Finished {
+                finished: Finished::Terminal { lease, receipt, .. },
+                state,
+            }) => (lease, receipt, Some(state)),
+            Ok(ControlAdvance::Finished {
+                finished: Finished::Uncertain { receipt, .. },
+                ..
+            }) => {
+                let phase = receipt.intent.expected;
+                let detail = result_detail(&receipt.result).to_string();
+                self.state = WalkState::Blocked {
+                    phase,
                     detail: detail.clone(),
                 };
-                self.record(format!("failed at {previous}: {detail}"));
-                Err(error)
+                self.record(format!("indeterminate at {phase}: {detail}"));
+                return Err(PrepareError::InvalidBatchSelection { detail });
+            }
+            Err(failure) => return Err(control_error(failure)),
+        };
+
+        let from = receipt.intent.expected;
+        let result = receipt.result.clone();
+        let phase = lease.cursor().phase;
+        if let Some(state) = committed_state {
+            self.state = state;
+            self.reconstruction = None;
+        } else {
+            if self.state.phase() != phase {
+                let detail = format!(
+                    "replayed terminal receipt at {phase} without resident post-edge typestate; durable receipt remains committed"
+                );
+                self.state = WalkState::Blocked {
+                    phase,
+                    detail: detail.clone(),
+                };
+                self.record(detail);
+            }
+        }
+        let version = release_lease_version(lease)?;
+
+        match result {
+            AttemptResult::Committed { phase: to, .. } => {
+                let transition = WalkTransition { from, to };
+                self.steps += 1;
+                self.record(format!(
+                    "step {}: {} -> {}",
+                    self.steps, transition.from, transition.to
+                ));
+                Ok((Some(transition), version))
+            }
+            AttemptResult::Rejected { detail, .. } | AttemptResult::Cancelled { detail, .. } => {
+                self.record(format!("blocked at {phase}: {detail}"));
+                Err(PrepareError::InvalidBatchSelection { detail })
+            }
+            AttemptResult::Indeterminate { detail, .. } => {
+                self.state = WalkState::Blocked {
+                    phase,
+                    detail: detail.clone(),
+                };
+                self.record(format!("indeterminate at {phase}: {detail}"));
+                Err(PrepareError::InvalidBatchSelection { detail })
             }
         }
     }
-
     fn replay_cursor_mut(&mut self) -> Result<&mut ReplayCursor, PrepareError> {
         if self.replay.is_none() {
             self.replay = Some(ReplayCursor::load(&self.repo_root)?);
@@ -1748,70 +2058,110 @@ impl WalkController {
     }
 }
 
-impl WalkState {
-    fn phase(&self) -> WalkPhase {
-        match self {
-            WalkState::Empty => WalkPhase::Empty,
-            WalkState::R0(_) => WalkPhase::R0,
-            WalkState::R1(_) => WalkPhase::R1,
-            WalkState::R2a(_) => WalkPhase::R2a,
-            WalkState::R3(_) => WalkPhase::R3,
-            WalkState::R4a(_) => WalkPhase::R4a,
-            WalkState::R4b(_) => WalkPhase::R4b,
-            WalkState::R4c(_) => WalkPhase::R4c,
-            WalkState::R5(_) => WalkPhase::R5,
-            WalkState::R6(_) => WalkPhase::R6,
-            WalkState::R7(_) => WalkPhase::R7,
-            WalkState::R8(_) => WalkPhase::R8,
-            WalkState::R9(_) => WalkPhase::R9,
-            WalkState::R10(_) => WalkPhase::R10,
-            WalkState::R11a(_) => WalkPhase::R11a,
-            WalkState::R11(_) => WalkPhase::R11,
-            WalkState::R12(_) => WalkPhase::R12,
-            WalkState::R13a(_) => WalkPhase::R13a,
-            WalkState::R13b(_) => WalkPhase::R13b,
-            WalkState::R14a(_) => WalkPhase::R14a,
-            WalkState::R14b(_) => WalkPhase::R14b,
-            WalkState::Failed { phase, .. } => *phase,
-        }
-    }
-
-    fn from_early(state: EarlyState) -> Self {
-        match state {
-            EarlyState::R1(r1) => WalkState::R1(r1),
-            EarlyState::R3(r3) => WalkState::R3(r3),
-            EarlyState::R4a(r4a) => WalkState::R4a(r4a),
-            EarlyState::R4b(r4b) => WalkState::R4b(r4b),
-            EarlyState::R4c(r4c) => WalkState::R4c(r4c),
-            EarlyState::R5(r5) => WalkState::R5(r5),
-            EarlyState::R6(r6) => WalkState::R6(r6),
-            EarlyState::R7(r7) => WalkState::R7(r7),
-            EarlyState::R10(r10) => WalkState::R10(r10),
-            EarlyState::R12(r12) => WalkState::R12(r12),
-            EarlyState::R13a(r13a) => WalkState::R13a(r13a),
-            EarlyState::R13b(r13b) => WalkState::R13b(r13b),
-            EarlyState::R14a(r14a) => WalkState::R14a(r14a),
-            EarlyState::R14b(r14b) => WalkState::R14b(r14b),
+fn reconstruct_state(
+    repo_root: &Path,
+    phase: WalkPhase,
+    handoff: Option<&Path>,
+) -> Result<WalkState, PrepareError> {
+    let snapshot = match handoff {
+        Some(path) => reconstruct::reconstruct_handoff_at(repo_root, phase, path)?,
+        None => reconstruct::reconstruct_at(repo_root, phase)?,
+    };
+    match snapshot.state {
+        Some(state) => Ok(WalkState::from_reconstructed(state)),
+        None => {
+            let detail = snapshot.blocked.map_or_else(
+                || {
+                    if snapshot.blockers.is_empty() {
+                        format!("durable reconstruction did not produce typed authority at {phase}")
+                    } else {
+                        snapshot.blockers.join("; ")
+                    }
+                },
+                |blocked| blocked.detail,
+            );
+            Err(PrepareError::InvalidBatchSelection { detail })
         }
     }
 }
 
-fn phase_for_early(state: &EarlyState) -> WalkPhase {
-    match state {
-        EarlyState::R1(_) => WalkPhase::R1,
-        EarlyState::R3(_) => WalkPhase::R3,
-        EarlyState::R4a(_) => WalkPhase::R4a,
-        EarlyState::R4b(_) => WalkPhase::R4b,
-        EarlyState::R4c(_) => WalkPhase::R4c,
-        EarlyState::R5(_) => WalkPhase::R5,
-        EarlyState::R6(_) => WalkPhase::R6,
-        EarlyState::R7(_) => WalkPhase::R7,
-        EarlyState::R10(_) => WalkPhase::R10,
-        EarlyState::R12(_) => WalkPhase::R12,
-        EarlyState::R13a(_) => WalkPhase::R13a,
-        EarlyState::R13b(_) => WalkPhase::R13b,
-        EarlyState::R14a(_) => WalkPhase::R14a,
-        EarlyState::R14b(_) => WalkPhase::R14b,
+fn release_lease(lease: Lease<Idle>) -> Result<(), PrepareError> {
+    match lease.release() {
+        Ok(_) => Ok(()),
+        Err(Failure::Retained {
+            authority,
+            source: first,
+        }) => authority
+            .release()
+            .map(|_| ())
+            .map_err(|retry| match retry {
+                Failure::Retained { source, .. } | Failure::Uncertain { source } => {
+                    session_error(format!("{source}; first release failed: {first}"))
+                }
+            }),
+        Err(Failure::Uncertain { source }) => Err(session_error(source)),
+    }
+}
+
+fn release_lease_version(lease: Lease<Idle>) -> Result<SessionVersion, PrepareError> {
+    let session_id = lease.session_id();
+    let cursor = lease.cursor().clone();
+    let receipt = match lease.release() {
+        Ok(receipt) => receipt,
+        Err(Failure::Retained {
+            authority,
+            source: first,
+        }) => authority.release().map_err(|retry| match retry {
+            Failure::Retained { source, .. } | Failure::Uncertain { source } => {
+                session_error(format!("{source}; first release failed: {first}"))
+            }
+        })?,
+        Err(Failure::Uncertain { source }) => return Err(session_error(source)),
+    };
+    Ok(SessionVersion {
+        session_id: Some(session_id),
+        cursor: Some(cursor),
+        journal_revision: receipt.source_event_index + 1,
+    })
+}
+
+fn control_error(failure: ControlFailure) -> PrepareError {
+    match failure {
+        ControlFailure::Reconstruct { lease, source } => {
+            let release = release_lease(lease).err();
+            attach_release(source, release)
+        }
+        ControlFailure::Admission(Failure::Retained { authority, source }) => {
+            let release = release_lease(authority).err();
+            attach_release(session_error(source), release)
+        }
+        ControlFailure::Admission(Failure::Uncertain { source }) => session_error(source),
+        ControlFailure::Persist(Failure::Retained { source, .. })
+        | ControlFailure::Persist(Failure::Uncertain { source }) => session_error(source),
+    }
+}
+
+fn attach_release(source: PrepareError, release: Option<PrepareError>) -> PrepareError {
+    match release {
+        Some(release) => PrepareError::InvalidBatchSelection {
+            detail: format!("{source}; controller release also failed: {release}"),
+        },
+        None => source,
+    }
+}
+
+fn result_detail(result: &AttemptResult) -> &str {
+    match result {
+        AttemptResult::Rejected { detail, .. }
+        | AttemptResult::Cancelled { detail, .. }
+        | AttemptResult::Indeterminate { detail, .. } => detail,
+        AttemptResult::Committed { .. } => "committed result lost idle authority",
+    }
+}
+
+fn session_error(source: impl std::fmt::Display) -> PrepareError {
+    PrepareError::InvalidBatchSelection {
+        detail: format!("controller session error: {source}"),
     }
 }
 
@@ -1903,20 +2253,65 @@ fn phase_rank(phase: WalkPhase) -> u8 {
         WalkPhase::Empty => 0,
         WalkPhase::R0 => 1,
         WalkPhase::R1 => 2,
-        WalkPhase::R2a | WalkPhase::R3 => 3,
-        WalkPhase::R4a => 4,
-        WalkPhase::R4b | WalkPhase::R4c => 5,
-        WalkPhase::R5 => 6,
-        WalkPhase::R6 => 7,
-        WalkPhase::R7 => 8,
-        WalkPhase::R8 => 9,
-        WalkPhase::R9 => 10,
-        WalkPhase::R10 => 11,
-        WalkPhase::R11a | WalkPhase::R11 => 12,
-        WalkPhase::R12 => 13,
-        WalkPhase::R13a | WalkPhase::R13b => 14,
-        WalkPhase::R14a | WalkPhase::R14b => 15,
+        WalkPhase::R2a => 3,
+        WalkPhase::R3 => 4,
+        WalkPhase::R4a => 5,
+        WalkPhase::R4b => 6,
+        WalkPhase::R4c => 7,
+        WalkPhase::R5 => 8,
+        WalkPhase::R6 => 9,
+        WalkPhase::R7 => 10,
+        WalkPhase::R8 => 11,
+        WalkPhase::R9 => 12,
+        WalkPhase::R10 => 13,
+        WalkPhase::R11a | WalkPhase::R11 => 14,
+        WalkPhase::R12 => 15,
+        WalkPhase::R13a | WalkPhase::R13b | WalkPhase::R13c => 16,
+        WalkPhase::R14a | WalkPhase::R14b => 17,
     }
+}
+
+fn phase_requires_live(phase: WalkPhase) -> bool {
+    let mut edges = ControlEdge::ALL
+        .into_iter()
+        .filter(|edge| edge.from() == phase);
+    let Some(first) = edges.next() else {
+        return false;
+    };
+    first.requires_live() && edges.all(ControlEdge::requires_live)
+}
+
+fn ensure_start_bound(version: &SessionVersion, target: WalkPhase) -> Result<(), PrepareError> {
+    let origin = match version.phase() {
+        WalkPhase::Empty => WalkPhase::R3,
+        phase => phase,
+    };
+    ensure_postdominator(origin, target)
+}
+
+fn ensure_postdominator(from: WalkPhase, target: WalkPhase) -> Result<(), PrepareError> {
+    let mut pending = vec![from];
+    let mut visited = Vec::new();
+    while let Some(phase) = pending.pop() {
+        if phase == target || visited.contains(&phase) {
+            continue;
+        }
+        visited.push(phase);
+        let next = ControlEdge::ALL
+            .into_iter()
+            .filter(|edge| edge.from() == phase)
+            .map(ControlEdge::to)
+            .collect::<Vec<_>>();
+        if next.is_empty() {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "bounded target {target} is branch-specific from {from}; use one unbounded Step, inspect its typed receipt, then choose the next target"
+                ),
+            });
+        }
+        pending.extend(next);
+    }
+    Ok(())
 }
 
 trait NextPhase {
@@ -1929,7 +2324,7 @@ impl NextPhase for WalkPhase {
             WalkPhase::Empty => Some(WalkPhase::R0),
             WalkPhase::R0 => Some(WalkPhase::R1),
             WalkPhase::R1 => Some(WalkPhase::R3),
-            WalkPhase::R2a => None,
+            WalkPhase::R2a => Some(WalkPhase::R3),
             WalkPhase::R3 => Some(WalkPhase::R4a),
             WalkPhase::R4a => Some(WalkPhase::R4c),
             WalkPhase::R4b => Some(WalkPhase::R4c),
@@ -1945,6 +2340,7 @@ impl NextPhase for WalkPhase {
             WalkPhase::R12 => Some(WalkPhase::R13a),
             WalkPhase::R13a => Some(WalkPhase::R14a),
             WalkPhase::R13b => Some(WalkPhase::R14b),
+            WalkPhase::R13c => None,
             WalkPhase::R14a => None,
             WalkPhase::R14b => None,
         }
@@ -1952,6 +2348,12 @@ impl NextPhase for WalkPhase {
 }
 
 fn ensure_supported_target(target: WalkPhase) -> Result<(), PrepareError> {
+    if target == WalkPhase::R14b {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: "step-mode walk target r14b crosses the R13b successor runtime boundary; take one bare Step at R12 with the advertised checkout grant and inspect its typed receipt. R14b finalization requires predecessor authority retained across the handoff and is not admitted through the transferred successor controller"
+                .to_string(),
+        });
+    }
     if target.is_early_boundary() {
         Ok(())
     } else {
@@ -1959,6 +2361,64 @@ fn ensure_supported_target(target: WalkPhase) -> Result<(), PrepareError> {
             detail: format!("walk target {target} is not supported by the current server slice"),
         })
     }
+}
+
+fn step_target(
+    phase: WalkPhase,
+    until: Option<WalkPhase>,
+    allow_live_api: bool,
+    r12_handoff: bool,
+) -> Result<WalkPhase, PrepareError> {
+    let target = until.unwrap_or_else(|| {
+        if allow_live_api && phase == WalkPhase::R7 {
+            WalkPhase::R8
+        } else if r12_handoff {
+            WalkPhase::R13b
+        } else {
+            phase.next().unwrap_or(phase)
+        }
+    });
+    ensure_supported_target(target)?;
+    ensure_branch_target(phase, target, r12_handoff)?;
+    Ok(target)
+}
+
+fn ensure_branch_target(
+    phase: WalkPhase,
+    target: WalkPhase,
+    r12_handoff: bool,
+) -> Result<(), PrepareError> {
+    if phase == WalkPhase::R12 {
+        if r12_handoff && matches!(target, WalkPhase::R13a | WalkPhase::R14a) {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "target {target} is the stopped branch, but the R12 continuation authorizes successor handoff; take one bare Step with --allow git-changes and inspect its typed receipt"
+                ),
+            });
+        }
+        if !r12_handoff && matches!(target, WalkPhase::R13b | WalkPhase::R13c | WalkPhase::R14b) {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "target {target} is the successor-handoff branch, but the R12 continuation does not authorize handoff; take one bare Step and inspect its typed receipt"
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+pub(crate) fn test_r12_target(
+    r12: &typestate::R12<
+        crate::cli::prototype1_state::cli_facing::Prototype1StateRunShape,
+        crate::ResolvedCampaignConfig,
+    >,
+    until: Option<WalkPhase>,
+) -> Result<WalkPhase, PrepareError> {
+    let handoff = r12
+        .preview_continuation()?
+        .is_some_and(|decision| decision.disposition.allows_successor());
+    step_target(WalkPhase::R12, until, false, handoff)
 }
 
 fn push_changes(lines: &mut Vec<String>, from: WalkPhase, to: WalkPhase, label: &str) {
@@ -2005,13 +2465,13 @@ fn push_verbose_changes(
     for delta in to.axis_deltas_from(from) {
         lines.push(format!(
             "  - {}:",
-            highlight_changed(delta.label, style.color)
+            highlight_changed(delta.axis.as_str(), style.color)
         ));
         lines.push("    removed:".to_string());
         push_type_lines(lines, &delta.from, 6, style.color, highlight_removed);
         lines.push("    added:".to_string());
         push_type_lines(lines, &delta.to, 6, style.color, highlight_added);
-        if delta.label != "phase" {
+        if delta.axis != typestate::RuntimeAxis::Phase {
             let removed = delta.removed_structures();
             if !removed.is_empty() {
                 lines.push("    structures removed:".to_string());
@@ -2048,12 +2508,12 @@ fn push_axis_delta(
     style: DeltaRenderStyle,
     indent: usize,
 ) {
-    let compact = format!("{}: {} -> {}", delta.label, delta.from, delta.to);
+    let compact = format!("{}: {} -> {}", delta.axis.as_str(), delta.from, delta.to);
     if compact.len() <= 96 {
         lines.push(format!(
             "{}- {}: {} -> {}",
             " ".repeat(indent),
-            highlight_changed(delta.label, style.color),
+            highlight_changed(delta.axis.as_str(), style.color),
             highlight_removed(&delta.from, style.color),
             highlight_added(&delta.to, style.color)
         ));
@@ -2062,7 +2522,7 @@ fn push_axis_delta(
     lines.push(format!(
         "{}- {}:",
         " ".repeat(indent),
-        highlight_changed(delta.label, style.color)
+        highlight_changed(delta.axis.as_str(), style.color)
     ));
     push_type_lines(
         lines,
@@ -2198,6 +2658,13 @@ fn paint(value: &str, color: bool, code: &str) -> String {
 
 fn push_next_steps(lines: &mut Vec<String>, phase: WalkPhase) {
     lines.push("next:".to_string());
+    if phase == WalkPhase::R13b {
+        lines.push(
+            "  (step-mode authority transferred at r13b; r14b finalization requires a retained predecessor lease in continuous mode)"
+                .to_string(),
+        );
+        return;
+    }
     let steps = phase.next_steps();
     if steps.is_empty() {
         lines.push("  (no admitted next step in this server slice)".to_string());
@@ -3351,7 +3818,7 @@ fn push_prompt_message(
 }
 
 fn render_llm_prompt_json(
-    controller: &WalkController,
+    inspector: &LlmInspector,
     lane: &LlmLane,
     step: usize,
     messages: &[ploke_tui::llm::RequestMessage],
@@ -3376,7 +3843,7 @@ fn render_llm_prompt_json(
         "session": lane.session.session_id,
         "step": step,
         "source": "persisted_checkpoint_request_messages",
-        "provenance": provenance_value(&controller.repo_root, &lane.session.workspace),
+        "provenance": provenance_value(&inspector.repo_root, &lane.session.workspace),
         "note": "provider request envelope and tool definitions are not persisted in this checkpoint record",
         "filters": {
             "role": role.map(role_label),
@@ -3529,7 +3996,7 @@ fn short_sha(commit: &str) -> String {
 }
 
 fn render_llm_tool_json(
-    controller: &WalkController,
+    inspector: &LlmInspector,
     lane: &LlmLane,
     step: Option<usize>,
     selected_call: Option<&ToolRequestRecord>,
@@ -3545,7 +4012,7 @@ fn render_llm_tool_json(
         "session": lane.session.session_id,
         "step": step,
         "tool": tool_name,
-        "provenance": provenance_value(&controller.repo_root, &lane.session.workspace),
+        "provenance": provenance_value(&inspector.repo_root, &lane.session.workspace),
         "definition_source": "current_renderer_checkout",
         "tool_definition": definition,
         "call_id": selected_call.map(|request| request.call_id.as_str()),
@@ -4197,8 +4664,12 @@ impl WalkFiles {
         }
         let mut lines = vec!["tracked output files:".to_string()];
         for file in &self.tracked {
-            lines.push(format!("--- {}: {} ---", file.label, file.path.display()));
-            lines.push(preview_file(&file.path));
+            lines.push(format!(
+                "{}: {} ({})",
+                file.label,
+                file.path.display(),
+                file_metadata(&file.path)
+            ));
         }
         lines.join("\n")
     }
@@ -4226,41 +4697,21 @@ fn display_dir(path: &Path) -> String {
     value
 }
 
-fn preview_file(path: &Path) -> String {
+fn file_metadata(path: &Path) -> String {
     let metadata = match fs::metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return "(missing)".to_string();
+            return "missing".to_string();
         }
-        Err(error) => return format!("(metadata error: {error})"),
+        Err(error) => return format!("metadata error: {error}"),
     };
-    if !metadata.is_file() {
-        return format!("(not a regular file; {} bytes)", metadata.len());
+    if metadata.is_file() {
+        format!("{} bytes", metadata.len())
+    } else if metadata.is_dir() {
+        "directory".to_string()
+    } else {
+        format!("non-regular file; {} bytes", metadata.len())
     }
-    let mut file = match fs::File::open(path) {
-        Ok(file) => file,
-        Err(error) => return format!("(open error: {error})"),
-    };
-    let mut bytes = Vec::new();
-    let read = file
-        .by_ref()
-        .take((MAX_FILE_BYTES + 1) as u64)
-        .read_to_end(&mut bytes);
-    if let Err(error) = read {
-        return format!("(read error: {error})");
-    }
-    let truncated = bytes.len() > MAX_FILE_BYTES;
-    if truncated {
-        bytes.truncate(MAX_FILE_BYTES);
-    }
-    let mut header = format!("{} bytes", metadata.len());
-    if truncated {
-        header.push_str(&format!("; showing first {MAX_FILE_BYTES} bytes"));
-    }
-    if bytes.is_empty() {
-        return format!("{header}\n(empty)");
-    }
-    format!("{header}\n{}", String::from_utf8_lossy(&bytes))
 }
 
 #[cfg(test)]
@@ -4277,13 +4728,277 @@ mod tests {
     use uuid::Uuid;
 
     use crate::{
-        cli::prototype1_state::identity::{ParentIdentity, write_parent_identity},
+        cli::prototype1_state::{
+            event::{ContentHash, TransitionId},
+            identity::{ParentIdentity, write_parent_identity},
+            session::{Cursor, SessionId},
+        },
         replay::tool_loop::{
             FsToolLoopStore, ToolLoopResult, ToolLoopResume, ToolLoopSession, ToolLoopStep,
             ToolLoopStore, WorkspaceState,
         },
         test_support::env_guard_os,
     };
+
+    fn version_at(phase: WalkPhase) -> SessionVersion {
+        SessionVersion {
+            session_id: None,
+            cursor: Some(Cursor::new(phase, ContentHash::of(phase.as_str())).expect("cursor")),
+            journal_revision: 1,
+        }
+    }
+
+    #[test]
+    fn files_report_is_metadata_only_and_bounded() {
+        let root = tempfile::tempdir().expect("file report root");
+        let path = root.path().join("large-journal.jsonl");
+        fs::write(&path, vec![b'x'; 256 * 1024]).expect("write large tracked file");
+        let mut files = WalkFiles::default();
+        files.root = Some(root.path().to_path_buf());
+        files.push("transition_journal", path.clone());
+
+        let report = files.render();
+
+        assert!(
+            report.len() < 1_024,
+            "file report was not bounded: {}",
+            report.len()
+        );
+        assert!(report.contains("transition_journal"), "{report}");
+        assert!(report.contains(path.to_string_lossy().as_ref()), "{report}");
+        assert!(report.contains("262144 bytes"), "{report}");
+        assert!(!report.contains(&"x".repeat(128)), "{report}");
+    }
+
+    #[test]
+    fn phase_rank_increases_across_every_control_edge() {
+        for edge in ControlEdge::ALL {
+            assert!(
+                phase_rank(edge.from()) < phase_rank(edge.to()),
+                "{edge} does not advance the phase rank: {} -> {}",
+                edge.from(),
+                edge.to()
+            );
+        }
+    }
+
+    #[test]
+    fn r13b_next_output_explains_step_authority_boundary() {
+        assert!(WalkPhase::R13b.next_steps().is_empty());
+        assert_eq!(
+            WalkPhase::R13b
+                .topology_steps()
+                .first()
+                .map(|step| step.phase),
+            Some(WalkPhase::R14b)
+        );
+        let mut lines = Vec::new();
+        push_next_steps(&mut lines, WalkPhase::R13b);
+        let rendered = lines.join("\n");
+
+        assert!(rendered.contains("step-mode authority transferred at r13b"));
+        assert!(rendered.contains("retained predecessor lease in continuous mode"));
+        assert!(!rendered.contains("r13_to_r14"));
+    }
+
+    #[test]
+    fn phase_rank_groups_alternative_branches() {
+        for (left, right) in [
+            (WalkPhase::R11a, WalkPhase::R11),
+            (WalkPhase::R13a, WalkPhase::R13b),
+            (WalkPhase::R13a, WalkPhase::R13c),
+            (WalkPhase::R14a, WalkPhase::R14b),
+        ] {
+            assert_eq!(
+                phase_rank(left),
+                phase_rank(right),
+                "alternative phases must remain incomparable: {left}, {right}"
+            );
+        }
+    }
+
+    #[test]
+    fn bounded_targets_require_postdominators() {
+        for (from, target) in [
+            (WalkPhase::R1, WalkPhase::R3),
+            (WalkPhase::R4a, WalkPhase::R4c),
+            (WalkPhase::R10, WalkPhase::R12),
+            (WalkPhase::R3, WalkPhase::R12),
+        ] {
+            ensure_postdominator(from, target)
+                .unwrap_or_else(|error| panic!("{target} must post-dominate {from}: {error}"));
+        }
+
+        for (from, target) in [
+            (WalkPhase::R1, WalkPhase::R2a),
+            (WalkPhase::R4a, WalkPhase::R4b),
+            (WalkPhase::R10, WalkPhase::R11),
+            (WalkPhase::R10, WalkPhase::R11a),
+            (WalkPhase::R12, WalkPhase::R13a),
+            (WalkPhase::R12, WalkPhase::R13b),
+            (WalkPhase::R12, WalkPhase::R13c),
+        ] {
+            let error = ensure_postdominator(from, target)
+                .expect_err("branch-specific bound must fail before controller admission");
+            assert!(error.to_string().contains("use one unbounded Step"));
+        }
+    }
+
+    #[tokio::test]
+    async fn branch_bound_rejects_before_repo_access() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let repo = root.path().join("absent-repo");
+        let mut controller = WalkController::new(repo.clone());
+
+        let error = controller
+            .advance_until(WalkPhase::R2a, false, false, None)
+            .await
+            .err()
+            .expect("branch-specific bound must fail before an edge claim");
+
+        assert!(error.to_string().contains("branch-specific"));
+        assert_eq!(controller.phase(), WalkPhase::Empty);
+        assert_eq!(controller.steps, 0);
+        assert!(
+            !repo.exists(),
+            "preflight must not access or create the repo"
+        );
+    }
+
+    #[tokio::test]
+    async fn step_refreshes_before_trusting_in_memory_state() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let repo = temp.path().join("repo");
+        fs::create_dir_all(&repo).expect("create repo");
+        let output = std::process::Command::new("git")
+            .current_dir(&repo)
+            .args(["init", "--quiet"])
+            .output()
+            .expect("initialize git repo");
+        assert!(
+            output.status.success(),
+            "git init failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let mut controller = WalkController::new(repo);
+        controller.state = WalkState::Blocked {
+            phase: WalkPhase::R13c,
+            detail: "persisted successor handoff is incomplete".to_string(),
+        };
+
+        let error = controller
+            .step(None, true, true)
+            .await
+            .err()
+            .expect("default step must not report a successful no-op at R13c");
+
+        assert_eq!(controller.phase(), WalkPhase::Empty);
+        assert!(
+            error.to_string().contains("no Prototype 1 parent identity"),
+            "{error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn start_rejects_cross_root_config_without_mutating_controller() {
+        let root = tempfile::tempdir().expect("server root");
+        let other = tempfile::tempdir().expect("other root");
+        let server_root = root.path().canonicalize().expect("canonical server root");
+        let mut controller = WalkController::new(server_root.clone());
+        controller.steps = 7;
+
+        let error = controller
+            .start(
+                WalkStartConfig {
+                    campaign: None,
+                    repo_root: Some(other.path().to_path_buf()),
+                },
+                WalkPhase::R3,
+                false,
+            )
+            .await
+            .err()
+            .expect("cross-root start must fail before controller mutation");
+
+        assert!(error.to_string().contains("does not match the server root"));
+        assert_eq!(controller.repo_root, server_root);
+        assert_eq!(controller.phase(), WalkPhase::Empty);
+        assert_eq!(controller.steps, 7);
+    }
+
+    #[tokio::test]
+    async fn reconstructed_start_failure_preserves_controller_evidence() {
+        let root = tempfile::tempdir().expect("server root");
+        let repo = root.path().join("repo");
+        let campaign = CampaignId::from("active-campaign");
+        write_test_identity(&repo, &campaign);
+        let mut controller = WalkController::new(repo.clone());
+        controller.state = WalkState::Blocked {
+            phase: WalkPhase::R4c,
+            detail: "preserved reconstruction".to_string(),
+        };
+        controller.reconstruction = Some(WalkReconstruction {
+            notes: vec!["preserved note".to_string()],
+            blockers: vec!["preserved blocker".to_string()],
+        });
+        controller
+            .files
+            .push("preserved_file", repo.join("preserved.json"));
+        controller.steps = 9;
+        let tracked: Vec<_> = controller
+            .files
+            .tracked
+            .iter()
+            .map(|file| (file.label, file.path.clone()))
+            .collect();
+
+        let error = controller
+            .start_version(
+                WalkStartConfig {
+                    campaign: Some(CampaignId::from("other-campaign")),
+                    repo_root: None,
+                },
+                WalkPhase::R3,
+                false,
+                &SessionVersion::empty(),
+            )
+            .await
+            .err()
+            .expect("campaign mismatch must reject reconstructed start");
+
+        assert!(
+            error
+                .to_string()
+                .contains("does not match the active checkout parent")
+        );
+        assert_eq!(controller.phase(), WalkPhase::R4c);
+        assert_eq!(controller.steps, 9);
+        let reconstruction = controller
+            .reconstruction
+            .as_ref()
+            .expect("reconstruction must remain attached");
+        assert_eq!(reconstruction.notes, ["preserved note"]);
+        assert_eq!(reconstruction.blockers, ["preserved blocker"]);
+        assert_eq!(
+            controller
+                .files
+                .tracked
+                .iter()
+                .map(|file| (file.label, file.path.clone()))
+                .collect::<Vec<_>>(),
+            tracked
+        );
+    }
+
+    #[test]
+    fn start_and_step_preflight_blocks_r5_without_live_capability() {
+        assert!(phase_requires_live(WalkPhase::R5));
+        assert!(phase_requires_live(WalkPhase::R7));
+        assert!(phase_requires_live(WalkPhase::R10));
+        assert!(!phase_requires_live(WalkPhase::R4c));
+        assert!(!phase_requires_live(WalkPhase::R6));
+        assert!(!phase_requires_live(WalkPhase::R12));
+    }
 
     fn content_response(index: usize) -> RawFullResponseRecord {
         let response = serde_json::from_value(serde_json::json!({
@@ -4394,10 +5109,10 @@ mod tests {
     #[test]
     fn llm_step_requires_explicit_workspace_mutation_gate() {
         let root = tempfile::tempdir().expect("tempdir");
-        let controller = WalkController::new(root.path().join("repo"));
+        let inspector = LlmInspector::new(root.path().join("repo"));
         let store = FsToolLoopStore::new(root.path().join("tool-loop"));
 
-        let result = controller.prepare_llm_step(
+        let result = inspector.prepare_llm_step(
             &store,
             &dummy_lane(),
             None,
@@ -4423,10 +5138,10 @@ mod tests {
     #[test]
     fn live_llm_step_requires_watch_gate() {
         let root = tempfile::tempdir().expect("tempdir");
-        let controller = WalkController::new(root.path().join("repo"));
+        let inspector = LlmInspector::new(root.path().join("repo"));
         let store = FsToolLoopStore::new(root.path().join("tool-loop"));
 
-        let result = controller.prepare_llm_step(
+        let result = inspector.prepare_llm_step(
             &store,
             &dummy_lane(),
             None,
@@ -4508,13 +5223,13 @@ mod tests {
         .expect("step");
         store.write_step(&step).expect("step file");
 
-        let mut controller = WalkController::new(tmp.path().join("repo"));
-        controller
+        let mut inspector = LlmInspector::new(tmp.path().join("repo"));
+        inspector
             .focus_llm_session_head(&store, "branched-session")
             .expect("focus branched session");
 
-        assert_eq!(controller.llm_focus.as_deref(), Some("branched-session"));
-        assert_eq!(controller.llm_cursors.get("branched-session"), Some(&3));
+        assert_eq!(inspector.focus.as_deref(), Some("branched-session"));
+        assert_eq!(inspector.cursors.get("branched-session"), Some(&3));
     }
 
     #[test]
@@ -4610,12 +5325,10 @@ mod tests {
             resume: None,
             head: Some(2),
         };
-        let mut controller = WalkController::new(tmp.path().join("repo"));
-        controller
-            .llm_cursors
-            .insert("session-timeline".to_string(), 1);
+        let mut inspector = LlmInspector::new(tmp.path().join("repo"));
+        inspector.cursors.insert("session-timeline".to_string(), 1);
 
-        let rendered = controller
+        let rendered = inspector
             .render_llm_timeline(&store, lane)
             .expect("timeline render");
 
@@ -4684,7 +5397,7 @@ mod tests {
             latency_ms: 0,
         }));
 
-        let rendered = WalkController::new(tmp.path().join("repo")).render_llm_checkpoint(
+        let rendered = LlmInspector::new(tmp.path().join("repo")).render_llm_checkpoint(
             &store,
             lane,
             Some((2, step)),
@@ -4729,9 +5442,9 @@ mod tests {
             WorkspaceState::default(),
         )
         .expect("step");
-        let controller = WalkController::new(tmp.path().join("repo"));
+        let inspector = LlmInspector::new(tmp.path().join("repo"));
 
-        let rendered = controller
+        let rendered = inspector
             .render_llm_prompt(lane.clone(), 0, step.clone(), None, None, false, false)
             .expect("human prompt render");
 
@@ -4744,7 +5457,7 @@ mod tests {
         assert!(rendered.contains("user task"));
         assert!(rendered.contains("walk llm prompt --step 0 --json"));
 
-        let json = controller
+        let json = inspector
             .render_llm_prompt(lane, 0, step, Some("user"), None, false, true)
             .expect("json prompt render");
         let value: serde_json::Value = serde_json::from_str(&json).expect("prompt json");
@@ -4849,9 +5562,9 @@ mod tests {
                 call_id: "call-read".to_string(),
             }],
         );
-        let controller = WalkController::new(tmp.path().join("repo"));
+        let inspector = LlmInspector::new(tmp.path().join("repo"));
 
-        let rendered = controller
+        let rendered = inspector
             .render_llm_protocol(&lane, &report, false)
             .expect("protocol render");
 
@@ -4862,7 +5575,7 @@ mod tests {
         assert!(rendered.contains("usefulness=key_progress/high"));
         assert!(rendered.contains("concerns=RecoveryOpportunity"));
 
-        let json = controller
+        let json = inspector
             .render_llm_protocol(&lane, &report, true)
             .expect("protocol json");
         let value: serde_json::Value = serde_json::from_str(&json).expect("protocol json value");
@@ -4923,8 +5636,8 @@ mod tests {
             arguments: ToolArgumentsJson::from(r#"{"dir":"crates/ploke-tree-browser"}"#),
         });
 
-        let controller = WalkController::new(tmp.path().join("repo"));
-        let rendered = controller
+        let inspector = LlmInspector::new(tmp.path().join("repo"));
+        let rendered = inspector
             .render_llm_tool(lane.clone(), Some((2, step.clone())), None, None, false)
             .expect("human tool render");
 
@@ -4938,7 +5651,7 @@ mod tests {
         assert!(rendered.contains("parameters:"));
         assert!(rendered.contains("dir: string required"));
 
-        let json = controller
+        let json = inspector
             .render_llm_tool(lane, Some((2, step)), None, None, true)
             .expect("json tool render");
         let value: serde_json::Value = serde_json::from_str(&json).expect("tool json");
@@ -4988,7 +5701,7 @@ mod tests {
                 latency_ms: 0,
             }));
 
-        let rendered = WalkController::new(tmp.path().join("repo")).render_llm_checkpoint(
+        let rendered = LlmInspector::new(tmp.path().join("repo")).render_llm_checkpoint(
             &store,
             lane,
             Some((11, step)),
@@ -5047,6 +5760,72 @@ mod tests {
     }
 
     #[test]
+    fn typed_delta_preserves_every_edge_and_distinguishes_no_history() {
+        let version = version_at(WalkPhase::R4b);
+        let report = WalkAdvanceReport {
+            from: WalkPhase::R3,
+            to: WalkPhase::R4b,
+            transitions: vec![
+                WalkTransition {
+                    from: WalkPhase::R3,
+                    to: WalkPhase::R4a,
+                },
+                WalkTransition {
+                    from: WalkPhase::R4a,
+                    to: WalkPhase::R4b,
+                },
+            ],
+            version: Some(version.clone()),
+        };
+
+        let snapshot = report.delta_snapshot().expect("typed delta");
+        let WalkDeltaState::Recorded { from, edges } = snapshot.state else {
+            panic!("expected a recorded transition delta");
+        };
+        assert_eq!(from, WalkPhase::R3);
+        assert_eq!(snapshot.version, version);
+        assert_eq!(edges.len(), 2);
+        assert_eq!(edges[0].edge, ControlEdge::R3ToR4a);
+        assert_eq!(edges[1].edge, ControlEdge::R4aToR4b);
+        assert!(!edges[0].axes.is_empty());
+        assert!(!edges[1].axes.is_empty());
+
+        let controller = WalkController::new(PathBuf::from("/tmp/no-delta"));
+        let observed = version_at(WalkPhase::R4b);
+        assert_eq!(
+            controller
+                .delta_snapshot(observed.clone())
+                .expect("empty delta projection"),
+            WalkDeltaSnapshot {
+                version: observed,
+                state: WalkDeltaState::NotRecorded,
+            }
+        );
+    }
+
+    #[test]
+    fn typed_delta_preserves_a_recorded_noop() {
+        let version = version_at(WalkPhase::R4b);
+        let report = WalkAdvanceReport {
+            from: WalkPhase::R4b,
+            to: WalkPhase::R4b,
+            transitions: Vec::new(),
+            version: Some(version.clone()),
+        };
+
+        assert_eq!(
+            report.delta_snapshot().expect("no-op delta"),
+            WalkDeltaSnapshot {
+                version,
+                state: WalkDeltaState::Recorded {
+                    from: WalkPhase::R4b,
+                    edges: Vec::new(),
+                },
+            }
+        );
+    }
+
+    #[test]
     fn llm_report_reads_latest_tool_loop_checkpoint() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let eval_home = tmp.path().join("eval-home");
@@ -5062,6 +5841,12 @@ mod tests {
                 .join("prototype1/debug/tool-loop"),
         );
         let mut session = ToolLoopSession::new("session-1", "headless-tui", repo.clone());
+        let outer_session = SessionId::for_test(0x1111);
+        let outer_transition = TransitionId(Uuid::from_u128(0x2222));
+        session.outer_attempt = OuterAttemptLink::Linked {
+            session_id: outer_session,
+            transition_id: outer_transition,
+        };
         session.outer_phase = Some("r10".to_string());
         session.outer_edge = Some("r10->r11".to_string());
         session.status = ToolLoopStatus::Paused;
@@ -5086,13 +5871,15 @@ mod tests {
         resume.next_step = 1;
         store.write_resume(&resume).expect("write resume");
 
-        let report = WalkController::new(repo)
+        let report = LlmInspector::new(repo)
             .llm_report(None, None, false, None)
             .expect("llm report");
 
         assert!(report.contains("llm tool-loop checkpoint"));
         assert!(report.contains("session: session-1"));
         assert!(report.contains("status: paused"));
+        assert!(report.contains(&format!("outer_session: {outer_session}")));
+        assert!(report.contains(&format!("outer_transition: {outer_transition}")));
         assert!(report.contains("outer_edge: r10->r11"));
         assert!(report.contains("step: 0"));
         assert!(report.contains("response_index: 0"));
@@ -5141,38 +5928,38 @@ mod tests {
         resume.next_step = 3;
         store.write_resume(&resume).expect("write resume");
 
-        let mut controller = WalkController::new(repo);
-        let lanes = controller.llm_lanes_report(false).expect("lanes");
+        let mut inspector = LlmInspector::new(repo);
+        let lanes = inspector.llm_lanes_report(false).expect("lanes");
         assert!(lanes.contains("lane-a status=paused cursor=- head=2 next_step=3"));
 
-        let focus = controller.llm_focus("lane-a".to_string()).expect("focus");
+        let focus = inspector.llm_focus("lane-a".to_string()).expect("focus");
         assert!(focus.contains("focused llm lane lane-a"));
 
-        let moved = controller
+        let moved = inspector
             .llm_move(Some("lane-a"), 1, LlmMove::Back)
             .expect("back");
         assert!(moved.contains("cursor=1 head=2"));
-        let report = controller
+        let report = inspector
             .llm_report(None, None, false, None)
             .expect("cursor report");
         assert!(report.contains("cursor: 1"));
         assert!(report.contains("step: 1"));
 
-        controller
+        inspector
             .llm_move(Some("lane-a"), 1, LlmMove::Forward)
             .expect("forward");
-        let report = controller
+        let report = inspector
             .llm_report(None, Some("lane-a"), false, None)
             .expect("forward report");
         assert!(report.contains("cursor: 2"));
         assert!(report.contains("step: 2"));
 
-        controller
+        inspector
             .llm_move(Some("lane-a"), 1, LlmMove::Back)
             .expect("back again");
-        let head = controller.llm_head(Some("lane-a")).expect("head");
+        let head = inspector.llm_head(Some("lane-a")).expect("head");
         assert!(head.contains("cursor=head (2)"));
-        let report = controller
+        let report = inspector
             .llm_report(None, Some("lane-a"), true, None)
             .expect("head report");
         assert!(report.contains("cursor: 2"));

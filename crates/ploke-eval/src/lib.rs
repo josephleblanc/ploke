@@ -6,6 +6,7 @@ pub mod branch_evaluation;
 pub mod campaign;
 pub mod cli;
 pub mod closure;
+pub(crate) mod durable_io;
 pub mod intervention;
 pub mod intervention_issue_aggregate;
 pub mod layout;
@@ -29,10 +30,12 @@ pub mod run_history;
 pub mod run_registry;
 pub mod runner;
 pub mod selection;
+pub mod setup_client;
 pub mod spec;
 pub(crate) mod successor_selection;
 pub mod target_registry;
 pub mod tracing_setup;
+pub mod walk_client;
 
 /// Non-secret Google Cloud project identifier used as the default direct
 /// Vertex AI route for ploke-eval live tests.

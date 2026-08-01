@@ -8,6 +8,8 @@
 
 use std::collections::BTreeSet;
 
+use serde::{Deserialize, Serialize};
+
 const TYPE_LINE_LIMIT: usize = 72;
 
 /// Stringified top-level axes of one `Runtime<...>` typestate alias.
@@ -24,17 +26,49 @@ pub(crate) struct RuntimeShape {
     pub(crate) report: &'static str,
 }
 
+/// Closed identity of one top-level `Runtime<...>` axis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeAxis {
+    Phase,
+    Role,
+    Context,
+    Plan,
+    Children,
+    History,
+    Evidence,
+    Continuation,
+    Report,
+}
+
+impl RuntimeAxis {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Phase => "phase",
+            Self::Role => "role",
+            Self::Context => "context",
+            Self::Plan => "plan",
+            Self::Children => "children",
+            Self::History => "history",
+            Self::Evidence => "evidence",
+            Self::Continuation => "continuation",
+            Self::Report => "report",
+        }
+    }
+}
+
 /// One changed top-level `Runtime<...>` axis.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RuntimeAxisDelta {
-    pub(crate) label: &'static str,
-    pub(crate) from: String,
-    pub(crate) to: String,
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeAxisDelta {
+    pub axis: RuntimeAxis,
+    pub from: String,
+    pub to: String,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct AxisShape {
-    label: &'static str,
+    axis: RuntimeAxis,
     value: &'static str,
     multiline: bool,
 }
@@ -78,7 +112,7 @@ impl RuntimeShape {
                     None
                 } else {
                     Some(RuntimeAxisDelta {
-                        label: to.label,
+                        axis: to.axis,
                         from: from_value,
                         to: to_value,
                     })
@@ -91,54 +125,54 @@ impl RuntimeShape {
     pub(crate) fn render_deltas_from(self, from: RuntimeShape) -> Vec<String> {
         self.axis_deltas_from(from)
             .into_iter()
-            .map(|delta| render_delta(delta.label, &delta.from, &delta.to))
+            .map(|delta| render_delta(delta.axis.as_str(), &delta.from, &delta.to))
             .collect()
     }
 
     fn axes(self) -> [AxisShape; 9] {
         [
             AxisShape {
-                label: "phase",
+                axis: RuntimeAxis::Phase,
                 value: self.phase,
                 multiline: false,
             },
             AxisShape {
-                label: "role",
+                axis: RuntimeAxis::Role,
                 value: self.role,
                 multiline: false,
             },
             AxisShape {
-                label: "context",
+                axis: RuntimeAxis::Context,
                 value: self.context,
                 multiline: false,
             },
             AxisShape {
-                label: "plan",
+                axis: RuntimeAxis::Plan,
                 value: self.plan,
                 multiline: true,
             },
             AxisShape {
-                label: "children",
+                axis: RuntimeAxis::Children,
                 value: self.children,
                 multiline: false,
             },
             AxisShape {
-                label: "history",
+                axis: RuntimeAxis::History,
                 value: self.history,
                 multiline: true,
             },
             AxisShape {
-                label: "evidence",
+                axis: RuntimeAxis::Evidence,
                 value: self.evidence,
                 multiline: true,
             },
             AxisShape {
-                label: "continuation",
+                axis: RuntimeAxis::Continuation,
                 value: self.continuation,
                 multiline: true,
             },
             AxisShape {
-                label: "report",
+                axis: RuntimeAxis::Report,
                 value: self.report,
                 multiline: false,
             },
@@ -323,7 +357,7 @@ mod tests {
     #[test]
     fn reports_added_and_removed_structures() {
         let delta = super::RuntimeAxisDelta {
-            label: "context",
+            axis: super::RuntimeAxis::Context,
             from: "Context<context::Command<Prototype1StateCommand>>".to_string(),
             to: "Context<context::Collected<RunShape, CampaignConfig>>".to_string(),
         };

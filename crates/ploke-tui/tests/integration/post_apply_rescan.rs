@@ -10,6 +10,7 @@
 use std::{fs, sync::Arc};
 
 use ploke_core::{ArcStr, PROJECT_NAMESPACE_UUID, WriteSnippetData};
+use ploke_db::multi_embedding::hnsw_ext::HnswExt as _;
 use ploke_embed::runtime::EmbeddingRuntime;
 use ploke_io::read::read_and_compute_filehash;
 use ploke_tui::{
@@ -26,6 +27,11 @@ use tokio::sync::RwLock;
 
 async fn build_state(profile: MessageVerbosityProfile) -> (Arc<AppState>, Arc<EventBus>) {
     let db = Arc::new(ploke_db::Database::init_with_schema().expect("db init"));
+    let active_set = db
+        .with_active_set(|set| set.clone())
+        .expect("active embedding set");
+    db.ensure_embedding_relation(&active_set)
+        .expect("active embedding relation");
     let io_handle = ploke_io::IoManagerHandle::new();
     let mut cfg = ploke_tui::user_config::UserConfig::default();
     cfg.default_verbosity = profile;
@@ -54,9 +60,32 @@ async fn build_state(profile: MessageVerbosityProfile) -> (Arc<AppState>, Arc<Ev
 
 async fn seed_and_approve_semantic_proposal(state: &Arc<AppState>, event_bus: &Arc<EventBus>) {
     let tmp = tempdir().expect("tempdir");
-    let file_path = tmp.path().join("post_apply_rescan.rs");
+    let src_dir = tmp.path().join("src");
+    fs::create_dir_all(&src_dir).expect("create temp crate src");
+    fs::write(
+        tmp.path().join("Cargo.toml"),
+        "[package]\nname = \"post-apply-rescan\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .expect("write temp Cargo.toml");
+    let file_path = src_dir.join("lib.rs");
     let initial = "fn before() {}\n";
     fs::write(&file_path, initial).expect("write temp rust file");
+    ploke_tui::app_state::handlers::indexing::index_workspace(
+        state,
+        event_bus,
+        Some(ploke_tui::app_state::IndexTargetDir::new(
+            tmp.path().to_path_buf(),
+        )),
+        true,
+    )
+    .await;
+    let parse_failure = state
+        .with_system_read(|sys| sys.last_parse_failure().cloned())
+        .await;
+    assert!(
+        parse_failure.is_none(),
+        "temp crate should index before the post-apply rescan: {parse_failure:?}"
+    );
     let file_hash = read_and_compute_filehash(&file_path, PROJECT_NAMESPACE_UUID)
         .await
         .expect("compute file hash");
@@ -101,6 +130,25 @@ async fn seed_and_approve_semantic_proposal(state: &Arc<AppState>, event_bus: &A
     )
     .await
     .expect("approve_edits timed out");
+    let status = state
+        .proposals
+        .read()
+        .await
+        .get(&proposal_id)
+        .map(|proposal| proposal.status.clone())
+        .expect("proposal should remain registered");
+    assert_eq!(
+        status,
+        EditProposalStatus::Applied,
+        "indexed temp-crate edit should cross the rescan barrier"
+    );
+    let parse_failure = state
+        .with_system_read(|sys| sys.last_parse_failure().cloned())
+        .await;
+    assert!(
+        parse_failure.is_none(),
+        "successful post-apply rescan should not leave a parse failure: {parse_failure:?}"
+    );
 }
 
 fn has_scheduled_rescan_message(chat: &ploke_tui::chat_history::ChatHistory) -> bool {

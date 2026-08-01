@@ -12,7 +12,9 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     CampaignManifest, EvalCampaignPolicy, ProtocolCampaignPolicy,
+    campaign::EmbeddingRoute,
     cli::prototype1_state::{
+        history::HistoryHash,
         identity::ParentIdentity,
         profile::{AdmittedRunProfile, EvalStorageBackend},
     },
@@ -23,6 +25,7 @@ use crate::{
 };
 
 use super::{
+    cozo_schema::eval_relation_exists,
     cozo_store::EvalDb,
     error::EvalStoreError,
     schema::{EvalRelationSchema, define_eval_schema, put_eval_params},
@@ -66,6 +69,23 @@ define_eval_schema!(CampaignEvalPolicySchema {
     ingested_at: "String",
 });
 
+define_eval_schema!(CampaignEmbeddingRouteSchema {
+    "eval_campaign_embedding_route",
+    campaign_id: "String" =>
+    embedding_route: "String",
+    ingested_at: "String",
+});
+
+// Additive relation so pre-token-cap owner databases retain their original
+// campaign-policy row shape. A missing row means the admitted campaign predates
+// this explicit field; fresh setup writes one row even when the value is null.
+define_eval_schema!(CampaignEvalTokenSchema {
+    "eval_campaign_eval_token",
+    campaign_id: "String" =>
+    max_tokens: "Int?",
+    ingested_at: "String",
+});
+
 define_eval_schema!(CampaignEvalBudgetSchema {
     "eval_campaign_eval_budget",
     campaign_id: "String" =>
@@ -106,6 +126,64 @@ define_eval_schema!(ProfileCommitmentSchema {
     source_path: "String?",
     admitted_at: "String",
     storage_ref: "String",
+    ingested_at: "String",
+});
+
+define_eval_schema!(RunProfilePolicySchema {
+    "eval_run_profile_policy",
+    campaign_id: "String" =>
+    profile_ref_id: "String",
+    schema_version: "String",
+    max_generations: "Int",
+    max_total_nodes: "Int",
+    child_min: "Int",
+    child_max: "Int",
+    parallel_targets: "Int?",
+    schedule_mode: "String",
+    stop_first_keep: "Bool",
+    require_keep: "Bool",
+    explore_rejected: "Bool",
+    generation_source: "String",
+    selection_strategy: "String",
+    selection_evidence: "String",
+    selection_seed: "Int",
+    metrics_persist: "Bool",
+    score_profile: "String",
+    imp_enabled: "Bool",
+    imp_budget_k: "Int",
+    imp_archive: "String",
+    imp_score_points: "Int",
+    imp_required: "Bool",
+    oracle_mode: "String",
+    oracle_required: "Bool",
+    stop_after: "String",
+    observe_stale_secs: "Int",
+    trace_jsonl: "String",
+    debug_tools: "Bool",
+    broad_max_attempts: "Int?",
+    fresh_slots: "Int?",
+    graph_nearest: "Int?",
+    timeout_secs: "Int?",
+    control_mode: "String",
+    parallel_cap: "Int?",
+    ingested_at: "String",
+});
+
+define_eval_schema!(OracleGateSchema {
+    "eval_oracle_gate",
+    campaign_id: "String" =>
+    profile_ref_id: "String",
+    gate: "String",
+    targets: "[String]",
+    ingested_at: "String",
+});
+
+define_eval_schema!(PatchGateSchema {
+    "eval_patch_gate",
+    campaign_id: "String" =>
+    profile_ref_id: "String",
+    gate: "String",
+    review_config_hash: "String?",
     ingested_at: "String",
 });
 
@@ -233,9 +311,14 @@ define_eval_schema!(BaselineInstanceMetricsSchema {
 
 pub(crate) const CAMPAIGN_REL: &str = CampaignSchema::RELATION;
 pub(crate) const CAMPAIGN_EVAL_POLICY_REL: &str = CampaignEvalPolicySchema::RELATION;
+pub(crate) const CAMPAIGN_EMBEDDING_ROUTE_REL: &str = CampaignEmbeddingRouteSchema::RELATION;
+pub(crate) const CAMPAIGN_EVAL_TOKEN_REL: &str = CampaignEvalTokenSchema::RELATION;
 pub(crate) const CAMPAIGN_EVAL_BUDGET_REL: &str = CampaignEvalBudgetSchema::RELATION;
 pub(crate) const CAMPAIGN_PROTOCOL_POLICY_REL: &str = CampaignProtocolPolicySchema::RELATION;
 pub(crate) const PROFILE_COMMITMENT_REL: &str = ProfileCommitmentSchema::RELATION;
+pub(crate) const RUN_PROFILE_POLICY_REL: &str = RunProfilePolicySchema::RELATION;
+pub(crate) const ORACLE_GATE_REL: &str = OracleGateSchema::RELATION;
+pub(crate) const PATCH_GATE_REL: &str = PatchGateSchema::RELATION;
 pub(crate) const CLOSURE_REF_REL: &str = ClosureRefSchema::RELATION;
 pub(crate) const CLOSURE_INSTANCE_REL: &str = ClosureInstanceSchema::RELATION;
 pub(crate) const CLOSURE_ARTIFACT_REF_REL: &str = ClosureArtifactRefSchema::RELATION;
@@ -248,10 +331,16 @@ pub(crate) const BASELINE_INSTANCE_METRICS_REL: &str = BaselineInstanceMetricsSc
 pub(super) fn ensure_setup_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(), EvalStoreError> {
     CampaignSchema::SCHEMA.ensure_installed(db, "schema.eval_campaign")?;
     CampaignEvalPolicySchema::SCHEMA.ensure_installed(db, "schema.eval_campaign_eval_policy")?;
+    CampaignEmbeddingRouteSchema::SCHEMA
+        .ensure_installed(db, "schema.eval_campaign_embedding_route")?;
+    CampaignEvalTokenSchema::SCHEMA.ensure_installed(db, "schema.eval_campaign_eval_token")?;
     CampaignEvalBudgetSchema::SCHEMA.ensure_installed(db, "schema.eval_campaign_eval_budget")?;
     CampaignProtocolPolicySchema::SCHEMA
         .ensure_installed(db, "schema.eval_campaign_protocol_policy")?;
     ProfileCommitmentSchema::SCHEMA.ensure_installed(db, "schema.eval_profile_commitment")?;
+    RunProfilePolicySchema::SCHEMA.ensure_installed(db, "schema.eval_run_profile_policy")?;
+    OracleGateSchema::SCHEMA.ensure_installed(db, "schema.eval_oracle_gate")?;
+    PatchGateSchema::SCHEMA.ensure_installed(db, "schema.eval_patch_gate")?;
     ClosureRefSchema::SCHEMA.ensure_installed(db, "schema.eval_closure_ref")?;
     ClosureInstanceSchema::SCHEMA.ensure_installed(db, "schema.eval_closure_instance")?;
     ClosureArtifactRefSchema::SCHEMA.ensure_installed(db, "schema.eval_closure_artifact_ref")?;
@@ -434,6 +523,256 @@ pub(super) fn put_campaign_manifest<D: EvalDb + ?Sized>(
     manifest.put_into_eval_db(db, manifest_path, storage_backend, profile_ref_id)
 }
 
+pub(super) fn put_run_profile_policy<D: EvalDb + ?Sized>(
+    db: &D,
+    campaign_id: &ploke_records::ids::CampaignId,
+    profile_ref_id: &str,
+    admitted: &AdmittedRunProfile,
+    review_config_hash: Option<&HistoryHash>,
+) -> Result<(), EvalStoreError> {
+    let profile = &admitted.profile;
+    let search = &profile.search;
+    let child = search.children;
+    let selection = profile.selection;
+    let metrics = selection.metrics;
+    let imp = metrics.imp_at_k;
+    let execution = &profile.execution;
+    let broad = execution.broad_tui;
+    let control = profile.control;
+    let oracle_targets = profile.target.eval_instances();
+
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    params.insert(
+        "profile_ref_id".to_string(),
+        profile_ref_id.to_string().into(),
+    );
+    params.insert(
+        "schema_version".to_string(),
+        admitted.profile.schema_version.clone().into(),
+    );
+    params.insert(
+        "max_generations".to_string(),
+        i64::from(search.max_generations).into(),
+    );
+    params.insert(
+        "max_total_nodes".to_string(),
+        i64::from(search.max_total_nodes).into(),
+    );
+    params.insert("child_min".to_string(), i64::from(child.min).into());
+    params.insert("child_max".to_string(), i64::from(child.max).into());
+    params.insert(
+        "parallel_targets".to_string(),
+        option_u32_param(child.parallel_targets),
+    );
+    params.insert(
+        "schedule_mode".to_string(),
+        enum_string(&search.schedule, "eval_run_profile_policy.schedule_mode")?.into(),
+    );
+    params.insert(
+        "stop_first_keep".to_string(),
+        DataValue::Bool(search.stop_on_first_keep),
+    );
+    params.insert(
+        "require_keep".to_string(),
+        DataValue::Bool(search.require_keep_for_continuation),
+    );
+    params.insert(
+        "explore_rejected".to_string(),
+        DataValue::Bool(search.explore_from_rejected),
+    );
+    params.insert(
+        "generation_source".to_string(),
+        enum_string(
+            &profile.generation.source,
+            "eval_run_profile_policy.generation_source",
+        )?
+        .into(),
+    );
+    params.insert(
+        "selection_strategy".to_string(),
+        enum_string(
+            &selection.strategy,
+            "eval_run_profile_policy.selection_strategy",
+        )?
+        .into(),
+    );
+    params.insert(
+        "selection_evidence".to_string(),
+        enum_string(
+            &selection.evidence,
+            "eval_run_profile_policy.selection_evidence",
+        )?
+        .into(),
+    );
+    params.insert(
+        "selection_seed".to_string(),
+        u64_to_i64(selection.seed, "eval_run_profile_policy.selection_seed")?.into(),
+    );
+    params.insert(
+        "metrics_persist".to_string(),
+        DataValue::Bool(metrics.persist),
+    );
+    params.insert(
+        "score_profile".to_string(),
+        enum_string(
+            &metrics.score_profile,
+            "eval_run_profile_policy.score_profile",
+        )?
+        .into(),
+    );
+    params.insert("imp_enabled".to_string(), DataValue::Bool(imp.enabled));
+    params.insert(
+        "imp_budget_k".to_string(),
+        usize_to_i64(imp.budget_k, "eval_run_profile_policy.imp_budget_k")?.into(),
+    );
+    params.insert(
+        "imp_archive".to_string(),
+        enum_string(&imp.archive_scope, "eval_run_profile_policy.imp_archive")?.into(),
+    );
+    params.insert(
+        "imp_score_points".to_string(),
+        imp.score_points_per_imp_point.into(),
+    );
+    params.insert(
+        "imp_required".to_string(),
+        DataValue::Bool(imp.require_for_score),
+    );
+    params.insert(
+        "oracle_mode".to_string(),
+        enum_string(
+            &selection.oracle.mode,
+            "eval_run_profile_policy.oracle_mode",
+        )?
+        .into(),
+    );
+    params.insert(
+        "oracle_required".to_string(),
+        DataValue::Bool(selection.oracle.require_evidence),
+    );
+    params.insert(
+        "stop_after".to_string(),
+        enum_string(&execution.stop_after, "eval_run_profile_policy.stop_after")?.into(),
+    );
+    params.insert(
+        "observe_stale_secs".to_string(),
+        u64_to_i64(
+            execution.observe_child_stale_after_secs,
+            "eval_run_profile_policy.observe_stale_secs",
+        )?
+        .into(),
+    );
+    params.insert(
+        "trace_jsonl".to_string(),
+        enum_string(
+            &execution.trace_jsonl,
+            "eval_run_profile_policy.trace_jsonl",
+        )?
+        .into(),
+    );
+    params.insert(
+        "debug_tools".to_string(),
+        DataValue::Bool(execution.debug_tools),
+    );
+    params.insert(
+        "broad_max_attempts".to_string(),
+        option_u32_param(broad.max_attempts),
+    );
+    params.insert(
+        "fresh_slots".to_string(),
+        option_usize_param(
+            broad.fresh_slots_per_child,
+            "eval_run_profile_policy.fresh_slots",
+        )?,
+    );
+    params.insert(
+        "graph_nearest".to_string(),
+        option_usize_param(broad.graph_nearest, "eval_run_profile_policy.graph_nearest")?,
+    );
+    params.insert(
+        "timeout_secs".to_string(),
+        option_u64_param(broad.timeout_secs, "eval_run_profile_policy.timeout_secs")?,
+    );
+    params.insert(
+        "control_mode".to_string(),
+        enum_string(&control.mode, "eval_run_profile_policy.control_mode")?.into(),
+    );
+    params.insert(
+        "parallel_cap".to_string(),
+        option_u32_param(control.parallel_cap),
+    );
+    let ingested_at = chrono::Utc::now().to_rfc3339();
+    params.insert("ingested_at".to_string(), ingested_at.clone().into());
+
+    put_eval_params(
+        db,
+        &RunProfilePolicySchema::SCHEMA,
+        params,
+        "put.eval_run_profile_policy",
+    )?;
+
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    params.insert(
+        "profile_ref_id".to_string(),
+        profile_ref_id.to_string().into(),
+    );
+    params.insert(
+        "gate".to_string(),
+        enum_string(&selection.oracle.gate, "eval_oracle_gate.gate")?.into(),
+    );
+    params.insert("targets".to_string(), string_list_param(&oracle_targets));
+    params.insert("ingested_at".to_string(), ingested_at.clone().into());
+    put_eval_params(
+        db,
+        &OracleGateSchema::SCHEMA,
+        params,
+        "put.eval_oracle_gate",
+    )?;
+
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    params.insert(
+        "profile_ref_id".to_string(),
+        profile_ref_id.to_string().into(),
+    );
+    params.insert(
+        "gate".to_string(),
+        enum_string(&selection.patch.gate, "eval_patch_gate.gate")?.into(),
+    );
+    params.insert(
+        "review_config_hash".to_string(),
+        option_string_param(patch_config_hash(selection.patch.gate, review_config_hash)?),
+    );
+    params.insert("ingested_at".to_string(), ingested_at.into());
+    put_eval_params(db, &PatchGateSchema::SCHEMA, params, "put.eval_patch_gate")
+}
+
+fn patch_config_hash(
+    gate: ploke_records::run_profile::PatchGate,
+    review_config_hash: Option<&HistoryHash>,
+) -> Result<Option<String>, EvalStoreError> {
+    match (gate, review_config_hash) {
+        (ploke_records::run_profile::PatchGate::Disabled, None) => Ok(None),
+        (ploke_records::run_profile::PatchGate::ReviewedAdmissible, Some(hash)) => {
+            Ok(Some(hash.as_str().to_string()))
+        }
+        (ploke_records::run_profile::PatchGate::Disabled, Some(_)) => {
+            Err(EvalStoreError::Validation {
+                field: "eval_patch_gate.review_config_hash",
+                detail: "disabled patch policy cannot carry a reviewer config hash".to_string(),
+            })
+        }
+        (ploke_records::run_profile::PatchGate::ReviewedAdmissible, None) => {
+            Err(EvalStoreError::Validation {
+                field: "eval_patch_gate.review_config_hash",
+                detail: "reviewed-admissible patch policy requires a reviewer config hash"
+                    .to_string(),
+            })
+        }
+    }
+}
+
 fn put_campaign_eval_rows<D: EvalDb + ?Sized>(
     db: &D,
     manifest: &CampaignManifest,
@@ -483,6 +822,41 @@ fn put_campaign_eval_rows<D: EvalDb + ?Sized>(
         &CampaignEvalPolicySchema::SCHEMA,
         params,
         "put.eval_campaign_eval_policy",
+    )?;
+
+    let mut params = BTreeMap::new();
+    params.insert(
+        "campaign_id".to_string(),
+        manifest.campaign_id.to_string().into(),
+    );
+    params.insert(
+        "embedding_route".to_string(),
+        enum_string(
+            &eval.embedding_route,
+            "eval_campaign_embedding_route.embedding_route",
+        )?
+        .into(),
+    );
+    params.insert("ingested_at".to_string(), ingested_at.to_string().into());
+    put_eval_params(
+        db,
+        &CampaignEmbeddingRouteSchema::SCHEMA,
+        params,
+        "put.eval_campaign_embedding_route",
+    )?;
+
+    let mut params = BTreeMap::new();
+    params.insert(
+        "campaign_id".to_string(),
+        manifest.campaign_id.to_string().into(),
+    );
+    params.insert("max_tokens".to_string(), option_u32_param(eval.max_tokens));
+    params.insert("ingested_at".to_string(), ingested_at.to_string().into());
+    put_eval_params(
+        db,
+        &CampaignEvalTokenSchema::SCHEMA,
+        params,
+        "put.eval_campaign_eval_token",
     )?;
 
     let budget = &eval.budget;
@@ -698,9 +1072,60 @@ fn read_campaign_eval<D: EvalDb + ?Sized>(
         exclude_dataset_labels: read_string_list(&rows, row, "exclude_dataset_labels")?,
         budget: EvalBudget::default(),
         batch_prefix: read_optional_string(&rows, row, "batch_prefix")?,
+        embedding_route: read_campaign_embedding_route(db, campaign_id)?,
         embedding_model_id: read_optional_string(&rows, row, "embedding_model_id")?,
         embedding_provider_slug: read_optional_string(&rows, row, "embedding_provider_slug")?,
+        max_tokens: read_campaign_tokens(db, campaign_id)?,
     })
+}
+
+fn read_campaign_tokens<D: EvalDb + ?Sized>(
+    db: &D,
+    campaign_id: &ploke_records::ids::CampaignId,
+) -> Result<Option<u32>, EvalStoreError> {
+    if !eval_relation_exists(db, CAMPAIGN_EVAL_TOKEN_REL)? {
+        return Ok(None);
+    }
+
+    let rows = query_campaign_rows(
+        db,
+        r#"
+?[max_tokens] :=
+    *eval_campaign_eval_token { campaign_id, max_tokens },
+    campaign_id = $campaign_id
+"#,
+        campaign_id,
+        "read.eval_campaign_eval_token",
+    )?;
+    match rows.rows.as_slice() {
+        [] => Ok(None),
+        [row] => read_optional_u32(&rows, row, "max_tokens"),
+        rows => Err(EvalStoreError::Validation {
+            field: "eval_campaign_eval_token",
+            detail: format!("expected at most one campaign row, found {}", rows.len()),
+        }),
+    }
+}
+
+fn read_campaign_embedding_route<D: EvalDb + ?Sized>(
+    db: &D,
+    campaign_id: &ploke_records::ids::CampaignId,
+) -> Result<EmbeddingRoute, EvalStoreError> {
+    let rows = query_campaign_rows(
+        db,
+        r#"
+?[embedding_route] :=
+    *eval_campaign_embedding_route { campaign_id, embedding_route },
+    campaign_id = $campaign_id
+"#,
+        campaign_id,
+        "read.eval_campaign_embedding_route",
+    )?;
+    let row = single_row(&rows, "eval_campaign_embedding_route")?;
+    parse_enum(
+        read_string(&rows, row, "embedding_route")?,
+        "eval_campaign_embedding_route.embedding_route",
+    )
 }
 
 fn read_campaign_budget<D: EvalDb + ?Sized>(
@@ -970,6 +1395,25 @@ fn read_optional_usize(
     }
 }
 
+fn read_optional_u32(
+    rows: &QueryResult,
+    row: &[DataValue],
+    field: &'static str,
+) -> Result<Option<u32>, EvalStoreError> {
+    match field_value(rows, row, field)? {
+        DataValue::Null => Ok(None),
+        DataValue::Num(cozo::Num::Int(value)) => {
+            u32::try_from(*value)
+                .map(Some)
+                .map_err(|_| EvalStoreError::Validation {
+                    field,
+                    detail: "value does not fit in u32".to_string(),
+                })
+        }
+        other => Err(type_error(field, "Int?", other)),
+    }
+}
+
 fn read_u32(
     rows: &QueryResult,
     row: &[DataValue],
@@ -1052,6 +1496,167 @@ pub(super) fn put_closure_ref<D: EvalDb + ?Sized>(
     put_closure_instance_rows(db, &closure_ref_id, state, &ingested_at)?;
 
     Ok(closure_ref_id)
+}
+
+pub(super) fn verify_r0_context<D: EvalDb + ?Sized>(
+    db: &D,
+    manifest: &CampaignManifest,
+    admitted: &AdmittedRunProfile,
+    review_config_hash: Option<&HistoryHash>,
+    closure_path: &Path,
+    closure: &ClosureState,
+) -> Result<(), EvalStoreError> {
+    let observed = CampaignManifest::read_from_eval_db(db, &manifest.campaign_id)?;
+    let expected_json =
+        serde_json::to_value(manifest).map_err(|source| EvalStoreError::Validation {
+            field: "eval_campaign",
+            detail: source.to_string(),
+        })?;
+    let observed_json =
+        serde_json::to_value(&observed).map_err(|source| EvalStoreError::Validation {
+            field: "eval_campaign",
+            detail: source.to_string(),
+        })?;
+    if observed_json != expected_json {
+        return Err(EvalStoreError::Validation {
+            field: "eval_campaign",
+            detail: "stored campaign differs from setup admission".to_string(),
+        });
+    }
+
+    let expected_profile = profile_ref_id(&manifest.campaign_id, admitted);
+    let mut profile_params = BTreeMap::new();
+    profile_params.insert(
+        "campaign_id".to_string(),
+        manifest.campaign_id.to_string().into(),
+    );
+    let profile_rows = db
+        .eval_query_params(
+            r#"
+?[profile_ref_id, schema_version, profile_path, content_sha256, source_path, admitted_at] :=
+    *eval_profile_commitment { profile_ref_id, campaign_id, schema_version, profile_path, content_sha256, source_path, admitted_at },
+    campaign_id = $campaign_id
+"#,
+            profile_params,
+        )
+        .map_err(|source| EvalStoreError::Db {
+            phase: "verify.eval_profile_commitment",
+            source,
+        })?;
+    let profile_row = single_row(&profile_rows, "eval_profile_commitment")?;
+    let source_path = admitted
+        .commitment
+        .source_path
+        .as_ref()
+        .map(|path| path.display().to_string());
+    let profile_exact = read_string(&profile_rows, profile_row, "profile_ref_id")?
+        == expected_profile
+        && read_string(&profile_rows, profile_row, "schema_version")?
+            == admitted.commitment.schema_version
+        && read_string(&profile_rows, profile_row, "profile_path")?
+            == admitted.commitment.profile_path.display().to_string()
+        && read_string(&profile_rows, profile_row, "content_sha256")? == admitted.commitment.sha256
+        && read_optional_string(&profile_rows, profile_row, "source_path")? == source_path
+        && read_string(&profile_rows, profile_row, "admitted_at")?
+            == admitted.commitment.admitted_at;
+    if !profile_exact {
+        return Err(EvalStoreError::Validation {
+            field: "eval_profile_commitment",
+            detail: "stored profile commitment differs from setup admission".to_string(),
+        });
+    }
+
+    let expected_gate = admitted.profile.selection.patch.gate;
+    patch_config_hash(expected_gate, review_config_hash)?;
+    let (stored_gate, stored_config) = load_patch_policy(db, &manifest.campaign_id)?;
+    if stored_gate != expected_gate || stored_config.as_ref() != review_config_hash {
+        return Err(EvalStoreError::Validation {
+            field: "eval_patch_gate",
+            detail: "stored patch policy differs from setup admission".to_string(),
+        });
+    }
+
+    let closure_hash = file_sha256(closure_path, "eval_closure_ref.source_ref")?;
+    let expected_closure =
+        closure_ref_id_from_parts(&manifest.campaign_id, closure_path, &closure_hash);
+    let mut closure_params = BTreeMap::new();
+    closure_params.insert(
+        "closure_ref_id".to_string(),
+        expected_closure.clone().into(),
+    );
+    let closure_rows = db
+        .eval_query_params(
+            r#"
+?[closure_ref_id, campaign_id, source_ref, content_sha256, schema_version] :=
+    *eval_closure_ref { closure_ref_id, campaign_id, source_ref, content_sha256, schema_version },
+    closure_ref_id = $closure_ref_id
+"#,
+            closure_params,
+        )
+        .map_err(|source| EvalStoreError::Db {
+            phase: "verify.eval_closure_ref",
+            source,
+        })?;
+    let closure_row = single_row(&closure_rows, "eval_closure_ref")?;
+    let closure_exact = read_string(&closure_rows, closure_row, "closure_ref_id")?
+        == expected_closure
+        && read_string(&closure_rows, closure_row, "campaign_id")?
+            == manifest.campaign_id.to_string()
+        && read_string(&closure_rows, closure_row, "source_ref")?
+            == closure_path.display().to_string()
+        && read_string(&closure_rows, closure_row, "content_sha256")? == closure_hash
+        && read_string(&closure_rows, closure_row, "schema_version")? == closure.schema_version;
+    if !closure_exact {
+        return Err(EvalStoreError::Validation {
+            field: "eval_closure_ref",
+            detail: "stored closure reference differs from setup admission".to_string(),
+        });
+    }
+    Ok(())
+}
+
+pub(super) fn load_patch_policy<D: EvalDb + ?Sized>(
+    db: &D,
+    campaign_id: &ploke_records::ids::CampaignId,
+) -> Result<(ploke_records::run_profile::PatchGate, Option<HistoryHash>), EvalStoreError> {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    let rows = db
+        .eval_query_params(
+            r#"
+?[profile_ref_id, gate, review_config_hash] :=
+    *eval_campaign { campaign_id, profile_ref_id },
+    *eval_profile_commitment { profile_ref_id, campaign_id },
+    *eval_patch_gate { campaign_id, profile_ref_id, gate, review_config_hash },
+    campaign_id = $campaign_id
+"#,
+            params,
+        )
+        .map_err(|source| EvalStoreError::Db {
+            phase: "verify.eval_patch_gate",
+            source,
+        })?;
+    let row = single_row(&rows, "eval_patch_gate")?;
+    let gate_name = read_string(&rows, row, "gate")?;
+    let gate = serde_json::from_value::<ploke_records::run_profile::PatchGate>(
+        serde_json::Value::String(gate_name),
+    )
+    .map_err(|source| EvalStoreError::Validation {
+        field: "eval_patch_gate.gate",
+        detail: source.to_string(),
+    })?;
+    let review_config_hash = read_optional_string(&rows, row, "review_config_hash")?
+        .map(|value| {
+            serde_json::from_value::<HistoryHash>(serde_json::Value::String(value)).map_err(
+                |source| EvalStoreError::Validation {
+                    field: "eval_patch_gate.review_config_hash",
+                    detail: source.to_string(),
+                },
+            )
+        })
+        .transpose()?;
+    patch_config_hash(gate, review_config_hash.as_ref())?;
+    Ok((gate, review_config_hash))
 }
 
 pub(super) fn put_baseline<D: EvalDb + ?Sized>(
@@ -1597,6 +2202,25 @@ fn usize_to_i64(value: usize, field: &'static str) -> Result<i64, EvalStoreError
     })
 }
 
+fn u64_to_i64(value: u64, field: &'static str) -> Result<i64, EvalStoreError> {
+    i64::try_from(value).map_err(|_| EvalStoreError::Validation {
+        field,
+        detail: format!("value {value} does not fit in Int"),
+    })
+}
+
+fn option_u32_param(value: Option<u32>) -> DataValue {
+    value
+        .map(|value| DataValue::from(i64::from(value)))
+        .unwrap_or(DataValue::Null)
+}
+
+fn option_u64_param(value: Option<u64>, field: &'static str) -> Result<DataValue, EvalStoreError> {
+    value
+        .map(|value| u64_to_i64(value, field).map(DataValue::from))
+        .unwrap_or(Ok(DataValue::Null))
+}
+
 fn profile_ref_id(
     campaign_id: &ploke_records::ids::CampaignId,
     admitted: &AdmittedRunProfile,
@@ -1640,7 +2264,9 @@ fn file_sha256(path: &Path, field: &'static str) -> Result<String, EvalStoreErro
         path: path.to_path_buf(),
         source,
     })?;
-    Ok(sha256_hex(&bytes))
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    Ok(sha256_hex(&hasher.finalize()))
 }
 
 fn option_string_param(value: Option<String>) -> DataValue {

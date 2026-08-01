@@ -1,5 +1,11 @@
 # 2026-06-16 Prototype 1 Typestate Walk Server
 
+> **Historical June 2026 implementation snapshot.** This page is not current
+> operator authority. Use the current [Loop Walk guide](../../../crates/ploke-eval/docs/prototype1/loop-walk.md)
+> and [Operator Map](../../../crates/ploke-eval/docs/prototype1/operator-map.md).
+> The current walk service owns the durable controller session, Start defaults
+> to R3, and Stop is idle-server shutdown only.
+
 Short description: cold-restart orientation for the debug-only local server that steps `prototype1-state` through the new live typestate transitions in memory.
 
 Related planning/code:
@@ -37,7 +43,8 @@ The original sections below predate the latest typestate-driver slices. Current 
 - durable `walk` reconstruction through R14a/R14b when matching evidence exists;
 - live `R7 -> R8` and `R10 -> R11a | R11` only with explicit `walk step --watch`;
 - selected-successor `R12 -> R13b` handoff only with `walk step --watch --allow git-changes`;
-- `R13b -> R14b` final handoff report once handoff is committed;
+- step-mode service transfer at R13b to the successor's R4c controller;
+- `R13b -> R14b` final handoff report only when continuous mode retains the predecessor lease;
 - serverless `walk summary` for durable run discovery;
 - read-only `walk replay`, `walk back`, and `walk forward` cursor movement;
 - `walk branch-live` as explicit provenance recording only.
@@ -247,10 +254,12 @@ R11a | R11 -> R12 # pure report-facts projection
 R12 -> R13a # stopped/no-selection or selected-successor stopped-by-policy branch
 R12 -> R13b # selected-successor handoff; requires --watch --allow git-changes
 R13a -> R14a # stopped/no-selection final report emission
-R13b -> R14b # final report after successor handoff
+R13b -> R14b # continuous-mode retained predecessor lease only
 ```
 
-- `R2a`, `R14a`, and `R14b` are current terminal stops.
+- `R2a` and `R14a` are current step-mode terminal stops; R13b transfers the
+  step-mode service to the successor. R14b remains a continuous-mode terminal
+  and a reconstructable durable phase.
 - Default live stepping at `R7` is a safe boundary; live `R7 -> R8` requires explicit `walk step --watch`.
 - Default stepping at `R10` is also a safe boundary; live `R10 -> R11a | R11` requires explicit `walk step --watch`.
 - `R8` is reconstructable from existing child-plan authority.

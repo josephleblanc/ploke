@@ -8,7 +8,6 @@ use ploke_llm::registry::calibration::{AttemptTimeout, RouterCalibration};
 use ploke_llm::request::ResponseFormat;
 use ploke_llm::response::{FinishReason, FunctionCall, OpenAiResponse, TokenUsage, ToolCall};
 use ploke_llm::{ChatHttpConfig, ChatStepError, ProviderAttempt, ProviderRetryDecision};
-use ploke_test_utils::workspace_root;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -35,8 +34,8 @@ use super::{format_tokens_payload, tokens_logging_enabled};
 use crate::llm::manager::loop_error::{
     ChatSessionReport, CommitPhase, ErrorAudience, ErrorContext, LoopError, RetryAdvice,
     RetryStrategy, SessionOutcome, Verbosity, build_loop_error_from_semantic_spec,
-    classify_finish_reason, classify_llm_error, mark_repair_budget_exhausted, recovery_from_retry,
-    render_error_view,
+    build_streak_error, classify_finish_reason, classify_llm_error, mark_repair_budget_exhausted,
+    recovery_from_retry, render_error_view,
 };
 use crate::llm::manager::semantics::{self, RecoveryDecision};
 use crate::tools::{
@@ -46,19 +45,16 @@ use crate::tools::{
 use ploke_llm::LlmError;
 use tokio::time::sleep;
 
-const OPENROUTER_REQUEST_LOG: &str = "logs/openrouter/session/last_request.json";
-const OPENROUTER_RESPONSE_LOG_PARSED: &str = "logs/openrouter/session/last_parsed.json";
-const OPENROUTER_RESPONSE_LOG_RAW: &str = "logs/openrouter/session/last_response_raw.txt";
 const DEFAULT_REPAIR_ATTEMPTS_PER_SESSION: u32 = 4;
 const REPLAY_LIVE_STEP_LIMIT_REACHED: &str = "replay live step limit reached";
 /// Minimum number of provider HTTP attempts (one retry) for any router. Routers
 /// that calibrate a larger retry budget keep it; others are floored here.
 const MIN_CHAT_HTTP_ATTEMPTS: u32 = 2;
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct FullResponseTraceRecord {
-    assistant_message_id: Uuid,
+pub struct FullResponseTraceRecord {
+    pub assistant_message_id: Uuid,
     #[serde(flatten)]
-    recorded_response: RecordedResponse,
+    pub recorded_response: RecordedResponse,
 }
 
 fn compact_tool_content_for_llm_replay(content: &str, max_file_lines: usize) -> String {
@@ -205,6 +201,7 @@ where
 pub struct TuiToolPolicy {
     pub tool_call_timeout: ToolCallTimeout,
     pub tool_call_chain_limit: usize,
+    pub tool_streak_limit: Option<usize>,
     pub tool_loop_mode: ToolLoopMode,
     pub retry_without_tools_on_404: bool,
 }
@@ -218,6 +215,7 @@ impl Default for TuiToolPolicy {
             // TODO:ploke-llm 2025-12-14
             // Set to 15 as initial default, experiment to determine the right default to set
             tool_call_chain_limit: 100,
+            tool_streak_limit: None,
             tool_loop_mode: ToolLoopMode::Auto,
             retry_without_tools_on_404: false,
         }
@@ -362,9 +360,36 @@ pub(crate) fn tool_policy_from_chat(cfg: &ChatPolicy) -> TuiToolPolicy {
     TuiToolPolicy {
         tool_call_timeout: Duration::from_secs(cfg.tool_call_timeout_secs),
         tool_call_chain_limit: cfg.tool_call_chain_limit,
+        tool_streak_limit: cfg.tool_streak_limit,
         tool_loop_mode: cfg.tool_loop_mode,
         retry_without_tools_on_404: cfg.retry_without_tools_on_404,
     }
+}
+
+fn tool_streak_stop(
+    streak: &mut Option<(ToolName, usize)>,
+    calls: &[ToolCall],
+    limit: Option<usize>,
+) -> Option<(ToolName, usize, usize)> {
+    let limit = limit?;
+    for call in calls {
+        let tool = call.function.name;
+        match streak {
+            Some((previous, count)) if *previous == tool => {
+                *count = count.saturating_add(1);
+            }
+            _ => {
+                *streak = Some((tool, 1));
+            }
+        }
+        let Some((tool, count)) = streak.as_ref() else {
+            continue;
+        };
+        if *count >= limit {
+            return Some((*tool, *count, limit));
+        }
+    }
+    None
 }
 
 pub(crate) fn finish_policy_from_chat(cfg: &ChatPolicy) -> FinishPolicy {
@@ -984,18 +1009,28 @@ fn capture_request_for_tap<R: Router>(req: &ChatCompRequest<R>) {
 fn capture_request_for_tap<R: Router>(_req: &ChatCompRequest<R>) {}
 
 #[cfg(feature = "test_harness")]
-fn capture_response_for_tap(response_index: usize, response: &OpenAiResponse) {
+fn active_response_tap() -> Option<std::sync::mpsc::Sender<RecordedResponse>> {
     let lock = RESPONSE_TAP.get_or_init(|| std::sync::Mutex::new(None));
     let guard = lock
         .lock()
         .expect("response tap lock should not be poisoned");
-    if let Some(sender) = guard.as_ref() {
-        let _ = sender.send(RecordedResponse::new(response_index, response.clone()));
-    }
+    guard.clone()
 }
 
 #[cfg(not(feature = "test_harness"))]
-fn capture_response_for_tap(_response_index: usize, _response: &OpenAiResponse) {}
+fn active_response_tap() -> Option<std::sync::mpsc::Sender<RecordedResponse>> {
+    None
+}
+
+fn capture_response_for_tap(
+    sender: Option<&std::sync::mpsc::Sender<RecordedResponse>>,
+    response_index: usize,
+    response: &OpenAiResponse,
+) {
+    if let Some(sender) = sender {
+        let _ = sender.send(RecordedResponse::new(response_index, response.clone()));
+    }
+}
 
 fn is_replay_live_step_limit_error(error: &LlmError) -> bool {
     // This sentinel is not a model failure. It is the intentional breakpoint
@@ -1036,6 +1071,76 @@ pub(super) fn take_recorded_chat_step_source() -> ChatStepSource {
     ChatStepSource::live()
 }
 
+/// Session-owned destinations for provider envelopes and debug steps.
+///
+/// [`SessionCapture::new`] is explicit: an absent destination stays absent and
+/// never falls back to a process-global test hook. [`Default`] retains the
+/// legacy installed-hook behavior for callers that have not migrated yet.
+#[derive(Clone)]
+pub struct SessionCapture {
+    response_tx: Option<std::sync::mpsc::Sender<FullResponseTraceRecord>>,
+    legacy_tx: Option<std::sync::mpsc::Sender<RecordedResponse>>,
+    debug_sink: Option<Arc<dyn ChatDebugSink>>,
+    legacy_fallback: bool,
+}
+
+impl Default for SessionCapture {
+    fn default() -> Self {
+        Self {
+            response_tx: None,
+            legacy_tx: None,
+            debug_sink: None,
+            legacy_fallback: true,
+        }
+    }
+}
+
+impl SessionCapture {
+    pub fn new(
+        response_tx: Option<std::sync::mpsc::Sender<FullResponseTraceRecord>>,
+        debug_sink: Option<Arc<dyn ChatDebugSink>>,
+    ) -> Self {
+        Self {
+            response_tx,
+            legacy_tx: None,
+            debug_sink,
+            legacy_fallback: false,
+        }
+    }
+
+    pub fn uses_legacy_fallback(&self) -> bool {
+        self.legacy_fallback
+    }
+
+    fn resolve(mut self) -> Self {
+        if self.legacy_fallback {
+            if self.response_tx.is_none() && self.legacy_tx.is_none() {
+                self.legacy_tx = active_response_tap();
+            }
+            if self.debug_sink.is_none() {
+                self.debug_sink = active_chat_debug_sink();
+            }
+        }
+        self
+    }
+
+    fn record_response(
+        &self,
+        assistant_message_id: Uuid,
+        response_index: usize,
+        response: &OpenAiResponse,
+    ) {
+        if let Some(response_tx) = self.response_tx.as_ref() {
+            let _ = response_tx.send(FullResponseTraceRecord {
+                assistant_message_id,
+                recorded_response: RecordedResponse::new(response_index, response.clone()),
+            });
+        } else {
+            capture_response_for_tap(self.legacy_tx.as_ref(), response_index, response);
+        }
+    }
+}
+
 pub struct ChatSession<R: Router> {
     pub client: Client,
     pub req: ChatCompRequest<R>,
@@ -1047,6 +1152,7 @@ pub struct ChatSession<R: Router> {
     pub included_message_ids: Vec<Uuid>,
     pub chat_policy: ChatPolicy,
     pub cancel_rx: watch::Receiver<CancelChatToken>,
+    pub capture: SessionCapture,
 }
 
 #[derive(Debug, Clone)]
@@ -1197,6 +1303,7 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
         included_message_ids,
         chat_policy,
         mut cancel_rx,
+        capture,
     } = session;
     let policy = tool_policy_from_chat(&chat_policy);
     let finish_policy = finish_policy_from_chat(&chat_policy);
@@ -1205,7 +1312,8 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
     let mut loop_state = ChatLoopState::default();
     let model_key = req.model_key.clone();
     let session_id = Uuid::new_v4();
-    let debug_sink = active_chat_debug_sink();
+    let capture = capture.resolve();
+    let debug_sink = capture.debug_sink.clone();
     let mut report = ChatSessionReport::new(
         session_id,
         assistant_message_id,
@@ -1214,6 +1322,7 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
     );
     let mut commit_phase = CommitPhase::PreCommit;
     let mut attempts = 0_u32;
+    let mut tool_streak = None;
 
     let mut initial_message_updated = false;
     for chain_index in 0..policy.tool_call_chain_limit {
@@ -1475,7 +1584,7 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
             chain_index,
             &full_response,
         );
-        capture_response_for_tap(chain_index, &full_response);
+        capture.record_response(assistant_message_id, chain_index, &full_response);
 
         if structured_action_response_finished_by_length(&req, &full_response) {
             let reason = FinishReason::Length;
@@ -1532,6 +1641,7 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
         let token_usage = full_response.usage;
         let mut debug_calls = Vec::new();
         let mut debug_results = Vec::new();
+        let mut streak_stop = None;
         if let Some(resp_tokens) = token_usage {
             state_cmd_tx
                 .send(StateCommand::UpdateContextTokens {
@@ -1653,6 +1763,7 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
                     None
                 };
                 debug_calls = calls.clone();
+                streak_stop = tool_streak_stop(&mut tool_streak, &calls, policy.tool_streak_limit);
                 req.core
                     .messages
                     .push(RequestMessage::new_assistant_with_tool_calls(
@@ -1859,6 +1970,48 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
                 commit_phase = CommitPhase::MessageCommitted;
             }
         };
+
+        if let Some((tool, count, limit)) = streak_stop {
+            let context = base_error_context(
+                attempts,
+                chain_index,
+                "tool_streak_limit",
+                &model_key,
+                assistant_message_id,
+            );
+            let loop_error =
+                build_streak_error(tool.as_str(), count, limit, context, commit_phase.clone());
+            emit_loop_error(
+                &state_cmd_tx,
+                assistant_message_id,
+                &mut initial_message_updated,
+                &loop_error,
+            )
+            .await;
+            record_chat_debug_step(
+                &debug_sink,
+                ChatDebugStep {
+                    session_id,
+                    parent_id,
+                    assistant_message_id,
+                    step_index: chain_index,
+                    request_messages: request_snapshot,
+                    response: full_response,
+                    tool_calls: debug_calls,
+                    tool_results: debug_results,
+                    final_messages: req.core.messages.clone(),
+                    terminal: true,
+                },
+            );
+            report.record_error(loop_error.clone());
+            report.outcome = SessionOutcome::Exhausted {
+                error_id: loop_error.error_id,
+            };
+            report.commit_phase = commit_phase;
+            report.attempts = attempts;
+            report.final_messages = req.core.messages.clone();
+            return report;
+        }
 
         let mut ctx = ChatLoopContext {
             cfg: &mut cfg,
@@ -2641,40 +2794,6 @@ fn is_pending_edit_payload(payload: &ToolUiPayload) -> bool {
         .any(|field| field.name.as_ref() == "status" && field.value.as_ref() == "pending")
 }
 
-use tracing::info;
-
-fn log_api_request_json(url: &str, payload: &str, rel_path: &str) -> color_eyre::Result<()> {
-    info!(target: "api_json", "\n// URL: {url}\n// Request\n{payload}\n");
-    write_payload(rel_path, payload);
-    Ok(())
-}
-
-fn log_api_raw_response(url: &str, status: u16, body: &str) -> color_eyre::Result<()> {
-    info!(target: "api_json", "\n// URL: {url}\n// Status: {status}\n{body}\n");
-    write_payload(OPENROUTER_RESPONSE_LOG_RAW, body);
-    Ok(())
-}
-
-async fn log_api_parsed_json_response(
-    url: &str,
-    status: u16,
-    parsed: &OpenAiResponse,
-) -> color_eyre::Result<()> {
-    let payload: String = serde_json::to_string_pretty(parsed)?;
-    info!(target: "api_json", "\n// URL: {url}\n// Status: {status}\n{payload}\n");
-    write_payload(OPENROUTER_RESPONSE_LOG_PARSED, &payload);
-    Ok(())
-}
-
-fn write_payload(rel_path: &str, payload: &str) {
-    let mut path = workspace_root();
-    path.push(rel_path);
-    if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-    let _ = fs::write(path, payload);
-}
-
 #[tracing::instrument]
 async fn add_sysinfo_message(
     call_id: &ploke_core::ArcStr,
@@ -2765,6 +2884,66 @@ mod tests {
 
     const TEST_ROUTER_URL: &str = "http://127.0.0.1:39181/v1/chat/completions";
     const TEST_ROUTER_URL_ALT: &str = "http://127.0.0.1:39182/v1/chat/completions";
+
+    fn test_tool_call(name: ToolName) -> ToolCall {
+        ToolCall {
+            call_id: ploke_core::ArcStr::from(format!("call_{}", name.as_str())),
+            call_type: FunctionMarker,
+            function: FunctionCall {
+                name,
+                arguments: "{}".to_string(),
+            },
+            extra_content: None,
+        }
+    }
+
+    #[test]
+    fn tool_streak_stop_resets_when_tool_changes() {
+        let mut streak = None;
+        let repeated = vec![
+            test_tool_call(ToolName::RequestCodeContext),
+            test_tool_call(ToolName::RequestCodeContext),
+        ];
+        assert_eq!(tool_streak_stop(&mut streak, &repeated, Some(3)), None);
+        assert_eq!(
+            tool_streak_stop(&mut streak, &[test_tool_call(ToolName::ListDir)], Some(3)),
+            None
+        );
+        assert_eq!(tool_streak_stop(&mut streak, &repeated, Some(3)), None);
+
+        let (tool, count, limit) = tool_streak_stop(
+            &mut streak,
+            &[test_tool_call(ToolName::RequestCodeContext)],
+            Some(3),
+        )
+        .expect("third repeated call should stop the session");
+        assert_eq!(tool, ToolName::RequestCodeContext);
+        assert_eq!(count, 3);
+        assert_eq!(limit, 3);
+    }
+
+    #[test]
+    fn tool_streak_stop_is_disabled_without_limit() {
+        let mut streak = None;
+        let repeated = (0..20)
+            .map(|_| test_tool_call(ToolName::RequestCodeContext))
+            .collect::<Vec<_>>();
+        assert_eq!(tool_streak_stop(&mut streak, &repeated, None), None);
+        assert_eq!(streak, None);
+    }
+
+    #[test]
+    fn tool_streak_stop_latches_before_later_tool() {
+        let mut streak = Some((ToolName::RequestCodeContext, 2));
+        let mixed = vec![
+            test_tool_call(ToolName::RequestCodeContext),
+            test_tool_call(ToolName::ListDir),
+        ];
+        assert_eq!(
+            tool_streak_stop(&mut streak, &mixed, Some(3)),
+            Some((ToolName::RequestCodeContext, 3, 3))
+        );
+    }
 
     #[derive(Clone, Default)]
     struct DebugSteps(StdArc<StdMutex<Vec<ChatDebugStep>>>);
@@ -3150,6 +3329,36 @@ mod tests {
         .to_string()
     }
 
+    fn list_dir_batch_response(index: usize, count: usize) -> String {
+        let tool_calls = (0..count)
+            .map(|call| {
+                json!({
+                    "id": format!("call_{index}_{call}"),
+                    "type": "function",
+                    "function": {
+                        "name": "list_dir",
+                        "arguments": "{\"dir\":\".\",\"max_entries\":3}"
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        json!({
+            "id": format!("tool-batch-{index}"),
+            "choices": [{
+                "index": 0,
+                "finish_reason": "tool_calls",
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": tool_calls
+                }
+            }],
+            "created": 0,
+            "model": "test/model",
+            "object": "chat.completion"
+        })
+        .to_string()
+    }
+
     fn content_response(content: &str) -> String {
         json!({
             "id": "final",
@@ -3189,6 +3398,12 @@ mod tests {
         assert!(value.get("recorded_response").is_none());
     }
 
+    #[test]
+    fn explicit_empty_capture_disables_legacy_fallback() {
+        assert!(SessionCapture::default().uses_legacy_fallback());
+        assert!(!SessionCapture::new(None, None).uses_legacy_fallback());
+    }
+
     async fn run_calibrated_test_router_session() -> ChatSessionReport {
         let responses = vec![content_response("final answer")];
         let request_count = std::sync::Arc::new(AtomicUsize::new(0));
@@ -3218,6 +3433,7 @@ mod tests {
                 included_message_ids: Vec::new(),
                 chat_policy: ChatPolicy::default(),
                 cancel_rx,
+                capture: SessionCapture::default(),
             },
             90,
         )
@@ -3261,6 +3477,7 @@ mod tests {
                 included_message_ids: Vec::new(),
                 chat_policy: ChatPolicy::default(),
                 cancel_rx,
+                capture: SessionCapture::default(),
             },
             1,
         )
@@ -3284,6 +3501,203 @@ mod tests {
             "recorded replay should not emit provider HTTP attempts"
         );
         assert_eq!(assistant_update.as_deref(), Some("recorded final answer"));
+    }
+
+    #[tokio::test]
+    async fn tool_streak_limit_settles_threshold_batch_before_exhaustion() {
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let mut tool_rx = event_bus.subscribe(crate::EventPriority::Realtime);
+        let requested = Arc::new(AtomicUsize::new(0));
+        let completed = Arc::new(AtomicUsize::new(0));
+        let tool_bus = Arc::clone(&event_bus);
+        let requested_a = Arc::clone(&requested);
+        let completed_a = Arc::clone(&completed);
+        let tool_task = tokio::spawn(async move {
+            while let Ok(event) = tool_rx.recv().await {
+                if let AppEvent::System(SystemEvent::ToolCallRequested {
+                    tool_call,
+                    request_id,
+                    parent_id,
+                }) = event
+                {
+                    requested_a.fetch_add(1, Ordering::SeqCst);
+                    tool_bus.send(AppEvent::System(SystemEvent::ToolCallCompleted {
+                        request_id,
+                        parent_id,
+                        call_id: tool_call.call_id,
+                        content: r#"{"ok":true,"entries":[]}"#.to_string(),
+                        ui_payload: None,
+                    }));
+                    completed_a.fetch_add(1, Ordering::SeqCst);
+                }
+            }
+        });
+
+        let responses = vec![
+            list_dir_batch_response(0, 1),
+            list_dir_batch_response(1, 1),
+            list_dir_batch_response(2, 2),
+            content_response("sentinel response must remain unconsumed"),
+        ];
+        let tape = RecordedResponseTape::new(
+            responses
+                .into_iter()
+                .enumerate()
+                .map(|(index, response)| {
+                    RecordedResponse::new(
+                        index,
+                        serde_json::from_str(&response).expect("recorded response parses"),
+                    )
+                })
+                .collect(),
+        );
+        let (state_cmd_tx, mut state_cmd_rx) = mpsc::channel(128);
+        let drain = tokio::spawn(async move { while state_cmd_rx.recv().await.is_some() {} });
+        let (_cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
+        let req = ChatCompRequest::<TestRouter>::default()
+            .with_model_str("moonshotai/kimi-k2")
+            .expect("model id")
+            .with_message(RequestMessage::new_user(
+                "Inspect the current directory.".to_string(),
+            ))
+            .with_tools(Some(vec![crate::tools::list_dir::ListDir::tool_def()]))
+            .with_tool_choice(Some(ToolChoice::Auto));
+        let debug_steps = DebugSteps::default();
+        let chat_policy = ChatPolicy {
+            tool_streak_limit: Some(3),
+            ..ChatPolicy::default()
+        };
+
+        let report = run_chat_session(
+            ChatSession {
+                client: Client::new(),
+                req,
+                chat_step_source: ChatStepSource::recorded(tape),
+                parent_id: Uuid::new_v4(),
+                assistant_message_id: Uuid::new_v4(),
+                event_bus,
+                state_cmd_tx,
+                included_message_ids: Vec::new(),
+                chat_policy,
+                cancel_rx,
+                capture: SessionCapture::new(None, Some(StdArc::new(debug_steps.clone()))),
+            },
+            1,
+        )
+        .await;
+
+        tool_task.abort();
+        drain.abort();
+        assert!(matches!(report.outcome, SessionOutcome::Exhausted { .. }));
+        assert_eq!(report.attempts, 3, "sentinel response must not be consumed");
+        let error = report.last_error().expect("typed streak error");
+        assert_eq!(error.code.as_ref(), "TOOL_STREAK_LIMIT");
+        assert_eq!(
+            error.context.tool_name.as_ref().map(AsRef::as_ref),
+            Some("list_dir")
+        );
+        assert_eq!(requested.load(Ordering::SeqCst), 4);
+        assert_eq!(completed.load(Ordering::SeqCst), 4);
+
+        let steps = debug_steps.snapshot();
+        assert_eq!(steps.len(), 3);
+        assert!(!steps[0].terminal);
+        assert!(!steps[1].terminal);
+        assert!(steps[2].terminal);
+        assert_eq!(steps[2].response.id, "tool-batch-2");
+        assert_eq!(steps[2].tool_calls.len(), 2);
+        assert_eq!(steps[2].tool_results.len(), 2);
+        assert_eq!(
+            report
+                .final_messages
+                .iter()
+                .filter(|message| message.role == Role::Tool)
+                .count(),
+            4
+        );
+    }
+
+    async fn run_captured_session(
+        response_id: &str,
+        response_tx: std::sync::mpsc::Sender<FullResponseTraceRecord>,
+        debug_sink: StdArc<dyn ChatDebugSink>,
+    ) -> ChatSessionReport {
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let (state_cmd_tx, _state_cmd_rx) = mpsc::channel(128);
+        let (_cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
+        let req = ChatCompRequest::<TestRouter>::default()
+            .with_model_str("moonshotai/kimi-k2")
+            .expect("model id")
+            .with_messages(vec![RequestMessage::new_system(
+                "You are a test assistant.".to_string(),
+            )]);
+        let mut response: OpenAiResponse =
+            serde_json::from_str(&content_response("recorded final answer"))
+                .expect("recorded response parses");
+        response.id = response_id.to_string();
+        let tape = RecordedResponseTape::new(vec![RecordedResponse::new(0, response)]);
+
+        run_chat_session(
+            ChatSession {
+                client: Client::new(),
+                req,
+                chat_step_source: ChatStepSource::recorded(tape),
+                parent_id: Uuid::new_v4(),
+                assistant_message_id: Uuid::new_v4(),
+                event_bus,
+                state_cmd_tx,
+                included_message_ids: Vec::new(),
+                chat_policy: ChatPolicy::default(),
+                cancel_rx,
+                capture: SessionCapture::new(Some(response_tx), Some(debug_sink)),
+            },
+            1,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn concurrent_chat_sessions_keep_capture_provenance() {
+        let (left_tx, left_rx) = std::sync::mpsc::channel();
+        let (right_tx, right_rx) = std::sync::mpsc::channel();
+        let left_steps = DebugSteps::default();
+        let right_steps = DebugSteps::default();
+
+        let (left, right) = tokio::join!(
+            run_captured_session("left-response", left_tx, StdArc::new(left_steps.clone())),
+            run_captured_session("right-response", right_tx, StdArc::new(right_steps.clone())),
+        );
+
+        assert!(matches!(left.outcome, SessionOutcome::Completed));
+        assert!(matches!(right.outcome, SessionOutcome::Completed));
+
+        let left_responses = left_rx.try_iter().collect::<Vec<_>>();
+        let right_responses = right_rx.try_iter().collect::<Vec<_>>();
+        assert_eq!(left_responses.len(), 1);
+        assert_eq!(right_responses.len(), 1);
+        assert_eq!(
+            left_responses[0].recorded_response.response.id,
+            "left-response"
+        );
+        assert_eq!(
+            right_responses[0].recorded_response.response.id,
+            "right-response"
+        );
+        assert_eq!(
+            left_responses[0].assistant_message_id,
+            left.assistant_message_id
+        );
+        assert_eq!(
+            right_responses[0].assistant_message_id,
+            right.assistant_message_id
+        );
+
+        let left_steps = left_steps.snapshot();
+        let right_steps = right_steps.snapshot();
+        assert_eq!(left_steps.len(), 1);
+        assert_eq!(right_steps.len(), 1);
+        assert_eq!(left_steps[0].response.id, "left-response");
+        assert_eq!(right_steps[0].response.id, "right-response");
     }
 
     #[tokio::test]
@@ -3322,6 +3736,7 @@ mod tests {
                 included_message_ids: Vec::new(),
                 chat_policy: ChatPolicy::default(),
                 cancel_rx,
+                capture: SessionCapture::default(),
             },
             2,
         )
@@ -3429,6 +3844,7 @@ mod tests {
                 included_message_ids: Vec::new(),
                 chat_policy: ChatPolicy::default(),
                 cancel_rx,
+                capture: SessionCapture::default(),
             },
             2,
         )
@@ -3511,6 +3927,7 @@ mod tests {
                 included_message_ids: Vec::new(),
                 chat_policy,
                 cancel_rx,
+                capture: SessionCapture::default(),
             },
             2,
         )
@@ -3558,6 +3975,7 @@ mod tests {
                 included_message_ids: Vec::new(),
                 chat_policy: ChatPolicy::default(),
                 cancel_rx,
+                capture: SessionCapture::default(),
             },
             2,
         )
@@ -3690,6 +4108,7 @@ mod tests {
                 included_message_ids: Vec::new(),
                 chat_policy: ChatPolicy::default(),
                 cancel_rx,
+                capture: SessionCapture::default(),
             },
             90,
         )
@@ -3759,6 +4178,7 @@ mod tests {
                 included_message_ids: Vec::new(),
                 chat_policy: ChatPolicy::default(),
                 cancel_rx,
+                capture: SessionCapture::default(),
             },
             2,
         )
@@ -3797,369 +4217,6 @@ mod tests {
                 .any(|content| content.contains("live tail after recorded prefix")),
             "expected live-tail assistant update, got {assistant_updates:?}"
         );
-    }
-
-    #[tokio::test]
-    async fn run_chat_session_can_replay_prefix_then_take_one_live_step() {
-        let _router_guard = TEST_ROUTER_LOCK.lock().await;
-        let _api_key = ApiKeyGuard::set("test-key");
-        let responses = vec![malformed_tool_call_response(2)];
-        let request_count = std::sync::Arc::new(AtomicUsize::new(0));
-        let server =
-            spawn_test_router_server("127.0.0.1:39181", responses, request_count.clone()).await;
-
-        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
-        let (state_cmd_tx, _state_cmd_rx) = mpsc::channel(128);
-        let (_cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
-        let assistant_message_id = Uuid::new_v4();
-        let req = ChatCompRequest::<TestRouter>::default()
-            .with_model_str("moonshotai/kimi-k2")
-            .expect("model id")
-            .with_messages(vec![RequestMessage::new_system(
-                "You are a test assistant.".to_string(),
-            )]);
-        let recorded_response = serde_json::from_str(&malformed_tool_call_response(1))
-            .expect("malformed tool response envelope still parses as provider response");
-        let tape = RecordedResponseTape::new(vec![RecordedResponse::new(0, recorded_response)]);
-        let (request_tx, request_rx) = std::sync::mpsc::channel();
-        let _request_tap = install_request_tap(request_tx);
-        let (response_tx, response_rx) = std::sync::mpsc::channel();
-        let _response_tap = install_response_tap(response_tx);
-
-        let report = run_chat_session(
-            ChatSession {
-                client: Client::new(),
-                req,
-                chat_step_source: ChatStepSource::recorded_prefix_then_live_steps(tape, 1),
-                parent_id: Uuid::new_v4(),
-                assistant_message_id,
-                event_bus,
-                state_cmd_tx,
-                included_message_ids: Vec::new(),
-                chat_policy: ChatPolicy::default(),
-                cancel_rx,
-            },
-            2,
-        )
-        .await;
-
-        server.await.expect("server task");
-        let captured_requests = request_rx.try_iter().collect::<Vec<_>>();
-        let captured_responses = response_rx.try_iter().collect::<Vec<_>>();
-
-        assert!(matches!(report.outcome, SessionOutcome::Completed));
-        assert_eq!(
-            request_count.load(Ordering::SeqCst),
-            1,
-            "exactly one live step should reach the provider"
-        );
-        assert_eq!(
-            captured_requests.len(),
-            3,
-            "expected recorded request, live request, then step-boundary request"
-        );
-        assert_eq!(
-            captured_responses.len(),
-            2,
-            "expected recorded and one live provider response"
-        );
-        assert_eq!(captured_responses[0].index(), 0);
-        assert_eq!(captured_responses[1].index(), 1);
-    }
-
-    #[tokio::test]
-    async fn run_chat_session_live_step_executes_tool_batch_before_boundary() {
-        let _router_guard = TEST_ROUTER_LOCK.lock().await;
-        let _api_key = ApiKeyGuard::set("test-key");
-        let responses = vec![list_dir_tool_call_response(0)];
-        let request_count = std::sync::Arc::new(AtomicUsize::new(0));
-        let server =
-            spawn_test_router_server("127.0.0.1:39181", responses, request_count.clone()).await;
-
-        let db = Arc::new(Database::new_init().expect("database initializes"));
-        let embedder = Arc::new(EmbeddingRuntime::from_shared_set(
-            Arc::clone(&db.active_embedding_set),
-            EmbeddingProcessor::new(EmbeddingSource::Local(
-                LocalEmbedder::new(EmbeddingConfig::default()).expect("local embedder initializes"),
-            )),
-        ));
-        let rag = Arc::new(
-            RagService::new(Arc::clone(&db), Arc::clone(&embedder))
-                .expect("rag service initializes"),
-        );
-        let (rag_tx, _rag_rx) = mpsc::channel(16);
-        let state = Arc::new(AppState::new(
-            db,
-            embedder,
-            ploke_io::IoManagerHandle::new(),
-            rag,
-            TokenBudget::default(),
-            rag_tx,
-        ));
-        let workspace = std::env::current_dir().expect("current dir is available");
-        state
-            .with_system_txn(|txn| {
-                txn.set_loaded_workspace(
-                    workspace.clone(),
-                    vec![workspace.clone()],
-                    Some(workspace),
-                );
-            })
-            .await;
-
-        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
-        let mut tool_rx = event_bus.subscribe(crate::EventPriority::Realtime);
-        let requested = Arc::new(AtomicUsize::new(0));
-        let completed = Arc::new(AtomicUsize::new(0));
-        let tool_state = Arc::clone(&state);
-        let tool_bus = Arc::clone(&event_bus);
-        let requested_a = Arc::clone(&requested);
-        let completed_a = Arc::clone(&completed);
-        let tool_task = tokio::spawn(async move {
-            while let Ok(event) = tool_rx.recv().await {
-                if let AppEvent::System(SystemEvent::ToolCallRequested {
-                    tool_call,
-                    request_id,
-                    parent_id,
-                }) = event
-                {
-                    requested_a.fetch_add(1, Ordering::SeqCst);
-                    let ctx = crate::tools::Ctx {
-                        state: Arc::clone(&tool_state),
-                        event_bus: Arc::clone(&tool_bus),
-                        request_id,
-                        parent_id,
-                        call_id: tool_call.call_id.clone(),
-                    };
-                    if crate::tools::process_tool(tool_call, ctx).await.is_ok() {
-                        completed_a.fetch_add(1, Ordering::SeqCst);
-                    }
-                }
-            }
-        });
-
-        let (state_cmd_tx, mut state_cmd_rx) = mpsc::channel(128);
-        let drain = tokio::spawn(async move { while state_cmd_rx.recv().await.is_some() {} });
-        let (_cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
-        let req = ChatCompRequest::<TestRouter>::default()
-            .with_model_str("moonshotai/kimi-k2")
-            .expect("model id")
-            .with_message(RequestMessage::new_user(
-                "Call list_dir for the current directory.".to_owned(),
-            ))
-            .with_tools(Some(vec![crate::tools::list_dir::ListDir::tool_def()]))
-            .with_tool_choice(Some(ToolChoice::Auto));
-        let tape = RecordedResponseTape::new(Vec::new());
-        let (request_tx, request_rx) = std::sync::mpsc::channel();
-        let _request_tap = install_request_tap(request_tx);
-        let (response_tx, response_rx) = std::sync::mpsc::channel();
-        let _response_tap = install_response_tap(response_tx);
-        let debug_steps = DebugSteps::default();
-        let _debug_guard = install_chat_debug_sink(StdArc::new(debug_steps.clone()));
-
-        let report = run_chat_session(
-            ChatSession {
-                client: Client::new(),
-                req,
-                chat_step_source: ChatStepSource::recorded_prefix_then_live_steps(tape, 1),
-                parent_id: Uuid::new_v4(),
-                assistant_message_id: Uuid::new_v4(),
-                event_bus,
-                state_cmd_tx,
-                included_message_ids: Vec::new(),
-                chat_policy: ChatPolicy::default(),
-                cancel_rx,
-            },
-            2,
-        )
-        .await;
-
-        server.await.expect("server task");
-        tool_task.abort();
-        drain.abort();
-        let captured_requests = request_rx.try_iter().collect::<Vec<_>>();
-        let captured_responses = response_rx.try_iter().collect::<Vec<_>>();
-
-        assert!(matches!(report.outcome, SessionOutcome::Completed));
-        assert_eq!(
-            request_count.load(Ordering::SeqCst),
-            1,
-            "exactly one live provider response should be allowed"
-        );
-        assert_eq!(
-            requested.load(Ordering::SeqCst),
-            1,
-            "the live response's tool request should execute before the boundary"
-        );
-        assert_eq!(
-            completed.load(Ordering::SeqCst),
-            1,
-            "the tool batch should complete before the boundary"
-        );
-        assert_eq!(
-            captured_requests.len(),
-            2,
-            "expected live request, then boundary request before the next provider call"
-        );
-        assert_eq!(captured_responses.len(), 1);
-        assert_eq!(captured_responses[0].index(), 0);
-        let steps = debug_steps.snapshot();
-        assert_eq!(
-            steps.len(),
-            1,
-            "debug sink should pause after one response step"
-        );
-        assert_eq!(steps[0].step_index, 0);
-        assert_eq!(steps[0].tool_calls.len(), 1);
-        assert_eq!(steps[0].tool_results.len(), 1);
-        assert!(!steps[0].terminal);
-        assert_eq!(steps[0].final_messages.len(), 3);
-        assert_eq!(report.final_messages.len(), 3);
-        assert!(
-            report
-                .final_messages
-                .iter()
-                .any(|message| message.role == Role::Assistant && message.tool_calls.is_some()),
-            "resume state should include the assistant tool-call message"
-        );
-        assert!(
-            report
-                .final_messages
-                .iter()
-                .any(|message| message.role == Role::Tool),
-            "resume state should include the completed tool result"
-        );
-    }
-
-    #[tokio::test]
-    #[cfg(feature = "live_api_tests")]
-    #[ignore = "requires direct Google auth/env, a tool-capable Gemini model, and quota"]
-    async fn live_google_chat_session_live_step_tool_batch_success_or_quota() {
-        if !google_live_ready("live_google_chat_session_live_step_tool_batch_success_or_quota") {
-            return;
-        }
-
-        let db = Arc::new(Database::new_init().expect("database initializes"));
-        let embedder = Arc::new(EmbeddingRuntime::from_shared_set(
-            Arc::clone(&db.active_embedding_set),
-            EmbeddingProcessor::new(EmbeddingSource::Local(
-                LocalEmbedder::new(EmbeddingConfig::default()).expect("local embedder initializes"),
-            )),
-        ));
-        let rag = Arc::new(
-            RagService::new(Arc::clone(&db), Arc::clone(&embedder))
-                .expect("rag service initializes"),
-        );
-        let (rag_tx, _rag_rx) = mpsc::channel(16);
-        let state = Arc::new(AppState::new(
-            db,
-            embedder,
-            ploke_io::IoManagerHandle::new(),
-            rag,
-            TokenBudget::default(),
-            rag_tx,
-        ));
-        let workspace = std::env::current_dir().expect("current dir is available");
-        state
-            .with_system_txn(|txn| {
-                txn.set_loaded_workspace(
-                    workspace.clone(),
-                    vec![workspace.clone()],
-                    Some(workspace),
-                );
-            })
-            .await;
-
-        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
-        let mut tool_rx = event_bus.subscribe(crate::EventPriority::Realtime);
-        let requested = Arc::new(AtomicUsize::new(0));
-        let completed = Arc::new(AtomicUsize::new(0));
-        let tool_state = Arc::clone(&state);
-        let tool_bus = Arc::clone(&event_bus);
-        let requested_a = Arc::clone(&requested);
-        let completed_a = Arc::clone(&completed);
-        let tool_task = tokio::spawn(async move {
-            while let Ok(event) = tool_rx.recv().await {
-                if let AppEvent::System(SystemEvent::ToolCallRequested {
-                    tool_call,
-                    request_id,
-                    parent_id,
-                }) = event
-                {
-                    requested_a.fetch_add(1, Ordering::SeqCst);
-                    let ctx = crate::tools::Ctx {
-                        state: Arc::clone(&tool_state),
-                        event_bus: Arc::clone(&tool_bus),
-                        request_id,
-                        parent_id,
-                        call_id: tool_call.call_id.clone(),
-                    };
-                    if crate::tools::process_tool(tool_call, ctx).await.is_ok() {
-                        completed_a.fetch_add(1, Ordering::SeqCst);
-                    }
-                }
-            }
-        });
-
-        let (state_cmd_tx, mut state_cmd_rx) = mpsc::channel(128);
-        let drain = tokio::spawn(async move { while state_cmd_rx.recv().await.is_some() {} });
-        let (_cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
-        let model = std::env::var("PLOKE_LIVE_GOOGLE_CHAT_MODEL")
-            .unwrap_or_else(|_| "google/gemini-2.5-flash".to_string());
-        let req = ChatCompRequest::<Google>::default()
-            .with_model_str(&model)
-            .expect("Google model id parses")
-            .with_message(RequestMessage::new_user(
-                "Call the list_dir tool exactly once with dir \".\" and max_entries 3.".to_string(),
-            ))
-            .with_max_tokens(160)
-            .with_temperature(0.0)
-            .with_tools(Some(vec![crate::tools::list_dir::ListDir::tool_def()]))
-            .with_tool_choice(Some(ToolChoice::Required));
-        let tape = RecordedResponseTape::new(Vec::new());
-        let (request_tx, request_rx) = std::sync::mpsc::channel();
-        let _request_tap = install_request_tap(request_tx);
-        let (response_tx, response_rx) = std::sync::mpsc::channel();
-        let _response_tap = install_response_tap(response_tx);
-
-        let report = run_chat_session(
-            ChatSession {
-                client: Client::new(),
-                req,
-                chat_step_source: ChatStepSource::recorded_prefix_then_live_steps(tape, 1),
-                parent_id: Uuid::new_v4(),
-                assistant_message_id: Uuid::new_v4(),
-                event_bus,
-                state_cmd_tx,
-                included_message_ids: Vec::new(),
-                chat_policy: ChatPolicy::default(),
-                cancel_rx,
-            },
-            90,
-        )
-        .await;
-
-        tool_task.abort();
-        drain.abort();
-        let captured_requests = request_rx.try_iter().collect::<Vec<_>>();
-        let captured_responses = response_rx.try_iter().collect::<Vec<_>>();
-
-        if matches!(report.outcome, SessionOutcome::Completed) && report.errors.is_empty() {
-            assert_eq!(requested.load(Ordering::SeqCst), 1, "report={report:#?}");
-            assert_eq!(completed.load(Ordering::SeqCst), 1, "report={report:#?}");
-            assert_eq!(
-                captured_requests.len(),
-                2,
-                "expected live request and next-request boundary, report={report:#?}"
-            );
-            assert_eq!(captured_responses.len(), 1, "report={report:#?}");
-            assert_eq!(captured_responses[0].index(), 0);
-        } else {
-            assert!(
-                live_google_failure_is_classified(&report),
-                "unexpected live Google failure: {report:#?}"
-            );
-        }
     }
 
     #[cfg(feature = "live_api_tests")]
@@ -4657,6 +4714,7 @@ mod tests {
                 included_message_ids: Vec::new(),
                 chat_policy: ChatPolicy::default(),
                 cancel_rx,
+                capture: SessionCapture::default(),
             },
             5,
         )
@@ -4743,6 +4801,7 @@ mod tests {
                 included_message_ids: Vec::new(),
                 chat_policy,
                 cancel_rx,
+                capture: SessionCapture::default(),
             },
             1,
         )
@@ -4826,6 +4885,7 @@ mod tests {
                 included_message_ids: Vec::new(),
                 chat_policy: ChatPolicy::default(),
                 cancel_rx,
+                capture: SessionCapture::default(),
             },
             45,
         )
@@ -4909,6 +4969,7 @@ mod tests {
                 included_message_ids: Vec::new(),
                 chat_policy: ChatPolicy::default(),
                 cancel_rx,
+                capture: SessionCapture::default(),
             },
             5,
         )

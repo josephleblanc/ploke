@@ -13,8 +13,8 @@ use crate::cli::{
 };
 
 use super::{
-    AsyncStep, AsyncStepInput, R1, R2a, R3, R4a, Step, StepInput, async_transition, context,
-    transition,
+    AsyncStep, AsyncStepInput, R1, R2a, R3, R4a, R13C_SHAPE, R13cHandoffIncomplete, RetiredParts,
+    Step, StepInput, async_transition, context, transition,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,11 +145,11 @@ fn state_command_for_typestate_test() -> Prototype1StateCommand {
         identity_branch: None,
         identity_instance: None,
         handoff_invocation: None,
-        stop_after: Prototype1StateStopAfter::Complete,
-        successor_selection: Prototype1SuccessorSelection::HistoryScoreChildProp,
-        successor_selection_seed: 0,
-        successor_selection_metrics: Prototype1TraversalMetrics::Operational,
-        candidate_generator: Prototype1CandidateGenerator::BroadHarnessRequest,
+        stop_after: Some(Prototype1StateStopAfter::Complete),
+        successor_selection: Some(Prototype1SuccessorSelection::HistoryScoreChildProp),
+        successor_selection_seed: Some(0),
+        successor_selection_metrics: Some(Prototype1TraversalMetrics::Operational),
+        candidate_generator: Some(Prototype1CandidateGenerator::BroadHarnessRequest),
         format: InspectOutputFormat::Table,
     }
 }
@@ -234,4 +234,38 @@ fn r4a_carries_existing_unchecked_parent_carrier() {
         parts.collected.into_parts().campaign_id,
         CampaignId::from("campaign")
     );
+}
+
+#[test]
+fn r13c_shape_preserves_consumed_handoff_authority() {
+    assert_eq!(R13C_SHAPE.phase, "phase::R13c");
+    assert_eq!(R13C_SHAPE.role, "parent_role::Parent<parent_role::Retired>");
+    assert!(R13C_SHAPE.children.contains("set::Successor"));
+    assert!(R13C_SHAPE.history.contains("head::Advanced"));
+    assert!(R13C_SHAPE.history.contains("epoch::Sealed"));
+    assert!(
+        R13C_SHAPE
+            .continuation
+            .contains("continuation::handoff::Incomplete<successor::Record>")
+    );
+    assert_eq!(R13C_SHAPE.report, "Report<report::Facts>");
+}
+
+#[test]
+fn r13c_constructor_and_parts_keep_retired_parent_typed() {
+    fn construct<RunShape, CampaignConfig>(
+        collected: context::Collected<RunShape, CampaignConfig>,
+        parent: Parent<crate::cli::prototype1_state::parent::Retired>,
+    ) -> R13cHandoffIncomplete<RunShape, CampaignConfig> {
+        R13cHandoffIncomplete::from_collected_parent(collected, parent)
+    }
+
+    fn recover<RunShape, CampaignConfig>(
+        state: R13cHandoffIncomplete<RunShape, CampaignConfig>,
+    ) -> RetiredParts<RunShape, CampaignConfig> {
+        state.into_parts()
+    }
+
+    let _ = construct::<(), ()>;
+    let _ = recover::<(), ()>;
 }

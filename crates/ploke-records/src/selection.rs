@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::branch::Disposition;
 use crate::evaluation::RunMetrics;
-use crate::ids::{CandidateMembershipId, CandidateOccurrenceId, HistoryHash};
+use crate::history::EvidenceCitationRecord;
+use crate::ids::{ArtifactId, CandidateMembershipId, CandidateOccurrenceId, HistoryHash};
 use crate::oracle;
 
 /// Candidate coordinate considered by successor selection.
@@ -28,6 +29,48 @@ pub struct Input {
     pub evaluation_artifact_path: PathBuf,
     #[serde(default)]
     pub comparisons: Vec<RunComparison>,
+}
+
+/// Absolute safety verdict from an artifact-bound candidate patch review.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PatchVerdict {
+    Admissible,
+    Rejected,
+    Inconclusive,
+}
+
+/// One path in the exact change set supplied to the patch adjudicator.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PatchChange {
+    pub relpath: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_content_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposed_content_hash: Option<String>,
+}
+
+/// Passive projection of candidate patch-review evidence sealed for selection.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PatchReview {
+    pub schema_version: u32,
+    pub procedure_id: String,
+    pub candidate: CandidateRef,
+    pub artifact_id: ArtifactId,
+    pub artifact_surface_hash: HistoryHash,
+    pub evaluation_hash: HistoryHash,
+    pub config_hash: HistoryHash,
+    pub change_set_hash: HistoryHash,
+    pub changes: Vec<PatchChange>,
+    pub verdict: PatchVerdict,
+    pub confidence: Confidence,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blocking_findings: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub missing_evidence: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rationale: Vec<String>,
+    pub citation: EvidenceCitationRecord,
 }
 
 /// Parent-vs-child metrics for one benchmark instance.
@@ -166,6 +209,15 @@ pub struct ScoreChildPropRecord {
     pub metric_inputs: String,
     pub oracle_mode: String,
     pub oracle_require_evidence: bool,
+    #[serde(default)]
+    pub oracle_gate: crate::run_profile::OracleGate,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::run_profile::PatchGate::is_disabled"
+    )]
+    pub patch_gate: crate::run_profile::PatchGate,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub oracle_targets: Vec<String>,
     pub total_weight: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sample: Option<f64>,
@@ -470,6 +522,9 @@ mod tests {
                 metric_inputs: "operational".to_string(),
                 oracle_mode: "record_only".to_string(),
                 oracle_require_evidence: true,
+                oracle_gate: crate::run_profile::OracleGate::Disabled,
+                patch_gate: crate::run_profile::PatchGate::Disabled,
+                oracle_targets: vec!["instance-a".to_string()],
                 total_weight: 0.75,
                 sample: Some(0.25),
                 sample_threshold: Some(0.1875),

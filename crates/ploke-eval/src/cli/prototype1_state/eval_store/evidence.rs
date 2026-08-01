@@ -298,6 +298,7 @@ pub(crate) struct RecordRefReceipt {
 pub(crate) struct TraceImportReceipt {
     pub(crate) log_ref_id: String,
     pub(crate) trace_event_ids: Vec<String>,
+    pub(crate) provider_attempt_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

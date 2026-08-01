@@ -23,7 +23,10 @@ use crate::cli::prototype1_state::{
         harness_result::SubmittedBroadHarnessResult,
         surface,
         surface_policy::SurfacePolicy,
-        tui_adapter::{harness::Timeouts, tui_bridge::run_headless_with_model},
+        tui_adapter::{
+            harness::{TOOL_STREAK_LIMIT, Timeouts},
+            tui_bridge::run_headless_with_model,
+        },
     },
 };
 use crate::loop_graph::{ArtifactId, Coordinate, OperationTarget, RuntimeId};
@@ -656,6 +659,27 @@ fn sparse_post_apply_refresh_gate_uses_sparse_search_config() {
     ));
 }
 
+#[tokio::test]
+async fn scan_barrier_times_out() {
+    let (_scan_tx, scan_rx) = tokio::sync::oneshot::channel();
+    let deadline = std::time::Instant::now() + Duration::from_millis(20);
+
+    let error = tokio::time::timeout(
+        Duration::from_millis(250),
+        await_scan_barrier(scan_rx, deadline),
+    )
+    .await
+    .expect("scan barrier must honor the refresh deadline")
+    .expect_err("an unresolved scan barrier must time out");
+
+    assert!(
+        error
+            .to_string()
+            .contains("timed out waiting for scan barrier"),
+        "unexpected scan barrier error: {error}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn sparse_post_apply_refresh_returns_on_bm25_without_dense_index_completion() {
     let _recorded_replay_guard = recorded_replay_test_mutex().lock().await;
@@ -667,6 +691,10 @@ async fn sparse_post_apply_refresh_returns_on_bm25_without_dense_index_completio
     let mut runtime = crate::runner::setup_workspace_tui_runtime(&fixture.workspace)
         .await
         .expect("start sparse refresh runtime");
+    assert!(
+        runtime.state.indexer_task.is_none(),
+        "sparse eval runtime must not retain the dense indexer that caused the V26 OOM"
+    );
     runtime.app.pump_pending_events().await;
 
     fs::write(
@@ -2231,7 +2259,7 @@ async fn recorded_replay_runs_declared_validation_after_applied_edit() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn applied_batch_finalizes_before_completed_turn() {
+async fn applied_batch_waits_for_completed_turn_before_validation() {
     let _recorded_replay_guard = recorded_replay_test_mutex().lock().await;
     let fixture = prepare_live_canary(
         "finalize-on-applied-batch-no-completed-turn",
@@ -2276,30 +2304,29 @@ async fn applied_batch_finalizes_before_completed_turn() {
             outcome,
             AttemptEnd::Terminal(HeadlessTerminal::Applied { .. })
         ),
-        "passing applied batch should classify Applied without waiting for a completed turn, got {outcome:?}; validations={:#?}",
+        "passing completed turn should classify Applied after validation, got {outcome:?}; validations={:#?}",
         run.validations()
     );
     assert!(
-        !run.events()
+        run.events()
             .iter()
             .any(|event| matches!(event, Event::Turn { .. })),
-        "finalize must classify at the applied batch, before any completed chat turn is observed; events={:#?}",
+        "validation must wait for the completed chat turn instead of finalizing at the applied batch; events={:#?}",
         run.events()
     );
     assert!(
         run.validations()
             .iter()
             .any(|validation| validation.display_command == "cargo check" && validation.ok),
-        "expected harness-owned `cargo check` to run at finalize, got {:#?}",
+        "expected harness-owned `cargo check` to run after turn completion, got {:#?}",
         run.validations()
     );
 }
 
-// C1 regression: `Attempt::run` with `Capture::Responses` must keep the
-// process-global response-tap guard installed across the whole attempt await.
-// If the guard is dropped early, `clear_response_tap` fires before the session
-// runs and no provider envelopes are captured, leaving `full_response_records`
-// empty even though the model produced responses.
+// C1 regression: `Attempt::run` with `Capture::Responses` must keep its
+// response sender attached to the session across the whole attempt await.
+// The historical test name refers to the former process-global tap; the
+// asserted contract is now satisfied by explicit session-owned capture.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn attempt_capture_responses_keeps_tap_installed_across_run() {
     let _recorded_replay_guard = recorded_replay_test_mutex().lock().await;
@@ -2332,26 +2359,80 @@ async fn attempt_capture_responses_keeps_tap_installed_across_run() {
 
     assert!(
         !outcome.run.full_response_records().is_empty(),
-        "Capture::Responses must drain at least one provider response; the tap \
-         guard was dropped before the run if this is empty. terminal={:?}",
+        "Capture::Responses must drain at least one provider response from its \
+         session-owned channel. terminal={:?}",
         outcome.run.terminal()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancelling_run_attempt_preserves_caller_run_evidence() {
+    let fixture = prepare_live_canary(
+        "run-attempt-cancellation-preserves-evidence",
+        "Do not submit this prompt.",
+    )
+    .expect("prepare cancellation fixture");
+    let runtime = crate::runner::setup_workspace_tui_prompt_runtime(&fixture.workspace)
+        .await
+        .expect("start prompt-only runtime");
+    let sentinel = Event::Tool {
+        call_id: "preexisting-sentinel".to_string(),
+        result: Tool::Completed {
+            content: "caller-owned evidence".to_string(),
+        },
+    };
+    let mut run = HeadlessRun::new();
+    run.events.push(sentinel.clone());
+
+    let cancelled = tokio::time::timeout(
+        Duration::from_millis(50),
+        run_attempt(
+            runtime,
+            Uuid::new_v4(),
+            &fixture.workspace,
+            &SurfacePolicy::workspace_except_core(),
+            1,
+            &mut run,
+            &LiveObserver::disabled(),
+            &[],
+            None,
+            Timeouts::default(),
+        ),
+    )
+    .await;
+
+    assert!(
+        cancelled.is_err(),
+        "prompt-only runtime must remain pending until the test cancels it"
+    );
+    assert!(
+        run.events().contains(&sentinel),
+        "cancelling run_attempt must not discard evidence already owned by the caller"
     );
 }
 
 #[test]
 fn response_tap_drain_rebases_session_local_indices_to_run_tape() {
-    let assistant_id = Uuid::from_u128(0xaaaaaaaa_aaaa_aaaa_aaaa_aaaaaaaaaaaa);
+    let first_id = Uuid::from_u128(0xaaaaaaaa_aaaa_aaaa_aaaa_aaaaaaaaaaaa);
+    let second_id = Uuid::from_u128(0xbbbbbbbb_bbbb_bbbb_bbbb_bbbbbbbbbbbb);
     let (tx, rx) = std::sync::mpsc::channel();
     let rx = Mutex::new(rx);
     let mut run = HeadlessRun::new();
 
-    tx.send(stop_response_record(assistant_id, 0, "first-local-zero").recorded_response)
-        .expect("send first local response");
-    drain_response_records(&mut run, assistant_id, Some(&rx));
+    tx.send(ploke_tui::llm::FullResponseTraceRecord {
+        assistant_message_id: first_id,
+        recorded_response: stop_response_record(first_id, 0, "first-local-zero").recorded_response,
+    })
+    .expect("send first local response");
+    drain_response_records(&mut run, Some(&rx));
 
-    tx.send(stop_response_record(assistant_id, 0, "second-local-zero").recorded_response)
-        .expect("send second local response");
-    drain_response_records(&mut run, assistant_id, Some(&rx));
+    tx.send(ploke_tui::llm::FullResponseTraceRecord {
+        assistant_message_id: second_id,
+        recorded_response: stop_response_record(second_id, 0, "second-local-zero")
+            .recorded_response,
+    })
+    .expect("send second local response");
+    drain_response_records(&mut run, Some(&rx));
 
     let indices = run
         .full_response_records()
@@ -2363,12 +2444,17 @@ fn response_tap_drain_rebases_session_local_indices_to_run_tape() {
         vec![0, 1],
         "turn-live sidecars need monotonic replay indices even when each chat session reports local chain_index=0"
     );
+    let assistants = run
+        .full_response_records()
+        .iter()
+        .map(|record| record.assistant_message_id)
+        .collect::<Vec<_>>();
+    assert_eq!(assistants, vec![first_id, second_id]);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn historical_r10_near_tail_turn_live_tape_applies_ns_patch_through_tool_loop() {
     const FINAL_EVENT_INDEX: usize = 95;
-    const HISTORICAL_STOP_RESPONSE_INDEX: usize = 34;
 
     let _env = crate::test_support::env_guard_os(vec![]);
     assert!(
@@ -2393,7 +2479,7 @@ async fn historical_r10_near_tail_turn_live_tape_applies_ns_patch_through_tool_l
         artifact_path: "agent-turn-trace.json".to_string(),
         event_index: FINAL_EVENT_INDEX,
     };
-    let (prefix, selected) = crate::replay::turn::resolve_replay_prefix_at(
+    let replay_error = crate::replay::turn::resolve_replay_prefix_at(
         &turn_live_dir,
         &cursor,
         crate::replay::turn::ReplayPrefixSelector::ThroughEvent {
@@ -2401,42 +2487,15 @@ async fn historical_r10_near_tail_turn_live_tape_applies_ns_patch_through_tool_l
         },
         crate::replay::turn::ReplayTail::Stop,
     )
-    .expect("historical r10 completed turn cursor should resolve through turn-live tape");
-    let selected_record_count = selected.records().len();
-    let mut selected_response_indices = selected
-        .records()
-        .iter()
-        .map(|record| record.response_index().get())
-        .collect::<Vec<_>>();
-    selected_response_indices.sort_unstable();
-    selected_response_indices.dedup();
-    let selected_duplicate_count =
-        selected_record_count.saturating_sub(selected_response_indices.len());
-    println!(
-        "\n=== historical r10 replay: resolved prefix ===\n  turn_live_dir: {}\n  trace_event_index: {}\n  through_response_index: {:#?}\n  unique_selected_response_indices: {:#?}\n  selected_record_count: {}\n  duplicate_sidecar_records: {}",
-        turn_live_dir.display(),
-        FINAL_EVENT_INDEX,
-        prefix.through_response_index,
-        selected_response_indices,
-        selected_record_count,
-        selected_duplicate_count
-    );
-    assert_eq!(prefix.anchor.call_id, None);
-    assert_eq!(
-        prefix.through_response_index,
-        Some(HISTORICAL_STOP_RESPONSE_INDEX),
-        "turn-live completed cursor should map to the final historical stop response"
+    .expect_err("multiplexed historical response indexes must fail strict replay admission");
+    let replay_message = replay_error.to_string();
+    assert!(
+        replay_message.contains("duplicate response_index 0"),
+        "strict replay admission should identify the ambiguous coordinate, got {replay_message}"
     );
     assert!(
-        selected
-            .records()
-            .iter()
-            .any(|record| response_record_contains_tool_call(
-                record,
-                "function-call-34662591-b7b8-4c3e-b589-f70d5b7fb2c1",
-                "non_semantic_patch"
-            )),
-        "selected prefix should include the historical repair ns_patch response"
+        replay_message.contains("load_for_inspection"),
+        "strict replay admission should preserve the forensic inspection path, got {replay_message}"
     );
 
     // Portable fixture preserves the historical ordering requirement:
@@ -2545,13 +2604,13 @@ async fn historical_r10_near_tail_turn_live_tape_applies_ns_patch_through_tool_l
         "diagnostics should record an applied terminal after post-stop validation, got {:#?}",
         diagnostics.terminal
     );
-    // The harness now finalizes at the validated repair batch instead of
-    // depending on the model emitting a completed chat turn first. Admission
-    // must therefore not require a completed turn; the repaired-content and
-    // passing-declared-validation guarantees below are what gate admission.
+    // The harness waits for the model's completed turn before running the
+    // request-declared validation. Intermediate, non-compiling repair states
+    // are allowed during the tool loop; the final completed turn plus passing
+    // declared validation gates admission.
     assert_eq!(
-        completed_turn_count, 0,
-        "post-apply finalize should admit at the validated repair batch, before any completed chat turn; events={:#?}",
+        completed_turn_count, 1,
+        "declared validation should run after the completed chat turn, not at an intermediate applied batch; events={:#?}",
         diagnostics.events
     );
     assert!(
@@ -2564,12 +2623,11 @@ async fn historical_r10_near_tail_turn_live_tape_applies_ns_patch_through_tool_l
         diagnostics.validations
     );
     assert!(
-        diagnostics.validations.iter().any(|validation| {
-            validation.call_id == "declared_validation_1_0"
-                && validation.display_command == "cargo check -p ploke-eval"
-                && !validation.ok
-        }),
-        "the broken first patch must fail the buildability gate before the repair lands; got {:#?}",
+        diagnostics
+            .validations
+            .iter()
+            .all(|validation| { validation.call_id != "declared_validation_1_0" || validation.ok }),
+        "request-declared validation must not run against intermediate repair states; got {:#?}",
         diagnostics.validations
     );
 
@@ -2597,12 +2655,41 @@ async fn historical_r10_near_tail_turn_live_tape_applies_ns_patch_through_tool_l
     );
 }
 
-// RED regression for the 2026-06-02 direct-Google broad-headless run:
+fn assert_streak_settled(run: &HeadlessRun, expected: usize) {
+    let requested = run
+        .events()
+        .iter()
+        .filter(|event| matches!(event, Event::ToolRequest { .. }))
+        .count();
+    let settled = run
+        .events()
+        .iter()
+        .filter(|event| matches!(event, Event::Tool { .. }))
+        .count();
+    assert_eq!(requested, expected, "unexpected tool request count");
+    assert_eq!(settled, expected, "every requested tool must settle");
+
+    let last_tool = run
+        .events()
+        .iter()
+        .rposition(|event| matches!(event, Event::Tool { .. }))
+        .expect("guarded run should contain a settled tool");
+    let turn = run
+        .events()
+        .iter()
+        .rposition(|event| matches!(event, Event::Turn { .. }))
+        .expect("guarded run should contain a terminal turn");
+    assert!(
+        last_tool < turn,
+        "terminal turn must follow tool settlement"
+    );
+}
+
+// Regression for the 2026-06-02 direct-Google broad-headless run, confirmed
+// again by the 2026-07-16 r2 no-progress context-retrieval loop:
 // `Budget::max_attempts == 1` bounded only the outer harness turn while the
-// inner TUI tool loop could keep making provider-step requests. Run with
-// `--ignored` until a provider-step cap is wired into this adapter path.
+// inner TUI tool loop could repeat one tool without making progress.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "RED until broad headless TUI enforces a provider-step cap"]
 async fn xfail_broad_headless_caps_provider_steps() {
     let _recorded_replay_guard = recorded_replay_test_mutex().lock().await;
     let fixture = prepare_live_canary(
@@ -2611,7 +2698,7 @@ async fn xfail_broad_headless_caps_provider_steps() {
     )
     .expect("prepare provider-step budget fixture");
 
-    let expected_cap = 15_usize;
+    let expected_cap = TOOL_STREAK_LIMIT;
     let replay_steps = expected_cap + 5;
     let tape = repeated_protected_ns_patch_tape(&fixture.artifact_root, replay_steps);
     ploke_tui::llm::install_recorded_response_tape(tape);
@@ -2646,9 +2733,79 @@ async fn xfail_broad_headless_caps_provider_steps() {
         snapshots.len(),
         run.terminal()
     );
+    assert_streak_settled(&run, expected_cap);
     assert!(
-        matches!(run.terminal(), Some(HeadlessTerminal::Exhausted { last, .. }) if last.contains("tool call chain limit")),
-        "provider-step cap should surface as a budget/chain-limit terminal, got {:?}",
+        matches!(run.terminal(), Some(HeadlessTerminal::Exhausted { last, .. }) if last.contains("TOOL_STREAK_LIMIT") && last.contains("no-progress guard") && last.contains("non_semantic_patch")),
+        "repeated-tool cap should surface as an explicit no-progress terminal, got {:?}",
+        run.terminal()
+    );
+}
+
+// Real persisted replay for the 2026-07-16 R2 lane that issued 54 consecutive
+// request_code_context calls while searching variants of sanitize_tool_args.
+// Source: campaign p1-v10-multigen-g35f-oropenai-3g1x3-p3-20260716-011330,
+// session 30dff829-27f6-45fe-b88c-a9e60f29818d, steps 29 through 48.
+// The preserved typed response envelopes are replayed through the production
+// headless session and tool path.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn historical_r2_context_loop_hits_tool_streak_guard() {
+    const ASSISTANT_ID: &str = "883b2031-da58-4ae9-a8fb-be6ea1e5c719";
+    let tape_dir = ploke_workspace_root_for_test()
+        .join("tests/fixtures/prototype1/r2-context-streak-20260716");
+    let _recorded_replay_guard = recorded_replay_test_mutex().lock().await;
+    let loaded = crate::replay::llm::install_tui_recorded_response_tape(&tape_dir, ASSISTANT_ID)
+        .expect("load checked-in historical R2 response tape");
+    assert_eq!(loaded.record_count(), TOOL_STREAK_LIMIT + 5);
+    for (response_index, record) in loaded.records().iter().enumerate() {
+        assert_eq!(record.response_index().get(), response_index);
+        let step_index = 29 + response_index;
+        let body = serde_json::to_string(record.response())
+            .expect("serialize historical R2 provider response");
+        let step = ploke_llm::manager::parse_chat_outcome(&body)
+            .expect("parse historical R2 provider response");
+        let ploke_llm::manager::ChatStepOutcome::ToolCalls { calls, .. } = step.outcome else {
+            panic!("historical R2 step {step_index} must be a tool-call response");
+        };
+        assert!(
+            !calls.is_empty()
+                && calls
+                    .iter()
+                    .all(|call| call.function.name.as_str() == "request_code_context"),
+            "historical R2 streak step {step_index} must contain only request_code_context calls"
+        );
+    }
+    let _clear_tape = ClearRecordedTapeOnDrop;
+
+    let fixture = prepare_live_canary(
+        "historical-r2-context-streak",
+        "Replay the preserved R2 no-progress context-retrieval streak.",
+    )
+    .expect("prepare historical R2 replay fixture");
+
+    let (request_tx, request_rx) = std::sync::mpsc::channel();
+    let _tap_guard = ploke_tui::llm::install_request_tap(request_tx);
+    let run = run_headless_with_model(
+        &fixture.workspace,
+        &fixture.prompt,
+        Budget::new(1, 120).expect("valid one-attempt budget"),
+        &SurfacePolicy::workspace_except_core(),
+        &[],
+        None,
+    )
+    .await
+    .expect("historical R2 replay should return typed evidence");
+
+    let mut snapshots = Vec::new();
+    collect_request_snapshots(&request_rx, &mut snapshots);
+    assert_eq!(
+        snapshots.len(),
+        TOOL_STREAK_LIMIT,
+        "real R2 responses must stop at the broad-harness repeated-tool bound"
+    );
+    assert_streak_settled(&run, TOOL_STREAK_LIMIT);
+    assert!(
+        matches!(run.terminal(), Some(HeadlessTerminal::Exhausted { last, .. }) if last.contains("TOOL_STREAK_LIMIT") && last.contains("no-progress guard") && last.contains("request_code_context")),
+        "historical R2 replay should expose the no-progress reason, got {:?}",
         run.terminal()
     );
 }

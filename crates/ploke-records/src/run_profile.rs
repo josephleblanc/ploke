@@ -15,6 +15,7 @@ pub const RUN_PROFILE_SCHEMA_VERSION: &str = "prototype1-run-profile.v1";
 pub const RUN_PROFILE_COMMITMENT_SCHEMA_VERSION: &str = "prototype1-run-profile-commitment.v1";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct RunProfileRecord {
     pub schema_version: String,
     pub name: String,
@@ -22,6 +23,8 @@ pub struct RunProfileRecord {
     pub storage: Storage,
     #[serde(default)]
     pub target: Target,
+    #[serde(default)]
+    pub model: ModelDefaults,
     #[serde(default)]
     pub search: Search,
     #[serde(default)]
@@ -43,6 +46,7 @@ impl Record for RunProfileRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct Storage {
     #[serde(default = "default_worktree_root")]
     pub worktree_root: PathBuf,
@@ -64,6 +68,7 @@ fn default_worktree_root() -> PathBuf {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct EvalStorage {
     #[serde(default)]
     pub backend: EvalStorageBackend,
@@ -95,6 +100,7 @@ impl Default for EvalStorageBackend {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct Target {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dataset_key: Option<String>,
@@ -104,7 +110,43 @@ pub struct Target {
     pub instances: Vec<String>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ModelDefaults {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route_source: Option<ModelRouteSource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    /// Retired profile-local eval cap retained only for immutable v1 evidence.
+    #[serde(
+        rename = "max_tokens",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub legacy_max_tokens: Option<u32>,
+}
+
+impl ModelDefaults {
+    fn is_empty(&self) -> bool {
+        self.id.is_none()
+            && self.route_source.is_none()
+            && self.provider.is_none()
+            && self.legacy_max_tokens.is_none()
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ModelRouteSource {
+    #[serde(rename = "openrouter", alias = "open-router", alias = "open_router")]
+    OpenRouter,
+    #[serde(rename = "direct-google", alias = "direct_google", alias = "google")]
+    DirectGoogle,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct Search {
     pub max_generations: u32,
     pub max_total_nodes: u32,
@@ -130,8 +172,16 @@ impl Default for Search {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct Generation {
     pub source: GenerationSource,
+    #[serde(default, skip_serializing_if = "AntiAttractorPolicy::is_none")]
+    pub anti_attractor_policy: AntiAttractorPolicy,
+    /// Historical v1 profiles may carry this retired generation selector.
+    ///
+    /// It remains part of the passive wire shape so immutable admitted profiles
+    /// can be inspected and hashed without dropping a known v1 field. New
+    /// operator admission rejects it in `ploke-eval`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub surface: Option<GenerationSurface>,
 }
@@ -139,17 +189,48 @@ pub struct Generation {
 impl Default for Generation {
     fn default() -> Self {
         Self {
-            source: GenerationSource::EditSurface,
-            surface: Some(GenerationSurface::WorkspaceExceptPlokeEval),
+            source: GenerationSource::BroadHarnessRequest,
+            anti_attractor_policy: AntiAttractorPolicy::default(),
+            surface: None,
         }
     }
+}
+
+/// Prompt-only candidate-generation policy carried by current run profiles.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(tag = "policy", rename_all = "kebab-case")]
+pub enum AntiAttractorPolicy {
+    #[default]
+    None,
+    SurfaceFreshness {
+        #[serde(default = "default_recent_surface_window")]
+        recent_surface_window: u32,
+        #[serde(default = "default_min_target_surface_skew")]
+        min_target_surface_skew: u32,
+    },
+}
+
+impl AntiAttractorPolicy {
+    pub const fn is_none(&self) -> bool {
+        matches!(self, Self::None)
+    }
+}
+
+fn default_recent_surface_window() -> u32 {
+    2
+}
+
+fn default_min_target_surface_skew() -> u32 {
+    2
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum GenerationSource {
     Legacy,
+    /// Retained for passive decoding of immutable v1 profiles only.
     EditSurface,
+    /// Retained for passive decoding of immutable v1 profiles only.
     BroadHarness,
     BroadHarnessRequest,
     DeterministicTuiTools,
@@ -163,6 +244,7 @@ pub enum GenerationSurface {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct Selection {
     pub strategy: SelectionStrategy,
     pub evidence: SelectionEvidence,
@@ -170,6 +252,8 @@ pub struct Selection {
     pub metrics: Metrics,
     #[serde(default)]
     pub oracle: Oracle,
+    #[serde(default, skip_serializing_if = "Patch::is_disabled")]
+    pub patch: Patch,
     pub seed: u64,
 }
 
@@ -180,6 +264,7 @@ impl Default for Selection {
             evidence: SelectionEvidence::Operational,
             metrics: Metrics::default(),
             oracle: Oracle::default(),
+            patch: Patch::default(),
             seed: 0,
         }
     }
@@ -201,6 +286,7 @@ pub enum SelectionEvidence {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct Metrics {
     #[serde(default = "default_metrics_persist")]
     pub persist: bool,
@@ -232,6 +318,7 @@ pub enum ScoreProfile {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ImpAtK {
     #[serde(default = "default_imp_at_k_enabled")]
     pub enabled: bool,
@@ -273,11 +360,14 @@ pub enum ArchiveScope {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct Oracle {
     #[serde(default)]
     pub mode: OracleMode,
     #[serde(default = "default_oracle_require_evidence")]
     pub require_evidence: bool,
+    #[serde(default)]
+    pub gate: OracleGate,
 }
 
 impl Default for Oracle {
@@ -285,6 +375,7 @@ impl Default for Oracle {
         Self {
             mode: OracleMode::RecordOnly,
             require_evidence: default_oracle_require_evidence(),
+            gate: OracleGate::Disabled,
         }
     }
 }
@@ -301,28 +392,96 @@ pub enum OracleMode {
     RelativeScore,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum OracleGate {
+    #[default]
+    Disabled,
+    AllResolved,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Patch {
+    #[serde(default)]
+    pub gate: PatchGate,
+}
+
+impl Patch {
+    pub fn is_disabled(&self) -> bool {
+        self.gate.is_disabled()
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum PatchGate {
+    #[default]
+    Disabled,
+    ReviewedAdmissible,
+}
+
+impl PatchGate {
+    pub fn is_disabled(&self) -> bool {
+        *self == Self::Disabled
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Disabled => "disabled",
+            Self::ReviewedAdmissible => "reviewed-admissible",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct Protocol {
+    #[serde(default, skip_serializing_if = "ModelDefaults::is_empty")]
+    pub model: ModelDefaults,
+    /// Retired flat protocol routing keys retained only for immutable v1 evidence.
+    #[serde(rename = "model_id", default, skip_serializing_if = "Option::is_none")]
+    pub legacy_model_id: Option<String>,
+    #[serde(
+        rename = "route_source",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub legacy_route_source: Option<ModelRouteSource>,
+    #[serde(rename = "provider", default, skip_serializing_if = "Option::is_none")]
+    pub legacy_provider: Option<String>,
     #[serde(default = "default_protocol_max_tokens")]
     pub max_tokens: u32,
-    #[serde(default, skip_serializing_if = "ProtocolReasoning::is_omit")]
+    #[serde(default = "default_protocol_tool_review_parallelism")]
+    pub tool_review_parallelism: usize,
+    #[serde(default, skip_serializing_if = "ProtocolReasoning::is_auto")]
     pub reasoning: ProtocolReasoning,
 }
 
 impl Default for Protocol {
     fn default() -> Self {
         Self {
+            model: ModelDefaults::default(),
+            legacy_model_id: None,
+            legacy_route_source: None,
+            legacy_provider: None,
             max_tokens: default_protocol_max_tokens(),
+            tool_review_parallelism: default_protocol_tool_review_parallelism(),
             reasoning: ProtocolReasoning::default(),
         }
     }
 }
 
 fn default_protocol_max_tokens() -> u32 {
-    2000
+    4096
+}
+
+fn default_protocol_tool_review_parallelism() -> usize {
+    8
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProtocolReasoning {
     #[serde(default)]
     pub mode: ProtocolReasoningMode,
@@ -331,15 +490,19 @@ pub struct ProtocolReasoning {
 }
 
 impl ProtocolReasoning {
-    pub fn is_omit(&self) -> bool {
+    pub fn is_auto(&self) -> bool {
         *self == Self::default()
+    }
+
+    pub fn is_omit(&self) -> bool {
+        self.mode == ProtocolReasoningMode::Omit && self.effort.is_none()
     }
 }
 
 impl Default for ProtocolReasoning {
     fn default() -> Self {
         Self {
-            mode: ProtocolReasoningMode::Omit,
+            mode: ProtocolReasoningMode::Auto,
             effort: None,
         }
     }
@@ -349,6 +512,7 @@ impl Default for ProtocolReasoning {
 #[serde(rename_all = "kebab-case")]
 pub enum ProtocolReasoningMode {
     #[default]
+    Auto,
     Omit,
     Effort,
     Disabled,
@@ -362,11 +526,18 @@ pub enum ProtocolReasoningEffort {
     Medium,
     Low,
     Minimal,
+    None,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct Execution {
     pub stop_after: ExecutionStopAfter,
+    #[serde(
+        rename = "observe_child_stale_after_secs",
+        default = "default_observe_child_stale_after_secs"
+    )]
+    pub child_stale_secs: u64,
     #[serde(default)]
     pub broad_tui: BroadTui,
     #[serde(default)]
@@ -381,6 +552,7 @@ impl Default for Execution {
     fn default() -> Self {
         Self {
             stop_after: ExecutionStopAfter::Complete,
+            child_stale_secs: default_observe_child_stale_after_secs(),
             broad_tui: BroadTui::default(),
             trace_jsonl: TraceJsonl::Inherit,
             debug_tools: false,
@@ -389,7 +561,12 @@ impl Default for Execution {
     }
 }
 
+fn default_observe_child_stale_after_secs() -> u64 {
+    20 * 60
+}
+
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct BroadTui {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_attempts: Option<u32>,
@@ -402,6 +579,7 @@ pub struct BroadTui {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct Mbe {
     #[serde(default)]
     pub enabled: bool,
@@ -440,6 +618,7 @@ pub enum TraceJsonl {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct Control {
     #[serde(default)]
     pub mode: RunMode,
@@ -465,6 +644,7 @@ pub enum RunMode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct RunProfileCommitmentRecord {
     pub schema_version: String,
     pub profile_path: PathBuf,
@@ -504,18 +684,22 @@ dataset_key = "ripgrep"
 instance = "BurntSushi__ripgrep-2209"
 instances = ["BurntSushi__ripgrep-2209"]
 
+[model]
+id = "google/gemini-3.5-flash"
+route_source = "direct-google"
+provider = "google"
+
 [search]
 max_generations = 15
 max_total_nodes = 96
-children = { min = 6, max = 6 }
+children = { min = 6, max = 6, parallel_targets = 3 }
 schedule = "full-batch"
 stop_on_first_keep = false
 require_keep_for_continuation = false
 explore_from_rejected = true
 
 [generation]
-source = "edit-surface"
-surface = "workspace-except-ploke-eval"
+source = "broad-harness-request"
 
 [selection]
 strategy = "history-score-child-prop"
@@ -538,13 +722,20 @@ mode = "record-only"
 require_evidence = true
 
 [protocol]
-max_tokens = 2000
+max_tokens = 4096
+tool_review_parallelism = 2
+
+[protocol.model]
+id = "openai/gpt-5.1"
+route_source = "openrouter"
+provider = "openai"
 
 [protocol.reasoning]
 mode = "omit"
 
 [execution]
 stop_after = "complete"
+observe_child_stale_after_secs = 1200
 trace_jsonl = "auto"
 debug_tools = true
 mbe = { enabled = true, python = "python3", workers = 2 }
@@ -562,19 +753,28 @@ graph_nearest = 13
         assert_eq!(profile.schema_version, RUN_PROFILE_SCHEMA_VERSION);
         assert_eq!(
             profile.search.children,
-            ChildBudgetRecord { min: 6, max: 6 }
+            ChildBudgetRecord {
+                min: 6,
+                max: 6,
+                parallel_targets: Some(3),
+            }
         );
         assert_eq!(profile.search.schedule, ChildScheduleModeRecord::FullBatch);
-        assert_eq!(profile.generation.source, GenerationSource::EditSurface);
         assert_eq!(
-            profile.generation.surface,
-            Some(GenerationSurface::WorkspaceExceptPlokeEval)
+            profile.generation.source,
+            GenerationSource::BroadHarnessRequest
         );
         assert_eq!(
             profile.target.instances,
             vec!["BurntSushi__ripgrep-2209".to_string()]
         );
+        assert_eq!(
+            profile.model.route_source,
+            Some(ModelRouteSource::DirectGoogle)
+        );
+        assert_eq!(profile.model.provider.as_deref(), Some("google"));
         assert_eq!(profile.execution.trace_jsonl, TraceJsonl::Auto);
+        assert_eq!(profile.execution.child_stale_secs, 1200);
         assert_eq!(profile.execution.broad_tui.max_attempts, Some(2));
         assert_eq!(profile.execution.broad_tui.fresh_slots_per_child, Some(2));
         assert_eq!(profile.execution.broad_tui.graph_nearest, Some(13));
@@ -583,12 +783,46 @@ graph_nearest = 13
         assert!(profile.selection.metrics.persist);
         assert!(profile.selection.metrics.imp_at_k.enabled);
         assert_eq!(profile.selection.metrics.imp_at_k.budget_k, 50);
-        assert_eq!(profile.protocol.max_tokens, 2000);
-        assert_eq!(profile.protocol.reasoning, ProtocolReasoning::default());
+        assert_eq!(profile.protocol.max_tokens, 4096);
+        assert_eq!(profile.protocol.tool_review_parallelism, 2);
+        assert_eq!(
+            profile.protocol.model.route_source,
+            Some(ModelRouteSource::OpenRouter)
+        );
+        assert_eq!(profile.protocol.model.provider.as_deref(), Some("openai"));
+        assert!(profile.protocol.reasoning.is_omit());
         assert_eq!(profile.storage.eval.backend, EvalStorageBackend::Fs);
         assert!(profile.execution.mbe.enabled);
         assert_eq!(profile.execution.mbe.python, "python3");
         assert_eq!(profile.execution.mbe.workers, 2);
+
+        let encoded = toml::to_string(&profile).expect("profile serializes");
+        let decoded: RunProfileRecord = toml::from_str(&encoded).expect("roundtrip parses");
+
+        assert_eq!(decoded, profile);
+    }
+
+    #[test]
+    fn run_profile_toml_defaults_match_runtime_profile() {
+        let profile: RunProfileRecord = toml::from_str(
+            r#"
+schema_version = "prototype1-run-profile.v1"
+name = "runtime-defaults"
+"#,
+        )
+        .expect("profile parses");
+
+        assert_eq!(profile.model, ModelDefaults::default());
+        assert_eq!(profile.search.children.parallel_targets, None);
+        assert_eq!(
+            profile.generation.source,
+            GenerationSource::BroadHarnessRequest
+        );
+        assert_eq!(profile.protocol.model, ModelDefaults::default());
+        assert_eq!(profile.protocol.max_tokens, 4096);
+        assert_eq!(profile.protocol.tool_review_parallelism, 8);
+        assert_eq!(profile.protocol.reasoning, ProtocolReasoning::default());
+        assert_eq!(profile.execution.child_stale_secs, 1200);
 
         let encoded = toml::to_string(&profile).expect("profile serializes");
         let decoded: RunProfileRecord = toml::from_str(&encoded).expect("roundtrip parses");
@@ -638,18 +872,57 @@ graph_nearest = 13
 
         assert_eq!(parsed.selection.oracle.mode, OracleMode::RecordOnly);
         assert!(parsed.selection.oracle.require_evidence);
+        assert_eq!(parsed.selection.oracle.gate, OracleGate::Disabled);
+    }
+
+    #[test]
+    fn run_profile_toml_defaults_patch_gate_to_disabled() {
+        let parsed: RunProfileRecord = toml::from_str(PROFILE).expect("profile parses");
+
+        assert_eq!(parsed.selection.patch.gate, PatchGate::Disabled);
+    }
+
+    #[test]
+    fn run_profile_toml_roundtrips_reviewed_admissible_patch_gate() {
+        let profile = PROFILE.replace(
+            "[selection.metrics]",
+            "[selection.patch]\ngate = \"reviewed-admissible\"\n\n[selection.metrics]",
+        );
+        let parsed: RunProfileRecord = toml::from_str(&profile).expect("profile parses");
+
+        assert_eq!(parsed.selection.patch.gate, PatchGate::ReviewedAdmissible);
+
+        let encoded = toml::to_string(&parsed).expect("profile serializes");
+        let decoded: RunProfileRecord = toml::from_str(&encoded).expect("roundtrip parses");
+
+        assert_eq!(decoded, parsed);
+    }
+
+    #[test]
+    fn run_profile_toml_rejects_unknown_patch_policy_fields() {
+        let profile = PROFILE.replace(
+            "[selection.metrics]",
+            "[selection.patch]\ngate = \"disabled\"\nunknown = true\n\n[selection.metrics]",
+        );
+        let error =
+            toml::from_str::<RunProfileRecord>(&profile).expect_err("unknown patch field rejected");
+
+        assert!(error.to_string().contains("unknown field `unknown`"));
     }
 
     #[test]
     fn run_profile_toml_defaults_protocol_max_tokens() {
-        let profile = PROFILE.replace(
-            "\n[protocol]\nmax_tokens = 2000\n\n[protocol.reasoning]\nmode = \"omit\"\n",
-            "\n",
-        );
+        let profile = PROFILE
+            .replace("max_tokens = 4096\n", "")
+            .replace("tool_review_parallelism = 2\n", "");
         let parsed: RunProfileRecord = toml::from_str(&profile).expect("profile parses");
 
         assert_eq!(parsed.protocol.max_tokens, default_protocol_max_tokens());
-        assert_eq!(parsed.protocol.reasoning, ProtocolReasoning::default());
+        assert_eq!(
+            parsed.protocol.tool_review_parallelism,
+            default_protocol_tool_review_parallelism()
+        );
+        assert!(parsed.protocol.reasoning.is_omit());
     }
 
     #[test]
@@ -694,6 +967,22 @@ graph_nearest = 13
     }
 
     #[test]
+    fn run_profile_toml_roundtrips_all_resolved_oracle_gate() {
+        let profile = PROFILE.replace(
+            "require_evidence = true",
+            "require_evidence = true\ngate = \"all-resolved\"",
+        );
+        let parsed: RunProfileRecord = toml::from_str(&profile).expect("profile parses");
+
+        assert_eq!(parsed.selection.oracle.gate, OracleGate::AllResolved);
+
+        let encoded = toml::to_string(&parsed).expect("profile serializes");
+        let decoded: RunProfileRecord = toml::from_str(&encoded).expect("roundtrip parses");
+
+        assert_eq!(decoded, parsed);
+    }
+
+    #[test]
     fn partial_search_requires_explore_from_rejected() {
         let profile = r#"
 schema_version = "prototype1-run-profile.v1"
@@ -730,48 +1019,102 @@ require_keep_for_continuation = false
     }
 
     #[test]
-    fn run_profile_toml_parses_newer_generation_sources() {
-        let broad: RunProfileRecord = toml::from_str(
-            r#"
-schema_version = "prototype1-run-profile.v1"
-name = "broad"
+    fn run_profile_toml_accepts_runtime_generation_sources() {
+        for (source, expected) in [
+            ("legacy", GenerationSource::Legacy),
+            (
+                "broad-harness-request",
+                GenerationSource::BroadHarnessRequest,
+            ),
+            (
+                "deterministic-tui-tools",
+                GenerationSource::DeterministicTuiTools,
+            ),
+        ] {
+            let profile = PROFILE.replace("broad-harness-request", source);
+            let parsed: RunProfileRecord = toml::from_str(&profile).expect("profile parses");
 
-[generation]
-source = "broad-harness"
-"#,
-        )
-        .expect("broad-harness profile parses");
-        assert_eq!(broad.generation.source, GenerationSource::BroadHarness);
+            assert_eq!(parsed.generation.source, expected);
+        }
+    }
 
-        let broad_request: RunProfileRecord = toml::from_str(
-            r#"
-schema_version = "prototype1-run-profile.v1"
-name = "broad-request"
+    #[test]
+    fn run_profile_toml_preserves_historical_generation_sources() {
+        for (source, expected) in [
+            ("edit-surface", GenerationSource::EditSurface),
+            ("broad-harness", GenerationSource::BroadHarness),
+        ] {
+            let profile = PROFILE.replace("broad-harness-request", source);
+            let parsed = toml::from_str::<RunProfileRecord>(&profile)
+                .expect("known historical generation source must remain readable");
+            let encoded = toml::to_string(&parsed).expect("historical profile serializes");
 
-[generation]
-source = "broad-harness-request"
-"#,
-        )
-        .expect("broad-harness-request profile parses");
-        assert_eq!(
-            broad_request.generation.source,
-            GenerationSource::BroadHarnessRequest
+            assert_eq!(parsed.generation.source, expected);
+            assert!(encoded.contains(&format!("source = \"{source}\"")));
+        }
+    }
+
+    #[test]
+    fn run_profile_toml_preserves_historical_generation_surfaces() {
+        for (surface, expected) in [
+            ("ploke-tui-tools", GenerationSurface::PlokeTuiTools),
+            (
+                "workspace-except-ploke-eval",
+                GenerationSurface::WorkspaceExceptPlokeEval,
+            ),
+        ] {
+            let profile = PROFILE.replace(
+                "source = \"broad-harness-request\"",
+                &format!("source = \"broad-harness-request\"\nsurface = \"{surface}\""),
+            );
+            let parsed = toml::from_str::<RunProfileRecord>(&profile)
+                .expect("known historical generation surface must remain readable");
+            let encoded = toml::to_string(&parsed).expect("historical profile serializes");
+
+            assert_eq!(parsed.generation.surface, Some(expected));
+            assert!(encoded.contains(&format!("surface = \"{surface}\"")));
+        }
+    }
+
+    #[test]
+    fn run_profile_toml_rejects_unknown_generation_surface() {
+        let profile = PROFILE.replace(
+            "source = \"broad-harness-request\"",
+            "source = \"broad-harness-request\"\nsurface = \"workspace-except-eval\"",
         );
+        let error = toml::from_str::<RunProfileRecord>(&profile)
+            .expect_err("unknown generation surface must be rejected")
+            .to_string();
 
-        let deterministic: RunProfileRecord = toml::from_str(
-            r#"
-schema_version = "prototype1-run-profile.v1"
-name = "deterministic"
+        assert!(error.contains("unknown variant"));
+        assert!(error.contains("workspace-except-eval"));
+    }
 
-[generation]
-source = "deterministic-tui-tools"
-"#,
-        )
-        .expect("deterministic-tui-tools profile parses");
-        assert_eq!(
-            deterministic.generation.source,
-            GenerationSource::DeterministicTuiTools
-        );
+    #[test]
+    fn run_profile_toml_rejects_typos_in_current_key_scopes() {
+        for (valid, typo) in [
+            (
+                "route_source = \"direct-google\"",
+                "route_soruce = \"direct-google\"",
+            ),
+            (
+                "tool_review_parallelism = 2",
+                "tool_review_parallellism = 2",
+            ),
+            (
+                "observe_child_stale_after_secs = 1200",
+                "observe_child_stale_after_sec = 1200",
+            ),
+        ] {
+            let profile = PROFILE.replacen(valid, typo, 1);
+            let error = toml::from_str::<RunProfileRecord>(&profile)
+                .expect_err("misspelled current profile key must be rejected")
+                .to_string();
+            let key = typo.split_once(" =").expect("typo assignment").0;
+
+            assert!(error.contains("unknown field"));
+            assert!(error.contains(key));
+        }
     }
 
     #[test]

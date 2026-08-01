@@ -1,10 +1,16 @@
 use std::collections::BTreeMap;
 
 use cozo::DataValue;
+use ploke_llm::{HttpBodyFailure, HttpSendFailure};
 
-use super::evidence::{
-    EvalAttemptRow, EvalChannelMessageRow, EvalChannelReceiptRow, EvalImportEventRow,
-    EvalInvocationRow, EvalLogRefRow, EvalRecordRefRow, EvalTraceEventRow, EvalTransitionEventRow,
+use super::{
+    error::EvalStoreError,
+    evidence::{
+        EvalAttemptRow, EvalChannelMessageRow, EvalChannelReceiptRow, EvalImportEventRow,
+        EvalInvocationRow, EvalLogRefRow, EvalRecordRefRow, EvalTraceEventRow,
+        EvalTransitionEventRow,
+    },
+    observation::ProviderAttemptRow,
 };
 
 pub(super) fn transition_event_params(row: &EvalTransitionEventRow) -> BTreeMap<String, DataValue> {
@@ -384,6 +390,140 @@ pub(super) fn trace_event_params(row: &EvalTraceEventRow) -> BTreeMap<String, Da
     params
 }
 
+pub(super) fn provider_attempt_params(
+    row: &ProviderAttemptRow,
+) -> Result<BTreeMap<String, DataValue>, EvalStoreError> {
+    let attempt = &row.timeline;
+    let mut params = BTreeMap::new();
+    params.insert(
+        "provider_attempt_id".to_string(),
+        row.provider_attempt_id.clone().into(),
+    );
+    params.insert(
+        "campaign_id".to_string(),
+        option_string_param(&row.campaign_id),
+    );
+    params.insert(
+        "request_id".to_string(),
+        attempt.request_id.to_string().into(),
+    );
+    params.insert("attempt".to_string(), i64::from(attempt.attempt).into());
+    params.insert(
+        "max_attempts".to_string(),
+        i64::from(attempt.max_attempts).into(),
+    );
+    params.insert(
+        "started_at_ms".to_string(),
+        u64_param(attempt.started_at_ms, "provider_attempt.started_at_ms")?,
+    );
+    params.insert(
+        "request_sent_ms".to_string(),
+        option_u64_param(attempt.request_sent_ms, "provider_attempt.request_sent_ms")?,
+    );
+    params.insert(
+        "headers_received_ms".to_string(),
+        option_u64_param(
+            attempt.headers_received_ms,
+            "provider_attempt.headers_received_ms",
+        )?,
+    );
+    params.insert(
+        "output_started_ms".to_string(),
+        option_u64_param(
+            attempt.output_started_ms,
+            "provider_attempt.output_started_ms",
+        )?,
+    );
+    params.insert(
+        "output_progress_ms".to_string(),
+        option_u64_param(
+            attempt.output_progress_ms,
+            "provider_attempt.output_progress_ms",
+        )?,
+    );
+    params.insert(
+        "output_completed_ms".to_string(),
+        option_u64_param(
+            attempt.output_completed_ms,
+            "provider_attempt.output_completed_ms",
+        )?,
+    );
+    params.insert(
+        "failed_ms".to_string(),
+        option_u64_param(attempt.failed_ms, "provider_attempt.failed_ms")?,
+    );
+    params.insert(
+        "status".to_string(),
+        attempt
+            .status
+            .map(|status| DataValue::from(i64::from(status)))
+            .unwrap_or(DataValue::Null),
+    );
+    params.insert(
+        "response_bytes".to_string(),
+        option_usize_param(attempt.response_bytes, "provider_attempt.response_bytes")?,
+    );
+    params.insert(
+        "transport_outcome".to_string(),
+        attempt.outcome.as_str().into(),
+    );
+    params.insert(
+        "failure_phase".to_string(),
+        attempt
+            .failure_phase
+            .map(|phase| DataValue::from(phase.as_str()))
+            .unwrap_or(DataValue::Null),
+    );
+    params.insert(
+        "send_failure".to_string(),
+        attempt
+            .send_failure
+            .as_ref()
+            .map(HttpSendFailure::as_str)
+            .map(DataValue::from)
+            .unwrap_or(DataValue::Null),
+    );
+    params.insert(
+        "body_failure".to_string(),
+        attempt
+            .body_failure
+            .as_ref()
+            .map(HttpBodyFailure::as_str)
+            .map(DataValue::from)
+            .unwrap_or(DataValue::Null),
+    );
+    params.insert(
+        "response_outcome".to_string(),
+        attempt.response_outcome.as_str().into(),
+    );
+    params.insert(
+        "retry_decision".to_string(),
+        attempt.retry_decision.as_str().into(),
+    );
+    params.insert(
+        "retry_after_ms".to_string(),
+        option_u64_param(attempt.retry_after_ms, "provider_attempt.retry_after_ms")?,
+    );
+    params.insert(
+        "backoff_ms".to_string(),
+        option_u64_param(attempt.backoff_ms, "provider_attempt.backoff_ms")?,
+    );
+    params.insert("error".to_string(), option_string_param(&attempt.error));
+    params.insert(
+        "source_log_ref".to_string(),
+        row.source_log_ref.clone().into(),
+    );
+    params.insert(
+        "source_event_index".to_string(),
+        row.source_event_index.into(),
+    );
+    params.insert(
+        "recorded_at".to_string(),
+        option_string_param(&row.recorded_at),
+    );
+    Ok(params)
+}
+
 fn option_string_param(value: &Option<String>) -> DataValue {
     value
         .clone()
@@ -393,4 +533,37 @@ fn option_string_param(value: &Option<String>) -> DataValue {
 
 fn option_i64_param(value: Option<i64>) -> DataValue {
     value.map(DataValue::from).unwrap_or(DataValue::Null)
+}
+
+fn u64_param(value: u64, field: &'static str) -> Result<DataValue, EvalStoreError> {
+    i64::try_from(value)
+        .map(DataValue::from)
+        .map_err(|_| EvalStoreError::Validation {
+            field,
+            detail: "provider attempt value exceeds Cozo Int range".to_string(),
+        })
+}
+
+fn option_u64_param(value: Option<u64>, field: &'static str) -> Result<DataValue, EvalStoreError> {
+    value
+        .map(|value| u64_param(value, field))
+        .transpose()
+        .map(|value| value.unwrap_or(DataValue::Null))
+}
+
+fn option_usize_param(
+    value: Option<usize>,
+    field: &'static str,
+) -> Result<DataValue, EvalStoreError> {
+    value
+        .map(|value| {
+            i64::try_from(value)
+                .map(DataValue::from)
+                .map_err(|_| EvalStoreError::Validation {
+                    field,
+                    detail: "provider attempt value exceeds Cozo Int range".to_string(),
+                })
+        })
+        .transpose()
+        .map(|value| value.unwrap_or(DataValue::Null))
 }

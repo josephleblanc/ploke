@@ -8,6 +8,7 @@ use ploke_core::PROJECT_NAMESPACE_UUID;
 use ploke_core::file_hash::{FileHash, LargeFilePolicy};
 use ploke_core::rag_types::ApplyCodeEditResult;
 use ploke_core::tool_types::{FunctionMarker, ToolName};
+use ploke_db::multi_embedding::hnsw_ext::HnswExt as _;
 use ploke_io::{Diff, NsWriteSnippetData, PatchApplyOptions};
 use ploke_llm::response::{FunctionCall, ToolCall};
 use ploke_test_utils::{FIXTURE_NODES_CANONICAL, fresh_backup_fixture_db};
@@ -108,6 +109,27 @@ fn make_ns_batch_proposal(
 }
 
 async fn configure_temp_workspace(state: &Arc<crate::app_state::AppState>, workspace_root: &Path) {
+    fs::create_dir_all(workspace_root.join("src")).expect("create temp crate src");
+    fs::write(
+        workspace_root.join("Cargo.toml"),
+        "[package]\nname = \"ns-patch-test\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .expect("write temp crate manifest");
+    fs::write(
+        workspace_root.join("src").join("lib.rs"),
+        "pub fn fixture() {}\n",
+    )
+    .expect("write temp crate lib");
+
+    let active_set = state
+        .db
+        .with_active_set(|set| set.clone())
+        .expect("active embedding set");
+    state
+        .db
+        .ensure_embedding_relation(&active_set)
+        .expect("active embedding relation");
+
     let workspace_root = workspace_root.to_path_buf();
     let _ = state
         .with_system_txn(|txn| {
@@ -128,6 +150,22 @@ async fn configure_temp_workspace(state: &Arc<crate::app_state::AppState>, works
         .io_handle
         .update_roots(Some(policy.roots.clone()), Some(policy.symlink_policy))
         .await;
+
+    let event_bus = Arc::new(crate::EventBus::new(crate::EventBusCaps::default()));
+    crate::app_state::handlers::indexing::index_workspace(
+        state,
+        &event_bus,
+        Some(crate::app_state::IndexTargetDir::new(workspace_root)),
+        true,
+    )
+    .await;
+    let parse_failure = state
+        .with_system_read(|sys| sys.last_parse_failure().cloned())
+        .await;
+    assert!(
+        parse_failure.is_none(),
+        "temp crate should index before edit approval: {parse_failure:?}"
+    );
 }
 
 fn write_named_fixture(workspace_root: &Path, relative_path: &str, contents: &str) -> PathBuf {

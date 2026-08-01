@@ -1,12 +1,17 @@
 use super::*;
 
-use crate::cli::prototype1_state::cli_facing::CandidateGenerationConfig;
+use crate::cli::prototype1_state::cli_facing::{CandidateGenerationConfig, ParentSelectionOutcome};
 use crate::cli::prototype1_state::edit_surface::harness_request::{
     PublishedBroadHarnessRequest, RequestAdmissionBinding,
 };
 use crate::cli::prototype1_state::edit_surface::surface::SurfacePolicyId;
 use crate::cli::prototype1_state::eval_store;
 use crate::cli::prototype1_state::typestate::{self, StepInput};
+use crate::cli::prototype1_state::walk::{
+    controller::WalkController,
+    phase::WalkPhase,
+    protocol::{SessionVersion, WalkStartConfig},
+};
 use crate::cli::{
     InspectOutputFormat, Prototype1CandidateGenerator,
     Prototype1ChildScheduleMode as CliPrototype1ChildScheduleMode, Prototype1LoopCommand,
@@ -163,6 +168,23 @@ where
     serde_json::from_str(text).expect("fixture deserializes")
 }
 
+fn hex_fixture_bytes(path: &Path) -> Vec<u8> {
+    let encoded = fs::read_to_string(path).expect("read hex fixture");
+    let compact = encoded
+        .chars()
+        .filter(|value| !value.is_whitespace())
+        .collect::<String>();
+    assert_eq!(compact.len() % 2, 0, "hex fixture is complete");
+    compact
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| {
+            let pair = std::str::from_utf8(pair).expect("hex pair is UTF-8");
+            u8::from_str_radix(pair, 16).expect("decode hex fixture")
+        })
+        .collect()
+}
+
 fn state_command_without_ids() -> Prototype1StateCommand {
     Prototype1StateCommand {
         campaign: None,
@@ -172,11 +194,11 @@ fn state_command_without_ids() -> Prototype1StateCommand {
         identity_branch: None,
         identity_instance: None,
         handoff_invocation: None,
-        stop_after: Prototype1StateStopAfter::Complete,
-        successor_selection: Prototype1SuccessorSelection::HistoryScoreChildProp,
-        successor_selection_seed: 0,
-        successor_selection_metrics: Prototype1TraversalMetrics::Operational,
-        candidate_generator: Prototype1CandidateGenerator::BroadHarnessRequest,
+        stop_after: Some(Prototype1StateStopAfter::Complete),
+        successor_selection: Some(Prototype1SuccessorSelection::HistoryScoreChildProp),
+        successor_selection_seed: Some(0),
+        successor_selection_metrics: Some(Prototype1TraversalMetrics::Operational),
+        candidate_generator: Some(Prototype1CandidateGenerator::BroadHarnessRequest),
         format: InspectOutputFormat::Table,
     }
 }
@@ -259,6 +281,28 @@ fn complete_child_budget_rejects_reached_total_node_limit() {
     );
 }
 
+#[test]
+fn replay_node_count_excludes_materialized_children() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = temp.path().join("campaign.json");
+    for generation in 0..=3 {
+        let node_id = format!("node-{generation}");
+        let mut node = test_node(temp.path(), &node_id, "branch", "candidate");
+        node.generation = generation;
+        write_test_node(&manifest_path, &node);
+    }
+
+    assert_eq!(
+        persisted_prototype1_node_count(&manifest_path).expect("all persisted nodes"),
+        4
+    );
+    assert_eq!(
+        node_count_through(&manifest_path, 2).expect("pre-plan generation count"),
+        3,
+        "replay must count the nodes that existed before generation-3 children materialized"
+    );
+}
+
 fn test_manifest_path(root: &Path) -> PathBuf {
     root.join("campaign.toml")
 }
@@ -327,11 +371,19 @@ fn selection_material_from_history() -> SelectionSealMaterial {
         traversal: Some(TraversalEvidence {
             seed: 0,
             strategy: StrategyKind::default(),
+            oracle_targets: Vec::new(),
             selected_source: Some(TraversalCandidateSource::History),
             child_counts: std::collections::BTreeMap::new(),
         }),
         metrics: selection_metrics_for(&[], &[]),
         selected_from_generation_outcomes: false,
+    }
+}
+
+fn selection_material_from_current_generation() -> SelectionSealMaterial {
+    SelectionSealMaterial {
+        selected_from_generation_outcomes: true,
+        ..selection_material_from_history()
     }
 }
 
@@ -360,6 +412,105 @@ fn successor_decision_for(node: &Prototype1NodeRecord) -> SuccessorDecision {
 }
 
 #[test]
+fn parent_selection_outcome_hydrates_current_generation_entry_exactly() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let node = test_node(
+        tmp.path(),
+        "node-current",
+        "branch-current",
+        "candidate-current",
+    );
+    let selected = SubjectRef::new("candidate:node-current:plan_index=0");
+    let payload = EvaluationPayload::builder(
+        selected.clone(),
+        ProcedureRef::new(crate::successor_selection::PROCEDURE_ID),
+    )
+    .selection_input(selection_input_from_child_report(
+        &node,
+        &test_evaluation_report(&node),
+    ))
+    .expect("selection input binds")
+    .build();
+    let sources = vec![TraversalCandidateSource::CurrentGeneration];
+    let mut material = selection_material_from_current_generation();
+    material.selected_candidate = selected;
+    material.considered = vec![payload.clone()];
+    material.considered_sources = sources.clone();
+    material.metrics = selection_metrics_for(std::slice::from_ref(&payload), &sources);
+    material
+        .traversal
+        .as_mut()
+        .expect("traversal evidence")
+        .selected_source = Some(TraversalCandidateSource::CurrentGeneration);
+    let original = ParentSelectionOutcome::Selected {
+        decision: successor_decision_for(&node),
+        material,
+    }
+    .entry()
+    .expect("selected entry");
+
+    let hydrated =
+        ParentSelectionOutcome::from_entry(original.clone()).expect("selected entry hydrates");
+    assert_eq!(hydrated.entry().expect("hydrated entry rebuilds"), original);
+    let (_, material) = hydrated.selected().expect("hydrated selected outcome");
+    assert!(material.selected_from_generation_outcomes);
+    assert_eq!(
+        material
+            .traversal
+            .as_ref()
+            .and_then(|traversal| traversal.selected_source),
+        Some(TraversalCandidateSource::CurrentGeneration)
+    );
+    match ParentSelectionOutcome::from_admitted_entry(
+        original.clone(),
+        crate::successor_selection::PatchGate::ReviewedAdmissible,
+        None,
+    ) {
+        Ok(_) => panic!("receipt admitted under a different patch gate must fail closed"),
+        Err(PrepareError::InvalidBatchSelection { detail }) => {
+            assert!(
+                detail.contains(
+                    "persisted selection patch gate does not match admitted profile: recorded=disabled, admitted=reviewed-admissible"
+                ),
+                "unexpected patch gate mismatch error: {detail}"
+            );
+        }
+        Err(other) => panic!("expected invalid selection error, got {other:?}"),
+    }
+
+    let mut missing = original;
+    missing
+        .traversal
+        .as_mut()
+        .expect("traversal evidence")
+        .selected_source = None;
+    match ParentSelectionOutcome::from_entry(missing) {
+        Ok(_) => panic!("selected receipt without selected_source must fail closed"),
+        Err(PrepareError::InvalidBatchSelection { detail }) => {
+            assert!(
+                detail.contains("persisted selected receipt has no traversal candidate source"),
+                "unexpected hydration error: {detail}"
+            );
+        }
+        Err(other) => panic!("expected invalid selection error, got {other:?}"),
+    }
+}
+
+fn persisted_continuation_decision(
+    manifest_path: &Path,
+    parent: &ParentIdentity,
+    policy: &Prototype1SearchPolicy,
+    decision: &SuccessorDecision,
+    material: &SelectionSealMaterial,
+    node: &Prototype1NodeRecord,
+) -> Result<Prototype1ContinuationDecision, PrepareError> {
+    let continuation =
+        preview_successor_continuation(manifest_path, parent, policy, decision, material, node)?;
+    record_continuation_decision(manifest_path, parent, &continuation)?;
+    Ok(continuation)
+}
+
+#[test]
 fn historical_selection_can_continue_when_unspent_and_bounded() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = test_manifest_path(tmp.path());
@@ -375,7 +526,7 @@ fn historical_selection_can_continue_when_unspent_and_bounded() {
         max_total_nodes: 96,
         ..Prototype1SearchPolicy::default()
     };
-    let decision = live_successor_continuation_decision(
+    let decision = persisted_continuation_decision(
         &manifest_path,
         &parent,
         &policy,
@@ -410,7 +561,7 @@ fn historical_selection_allows_archive_parent_revisit() {
         ..Prototype1SearchPolicy::default()
     };
 
-    let decision = live_successor_continuation_decision(
+    let decision = persisted_continuation_decision(
         &manifest_path,
         &parent,
         &policy,
@@ -449,7 +600,7 @@ fn historical_selection_rejects_already_active_parent_cycle() {
         ..Prototype1SearchPolicy::default()
     };
 
-    let decision = live_successor_continuation_decision(
+    let decision = persisted_continuation_decision(
         &manifest_path,
         &parent,
         &policy,
@@ -488,7 +639,7 @@ fn continuation_decision_mirrors_owned_eval_store_row_without_successor_authorit
         ..Prototype1SearchPolicy::default()
     };
 
-    let decision = live_successor_continuation_decision(
+    let decision = persisted_continuation_decision(
         &manifest_path,
         &parent,
         &policy,
@@ -619,7 +770,7 @@ fn historical_selection_rejects_exhausted_parent_turn_budget() {
         ..Prototype1SearchPolicy::default()
     };
 
-    let decision = live_successor_continuation_decision(
+    let decision = persisted_continuation_decision(
         &manifest_path,
         &parent,
         &policy,
@@ -632,6 +783,39 @@ fn historical_selection_rejects_exhausted_parent_turn_budget() {
     assert_eq!(
         decision.disposition,
         Prototype1ContinuationDisposition::StopHistoricalTraversalBudget
+    );
+    assert!(!decision.disposition.allows_successor());
+}
+
+#[test]
+fn generation_cap_stops_direct_child_handoff_at_max_generation() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = test_manifest_path(tmp.path());
+    let parent = parent_identity_for("node-current", 2);
+    append_parent_started(&manifest_path, parent.clone());
+    let mut node = test_node(tmp.path(), "node-child", "branch-child", "candidate-1");
+    node.generation = 3;
+    node.parent_node_id = Some(parent.node_id().to_string());
+    write_test_node(&manifest_path, &node);
+    let policy = Prototype1SearchPolicy {
+        max_generations: 3,
+        max_total_nodes: 96,
+        ..Prototype1SearchPolicy::default()
+    };
+
+    let decision = persisted_continuation_decision(
+        &manifest_path,
+        &parent,
+        &policy,
+        &successor_decision_for(&node),
+        &selection_material_from_current_generation(),
+        &node,
+    )
+    .expect("continuation decision");
+
+    assert_eq!(
+        decision.disposition,
+        Prototype1ContinuationDisposition::StopMaxGenerations
     );
     assert!(!decision.disposition.allows_successor());
 }
@@ -678,7 +862,7 @@ fn test_history_candidate(
 #[test]
 fn candidate_generation_config_dispatches_broad_harness_surface() {
     let mut command = state_command_without_ids();
-    command.candidate_generator = Prototype1CandidateGenerator::BroadHarnessRequest;
+    command.candidate_generator = Some(Prototype1CandidateGenerator::BroadHarnessRequest);
     let config = CandidateGenerationConfig::from_command(&command);
 
     assert_eq!(config, CandidateGenerationConfig::BroadHarnessRequest);
@@ -687,7 +871,7 @@ fn candidate_generation_config_dispatches_broad_harness_surface() {
 #[test]
 fn candidate_generation_config_dispatches_deterministic_tui_tools_fixture() {
     let mut command = state_command_without_ids();
-    command.candidate_generator = Prototype1CandidateGenerator::DeterministicTuiTools;
+    command.candidate_generator = Some(Prototype1CandidateGenerator::DeterministicTuiTools);
     let config = CandidateGenerationConfig::from_command(&command);
 
     assert_eq!(config, CandidateGenerationConfig::DeterministicTuiTools);
@@ -703,6 +887,9 @@ name = "overnight-edit-surface"
 
 [storage.eval]
 backend = "dual-strict"
+
+[target]
+instance = "BurntSushi__ripgrep-2209"
 
 [search]
 max_generations = 15
@@ -757,6 +944,35 @@ observe_child_stale_after_secs = 17
         crate::successor_selection::OracleMode::RecordOnly
     );
     assert!(shape.successor_oracle_require_evidence);
+    assert_eq!(
+        shape.successor_oracle_gate,
+        crate::successor_selection::OracleGate::Disabled
+    );
+    assert_eq!(
+        shape.successor_oracle_targets,
+        vec!["BurntSushi__ripgrep-2209".to_string()]
+    );
+}
+
+#[test]
+fn state_run_shape_rejects_profile_without_commitment() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let profile_path = tmp.path().join("prototype1/run-profile.toml");
+    fs::create_dir_all(profile_path.parent().expect("profile parent"))
+        .expect("create profile parent");
+    fs::write(
+        &profile_path,
+        r#"schema_version = "prototype1-run-profile.v1"
+name = "partial-admission"
+"#,
+    )
+    .expect("write partial profile");
+
+    let error = Prototype1StateRunShape::resolve(&state_command_without_ids(), &manifest_path)
+        .expect_err("profile-only campaign must not fall back to command defaults");
+
+    assert!(error.to_string().contains("has no admission commitment"));
 }
 
 #[test]
@@ -767,12 +983,8 @@ fn state_run_shape_defaults_eval_storage_backend_to_fs() {
     assert_eq!(shape.eval_storage_backend, profile::EvalStorageBackend::Fs);
 }
 
-#[test]
-fn prototype1_setup_campaign_manifest_preserves_embedding_overrides() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let _guard =
-        crate::test_support::env_guard_os(vec![("PLOKE_EVAL_HOME", tmp.path().as_os_str().into())]);
-    let models_dir = tmp.path().join("models");
+fn write_direct_google_registry(eval_home: &Path) {
+    let models_dir = eval_home.join("models");
     fs::create_dir_all(&models_dir).expect("models dir");
     fs::write(
         models_dir.join("registry.json"),
@@ -808,6 +1020,1317 @@ fn prototype1_setup_campaign_manifest_preserves_embedding_overrides() {
         .expect("registry json"),
     )
     .expect("write registry");
+}
+
+fn setup_preview_command(batch: PathBuf, profile: PathBuf) -> Prototype1LoopCommand {
+    Prototype1LoopCommand {
+        batch: Some(batch),
+        batch_id: None,
+        dataset: None,
+        dataset_key: None,
+        all: false,
+        instance: Vec::new(),
+        specific: Vec::new(),
+        limit: None,
+        prepare_batch_id: None,
+        campaign: Some(CampaignId::from("setup-preview-campaign")),
+        profile: Some(profile.display().to_string()),
+        repo_cache: None,
+        instances_root: None,
+        batches_root: None,
+        max_turns: 40,
+        max_tool_calls: 200,
+        wall_clock_secs: 1800,
+        eval_max_tokens: crate::campaign::DEFAULT_EVAL_MAX_TOKENS,
+        index_debug_snapshots: true,
+        use_default_model: false,
+        model_id: Some("google/gemini-3.5-flash".to_string()),
+        provider: Some("google".to_string()),
+        route_source: Some(ModelRouteSource::DirectGoogle),
+        embedding_model_id: Some("perplexity/pplx-embed-v1-4b".to_string()),
+        embedding_route: None,
+        embedding_provider: Some("perplexity".to_string()),
+        stop_on_error: false,
+        protocol_model_id: Some("google/gemini-3.5-flash".to_string()),
+        protocol_provider: Some("google".to_string()),
+        protocol_route_source: Some(ModelRouteSource::DirectGoogle),
+        source_campaign: None,
+        source_branch_id: None,
+        max_generations: 1,
+        max_total_nodes: 32,
+        min_children: 2,
+        max_children: 6,
+        child_schedule_mode: CliPrototype1ChildScheduleMode::FullBatch,
+        stop_on_first_keep: false,
+        require_keep_for_continuation: true,
+        explore_from_rejected: true,
+        stop_after: Prototype1LoopStopAfter::InterventionApply,
+        dry_run: false,
+        format: InspectOutputFormat::Json,
+    }
+}
+
+fn snapshot_setup_tree(root: &Path) -> BTreeMap<PathBuf, Option<Vec<u8>>> {
+    fn visit(root: &Path, path: &Path, entries: &mut BTreeMap<PathBuf, Option<Vec<u8>>>) {
+        for entry in fs::read_dir(path).expect("read snapshot directory") {
+            let entry = entry.expect("snapshot directory entry");
+            let path = entry.path();
+            let relative = path
+                .strip_prefix(root)
+                .expect("snapshot path under root")
+                .to_path_buf();
+            if path.is_dir() {
+                entries.insert(relative, None);
+                visit(root, &path, entries);
+            } else if path.is_file() {
+                entries.insert(relative, Some(fs::read(path).expect("snapshot file")));
+            }
+        }
+    }
+
+    let mut entries = BTreeMap::new();
+    visit(root, root, &mut entries);
+    entries
+}
+
+#[test]
+fn setup_authority_tracks_partial_model_sources() {
+    let mut command =
+        setup_preview_command(PathBuf::from("batch.json"), PathBuf::from("profile.toml"));
+    command.model_id = None;
+    command.use_default_model = false;
+    command.route_source = None;
+    command.provider = None;
+    command.protocol_model_id = None;
+    command.protocol_route_source = None;
+    command.protocol_provider = None;
+    command.embedding_provider = None;
+    let mut run_profile = toml::from_str::<profile::Prototype1RunProfile>(
+        r#"schema_version = "prototype1-run-profile.v1"
+name = "partial-model-authority"
+
+[model]
+route_source = "direct-google"
+provider = "google"
+
+[protocol.model]
+route_source = "direct-google"
+provider = "google"
+"#,
+    )
+    .expect("profile parses");
+
+    let authority = setup_authority(&command, &run_profile);
+    assert_eq!(authority.eval_model, "active_model_registry");
+    assert_eq!(authority.eval_route, "run_profile.model");
+    assert_eq!(authority.eval_provider, "run_profile.model");
+    assert_eq!(authority.protocol_model, "resolved_eval_model");
+    assert_eq!(authority.protocol_route, "run_profile.protocol.model");
+    assert_eq!(authority.protocol_provider, "run_profile.protocol.model");
+    assert_eq!(authority.embedding_route, "campaign.eval.default");
+    assert_eq!(authority.embedding_model, "command.embedding_model_id");
+    assert_eq!(authority.embedding_provider, "runtime_provider_resolution");
+
+    run_profile.model = profile::ModelDefaults::default();
+    let authority = setup_authority(&command, &run_profile);
+    assert_eq!(authority.eval_model, "active_model_registry");
+    assert_eq!(authority.protocol_model, "protocol_model_selection");
+}
+
+#[test]
+fn prototype1_setup_preview_is_non_writing_and_admits_exact_plan() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let _guard =
+        crate::test_support::env_guard_os(vec![("PLOKE_EVAL_HOME", tmp.path().as_os_str().into())]);
+    write_direct_google_registry(tmp.path());
+    let dataset_file = tmp.path().join("dataset.jsonl");
+    let dataset_text = r#"{"instance_id":"BurntSushi__ripgrep-2209"}"#;
+    fs::write(&dataset_file, dataset_text).expect("write dataset");
+    let batch = crate::spec::PreparedMsbBatch {
+        batch_id: "setup-preview-batch".to_string(),
+        dataset_file: dataset_file.clone(),
+        dataset_url: None,
+        repo_cache: tmp.path().join("repo-cache"),
+        instances_root: tmp.path().join("instances"),
+        output_dir: tmp.path().join("batches/setup-preview-batch"),
+        budget: crate::spec::EvalBudget::default(),
+        instances: vec!["BurntSushi__ripgrep-2209".to_string()],
+        campaign: None,
+    };
+    let batch_manifest = tmp.path().join("prepared-batch.json");
+    fs::write(
+        &batch_manifest,
+        serde_json::to_vec_pretty(&batch).expect("serialize batch"),
+    )
+    .expect("write batch");
+    let profile_path = tmp.path().join("run-profile.toml");
+    let profile_text = r#"schema_version = "prototype1-run-profile.v1"
+name = "setup-preview"
+"#;
+    fs::write(&profile_path, profile_text).expect("write profile");
+    let command = setup_preview_command(batch_manifest.clone(), profile_path.clone());
+    let before = snapshot_setup_tree(tmp.path());
+
+    let plan = preview_prototype1_parent_setup(&command).expect("preview setup");
+
+    assert_eq!(snapshot_setup_tree(tmp.path()), before);
+    assert_eq!(
+        plan.schema_version,
+        super::PROTOTYPE1_SETUP_PLAN_SCHEMA_VERSION
+    );
+    assert_eq!(plan.plan_sha256.len(), 64);
+    assert!(!plan.content.campaign.manifest_path().exists());
+    assert!(!plan.content.profile.profile_path().exists());
+    assert_eq!(
+        plan.content
+            .campaign
+            .resolved
+            .eval
+            .embedding_model_id
+            .as_deref(),
+        Some("perplexity/pplx-embed-v1-4b")
+    );
+    assert_eq!(
+        plan.content
+            .campaign
+            .resolved
+            .eval
+            .embedding_provider_slug
+            .as_deref(),
+        Some("perplexity")
+    );
+    assert_eq!(
+        plan.content.campaign.resolved.eval.embedding_route,
+        EmbeddingRoute::OpenRouter
+    );
+    assert_eq!(plan.content.embedding_route, EmbeddingRoute::OpenRouter);
+    assert_eq!(
+        plan.content.authority.embedding_route,
+        "campaign.eval.default"
+    );
+    let plan_json = serde_json::to_value(&plan).expect("serialize setup preview");
+    assert_eq!(
+        plan_json["content"]["embedding_route"],
+        serde_json::json!("openrouter")
+    );
+
+    let mut invalid_route = setup_preview_command(batch_manifest.clone(), profile_path.clone());
+    invalid_route.embedding_route = Some(EmbeddingRoute::DirectOpenAi);
+    let error = preview_prototype1_parent_setup(&invalid_route)
+        .expect_err("direct OpenAI setup must reject an OpenRouter provider preference");
+    assert!(
+        error
+            .to_string()
+            .contains("does not accept OpenRouter provider")
+    );
+    invalid_route.embedding_provider = None;
+    let error = preview_prototype1_parent_setup(&invalid_route)
+        .expect_err("direct OpenAI setup must reject a non-OpenAI model");
+    assert!(error.to_string().contains("requires an OpenAI model"));
+
+    let mut direct_route = setup_preview_command(batch_manifest.clone(), profile_path.clone());
+    direct_route.embedding_route = Some(EmbeddingRoute::DirectOpenAi);
+    direct_route.embedding_model_id = None;
+    direct_route.embedding_provider = None;
+    let direct_plan = preview_prototype1_parent_setup(&direct_route)
+        .expect("direct OpenAI route should enter the reviewed setup plan");
+    assert_eq!(
+        direct_plan.content.campaign.resolved.eval.embedding_route,
+        EmbeddingRoute::DirectOpenAi
+    );
+    assert_ne!(direct_plan.plan_sha256, plan.plan_sha256);
+    let planned_manifest = serde_json::to_value(plan.content.campaign.manifest_plan.manifest())
+        .expect("serialize planned manifest");
+    let planned_json = plan
+        .content
+        .campaign
+        .manifest_plan
+        .normalized_json()
+        .to_string();
+    let planned_config =
+        serde_json::to_value(&plan.content.campaign.resolved).expect("serialize planned config");
+    let planned_toml = plan.content.profile.normalized_toml().to_string();
+    let planned_sha = plan.content.profile.sha256().to_string();
+    let planned_slice = plan.content.campaign.slice_dataset.clone();
+
+    fs::write(
+        &profile_path,
+        profile_text.replace("setup-preview", "setup-drift"),
+    )
+    .expect("write profile drift");
+    let error = resolve_expected_setup(&command, &plan.plan_sha256)
+        .expect_err("profile drift must invalidate preview");
+    assert!(error.to_string().contains("setup plan changed"));
+    assert!(!plan.content.campaign.manifest_path().exists());
+    fs::write(&profile_path, profile_text).expect("restore profile");
+
+    fs::write(
+        &dataset_file,
+        r#"{"instance_id":"BurntSushi__ripgrep-2209","drift":true}"#,
+    )
+    .expect("write slice drift");
+    let error = resolve_expected_setup(&command, &plan.plan_sha256)
+        .expect_err("slice drift must invalidate preview");
+    assert!(error.to_string().contains("setup plan changed"));
+    assert!(!plan.content.campaign.manifest_path().exists());
+    fs::write(&dataset_file, dataset_text).expect("restore dataset");
+
+    let mut changed_batch = batch.clone();
+    changed_batch.budget.max_turns += 1;
+    fs::write(
+        &batch_manifest,
+        serde_json::to_vec_pretty(&changed_batch).expect("serialize batch drift"),
+    )
+    .expect("write batch drift");
+    let error = resolve_expected_setup(&command, &plan.plan_sha256)
+        .expect_err("batch drift must invalidate preview");
+    assert!(error.to_string().contains("setup plan changed"));
+    assert!(!plan.content.campaign.manifest_path().exists());
+    fs::write(
+        &batch_manifest,
+        serde_json::to_vec_pretty(&batch).expect("serialize restored batch"),
+    )
+    .expect("restore batch");
+
+    let admitted_plan = resolve_expected_setup(&command, &plan.plan_sha256)
+        .expect("separate admission planning matches preview");
+    assert_eq!(snapshot_setup_tree(tmp.path()), before);
+
+    let campaign = admit_prototype1_loop_campaign(admitted_plan.content.campaign)
+        .expect("admit planned campaign");
+    let admitted = profile::admit_run_profile_plan(admitted_plan.content.profile)
+        .expect("admit planned profile");
+
+    let stored_manifest = crate::campaign::load_campaign_manifest(&campaign.campaign_id)
+        .expect("load admitted manifest");
+    assert_eq!(
+        serde_json::to_value(stored_manifest).expect("serialize stored manifest"),
+        planned_manifest
+    );
+    assert_eq!(
+        fs::read_to_string(&campaign.manifest_path).expect("read admitted manifest"),
+        planned_json
+    );
+    assert_eq!(
+        serde_json::to_value(&campaign.resolved).expect("serialize admitted config"),
+        planned_config
+    );
+    assert_eq!(
+        fs::read_to_string(&campaign.slice_dataset_path).expect("read admitted slice"),
+        planned_slice
+    );
+    assert_eq!(
+        fs::read_to_string(&admitted.commitment.profile_path).expect("read admitted profile"),
+        planned_toml
+    );
+    assert_eq!(admitted.commitment.sha256, planned_sha);
+}
+
+#[tokio::test]
+async fn fresh_setup_reconstruction_claims_first_walk_session_at_r3() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let eval_home = tmp.path().join("eval-home");
+    let repo_root = tmp.path().join("repo");
+    let _guard =
+        crate::test_support::env_guard_os(vec![("PLOKE_EVAL_HOME", eval_home.as_os_str().into())]);
+    write_direct_google_registry(&eval_home);
+
+    init_indexed_repo(&repo_root);
+    fs::write(repo_root.join("README.md"), "fresh walk setup\n").expect("write seed file");
+    index_repo(&repo_root);
+    commit_indexed_repo(&repo_root, "seed fresh walk setup");
+
+    let dataset_file = eval_home.join("dataset.jsonl");
+    fs::create_dir_all(&eval_home).expect("create eval home");
+    fs::write(
+        &dataset_file,
+        r#"{"instance_id":"BurntSushi__ripgrep-2209","org":"BurntSushi","repo":"ripgrep","number":2209,"title":"Fix multiline replacement","body":"body one","base":{"sha":"abc123"},"fix_patch":"diff --git a/crates/printer/src/util.rs b/crates/printer/src/util.rs\n--- a/crates/printer/src/util.rs\n+++ b/crates/printer/src/util.rs\n@@ -1 +1 @@\n-old\n+new\n"}"#,
+    )
+    .expect("write dataset");
+    let batch = crate::spec::PreparedMsbBatch {
+        batch_id: "fresh-walk-batch".to_string(),
+        dataset_file,
+        dataset_url: None,
+        repo_cache: eval_home.join("repo-cache"),
+        instances_root: eval_home.join("instances"),
+        output_dir: eval_home.join("batches/fresh-walk-batch"),
+        budget: crate::spec::EvalBudget::default(),
+        instances: vec!["BurntSushi__ripgrep-2209".to_string()],
+        campaign: None,
+    };
+    let batch_path = eval_home.join("prepared-batch.json");
+    fs::write(
+        &batch_path,
+        serde_json::to_vec_pretty(&batch).expect("serialize batch"),
+    )
+    .expect("write batch");
+    let profile_path = eval_home.join("run-profile.toml");
+    fs::write(
+        &profile_path,
+        r#"schema_version = "prototype1-run-profile.v1"
+name = "fresh-walk-start"
+
+[control]
+mode = "step"
+
+[storage.eval]
+backend = "dual-strict"
+"#,
+    )
+    .expect("write profile");
+    let request = crate::setup_client::RunSetupRequest {
+        repo_root: repo_root.clone(),
+        batch: crate::setup_client::RunSetupBatch::Manifest(batch_path),
+        campaign: CampaignId::from("fresh-walk-campaign"),
+        profile: crate::setup_client::RunSetupProfile::Path(profile_path.clone()),
+        primary_instance: None,
+        model: crate::setup_client::RunSetupModel {
+            id: Some("google/gemini-3.5-flash".to_string()),
+            provider: Some("google".to_string()),
+            route: Some(ModelRouteSource::DirectGoogle),
+            max_tokens: None,
+            use_default: false,
+        },
+        protocol: crate::setup_client::RunSetupProtocol {
+            id: Some("google/gemini-3.5-flash".to_string()),
+            provider: Some("google".to_string()),
+            route: Some(ModelRouteSource::DirectGoogle),
+        },
+        embedding: crate::setup_client::RunSetupEmbedding {
+            id: Some("perplexity/pplx-embed-v1-4b".to_string()),
+            provider: Some("perplexity".to_string()),
+            route: None,
+        },
+    };
+    let home_before = snapshot_setup_tree(&eval_home);
+    let repo_before = snapshot_setup_tree(&repo_root);
+    let plan = crate::setup_client::preview_run_setup(&request).expect("preview setup");
+    assert_eq!(snapshot_setup_tree(&eval_home), home_before);
+    assert_eq!(snapshot_setup_tree(&repo_root), repo_before);
+    assert_eq!(plan.profile.record.name, "fresh-walk-start");
+    assert_eq!(plan.control.mode, ploke_records::run_profile::RunMode::Step);
+    assert_eq!(
+        plan.batch.batch.instances,
+        vec!["BurntSushi__ripgrep-2209".to_string()]
+    );
+    assert_eq!(
+        plan.campaign.manifest.campaign_id.as_str(),
+        "fresh-walk-campaign"
+    );
+    let profile_text = fs::read_to_string(&profile_path).expect("read setup profile");
+    fs::write(
+        &profile_path,
+        profile_text.replace("fresh-walk-start", "fresh-walk-drift"),
+    )
+    .expect("write profile drift");
+    let error = crate::setup_client::admit_run_setup(&request, &plan.plan_hash)
+        .expect_err("service admission must reject profile drift");
+    assert!(error.to_string().contains("setup plan changed"));
+    assert!(!plan.campaign.manifest_path.exists());
+    fs::write(&profile_path, profile_text).expect("restore setup profile");
+    let setup = crate::setup_client::admit_run_setup(&request, &plan.plan_hash)
+        .expect("prepare completed setup");
+    let parent = load_parent_identity_optional(&repo_root)
+        .expect("load admitted identity")
+        .expect("stored admitted identity");
+    assert_eq!(parent.node_id(), setup.config.identity.record.node_id);
+    let manifest = &setup.config.campaign.path;
+    assert_session_absent(manifest, &parent);
+
+    let mut controller = WalkController::new(
+        repo_root
+            .canonicalize()
+            .expect("canonical fresh setup root"),
+    );
+    controller
+        .refresh_from_disk()
+        .expect("reconstruct completed setup");
+    assert_eq!(controller.phase(), WalkPhase::R4c);
+
+    let advance = controller
+        .start_version(
+            WalkStartConfig {
+                campaign: Some(parent.campaign_id().clone()),
+                repo_root: None,
+            },
+            WalkPhase::R3,
+            false,
+            &SessionVersion::empty(),
+        )
+        .await
+        .expect("fresh reconstructed setup should admit its first session claim");
+    assert_eq!(advance.from(), WalkPhase::R3);
+    assert_eq!(advance.to(), WalkPhase::R3);
+    assert!(
+        advance
+            .transition_edges()
+            .expect("transition edges")
+            .is_empty()
+    );
+    let version = advance.exact_version().expect("exact session version");
+    assert!(version.session_id().is_some());
+    assert_eq!(version.phase(), WalkPhase::R3);
+    assert!(version.journal_revision() > 0);
+
+    let store = crate::cli::prototype1_state::session::Store::for_manifest(manifest);
+    let paths = store.paths(&parent);
+    let session = store
+        .inspect(&parent)
+        .expect("inspect claimed session")
+        .expect("claimed session exists");
+    assert!(session.active.is_none());
+    assert_eq!(session.cursor.expect("session cursor").phase, WalkPhase::R3);
+    assert!(paths.journal().exists());
+
+    let cross_runtime = match controller
+        .step_version(Some(WalkPhase::R14b), false, true, &version)
+        .await
+    {
+        Ok(_) => panic!("one bounded operation must not cross successor authority"),
+        Err(error) => error,
+    };
+    let detail = cross_runtime.to_string();
+    assert!(
+        detail.contains("crosses the R13b successor runtime boundary"),
+        "{detail}"
+    );
+    let session = store
+        .inspect(&parent)
+        .expect("inspect session after rejected cross-runtime target")
+        .expect("session remains after rejected cross-runtime target");
+    assert!(session.active.is_none());
+    assert_eq!(session.journal_revision, version.journal_revision());
+    assert_eq!(
+        session
+            .cursor
+            .expect("session cursor after rejected cross-runtime target")
+            .phase,
+        WalkPhase::R3
+    );
+
+    let advanced = controller
+        .step_version(Some(WalkPhase::R4a), false, false, &version)
+        .await
+        .expect("bounded walk step should stop on its committed target");
+    assert_eq!(advanced.from(), WalkPhase::R3);
+    assert_eq!(advanced.to(), WalkPhase::R4a);
+    assert_eq!(
+        advanced
+            .transition_edges()
+            .expect("bounded transition edge"),
+        [crate::cli::prototype1_state::edge::ControlEdge::R3ToR4a]
+    );
+    let advanced_version = advanced.exact_version().expect("advanced session version");
+    assert_eq!(
+        advanced_version.journal_revision(),
+        version.journal_revision() + 4,
+        "one committed edge must append exactly Acquired, Began, Finished, and Released; reaching the requested target must not acquire a second no-op lease"
+    );
+
+    let session = store
+        .inspect(&parent)
+        .expect("inspect advanced session")
+        .expect("advanced session exists");
+    assert!(session.active.is_none());
+    assert_eq!(
+        session.journal_revision,
+        advanced_version.journal_revision()
+    );
+    assert_eq!(
+        session.cursor.expect("advanced session cursor").phase,
+        WalkPhase::R4a
+    );
+}
+
+#[tokio::test]
+async fn prototype1_setup_recovers_and_completed_retry_is_read_only() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let eval_home = tmp.path().join("eval-home");
+    let repo_root = tmp.path().join("repo");
+    let _guard =
+        crate::test_support::env_guard_os(vec![("PLOKE_EVAL_HOME", eval_home.as_os_str().into())]);
+    write_direct_google_registry(&eval_home);
+
+    init_indexed_repo(&repo_root);
+    let old_identity = parent_identity_for("old-parent", 0);
+    let identity_path = repo_root.join(parent_identity_relpath());
+    fs::create_dir_all(identity_path.parent().expect("identity parent"))
+        .expect("create identity parent");
+    fs::write(
+        &identity_path,
+        serde_json::to_vec_pretty(&old_identity).expect("serialize old identity"),
+    )
+    .expect("write old identity");
+    index_repo(&repo_root);
+    commit_indexed_repo(&repo_root, "seed old identity");
+
+    let dataset_file = eval_home.join("dataset.jsonl");
+    fs::write(
+        &dataset_file,
+        r#"{"instance_id":"BurntSushi__ripgrep-2209","org":"BurntSushi","repo":"ripgrep","number":2209,"title":"Fix multiline replacement","body":"body one","base":{"sha":"abc123"},"fix_patch":"diff --git a/crates/printer/src/util.rs b/crates/printer/src/util.rs\n--- a/crates/printer/src/util.rs\n+++ b/crates/printer/src/util.rs\n@@ -1 +1 @@\n-old\n+new\n"}"#,
+    )
+    .expect("write dataset");
+    let batch = crate::spec::PreparedMsbBatch {
+        batch_id: "setup-recovery-batch".to_string(),
+        dataset_file,
+        dataset_url: None,
+        repo_cache: eval_home.join("repo-cache"),
+        instances_root: eval_home.join("instances"),
+        output_dir: eval_home.join("batches/setup-recovery-batch"),
+        budget: crate::spec::EvalBudget::default(),
+        instances: vec!["BurntSushi__ripgrep-2209".to_string()],
+        campaign: None,
+    };
+    let batch_manifest = eval_home.join("prepared-batch.json");
+    fs::write(
+        &batch_manifest,
+        serde_json::to_vec_pretty(&batch).expect("serialize batch"),
+    )
+    .expect("write batch");
+    let profile_path = eval_home.join("run-profile.toml");
+    fs::write(
+        &profile_path,
+        "schema_version = \"prototype1-run-profile.v1\"\nname = \"setup-recovery\"\n\n[storage.eval]\nbackend = \"dual-strict\"\n",
+    )
+    .expect("write profile");
+    let mut command = setup_preview_command(batch_manifest, profile_path);
+    command.campaign = Some(CampaignId::from("setup-recovery-campaign"));
+    let plan =
+        preview_prototype1_parent_setup_at(&command, repo_root.clone()).expect("preview setup");
+    let expected_sha = plan.plan_sha256.clone();
+
+    let admission_path = setup_admission_path(plan.content.campaign.manifest_path());
+    let receipt_root = admission_path.parent().expect("receipt root");
+    fs::create_dir_all(receipt_root).expect("create receipt root");
+    let meaningful = receipt_root.join("unexpected.json");
+    fs::write(&meaningful, b"{}\n").expect("write meaningful unreceipted artifact");
+    let lock_path = GitWorktreeBackend
+        .setup_lock_path(&repo_root)
+        .expect("setup lock path");
+    {
+        let _lock = acquire_setup_lock(&lock_path).expect("setup lock");
+        let error = load_or_capture_setup_admission(&plan, &GitWorktreeBackend, &admission_path)
+            .expect_err("meaningful unreceipted state must fail closed");
+        assert!(error.to_string().contains("automatic adoption is unsafe"));
+    }
+    assert!(meaningful.exists(), "meaningful state must not be removed");
+    fs::remove_file(&meaningful).expect("remove meaningful test artifact");
+
+    let staging = receipt_root.join(".setup-admission.json.tmp-99999-1");
+    fs::write(&staging, b"partial receipt").expect("write receipt staging remnant");
+    let admission = {
+        let _lock = acquire_setup_lock(&lock_path).expect("setup lock after simulated crash");
+        load_or_capture_setup_admission(&plan, &GitWorktreeBackend, &admission_path)
+            .expect("recover crash before receipt publication")
+    };
+    assert!(!staging.exists(), "stale receipt staging must be removed");
+    let campaign = ensure_prototype1_loop_campaign(plan.content.campaign.clone())
+        .expect("persist campaign partial");
+    let admitted_at = recorded_at_rfc3339(admission.intent.started_at).expect("receipt timestamp");
+    let admitted = profile::ensure_run_profile_plan(plan.content.profile.clone(), &admitted_at)
+        .expect("persist profile partial");
+    let closure = ensure_setup_closure_state(&campaign.resolved).expect("persist closure partial");
+    ensure_setup_owner_db(&campaign, &admitted, &closure).expect("persist owner DB partial");
+    let root = RootParentSetup {
+        node: admission.intent.node.clone(),
+        request: admission.intent.request.clone(),
+    };
+    ensure_root_parent_node(
+        &campaign.campaign_id,
+        &campaign.manifest_path,
+        &root,
+        plan.content.search_policy.clone(),
+    )
+    .expect("persist root partial");
+    assert!(matches!(admission.state, SetupAdmissionState::Admitting));
+    assert_eq!(
+        GitWorktreeBackend
+            .active_branch(&repo_root)
+            .expect("branch before recovery"),
+        plan.content.checkout.branch
+    );
+
+    GitWorktreeBackend
+        .checkout_fresh_parent_branch(&repo_root, &plan.content.artifact_branch)
+        .expect("simulate crash after branch switch");
+    let recovered_plan = resolve_expected_setup_at(&command, &expected_sha, repo_root.clone())
+        .expect("public retry must recover the receipt-bound plan");
+    assert_eq!(recovered_plan.plan_sha256, expected_sha);
+    assert_eq!(recovered_plan.content.checkout, plan.content.checkout);
+
+    let report =
+        prepare_prototype1_parent_setup_at(&command, Some(&expected_sha), repo_root.clone())
+            .expect("recover partial setup through public setup service");
+    assert!(matches!(
+        report.admission_state,
+        SetupAdmissionState::Complete { .. }
+    ));
+    let admitted_identity = load_parent_identity_optional(&repo_root)
+        .expect("load admitted identity")
+        .expect("stored admitted identity");
+    assert_ne!(admitted_identity, old_identity);
+    assert_eq!(admitted_identity.node_id(), report.node_id);
+
+    let before = snapshot_setup_tree(&eval_home);
+    let head = GitWorktreeBackend
+        .head_commit(&repo_root)
+        .expect("bootstrap head");
+    let retried =
+        prepare_prototype1_parent_setup_at(&command, Some(&expected_sha), repo_root.clone())
+            .expect("retry completed setup");
+
+    assert!(matches!(
+        retried.admission_state,
+        SetupAdmissionState::Complete { .. }
+    ));
+    assert_eq!(retried.node_id, report.node_id);
+    assert_eq!(snapshot_setup_tree(&eval_home), before);
+    assert_eq!(
+        GitWorktreeBackend
+            .head_commit(&repo_root)
+            .expect("unchanged bootstrap head"),
+        head
+    );
+
+    let status = std::process::Command::new("git")
+        .current_dir(&repo_root)
+        .args(["switch", "-c", "setup-drift"])
+        .status()
+        .expect("create drift branch");
+    assert!(status.success(), "create drift branch failed");
+    let error =
+        prepare_prototype1_parent_setup_at(&command, Some(&expected_sha), repo_root.clone())
+            .expect_err("completed setup must reject active branch drift");
+    assert!(error.to_string().contains("active branch"));
+    let status = std::process::Command::new("git")
+        .current_dir(&repo_root)
+        .args(["switch", &report.artifact_branch])
+        .status()
+        .expect("restore setup branch");
+    assert!(status.success(), "restore setup branch failed");
+
+    let scheduler_path = prototype1_scheduler_path(plan.content.campaign.manifest_path());
+    let scheduler_bytes = fs::read(&scheduler_path).expect("read scheduler");
+    fs::remove_file(&scheduler_path).expect("remove scheduler");
+    let error =
+        prepare_prototype1_parent_setup_at(&command, Some(&expected_sha), repo_root.clone())
+            .expect_err("completed setup must reject missing scheduler");
+    assert!(error.to_string().contains("scheduler.json"));
+    assert!(
+        !scheduler_path.exists(),
+        "completed retry must not repair state"
+    );
+    crate::durable_io::write_atomic(&scheduler_path, &scheduler_bytes).expect("restore scheduler");
+
+    let mismatch = Prototype1StateCommand {
+        campaign: Some(report.campaign_id.clone()),
+        node_id: None,
+        repo_root: Some(repo_root.clone()),
+        init_parent_identity: false,
+        identity_branch: None,
+        identity_instance: None,
+        handoff_invocation: None,
+        stop_after: None,
+        successor_selection: None,
+        successor_selection_seed: None,
+        successor_selection_metrics: None,
+        candidate_generator: Some(Prototype1CandidateGenerator::Legacy),
+        format: InspectOutputFormat::Table,
+    };
+    let error =
+        crate::cli::prototype1_state::driver::advance::run_to_terminal(mismatch, false, false)
+            .await
+            .expect_err("profile assertions cannot override admitted configuration");
+    assert!(error.to_string().contains("--candidate-generator"));
+    assert!(error.to_string().contains("BroadHarnessRequest"));
+
+    let lease = crate::cli::prototype1_state::driver::control::claim_controller(
+        &repo_root,
+        profile::RunMode::Continuous,
+    )
+    .expect("completed setup admits the continuous controller");
+    assert_eq!(
+        lease.cursor().phase,
+        crate::cli::prototype1_state::walk::phase::WalkPhase::R3
+    );
+    let before_live = snapshot_setup_tree(&eval_home);
+    let setup_error =
+        prepare_prototype1_parent_setup_at(&command, Some(&expected_sha), repo_root.clone())
+            .expect_err("live controller lease must exclude setup admission");
+    assert!(
+        setup_error.to_string().contains("repository authority"),
+        "{setup_error}"
+    );
+    assert_eq!(
+        snapshot_setup_tree(&eval_home),
+        before_live,
+        "blocked setup must not change setup artifacts"
+    );
+    let conflict = crate::cli::prototype1_state::driver::control::claim_active(&repo_root)
+        .expect_err("ancillary mutation must not bypass the active controller lease");
+    assert!(
+        conflict
+            .to_string()
+            .contains("controller session claim conflicted"),
+        "{conflict}"
+    );
+    let intent = lease
+        .intent_with_live_api(false, false)
+        .expect("R3 edge intent");
+    let (lease, receipt, state) =
+        match crate::cli::prototype1_state::driver::control::advance_controlled(lease, intent)
+            .await
+            .expect("R3 edge is controlled")
+        {
+            crate::cli::prototype1_state::driver::control::ControlAdvance::Finished {
+                finished:
+                    crate::cli::prototype1_state::session::Finished::Terminal { lease, receipt, .. },
+                state,
+            } => (lease, receipt, state),
+            other => panic!("unexpected R3 controller result: {other:?}"),
+        };
+    assert_eq!(
+        state.phase(),
+        crate::cli::prototype1_state::walk::phase::WalkPhase::R4a,
+        "a newly committed edge must return its canonical typed post-state"
+    );
+    assert_eq!(
+        lease.cursor().phase,
+        crate::cli::prototype1_state::walk::phase::WalkPhase::R4a
+    );
+    let evidence = receipt
+        .evidence
+        .as_ref()
+        .expect("committed edge has certified evidence");
+    assert_eq!(
+        evidence.edge(),
+        crate::cli::prototype1_state::edge::ControlEdge::R3ToR4a
+    );
+    assert_eq!(
+        evidence.cursor().expect("certified cursor"),
+        lease.cursor().clone()
+    );
+    let before_transitioned = snapshot_setup_tree(&eval_home);
+    let setup_error =
+        prepare_prototype1_parent_setup_at(&command, Some(&expected_sha), repo_root.clone())
+            .expect_err("transitioned controller lease must retain setup exclusion");
+    assert!(
+        setup_error.to_string().contains("repository authority"),
+        "{setup_error}"
+    );
+    assert_eq!(
+        snapshot_setup_tree(&eval_home),
+        before_transitioned,
+        "transitioned lease must fence setup before any artifact changes"
+    );
+    lease.release().expect("release controlled setup session");
+    prepare_prototype1_parent_setup_at(&command, Some(&expected_sha), repo_root.clone())
+        .expect("setup admission may resume after controller authority is released");
+
+    let session = crate::cli::prototype1_state::session::Store::for_manifest(
+        plan.content.campaign.manifest_path(),
+    )
+    .inspect(&admitted_identity)
+    .expect("inspect controlled setup session")
+    .expect("session exists");
+    assert!(session.active.is_none());
+    assert_eq!(
+        session.cursor.expect("committed cursor").phase,
+        crate::cli::prototype1_state::walk::phase::WalkPhase::R4a
+    );
+
+    let mut drifted =
+        crate::cli::prototype1_state::setup_admission::load_setup_admission(&admission_path)
+            .expect("load completed receipt")
+            .expect("completed receipt exists");
+    drifted.intent.batch_manifest = eval_home.join("other-batch.json");
+    write_json_atomic(&admission_path, &drifted).expect("write drifted receipt");
+    let error = prepare_prototype1_parent_setup_at(&command, Some(&expected_sha), repo_root)
+        .expect_err("receipt fields must remain bound to the reviewed plan");
+    assert!(error.to_string().contains("deterministic intent"));
+}
+
+fn assert_session_absent(manifest: &Path, parent: &ParentIdentity) {
+    let store = crate::cli::prototype1_state::session::Store::for_manifest(manifest);
+    let paths = store.paths(parent);
+    assert!(
+        store
+            .inspect(parent)
+            .expect("inspect successor session")
+            .is_none(),
+        "rejected successor evidence must not create a session"
+    );
+    assert!(
+        !paths.journal().exists(),
+        "rejected successor evidence must not create a session journal"
+    );
+}
+
+#[test]
+fn successor_transfer_claims_exact_origin_and_rejects_drift() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let eval_home = tmp.path().join("eval-home");
+    let repo_root = tmp.path().join("repo");
+    let _guard =
+        crate::test_support::env_guard_os(vec![("PLOKE_EVAL_HOME", eval_home.as_os_str().into())]);
+
+    init_indexed_repo(&repo_root);
+    let predecessor = parent_identity_for("node-predecessor", 0);
+    let parent = ParentIdentity::from_record_for_test(ParentIdentityRecord {
+        schema_version: crate::cli::prototype1_state::identity::PARENT_IDENTITY_SCHEMA_VERSION
+            .to_string(),
+        campaign_id: predecessor.campaign_id().clone(),
+        parent_id: "node-successor".to_string(),
+        node_id: "node-successor".to_string(),
+        generation: 1,
+        instance_id: Some("clap-rs__clap-3670".to_string()),
+        previous_parent_id: Some(predecessor.parent_id().to_string()),
+        parent_node_id: Some(predecessor.node_id().to_string()),
+        branch_id: "branch-node-successor".to_string(),
+        artifact_branch: Some("prototype1-node-successor".to_string()),
+        created_at: "2026-05-06T00:00:00Z".to_string(),
+    });
+    let branch = parent
+        .artifact_branch()
+        .expect("successor artifact branch")
+        .to_string();
+    let status = std::process::Command::new("git")
+        .current_dir(&repo_root)
+        .args(["switch", "-c", &branch])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .expect("create successor branch");
+    assert!(status.success(), "create successor branch failed");
+    write_parent_identity(&repo_root, &parent).expect("write successor parent identity");
+    index_repo(&repo_root);
+    commit_indexed_repo(&repo_root, "seed successor parent");
+    let head = GitWorktreeBackend
+        .head_commit(&repo_root)
+        .expect("successor checkout head");
+
+    let manifest = campaign_manifest_path(parent.campaign_id()).expect("campaign manifest path");
+    let profile = toml::from_str::<profile::Prototype1RunProfile>(
+        "schema_version = \"prototype1-run-profile.v1\"\nname = \"successor-transfer\"\n",
+    )
+    .expect("run profile parses");
+    let admitted = profile::admit_run_profile(
+        &manifest,
+        &profile::OperatorRunProfile {
+            source_path: eval_home.join("successor-transfer.toml"),
+            profile,
+        },
+    )
+    .expect("run profile admitted");
+    let journal_path = prototype1_transition_journal_path(&manifest);
+    let node_dir = journal_path
+        .parent()
+        .expect("prototype1 root")
+        .join("nodes")
+        .join(parent.node_id());
+    let ready_path = node_dir.join("successor-ready.json");
+    let binary_path = std::env::current_exe().expect("current test executable");
+    let runtime_other = RuntimeId::new();
+    let runtime_wrong = RuntimeId::new();
+    let runtime_path = RuntimeId::new();
+    let runtime_checkout = RuntimeId::new();
+    let runtime_exact = RuntimeId::new();
+    let runtime_timeout = RuntimeId::new();
+
+    let invocation_for = |runtime_id| {
+        let path = invocation::invocation_path(&node_dir, runtime_id);
+        let invocation = crate::cli::prototype1_state::invocation::Invocation {
+            schema_version: invocation::SCHEMA_VERSION.to_string(),
+            role: crate::cli::prototype1_state::invocation::Role::Successor,
+            campaign_id: parent.campaign_id().clone(),
+            node_id: parent.node_id().to_string(),
+            runtime_id,
+            journal_path: journal_path.clone(),
+            channel_root: Some(invocation::channel_root(&node_dir, runtime_id)),
+            node: None,
+            request: None,
+            resolved: None,
+            active_parent_root: Some(repo_root.clone()),
+            run_profile: Some(admitted.commitment.clone()),
+            predecessor_attempt: Some(
+                crate::cli::prototype1_state::successor::PredecessorAttempt::new(
+                    crate::cli::prototype1_state::session::SessionId::for_test(1),
+                    crate::cli::prototype1_state::event::TransitionId::new(),
+                    crate::cli::prototype1_state::session::Fence::for_test(1),
+                    true,
+                    true,
+                ),
+            ),
+            created_at: Utc::now().to_rfc3339(),
+        };
+        write_json_atomic(&path, &invocation).expect("write successor invocation");
+        (path, invocation)
+    };
+    let spawn_for =
+        |runtime_id, invocation_path: PathBuf| crate::cli::prototype1_state::successor::Record {
+            runtime_id: Some(runtime_id),
+            recorded_at: RecordedAt::now(),
+            campaign_id: parent.campaign_id().clone(),
+            node_id: parent.node_id().to_string(),
+            state: crate::cli::prototype1_state::successor::State::Spawned {
+                pid: std::process::id(),
+                incarnation: crate::cli::prototype1_state::invocation::process_incarnation(
+                    std::process::id(),
+                )
+                .expect("capture successor process"),
+                active_parent_root: repo_root.clone(),
+                binary_path: binary_path.clone(),
+                invocation_path,
+                ready_path: ready_path.clone(),
+                streams: journal::Streams {
+                    stdout: node_dir.join("successor.stdout"),
+                    stderr: node_dir.join("successor.stderr"),
+                },
+            },
+        };
+    let checkout_for = |installed_commit: String| journal::ActiveCheckoutAdvancedEntry {
+        recorded_at: RecordedAt::now(),
+        campaign_id: parent.campaign_id().clone(),
+        previous_parent_identity: Some(predecessor.clone()),
+        selected_parent_identity: parent.clone(),
+        active_parent_root: repo_root.clone(),
+        selected_branch: branch.clone(),
+        installed_commit,
+    };
+    let mut journal = PrototypeJournal::new(journal_path.clone());
+    let exact_checkout = checkout_for(head.to_string());
+
+    let (wrong_path, _) = invocation_for(runtime_wrong);
+    journal
+        .append(JournalEntry::Successor(spawn_for(
+            runtime_other,
+            wrong_path.clone(),
+        )))
+        .expect("append wrong-runtime spawn");
+    let error = crate::cli::prototype1_state::driver::control::claim_successor(
+        &repo_root,
+        profile::RunMode::Continuous,
+        &wrong_path,
+    )
+    .expect_err("wrong runtime evidence must be rejected");
+    assert!(
+        error.to_string().contains("exact Spawned runtime"),
+        "{error}"
+    );
+    assert_session_absent(&manifest, &parent);
+
+    journal
+        .append(JournalEntry::ActiveCheckoutAdvanced(exact_checkout.clone()))
+        .expect("append path-test checkout");
+    let (path_drift, _) = invocation_for(runtime_path);
+    journal
+        .append(JournalEntry::Successor(spawn_for(
+            runtime_path,
+            node_dir.join("invocations/other.json"),
+        )))
+        .expect("append wrong-path spawn");
+    let error = crate::cli::prototype1_state::driver::control::claim_successor(
+        &repo_root,
+        profile::RunMode::Continuous,
+        &path_drift,
+    )
+    .expect_err("wrong invocation evidence must be rejected");
+    assert!(error.to_string().contains("Spawned paths"), "{error}");
+    assert_session_absent(&manifest, &parent);
+
+    let bad_checkout = checkout_for("wrong-installed-commit".to_string());
+    let (checkout_path, _) = invocation_for(runtime_checkout);
+    let checkout_spawn = spawn_for(runtime_checkout, checkout_path.clone());
+    journal
+        .append(JournalEntry::ActiveCheckoutAdvanced(bad_checkout))
+        .expect("append wrong checkout");
+    journal
+        .append(JournalEntry::Successor(checkout_spawn))
+        .expect("append checkout-test spawn");
+    let error = crate::cli::prototype1_state::driver::control::claim_successor(
+        &repo_root,
+        profile::RunMode::Continuous,
+        &checkout_path,
+    )
+    .expect_err("wrong checkout evidence must be rejected");
+    assert!(
+        error
+            .to_string()
+            .contains("does not match controller epoch Git HEAD"),
+        "{error}"
+    );
+    assert_session_absent(&manifest, &parent);
+
+    let (exact_path, exact_invocation) = invocation_for(runtime_exact);
+    let exact_spawn = spawn_for(runtime_exact, exact_path.clone());
+    journal
+        .append(JournalEntry::ActiveCheckoutAdvanced(exact_checkout.clone()))
+        .expect("append exact checkout before spawn");
+    journal
+        .append(JournalEntry::Successor(exact_spawn.clone()))
+        .expect("append exact spawn after checkout");
+    let error = crate::cli::prototype1_state::driver::control::claim_successor(
+        &repo_root,
+        profile::RunMode::Step,
+        &exact_path,
+    )
+    .expect_err("mode mismatch must be rejected");
+    assert!(
+        error
+            .to_string()
+            .contains("admitted run profile requires Continuous"),
+        "{error}"
+    );
+    assert_session_absent(&manifest, &parent);
+
+    let expected_origin = crate::cli::prototype1_state::control_evidence::SuccessorOrigin::new(
+        exact_path
+            .canonicalize()
+            .expect("canonical invocation path"),
+        exact_invocation,
+        exact_checkout.clone(),
+        exact_spawn,
+        &parent,
+        &admitted.commitment,
+        &repo_root,
+    )
+    .expect("exact successor origin");
+    let expected_cursor = crate::cli::prototype1_state::control_evidence::successor_cursor(
+        &expected_origin,
+        &parent,
+        &admitted.commitment,
+        &repo_root,
+    )
+    .expect("successor R3 cursor");
+    let lease = crate::cli::prototype1_state::driver::control::claim_successor(
+        &repo_root,
+        profile::RunMode::Continuous,
+        &exact_path,
+    )
+    .expect("exact successor transfer claims session");
+    assert_eq!(lease.runtime_id(), Some(runtime_exact));
+    assert_eq!(lease.mode(), profile::RunMode::Continuous);
+    assert_eq!(lease.cursor(), &expected_cursor);
+    assert_eq!(
+        lease.cursor().phase,
+        crate::cli::prototype1_state::walk::phase::WalkPhase::R3
+    );
+    assert_eq!(
+        lease.handoff_path(),
+        Some(expected_origin.invocation_path())
+    );
+    let store = crate::cli::prototype1_state::session::Store::for_manifest(&manifest);
+    let snapshot = store
+        .inspect(&parent)
+        .expect("inspect claimed successor session")
+        .expect("successor session exists");
+    assert_eq!(
+        snapshot
+            .active
+            .as_ref()
+            .and_then(|owner| owner.runtime_id()),
+        Some(runtime_exact)
+    );
+    assert_eq!(snapshot.cursor.as_ref(), Some(&expected_cursor));
+    lease.release().expect("release successor session");
+
+    let session_path = store.paths(&parent).journal().to_path_buf();
+    let session_text = fs::read_to_string(&session_path).expect("read successor session");
+    let mut created = serde_json::from_str::<serde_json::Value>(
+        session_text.lines().next().expect("Created session entry"),
+    )
+    .expect("decode Created session entry");
+    assert_eq!(
+        created["schema_version"],
+        serde_json::json!("prototype1-control-session.v5")
+    );
+    assert_eq!(created["origin"]["kind"], serde_json::json!("successor"));
+    created["cursor"]["phase"] = serde_json::json!("r4c");
+    let tampered =
+        crate::cli::prototype1_state::session::Store::new(eval_home.join("tampered-control"));
+    let tampered_path = tampered.paths(&parent).journal().to_path_buf();
+    fs::create_dir_all(tampered_path.parent().expect("tampered session parent"))
+        .expect("create tampered session parent");
+    fs::write(
+        &tampered_path,
+        format!(
+            "{}\n",
+            serde_json::to_string(&created).expect("encode tampered Created entry")
+        ),
+    )
+    .expect("write tampered Created entry");
+    let error = tampered
+        .inspect(&parent)
+        .expect_err("tampered successor origin cursor must be rejected");
+    assert!(
+        error
+            .to_string()
+            .contains("session origin cursor does not match its admitted authority"),
+        "{error}"
+    );
+
+    fs::remove_dir_all(store.paths(&parent).root()).expect("remove completed test session");
+    journal
+        .append(JournalEntry::Successor(
+            crate::cli::prototype1_state::successor::Record {
+                runtime_id: Some(runtime_exact),
+                recorded_at: RecordedAt::now(),
+                campaign_id: parent.campaign_id().clone(),
+                node_id: parent.node_id().to_string(),
+                state: crate::cli::prototype1_state::successor::State::Ready {
+                    pid: std::process::id(),
+                    ready_path: ready_path.clone(),
+                    controller: None,
+                },
+            },
+        ))
+        .expect("append successor ready");
+    let error = crate::cli::prototype1_state::driver::control::claim_successor(
+        &repo_root,
+        profile::RunMode::Continuous,
+        &exact_path,
+    )
+    .expect_err("matching Ready evidence must prevent fresh session creation");
+    assert!(error.to_string().contains("legacy Ready"), "{error}");
+    assert_session_absent(&manifest, &parent);
+
+    let (timeout_path, _) = invocation_for(runtime_timeout);
+    journal
+        .append(JournalEntry::ActiveCheckoutAdvanced(exact_checkout))
+        .expect("append timeout checkout before spawn");
+    journal
+        .append(JournalEntry::Successor(spawn_for(
+            runtime_timeout,
+            timeout_path.clone(),
+        )))
+        .expect("append timeout spawn after checkout");
+    let lease = crate::cli::prototype1_state::driver::control::claim_successor(
+        &repo_root,
+        profile::RunMode::Continuous,
+        &timeout_path,
+    )
+    .expect("Spawned timeout runtime claims initial session");
+    assert_eq!(lease.runtime_id(), Some(runtime_timeout));
+    lease.release().expect("release timeout runtime session");
+    journal
+        .append(JournalEntry::Successor(
+            crate::cli::prototype1_state::successor::Record {
+                runtime_id: Some(runtime_timeout),
+                recorded_at: RecordedAt::now(),
+                campaign_id: parent.campaign_id().clone(),
+                node_id: parent.node_id().to_string(),
+                state: crate::cli::prototype1_state::successor::State::TimedOut {
+                    waited_ms: 1,
+                    ready_path: ready_path.clone(),
+                },
+            },
+        ))
+        .expect("append successor timeout");
+    let error = crate::cli::prototype1_state::driver::control::claim_successor(
+        &repo_root,
+        profile::RunMode::Continuous,
+        &timeout_path,
+    )
+    .expect_err("TimedOut runtime must not reclaim its session");
+    assert!(error.to_string().contains("cannot reclaim"), "{error}");
+    assert!(error.to_string().contains("TimedOut"), "{error}");
+    assert!(
+        store
+            .inspect(&parent)
+            .expect("inspect released timeout session")
+            .is_some(),
+        "terminal lifecycle rejection must preserve its existing session"
+    );
+
+    fs::remove_dir_all(store.paths(&parent).root()).expect("remove timeout test session");
+    let error = crate::cli::prototype1_state::driver::control::claim_successor(
+        &repo_root,
+        profile::RunMode::Continuous,
+        &timeout_path,
+    )
+    .expect_err("TimedOut runtime must not create a fresh session");
+    assert!(
+        error.to_string().contains("cannot create a fresh"),
+        "{error}"
+    );
+    assert!(error.to_string().contains("TimedOut"), "{error}");
+    assert_session_absent(&manifest, &parent);
+}
+
+#[test]
+fn prototype1_setup_preview_rejects_mutating_or_ambiguous_inputs() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let _guard =
+        crate::test_support::env_guard_os(vec![("PLOKE_EVAL_HOME", tmp.path().as_os_str().into())]);
+    let before = snapshot_setup_tree(tmp.path());
+
+    let mut inline = setup_preview_command(
+        tmp.path().join("missing-batch.json"),
+        tmp.path().join("missing-profile.toml"),
+    );
+    inline.batch = None;
+    inline.dataset = Some(tmp.path().join("dataset.jsonl"));
+    let error = preview_prototype1_parent_setup(&inline)
+        .expect_err("preview must reject inline preparation");
+    assert!(
+        error
+            .to_string()
+            .contains("requires an existing --batch or --batch-id")
+    );
+
+    let mut dry_run = setup_preview_command(
+        tmp.path().join("missing-batch.json"),
+        tmp.path().join("missing-profile.toml"),
+    );
+    dry_run.dry_run = true;
+    let error = preview_prototype1_parent_setup(&dry_run)
+        .expect_err("legacy dry-run must not masquerade as preview");
+    assert!(error.to_string().contains("use prototype1-setup --preview"));
+
+    let mut missing_profile = setup_preview_command(
+        tmp.path().join("missing-batch.json"),
+        tmp.path().join("missing-profile.toml"),
+    );
+    missing_profile.profile = None;
+    let error = prepare_prototype1_parent_setup(&missing_profile, None)
+        .expect_err("setup must require an explicit profile");
+    assert!(error.to_string().contains("requires an explicit --profile"));
+
+    let mut legacy_search = setup_preview_command(
+        tmp.path().join("missing-batch.json"),
+        tmp.path().join("missing-profile.toml"),
+    );
+    legacy_search.max_generations = 2;
+    let error = preview_prototype1_parent_setup(&legacy_search)
+        .expect_err("setup must reject legacy search authority");
+    assert!(error.to_string().contains("run profile"));
+
+    let mut legacy_stop = setup_preview_command(
+        tmp.path().join("missing-batch.json"),
+        tmp.path().join("missing-profile.toml"),
+    );
+    legacy_stop.stop_after = Prototype1LoopStopAfter::BaselineEval;
+    let error = preview_prototype1_parent_setup(&legacy_stop)
+        .expect_err("setup must reject legacy stop authority");
+    assert!(error.to_string().contains("[execution].stop_after"));
+
+    let mut batch_selector = setup_preview_command(
+        tmp.path().join("missing-batch.json"),
+        tmp.path().join("missing-profile.toml"),
+    );
+    batch_selector.specific.push("ripgrep".to_string());
+    let error = preview_prototype1_parent_setup(&batch_selector)
+        .expect_err("prepared batch must own its cohort");
+    assert!(error.to_string().contains("prepared batch manifest"));
+    assert_eq!(snapshot_setup_tree(tmp.path()), before);
+}
+
+#[test]
+fn prototype1_setup_campaign_manifest_preserves_embedding_overrides() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let _guard =
+        crate::test_support::env_guard_os(vec![("PLOKE_EVAL_HOME", tmp.path().as_os_str().into())]);
+    write_direct_google_registry(tmp.path());
 
     let dataset_file = tmp.path().join("dataset.jsonl");
     fs::write(
@@ -844,12 +2367,14 @@ fn prototype1_setup_campaign_manifest_preserves_embedding_overrides() {
         max_turns: 40,
         max_tool_calls: 200,
         wall_clock_secs: 1800,
+        eval_max_tokens: crate::campaign::DEFAULT_EVAL_MAX_TOKENS,
         index_debug_snapshots: true,
         use_default_model: false,
         model_id: Some("google/gemini-3.5-flash".to_string()),
         provider: Some("google".to_string()),
         route_source: Some(ModelRouteSource::DirectGoogle),
         embedding_model_id: Some("perplexity/pplx-embed-v1-4b".to_string()),
+        embedding_route: Some(EmbeddingRoute::OpenRouter),
         embedding_provider: Some("perplexity".to_string()),
         stop_on_error: false,
         protocol_model_id: None,
@@ -892,6 +2417,11 @@ fn prototype1_setup_campaign_manifest_preserves_embedding_overrides() {
         campaign.resolved.eval.embedding_provider_slug.as_deref(),
         Some("perplexity")
     );
+    assert_eq!(
+        manifest.eval.max_tokens,
+        Some(crate::campaign::DEFAULT_EVAL_MAX_TOKENS)
+    );
+    assert_eq!(campaign.resolved.eval.max_tokens, manifest.eval.max_tokens);
 }
 
 #[test]
@@ -928,6 +2458,33 @@ fn prototype1_eval_set_id_includes_embedding_overrides() {
     );
 
     assert_ne!(base_id, embedding_id);
+
+    let mut direct_policy = embedding_policy;
+    direct_policy.embedding_route = EmbeddingRoute::DirectOpenAi;
+    direct_policy.embedding_provider_slug = None;
+    let direct_id = prototype1_eval_set_id(
+        &baseline_campaign,
+        &treatment_campaign,
+        crate::target_registry::BenchmarkFamily::MultiSweBenchRust,
+        &sources,
+        &direct_policy,
+        &instance_ids,
+    );
+
+    assert_ne!(embedding_id, direct_id);
+
+    let mut token_policy = direct_policy;
+    token_policy.max_tokens = Some(crate::campaign::DEFAULT_EVAL_MAX_TOKENS);
+    let token_id = prototype1_eval_set_id(
+        &baseline_campaign,
+        &treatment_campaign,
+        crate::target_registry::BenchmarkFamily::MultiSweBenchRust,
+        &sources,
+        &token_policy,
+        &instance_ids,
+    );
+
+    assert_ne!(direct_id, token_id);
 }
 
 #[test]
@@ -1307,6 +2864,7 @@ fn ready_parent_for_test(manifest_path: &Path, repo_root: &Path) -> Parent<Ready
 
 struct R4cFixture {
     r4c: typestate::R4cReady<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    config: ResolvedCampaignConfig,
     manifest_path: PathBuf,
     repo_root: PathBuf,
     journal_path: PathBuf,
@@ -1346,7 +2904,7 @@ fn r4c_fixture(root: &Path, backend: profile::EvalStorageBackend) -> R4cFixture 
         parent.campaign_id().clone(),
         manifest_path.clone(),
         shape,
-        config,
+        config.clone(),
         journal_path.clone(),
         journal,
     );
@@ -1354,6 +2912,7 @@ fn r4c_fixture(root: &Path, backend: profile::EvalStorageBackend) -> R4cFixture 
 
     R4cFixture {
         r4c,
+        config,
         manifest_path,
         repo_root,
         journal_path,
@@ -1801,6 +3360,8 @@ async fn broad_tui_prep_failure_is_setup_blocker() {
 
 #[tokio::test]
 async fn zero_admission_batch_is_persisted() {
+    let _slot_env =
+        crate::test_support::env_guard_os(vec![("PLOKE_EVAL_BROAD_TUI_SLOT_LIMIT", "9".into())]);
     let historical_request: PublishedBroadHarnessRequest = json_fixture(include_str!(
         "../../../tests/fixtures/prototype1-zero-admission-child-plan/node-18f71c7f3b1718b8.request.json"
     ));
@@ -2202,6 +3763,39 @@ fn deterministic_surface_producer_dedupes_duplicate_proposed_contents() {
 }
 
 #[test]
+fn deterministic_tui_tools_child_plan_is_disabled_until_real_patch_generation_exists() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let repo_root = tmp.path().join("repo");
+    write_broad_surface_targets(&repo_root);
+    let parent = ready_parent_for_test(&manifest_path, &repo_root);
+    let budget = Prototype1ChildBudget::new(1, 1);
+
+    let err = match publish_deterministic_tui_tools_child_plan(
+        ChildPlanEnv {
+            campaign_id: &CLI_TEST_CAMPAIGN,
+            manifest_path: &manifest_path,
+            repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
+            route_source: ModelRouteSource::DirectGoogle,
+        },
+        parent,
+        budget,
+    ) {
+        Ok(_) => panic!("deterministic no-op child planning must fail loudly"),
+        Err(err) => err,
+    };
+
+    let PrepareError::InvalidBatchSelection { detail } = err else {
+        panic!("unexpected error variant");
+    };
+    assert!(detail.contains("deterministic-tui-tools is disabled"));
+    assert!(detail.contains("generate real patches"));
+}
+
+#[test]
+#[ignore = "obsolete deterministic no-op child publication path is intentionally disabled"]
 fn tui_edit_surface_parent_selection_publishes_child_plan() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("campaign.json");
@@ -2997,27 +4591,13 @@ fn broad_harness_complete_run_reaches_request_continuation_hook() {
 #[test]
 fn broad_harness_rejects_unbound_existing_child_plan() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let manifest_path = tmp.path().join("campaign.json");
-    let repo_root = tmp.path().join("repo");
-    write_broad_surface_targets(&repo_root);
-    let parent = ready_parent_for_test(&manifest_path, &repo_root);
-    let budget = Prototype1ChildBudget::new(1, 1);
-    let receipt = publish_deterministic_tui_tools_child_plan(
-        ChildPlanEnv {
-            campaign_id: &CLI_TEST_CAMPAIGN,
-            manifest_path: &manifest_path,
-            repo_root: &repo_root,
-            broad_tui: profile::BroadTui::default(),
-            eval_storage_backend: profile::EvalStorageBackend::Fs,
-            route_source: ModelRouteSource::DirectGoogle,
-        },
-        parent,
-        budget,
-    )
-    .expect("published deterministic child plan");
+    let node = test_node(tmp.path(), "node-det", "branch-det", "candidate-det");
+    let mut resolved = test_resolved(&node);
+    resolved.branch.synthesized_spec_id = TUI_EDIT_SURFACE_PRODUCER_ID.to_string();
+    let child = ChildFiles::from_resolved(&CLI_TEST_CAMPAIGN, node, resolved, false);
 
     let err = CandidateGenerationConfig::BroadHarnessRequest
-        .validate_received_child_plan(receipt.plan.body().children())
+        .validate_received_child_plan(&[child])
         .expect_err("broad harness must not consume unbound child plans");
 
     let PrepareError::InvalidBatchSelection { detail } = err else {
@@ -3145,6 +4725,110 @@ fn broad_harness_multi_file_admission_mints_one_artifact_child() {
             .derived_artifact_id,
         admitted_derived
     );
+
+    {
+        let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
+        let mut params = std::collections::BTreeMap::new();
+        params.insert(
+            "campaign_id".to_string(),
+            cozo::DataValue::from(CLI_TEST_CAMPAIGN.to_string()),
+        );
+        params.insert(
+            "parent_node_id".to_string(),
+            cozo::DataValue::from(child_plan.plan.body().parent_node_id().to_string()),
+        );
+        let plans = db
+            .raw_query_params(
+                r#"
+?[plan_id, child_count, rejected_count, message_sha256] :=
+    *eval_child_plan {
+        plan_id,
+        campaign_id,
+        parent_node_id,
+        child_count,
+        rejected_count,
+        message_sha256
+    },
+    campaign_id = $campaign_id,
+    parent_node_id = $parent_node_id
+"#,
+                params,
+            )
+            .expect("query normalized broad-harness child plan");
+        assert_eq!(plans.rows.len(), 1);
+        let plan = plans.row_refs().next().expect("plan row");
+        let plan_id = plan.get::<String>("plan_id").expect("plan id");
+        assert_eq!(plan.get::<i64>("child_count").expect("child count"), 1);
+        assert_eq!(
+            plan.get::<i64>("rejected_count").expect("rejected count"),
+            0
+        );
+        assert!(
+            !plan
+                .get::<String>("message_sha256")
+                .expect("message hash")
+                .is_empty()
+        );
+
+        let mut params = std::collections::BTreeMap::new();
+        params.insert("plan_id".to_string(), cozo::DataValue::from(plan_id));
+        let children = db
+            .raw_query_params(
+                r#"
+?[child_node_id, child_index, status, target_relpath, harness_present, surface_present] :=
+    *eval_child_plan_child {
+        plan_id,
+        child_node_id,
+        child_index,
+        status,
+        target_relpath,
+        harness_present,
+        surface_present
+    },
+    plan_id = $plan_id
+"#,
+                params,
+            )
+            .expect("query normalized broad-harness child rows");
+        assert_eq!(children.rows.len(), 1);
+        let row = children.row_refs().next().expect("child row");
+        assert_eq!(
+            row.get::<String>("child_node_id").expect("child id"),
+            child.node_id()
+        );
+        assert_eq!(row.get::<i64>("child_index").expect("index"), 0);
+        assert_eq!(row.get::<String>("status").expect("status"), "planned");
+        assert_eq!(
+            row.get::<String>("target_relpath").expect("target"),
+            child.node_record().target_relpath.display().to_string()
+        );
+        assert!(row.get::<bool>("harness_present").expect("harness"));
+        assert!(
+            !row.get::<bool>("surface_present").expect("surface"),
+            "broad-harness children carry request-bound harness evidence, not deterministic surface evidence"
+        );
+
+        let refs = db
+            .raw_query_params(
+                r#"
+?[count(record_ref_id)] :=
+    *eval_record_ref { record_ref_id, family },
+    family = "child_plan_file"
+"#,
+                std::collections::BTreeMap::new(),
+            )
+            .expect("query child-plan record refs");
+        let count = refs
+            .row_refs()
+            .next()
+            .expect("count row")
+            .get::<i64>("count(record_ref_id)")
+            .expect("count");
+        assert_eq!(
+            count, 0,
+            "child plan should not use eval_record_ref payloads"
+        );
+    }
 
     let mut journal = PrototypeJournal::new(prototype1_transition_journal_path(&manifest_path));
     let c1 = C1::from_child_plan(
@@ -5887,6 +7571,7 @@ cat >> "$channel_dir/child-to-parent.jsonl" <<JSON
 {"schema_version":"prototype1-runtime-channel.v1","direction":"child_to_parent","campaign_id":"${PLOKE_PROTOTYPE1_CAMPAIGN_ID:?missing campaign}","node_id":"${PLOKE_PROTOTYPE1_NODE_ID:?missing node}","runtime_id":"$runtime_id","message_id":"00000000-0000-4000-8000-000000000001","recorded_at":0,"body_hash":"40ec7f71ea684c8b976e79e8e425f87779e6de57f4821dcfc8066dbcad2defe0","body":"ready"}
 JSON
 sleep 1
+: > "$node_dir/completed-$runtime_id"
 exit 0
 "#,
     );
@@ -5971,6 +7656,19 @@ exit 0
     let entries = PrototypeJournal::new(journal_path)
         .load_entries()
         .expect("load transition journal");
+    let (child_pid, incarnation) = entries
+        .iter()
+        .find_map(|entry| match entry {
+            JournalEntry::SpawnChild(spawn)
+                if spawn.refs.node_id == node.node_id
+                    && spawn.phase
+                        == crate::cli::prototype1_state::journal::SpawnPhase::Observed =>
+            {
+                spawn.child_pid.zip(spawn.incarnation.clone())
+            }
+            _ => None,
+        })
+        .expect("observed child process identity");
     assert!(entries.iter().any(|entry| {
         matches!(
             entry,
@@ -5980,9 +7678,36 @@ exit 0
                     && matches!(
                         spawn.result,
                         Some(crate::cli::prototype1_state::journal::SpawnObservation::Acknowledged)
-                )
+            )
         )
     }));
+
+    #[cfg(target_os = "linux")]
+    {
+        let completion_path = node.node_dir.join(format!("completed-{runtime}"));
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !completion_path.exists() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "acknowledged child process {child_pid} must reach normal completion"
+            );
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            let observed = crate::cli::prototype1_state::invocation::process_incarnation(child_pid)
+                .expect("inspect acknowledged child process");
+            if observed.as_ref() != Some(&incarnation) {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "acknowledged child process {child_pid} must be reaped after it exits"
+            );
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    }
 
     let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
     let mut params = std::collections::BTreeMap::new();
@@ -7048,8 +8773,10 @@ fn test_evaluation_report(node: &Prototype1NodeRecord) -> Prototype1BranchEvalua
                 exclude_dataset_labels: Vec::new(),
                 budget: EvalBudget::default(),
                 batch_prefix: Some("test-batch".to_string()),
+                embedding_route: EmbeddingRoute::OpenRouter,
                 embedding_model_id: None,
                 embedding_provider_slug: None,
+                max_tokens: None,
             },
             instance_ids: vec![node.instance_id.clone()],
             missing_treatment_instance_ids: Vec::new(),
@@ -7106,8 +8833,10 @@ fn test_eval_policy() -> EvalCampaignPolicy {
         exclude_dataset_labels: Vec::new(),
         budget: EvalBudget::default(),
         batch_prefix: Some("test-batch".to_string()),
+        embedding_route: EmbeddingRoute::OpenRouter,
         embedding_model_id: None,
         embedding_provider_slug: None,
+        max_tokens: None,
     }
 }
 
@@ -7190,6 +8919,56 @@ fn initial_parent_baseline_rejects_complete_projection_without_record() {
     assert!(
         err.to_string().contains("has no record_path"),
         "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn load_parent_baseline_treats_fresh_missing_closure_as_not_ready() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let _env =
+        crate::test_support::env_guard_os(vec![("PLOKE_EVAL_HOME", tmp.path().as_os_str().into())]);
+    let fixture = r4c_fixture(tmp.path(), profile::EvalStorageBackend::Fs);
+    let campaign_dir = tmp
+        .path()
+        .join("campaigns")
+        .join(fixture.parent.campaign_id());
+    fs::create_dir_all(&campaign_dir).expect("campaign dir");
+
+    let mut closure = test_closure_state_without_record("clap-rs__clap-3670");
+    closure.campaign_id = fixture.parent.campaign_id().clone();
+    closure.eval.complete_total = 0;
+    closure.eval.missing_total = 1;
+    closure.eval.status = ClosureClass::Missing;
+    closure.instances[0].eval_status = ClosureClass::Missing;
+    write_json_file_pretty(&campaign_dir.join("closure-state.json"), &closure)
+        .expect("write missing closure");
+
+    let baseline = load_parent_baseline(
+        fixture.parent.campaign_id(),
+        &fixture.config,
+        &fixture.manifest_path,
+        &fixture.parent,
+    )
+    .expect("missing pre-baseline closure is not a reconstruction blocker");
+
+    assert!(
+        baseline.is_none(),
+        "fresh missing closure must reconstruct only through R5"
+    );
+
+    closure.eval.missing_total = 0;
+    write_json_file_pretty(&campaign_dir.join("closure-state.json"), &closure)
+        .expect("write inconsistent closure");
+    let error = load_parent_baseline(
+        fixture.parent.campaign_id(),
+        &fixture.config,
+        &fixture.manifest_path,
+        &fixture.parent,
+    )
+    .expect_err("inconsistent missing counts must remain a reconstruction blocker");
+    assert!(
+        error.to_string().contains("Missing"),
+        "unexpected inconsistent closure error: {error}"
     );
 }
 
@@ -7495,9 +9274,2333 @@ fn test_completed_outcome(
         evaluation_report: Some(report),
         selection_input: Some(selection_input),
         surface: None,
+        harness: None,
         artifact_surface: Some(ArtifactSurface::test(&node.node_id)),
         node,
     }
+}
+
+#[tokio::test]
+async fn r12_reject_replay() {
+    const NODE_ID: &str = "node-cb1b41e21e01ddc7";
+    const BRANCH_ID: &str = "branch-aef83be6f4105a58";
+
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("src/tests/fixtures/prototype1-r12-selected-reject-20260716");
+    let profile_text =
+        fs::read_to_string(fixture.join("run-profile.toml")).expect("read historical run profile");
+    let profile: profile::Prototype1RunProfile =
+        toml::from_str(&profile_text).expect("parse historical run profile");
+    profile
+        .validate()
+        .expect("historical profile remains valid");
+    assert!(profile.search.require_keep_for_continuation);
+    assert!(!profile.search.explore_from_rejected);
+    let commitment: serde_json::Value = json_fixture(
+        &fs::read_to_string(fixture.join("run-profile.commitment.json"))
+            .expect("read historical profile commitment"),
+    );
+    let profile_hash = format!("{:x}", Sha256::digest(profile_text.as_bytes()));
+    assert_eq!(commitment["sha256"], profile_hash);
+    assert_eq!(
+        profile_hash,
+        "7a92bef48096e563b4b1287207a006b320029f0bf88ca5314caa102900340275"
+    );
+
+    let parent: ParentIdentity = json_fixture(
+        &fs::read_to_string(fixture.join("parent_identity.json"))
+            .expect("read historical parent identity"),
+    );
+    assert_eq!(parent.node_id(), "node-802e115bdf749c6d");
+    assert_eq!(parent.generation(), 0);
+
+    let temp = tempfile::tempdir().expect("historical R12 replay tempdir");
+    let manifest_path = temp.path().join("campaign.json");
+    fs::copy(fixture.join("campaign.json"), &manifest_path)
+        .expect("stage historical campaign manifest");
+    let repo_root = temp.path().join("repo");
+    init_indexed_repo(&repo_root);
+    write_surface_target(
+        &repo_root,
+        Path::new("README.md"),
+        "historical R12 replay\n",
+    );
+    index_repo(&repo_root);
+    commit_indexed_repo(&repo_root, "historical R12 replay");
+
+    let control = crate::cli::prototype1_state::session::Store::new(temp.path().join("control"));
+    let control_path = control.paths(&parent).journal().to_path_buf();
+    fs::create_dir_all(control_path.parent().expect("control journal parent"))
+        .expect("create control journal directory");
+    fs::copy(fixture.join("control-journal.jsonl"), &control_path)
+        .expect("stage historical control journal");
+    let epoch = crate::cli::prototype1_state::walk::epoch::ServerEpoch::capture(&repo_root)
+        .expect("capture replay epoch");
+    let control_history = control
+        .inspect_history(&parent, epoch)
+        .expect("replay historical controller journal")
+        .expect("historical controller session exists");
+    assert!(control_history.damage.is_none());
+    assert_eq!(control_history.version.phase(), WalkPhase::R12);
+    assert!(control_history.events.iter().any(|event| {
+        matches!(
+            event.kind,
+            crate::cli::prototype1_state::walk::protocol::WalkSessionEventKind::Acquired {
+                fence: 19,
+                ..
+            }
+        )
+    }));
+    assert!(!control_history.events.iter().any(|event| {
+        matches!(
+            event.kind,
+            crate::cli::prototype1_state::walk::protocol::WalkSessionEventKind::AttemptBegan {
+                fence: 19,
+                ..
+            }
+        )
+    }));
+
+    let journal_path = prototype1_transition_journal_path(&manifest_path);
+    fs::create_dir_all(journal_path.parent().expect("transition journal parent"))
+        .expect("create transition journal directory");
+    fs::copy(fixture.join("transition-journal.jsonl"), &journal_path)
+        .expect("stage historical transition journal");
+    let journal = PrototypeJournal::new(&journal_path);
+    let journal_before = journal
+        .load_entries()
+        .expect("load historical transition journal");
+
+    let child_plan_path = child_plan_message_path_for_parent(&manifest_path, &parent);
+    fs::create_dir_all(child_plan_path.parent().expect("child plan parent"))
+        .expect("create child plan directory");
+    let mut child_plan_json: serde_json::Value = json_fixture(
+        &fs::read_to_string(fixture.join("child-plan-node-802e115bdf749c6d.json"))
+            .expect("read historical child plan fixture"),
+    );
+    child_plan_json["message"] = serde_json::Value::String(
+        child_plan_path
+            .to_str()
+            .expect("temporary child plan path is UTF-8")
+            .to_string(),
+    );
+    fs::write(
+        &child_plan_path,
+        serde_json::to_vec_pretty(&child_plan_json).expect("serialize re-homed child plan"),
+    )
+    .expect("stage historical child plan");
+    let child_plan: ChildPlanFiles = json_fixture(
+        &fs::read_to_string(&child_plan_path).expect("read staged historical child plan"),
+    );
+    let (plan_index, child) = child_plan
+        .children()
+        .iter()
+        .enumerate()
+        .find(|(_, child)| child.node_id() == NODE_ID)
+        .expect("historical selected child plan entry");
+
+    let load_parent = || {
+        let unchecked = Parent::<Unchecked>::load(&manifest_path, parent.clone())
+            .expect("load historical parent");
+        let checked = unchecked
+            .check(
+                &NoopBackend,
+                &manifest_path,
+                Check {
+                    campaign_id: parent.campaign_id(),
+                    active_root: &repo_root,
+                },
+            )
+            .expect("check historical parent");
+        let startup = Startup::<Genesis>::from_history(checked.identity(), &manifest_path)
+            .expect("historical genesis startup");
+        let ready = checked.ready(startup).expect("historical parent ready");
+        load_existing_child_plan_for_id(parent.campaign_id(), &manifest_path, ready)
+            .expect("replay historical child plan authority")
+            .parent
+    };
+    let planned_parent = load_parent();
+    let denied_parent = load_parent();
+
+    let mut node: Prototype1NodeRecord = json_fixture(
+        &fs::read_to_string(fixture.join("child-node.json")).expect("read historical child node"),
+    );
+    let node_dir = manifest_path
+        .parent()
+        .expect("manifest parent")
+        .join("prototype1/nodes")
+        .join(NODE_ID);
+    node.node_dir = node_dir.clone();
+    node.workspace_root = temp.path().join("candidate");
+    node.binary_path = node_dir.join("bin/ploke-eval");
+    node.runner_request_path = node_dir.join("runner-request.json");
+    node.runner_result_path = node_dir.join("runner-result.json");
+    fs::create_dir_all(&node_dir).expect("create historical child node directory");
+    fs::write(
+        crate::intervention::prototype1_node_record_path(&manifest_path, NODE_ID),
+        serde_json::to_vec_pretty(&node).expect("serialize re-homed historical node"),
+    )
+    .expect("stage historical child node");
+
+    let runner_result: Prototype1RunnerResult = json_fixture(
+        &fs::read_to_string(fixture.join("child-runner-result.json"))
+            .expect("read historical runner result"),
+    );
+    assert_eq!(runner_result.node_id, node.node_id);
+    assert_eq!(runner_result.branch_id, node.branch_id);
+    fs::copy(
+        fixture.join("child-runner-result.json"),
+        &node.runner_result_path,
+    )
+    .expect("stage historical runner result");
+
+    let report: Prototype1BranchEvaluationReport = json_fixture(
+        &fs::read_to_string(fixture.join("branch-aef83be6f4105a58.evaluation.json"))
+            .expect("read historical branch evaluation"),
+    );
+    assert_eq!(report.branch_id, BRANCH_ID);
+    assert_eq!(report.overall_disposition, BranchDisposition::Reject);
+
+    let terminal = fs::read_to_string(fixture.join("child-to-parent.jsonl"))
+        .expect("read historical child channel")
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            serde_json::from_str::<
+                crate::cli::prototype1_state::channel::Envelope<
+                    crate::cli::prototype1_state::channel::ToParent,
+                >,
+            >(line)
+            .expect("historical child channel envelope")
+        })
+        .find_map(|envelope| match envelope.body() {
+            crate::cli::prototype1_state::channel::ToParent::Result {
+                runner_result,
+                treatment,
+            } => Some((
+                envelope.runtime_id().to_string(),
+                runner_result.clone(),
+                treatment.clone(),
+            )),
+            _ => None,
+        })
+        .expect("historical child terminal result");
+    assert_eq!(terminal.1, runner_result);
+    let terminal_body = crate::cli::prototype1_state::channel::ToParent::Result {
+        runner_result: terminal.1.clone(),
+        treatment: terminal.2,
+    };
+    let channel_evidence = ChildChannelEvidenceRefs {
+        runtime_id: terminal.0.clone(),
+        terminal_result: SealedEvidenceCitation {
+            ref_id: format!(
+                "channel:child-to-parent:terminal-result:{NODE_ID}:{}",
+                terminal.0
+            ),
+            content_hash: Some(
+                HistoryHash::of_domain_json(
+                    "prototype1.history.child_channel_terminal_result.v1",
+                    &terminal_body,
+                )
+                .expect("historical terminal channel hash"),
+            ),
+            record_name: Some(CHILD_CHANNEL_TERMINAL_RESULT_RECORD.to_string()),
+        },
+        attempt_result: Some(SealedEvidenceCitation {
+            ref_id: format!("child-store:attempt-runner-result:{NODE_ID}:{}", terminal.0),
+            content_hash: Some(
+                HistoryHash::of_domain_json(
+                    "prototype1.history.child_attempt_runner_result.v1",
+                    &runner_result,
+                )
+                .expect("historical attempt result hash"),
+            ),
+            record_name: Some(CHILD_ATTEMPT_RUNNER_RESULT_RECORD.to_string()),
+        }),
+        invocation: None,
+    };
+    let outcome = PlannedChildOutcome {
+        plan_index,
+        node_id: node.node_id.clone(),
+        outcome: "completed:Reject".to_string(),
+        node_status: node.status,
+        workspace_root: node.workspace_root.clone(),
+        binary_path: node.binary_path.clone(),
+        resolved: child.resolved().clone(),
+        child_runtime: Some(terminal.0),
+        channel_evidence: Some(channel_evidence),
+        evaluation_report: Some(report.clone()),
+        selection_input: Some(selection_input_from_child_report(&node, &report)),
+        surface: child.surface().cloned(),
+        harness: child.harness_evidence().cloned(),
+        artifact_surface: Some(
+            child
+                .harness_evidence()
+                .expect("historical broad harness evidence")
+                .artifact_surface()
+                .clone(),
+        ),
+        node: node.clone(),
+    };
+    let (selection, material) = select_successor_for_profile(
+        &manifest_path,
+        &parent,
+        std::slice::from_ref(&outcome),
+        child_plan.rejected_surface_attempts(),
+        &profile,
+    )
+    .expect("replay historical successor selection")
+    .expect("historical rejected child remains traversal-selected");
+    assert_eq!(selection.candidate_node_id, NODE_ID);
+    assert_eq!(selection.selected_branch_id.as_deref(), Some(BRANCH_ID));
+    let denied_selection = selection.clone();
+    let denied_material = material.clone();
+
+    let candidate_generation = match profile.generation.source {
+        profile::GenerationSource::Legacy => CandidateGenerationConfig::Legacy,
+        profile::GenerationSource::BroadHarnessRequest => {
+            CandidateGenerationConfig::BroadHarnessRequest
+        }
+        profile::GenerationSource::DeterministicTuiTools => {
+            CandidateGenerationConfig::DeterministicTuiTools
+        }
+    };
+    let run_shape = Prototype1StateRunShape {
+        stop_after: profile.execution.state_stop_after(),
+        observe_child_stale_after: profile.execution.observe_child_stale_after(),
+        broad_tui: profile.execution.broad_tui,
+        candidate_generation,
+        successor_selection: profile.selection.successor_selection(),
+        successor_selection_seed: profile.selection.seed,
+        successor_selection_metrics: profile.selection.traversal_metrics(),
+        successor_oracle_mode: profile.selection.oracle_mode(),
+        successor_oracle_require_evidence: profile.selection.oracle_require_evidence(),
+        successor_oracle_gate: profile.selection.oracle_gate(),
+        successor_patch_gate: crate::successor_selection::PatchGate::Disabled,
+        successor_oracle_targets: profile.target.eval_instances(),
+        successor_metrics_policy: profile.selection.metrics_policy(),
+        eval_storage_backend: profile.storage.eval.backend,
+    };
+    let config = ResolvedCampaignConfig {
+        campaign_id: parent.campaign_id().clone(),
+        benchmark_family: BenchmarkFamily::MultiSweBenchRust,
+        dataset_sources: Vec::new(),
+        model_id: profile
+            .model
+            .id
+            .clone()
+            .expect("historical profile model id"),
+        provider_slug: profile.model.provider.clone(),
+        route_source: profile
+            .model
+            .route_source
+            .expect("historical profile route source"),
+        required_procedures: Vec::new(),
+        instances_root: temp.path().join("instances"),
+        batches_root: temp.path().join("batches"),
+        eval: EvalCampaignPolicy::default(),
+        protocol: ProtocolCampaignPolicy::default(),
+        framework: crate::FrameworkConfig::default(),
+    };
+    let mut command = state_command_without_ids();
+    command.campaign = Some(parent.campaign_id().clone());
+    command.repo_root = Some(repo_root.clone());
+    let facts = typestate::context::Facts {
+        complete_search_policy: Some(profile.search_policy()),
+        selection: Some(ParentSelectionOutcome::Selected {
+            decision: selection,
+            material,
+        }),
+        report: Some(typestate::context::ReportFacts {
+            outcome: "historical R12 selected rejected child".to_string(),
+            node_id: node.node_id.clone(),
+            node_status: node.status,
+            workspace_root: node.workspace_root.clone(),
+            binary_path: node.binary_path.clone(),
+            child_runtime: outcome.child_runtime.clone(),
+            successor_runtime: None,
+            successor_pid: None,
+            successor_ready_path: None,
+        }),
+        ..Default::default()
+    };
+    let collected = typestate::context::Collected::new(
+        command,
+        repo_root.clone(),
+        parent.campaign_id().clone(),
+        manifest_path.clone(),
+        run_shape.clone(),
+        config.clone(),
+        journal_path.clone(),
+        journal,
+    )
+    .with_facts(facts);
+    let r12 = typestate::R12::from_collected_parent(collected, planned_parent);
+    assert!(r12.has_successor_selection());
+    let preview = r12
+        .preview_continuation()
+        .expect("preview historical continuation")
+        .expect("historical R12 has selected continuation evidence");
+    assert_eq!(
+        preview.disposition,
+        Prototype1ContinuationDisposition::StopSelectedBranchRejected
+    );
+    assert!(!preview.disposition.allows_successor());
+
+    let mut denied_policy = profile.search_policy();
+    denied_policy.explore_from_rejected = true;
+    let mut denied_command = state_command_without_ids();
+    denied_command.campaign = Some(parent.campaign_id().clone());
+    denied_command.repo_root = Some(repo_root.clone());
+    let denied_facts = typestate::context::Facts {
+        complete_search_policy: Some(denied_policy),
+        selection: Some(ParentSelectionOutcome::Selected {
+            decision: denied_selection,
+            material: denied_material,
+        }),
+        report: Some(typestate::context::ReportFacts {
+            outcome: "historical R12 rejected exploration".to_string(),
+            node_id: node.node_id.clone(),
+            node_status: node.status,
+            workspace_root: node.workspace_root.clone(),
+            binary_path: node.binary_path.clone(),
+            child_runtime: outcome.child_runtime.clone(),
+            successor_runtime: None,
+            successor_pid: None,
+            successor_ready_path: None,
+        }),
+        ..Default::default()
+    };
+    let denied = typestate::context::Collected::new(
+        denied_command,
+        repo_root.clone(),
+        parent.campaign_id().clone(),
+        manifest_path.clone(),
+        run_shape,
+        config,
+        journal_path.clone(),
+        PrototypeJournal::new(&journal_path),
+    )
+    .with_facts(denied_facts);
+    let denied = typestate::R12::from_collected_parent(denied, denied_parent);
+    let denied_preview = denied
+        .preview_continuation()
+        .expect("preview rejected exploration")
+        .expect("rejected exploration has selected continuation evidence");
+    assert_eq!(
+        denied_preview.disposition,
+        Prototype1ContinuationDisposition::ContinueExploreFromRejected
+    );
+    assert!(denied_preview.disposition.allows_successor());
+    assert_eq!(
+        crate::cli::prototype1_state::walk::controller::test_r12_target(
+            &denied,
+            Some(WalkPhase::R13b),
+        )
+        .expect("continuable R12 must admit the bounded handoff target"),
+        WalkPhase::R13b
+    );
+    let boundary_error = crate::cli::prototype1_state::walk::controller::test_r12_target(
+        &denied,
+        Some(WalkPhase::R14b),
+    )
+    .expect_err("step-mode R12 must reject a target beyond transferred authority");
+    assert!(
+        boundary_error
+            .to_string()
+            .contains("crosses the R13b successor runtime boundary"),
+        "unexpected runtime-boundary error: {boundary_error}"
+    );
+
+    let db_path = eval_store::prototype1_eval_store_db_path(&manifest_path);
+    fs::create_dir_all(db_path.parent().expect("eval db parent")).expect("eval db dir");
+    ploke_db::Database::new_init()
+        .expect("empty eval db")
+        .write_backup_to_path(&db_path)
+        .expect("seed owner eval db");
+    let db_before = fs::read(&db_path).expect("read owner eval DB before denied handoff");
+    assert_eq!(
+        crate::cli::prototype1_state::walk::controller::test_r12_target(
+            &r12,
+            Some(WalkPhase::R13a),
+        )
+        .expect("historical policy stop must admit the operator's R13a target"),
+        WalkPhase::R13a
+    );
+    assert_eq!(
+        crate::cli::prototype1_state::walk::controller::test_r12_target(&r12, None)
+            .expect("historical policy stop must default to R13a"),
+        WalkPhase::R13a
+    );
+    let branch_error = crate::cli::prototype1_state::walk::controller::test_r12_target(
+        &r12,
+        Some(WalkPhase::R13b),
+    )
+    .expect_err("historical policy stop must reject the handoff branch");
+    assert!(
+        branch_error
+            .to_string()
+            .contains("continuation does not authorize handoff"),
+        "unexpected branch error: {branch_error}"
+    );
+
+    let history_root = manifest_path
+        .parent()
+        .expect("manifest parent")
+        .join("prototype1/history");
+    assert!(!history_root.exists());
+    let head_before = GitWorktreeBackend
+        .head_commit(&repo_root)
+        .expect("historical replay head");
+    let status_before = std::process::Command::new("git")
+        .current_dir(&repo_root)
+        .args(["status", "--porcelain=v1"])
+        .output()
+        .expect("historical replay status");
+    assert!(status_before.status.success());
+
+    let denied_error =
+        crate::cli::prototype1_state::driver::control::test_r12_denied(&repo_root, denied)
+            .expect_err("continuable R12 must reject a stopped-branch permit before mutation");
+    assert!(
+        denied_error
+            .to_string()
+            .contains("only an admitted R12->R13b controller attempt"),
+        "unexpected denied handoff error: {denied_error}"
+    );
+    let denied_journal = PrototypeJournal::new(&journal_path)
+        .load_entries()
+        .expect("load journal after denied handoff");
+    assert_eq!(denied_journal.len(), journal_before.len());
+    assert_eq!(
+        fs::read(&db_path).expect("read owner eval DB after denied handoff"),
+        db_before
+    );
+    assert!(!history_root.exists());
+    assert_eq!(
+        GitWorktreeBackend
+            .head_commit(&repo_root)
+            .expect("head after denied handoff"),
+        head_before
+    );
+    let status_denied = std::process::Command::new("git")
+        .current_dir(&repo_root)
+        .args(["status", "--porcelain=v1"])
+        .output()
+        .expect("status after denied handoff");
+    assert!(status_denied.status.success());
+    assert_eq!(status_denied.stdout, status_before.stdout);
+
+    let step = crate::cli::prototype1_state::driver::control::test_r12_stop(&repo_root, r12)
+        .await
+        .expect("selected rejected continuation must stop without checkout permission");
+
+    assert_eq!(step.transition().from(), WalkPhase::R12);
+    assert_eq!(step.transition().to(), WalkPhase::R13a);
+    assert!(matches!(
+        step.state(),
+        crate::cli::prototype1_state::driver::control::ControlState::R13a(_)
+    ));
+    let journal_after = PrototypeJournal::new(&journal_path)
+        .load_entries()
+        .expect("load stopped transition journal");
+    assert_eq!(journal_after.len(), journal_before.len() + 1);
+    let stopped = journal_after
+        .iter()
+        .rev()
+        .find_map(|entry| match entry {
+            JournalEntry::Successor(record) if record.node_id == NODE_ID => Some(record),
+            _ => None,
+        })
+        .expect("stopped successor record");
+    let crate::cli::prototype1_state::successor::State::Stopped { decision, .. } = &stopped.state
+    else {
+        panic!("selected rejected child must record a stopped successor")
+    };
+    assert_eq!(
+        decision.disposition,
+        Prototype1ContinuationDisposition::StopSelectedBranchRejected
+    );
+    assert!(!decision.disposition.allows_successor());
+    assert!(!history_root.exists());
+    assert_eq!(
+        GitWorktreeBackend
+            .head_commit(&repo_root)
+            .expect("unchanged historical replay head"),
+        head_before
+    );
+    let status_after = std::process::Command::new("git")
+        .current_dir(&repo_root)
+        .args(["status", "--porcelain=v1"])
+        .output()
+        .expect("historical replay status after stop");
+    assert!(status_after.status.success());
+    assert_eq!(status_after.stdout, status_before.stdout);
+}
+
+#[test]
+fn v15_missing_oracle_replay_fails_closed_under_all_resolved_gate() {
+    const NODE_ID: &str = "node-6bae782006db482c";
+    const BRANCH_ID: &str = "branch-68afac57e92d5ebd";
+    const FIXTURE_HASHES: [(&str, &str); 9] = [
+        (
+            "branch-68afac57e92d5ebd.evaluation.json",
+            "d41b3dd2effebc4dde22cc9b9dddc59d4890b3b37f2f3b44f692f4e1d460bbb4",
+        ),
+        (
+            "campaign.json",
+            "2f21c8af424c15603bc0219446b87c161a01f7f2c2ce044cb82aa54d32c00dfb",
+        ),
+        (
+            "child-node.json",
+            "5cb0ae5153a198522077ef0946d6c37b4ce74f115450ec275bb86bfa4d70039c",
+        ),
+        (
+            "child-plan-node-9c9dcbeeb3a4d400.json",
+            "c3251db8d66075579d114891432fb128715e6d2379ffbe5cf7dafda26e45e3c2",
+        ),
+        (
+            "child-runner-result.json",
+            "0ba334192a79524eda1aa227701cc5c41c5eb2a0058ce4ee9e7f379021439368",
+        ),
+        (
+            "child-to-parent.jsonl",
+            "64d919e0d0bbc814bab76fb4d8de671056781a1957841ae0a606e252dd4ad372",
+        ),
+        (
+            "parent_identity.json",
+            "96f0c9cbb3e00b5d78d7d55e18b6bee1b2a2aa3ae1b7eb8f2828de3532bc5fbc",
+        ),
+        (
+            "run-profile.commitment.json",
+            "d693b80d9cf92a1790c8d1019aee9be5e2ba2d1468ddd400be7c8f3a93403bd7",
+        ),
+        (
+            "run-profile.toml",
+            "cfda200a2ad71803cb405c6e109bca8c80dd6b2101d4ec4a12abe9eedf1c4f95",
+        ),
+    ];
+
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("src/tests/fixtures/prototype1-v15-missing-oracle-20260717");
+    for (name, expected) in FIXTURE_HASHES {
+        let bytes = fs::read(fixture.join(name)).expect("read immutable v15 fixture artifact");
+        assert_eq!(format!("{:x}", Sha256::digest(bytes)), expected, "{name}");
+    }
+    let manifest_path = fixture.join("campaign.json");
+    let profile_text =
+        fs::read_to_string(fixture.join("run-profile.toml")).expect("read v15 run profile");
+    let profile: profile::Prototype1RunProfile =
+        toml::from_str(&profile_text).expect("parse v15 run profile");
+    profile.validate().expect("v15 profile remains valid");
+    assert_eq!(
+        profile.selection.oracle_mode(),
+        crate::successor_selection::OracleMode::RecordOnly
+    );
+    assert!(profile.selection.oracle_require_evidence());
+    assert_eq!(
+        profile.selection.oracle_gate(),
+        crate::successor_selection::OracleGate::Disabled
+    );
+    assert!(!profile.execution.mbe.enabled);
+
+    let commitment: serde_json::Value = json_fixture(
+        &fs::read_to_string(fixture.join("run-profile.commitment.json"))
+            .expect("read v15 profile commitment"),
+    );
+    let profile_hash = format!("{:x}", Sha256::digest(profile_text.as_bytes()));
+    assert_eq!(commitment["sha256"], profile_hash);
+    assert_eq!(
+        profile_hash,
+        "cfda200a2ad71803cb405c6e109bca8c80dd6b2101d4ec4a12abe9eedf1c4f95"
+    );
+
+    let parent: ParentIdentity = json_fixture(
+        &fs::read_to_string(fixture.join("parent_identity.json"))
+            .expect("read v15 parent identity"),
+    );
+    assert_eq!(parent.node_id(), "node-9c9dcbeeb3a4d400");
+
+    let child_plan: ChildPlanFiles = json_fixture(
+        &fs::read_to_string(fixture.join("child-plan-node-9c9dcbeeb3a4d400.json"))
+            .expect("read v15 child plan"),
+    );
+    let (plan_index, child) = child_plan
+        .children()
+        .iter()
+        .enumerate()
+        .find(|(_, child)| child.node_id() == NODE_ID)
+        .expect("v15 selected child plan entry");
+
+    let node: Prototype1NodeRecord = json_fixture(
+        &fs::read_to_string(fixture.join("child-node.json")).expect("read v15 child node"),
+    );
+    assert_eq!(node.node_id, NODE_ID);
+    assert_eq!(node.branch_id, BRANCH_ID);
+
+    let runner_result: Prototype1RunnerResult = json_fixture(
+        &fs::read_to_string(fixture.join("child-runner-result.json"))
+            .expect("read v15 runner result"),
+    );
+    assert_eq!(runner_result.node_id, node.node_id);
+    assert_eq!(runner_result.branch_id, node.branch_id);
+
+    let report: Prototype1BranchEvaluationReport = json_fixture(
+        &fs::read_to_string(fixture.join("branch-68afac57e92d5ebd.evaluation.json"))
+            .expect("read v15 branch evaluation"),
+    );
+    assert_eq!(report.branch_id, BRANCH_ID);
+    assert_eq!(report.overall_disposition, BranchDisposition::Keep);
+    assert_eq!(
+        report
+            .eval_set_identity
+            .as_ref()
+            .expect("v15 eval set identity")
+            .instance_ids,
+        vec!["BurntSushi__ripgrep-2209".to_string()]
+    );
+    assert_eq!(report.compared_instances.len(), 1);
+    let compared = &report.compared_instances[0];
+    assert!(
+        compared
+            .baseline_metrics
+            .as_ref()
+            .is_some_and(|metrics| metrics.oracle_eligible)
+    );
+    assert!(
+        compared
+            .treatment_metrics
+            .as_ref()
+            .is_some_and(|metrics| metrics.oracle_eligible)
+    );
+    assert!(compared.oracle_evaluation.is_none());
+
+    let terminal = fs::read_to_string(fixture.join("child-to-parent.jsonl"))
+        .expect("read v15 child channel")
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            serde_json::from_str::<
+                crate::cli::prototype1_state::channel::Envelope<
+                    crate::cli::prototype1_state::channel::ToParent,
+                >,
+            >(line)
+            .expect("v15 child channel envelope")
+        })
+        .find_map(|envelope| match envelope.body() {
+            crate::cli::prototype1_state::channel::ToParent::Result {
+                runner_result,
+                treatment,
+            } => Some((
+                envelope.runtime_id().to_string(),
+                runner_result.clone(),
+                treatment.clone(),
+            )),
+            _ => None,
+        })
+        .expect("v15 child terminal result");
+    assert_eq!(terminal.1, runner_result);
+    let terminal_body = crate::cli::prototype1_state::channel::ToParent::Result {
+        runner_result: terminal.1.clone(),
+        treatment: terminal.2,
+    };
+    let channel_evidence = ChildChannelEvidenceRefs {
+        runtime_id: terminal.0.clone(),
+        terminal_result: SealedEvidenceCitation {
+            ref_id: format!(
+                "channel:child-to-parent:terminal-result:{NODE_ID}:{}",
+                terminal.0
+            ),
+            content_hash: Some(
+                HistoryHash::of_domain_json(
+                    "prototype1.history.child_channel_terminal_result.v1",
+                    &terminal_body,
+                )
+                .expect("v15 terminal channel hash"),
+            ),
+            record_name: Some(CHILD_CHANNEL_TERMINAL_RESULT_RECORD.to_string()),
+        },
+        attempt_result: Some(SealedEvidenceCitation {
+            ref_id: format!("child-store:attempt-runner-result:{NODE_ID}:{}", terminal.0),
+            content_hash: Some(
+                HistoryHash::of_domain_json(
+                    "prototype1.history.child_attempt_runner_result.v1",
+                    &runner_result,
+                )
+                .expect("v15 attempt result hash"),
+            ),
+            record_name: Some(CHILD_ATTEMPT_RUNNER_RESULT_RECORD.to_string()),
+        }),
+        invocation: None,
+    };
+    let outcome = PlannedChildOutcome {
+        plan_index,
+        node_id: node.node_id.clone(),
+        outcome: "completed:Keep".to_string(),
+        node_status: node.status,
+        workspace_root: node.workspace_root.clone(),
+        binary_path: node.binary_path.clone(),
+        resolved: child.resolved().clone(),
+        child_runtime: Some(terminal.0),
+        channel_evidence: Some(channel_evidence),
+        evaluation_report: Some(report.clone()),
+        selection_input: Some(selection_input_from_child_report(&node, &report)),
+        surface: child.surface().cloned(),
+        harness: child.harness_evidence().cloned(),
+        artifact_surface: Some(
+            child
+                .harness_evidence()
+                .expect("v15 broad harness evidence")
+                .artifact_surface()
+                .clone(),
+        ),
+        node,
+    };
+
+    let original = select_successor_for_profile(
+        &manifest_path,
+        &parent,
+        std::slice::from_ref(&outcome),
+        child_plan.rejected_surface_attempts(),
+        &profile,
+    )
+    .expect("replay original v15 selection")
+    .expect("original v15 policy selected the candidate");
+    assert_eq!(original.0.candidate_node_id, NODE_ID);
+    assert_eq!(original.0.selected_branch_id.as_deref(), Some(BRANCH_ID));
+
+    let mut strict = profile.clone();
+    strict.selection.oracle.gate = crate::successor_selection::OracleGate::AllResolved;
+    strict.execution.mbe.enabled = true;
+    strict.validate().expect("strict replay profile is valid");
+    let error = match select_successor_for_profile(
+        &manifest_path,
+        &parent,
+        std::slice::from_ref(&outcome),
+        child_plan.rejected_surface_attempts(),
+        &strict,
+    ) {
+        Err(error) => error,
+        Ok(_) => panic!("v15 missing oracle evidence must fail closed"),
+    };
+    assert!(
+        error.to_string().contains("missing oracle evaluation"),
+        "unexpected strict replay error: {error}"
+    );
+    assert!(!fixture.join("prototype1/history").exists());
+    assert!(!eval_store::prototype1_eval_store_db_path(&manifest_path).exists());
+}
+
+#[test]
+fn v25_receipt_replay() {
+    const SELECTED_NODE: &str = "node-f4f44e07e0be8caa";
+    const SELECTED_BRANCH: &str = "branch-55892858db150ccd";
+    const OTHER_BLOCKED_NODE: &str = "node-3247ff02a2053a57";
+    const ADMISSIBLE_NODE: &str = "node-2f0b3cda4c2c8d89";
+    const SECOND_PATH: &str = "crates/ploke-tui/src/tools/get_code_edges.rs";
+    const SECOND_SOURCE_HASH: &str =
+        "be0dd87df60e1aa5e1381ad9d9ee7d404863487dd58fa129a3c93a9686e91776";
+    const SECOND_PROPOSED_HASH: &str =
+        "055dd8d3c5a357ca1177b69125eff2dace008cb741b18523f88ad1f6659f6d66";
+    const DECISION_HASH: &str = "26e318146c7ca203b18f924b6b329e96975743dfbe416a92d743730912545de6";
+    const ENTRY_SHA256: &str = "b453ddaf8d0ac90527835568f8ad16ad93a0d84158deb0fc035d082802ff2615";
+    const SET_ROOT: &str = "6632780e126edc069f4b8d103dc36ea33fdc35b77119c1066a8a36a29108cf6c";
+    const PAYLOAD_HASHES: [&str; 3] = [
+        "519cb576045f8236e3cc74a663322d9cabdf2f57990f330b0f83986afd7bf211",
+        "7ebdf2b794704b4952fc54e0040b45ac524793dc059a7236c26bddb76fde4608",
+        "567c194c04882b04c3c7b7cc2f0890086bce94e5e1b5a7bdfe85fb90c060c7fe",
+    ];
+    const FIXTURE_HASHES: [(&str, &str); 14] = [
+        (
+            "branch-269c5d245f354a1e.evaluation.json",
+            "df45a63dd9af27f2061a6fb82f6194c020082cfd32c5ee5bb45e1d38acd6928d",
+        ),
+        (
+            "branch-42f0d2c400a40cee.evaluation.json",
+            "0522142bd9fe8d887fcfda2b52c38bbc47e5b266ce882c7b79318e4f088069b0",
+        ),
+        (
+            "branch-55892858db150ccd.evaluation.json",
+            "93e90a839c12ec8eacb74ebfca53b8a56d815fe98e59d0421d1dea75395e98c9",
+        ),
+        (
+            "campaign.json",
+            "ab21d10c0efdaa003ac49312de5baef0b39fc282640b1808d769a9bce795fec5",
+        ),
+        (
+            "child-plan-node-461dba1909fb6cf7.json",
+            "f68736a57839947494478b10a72dee26da2537e72a1bd34b4d7922e414a4bd64",
+        ),
+        (
+            "node-2f0b3cda4c2c8d89.child-to-parent.jsonl",
+            "dddbc063fd326b505a0f08972fc535f73699c9b31f3617422aba8c38a76a71db",
+        ),
+        (
+            "node-2f0b3cda4c2c8d89.json",
+            "8d50a7cb7b738602fb844a95287151c4132ef410e21ea45a152f825c8db3c562",
+        ),
+        (
+            "node-3247ff02a2053a57.child-to-parent.jsonl",
+            "48c4c039fb5c822bd485a7c46830b18b38a342c9dc4351bb8341cf1c1ad752eb",
+        ),
+        (
+            "node-3247ff02a2053a57.json",
+            "f47153b214ee327afcfd5148763f23f5cb3500e670376ec8b8cbe6e65fa27beb",
+        ),
+        (
+            "node-f4f44e07e0be8caa.child-to-parent.jsonl",
+            "f1cf77fd595316055dfc9f2dd67ddb2240fd1178164749559e0e29f8954b3949",
+        ),
+        (
+            "node-f4f44e07e0be8caa.json",
+            "638c9094635474d7472179499d78549f7a49ac6f926601d1523ed18fa1afec0c",
+        ),
+        (
+            "parent_identity.json",
+            "b000745fed82cc75fdd2b1fdd6c1340f473c1d682d2cde77af7be65ad70ad071",
+        ),
+        (
+            "run-profile.commitment.json",
+            "cb021229bfde16585bb55eedaf62cab3244ac581270efb5e92ef574d6262807c",
+        ),
+        (
+            "run-profile.toml",
+            "c3b2fd9147560917f64bb0d28a833016f0e46080fd9453e73f3883162631b85a",
+        ),
+    ];
+
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("src/tests/fixtures/prototype1-v25-selection-safety-20260717");
+    let manifest_path = fixture.join("campaign.json");
+    let history_dir = fixture.join("prototype1/history");
+    let reviews_dir = fixture.join("prototype1/reviews");
+    let owner_db = eval_store::prototype1_eval_store_db_path(&manifest_path);
+    assert!(!history_dir.exists());
+    assert!(!reviews_dir.exists());
+    assert!(!owner_db.exists());
+    for (name, expected) in FIXTURE_HASHES {
+        let bytes = fs::read(fixture.join(name)).expect("read immutable v25 fixture artifact");
+        assert_eq!(format!("{:x}", Sha256::digest(bytes)), expected, "{name}");
+    }
+
+    let profile_text =
+        fs::read_to_string(fixture.join("run-profile.toml")).expect("read v25 run profile");
+    let profile: profile::Prototype1RunProfile =
+        toml::from_str(&profile_text).expect("parse v25 run profile");
+    profile.validate().expect("v25 profile remains valid");
+    assert_eq!(
+        profile.selection.patch_gate(),
+        crate::successor_selection::PatchGate::Disabled
+    );
+    assert_eq!(
+        profile.selection.oracle_gate(),
+        crate::successor_selection::OracleGate::AllResolved
+    );
+    assert!(profile.execution.mbe.enabled);
+
+    let bytes =
+        fs::read(fixture.join("selection-decision-entry.json")).expect("read exact v25 receipt");
+    assert_eq!(bytes.len(), 573_257);
+    assert_eq!(
+        format!("{:x}", Sha256::digest(&bytes)),
+        ENTRY_SHA256,
+        "exact persisted entry_json bytes"
+    );
+    let entry: SelectionDecisionEntry =
+        serde_json::from_slice(&bytes).expect("decode exact persisted v25 receipt");
+    entry.validate_shape().expect("validate exact v25 receipt");
+    assert_eq!(
+        entry
+            .decision_hash()
+            .expect("hash exact v25 receipt")
+            .as_str(),
+        DECISION_HASH
+    );
+    let decision = entry.decision.as_ref().expect("v25 selected decision");
+    assert_eq!(decision.candidate_node_id, SELECTED_NODE);
+    assert_eq!(
+        decision.selected_branch_id.as_deref(),
+        Some(SELECTED_BRANCH)
+    );
+    let candidate_set = entry.candidate_set.as_ref().expect("v25 candidate set");
+    assert_eq!(candidate_set.root.as_str(), SET_ROOT);
+    assert_eq!(
+        candidate_set
+            .memberships
+            .iter()
+            .map(|membership| membership.payload_hash.as_str())
+            .collect::<Vec<_>>(),
+        PAYLOAD_HASHES
+    );
+    let traversal = entry.traversal.as_ref().expect("v25 traversal");
+    assert_eq!(
+        traversal.strategy.patch_gate(),
+        crate::successor_selection::PatchGate::Disabled
+    );
+
+    let original = traversal_selection::Candidates::from_history(HistoryCandidates {
+        scope: entry.scope.clone(),
+        candidates: Vec::new(),
+    })
+    .with_current_generation(entry.scope.clone(), entry.considered.clone())
+    .expect("bind exact historical V25 candidates");
+    let original = traversal_selection::select_attempt_with_policy(
+        original,
+        traversal.seed,
+        traversal.strategy,
+        entry.metrics.policy.clone(),
+        &traversal.oracle_targets,
+    )
+    .expect("replay original V25 production traversal");
+    let traversal_selection::SelectionAttempt::Selected(original) = original else {
+        panic!("original V25 traversal must reproduce the persisted selection")
+    };
+    assert_eq!(
+        &original.decision,
+        entry.decision.as_ref().expect("v25 selected decision")
+    );
+    assert_eq!(original.decision.candidate_node_id, SELECTED_NODE);
+
+    let outcome =
+        ParentSelectionOutcome::from_entry(entry.clone()).expect("hydrate exact v25 receipt");
+    assert_eq!(
+        outcome.entry().expect("rebuild hydrated v25 receipt"),
+        entry,
+        "typed hydration preserves every persisted field"
+    );
+    traversal_selection::validate_patch_gate(
+        &entry,
+        crate::successor_selection::PatchGate::Disabled,
+    )
+    .expect("historical disabled patch gate remains compatible");
+    let error = traversal_selection::validate_patch_gate(
+        &entry,
+        crate::successor_selection::PatchGate::ReviewedAdmissible,
+    )
+    .expect_err("strict patch gate rejects a receipt without candidate reviews");
+    assert!(
+        error
+            .to_string()
+            .contains("reviewed-admissible patch gate requires candidate review"),
+        "unexpected strict v25 replay error: {error}"
+    );
+
+    let plan_bytes = fs::read(fixture.join("child-plan-node-461dba1909fb6cf7.json"))
+        .expect("read exact v25 child plan");
+    let child_plan: ChildPlanFiles =
+        serde_json::from_slice(&plan_bytes).expect("decode exact v25 child plan");
+    let mut reviewed = entry.considered.clone();
+    for payload in &mut reviewed {
+        let candidate = payload
+            .selection_input
+            .as_ref()
+            .expect("v25 selection input")
+            .candidate
+            .clone();
+        let child = child_plan
+            .children()
+            .iter()
+            .find(|child| child.node_id() == candidate.node_id)
+            .expect("v25 payload has a child-plan carrier");
+        assert_eq!(child.resolved().branch.branch_id, candidate.branch_id);
+        let harness = child
+            .harness_evidence()
+            .expect("v25 broad candidate has typed harness evidence")
+            .clone();
+        let artifact = payload.artifact.as_mut().expect("v25 candidate artifact");
+        assert_eq!(
+            artifact.artifact_surface.as_ref(),
+            Some(harness.artifact_surface()),
+            "receipt and child-plan artifact surfaces agree"
+        );
+        let harness_artifact = harness.artifact().expect("v25 harness artifact binding");
+        assert_eq!(
+            artifact.resolved.branch.derived_artifact_id.as_ref(),
+            Some(&harness_artifact.derived_artifact_id)
+        );
+        assert_eq!(
+            artifact.node.derived_artifact_id.as_ref(),
+            Some(&harness_artifact.derived_artifact_id)
+        );
+        assert_eq!(
+            artifact.node.base_artifact_id.as_ref(),
+            Some(&harness_artifact.base_artifact_id)
+        );
+        artifact.harness = Some(harness);
+        artifact.schema_version = artifact.schema_version.max(4);
+    }
+
+    // V25 predated persisted patch reviews. This post-incident overlay uses the
+    // production reviewer-config identity derived from the exact admitted
+    // profile, but never claims that a provider response existed during the
+    // historical run.
+    let config_tmp = tempfile::tempdir().expect("v25 reviewer config tempdir");
+    let config_manifest = config_tmp.path().join("campaign.json");
+    fs::copy(&manifest_path, &config_manifest).expect("stage v25 reviewer campaign");
+    profile::admit_run_profile(
+        &config_manifest,
+        &profile::OperatorRunProfile {
+            source_path: fixture.join("run-profile.toml"),
+            profile: profile.clone(),
+        },
+    )
+    .expect("admit exact v25 reviewer profile");
+    let config_hash =
+        crate::cli::prototype1_state::candidate_review::admitted_config_hash(&config_manifest)
+            .expect("hash production v25 reviewer config");
+    let attach_review = |payload: &mut EvaluationPayload,
+                         verdict: crate::successor_selection::PatchVerdict,
+                         findings: Vec<String>| {
+        let candidate = payload
+            .selection_input
+            .as_ref()
+            .expect("v25 selection input")
+            .candidate
+            .clone();
+        let artifact = payload.artifact.as_ref().expect("v25 candidate artifact");
+        let harness = artifact
+            .harness
+            .as_ref()
+            .expect("in-memory overlay retains exact harness evidence");
+        let artifact_id = artifact
+            .resolved
+            .branch
+            .derived_artifact_id
+            .as_ref()
+            .expect("v25 derived artifact id")
+            .clone();
+        let surface_hash = HistoryHash::of_domain_json(
+            "prototype1.history.artifact_surface.v1",
+            artifact
+                .artifact_surface
+                .as_ref()
+                .expect("v25 artifact surface"),
+        )
+        .expect("hash v25 artifact surface");
+        assert_eq!(
+            artifact.node.branch_id.as_str(),
+            candidate.branch_id.as_str()
+        );
+        let evaluations = payload
+            .sealed_evidence
+            .as_ref()
+            .expect("v25 sealed evidence")
+            .evaluations
+            .iter()
+            .filter(|item| item.branch_id == candidate.branch_id)
+            .collect::<Vec<_>>();
+        let [evaluation] = evaluations.as_slice() else {
+            panic!("v25 candidate must have exactly one branch evaluation")
+        };
+        let evaluation_hash = evaluation
+            .evaluation_artifact_citation
+            .as_ref()
+            .and_then(|citation| citation.content_hash.as_ref())
+            .expect("v25 evaluation artifact hash")
+            .clone();
+        assert_eq!(
+            evaluation.primary_report_citation.content_hash.as_ref(),
+            Some(&evaluation_hash),
+            "v25 evaluation citations bind the same report"
+        );
+
+        let mut paths = harness.changed_paths().to_vec();
+        let recorded_paths = paths.clone();
+        paths.sort();
+        paths.dedup();
+        assert_eq!(recorded_paths, paths, "v25 change paths are canonical");
+        let changes = paths
+            .into_iter()
+            .map(|relpath| {
+                let (source_hash, proposed_hash) = if relpath == artifact.resolved.target_relpath {
+                    (
+                        artifact.resolved.source_content_hash.clone(),
+                        artifact.resolved.branch.proposed_content_hash.clone(),
+                    )
+                } else {
+                    assert_eq!(candidate.node_id, ADMISSIBLE_NODE);
+                    assert_eq!(relpath, PathBuf::from(SECOND_PATH));
+                    (
+                        SECOND_SOURCE_HASH.to_string(),
+                        SECOND_PROPOSED_HASH.to_string(),
+                    )
+                };
+                crate::successor_selection::PatchChange {
+                    relpath,
+                    source_content_hash: Some(source_hash),
+                    proposed_content_hash: Some(proposed_hash),
+                }
+            })
+            .collect::<Vec<_>>();
+        let change_set_hash = HistoryHash::of_domain_json(
+            "prototype1.history.candidate_patch_change_set.v1",
+            &changes,
+        )
+        .expect("hash exact v25 change set");
+        let citation_hash = HistoryHash::of_domain_json(
+            "prototype1.test.v25_post_incident_patch_review.v1",
+            &(
+                &candidate,
+                &artifact_id,
+                &surface_hash,
+                &evaluation_hash,
+                &config_hash,
+                &change_set_hash,
+                &changes,
+                verdict,
+                &findings,
+            ),
+        )
+        .expect("hash post-incident v25 review");
+        let confidence = crate::successor_selection::domains::Confidence::High;
+        payload.patch_review = Some(crate::successor_selection::PatchReview {
+            schema_version: 2,
+            procedure_id: crate::successor_selection::PATCH_REVIEW_PROCEDURE_ID.to_string(),
+            candidate: candidate.clone(),
+            artifact_id,
+            artifact_surface_hash: surface_hash,
+            evaluation_hash,
+            config_hash: config_hash.clone(),
+            change_set_hash,
+            changes,
+            verdict,
+            confidence,
+            blocking_findings: findings,
+            missing_evidence: Vec::new(),
+            rationale: vec![
+                "post-incident review of the exact V25 artifact and evaluation bindings"
+                    .to_string(),
+            ],
+            citation: SealedEvidenceCitation {
+                ref_id: crate::successor_selection::candidate_review_ref(&candidate.branch_id),
+                content_hash: Some(citation_hash),
+                record_name: Some(crate::successor_selection::PATCH_REVIEW_RECORD_NAME.to_string()),
+            },
+        });
+        payload.schema_version = payload.schema_version.max(5);
+    };
+
+    for payload in &mut reviewed {
+        let node_id = payload
+            .selection_input
+            .as_ref()
+            .expect("v25 selection input")
+            .candidate
+            .node_id
+            .as_str();
+        let (verdict, findings) = match node_id {
+            SELECTED_NODE => (
+                crate::successor_selection::PatchVerdict::Rejected,
+                vec![
+                    "uses a process-global Cargo metadata cache keyed only by the focused manifest modification time"
+                        .to_string(),
+                    "can return stale workspace metadata after workspace-root or sibling-manifest changes"
+                        .to_string(),
+                ],
+            ),
+            OTHER_BLOCKED_NODE => (
+                crate::successor_selection::PatchVerdict::Rejected,
+                vec![
+                    "spawns unbounded nested operating-system thread fanout and unwraps join failures"
+                        .to_string(),
+                    "turns a missing filesystem node into an empty iterator and erases the error"
+                        .to_string(),
+                ],
+            ),
+            ADMISSIBLE_NODE => (
+                crate::successor_selection::PatchVerdict::Admissible,
+                Vec::new(),
+            ),
+            other => panic!("unexpected V25 candidate '{other}'"),
+        };
+        attach_review(payload, verdict, findings);
+    }
+    assert!(reviewed.iter().all(|payload| {
+        payload
+            .patch_review
+            .as_ref()
+            .is_some_and(|review| review.config_hash == config_hash)
+    }));
+
+    let strict_gate = crate::successor_selection::PatchGate::ReviewedAdmissible;
+    let strict_strategy = traversal.strategy.with_patch_gate(strict_gate);
+    let candidates = traversal_selection::Candidates::from_history(HistoryCandidates {
+        scope: entry.scope.clone(),
+        candidates: Vec::new(),
+    })
+    .with_current_generation(entry.scope.clone(), reviewed.clone())
+    .expect("bind reviewed V25 candidates");
+    let attempt = traversal_selection::select_attempt_with_policy(
+        candidates,
+        traversal.seed,
+        strict_strategy,
+        entry.metrics.policy.clone(),
+        &traversal.oracle_targets,
+    )
+    .expect("run production strict traversal over exact V25 payloads");
+    let traversal_selection::SelectionAttempt::Selected(selection) = attempt else {
+        panic!("strict V25 overlay must select the admissible patch")
+    };
+    assert_eq!(selection.decision.candidate_node_id, ADMISSIBLE_NODE);
+    assert_ne!(selection.decision.candidate_node_id, SELECTED_NODE);
+    assert_ne!(selection.decision.candidate_node_id, OTHER_BLOCKED_NODE);
+    assert_eq!(
+        selection
+            .selected_payload
+            .selection_input
+            .as_ref()
+            .expect("selected V25 input")
+            .candidate
+            .node_id,
+        ADMISSIBLE_NODE
+    );
+
+    let mut all_rejected = reviewed;
+    let remaining = all_rejected
+        .iter_mut()
+        .find(|payload| {
+            payload
+                .selection_input
+                .as_ref()
+                .is_some_and(|input| input.candidate.node_id == ADMISSIBLE_NODE)
+        })
+        .expect("v25 admissible overlay");
+    attach_review(
+        remaining,
+        crate::successor_selection::PatchVerdict::Rejected,
+        vec![
+            "the persisted V25 evidence has no focused regression for the cross-file error propagation"
+                .to_string(),
+        ],
+    );
+    let candidates = traversal_selection::Candidates::from_history(HistoryCandidates {
+        scope: entry.scope.clone(),
+        candidates: Vec::new(),
+    })
+    .with_current_generation(entry.scope.clone(), all_rejected)
+    .expect("bind all-rejected V25 candidates");
+    let attempt = traversal_selection::select_attempt_with_policy(
+        candidates,
+        traversal.seed,
+        strict_strategy,
+        entry.metrics.policy.clone(),
+        &traversal.oracle_targets,
+    )
+    .expect("run production traversal for all-rejected V25 overlay");
+    let traversal_selection::SelectionAttempt::NoSelection(receipt) = attempt else {
+        panic!("all-rejected V25 overlay must preserve no selection")
+    };
+    let no_selection = SelectionDecisionEntry::new_no_selection_with_traversal_metrics(
+        ProcedureRef::new(crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID),
+        entry.scope.clone(),
+        receipt.considered,
+        receipt.considered_sources,
+        receipt.projection_failures,
+        Some(TraversalEvidence {
+            seed: traversal.seed,
+            strategy: strict_strategy,
+            oracle_targets: traversal.oracle_targets.clone(),
+            selected_source: None,
+            child_counts: receipt.child_counts,
+        }),
+        receipt.metrics,
+    )
+    .expect("construct in-memory V25 no-selection receipt");
+    traversal_selection::validate_patch_gate(&no_selection, strict_gate)
+        .expect("all V25 reviews satisfy the typed strict gate");
+    traversal_selection::validate_patch_replay(&no_selection)
+        .expect("all-rejected V25 receipt replays through production traversal");
+    let traversal_selection::Formula::ScoreChildProp(formula) = &no_selection
+        .formula
+        .as_ref()
+        .expect("V25 no-selection formula")
+        .formula;
+    assert_eq!(formula.patch_gate, strict_gate);
+    assert_eq!(formula.rows.len(), 3);
+    for node_id in [SELECTED_NODE, OTHER_BLOCKED_NODE, ADMISSIBLE_NODE] {
+        let row = formula
+            .rows
+            .iter()
+            .find(|row| row.node_id.as_deref() == Some(node_id))
+            .expect("V25 exclusion row");
+        assert!(!row.selectable);
+        assert!(!row.selected);
+        assert_eq!(
+            row.exclusion_reason.as_deref(),
+            Some("patch_gate_not_satisfied")
+        );
+    }
+
+    // Selection accepted only deserialized values and paths for diagnostics;
+    // it had no campaign/History/database handle capable of mutation.
+    assert!(!history_dir.exists());
+    assert!(!reviews_dir.exists());
+    assert!(!owner_db.exists());
+    assert_eq!(
+        fs::read(fixture.join("selection-decision-entry.json"))
+            .expect("re-read immutable V25 receipt"),
+        bytes
+    );
+    for (name, expected) in FIXTURE_HASHES {
+        let bytes = fs::read(fixture.join(name)).expect("re-read immutable v25 fixture artifact");
+        assert_eq!(format!("{:x}", Sha256::digest(bytes)), expected, "{name}");
+    }
+}
+
+#[tokio::test]
+async fn v16_all_unresolved_replay_persists_no_selection_evidence() {
+    const NODE_ID: &str = "node-0d80c1aeea697e6b";
+    const BRANCH_ID: &str = "branch-652e6dab480c355a";
+    const FIXTURE_HASHES: [(&str, &str); 9] = [
+        (
+            "branch-652e6dab480c355a.evaluation.json",
+            "91a9aea152cff69f171823126ae90a93b939d88ccc87db11be683f3bf6f406ec",
+        ),
+        (
+            "campaign.json",
+            "dcb2679451b905181fb99a8fe038acd33ca27b29a97a00c8dfd653d50fdfb57b",
+        ),
+        (
+            "child-node.json",
+            "353bdf9fb01e0f2bdde9e02eeaabf34ce497edb0f01043bb3460cd8738422161",
+        ),
+        (
+            "child-plan-node-e4ecdce2d6ee1098.json",
+            "ea3bcc6b9528577af591681afa171055158f35b612787bc498e0a67289b7ab6e",
+        ),
+        (
+            "child-runner-result.json",
+            "855cfaa8618d4739c4ea64a9f7c636a9634ab5ae146516b397be3586b1b7d2a0",
+        ),
+        (
+            "child-to-parent.jsonl",
+            "bc0a7c2377057392a1b4096088138aca8d1bbdb96163664928e93af2903b4e32",
+        ),
+        (
+            "parent_identity.json",
+            "dc89d998348061704bdab22269a34e297d80e856ed4a16acc299ae03135f66a3",
+        ),
+        (
+            "run-profile.commitment.json",
+            "84844a242dd344e5b4bd47aa0a4c32a721ea91b1a260eb4159d3ed0a45cbbdde",
+        ),
+        (
+            "run-profile.toml",
+            "0949cf0e14e78111577e3823f433468301b13062b89eaea83f0533ee946d4d77",
+        ),
+    ];
+
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("src/tests/fixtures/prototype1-v16-all-unresolved-20260717");
+    for (name, expected) in FIXTURE_HASHES {
+        let bytes = fs::read(fixture.join(name)).expect("read immutable v16 fixture artifact");
+        assert_eq!(format!("{:x}", Sha256::digest(bytes)), expected, "{name}");
+    }
+    let temp = tempfile::tempdir().expect("v16 replay tempdir");
+    let baseline_bytes = hex_fixture_bytes(&fixture.join("baseline-record.json.gz.hex"));
+    assert_eq!(
+        format!("{:x}", Sha256::digest(&baseline_bytes)),
+        "f4c6adc1451f86ef072d218dd0ef6fb6a66c6ddcfa16405ee5b0122d30db820f"
+    );
+    let baseline_path = temp.path().join("baseline-record.json.gz");
+    fs::write(&baseline_path, baseline_bytes).expect("stage v16 baseline record");
+    let treatment_bytes = hex_fixture_bytes(&fixture.join("treatment-record.json.gz.hex"));
+    assert_eq!(
+        format!("{:x}", Sha256::digest(&treatment_bytes)),
+        "09d191acf579a994e6fea9706575ccc8567d4a43139877444ac455967b2e7dd5"
+    );
+    let treatment_path = temp.path().join("treatment-record.json.gz");
+    fs::write(&treatment_path, treatment_bytes).expect("stage v16 treatment record");
+
+    let profile_text =
+        fs::read_to_string(fixture.join("run-profile.toml")).expect("read v16 run profile");
+    let profile: profile::Prototype1RunProfile =
+        toml::from_str(&profile_text).expect("parse v16 run profile");
+    profile.validate().expect("v16 profile remains valid");
+    assert_eq!(
+        profile.selection.oracle_mode(),
+        crate::successor_selection::OracleMode::RecordOnly
+    );
+    assert!(profile.selection.oracle_require_evidence());
+    assert_eq!(
+        profile.selection.oracle_gate(),
+        crate::successor_selection::OracleGate::AllResolved
+    );
+    assert!(profile.execution.mbe.enabled);
+
+    let commitment: serde_json::Value = json_fixture(
+        &fs::read_to_string(fixture.join("run-profile.commitment.json"))
+            .expect("read v16 profile commitment"),
+    );
+    let profile_hash = format!("{:x}", Sha256::digest(profile_text.as_bytes()));
+    assert_eq!(commitment["sha256"], profile_hash);
+    assert_eq!(
+        profile_hash,
+        "0949cf0e14e78111577e3823f433468301b13062b89eaea83f0533ee946d4d77"
+    );
+
+    let parent: ParentIdentity = json_fixture(
+        &fs::read_to_string(fixture.join("parent_identity.json"))
+            .expect("read v16 parent identity"),
+    );
+    assert_eq!(parent.node_id(), "node-e4ecdce2d6ee1098");
+    assert_eq!(parent.generation(), 0);
+
+    let child_plan: ChildPlanFiles = json_fixture(
+        &fs::read_to_string(fixture.join("child-plan-node-e4ecdce2d6ee1098.json"))
+            .expect("read v16 child plan"),
+    );
+    assert_eq!(child_plan.rejected_surface_attempts().len(), 2);
+    let (plan_index, child) = child_plan
+        .children()
+        .iter()
+        .enumerate()
+        .find(|(_, child)| child.node_id() == NODE_ID)
+        .expect("v16 admitted child plan entry");
+
+    let node: Prototype1NodeRecord = json_fixture(
+        &fs::read_to_string(fixture.join("child-node.json")).expect("read v16 child node"),
+    );
+    assert_eq!(node.node_id, NODE_ID);
+    assert_eq!(node.branch_id, BRANCH_ID);
+
+    let runner_result: Prototype1RunnerResult = json_fixture(
+        &fs::read_to_string(fixture.join("child-runner-result.json"))
+            .expect("read v16 runner result"),
+    );
+    assert_eq!(runner_result.node_id, node.node_id);
+    assert_eq!(runner_result.branch_id, node.branch_id);
+
+    let mut report: Prototype1BranchEvaluationReport = json_fixture(
+        &fs::read_to_string(fixture.join("branch-652e6dab480c355a.evaluation.json"))
+            .expect("read v16 branch evaluation"),
+    );
+    assert_eq!(report.branch_id, BRANCH_ID);
+    assert_eq!(report.overall_disposition, BranchDisposition::Keep);
+    assert_eq!(
+        report
+            .eval_set_identity
+            .as_ref()
+            .expect("v16 eval set identity")
+            .instance_ids,
+        vec!["BurntSushi__ripgrep-2209".to_string()]
+    );
+    assert_eq!(report.compared_instances.len(), 1);
+    let oracle = report.compared_instances[0]
+        .oracle_evaluation
+        .as_ref()
+        .expect("v16 oracle evaluation");
+    assert_eq!(oracle.evidence.verdict, crate::mbe::Verdict::Unresolved);
+    assert!(oracle.usable_for_selection);
+    let instance_report = oracle
+        .instance_report
+        .as_ref()
+        .expect("v16 MBE instance report");
+    assert_eq!(instance_report.valid, Some(true));
+    assert!(
+        instance_report
+            .fixed_tests
+            .contains_key("regression::r2095")
+    );
+    assert!(
+        instance_report
+            .fix_patch_result
+            .failed_tests
+            .contains("regression::r2208")
+    );
+    report.compared_instances[0].baseline_record_path = Some(baseline_path);
+    report.compared_instances[0].treatment_record_path = Some(treatment_path);
+
+    let terminal = fs::read_to_string(fixture.join("child-to-parent.jsonl"))
+        .expect("read v16 child channel")
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            serde_json::from_str::<
+                crate::cli::prototype1_state::channel::Envelope<
+                    crate::cli::prototype1_state::channel::ToParent,
+                >,
+            >(line)
+            .expect("v16 child channel envelope")
+        })
+        .find_map(|envelope| match envelope.body() {
+            crate::cli::prototype1_state::channel::ToParent::Result {
+                runner_result,
+                treatment,
+            } => Some((
+                envelope.runtime_id().to_string(),
+                runner_result.clone(),
+                treatment.clone(),
+            )),
+            _ => None,
+        })
+        .expect("v16 child terminal result");
+    assert_eq!(terminal.1, runner_result);
+    let terminal_body = crate::cli::prototype1_state::channel::ToParent::Result {
+        runner_result: terminal.1.clone(),
+        treatment: terminal.2,
+    };
+    let channel_evidence = ChildChannelEvidenceRefs {
+        runtime_id: terminal.0.clone(),
+        terminal_result: SealedEvidenceCitation {
+            ref_id: format!(
+                "channel:child-to-parent:terminal-result:{NODE_ID}:{}",
+                terminal.0
+            ),
+            content_hash: Some(
+                HistoryHash::of_domain_json(
+                    "prototype1.history.child_channel_terminal_result.v1",
+                    &terminal_body,
+                )
+                .expect("v16 terminal channel hash"),
+            ),
+            record_name: Some(CHILD_CHANNEL_TERMINAL_RESULT_RECORD.to_string()),
+        },
+        attempt_result: Some(SealedEvidenceCitation {
+            ref_id: format!("child-store:attempt-runner-result:{NODE_ID}:{}", terminal.0),
+            content_hash: Some(
+                HistoryHash::of_domain_json(
+                    "prototype1.history.child_attempt_runner_result.v1",
+                    &runner_result,
+                )
+                .expect("v16 attempt result hash"),
+            ),
+            record_name: Some(CHILD_ATTEMPT_RUNNER_RESULT_RECORD.to_string()),
+        }),
+        invocation: None,
+    };
+    let outcome = PlannedChildOutcome {
+        plan_index,
+        node_id: node.node_id.clone(),
+        outcome: "completed:Keep".to_string(),
+        node_status: node.status,
+        workspace_root: node.workspace_root.clone(),
+        binary_path: node.binary_path.clone(),
+        resolved: child.resolved().clone(),
+        child_runtime: Some(terminal.0),
+        channel_evidence: Some(channel_evidence),
+        evaluation_report: Some(report.clone()),
+        selection_input: Some(selection_input_from_child_report(&node, &report)),
+        surface: child.surface().cloned(),
+        harness: child.harness_evidence().cloned(),
+        artifact_surface: Some(
+            child
+                .harness_evidence()
+                .expect("v16 broad harness evidence")
+                .artifact_surface()
+                .clone(),
+        ),
+        node,
+    };
+
+    let manifest_path = temp.path().join("campaign.json");
+    fs::copy(fixture.join("campaign.json"), &manifest_path).expect("stage v16 campaign manifest");
+    let manifest: crate::campaign::CampaignManifest = json_fixture(
+        &fs::read_to_string(&manifest_path).expect("read staged v16 campaign manifest"),
+    );
+    let operator = profile::OperatorRunProfile {
+        source_path: fixture.join("run-profile.toml"),
+        profile: profile.clone(),
+    };
+    let admitted =
+        profile::admit_run_profile(&manifest_path, &operator).expect("admit v16 replay profile");
+    let setup_closure = eval_store::sample_closure_state(parent.campaign_id().clone());
+    let setup_path = temp.path().join("closure-state.json");
+    fs::write(
+        &setup_path,
+        serde_json::to_vec_pretty(&setup_closure).expect("serialize v16 setup closure"),
+    )
+    .expect("write v16 setup closure");
+    let db_path = eval_store::prototype1_eval_store_db_path(&manifest_path);
+    eval_store::write_r0_context_to_owner_db(
+        &db_path,
+        &manifest_path,
+        &manifest,
+        profile.storage.eval.backend,
+        Some(&admitted),
+        None,
+        &setup_path,
+        &setup_closure,
+    )
+    .expect("seed v16 admitted setup authority");
+    let db_before = fs::read(&db_path).expect("read owner DB before pure selection");
+
+    let pure_outcome = selection_outcome_for_profile(
+        &manifest_path,
+        &parent,
+        std::slice::from_ref(&outcome),
+        child_plan.rejected_surface_attempts(),
+        &profile,
+    )
+    .expect("compute pure v16 selection outcome");
+    assert_eq!(
+        fs::read(&db_path).expect("read owner DB after pure selection"),
+        db_before,
+        "pure selection must not persist eval rows"
+    );
+    let entry = match pure_outcome {
+        ParentSelectionOutcome::NoSelection { entry } => entry,
+        ParentSelectionOutcome::Selected { .. } => {
+            panic!("v16 unresolved oracle evidence must not select a successor")
+        }
+    };
+    entry
+        .validate_shape()
+        .expect("v16 no-selection receipt shape");
+    assert_eq!(entry.schema_version, 5);
+    assert!(entry.decision.is_none());
+    assert!(entry.selected_candidate.is_none());
+    assert!(entry.selected_occurrence_id.is_none());
+    assert!(entry.selected_membership_id.is_none());
+    assert_eq!(entry.considered.len(), 1);
+    assert_eq!(entry.projection_failures.len(), 4);
+    let formula = entry.formula.as_ref().expect("v16 selection formula");
+    let crate::successor_selection::traversal::Formula::ScoreChildProp(formula) = &formula.formula;
+    assert_eq!(formula.rows.len(), 1);
+    let formula_row = &formula.rows[0];
+    assert_eq!(formula_row.node_id.as_deref(), Some(NODE_ID));
+    assert_eq!(formula_row.branch_id.as_deref(), Some(BRANCH_ID));
+    assert_eq!(formula_row.oracle_resolved, Some(0));
+    assert_eq!(formula_row.oracle_configured, Some(1));
+    assert!(!formula_row.selectable);
+    assert_eq!(
+        formula_row.exclusion_reason.as_deref(),
+        Some("oracle_gate_not_satisfied")
+    );
+    assert!(!formula_row.selected);
+    let receipt_hash = entry.receipt_hash().expect("hash v16 no-selection receipt");
+    let expected_hash = receipt_hash.as_str().to_string();
+    let mut tampered = entry.clone();
+    tampered.projection_failures[0].committed_message =
+        Some("tampered projection evidence".to_string());
+    assert!(tampered.receipt_hash().is_err());
+
+    let selected = select_successor_for_profile(
+        &manifest_path,
+        &parent,
+        std::slice::from_ref(&outcome),
+        child_plan.rejected_surface_attempts(),
+        &profile,
+    )
+    .expect("persist v16 no-selection outcome");
+    assert!(selected.is_none());
+
+    let db = eval_store::load_owner_eval_database(&db_path).expect("load v16 owner eval DB");
+    let decision_rows = db
+        .raw_query_params(
+            r#"
+?[
+    decision_id,
+    parent_id,
+    procedure_id,
+    selected_node_id,
+    selected_artifact_id,
+    outcome,
+    disposition,
+    decision_hash
+] :=
+    *eval_selection_decision {
+        decision_id,
+        parent_id,
+        procedure_id,
+        selected_node_id,
+        selected_artifact_id,
+        outcome,
+        disposition,
+        decision_hash
+    }
+"#,
+            std::collections::BTreeMap::new(),
+        )
+        .expect("query v16 selection decision");
+    assert_eq!(decision_rows.rows.len(), 1);
+    let decision_row = decision_rows.row_refs().next().expect("v16 decision row");
+    let decision_id = decision_row
+        .get::<String>("decision_id")
+        .expect("v16 decision id");
+    assert_eq!(
+        decision_row.get::<String>("parent_id").expect("v16 parent"),
+        parent.parent_id()
+    );
+    assert_eq!(
+        decision_row
+            .get::<String>("procedure_id")
+            .expect("v16 procedure"),
+        crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID
+    );
+    assert_eq!(
+        decision_row
+            .get::<Option<String>>("selected_node_id")
+            .expect("v16 selected node"),
+        None
+    );
+    assert_eq!(
+        decision_row
+            .get::<Option<String>>("selected_artifact_id")
+            .expect("v16 selected artifact"),
+        None
+    );
+    assert_eq!(
+        decision_row.get::<String>("outcome").expect("v16 outcome"),
+        "no_selection"
+    );
+    assert_eq!(
+        decision_row
+            .get::<Option<String>>("disposition")
+            .expect("v16 disposition"),
+        None
+    );
+    assert_eq!(
+        decision_row
+            .get::<String>("decision_hash")
+            .expect("v16 decision hash"),
+        expected_hash
+    );
+
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "decision_id".to_string(),
+        cozo::DataValue::from(decision_id.clone()),
+    );
+    let candidate_rows = db
+        .raw_query_params(
+            r#"
+?[node_id, branch_id, selectable, selected, exclusion_ref] :=
+    *eval_selection_candidate {
+        decision_id,
+        node_id,
+        branch_id,
+        selectable,
+        selected,
+        exclusion_ref
+    },
+    decision_id = $decision_id
+"#,
+            params.clone(),
+        )
+        .expect("query v16 selection candidate");
+    assert_eq!(candidate_rows.rows.len(), 1);
+    let candidate_row = candidate_rows.row_refs().next().expect("v16 candidate row");
+    assert_eq!(
+        candidate_row.get::<String>("node_id").expect("v16 node"),
+        NODE_ID
+    );
+    assert_eq!(
+        candidate_row
+            .get::<String>("branch_id")
+            .expect("v16 branch"),
+        BRANCH_ID
+    );
+    assert!(
+        !candidate_row
+            .get::<bool>("selectable")
+            .expect("v16 selectable")
+    );
+    assert!(!candidate_row.get::<bool>("selected").expect("v16 selected"));
+    assert_eq!(
+        candidate_row
+            .get::<Option<String>>("exclusion_ref")
+            .expect("v16 exclusion")
+            .as_deref(),
+        Some("oracle_gate_not_satisfied")
+    );
+
+    let score_rows = db
+        .raw_query_params(
+            r#"
+?[formula_id, score_json, weight, selected] :=
+    *eval_selection_score {
+        decision_id,
+        formula_id,
+        score_json,
+        weight,
+        selected
+    },
+    decision_id = $decision_id
+"#,
+            params.clone(),
+        )
+        .expect("query v16 selection score");
+    assert_eq!(score_rows.rows.len(), 1);
+    let score_row = score_rows.row_refs().next().expect("v16 score row");
+    assert!(
+        score_row
+            .get::<String>("formula_id")
+            .expect("v16 formula id")
+            .starts_with("score_child_prop:")
+    );
+    assert_eq!(
+        score_row.get::<Option<f64>>("weight").expect("v16 weight"),
+        None
+    );
+    assert!(
+        !score_row
+            .get::<bool>("selected")
+            .expect("v16 score selected")
+    );
+    let score_json: serde_json::Value = serde_json::from_str(
+        &score_row
+            .get::<String>("score_json")
+            .expect("v16 score JSON"),
+    )
+    .expect("parse v16 score JSON");
+    assert_eq!(score_json["oracle_resolved"], 0);
+    assert_eq!(score_json["oracle_configured"], 1);
+    assert_eq!(score_json["selectable"], false);
+    assert_eq!(score_json["exclusion_reason"], "oracle_gate_not_satisfied");
+    assert_eq!(score_json["selected"], false);
+
+    let oracle_rows = db
+        .raw_query_params(
+            r#"
+?[mode, require_evidence, gate, targets, formula_id] :=
+    *eval_selection_oracle {
+        decision_id,
+        mode,
+        require_evidence,
+        gate,
+        targets,
+        formula_id
+    },
+    decision_id = $decision_id
+"#,
+            params.clone(),
+        )
+        .expect("query v16 selection oracle");
+    assert_eq!(oracle_rows.rows.len(), 1);
+    let oracle_row = oracle_rows.row_refs().next().expect("v16 oracle row");
+    assert_eq!(
+        oracle_row.get::<String>("mode").expect("v16 oracle mode"),
+        "record-only"
+    );
+    assert!(
+        oracle_row
+            .get::<bool>("require_evidence")
+            .expect("v16 oracle evidence policy")
+    );
+    assert_eq!(
+        oracle_row.get::<String>("gate").expect("v16 oracle gate"),
+        "all-resolved"
+    );
+    assert_eq!(
+        oracle_row
+            .get::<Vec<String>>("targets")
+            .expect("v16 oracle targets"),
+        vec!["BurntSushi__ripgrep-2209".to_string()]
+    );
+    assert!(
+        oracle_row
+            .get::<String>("formula_id")
+            .expect("v16 oracle formula")
+            .starts_with("score_child_prop:")
+    );
+
+    let projection_rows = db
+        .raw_query_params(
+            r#"
+?[failure_id, candidate_subject, kind, message] :=
+    *eval_selection_projection_failure {
+        decision_id,
+        failure_id,
+        candidate_subject,
+        kind,
+        message
+    },
+    decision_id = $decision_id
+"#,
+            params,
+        )
+        .expect("query v16 selection projection failures");
+    assert_eq!(projection_rows.rows.len(), 4);
+    let mut subjects = std::collections::BTreeMap::<String, usize>::new();
+    let mut messages = std::collections::BTreeSet::new();
+    for row in projection_rows.row_refs() {
+        assert!(
+            !row.get::<String>("failure_id")
+                .expect("v16 projection failure id")
+                .is_empty()
+        );
+        assert_eq!(
+            row.get::<String>("kind")
+                .expect("v16 projection failure kind"),
+            "missing_selection_input"
+        );
+        let subject = row
+            .get::<Option<String>>("candidate_subject")
+            .expect("v16 projection subject")
+            .expect("v16 rejected surface candidate");
+        assert!(subject.starts_with("candidate:rejected_surface_attempt:"));
+        *subjects.entry(subject).or_default() += 1;
+        messages.insert(
+            row.get::<Option<String>>("message")
+                .expect("v16 projection message")
+                .expect("v16 committed projection message"),
+        );
+    }
+    assert_eq!(subjects.len(), 2);
+    assert!(subjects.values().all(|count| *count == 2));
+    assert!(
+        messages
+            .contains("missing_selection_input: rejected_surface_attempt_without_child_runtime")
+    );
+    assert!(messages.contains("traversal: missing SelectionInput"));
+    drop(db);
+
+    let history_root = temp.path().join("prototype1/history");
+    assert!(
+        !history_root.exists(),
+        "passive no-selection evidence must not create History"
+    );
+    let journal_path = prototype1_transition_journal_path(&manifest_path);
+    assert!(
+        !journal_path.exists(),
+        "selection replay alone must not create a successor handoff journal"
+    );
+    let journal_entries = PrototypeJournal::new(&journal_path)
+        .load_entries()
+        .expect("load empty v16 replay journal");
+    assert!(
+        journal_entries
+            .iter()
+            .all(|entry| !matches!(entry, JournalEntry::Successor(_)))
+    );
+
+    let child_plan_path = child_plan_message_path_for_parent(&manifest_path, &parent);
+    fs::create_dir_all(child_plan_path.parent().expect("v16 child-plan parent"))
+        .expect("create v16 child-plan directory");
+    let mut child_plan_json: serde_json::Value = json_fixture(
+        &fs::read_to_string(fixture.join("child-plan-node-e4ecdce2d6ee1098.json"))
+            .expect("read v16 child-plan fixture for R12"),
+    );
+    child_plan_json["message"] = serde_json::Value::String(
+        child_plan_path
+            .to_str()
+            .expect("temporary v16 child-plan path is UTF-8")
+            .to_string(),
+    );
+    fs::write(
+        &child_plan_path,
+        serde_json::to_vec_pretty(&child_plan_json).expect("serialize re-homed v16 child plan"),
+    )
+    .expect("stage v16 child plan");
+
+    let repo_root = temp.path().join("repo");
+    init_indexed_repo(&repo_root);
+    write_surface_target(&repo_root, Path::new("README.md"), "v16 R12 replay\n");
+    index_repo(&repo_root);
+    commit_indexed_repo(&repo_root, "v16 R12 replay");
+    let head_before = GitWorktreeBackend
+        .head_commit(&repo_root)
+        .expect("v16 R12 replay head");
+    let status_before = std::process::Command::new("git")
+        .current_dir(&repo_root)
+        .args(["status", "--porcelain=v1"])
+        .output()
+        .expect("v16 R12 replay status");
+    assert!(status_before.status.success());
+
+    let unchecked =
+        Parent::<Unchecked>::load(&manifest_path, parent.clone()).expect("load v16 parent for R12");
+    let checked = unchecked
+        .check(
+            &NoopBackend,
+            &manifest_path,
+            Check {
+                campaign_id: parent.campaign_id(),
+                active_root: &repo_root,
+            },
+        )
+        .expect("check v16 parent for R12");
+    let startup = Startup::<Genesis>::from_history(checked.identity(), &manifest_path)
+        .expect("validate v16 genesis startup");
+    let ready = checked.ready(startup).expect("ready v16 parent for R12");
+    let planned = load_existing_child_plan_for_id(parent.campaign_id(), &manifest_path, ready)
+        .expect("load staged v16 child plan");
+    let selectable_parent = planned.parent;
+
+    let mut command = state_command_without_ids();
+    command.campaign = Some(parent.campaign_id().clone());
+    command.repo_root = Some(repo_root.clone());
+    let run_shape = Prototype1StateRunShape::from_profile(&profile);
+    let config = ResolvedCampaignConfig {
+        campaign_id: parent.campaign_id().clone(),
+        benchmark_family: BenchmarkFamily::MultiSweBenchRust,
+        dataset_sources: Vec::new(),
+        model_id: profile.model.id.clone().expect("v16 profile model id"),
+        provider_slug: profile.model.provider.clone(),
+        route_source: profile
+            .model
+            .route_source
+            .expect("v16 profile route source"),
+        required_procedures: Vec::new(),
+        instances_root: temp.path().join("instances"),
+        batches_root: temp.path().join("batches"),
+        eval: EvalCampaignPolicy::default(),
+        protocol: ProtocolCampaignPolicy::default(),
+        framework: crate::FrameworkConfig::default(),
+    };
+    let facts = typestate::context::Facts {
+        complete_search_policy: Some(profile.search_policy()),
+        selection: Some(ParentSelectionOutcome::NoSelection { entry }),
+        report: Some(typestate::context::ReportFacts {
+            outcome: "historical v16 no-selection".to_string(),
+            node_id: outcome.node_id.clone(),
+            node_status: outcome.node_status,
+            workspace_root: outcome.workspace_root.clone(),
+            binary_path: outcome.binary_path.clone(),
+            child_runtime: outcome.child_runtime.clone(),
+            successor_runtime: None,
+            successor_pid: None,
+            successor_ready_path: None,
+        }),
+        ..Default::default()
+    };
+    let collected = typestate::context::Collected::new(
+        command,
+        repo_root.clone(),
+        parent.campaign_id().clone(),
+        manifest_path.clone(),
+        run_shape,
+        config,
+        journal_path.clone(),
+        PrototypeJournal::new(&journal_path),
+    )
+    .with_facts(facts);
+    let r12 = typestate::R12::from_collected_parent(collected, selectable_parent);
+    let step = crate::cli::prototype1_state::driver::control::test_r12_stop(&repo_root, r12)
+        .await
+        .expect("v16 no-selection R12 must stop");
+    assert_eq!(step.transition().from(), WalkPhase::R12);
+    assert_eq!(step.transition().to(), WalkPhase::R13a);
+    assert!(matches!(
+        step.state(),
+        crate::cli::prototype1_state::driver::control::ControlState::R13a(_)
+    ));
+
+    let journal_entries = PrototypeJournal::new(&journal_path)
+        .load_entries()
+        .expect("load v16 stopped journal");
+    assert_eq!(journal_entries.len(), 1);
+    let stopped = journal_entries
+        .iter()
+        .find_map(|entry| match entry {
+            JournalEntry::Successor(record) if record.node_id == parent.node_id() => Some(record),
+            _ => None,
+        })
+        .expect("v16 parent-node stopped record");
+    assert_eq!(stopped.runtime_id, None);
+    let crate::cli::prototype1_state::successor::State::Stopped {
+        decision,
+        selection_decision,
+        selection_receipt,
+    } = &stopped.state
+    else {
+        panic!("v16 no-selection R12 must persist a stopped successor record")
+    };
+    assert_eq!(
+        decision.disposition,
+        Prototype1ContinuationDisposition::StopNoSelectedBranch
+    );
+    assert!(selection_decision.is_none());
+    assert_eq!(
+        selection_receipt,
+        &Some(
+            crate::cli::prototype1_state::successor::SelectionReceipt::Completed {
+                hash: receipt_hash,
+            }
+        )
+    );
+    assert!(journal_entries.iter().all(|entry| {
+        !matches!(
+            entry,
+            JournalEntry::Successor(crate::cli::prototype1_state::successor::Record {
+                state: crate::cli::prototype1_state::successor::State::Checkout { .. },
+                ..
+            })
+        )
+    }));
+    assert!(
+        !history_root.exists(),
+        "schema-v5 no-selection stop must not create History"
+    );
+    assert_eq!(
+        GitWorktreeBackend
+            .head_commit(&repo_root)
+            .expect("v16 head after R12 stop"),
+        head_before
+    );
+    let status_after = std::process::Command::new("git")
+        .current_dir(&repo_root)
+        .args(["status", "--porcelain=v1"])
+        .output()
+        .expect("v16 status after R12 stop");
+    assert!(status_after.status.success());
+    assert_eq!(status_after.stdout, status_before.stdout);
+}
+
+#[tokio::test]
+async fn r12_rejected_only_records_selection_not_run() {
+    let temp = tempfile::tempdir().expect("rejected-only R12 tempdir");
+    let manifest_path = temp.path().join("campaign.json");
+    let repo_root = temp.path().join("repo");
+    init_indexed_repo(&repo_root);
+    write_surface_target(&repo_root, Path::new("README.md"), "rejected-only R12\n");
+    index_repo(&repo_root);
+    commit_indexed_repo(&repo_root, "rejected-only R12");
+
+    let ready = ready_parent_for_test(&manifest_path, &repo_root);
+    let parent = ready.identity().clone();
+    let rejected = surface_attempt::Evidence::rejected(
+        TUI_EDIT_SURFACE_PRODUCER_ID,
+        "proposal-rejected",
+        "run-rejected",
+        "workspace_except_ploke_eval",
+        PathBuf::from("crates/ploke-tui/src/tools/code_edit.rs"),
+        "synthetic rejected-only R12 evidence",
+    );
+    persist_rejected_surface_attempt_child_plan(
+        parent.campaign_id(),
+        &manifest_path,
+        ready,
+        vec![rejected.clone()],
+    )
+    .expect("persist rejected-only child plan");
+    let ready = ready_parent_for_test(&manifest_path, &repo_root);
+    let planned = load_existing_child_plan_for_id(parent.campaign_id(), &manifest_path, ready)
+        .expect("load rejected-only child plan");
+    assert!(planned.children.is_empty());
+    assert_eq!(
+        planned.rejected_surface_attempts.as_slice(),
+        std::slice::from_ref(&rejected)
+    );
+    let selectable_parent = planned.parent;
+
+    let mut command = state_command_without_ids();
+    command.campaign = Some(parent.campaign_id().clone());
+    command.repo_root = Some(repo_root.clone());
+    let run_shape = Prototype1StateRunShape::from_command(&command);
+    let config = ResolvedCampaignConfig {
+        campaign_id: parent.campaign_id().clone(),
+        benchmark_family: BenchmarkFamily::MultiSweBenchRust,
+        dataset_sources: Vec::new(),
+        model_id: "test-model".to_string(),
+        provider_slug: None,
+        route_source: ModelRouteSource::DirectGoogle,
+        required_procedures: Vec::new(),
+        instances_root: temp.path().join("instances"),
+        batches_root: temp.path().join("batches"),
+        eval: EvalCampaignPolicy::default(),
+        protocol: ProtocolCampaignPolicy::default(),
+        framework: crate::FrameworkConfig::default(),
+    };
+    let journal_path = prototype1_transition_journal_path(&manifest_path);
+    let facts = typestate::context::Facts {
+        complete_search_policy: Some(Prototype1SearchPolicy::default()),
+        selection: None,
+        rejected_attempt_payloads: Some(1),
+        report: Some(typestate::context::ReportFacts {
+            outcome: "synthetic rejected-only R12".to_string(),
+            node_id: parent.node_id().to_string(),
+            node_status: Prototype1NodeStatus::Running,
+            workspace_root: repo_root.clone(),
+            binary_path: temp.path().join("unused-ploke-eval"),
+            child_runtime: None,
+            successor_runtime: None,
+            successor_pid: None,
+            successor_ready_path: None,
+        }),
+        ..Default::default()
+    };
+    let collected = typestate::context::Collected::new(
+        command,
+        repo_root.clone(),
+        parent.campaign_id().clone(),
+        manifest_path.clone(),
+        run_shape,
+        config,
+        journal_path.clone(),
+        PrototypeJournal::new(&journal_path),
+    )
+    .with_facts(facts);
+    let r12 = typestate::R12::from_collected_parent(collected, selectable_parent);
+
+    let history_root = temp.path().join("prototype1/history");
+    assert!(!history_root.exists());
+    let head_before = GitWorktreeBackend
+        .head_commit(&repo_root)
+        .expect("rejected-only R12 head");
+    let status_before = std::process::Command::new("git")
+        .current_dir(&repo_root)
+        .args(["status", "--porcelain=v1"])
+        .output()
+        .expect("rejected-only R12 status");
+    assert!(status_before.status.success());
+
+    let step = crate::cli::prototype1_state::driver::control::test_r12_stop(&repo_root, r12)
+        .await
+        .expect("rejected-only R12 must stop");
+    assert_eq!(step.transition().from(), WalkPhase::R12);
+    assert_eq!(step.transition().to(), WalkPhase::R13a);
+    assert!(matches!(
+        step.state(),
+        crate::cli::prototype1_state::driver::control::ControlState::R13a(_)
+    ));
+
+    let journal_entries = PrototypeJournal::new(&journal_path)
+        .load_entries()
+        .expect("load rejected-only stopped journal");
+    assert_eq!(journal_entries.len(), 1);
+    let stopped = journal_entries
+        .iter()
+        .find_map(|entry| match entry {
+            JournalEntry::Successor(record) if record.node_id == parent.node_id() => Some(record),
+            _ => None,
+        })
+        .expect("rejected-only parent-node stopped record");
+    assert_eq!(stopped.runtime_id, None);
+    let crate::cli::prototype1_state::successor::State::Stopped {
+        decision,
+        selection_decision,
+        selection_receipt,
+    } = &stopped.state
+    else {
+        panic!("rejected-only R12 must persist a stopped successor record")
+    };
+    assert_eq!(
+        decision.disposition,
+        Prototype1ContinuationDisposition::StopNoSelectedBranch
+    );
+    assert!(selection_decision.is_none());
+    assert_eq!(
+        selection_receipt,
+        &Some(crate::cli::prototype1_state::successor::SelectionReceipt::NotRun)
+    );
+    assert!(journal_entries.iter().all(|entry| {
+        !matches!(
+            entry,
+            JournalEntry::Successor(crate::cli::prototype1_state::successor::Record {
+                state: crate::cli::prototype1_state::successor::State::Checkout { .. },
+                ..
+            })
+        )
+    }));
+    assert!(
+        !history_root.exists(),
+        "rejected-only stop must not create History"
+    );
+    assert_eq!(
+        GitWorktreeBackend
+            .head_commit(&repo_root)
+            .expect("rejected-only head after R12 stop"),
+        head_before
+    );
+    let status_after = std::process::Command::new("git")
+        .current_dir(&repo_root)
+        .args(["status", "--porcelain=v1"])
+        .output()
+        .expect("rejected-only status after R12 stop");
+    assert!(status_after.status.success());
+    assert_eq!(status_after.stdout, status_before.stdout);
 }
 
 #[test]
@@ -7507,11 +11610,6 @@ fn historical_node_150_channel_treatment_reaches_current_generation_handoff() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("campaign.json");
     let db_path = eval_store::prototype1_eval_store_db_path(&manifest_path);
-    fs::create_dir_all(db_path.parent().expect("eval db parent")).expect("eval db dir");
-    ploke_db::Database::new_init()
-        .expect("empty eval db")
-        .write_backup_to_path(&db_path)
-        .expect("seed owner eval db");
     let parent_identity: ParentIdentity = json_fixture(include_str!(
         "../../../tests/fixtures/prototype1-node-150-handoff/parent_identity.json"
     ));
@@ -7779,6 +11877,7 @@ fn historical_node_150_channel_treatment_reaches_current_generation_handoff() {
         evaluation_report: Some(report.clone()),
         selection_input: Some(selection_input_from_child_report(&node, &report)),
         surface: child.surface().cloned(),
+        harness: child.harness_evidence().cloned(),
         artifact_surface: Some(
             child
                 .harness_evidence()
@@ -7788,8 +11887,7 @@ fn historical_node_150_channel_treatment_reaches_current_generation_handoff() {
         ),
         node,
     };
-    let profile = toml::from_str::<profile::Prototype1RunProfile>(
-        r#"
+    let profile_text = r#"
 schema_version = "prototype1-run-profile.v1"
 name = "historical-node-150-handoff"
 
@@ -7797,10 +11895,43 @@ name = "historical-node-150-handoff"
 strategy = "history-score-child-prop"
 evidence = "operational"
 seed = 0
-"#,
-    )
-    .expect("profile parses");
+"#;
+    let profile =
+        toml::from_str::<profile::Prototype1RunProfile>(profile_text).expect("profile parses");
     profile.validate().expect("profile validates");
+    let manifest = crate::campaign::CampaignManifest::new(parent_identity.campaign_id().clone());
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).expect("serialize node-150 campaign manifest"),
+    )
+    .expect("write node-150 campaign manifest");
+    let source_path = tmp.path().join("historical-node-150.toml");
+    fs::write(&source_path, profile_text).expect("write node-150 operator profile");
+    let admitted = profile::admit_run_profile(
+        &manifest_path,
+        &profile::OperatorRunProfile {
+            source_path,
+            profile: profile.clone(),
+        },
+    )
+    .expect("admit node-150 replay profile");
+    let closure_path = tmp.path().join("closure-state.json");
+    fs::write(
+        &closure_path,
+        serde_json::to_vec_pretty(&closure).expect("serialize node-150 closure"),
+    )
+    .expect("write node-150 closure");
+    eval_store::write_r0_context_to_owner_db(
+        &db_path,
+        &manifest_path,
+        &manifest,
+        profile.storage.eval.backend,
+        Some(&admitted),
+        None,
+        &closure_path,
+        &closure,
+    )
+    .expect("seed node-150 admitted setup authority");
 
     let (decision, material) = select_successor_for_profile(
         &manifest_path,
@@ -7882,6 +12013,56 @@ seed = 0
             .get::<String>("decision_hash")
             .expect("decision hash")
             .is_empty()
+    );
+
+    let mut oracle_params = std::collections::BTreeMap::new();
+    oracle_params.insert(
+        "decision_id".to_string(),
+        cozo::DataValue::from(decision_id.clone()),
+    );
+    let oracle_rows = db
+        .raw_query_params(
+            r#"
+?[mode, require_evidence, gate, targets, formula_id] :=
+    *eval_selection_oracle {
+        decision_id,
+        mode,
+        require_evidence,
+        gate,
+        targets,
+        formula_id
+    },
+    decision_id = $decision_id
+"#,
+            oracle_params,
+        )
+        .expect("query selection oracle row");
+    assert_eq!(oracle_rows.rows.len(), 1);
+    let oracle_row = oracle_rows.row_refs().next().expect("selection oracle row");
+    assert_eq!(
+        oracle_row.get::<String>("mode").expect("oracle mode"),
+        "record-only"
+    );
+    assert!(
+        oracle_row
+            .get::<bool>("require_evidence")
+            .expect("oracle evidence policy")
+    );
+    assert_eq!(
+        oracle_row.get::<String>("gate").expect("oracle gate"),
+        "disabled"
+    );
+    assert!(
+        oracle_row
+            .get::<Vec<String>>("targets")
+            .expect("oracle targets")
+            .is_empty()
+    );
+    assert!(
+        oracle_row
+            .get::<String>("formula_id")
+            .expect("oracle formula")
+            .starts_with("score_child_prop:")
     );
 
     let mut candidate_params = std::collections::BTreeMap::new();
@@ -8432,6 +12613,7 @@ fn history_handoff_rejects_missing_artifact_payload_before_seal() {
         traversal: Some(TraversalEvidence {
             seed: 1,
             strategy: StrategyKind::default(),
+            oracle_targets: Vec::new(),
             selected_source: None,
             child_counts: std::collections::BTreeMap::new(),
         }),
@@ -8510,6 +12692,7 @@ fn history_handoff_rejects_missing_artifact_surface_before_seal() {
         traversal: Some(TraversalEvidence {
             seed: 1,
             strategy: StrategyKind::default(),
+            oracle_targets: Vec::new(),
             selected_source: None,
             child_counts: std::collections::BTreeMap::new(),
         }),
@@ -8591,6 +12774,7 @@ fn history_handoff_rejects_unresolvable_runtime_before_seal() {
         traversal: Some(TraversalEvidence {
             seed: 1,
             strategy: StrategyKind::default(),
+            oracle_targets: Vec::new(),
             selected_source: None,
             child_counts: std::collections::BTreeMap::new(),
         }),
@@ -8668,6 +12852,7 @@ fn history_handoff_selection_carries_resolved_artifact() {
         traversal: Some(TraversalEvidence {
             seed: 1,
             strategy: StrategyKind::default(),
+            oracle_targets: Vec::new(),
             selected_source: None,
             child_counts: std::collections::BTreeMap::new(),
         }),
@@ -8720,4 +12905,253 @@ fn history_handoff_selection_carries_resolved_artifact() {
             "primary_runtime_id=Some(\"runtime:node-historical\")",
         ],
     ));
+}
+
+#[test]
+fn stage6_handoff_race_replays_through_production_readers() {
+    use crate::cli::prototype1_state::{
+        channel::{Envelope, ToParent},
+        invocation::{self, InvocationAuthority},
+        journal::{JournalEntry, PrototypeJournal},
+        session::Store,
+        successor::State as SuccessorState,
+        walk::{
+            epoch::ServerEpoch,
+            protocol::{WalkAttemptResult, WalkSessionEventKind},
+        },
+    };
+    use flate2::read::GzDecoder;
+    use std::{fs::File, io};
+
+    fn inflate(source: &Path, target: &Path) {
+        std::fs::create_dir_all(target.parent().expect("fixture target parent"))
+            .expect("create fixture target directory");
+        let source = File::open(source).expect("open compressed historical fixture");
+        let mut decoder = GzDecoder::new(source);
+        let mut target = File::create(target).expect("create inflated historical fixture");
+        io::copy(&mut decoder, &mut target).expect("inflate historical fixture");
+    }
+
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("src/tests/fixtures/prototype1-stage6-handoff-race-20260715");
+    let predecessor: ParentIdentity = json_fixture(
+        &std::fs::read_to_string(fixture.join("predecessor-parent-identity.json"))
+            .expect("read predecessor identity"),
+    );
+    let successor: ParentIdentity = json_fixture(
+        &std::fs::read_to_string(fixture.join("successor-parent-identity.json"))
+            .expect("read successor identity"),
+    );
+    assert_eq!(predecessor.generation(), 0);
+    assert_eq!(successor.generation(), 1);
+    assert_eq!(
+        successor.previous_parent_id(),
+        Some(predecessor.parent_id())
+    );
+
+    let invocation_path = fixture.join("successor-invocation.json");
+    let InvocationAuthority::Successor(invocation) =
+        invocation::load_authority(&invocation_path).expect("load historical successor invocation")
+    else {
+        panic!("historical invocation must carry successor authority");
+    };
+    let attempt = invocation
+        .predecessor_attempt()
+        .expect("successor invocation preserves predecessor attempt");
+    assert_eq!(
+        attempt.session().to_string(),
+        "a3e007a6-07a5-4fc5-aff6-238d522d053f"
+    );
+    assert_eq!(
+        attempt.transition().to_string(),
+        "d1d31434-2b01-5b88-be8b-de19c60b0b56"
+    );
+    assert_eq!(attempt.fence().to_string(), "13");
+    assert!(!attempt.allow_live_api());
+    assert!(attempt.allow_git_changes());
+
+    let temp = tempfile::tempdir().expect("historical replay tempdir");
+    let store = Store::new(temp.path().join("control"));
+    inflate(
+        &fixture.join("predecessor-control-journal.jsonl.gz"),
+        store.paths(&predecessor).journal(),
+    );
+    inflate(
+        &fixture.join("successor-control-journal.jsonl.gz"),
+        store.paths(&successor).journal(),
+    );
+    let epoch = ServerEpoch::capture(temp.path()).expect("capture replay presentation epoch");
+    let predecessor_history = store
+        .inspect_history(&predecessor, epoch.clone())
+        .expect("replay predecessor history")
+        .expect("predecessor history exists");
+    let successor_history = store
+        .inspect_history(&successor, epoch)
+        .expect("replay successor history")
+        .expect("successor history exists");
+    assert!(predecessor_history.damage.is_none());
+    assert!(successor_history.damage.is_none());
+    assert_eq!(predecessor_history.events.len(), 51);
+    assert_eq!(successor_history.events.len(), 43);
+    assert_eq!(
+        predecessor_history.version.session_id(),
+        Some(attempt.session())
+    );
+    let predecessor_snapshot = store
+        .inspect(&predecessor)
+        .expect("inspect predecessor session")
+        .expect("predecessor session exists");
+    let committed = predecessor_snapshot
+        .committed_handoff(attempt.session(), attempt.fence())
+        .expect("production replay identifies the exact committed handoff");
+    assert_eq!(committed.intent().transition_id(), attempt.transition());
+    assert!(matches!(
+        committed.result(),
+        crate::cli::prototype1_state::session::AttemptResult::Committed {
+            phase: WalkPhase::R13b,
+            ..
+        }
+    ));
+
+    let began = predecessor_history
+        .events
+        .iter()
+        .find(|event| {
+            matches!(
+                &event.kind,
+                WalkSessionEventKind::AttemptBegan { fence: 13, intent }
+                    if intent.transition_id == attempt.transition()
+            )
+        })
+        .expect("replay exact predecessor handoff admission");
+    let WalkSessionEventKind::AttemptBegan { intent, .. } = &began.kind else {
+        unreachable!("filtered predecessor admission")
+    };
+    assert_eq!(intent.expected, WalkPhase::R12);
+    assert!(intent.targets.contains(&WalkPhase::R13b));
+    assert!(!intent.allow_live_api);
+    assert!(intent.allow_git_changes);
+
+    let finished = predecessor_history
+        .events
+        .iter()
+        .find(|event| {
+            matches!(
+                &event.kind,
+                WalkSessionEventKind::AttemptFinished { receipt }
+                    if receipt.transition_id == attempt.transition()
+                        && receipt.fence == 13
+                        && matches!(
+                            receipt.result,
+                            WalkAttemptResult::Committed {
+                                phase: WalkPhase::R13b,
+                                ..
+                            }
+                        )
+            )
+        })
+        .expect("replay committed predecessor handoff receipt");
+    let released = predecessor_history
+        .events
+        .iter()
+        .find(|event| {
+            matches!(
+                event.kind,
+                WalkSessionEventKind::Released {
+                    fence: 13,
+                    ready: None
+                }
+            )
+        })
+        .expect("replay clean predecessor release");
+    let successor_ready = successor_history
+        .events
+        .iter()
+        .find_map(|event| match &event.kind {
+            WalkSessionEventKind::Released {
+                fence: 1,
+                ready: Some(ready),
+            } => Some((event, ready)),
+            _ => None,
+        })
+        .expect("replay atomic successor Ready release");
+    assert_eq!(
+        successor_history.version.session_id(),
+        Some(successor_ready.1.commit.session_id)
+    );
+    assert_eq!(successor_ready.1.commit.cursor.phase, WalkPhase::R4c);
+    assert_eq!(
+        successor_ready.1.runtime_id.to_string(),
+        invocation.runtime_id().to_string()
+    );
+    assert!(
+        successor_ready.0.recorded_at_ms < finished.recorded_at_ms,
+        "historical successor Ready preceded predecessor terminal publication"
+    );
+    assert!(
+        finished.recorded_at_ms < released.recorded_at_ms,
+        "historical predecessor terminal receipt preceded its clean release"
+    );
+
+    let transition_path = temp.path().join("transition-journal.jsonl");
+    inflate(
+        &fixture.join("transition-journal.jsonl.gz"),
+        &transition_path,
+    );
+    let entries = PrototypeJournal::new(&transition_path)
+        .load_entries()
+        .expect("replay transition journal");
+    let journal_ready = entries
+        .iter()
+        .find_map(|entry| match entry {
+            JournalEntry::Successor(record)
+                if record.runtime_id == Some(invocation.runtime_id()) =>
+            {
+                match &record.state {
+                    SuccessorState::Ready {
+                        controller: Some(ready),
+                        ..
+                    } => Some(ready),
+                    _ => None,
+                }
+            }
+            _ => None,
+        })
+        .expect("replay typed successor Ready projection");
+    journal_ready
+        .validate_persisted()
+        .expect("historical Ready receipt remains structurally valid");
+    assert_eq!(
+        journal_ready.commit().session_id(),
+        successor_ready.1.commit.session_id
+    );
+    let acceptance = entries
+        .iter()
+        .find_map(|entry| match entry {
+            JournalEntry::SuccessorHandoff(handoff)
+                if handoff.runtime_id == invocation.runtime_id() =>
+            {
+                handoff.acceptance.as_ref()
+            }
+            _ => None,
+        })
+        .expect("replay typed successor handoff acceptance");
+    assert_eq!(acceptance.ready(), journal_ready);
+    assert_eq!(acceptance.attempt(), attempt);
+
+    let channel: Envelope<ToParent> = serde_json::from_str(
+        std::fs::read_to_string(fixture.join("successor-ready-channel.jsonl"))
+            .expect("read historical Ready channel")
+            .trim(),
+    )
+    .expect("decode typed historical Ready channel envelope");
+    assert_eq!(channel.runtime_id(), invocation.runtime_id());
+    let ToParent::SuccessorReady {
+        controller: Some(channel_ready),
+        ..
+    } = channel.body()
+    else {
+        panic!("historical channel must carry typed successor Ready");
+    };
+    assert_eq!(channel_ready, journal_ready);
 }

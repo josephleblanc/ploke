@@ -26,16 +26,74 @@ use ploke_records::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::spec::PrepareError;
+use crate::{
+    cli::prototype1_state::{event::TransitionId, session::SessionId},
+    spec::PrepareError,
+};
 
-pub(crate) const TOOL_LOOP_SESSION_SCHEMA: &str = "ploke-eval-tool-loop-session.v1";
+const TOOL_LOOP_SESSION_SCHEMA_V1: &str = "ploke-eval-tool-loop-session.v1";
+pub(crate) const TOOL_LOOP_SESSION_SCHEMA: &str = "ploke-eval-tool-loop-session.v2";
 pub(crate) const TOOL_LOOP_STEP_SCHEMA: &str = "ploke-eval-tool-loop-step.v1";
 pub(crate) const TOOL_LOOP_RESUME_SCHEMA: &str = "ploke-eval-tool-loop-resume.v1";
 
+/// Typed provenance for the admitted outer controller attempt that installed
+/// this nested tool-loop sink.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum OuterAttemptLink {
+    Linked {
+        session_id: SessionId,
+        transition_id: TransitionId,
+    },
+    #[default]
+    Unlinked,
+    /// Serde-only sentinel used to distinguish an omitted field from an
+    /// explicitly persisted `unlinked` value. Store validation must either
+    /// normalize this for a historical v1 record or reject it.
+    #[serde(skip)]
+    Missing,
+}
+
+impl OuterAttemptLink {
+    const fn missing() -> Self {
+        Self::Missing
+    }
+}
+
+/// Required outer controller coordinate for a nested tool loop opened by a
+/// live typestate edge. Standalone debugger flows continue to use
+/// `OuterAttemptLink::Unlinked` directly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct OuterAttempt {
+    session_id: SessionId,
+    transition_id: TransitionId,
+}
+
+impl OuterAttempt {
+    pub(crate) const fn new(session_id: SessionId, transition_id: TransitionId) -> Self {
+        Self {
+            session_id,
+            transition_id,
+        }
+    }
+}
+
+impl From<OuterAttempt> for OuterAttemptLink {
+    fn from(attempt: OuterAttempt) -> Self {
+        Self::Linked {
+            session_id: attempt.session_id,
+            transition_id: attempt.transition_id,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ToolLoopSession {
     pub(crate) schema: String,
     pub(crate) session_id: String,
+    #[serde(default = "OuterAttemptLink::missing")]
+    pub(crate) outer_attempt: OuterAttemptLink,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) campaign_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -70,6 +128,7 @@ impl ToolLoopSession {
         Self {
             schema: TOOL_LOOP_SESSION_SCHEMA.to_owned(),
             session_id: session_id.into(),
+            outer_attempt: OuterAttemptLink::Unlinked,
             campaign_id: None,
             parent_node_id: None,
             branch_id: None,
@@ -86,19 +145,66 @@ impl ToolLoopSession {
         }
     }
 
-    fn validate_schema(&self) -> Result<(), PrepareError> {
+    fn validate_read_schema(&mut self) -> Result<(), PrepareError> {
+        match (self.schema.as_str(), self.outer_attempt) {
+            (
+                TOOL_LOOP_SESSION_SCHEMA,
+                OuterAttemptLink::Linked { .. } | OuterAttemptLink::Unlinked,
+            ) => Ok(()),
+            (TOOL_LOOP_SESSION_SCHEMA, OuterAttemptLink::Missing) => {
+                Err(PrepareError::DatabaseSetup {
+                    phase: "read_tool_loop_session",
+                    detail: "tool-loop session v2 requires an explicit outer_attempt field"
+                        .to_string(),
+                })
+            }
+            (TOOL_LOOP_SESSION_SCHEMA_V1, OuterAttemptLink::Missing) => {
+                self.outer_attempt = OuterAttemptLink::Unlinked;
+                Ok(())
+            }
+            (TOOL_LOOP_SESSION_SCHEMA_V1, OuterAttemptLink::Linked { .. }) => {
+                Err(PrepareError::DatabaseSetup {
+                    phase: "read_tool_loop_session",
+                    detail: "tool-loop session v1 cannot carry linked outer-attempt provenance"
+                        .to_string(),
+                })
+            }
+            (TOOL_LOOP_SESSION_SCHEMA_V1, OuterAttemptLink::Unlinked) => {
+                Err(PrepareError::DatabaseSetup {
+                    phase: "read_tool_loop_session",
+                    detail: "tool-loop session v1 cannot carry an explicit outer_attempt field"
+                        .to_string(),
+                })
+            }
+            _ => validate_schema(
+                "read_tool_loop_session",
+                "session",
+                &self.schema,
+                TOOL_LOOP_SESSION_SCHEMA,
+            ),
+        }
+    }
+
+    fn validate_write_schema(&self) -> Result<(), PrepareError> {
         validate_schema(
-            "read_tool_loop_session",
+            "write_tool_loop_session",
             "session",
             &self.schema,
             TOOL_LOOP_SESSION_SCHEMA,
-        )
+        )?;
+        if self.outer_attempt == OuterAttemptLink::Missing {
+            return Err(PrepareError::DatabaseSetup {
+                phase: "write_tool_loop_session",
+                detail: "tool-loop session v2 requires an explicit outer_attempt field".to_string(),
+            });
+        }
+        Ok(())
     }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum ToolLoopStatus {
+pub enum ToolLoopStatus {
     Active,
     Paused,
     Terminal,
@@ -106,6 +212,7 @@ pub(crate) enum ToolLoopStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ToolLoopStep {
     pub(crate) schema: String,
     pub(crate) session_id: String,
@@ -161,8 +268,8 @@ impl ToolLoopStep {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub(crate) enum ToolLoopOutcome {
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ToolLoopOutcome {
     ToolCalls {
         count: usize,
         finish_reason: String,
@@ -207,21 +314,23 @@ impl ToolLoopOutcome {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(tag = "status", rename_all = "snake_case")]
-pub(crate) enum ToolLoopResult {
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ToolLoopResult {
     Completed(ToolCompletedRecord),
     Failed(ToolFailedRecord),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-pub(crate) struct WorkspaceState {
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceState {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(crate) dirty_paths: Vec<PathBuf>,
+    pub dirty_paths: Vec<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) error: Option<String>,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ToolLoopResume {
     pub(crate) schema: String,
     pub(crate) session_id: String,
@@ -354,13 +463,13 @@ impl FsToolLoopStore {
 
 impl ToolLoopStore for FsToolLoopStore {
     fn write_session(&self, session: &ToolLoopSession) -> Result<(), PrepareError> {
-        session.validate_schema()?;
+        session.validate_write_schema()?;
         write_json(&self.session_path(&session.session_id), session)
     }
 
     fn read_session(&self, session_id: &str) -> Result<ToolLoopSession, PrepareError> {
-        let session: ToolLoopSession = read_json(&self.session_path(session_id))?;
-        session.validate_schema()?;
+        let mut session: ToolLoopSession = read_json(&self.session_path(session_id))?;
+        session.validate_read_schema()?;
         Ok(session)
     }
 
@@ -402,14 +511,44 @@ impl ToolLoopStore for FsToolLoopStore {
             })?;
             let path = entry.path().join("session.json");
             if path.is_file() {
-                let session: ToolLoopSession = read_json(&path)?;
-                session.validate_schema()?;
+                let mut session: ToolLoopSession = read_json(&path)?;
+                session.validate_read_schema()?;
                 sessions.push(session);
             }
         }
         sessions.sort_by(|left, right| left.session_id.cmp(&right.session_id));
         Ok(sessions)
     }
+}
+
+pub(crate) fn decode_session(path: &Path, body: &[u8]) -> Result<ToolLoopSession, PrepareError> {
+    let mut session: ToolLoopSession =
+        serde_json::from_slice(body).map_err(|source| PrepareError::DatabaseSetup {
+            phase: "read_tool_loop_json",
+            detail: format!("failed to parse '{}': {source}", path.display()),
+        })?;
+    session.validate_read_schema()?;
+    Ok(session)
+}
+
+pub(crate) fn decode_step(path: &Path, body: &[u8]) -> Result<ToolLoopStep, PrepareError> {
+    let step: ToolLoopStep =
+        serde_json::from_slice(body).map_err(|source| PrepareError::DatabaseSetup {
+            phase: "read_tool_loop_json",
+            detail: format!("failed to parse '{}': {source}", path.display()),
+        })?;
+    step.validate_schema()?;
+    Ok(step)
+}
+
+pub(crate) fn decode_resume(path: &Path, body: &[u8]) -> Result<ToolLoopResume, PrepareError> {
+    let resume: ToolLoopResume =
+        serde_json::from_slice(body).map_err(|source| PrepareError::DatabaseSetup {
+            phase: "read_tool_loop_json",
+            detail: format!("failed to parse '{}': {source}", path.display()),
+        })?;
+    resume.validate_schema()?;
+    Ok(resume)
 }
 
 fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), PrepareError> {
@@ -420,7 +559,7 @@ fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), PrepareError> 
         })?;
     }
     let body = serde_json::to_vec_pretty(value).map_err(PrepareError::Serialize)?;
-    fs::write(path, body).map_err(|source| PrepareError::WriteManifest {
+    crate::durable_io::write_atomic(path, &body).map_err(|source| PrepareError::WriteManifest {
         path: path.to_path_buf(),
         source,
     })
@@ -641,6 +780,201 @@ mod tests {
         let loaded_resume = store.read_resume("session-1").expect("read resume");
         assert_eq!(loaded_resume.next_step, 1);
         assert_eq!(loaded_resume.request_messages.len(), 1);
+    }
+
+    #[test]
+    fn tool_loop_session_v2_roundtrips_linked_outer_attempt() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = FsToolLoopStore::new(dir.path().join("debug/tool-loop"));
+        let outer_attempt = OuterAttemptLink::Linked {
+            session_id: SessionId::for_test(0x1111),
+            transition_id: TransitionId(Uuid::from_u128(0x2222)),
+        };
+        let mut session = ToolLoopSession::new(
+            "session-linked",
+            "broad-headless-tui",
+            PathBuf::from("/tmp/workspace"),
+        );
+        session.outer_attempt = outer_attempt;
+
+        store.write_session(&session).expect("write session");
+
+        let loaded = store.read_session("session-linked").expect("read session");
+        assert_eq!(loaded.schema, TOOL_LOOP_SESSION_SCHEMA);
+        assert_eq!(loaded.outer_attempt, outer_attempt);
+    }
+
+    #[test]
+    fn admitted_outer_attempt_always_projects_as_linked() {
+        let session_id = SessionId::for_test(0x5555);
+        let transition_id = TransitionId(Uuid::from_u128(0x6666));
+
+        assert_eq!(
+            OuterAttemptLink::from(OuterAttempt::new(session_id, transition_id)),
+            OuterAttemptLink::Linked {
+                session_id,
+                transition_id,
+            }
+        );
+    }
+
+    #[test]
+    fn historical_v1_tool_loop_session_loads_as_unlinked() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = FsToolLoopStore::new(dir.path().join("debug/tool-loop"));
+        let path = store.session_path("session-v1");
+        write_json(
+            &path,
+            &serde_json::json!({
+                "schema": TOOL_LOOP_SESSION_SCHEMA_V1,
+                "session_id": "session-v1",
+                "harness": "broad-headless-tui",
+                "workspace": "/tmp/workspace",
+                "status": "paused"
+            }),
+        )
+        .expect("write historical v1 session");
+
+        let loaded = store.read_session("session-v1").expect("read v1 session");
+        assert_eq!(loaded.schema, TOOL_LOOP_SESSION_SCHEMA_V1);
+        assert_eq!(loaded.outer_attempt, OuterAttemptLink::Unlinked);
+    }
+
+    #[test]
+    fn tool_loop_session_v2_rejects_missing_outer_attempt() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = FsToolLoopStore::new(dir.path().join("debug/tool-loop"));
+        let path = store.session_path("session-v2-missing-link");
+        write_json(
+            &path,
+            &serde_json::json!({
+                "schema": TOOL_LOOP_SESSION_SCHEMA,
+                "session_id": "session-v2-missing-link",
+                "harness": "broad-headless-tui",
+                "workspace": "/tmp/workspace",
+                "status": "paused"
+            }),
+        )
+        .expect("write invalid v2 session");
+
+        let error = store
+            .read_session("session-v2-missing-link")
+            .expect_err("v2 session without outer_attempt should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("v2 requires an explicit outer_attempt field"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn current_tool_loop_records_reject_unknown_fields() {
+        let session = ToolLoopSession::new(
+            "strict-session",
+            "broad-headless-tui",
+            PathBuf::from("/tmp/workspace"),
+        );
+        let step = ToolLoopStep::new(
+            "strict-session",
+            0,
+            vec![RequestMessage::new_user("hello".to_string())],
+            content_response(0),
+            WorkspaceState::default(),
+            WorkspaceState::default(),
+        )
+        .expect("step");
+        let resume = ToolLoopResume::new(
+            "strict-session",
+            "assistant",
+            "parent",
+            "request",
+            vec![RequestMessage::new_user("hello".to_string())],
+        );
+
+        for (label, mut value) in [
+            (
+                "session",
+                serde_json::to_value(session).expect("session serializes"),
+            ),
+            ("step", serde_json::to_value(step).expect("step serializes")),
+            (
+                "resume",
+                serde_json::to_value(resume).expect("resume serializes"),
+            ),
+        ] {
+            value
+                .as_object_mut()
+                .expect("record is an object")
+                .insert("unexpected".to_string(), serde_json::Value::Bool(true));
+            let error = match label {
+                "session" => serde_json::from_value::<ToolLoopSession>(value)
+                    .expect_err("session unknown field must fail")
+                    .to_string(),
+                "step" => serde_json::from_value::<ToolLoopStep>(value)
+                    .expect_err("step unknown field must fail")
+                    .to_string(),
+                "resume" => serde_json::from_value::<ToolLoopResume>(value)
+                    .expect_err("resume unknown field must fail")
+                    .to_string(),
+                _ => unreachable!(),
+            };
+            assert!(
+                error.contains("unexpected"),
+                "unexpected {label} error: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn tool_loop_session_v1_rejects_linked_outer_attempt() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = FsToolLoopStore::new(dir.path().join("debug/tool-loop"));
+        let mut session = ToolLoopSession::new(
+            "session-v1-linked",
+            "broad-headless-tui",
+            PathBuf::from("/tmp/workspace"),
+        );
+        session.schema = TOOL_LOOP_SESSION_SCHEMA_V1.to_string();
+        session.outer_attempt = OuterAttemptLink::Linked {
+            session_id: SessionId::for_test(0x3333),
+            transition_id: TransitionId(Uuid::from_u128(0x4444)),
+        };
+        let path = store.session_path("session-v1-linked");
+        write_json(&path, &session).expect("write invalid v1 session");
+
+        let error = store
+            .read_session("session-v1-linked")
+            .expect_err("v1 linked provenance should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("v1 cannot carry linked outer-attempt provenance"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn tool_loop_session_write_rejects_legacy_schema() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = FsToolLoopStore::new(dir.path().join("debug/tool-loop"));
+        let mut session = ToolLoopSession::new(
+            "session-v1-write",
+            "broad-headless-tui",
+            PathBuf::from("/tmp/workspace"),
+        );
+        session.schema = TOOL_LOOP_SESSION_SCHEMA_V1.to_string();
+
+        let error = store
+            .write_session(&session)
+            .expect_err("new writes must reject the legacy session schema");
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported tool-loop session schema"),
+            "unexpected error: {error}"
+        );
+        assert!(!store.session_path("session-v1-write").exists());
     }
 
     #[test]

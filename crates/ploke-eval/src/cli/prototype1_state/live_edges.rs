@@ -10,30 +10,33 @@ use ploke_core::EXECUTION_DEBUG_TARGET;
 use tracing::{debug, info};
 
 use crate::{
-    CampaignOverrides, ResolvedCampaignConfig,
-    campaign::campaign_closure_state_path,
+    ResolvedCampaignConfig,
+    campaign::{campaign_closure_state_path, resolve_explicit_campaign},
     campaign_manifest_path,
     cli::{
         InspectOutputFormat, Prototype1StateStopAfter,
         prototype1_process::{
-            record_prototype1_successor_completion, record_prototype1_successor_ready,
+            HandoffOutcome, record_prototype1_successor_completion,
             spawn_and_handoff_prototype1_successor, validate_prototype1_successor_continuation,
         },
         prototype1_state::{
             backend::GitWorktreeBackend,
+            candidate_review,
             cli_facing::{
-                ParentSelection, PlannedChildren, Prototype1StateReport, Prototype1StateRunShape,
-                append_parent_target_sample, current_dir_as_repo_root,
-                emit_selection_decision_for_backend, ensure_prototype1_baseline_closure_state,
+                ParentSelection, ParentSelectionOutcome, PlannedChildren, Prototype1StateReport,
+                Prototype1StateRunShape, append_parent_target_sample, current_dir_as_repo_root,
+                emit_selection_outcome_for_backend, ensure_prototype1_baseline_closure_state,
                 establish_parent_baseline, initialize_prototype1_parent_identity,
-                live_successor_continuation_decision, outcome_for_report,
-                prototype1_state_report_path, prototype1_state_successor_handoff_mode,
-                prototype1_state_transition_error, record_active_prototype1_monitor_target,
-                resolve_child_plan_for_id, resolve_parent_policy_budget,
+                outcome_for_report, preview_no_selection_continuation,
+                preview_successor_continuation, prototype1_state_report_path,
+                prototype1_state_successor_handoff_mode, prototype1_state_transition_error,
+                record_active_prototype1_monitor_target, record_continuation_decision,
+                resolve_linked_plan, resolve_parent_policy_budget,
                 resolve_prototype1_parent_identity, resolve_prototype1_state_campaign,
                 run_adaptive_child_fanout, run_child_fanout, same_existing_path,
                 select_artifact_for_handoff, traversal_metric_inputs,
             },
+            driver::control::ControlPermit,
             eval_store::{
                 ConfiguredEvalStore, EvalStore, ParentStartedEvidence,
                 prototype1_eval_store_db_path, write_baseline_to_owner_db,
@@ -50,7 +53,8 @@ use crate::{
         },
     },
     intervention::{Prototype1ChildBudget, Prototype1ChildScheduleMode, RecordStore},
-    load_campaign_manifest, load_closure_state, resolve_campaign_config,
+    load_campaign_manifest, load_closure_state,
+    replay::tool_loop::{OuterAttempt, OuterAttemptLink},
     spec::PrepareError,
 };
 
@@ -73,18 +77,29 @@ pub(crate) fn r0_to_r1(
     record_active_prototype1_monitor_target(&campaign_id, &repo_root);
     let manifest_path = campaign_manifest_path(&campaign_id)?;
     let run_shape = Prototype1StateRunShape::resolve(&command, &manifest_path)?;
-    let resolved_campaign = resolve_campaign_config(&campaign_id, &CampaignOverrides::default())?;
+    let resolved_campaign = resolve_explicit_campaign(&campaign_id)?;
     let closure_state_path = ensure_prototype1_baseline_closure_state(&resolved_campaign)?;
     if run_shape.eval_storage_backend.mirrors_owner_db() {
         let manifest = load_campaign_manifest(&campaign_id)?;
         let admitted_profile = profile::load_admitted_run_profile(&manifest_path)?;
         let closure_state = load_closure_state(&campaign_id)?;
+        let review_hash = admitted_profile
+            .as_ref()
+            .filter(|admitted| {
+                admitted.profile.selection.patch_gate()
+                    == crate::successor_selection::PatchGate::ReviewedAdmissible
+            })
+            .map(|_| {
+                crate::cli::prototype1_state::candidate_review::admitted_config_hash(&manifest_path)
+            })
+            .transpose()?;
         write_r0_context_to_owner_db(
             &prototype1_eval_store_db_path(&manifest_path),
             &manifest_path,
             &manifest,
             run_shape.eval_storage_backend,
             admitted_profile.as_ref(),
+            review_hash.as_ref(),
             &closure_state_path,
             &closure_state,
         )
@@ -199,6 +214,22 @@ pub(crate) fn r1_to_r2a_or_r3(
     ))
 }
 // ANCHOR_END: prototype1_live_edge_r1_to_r2a_or_r3
+
+/// Continue from parent-identity initialization into the normal parent path.
+///
+/// This is a pure typestate edge: the identity created by `R1 -> R2a` is
+/// carried forward directly rather than resolved from disk a second time.
+// ANCHOR: prototype1_live_edge_r2a_to_r3
+pub(crate) fn r2a_to_r3(
+    r2a: typestate::R2a<Prototype1StateRunShape, ResolvedCampaignConfig>,
+) -> Result<typestate::R3<Prototype1StateRunShape, ResolvedCampaignConfig>, PrepareError> {
+    let typestate::R2aParts {
+        collected,
+        identity,
+    } = r2a.into_parts();
+    Ok(typestate::R3::from_collected_identity(collected, identity))
+}
+// ANCHOR_END: prototype1_live_edge_r2a_to_r3
 
 /// Load the resolved parent identity as `Parent<Unchecked>`.
 ///
@@ -351,16 +382,14 @@ pub(crate) fn r4a_to_r4b_or_r4c(
     let startup =
         Startup::<Predecessor>::from_history(&identity, &parts.manifest_path, &parts.repo_root)?;
     let parent = parent.ready_from_predecessor_startup(startup)?;
-    let ready = record_prototype1_successor_ready(&invocation)?;
     debug!(
         target: EXECUTION_DEBUG_TARGET,
         campaign = %invocation.campaign_id(),
         node_id = %invocation.node_id(),
         runtime_id = %invocation.runtime_id(),
-        pid = ready.pid,
         invocation_path = %invocation_path.display(),
         active_parent_root = %active_parent_root.display(),
-        "prototype1 successor acknowledged handoff before entering typed parent run"
+        "prototype1 successor startup validated; Ready remains unpublished until R4c is durably committed"
     );
     Ok(typestate::R4aStartupBranch::PredecessorReady(
         typestate::R4cReady::from_collected_parent(
@@ -563,8 +592,9 @@ pub(crate) fn r6_to_r7(
 
 /// Resolve and publish/load the child plan, carrying planned children forward.
 // ANCHOR: prototype1_live_edge_r7_to_r8
-pub(crate) async fn r7_to_r8(
+pub(crate) async fn r7_to_r8_linked(
     r7: typestate::R7<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    outer_attempt: OuterAttempt,
 ) -> Result<typestate::R8<Prototype1StateRunShape, ResolvedCampaignConfig>, PrepareError> {
     let typestate::ReadyParts { collected, parent } = r7.into_parts();
     let mut parts = collected.into_parts();
@@ -575,7 +605,7 @@ pub(crate) async fn r7_to_r8(
             .ok_or_else(|| PrepareError::InvalidBatchSelection {
                 detail: "R7 child-plan transition missing plan child budget".to_string(),
             })?;
-    let planned_children = resolve_child_plan_for_id(
+    let planned_children = resolve_linked_plan(
         &parts.campaign_id,
         &parts.manifest_path,
         &parts.repo_root,
@@ -586,6 +616,7 @@ pub(crate) async fn r7_to_r8(
         parts.run_shape.broad_tui,
         parts.run_shape.eval_storage_backend,
         parts.campaign_config.route_source.clone(),
+        OuterAttemptLink::from(outer_attempt),
     )
     .await?;
     let PlannedChildren {
@@ -682,6 +713,9 @@ pub(crate) fn r9_to_r10(
         metric_inputs,
         parts.run_shape.successor_oracle_mode,
         parts.run_shape.successor_oracle_require_evidence,
+        parts.run_shape.successor_oracle_gate,
+        parts.run_shape.successor_patch_gate,
+        parts.run_shape.successor_oracle_targets.clone(),
         parts.run_shape.successor_metrics_policy,
     );
     parts.facts.selection_strategy = Some(selection_strategy);
@@ -720,13 +754,11 @@ pub(crate) async fn r10_to_r11(
             .ok_or_else(|| PrepareError::InvalidBatchSelection {
                 detail: "R10 fanout transition missing child schedule mode".to_string(),
             })?;
-    let selection_strategy =
-        parts
-            .facts
-            .selection_strategy
-            .ok_or_else(|| PrepareError::InvalidBatchSelection {
-                detail: "R10 fanout transition missing selection strategy".to_string(),
-            })?;
+    let selection_strategy = parts.facts.selection_strategy.clone().ok_or_else(|| {
+        PrepareError::InvalidBatchSelection {
+            detail: "R10 fanout transition missing selection strategy".to_string(),
+        }
+    })?;
     let child_plan =
         parts
             .facts
@@ -758,12 +790,23 @@ pub(crate) async fn r10_to_r11(
             typestate::R11aRejectedOnly::from_collected_parent(parts.into_collected(), parent),
         ));
     }
+    let review_config = if parts.run_shape.stop_after == Prototype1StateStopAfter::Complete
+        && parts.run_shape.successor_patch_gate
+            == crate::successor_selection::PatchGate::ReviewedAdmissible
+    {
+        Some(candidate_review::resolve_config(
+            &parts.manifest_path,
+            &parts.campaign_config,
+        )?)
+    } else {
+        None
+    };
 
-    let (child_outcomes, selection) = if parts.run_shape.stop_after
+    let (child_outcomes, outcome) = if parts.run_shape.stop_after
         == Prototype1StateStopAfter::Complete
         && child_schedule_mode == Prototype1ChildScheduleMode::AdaptiveBatch
     {
-        run_adaptive_child_fanout(
+        let (child_outcomes, outcome) = run_adaptive_child_fanout(
             &parts.campaign_id,
             &parts.manifest_path,
             &parts.repo_root,
@@ -776,8 +819,10 @@ pub(crate) async fn r10_to_r11(
             &rejected_surface_attempts,
             parts.run_shape.successor_selection_seed,
             selection_strategy,
+            review_config.as_ref(),
         )
-        .await?
+        .await?;
+        (child_outcomes, Some(outcome))
     } else {
         let child_outcomes = run_child_fanout(
             &parts.campaign_id,
@@ -794,31 +839,35 @@ pub(crate) async fn r10_to_r11(
             children,
         )
         .await?;
+        if let Some(config) = review_config.as_ref() {
+            candidate_review::ensure_reviews(&parts.manifest_path, &child_outcomes, config).await?;
+        }
         let parent_selection = ParentSelection::new(
             &parts.manifest_path,
             &parent_identity,
             &child_outcomes,
             &rejected_surface_attempts,
         );
-        let selection = if parts.run_shape.stop_after == Prototype1StateStopAfter::Complete {
-            parent_selection
-                .select_successor(parts.run_shape.successor_selection_seed, selection_strategy)?
+        let outcome = if parts.run_shape.stop_after == Prototype1StateStopAfter::Complete {
+            Some(parent_selection.select_successor_attempt(
+                parts.run_shape.successor_selection_seed,
+                selection_strategy,
+            )?)
         } else {
             None
         };
-        (child_outcomes, selection)
+        (child_outcomes, outcome)
     };
-    if let Some((decision, material)) = selection.as_ref() {
-        emit_selection_decision_for_backend(
+    if let Some(outcome) = outcome.as_ref() {
+        emit_selection_outcome_for_backend(
             &parts.manifest_path,
             &parent_identity,
-            decision,
-            material,
+            outcome,
             parts.run_shape.eval_storage_backend,
         )?;
     }
     parts.facts.child_outcomes = Some(child_outcomes);
-    parts.facts.selection = selection;
+    parts.facts.selection = outcome;
     parts.facts.rejected_attempt_payloads = None;
     Ok(typestate::R10FanoutBranch::FanoutComplete(
         typestate::R11FanoutComplete::from_collected_parent(parts.into_collected(), parent),
@@ -859,6 +908,7 @@ pub(crate) fn r11_to_r12(
             .facts
             .selection
             .as_ref()
+            .and_then(ParentSelectionOutcome::selected)
             .map(|(decision, _)| decision.candidate_node_id.as_str());
         outcome_for_report(child_outcomes, selected_node_id)
     };
@@ -913,6 +963,7 @@ pub(crate) fn r11_to_r12(
 // ANCHOR: prototype1_live_edge_r12_to_r13
 pub(crate) fn r12_to_r13(
     r12: typestate::R12<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    permit: &ControlPermit,
 ) -> Result<
     typestate::R12ContinuationBranch<Prototype1StateRunShape, ResolvedCampaignConfig>,
     PrepareError,
@@ -922,8 +973,13 @@ pub(crate) fn r12_to_r13(
     let parent_identity = parent.identity().clone();
     parts.facts.parent_identity = Some(parent_identity.clone());
 
-    if let Some((selection_decision, selection_material)) = parts.facts.selection.take() {
-        let material = selection_material;
+    let selection = parts.facts.selection.take();
+    if let Some((selection_decision, selection_material)) = selection
+        .as_ref()
+        .and_then(ParentSelectionOutcome::selected)
+    {
+        let selection_decision = selection_decision.clone();
+        let material = selection_material.clone();
         let artifact = material.selected_artifact()?;
         let node = artifact.node().clone();
         let search_policy = parts
@@ -935,7 +991,7 @@ pub(crate) fn r12_to_r13(
                     "successor selection reached handoff without an admitted or scheduler search policy"
                         .to_string(),
             })?;
-        let decision = live_successor_continuation_decision(
+        let decision = preview_successor_continuation(
             &parts.manifest_path,
             &parent_identity,
             search_policy,
@@ -944,12 +1000,14 @@ pub(crate) fn r12_to_r13(
             &node,
         )?;
         let handoff = if decision.disposition.allows_successor() {
+            let attempt = permit.handoff_attempt()?;
             let selected_artifact = select_artifact_for_handoff(&selection_decision, &material)?;
             let selection_entry = material.into_entry(selection_decision.clone())?;
-            Some((selected_artifact, selection_entry))
+            Some((selected_artifact, selection_entry, attempt))
         } else {
             None
         };
+        record_continuation_decision(&parts.manifest_path, &parent_identity, &decision)?;
         observe::Step::start(observe::span!(
             "prototype1.parent.select_successor",
             campaign_id = %parts.campaign_id,
@@ -977,7 +1035,7 @@ pub(crate) fn r12_to_r13(
             ));
 
         // ANCHOR: prototype1_live_edge_r12_handoff_branch
-        if let Some((selected_artifact, selection_entry)) = handoff {
+        if let Some((selected_artifact, selection_entry, attempt)) = handoff {
             parts
                 .journal
                 .append(JournalEntry::Successor(
@@ -1001,8 +1059,9 @@ pub(crate) fn r12_to_r13(
                 parent,
                 selection_entry,
                 prototype1_state_successor_handoff_mode(),
+                attempt,
             )? {
-                (retired, Some(successor)) => {
+                (retired, HandoffOutcome::Ready(successor)) => {
                     let report = parts.facts.report.as_mut().ok_or_else(|| {
                         PrepareError::InvalidBatchSelection {
                             detail: "R12 handoff transition missing report facts".to_string(),
@@ -1019,18 +1078,33 @@ pub(crate) fn r12_to_r13(
                         ),
                     ))
                 }
-                (retired, None) => {
-                    parts
-                        .facts
-                        .report
-                        .as_mut()
-                        .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                (retired, HandoffOutcome::Incomplete(record)) => {
+                    let status = match &record.state {
+                        crate::cli::prototype1_state::successor::State::TimedOut { .. } => {
+                            "timed_out"
+                        }
+                        crate::cli::prototype1_state::successor::State::ExitedBeforeReady {
+                            ..
+                        } => "exited_before_ready",
+                        state => {
+                            return Err(PrepareError::InvalidBatchSelection {
+                                detail: format!(
+                                    "incomplete successor outcome carried non-terminal state {state:?}"
+                                ),
+                            });
+                        }
+                    };
+                    let report = parts.facts.report.as_mut().ok_or_else(|| {
+                        PrepareError::InvalidBatchSelection {
                             detail: "R12 handoff transition missing report facts".to_string(),
-                        })?
+                        }
+                    })?;
+                    report.successor_runtime = record.runtime_id.map(|id| id.to_string());
+                    report
                         .outcome
-                        .push_str(";successor_handoff=timed_out");
-                    Ok(typestate::R12ContinuationBranch::HandoffCommitted(
-                        typestate::R13bHandoffCommitted::from_collected_parent(
+                        .push_str(&format!(";successor_handoff={status}"));
+                    Ok(typestate::R12ContinuationBranch::HandoffIncomplete(
+                        typestate::R13cHandoffIncomplete::from_collected_parent(
                             parts.into_collected(),
                             retired,
                         ),
@@ -1070,16 +1144,71 @@ pub(crate) fn r12_to_r13(
             ))
         }
     } else {
+        let selection_receipt = match selection {
+            Some(ParentSelectionOutcome::NoSelection { entry }) => Some(
+                entry
+                    .receipt_hash()
+                    .map_err(|error| PrepareError::InvalidBatchSelection {
+                        detail: format!("failed to hash no-selection receipt: {error}"),
+                    })?,
+            ),
+            None => None,
+            Some(ParentSelectionOutcome::Selected { .. }) => unreachable!(
+                "selected successor outcome was handled by the selected continuation branch"
+            ),
+        };
         if parts.run_shape.stop_after == Prototype1StateStopAfter::Complete {
+            let selection_completed = selection_receipt.is_some();
+            if !selection_completed && parts.facts.rejected_attempt_payloads.is_none() {
+                return Err(PrepareError::InvalidBatchSelection {
+                    detail: "R12 stopped transition has neither a completed selection receipt nor rejected-only procedure evidence"
+                        .to_string(),
+                });
+            }
+            if parts.facts.report.is_none() {
+                return Err(PrepareError::InvalidBatchSelection {
+                    detail: "R12 no-selection transition missing report facts".to_string(),
+                });
+            }
+            let decision =
+                preview_no_selection_continuation(&parts.manifest_path, &parent_identity)?;
+            record_continuation_decision(&parts.manifest_path, &parent_identity, &decision)?;
+            parts
+                .journal
+                .append(JournalEntry::Successor(match selection_receipt {
+                    Some(hash) => SuccessorRecord::stopped_without_selection(
+                        parts.campaign_id.clone(),
+                        parent_identity.node_id().to_string(),
+                        decision.clone(),
+                        hash,
+                    ),
+                    None => SuccessorRecord::stopped_without_attempt(
+                        parts.campaign_id.clone(),
+                        parent_identity.node_id().to_string(),
+                        decision.clone(),
+                    ),
+                }))
+                .map_err(|err| {
+                    prototype1_state_transition_error(
+                        "prototype1_successor_no_selection",
+                        err.to_string(),
+                    )
+                })?;
             parts
                 .facts
                 .report
                 .as_mut()
-                .ok_or_else(|| PrepareError::InvalidBatchSelection {
-                    detail: "R12 no-selection transition missing report facts".to_string(),
-                })?
+                .expect("R12 no-selection report was validated before persistence")
                 .outcome
-                .push_str(";selection=none");
+                .push_str(&format!(
+                    ";selection={};successor_handoff=skipped:{:?}",
+                    if selection_completed {
+                        "none"
+                    } else {
+                        "not_run"
+                    },
+                    decision.disposition
+                ));
         }
         Ok(typestate::R12ContinuationBranch::Stopped(
             typestate::R13aStopped::from_collected_parent(parts.into_collected(), parent),
@@ -1231,7 +1360,30 @@ pub(crate) fn r13_to_r14(
                 typestate::R14bFinalHandoff::from_collected_parent(collected, parent),
             ))
         }
+        typestate::R12ContinuationBranch::HandoffIncomplete(_) => {
+            Err(PrepareError::InvalidBatchSelection {
+                detail: "R13c is a retired predecessor with incomplete successor handoff; reconstruct and reconcile it before any further mutation"
+                    .to_string(),
+            })
+        }
     }
 }
 // ANCHOR_END: prototype1_live_edge_r13_to_r14
 // ANCHOR_END: prototype1_live_edges
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn r2a_to_r3_has_typed_shape() {
+        let edge: fn(
+            typestate::R2a<Prototype1StateRunShape, ResolvedCampaignConfig>,
+        ) -> Result<
+            typestate::R3<Prototype1StateRunShape, ResolvedCampaignConfig>,
+            PrepareError,
+        > = r2a_to_r3;
+
+        let _ = edge;
+    }
+}

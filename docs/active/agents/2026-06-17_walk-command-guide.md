@@ -1,5 +1,11 @@
 # 2026-06-17 Walk Command Guide
 
+> **Historical June 2026 implementation snapshot.** This page is not current
+> operator authority. Use the current [Loop Walk guide](../../../crates/ploke-eval/docs/prototype1/loop-walk.md)
+> and [Operator Map](../../../crates/ploke-eval/docs/prototype1/operator-map.md).
+> The current walk service owns the durable controller session, Start defaults
+> to R3, and Stop is idle-server shutdown only.
+
 Short description: quick operator guide for trying the debug-only `walk` server, reviewing behavior, and collecting feedback on the command surface.
 
 Related planning/code:
@@ -24,7 +30,8 @@ R11a | R11 -> R12 projects report facts without emitting final report
 R12 -> R13a records stopped/no-selection or selected-successor stopped-by-policy continuation
 R12 -> R13b commits selected-successor handoff only with --watch --allow git-changes
 R13a -> R14a emits stopped/no-selection final report
-R13b -> R14b emits final report after successor handoff
+R13b transfers the step-mode walk service to the successor at its R4c cursor
+R13b -> R14b finalization remains available only while continuous mode retains the predecessor lease
 ```
 
 `R8` can also be reconstructed when an existing child-plan message is present. `R11/R12` can be reconstructed after restart when all planned terminal children have validated channel `Result` evidence, matching runner results, and successful children have matching branch evaluation reports. Stopped `R13a/R14a` and handoff `R13b/R14b` can be reconstructed from R12 report facts plus matching durable successor handoff/stopped and parent-complete evidence. `R2a` is the alternate parent-identity initialization boundary when started with `--init-parent-identity`.
@@ -41,7 +48,10 @@ R13b -> R14b emits final report after successor handoff
 - `R12 -> R13a` is the stopped continuation branch. If R12 has selected-successor evidence and the target is the stopped branch, `walk` rejects the target and tells you to use the matching handoff target.
 - `R12 -> R13b` is selected-successor handoff. It is admitted only with `walk step --watch --allow git-changes` because it may seal/advance History, install the selected successor into the active checkout, retire the parent, spawn the successor runtime, and wait for successor readiness.
 - `R13a -> R14a` emits the stopped/no-selection final report and records parent-complete evidence; restart reconstruction uses that evidence read-only and does not re-emit the report.
-- `R13b -> R14b` emits the final report after successor handoff once R13b exists.
+- Step mode stops the predecessor operation at `R13b` and follows the successor
+  service at its R4c cursor. It rejects R14b before mutation because the
+  predecessor lease was released during transfer. Continuous mode can still
+  commit `R13b -> R14b` while retaining that lease.
 - If you run from a dirty development checkout, failing at `R4a` because local changes would block a checkout switch is expected.
 - `walk start --until ...` on an existing matching parent checkout prefers durable reconstruction before creating a fresh R0 walk. If reconstruction is already past the requested phase, `start` returns the later reconstructed phase instead of replaying live setup; historical `--until r12` smokes therefore do not duplicate parent-start/resource journal entries.
 - The auto-started server exits after 30 idle minutes by default.
@@ -231,11 +241,15 @@ ploke-eval loop walk step --watch --allow git-changes
 # r12_to_r13 -> r13b, when selected-successor handoff is allowed
 ```
 
-At R13a, the default next step emits the stopped/no-selection final report and stops at R14a. At R13b, the default next step emits the final report after handoff and stops at R14b:
+At R13a, the default next step emits the stopped/no-selection final report and
+stops at R14a. In step mode, R13b is the predecessor boundary: the endpoint
+transfers to the successor's R4c session, and R14b is not admitted through that
+successor controller. Continuous mode may still emit the handoff final report
+while retaining the predecessor lease:
 
 ```text
 ploke-eval loop walk step
-# r13_to_r14 -> r14a | r14b
+# r13_to_r14 -> r14a
 ```
 
 ### `show`
@@ -302,7 +316,7 @@ ploke-eval loop walk serve --no-ttl
 
 ## Recommended review session
 
-Use a clean Prototype 1 parent worktree as `ROOT` if you want to reach `R7`, or one with existing valid child-plan evidence if you want to reconstruct R8 and step to R10 without additional provider/harness work. R10 -> R11 requires `--watch` and may run live child fanout; R11 -> R12 is an in-memory report-facts projection. From R12, stopped/no-selection paths go to R13a/R14a, while selected-successor handoff goes to R13b/R14b only with `--watch --allow git-changes`.
+Use a clean Prototype 1 parent worktree as `ROOT` if you want to reach `R7`, or one with existing valid child-plan evidence if you want to reconstruct R8 and step to R10 without additional provider/harness work. R10 -> R11 requires `--watch` and may run live child fanout; R11 -> R12 is an in-memory report-facts projection. From R12, stopped/no-selection paths go to R13a/R14a. Selected-successor step-mode handoff goes to R13b only with `--watch --allow git-changes`, then the shared endpoint follows the successor from R4c.
 
 ```text
 ploke-eval loop walk use /path/to/prototype1-parent-worktree

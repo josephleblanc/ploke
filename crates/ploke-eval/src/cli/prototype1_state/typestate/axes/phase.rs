@@ -24,4 +24,5 @@ phase_marker!(R11, "R11b/c: child fanout complete.");
 phase_marker!(R12, "R12: report projection facts ready.");
 phase_marker!(R13a, "R13a: successor continuation stopped.");
 phase_marker!(R13b, "R13b: successor handoff committed.");
+phase_marker!(R13c, "R13c: successor handoff incomplete.");
 phase_marker!(R14, "R14: final report emitted.");

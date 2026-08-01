@@ -7,6 +7,7 @@
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::branch::ResolvedTreatmentBranch;
 use crate::ids::{CampaignId, RuntimeId};
@@ -16,7 +17,8 @@ use crate::scheduler::{NodeRecord, RunnerRequestRecord};
 pub const INVOCATION_SCHEMA_VERSION: &str = "prototype1-invocation.v1";
 
 /// Durable schema version for successor-ready acknowledgements.
-pub const SUCCESSOR_READY_SCHEMA_VERSION: &str = "prototype1-successor-ready.v1";
+pub const SUCCESSOR_READY_SCHEMA_VERSION_V1: &str = "prototype1-successor-ready.v1";
+pub const SUCCESSOR_READY_SCHEMA_VERSION: &str = "prototype1-successor-ready.v2";
 
 /// Durable schema version for successor completion records.
 pub const SUCCESSOR_COMPLETION_SCHEMA_VERSION: &str = "prototype1-successor-completion.v1";
@@ -64,7 +66,18 @@ pub struct SuccessorReadyRecord {
     pub node_id: String,
     pub runtime_id: RuntimeId,
     pub pid: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub incarnation: Option<ProcessIncarnation>,
     pub recorded_at: String,
+}
+
+/// Linux process incarnation that remains distinct across PID reuse and host
+/// restarts.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProcessIncarnation {
+    pub boot_id: Uuid,
+    pub start_ticks: u64,
 }
 
 /// Terminal status for one successor rehydration attempt.

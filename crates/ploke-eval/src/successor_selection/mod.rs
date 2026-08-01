@@ -18,6 +18,8 @@
 
 use std::path::PathBuf;
 
+pub(crate) use ploke_records::run_profile::{OracleGate, PatchGate};
+
 use crate::BranchDisposition;
 
 pub mod decision;
@@ -29,11 +31,17 @@ pub mod registry;
 pub mod traversal;
 
 pub(crate) use decision::SuccessorDecision;
-pub(crate) use evidence::{RunComparison, SelectionInput};
+pub(crate) use evidence::{PatchChange, PatchReview, PatchVerdict, RunComparison, SelectionInput};
 pub(crate) use registry::SelectionRegistry;
 
 pub(crate) const PROCEDURE_ID: &str = "successor-selection:v1";
 pub(crate) const HISTORY_TRAVERSAL_PROCEDURE_ID: &str = "successor-selection:history-traversal:v1";
+pub(crate) const PATCH_REVIEW_PROCEDURE_ID: &str = "prototype1:candidate-patch-review:v2";
+pub(crate) const PATCH_REVIEW_RECORD_NAME: &str = "prototype1_candidate_patch_review";
+
+pub(crate) fn candidate_review_ref(branch_id: &str) -> String {
+    format!("campaign:prototype1/reviews/{branch_id}.candidate-review.json")
+}
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "kebab-case")]

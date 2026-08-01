@@ -1,8 +1,12 @@
-use super::super::event::{Paths, Refs};
+use super::super::event::{ContentHash, Paths, Refs, TransitionId};
 use super::super::invocation::{
     SUCCESSOR_COMPLETION_SCHEMA_VERSION, SUCCESSOR_READY_SCHEMA_VERSION, SuccessorCompletionStatus,
     record_runtime_id,
 };
+use super::super::profile::RunMode;
+use super::super::session::{Cursor as SessionCursor, Fence, SessionId};
+use super::super::successor::{ReadyCommit, ReadyReceipt};
+use super::super::walk::phase::WalkPhase;
 use super::mirror::{channel_message_ref, direction_label};
 use super::*;
 
@@ -227,15 +231,31 @@ fn prototype1_eval_store_remaining_channel_messages_write_owner_db_rows() {
     child
         .send_result_written(PathBuf::from("results/runtime-1.json"))
         .expect("send result-written projection");
+    let ready = SuccessorReadyRecord {
+        schema_version: SUCCESSOR_READY_SCHEMA_VERSION.to_string(),
+        campaign_id: endpoint.campaign_id().clone(),
+        node_id: endpoint.node_id().to_string(),
+        runtime_id: record_runtime_id(endpoint.runtime_id()),
+        pid: 42,
+        incarnation: Some(
+            crate::cli::prototype1_state::invocation::ProcessIncarnation {
+                boot_id: uuid::Uuid::from_u128(1),
+                start_ticks: 1,
+            },
+        ),
+        recorded_at: "0".to_string(),
+    };
+    let commit = ReadyCommit::new(
+        SessionId::for_test(1),
+        TransitionId::new(),
+        Fence::for_test(1),
+        SessionCursor::new(WalkPhase::R4c, ContentHash::of("ready")).expect("R4c cursor"),
+        RunMode::Continuous,
+    )
+    .expect("Ready commit");
+    let ready = ReadyReceipt::new(ready, commit, None, None).expect("Ready receipt");
     successor_channel
-        .send_successor_ready(SuccessorReadyRecord {
-            schema_version: SUCCESSOR_READY_SCHEMA_VERSION.to_string(),
-            campaign_id: endpoint.campaign_id().clone(),
-            node_id: endpoint.node_id().to_string(),
-            runtime_id: record_runtime_id(endpoint.runtime_id()),
-            pid: 42,
-            recorded_at: "0".to_string(),
-        })
+        .send_successor_ready(ready)
         .expect("send successor ready");
     successor_channel
         .send_successor_completion(SuccessorCompletionRecord {

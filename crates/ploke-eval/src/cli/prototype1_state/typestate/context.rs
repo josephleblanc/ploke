@@ -5,15 +5,18 @@ use ploke_records::ids::CampaignId;
 use crate::{
     cli::Prototype1StateCommand,
     intervention::{
-        CompleteBaseline, Prototype1ChildBudget, Prototype1ChildScheduleMode, Prototype1NodeStatus,
-        Prototype1SearchPolicy,
+        CompleteBaseline, Prototype1ChildBudget, Prototype1ChildScheduleMode,
+        Prototype1ContinuationDecision, Prototype1NodeStatus, Prototype1SearchPolicy,
     },
-    successor_selection::SuccessorDecision,
+    spec::PrepareError,
 };
 
 use super::{
     super::{
-        cli_facing::{ActiveSelectionStrategy, PlannedChildOutcome, SelectionSealMaterial},
+        cli_facing::{
+            ActiveSelectionStrategy, ParentSelectionOutcome, PlannedChildOutcome,
+            preview_successor_continuation,
+        },
         history::surface_attempt,
         identity::ParentIdentity,
         inner::Received,
@@ -62,7 +65,10 @@ pub(crate) struct Facts {
     pub(crate) child_plan: Option<ChildPlanFacts>,
     pub(crate) selection_strategy: Option<ActiveSelectionStrategy>,
     pub(crate) child_outcomes: Option<Vec<PlannedChildOutcome>>,
-    pub(crate) selection: Option<(SuccessorDecision, SelectionSealMaterial)>,
+    /// Completed successor-selection procedure, including a valid no-selection receipt.
+    ///
+    /// `None` means the procedure has not run for this typestate path.
+    pub(crate) selection: Option<ParentSelectionOutcome>,
     pub(crate) rejected_attempt_payloads: Option<usize>,
     pub(crate) report: Option<ReportFacts>,
     pub(crate) parent_identity: Option<ParentIdentity>,
@@ -237,7 +243,39 @@ impl<RunShape, CampaignConfig> Collected<RunShape, CampaignConfig> {
     /// traversal policy admits exploration from rejected children; see
     /// docs/workflow/evalnomicon/src/prototype1/selection-and-evaluation.md.
     pub(crate) fn has_successor_selection(&self) -> bool {
-        self.facts.selection.is_some()
+        self.facts
+            .selection
+            .as_ref()
+            .is_some_and(|outcome| outcome.selected().is_some())
+    }
+
+    pub(crate) fn preview_continuation(
+        &self,
+        parent: &ParentIdentity,
+    ) -> Result<Option<Prototype1ContinuationDecision>, PrepareError> {
+        let Some((decision, material)) = self
+            .facts
+            .selection
+            .as_ref()
+            .and_then(ParentSelectionOutcome::selected)
+        else {
+            return Ok(None);
+        };
+        let policy = self.facts.complete_search_policy.as_ref().ok_or_else(|| {
+            PrepareError::InvalidBatchSelection {
+                detail: "R12 continuation preview missing search policy".to_string(),
+            }
+        })?;
+        let artifact = material.selected_artifact()?;
+        preview_successor_continuation(
+            &self.manifest_path,
+            parent,
+            policy,
+            decision,
+            material,
+            artifact.node(),
+        )
+        .map(Some)
     }
 
     pub(crate) fn into_parts(self) -> CollectedParts<RunShape, CampaignConfig> {

@@ -13,11 +13,11 @@ pub(crate) mod events;
 pub use crate::llm::manager::session::CancelChatToken;
 #[cfg(feature = "test_harness")]
 pub use crate::llm::manager::session::{
-    ChatDebugSink, ChatDebugSinkGuard, ChatDebugStep, ChatDebugToolResult, RequestTapGuard,
-    ResponseTapGuard, clear_chat_debug_sink, clear_recorded_response_tape, clear_request_tap,
-    clear_response_tap, install_chat_debug_sink, install_recorded_response_prefix_then_live,
-    install_recorded_response_prefix_then_live_steps, install_recorded_response_tape,
-    install_request_tap, install_response_tap,
+    ChatDebugSink, ChatDebugSinkGuard, ChatDebugStep, ChatDebugToolResult, FullResponseTraceRecord,
+    RequestTapGuard, ResponseTapGuard, SessionCapture, clear_chat_debug_sink,
+    clear_recorded_response_tape, clear_request_tap, clear_response_tap, install_chat_debug_sink,
+    install_recorded_response_prefix_then_live, install_recorded_response_prefix_then_live_steps,
+    install_recorded_response_tape, install_request_tap, install_response_tap,
 };
 pub use events::{ChatEvt, LlmEvent};
 pub(crate) use loop_error::{ChatSessionReport, SessionOutcome};
@@ -322,12 +322,46 @@ struct EvtKey {
 }
 
 pub async fn llm_manager(
+    rt_rx: broadcast::Receiver<AppEvent>,
+    bg_rx: broadcast::Receiver<AppEvent>,
+    state: Arc<AppState>,
+    cmd_tx: mpsc::Sender<StateCommand>,
+    event_bus: Arc<EventBus>,
+    cancel_rx: watch::Receiver<CancelChatToken>,
+) {
+    run_llm_manager(
+        rt_rx,
+        bg_rx,
+        state,
+        cmd_tx,
+        event_bus,
+        cancel_rx,
+        session::SessionCapture::default(),
+    )
+    .await;
+}
+
+#[cfg(feature = "test_harness")]
+pub(crate) async fn captured_llm_manager(
+    rt_rx: broadcast::Receiver<AppEvent>,
+    bg_rx: broadcast::Receiver<AppEvent>,
+    state: Arc<AppState>,
+    cmd_tx: mpsc::Sender<StateCommand>,
+    event_bus: Arc<EventBus>,
+    cancel_rx: watch::Receiver<CancelChatToken>,
+    capture: session::SessionCapture,
+) {
+    run_llm_manager(rt_rx, bg_rx, state, cmd_tx, event_bus, cancel_rx, capture).await;
+}
+
+async fn run_llm_manager(
     mut rt_rx: broadcast::Receiver<AppEvent>,
     mut bg_rx: broadcast::Receiver<AppEvent>,
     state: Arc<AppState>,
     cmd_tx: mpsc::Sender<StateCommand>,
     event_bus: Arc<EventBus>,
     cancel_rx: watch::Receiver<CancelChatToken>,
+    capture: session::SessionCapture,
     // providers: crate::user_config::ModelRegistry,
 ) {
     let client = Client::new();
@@ -340,6 +374,7 @@ pub async fn llm_manager(
         cmd_tx,
         client,
         event_bus,
+        capture,
     };
 
     // Enters loop every time there is a new event.
@@ -420,6 +455,7 @@ pub struct LlmRequestArgs {
     cmd_tx: mpsc::Sender<StateCommand>,
     client: Client,
     event_bus: Arc<EventBus>,
+    capture: session::SessionCapture,
 }
 
 fn handle_event(
@@ -655,6 +691,7 @@ pub async fn process_llm_request(
         cmd_tx,
         client,
         event_bus,
+        capture,
     } = llm_request_args;
     let llm_call_args = LlmCallArgs {
         state,
@@ -666,6 +703,7 @@ pub async fn process_llm_request(
         parent_id,
         cmd_tx,
         cancel_rx,
+        capture,
     };
     // Prepare and execute the API call; UI updates happen inside the chat loop.
     let report = prepare_and_run_llm_call(llm_call_args).await;
@@ -700,6 +738,7 @@ pub struct LlmCallArgs {
     parent_id: Uuid,
     cmd_tx: mpsc::Sender<StateCommand>,
     cancel_rx: watch::Receiver<CancelChatToken>,
+    capture: session::SessionCapture,
 }
 
 #[cfg(feature = "test_harness")]
@@ -712,6 +751,7 @@ pub struct ChatDebugRunArgs {
     pub assistant_message_id: Uuid,
     pub parent_id: Uuid,
     pub cmd_tx: mpsc::Sender<StateCommand>,
+    pub capture: SessionCapture,
 }
 
 #[cfg(feature = "test_harness")]
@@ -739,6 +779,7 @@ pub async fn run_chat_debug_messages(args: ChatDebugRunArgs) -> ChatDebugRunRepo
         parent_id: args.parent_id,
         cmd_tx: args.cmd_tx,
         cancel_rx,
+        capture: args.capture,
     })
     .await;
     ChatDebugRunReport {
@@ -768,6 +809,7 @@ async fn prepare_and_run_llm_call(args: LlmCallArgs) -> ChatSessionReport {
         parent_id,
         cmd_tx,
         cancel_rx,
+        capture,
     } = args;
     // 5) Tool selection. For now, expose a fixed set of tools.
     //    Later, query registry caps and enforcement policy for tool_choice.
@@ -788,10 +830,6 @@ async fn prepare_and_run_llm_call(args: LlmCallArgs) -> ChatSessionReport {
         ListDir::tool_def(),
     ];
 
-    // 4) Parameters (placeholder: use defaults until llm registry/prefs are wired)
-    //    When registry is available, merge model/user defaults into LLMParameters.
-    let mut llm_params = crate::llm::LLMParameters::default();
-
     // Gate tools by crate_focus: disable when no workspace is loaded
     let crate_loaded = state.with_system_read(|sys| sys.has_loaded_crates()).await;
     let (tools, tool_choice) = if crate_loaded {
@@ -800,7 +838,7 @@ async fn prepare_and_run_llm_call(args: LlmCallArgs) -> ChatSessionReport {
         (None, None)
     };
 
-    let (model_id, active_router, chat_policy, llm_timeout_secs, openrouter_fields) = {
+    let (model_id, active_router, chat_policy, llm_timeout_secs, mut llm_params, openrouter_fields) = {
         let cfg = state.config.read().await;
         let mut router_fields = <OpenRouter as ploke_llm::Router>::CompletionFields::default();
         if let Some(provider) = cfg
@@ -817,6 +855,7 @@ async fn prepare_and_run_llm_call(args: LlmCallArgs) -> ChatSessionReport {
             cfg.active_router,
             cfg.chat_policy.clone(),
             cfg.llm_timeout_secs,
+            cfg.llm_params.clone(),
             router_fields,
         )
     };
@@ -876,6 +915,7 @@ async fn prepare_and_run_llm_call(args: LlmCallArgs) -> ChatSessionReport {
             included_message_ids,
             chat_policy,
             cancel_rx,
+            capture,
         };
         run_chat_session(chat_session, llm_timeout_secs).await
     } else {
@@ -899,6 +939,7 @@ async fn prepare_and_run_llm_call(args: LlmCallArgs) -> ChatSessionReport {
             included_message_ids,
             chat_policy,
             cancel_rx,
+            capture,
         };
         run_chat_session(chat_session, llm_timeout_secs).await
     }

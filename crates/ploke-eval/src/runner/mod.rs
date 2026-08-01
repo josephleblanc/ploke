@@ -20,6 +20,7 @@ use ploke_tui::app::commands::harness::{TestRuntime, TestRuntimeActorGuard};
 use ploke_tui::app::view::components::model_browser::tool_capable_provider_key;
 use ploke_tui::app_state::AppState;
 use ploke_tui::app_state::core::RuntimeConfig;
+use ploke_tui::llm::SessionCapture;
 use ploke_tui::parser::{resolve_index_target, run_parse_resolved};
 use ploke_tui::user_config::{
     ChatPolicy, ChatTimeoutStrategy, RetrievalStrategyUser, ToolLoopMode,
@@ -33,9 +34,10 @@ use uuid::Uuid;
 
 use crate::inner::core::{RegisteredRunRole, RunIntent};
 use crate::inner::registry::RunRegistration;
+use crate::model_registry::resolve_model_for_run;
 use crate::provider_prefs::load_provider_for_model;
 use crate::run_registry::{persist_registration, register_live_run, storage_roots_for_instance};
-use crate::spec::{PrepareError, PreparedSingleRun, RunSource};
+use crate::spec::{PrepareError, PreparedCampaignContext, PreparedSingleRun, RunSource};
 
 mod artifacts;
 mod msb_batch;
@@ -61,6 +63,7 @@ static EMBEDDING_PREFLIGHT_CACHE: OnceLock<Mutex<HashMap<String, u32>>> = OnceLo
 pub(crate) fn benchmark_chat_policy() -> ChatPolicy {
     let mut policy = ChatPolicy::default();
     policy.tool_call_timeout_secs = 60;
+    policy.tool_loop_mode = ToolLoopMode::Gated;
     policy.timeout_strategy = ChatTimeoutStrategy::Backoff { attempts: Some(3) };
     policy.timeout_base_secs = 5;
     policy.error_retry_limit = 3;
@@ -81,6 +84,61 @@ pub(crate) fn configure_headless_benchmark_chat(cfg: &mut RuntimeConfig, route: 
     cfg.editing.auto_confirm_edits = true;
     cfg.chat_policy = benchmark_chat_policy();
     configure_eval_model_runtime(cfg, route);
+}
+
+pub(crate) fn validate_token_cap(max_tokens: Option<u32>) -> Result<(), PrepareError> {
+    if max_tokens == Some(0) {
+        return Err(PrepareError::DatabaseSetup {
+            phase: "eval_max_tokens",
+            detail: "eval max_tokens must be greater than zero when set".to_string(),
+        });
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_route_cap(
+    max_tokens: Option<u32>,
+    route: &LlmRoute,
+) -> Result<(), PrepareError> {
+    let Some(max_tokens) = max_tokens else {
+        return Ok(());
+    };
+    let Some(floor) = ploke_tui::llm::model_token_floor(route.router(), route.model()) else {
+        return Ok(());
+    };
+    if max_tokens < floor {
+        return Err(PrepareError::DatabaseSetup {
+            phase: "eval_max_tokens_model_floor",
+            detail: format!(
+                "admitted eval max_tokens {max_tokens} is below the required {floor} token floor for selected model '{}' on route '{}'; the admitted maximum cannot be raised silently",
+                route.model(),
+                route.selected_provider_slug()
+            ),
+        });
+    }
+    Ok(())
+}
+
+pub(crate) fn resolve_token_cap(
+    explicit: Option<u32>,
+    campaign: Option<&PreparedCampaignContext>,
+) -> Result<Option<u32>, PrepareError> {
+    validate_token_cap(explicit)?;
+    let admitted = campaign.and_then(|context| context.max_tokens);
+    validate_token_cap(admitted)?;
+
+    if let (Some(explicit), Some(admitted)) = (explicit, admitted)
+        && explicit != admitted
+    {
+        return Err(PrepareError::DatabaseSetup {
+            phase: "campaign_eval_max_tokens",
+            detail: format!(
+                "requested eval max_tokens {explicit} does not match admitted campaign max_tokens {admitted}"
+            ),
+        });
+    }
+
+    Ok(explicit.or(admitted))
 }
 
 pub(crate) fn artifact_runs_dir(instance_dir: &Path) -> PathBuf {
@@ -288,6 +346,49 @@ pub(crate) fn parse_requested_model_id(
         .transpose()
 }
 
+pub(crate) fn select_run_model(
+    model_id: Option<&str>,
+    use_default: bool,
+    campaign: Option<&PreparedCampaignContext>,
+) -> Result<ResponseItem, PrepareError> {
+    let selected_id = model_id.or_else(|| campaign.and_then(|context| context.model_id.as_deref()));
+    let requested = parse_requested_model_id(selected_id)?;
+    let mut selected = resolve_model_for_run(requested.as_ref(), use_default)?;
+    apply_campaign_route(&mut selected, campaign)?;
+    Ok(selected)
+}
+
+pub(crate) fn apply_campaign_route(
+    selected_model: &mut ResponseItem,
+    campaign: Option<&PreparedCampaignContext>,
+) -> Result<(), PrepareError> {
+    let Some(campaign) = campaign else {
+        return Ok(());
+    };
+    if let Some(model_id) = campaign.model_id.as_deref()
+        && model_id != selected_model.id.to_string()
+    {
+        return Err(PrepareError::DatabaseSetup {
+            phase: "campaign_model_route",
+            detail: format!(
+                "prepared campaign model '{model_id}' does not match selected model '{}'",
+                selected_model.id
+            ),
+        });
+    }
+    let route_source = campaign
+        .route_source
+        .ok_or_else(|| PrepareError::DatabaseSetup {
+            phase: "campaign_model_route",
+            detail: format!(
+                "prepared campaign '{}' does not carry its admitted model route",
+                campaign.campaign_id
+            ),
+        })?;
+    selected_model.route_source = route_source;
+    Ok(())
+}
+
 pub(crate) fn provider_request_for_selected_model<'a>(
     selected_model: &ResponseItem,
     explicit_provider: Option<&'a ProviderKey>,
@@ -305,12 +406,51 @@ pub(crate) fn provider_request_for_selected_model<'a>(
 pub(crate) fn load_provider_preference_for_selected_model(
     selected_model: &ResponseItem,
     explicit_provider: Option<&ProviderKey>,
+    campaign: Option<&PreparedCampaignContext>,
 ) -> Result<Option<ProviderKey>, PrepareError> {
-    if explicit_provider.is_some() || selected_model.route_source.is_direct_google() {
-        Ok(None)
-    } else {
-        load_provider_for_model(&selected_model.id)
+    if let Some(campaign) = campaign {
+        if let Some(model_id) = campaign.model_id.as_deref()
+            && model_id != selected_model.id.to_string()
+        {
+            return Err(PrepareError::DatabaseSetup {
+                phase: "campaign_model_route",
+                detail: format!(
+                    "prepared campaign model '{model_id}' does not match selected model '{}'",
+                    selected_model.id
+                ),
+            });
+        }
+        if let Some(explicit) = explicit_provider {
+            let selected = explicit.slug.as_str();
+            if campaign.provider_slug.as_deref() != Some(selected) {
+                return Err(PrepareError::DatabaseSetup {
+                    phase: "campaign_provider_route",
+                    detail: format!(
+                        "requested provider '{selected}' does not match admitted campaign provider '{}'",
+                        campaign
+                            .provider_slug
+                            .as_deref()
+                            .unwrap_or("<route-default>")
+                    ),
+                });
+            }
+            return Ok(None);
+        }
+        return campaign
+            .provider_slug
+            .as_deref()
+            .map(|slug| {
+                ProviderKey::new(slug).map_err(|error| PrepareError::DatabaseSetup {
+                    phase: "campaign_provider_route",
+                    detail: error.to_string(),
+                })
+            })
+            .transpose();
     }
+    if explicit_provider.is_some() || selected_model.route_source.is_direct_google() {
+        return Ok(None);
+    }
+    load_provider_for_model(&selected_model.id)
 }
 pub(crate) fn init_runtime_db() -> Result<Arc<Database>, PrepareError> {
     info!("initializing eval runtime database");
@@ -382,6 +522,22 @@ pub(crate) async fn setup_workspace_tui_runtime_with_read_roots(
     workspace_root: &Path,
     extra_read_roots: &[PathBuf],
 ) -> Result<WorkspaceTuiRuntime, PrepareError> {
+    setup_runtime(workspace_root, extra_read_roots, SessionCapture::default()).await
+}
+
+pub(crate) async fn setup_captured_runtime(
+    workspace_root: &Path,
+    extra_read_roots: &[PathBuf],
+    capture: SessionCapture,
+) -> Result<WorkspaceTuiRuntime, PrepareError> {
+    setup_runtime(workspace_root, extra_read_roots, capture).await
+}
+
+async fn setup_runtime(
+    workspace_root: &Path,
+    extra_read_roots: &[PathBuf],
+    capture: SessionCapture,
+) -> Result<WorkspaceTuiRuntime, PrepareError> {
     let runtime_db = init_runtime_db()?;
 
     let config_home = tempfile::tempdir().map_err(|source| PrepareError::CreateOutputDir {
@@ -398,9 +554,13 @@ pub(crate) async fn setup_workspace_tui_runtime_with_read_roots(
     )
     .spawn_file_manager()
     .spawn_state_manager()
-    .spawn_event_bus()
-    .spawn_llm_manager()
-    .spawn_observability();
+    .spawn_event_bus();
+    let runtime = if capture.uses_legacy_fallback() {
+        runtime.spawn_llm_manager()
+    } else {
+        runtime.spawn_captured_llm(capture)
+    };
+    let runtime = runtime.spawn_observability();
     let events = runtime.events_builder().build_all();
     let realtime_rx = events.event_bus_events.realtime_tx_rx;
     let background_rx = events.event_bus_events.background_tx_rx;

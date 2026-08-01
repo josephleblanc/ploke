@@ -6,5 +6,6 @@
 //! a time behind this driver.
 
 pub(crate) mod advance;
+pub(crate) mod control;
 pub(crate) mod reconstruct;
 pub(crate) mod replay;

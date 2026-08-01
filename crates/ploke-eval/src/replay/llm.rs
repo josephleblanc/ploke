@@ -13,7 +13,9 @@ use std::{
 use ploke_llm::manager::{
     ChatStepOutcome, RecordedResponseTape, ResponseIndex, parse_chat_outcome,
 };
-use ploke_records::llm_response::{FULL_RESPONSE_TRACE_FILE, RawFullResponseRecord};
+use ploke_records::llm_response::{
+    FULL_RESPONSE_TRACE_FILE, FullResponseLine, RawFullResponseRecord, decode_full_response_lines,
+};
 use uuid::Uuid;
 
 use crate::spec::PrepareError;
@@ -30,11 +32,13 @@ pub struct ResponseTapeInspection {
     path: PathBuf,
     assistant_message_id: Uuid,
     records: Vec<RawFullResponseRecord>,
+    source_lines: Vec<usize>,
 }
 
 impl LoadedResponseTape {
     pub fn load(run_dir: &Path, assistant_message_id: &str) -> Result<Self, PrepareError> {
         let loaded = load_response_tape_records(run_dir, assistant_message_id)?;
+        loaded.reject_duplicate_response_indices()?;
         loaded.reject_missing_response_indices()?;
         Ok(loaded)
     }
@@ -43,7 +47,22 @@ impl LoadedResponseTape {
         run_dir: &Path,
         assistant_message_id: &str,
     ) -> Result<ResponseTapeInspection, PrepareError> {
-        load_response_tape_records(run_dir, assistant_message_id).map(ResponseTapeInspection::from)
+        let assistant_message_id = parse_assistant_message_id(assistant_message_id)?;
+        let path = run_dir.join(FULL_RESPONSE_TRACE_FILE);
+        let lines = load_full_response_lines_for_assistant(&path, assistant_message_id)?;
+        if lines.is_empty() {
+            return Err(missing_tape(&path, assistant_message_id));
+        }
+        let (source_lines, records) = lines
+            .into_iter()
+            .map(|line| (line.line(), line.into_record()))
+            .unzip();
+        Ok(ResponseTapeInspection {
+            path,
+            assistant_message_id,
+            records,
+            source_lines,
+        })
     }
 
     pub fn path(&self) -> &Path {
@@ -172,6 +191,25 @@ impl LoadedResponseTape {
         missing_response_indices(&self.records)
     }
 
+    fn reject_duplicate_response_indices(&self) -> Result<(), PrepareError> {
+        let duplicate = self.records.windows(2).find_map(|records| {
+            (records[0].response_index() == records[1].response_index())
+                .then(|| records[0].response_index())
+        });
+        let Some(duplicate) = duplicate else {
+            return Ok(());
+        };
+        Err(PrepareError::DatabaseSetup {
+            phase: "load_llm_replay",
+            detail: format!(
+                "recorded provider response sidecar '{}' for assistant message '{}' contains duplicate response_index {}; use load_for_inspection for forensic inspection only",
+                self.path.display(),
+                self.assistant_message_id,
+                duplicate,
+            ),
+        })
+    }
+
     fn reject_missing_response_indices(&self) -> Result<(), PrepareError> {
         let missing = self.missing_response_indices();
         if missing.is_empty() {
@@ -216,18 +254,13 @@ impl ResponseTapeInspection {
         &self.records
     }
 
+    /// One-based physical JSONL lines aligned with `records()` file order.
+    pub fn source_lines(&self) -> &[usize] {
+        &self.source_lines
+    }
+
     pub fn missing_response_indices(&self) -> Vec<ResponseIndex> {
         missing_response_indices(&self.records)
-    }
-}
-
-impl From<LoadedResponseTape> for ResponseTapeInspection {
-    fn from(loaded: LoadedResponseTape) -> Self {
-        Self {
-            path: loaded.path,
-            assistant_message_id: loaded.assistant_message_id,
-            records: loaded.records,
-        }
     }
 }
 
@@ -264,16 +297,13 @@ fn load_response_tape_records(
 ) -> Result<LoadedResponseTape, PrepareError> {
     let assistant_message_id = parse_assistant_message_id(assistant_message_id)?;
     let path = run_dir.join(FULL_RESPONSE_TRACE_FILE);
-    let records = load_full_response_records_for_assistant(&path, assistant_message_id)?;
+    let mut records = load_full_response_lines_for_assistant(&path, assistant_message_id)?
+        .into_iter()
+        .map(FullResponseLine::into_record)
+        .collect::<Vec<_>>();
+    records.sort_by_key(RawFullResponseRecord::response_index);
     if records.is_empty() {
-        return Err(PrepareError::DatabaseSetup {
-            phase: "load_llm_replay",
-            detail: format!(
-                "no recorded provider responses in '{}' for assistant message '{}'",
-                path.display(),
-                assistant_message_id
-            ),
-        });
+        return Err(missing_tape(&path, assistant_message_id));
     }
 
     Ok(LoadedResponseTape {
@@ -283,35 +313,48 @@ fn load_response_tape_records(
     })
 }
 
-fn load_full_response_records_for_assistant(
+fn load_full_response_lines_for_assistant(
     path: &Path,
     assistant_message_id: Uuid,
-) -> Result<Vec<RawFullResponseRecord>, PrepareError> {
+) -> Result<Vec<FullResponseLine>, PrepareError> {
     let text = fs::read_to_string(path).map_err(|source| PrepareError::ReadManifest {
         path: path.to_path_buf(),
         source,
     })?;
-    let mut responses = Vec::new();
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let record: RawFullResponseRecord =
-            serde_json::from_str(trimmed).map_err(|source| PrepareError::ParseManifest {
-                path: path.to_path_buf(),
-                source,
-            })?;
-        if record.matches_assistant_message(assistant_message_id) {
-            responses.push(record);
-        }
-    }
-    responses.sort_by_key(|record| record.response_index());
+    let responses = decode_full_response_lines(&text)
+        .map_err(|error| PrepareError::DatabaseSetup {
+            phase: "load_llm_replay",
+            detail: format!(
+                "parse provider response sidecar '{}': {error}",
+                path.display()
+            ),
+        })?
+        .into_iter()
+        .filter(|line| {
+            line.record()
+                .matches_assistant_message(assistant_message_id)
+        })
+        .collect::<Vec<_>>();
     Ok(responses)
 }
 
+fn missing_tape(path: &Path, assistant_message_id: Uuid) -> PrepareError {
+    PrepareError::DatabaseSetup {
+        phase: "load_llm_replay",
+        detail: format!(
+            "no recorded provider responses in '{}' for assistant message '{}'",
+            path.display(),
+            assistant_message_id
+        ),
+    }
+}
+
 fn missing_response_indices(records: &[RawFullResponseRecord]) -> Vec<ResponseIndex> {
-    let Some(last) = records.last().map(|record| record.response_index().get()) else {
+    let Some(last) = records
+        .iter()
+        .map(|record| record.response_index().get())
+        .max()
+    else {
         return Vec::new();
     };
     let present = records
@@ -362,6 +405,33 @@ mod tests {
     }
 
     #[test]
+    fn response_inspection_preserves_physical_order_and_lines() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = root.path().join(FULL_RESPONSE_TRACE_FILE);
+        let assistant_a = Uuid::from_u128(0xaaaaaaaa_aaaa_aaaa_aaaa_aaaaaaaaaaaa);
+        let assistant_b = Uuid::from_u128(0xbbbbbbbb_bbbb_bbbb_bbbb_bbbbbbbbbbbb);
+        let second = response_line(assistant_a, 2, "second");
+        let other = response_line(assistant_b, 0, "ignored");
+        let first = response_line(assistant_a, 1, "first");
+        let zeroth = response_line(assistant_a, 0, "zeroth");
+        fs::write(&path, format!("{second}\n{other}\n\n{first}\n{zeroth}\n"))
+            .expect("write sidecar");
+
+        let inspected =
+            LoadedResponseTape::load_for_inspection(root.path(), &assistant_a.to_string())
+                .expect("inspect tape");
+        let indexes = inspected
+            .records()
+            .iter()
+            .map(|record| record.response_index().get())
+            .collect::<Vec<_>>();
+
+        assert_eq!(indexes, vec![2, 1, 0]);
+        assert_eq!(inspected.source_lines(), &[1, 4, 5]);
+        assert_eq!(inspected.missing_response_indices(), Vec::new());
+    }
+
+    #[test]
     fn loaded_response_tape_rejects_non_contiguous_response_indexes_by_default() {
         let root = tempfile::tempdir().expect("tempdir");
         let path = root.path().join(FULL_RESPONSE_TRACE_FILE);
@@ -381,6 +451,37 @@ mod tests {
             message.contains("load_for_inspection"),
             "expected forensic inspection hint in error, got {message}"
         );
+    }
+
+    #[test]
+    fn loaded_response_tape_rejects_duplicate_response_indexes_by_default() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = root.path().join(FULL_RESPONSE_TRACE_FILE);
+        let assistant = Uuid::from_u128(0xaaaaaaaa_aaaa_aaaa_aaaa_aaaaaaaaaaaa);
+        let first = response_line(assistant, 0, "first");
+        let duplicate = response_line(assistant, 0, "duplicate");
+        fs::write(&path, format!("{first}\n{duplicate}\n")).expect("write sidecar");
+
+        let error = LoadedResponseTape::load(root.path(), &assistant.to_string())
+            .expect_err("default replay admission should reject duplicate indexes");
+
+        assert!(error.to_string().contains("duplicate response_index 0"));
+    }
+
+    #[test]
+    fn loaded_response_tape_reports_physical_jsonl_line() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = root.path().join(FULL_RESPONSE_TRACE_FILE);
+        let assistant = Uuid::from_u128(0xaaaaaaaa_aaaa_aaaa_aaaa_aaaaaaaaaaaa);
+        let first = response_line(assistant, 0, "first");
+        fs::write(&path, format!("{first}\n{{not-json}}\n")).expect("write malformed sidecar");
+
+        let error = LoadedResponseTape::load(root.path(), &assistant.to_string())
+            .expect_err("malformed second JSONL record must fail");
+        let message = error.to_string();
+
+        assert!(message.contains(path.to_string_lossy().as_ref()));
+        assert!(message.contains("line 2"));
     }
 
     #[test]

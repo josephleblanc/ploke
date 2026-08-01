@@ -7,7 +7,7 @@ use std::{
     time::Instant,
 };
 
-use ploke_llm::manager::RecordedResponse;
+use ploke_tui::llm::FullResponseTraceRecord;
 use uuid::Uuid;
 
 use super::super::super::harness_request::contract;
@@ -22,22 +22,22 @@ use super::super::tui_bridge::{
     drain_debug_observed, drain_response_records, next_event_with_deadline, observe_staged_item,
     provider_failure_from_chat, provider_failure_from_message, provider_unavailable_reason,
     record_batch_terminal, record_post_approval_indeterminate, reject_item, repair_prompt_feedback,
-    run_contract_validations, select_disjoint, turn_aborted_after_apply_terminal,
-    validate_applied_batch, wait_for_refresh, wait_for_selected,
+    run_contract_validations, select_disjoint, turn_aborted_after_apply_terminal, wait_for_refresh,
+    wait_for_selected,
 };
 use super::{
     Batch, Decision, DenyItem, Error, Harness, Progress, PromptInfo, SessionSpec, Settled, Staged,
     StagedKind, ToolTrace, TurnStop,
 };
 
-pub(crate) struct TuiHarness {
+pub(crate) struct TuiHarness<'run> {
     runtime: crate::runner::WorkspaceTuiRuntime,
-    run: HeadlessRun,
+    run: &'run mut HeadlessRun,
     spec: SessionSpec,
     active_parent_id: Uuid,
     turn: u32,
     validation_commands: Vec<contract::Command>,
-    response_rx: Option<Arc<Mutex<Receiver<RecordedResponse>>>>,
+    response_rx: Option<Arc<Mutex<Receiver<FullResponseTraceRecord>>>>,
     observer: LiveObserver,
     pending_retry: Option<String>,
     provider_failure: Option<String>,
@@ -50,15 +50,15 @@ pub(crate) struct TuiHarness {
     awaiting_decision: bool,
 }
 
-impl TuiHarness {
+impl<'run> TuiHarness<'run> {
     pub(crate) fn attach(
         runtime: crate::runner::WorkspaceTuiRuntime,
-        run: HeadlessRun,
+        run: &'run mut HeadlessRun,
         spec: SessionSpec,
         active_parent_id: Uuid,
         turn: u32,
         validation_commands: Vec<contract::Command>,
-        response_rx: Option<Arc<Mutex<Receiver<RecordedResponse>>>>,
+        response_rx: Option<Arc<Mutex<Receiver<FullResponseTraceRecord>>>>,
         observer: LiveObserver,
     ) -> Self {
         Self {
@@ -107,43 +107,53 @@ impl TuiHarness {
             let deadline = self.spec.timeouts.attempt_deadline(started);
             match self.next(deadline).await? {
                 Progress::PendingEdit(batch) => {
+                    tracing::info!(
+                        target: "ploke_eval::harness_gate",
+                        turn = self.turn,
+                        request_id = %batch.request_id,
+                        staged_count = batch.staged.len(),
+                        "harness_pending_edit_batch"
+                    );
                     let decision = surface_decision(&batch, &self.spec.workspace_path, surface);
+                    tracing::info!(
+                        target: "ploke_eval::harness_gate",
+                        turn = self.turn,
+                        request_id = %batch.request_id,
+                        approve_count = decision.approve.len(),
+                        deny_count = decision.deny.len(),
+                        "harness_surface_decision"
+                    );
                     let newly_applied = self.decide(decision).await?;
+                    tracing::info!(
+                        target: "ploke_eval::harness_gate",
+                        turn = self.turn,
+                        request_id = %batch.request_id,
+                        newly_applied,
+                        applied_total = self.applied.len(),
+                        changed_path_count = self.changed_paths.len(),
+                        "harness_decide_done"
+                    );
                     if newly_applied {
                         let settle_deadline = self.spec.timeouts.phase_deadline(
                             deadline,
                             self.spec.timeouts.post_apply_index_duration(),
                         );
+                        tracing::info!(
+                            target: "ploke_eval::harness_gate",
+                            turn = self.turn,
+                            request_id = %batch.request_id,
+                            changed_path_count = self.changed_paths.len(),
+                            "harness_settle_phase_start"
+                        );
                         self.settle(settle_deadline).await?;
-                        if !self.validation_commands.is_empty() {
-                            if let Some(terminal) = validate_applied_batch(
-                                &self.runtime,
-                                self.active_parent_id,
-                                batch.request_id,
-                                self.turn,
-                                &mut self.run,
-                                &self.observer,
-                                &self.validation_commands,
-                                &self.applied,
-                                &self.changed_paths,
-                            )
-                            .await
-                            {
-                                if matches!(terminal, HeadlessTerminal::Applied { .. }) {
-                                    self.observer.emit(format!(
-                                        "attempt {} finalize_applied {}",
-                                        self.turn,
-                                        terminal.live_summary()
-                                    ));
-                                    return Ok(AttemptEnd::Terminal(terminal));
-                                }
-                                self.observer.emit(format!(
-                                    "attempt {} applied_batch_validation_unsatisfied {}",
-                                    self.turn,
-                                    terminal.live_summary()
-                                ));
-                            }
-                        }
+                        tracing::info!(
+                            target: "ploke_eval::harness_gate",
+                            turn = self.turn,
+                            request_id = %batch.request_id,
+                            applied_total = self.applied.len(),
+                            changed_path_count = self.changed_paths.len(),
+                            "harness_settle_phase_done"
+                        );
                     }
                 }
                 Progress::ContextUnavailable(reason) => {
@@ -174,12 +184,12 @@ impl TuiHarness {
         );
     }
 
-    pub(crate) fn into_parts(self) -> (HeadlessRun, crate::runner::WorkspaceTuiRuntime) {
-        (self.run, self.runtime)
+    pub(crate) fn into_runtime(self) -> crate::runner::WorkspaceTuiRuntime {
+        self.runtime
     }
 }
 
-impl Harness for TuiHarness {
+impl Harness for TuiHarness<'_> {
     async fn next(&mut self, deadline: Instant) -> Result<Progress, Error> {
         if self.awaiting_decision {
             return Err(Error::HeadlessEvent(
@@ -455,11 +465,7 @@ impl Harness for TuiHarness {
                         summary: summary.clone(),
                     });
                     if let Some(response_rx) = self.response_rx.as_ref() {
-                        drain_response_records(
-                            &mut self.run,
-                            assistant_message_id,
-                            Some(response_rx),
-                        );
+                        drain_response_records(&mut self.run, Some(response_rx));
                     }
                     self.observer.emit(format!(
                         "attempt {} turn_finished outcome={} attempts={} summary={}",
@@ -496,6 +502,14 @@ impl Harness for TuiHarness {
             ));
         }
         self.awaiting_decision = false;
+        tracing::info!(
+            target: "ploke_eval::harness_gate",
+            turn = self.turn,
+            request_id = %decision.request_id,
+            approve_requested = decision.approve.len(),
+            deny_requested = decision.deny.len(),
+            "harness_decide_start"
+        );
 
         let workspace_path = self.spec.workspace_path.as_path();
         let mut candidates = Vec::new();
@@ -560,6 +574,14 @@ impl Harness for TuiHarness {
         }
 
         let (selected, rejected) = select_disjoint(candidates, workspace_path);
+        tracing::info!(
+            target: "ploke_eval::harness_gate",
+            turn = self.turn,
+            request_id = %decision.request_id,
+            selected_count = selected.len(),
+            rejected_overlap_count = rejected.len(),
+            "harness_decide_selected"
+        );
         for candidate in rejected {
             let reason =
                 "Staged edit overlaps a newer valid proposal from the same tool batch".to_string();
@@ -579,6 +601,13 @@ impl Harness for TuiHarness {
             return Ok(false);
         }
 
+        tracing::info!(
+            target: "ploke_eval::harness_gate",
+            turn = self.turn,
+            request_id = %decision.request_id,
+            selected_count = selected.len(),
+            "harness_approve_selected_start"
+        );
         approve_selected(&self.runtime, self.turn, &self.observer, &selected).await?;
         let applied_outcome = match wait_for_selected(
             &mut self.runtime,
@@ -602,6 +631,16 @@ impl Harness for TuiHarness {
                 return Err(error);
             }
         };
+        tracing::info!(
+            target: "ploke_eval::harness_gate",
+            turn = self.turn,
+            request_id = %decision.request_id,
+            applied_count = applied_outcome.applied.len(),
+            changed_path_count = applied_outcome.changed_paths.len(),
+            mutated = applied_outcome.mutated,
+            retry = applied_outcome.retry.is_some(),
+            "harness_wait_for_selected_done"
+        );
         let newly_applied = !applied_outcome.applied.is_empty();
         self.applied.extend(applied_outcome.applied);
         push_changed_paths(&mut self.changed_paths, applied_outcome.changed_paths);
@@ -618,6 +657,15 @@ impl Harness for TuiHarness {
                 changed_paths: Vec::new(),
             });
         }
+        let settle_started = Instant::now();
+        tracing::info!(
+            target: "ploke_eval::harness_gate",
+            turn = self.turn,
+            applied_count = self.applied.len(),
+            changed_path_count = self.changed_paths.len(),
+            remaining_ms = deadline.saturating_duration_since(Instant::now()).as_millis() as u64,
+            "harness_settle_start"
+        );
         wait_for_refresh(
             &mut self.runtime,
             &mut self.pending_events,
@@ -628,6 +676,14 @@ impl Harness for TuiHarness {
             &self.changed_paths,
         )
         .await?;
+        tracing::info!(
+            target: "ploke_eval::harness_gate",
+            turn = self.turn,
+            elapsed_ms = settle_started.elapsed().as_millis() as u64,
+            applied_count = self.applied.len(),
+            changed_path_count = self.changed_paths.len(),
+            "harness_settle_done"
+        );
         Ok(Settled {
             applied: self.applied.iter().map(|item| item.id()).collect(),
             changed_paths: self.changed_paths.clone(),
@@ -643,7 +699,7 @@ impl Harness for TuiHarness {
     }
 }
 
-impl TuiHarness {
+impl TuiHarness<'_> {
     async fn build_batch(&self, request_id: Uuid, items: Vec<StagedItem>) -> Result<Batch, Error> {
         let mut staged = Vec::new();
         for item in items {
@@ -723,7 +779,10 @@ async fn reject_item_with_reason(
     reject_item(runtime, item, turn, run, observer, reason).await
 }
 
-async fn classify_turn_stop(harness: &mut TuiHarness, stop: TurnStop) -> Result<AttemptEnd, Error> {
+async fn classify_turn_stop(
+    harness: &mut TuiHarness<'_>,
+    stop: TurnStop,
+) -> Result<AttemptEnd, Error> {
     let TurnStop {
         outcome,
         summary,
@@ -741,7 +800,9 @@ async fn classify_turn_stop(harness: &mut TuiHarness, stop: TurnStop) -> Result<
                 summary,
             )));
         }
-        let feedback = if let Some(feedback) = repaired_failure {
+        let feedback = if outcome == "exhausted" && summary.contains("code=TOOL_STREAK_LIMIT") {
+            summary.clone()
+        } else if let Some(feedback) = repaired_failure {
             feedback
         } else if summary.trim().is_empty() {
             format!(
@@ -798,10 +859,29 @@ async fn classify_turn_stop(harness: &mut TuiHarness, stop: TurnStop) -> Result<
     let applied_edit =
         applied_edit_from_terminal_items(harness.applied_items(), harness.changed_paths())
             .expect("applied is not empty");
-    Ok(AttemptEnd::Terminal(classify_applied_terminal(
+    let terminal = classify_applied_terminal(
         harness.run(),
         &harness.validation_commands,
         request_id,
         applied_edit,
-    )))
+    );
+    match &terminal {
+        HeadlessTerminal::Applied { .. } => Ok(AttemptEnd::Terminal(terminal)),
+        HeadlessTerminal::AppliedValidationFailed { feedback, .. } => {
+            Ok(AttemptEnd::RetryValidation {
+                feedback: feedback.clone(),
+                terminal,
+            })
+        }
+        HeadlessTerminal::AppliedValidationMissing { missing, .. } => {
+            Ok(AttemptEnd::RetryValidation {
+                feedback: format!(
+                    "Requested validation missing after model stopped: {}",
+                    missing.join(", ")
+                ),
+                terminal,
+            })
+        }
+        _ => Ok(AttemptEnd::Terminal(terminal)),
+    }
 }

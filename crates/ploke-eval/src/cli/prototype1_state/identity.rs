@@ -30,6 +30,10 @@ pub(crate) use ploke_records::identity::{
 pub(crate) struct ParentIdentity(ParentIdentityRecord);
 
 impl ParentIdentity {
+    pub(crate) fn record(&self) -> &ParentIdentityRecord {
+        &self.0
+    }
+
     pub(crate) fn schema_version(&self) -> &str {
         &self.0.schema_version
     }
@@ -127,6 +131,32 @@ impl ParentIdentity {
             branch_id: node.branch_id.clone(),
             artifact_branch,
             created_at: Utc::now().to_rfc3339(),
+        })
+    }
+
+    /// Construct a parent identity with an explicit recorded timestamp.
+    ///
+    /// Receipt-backed setup uses the same timestamp as its root-node carrier so
+    /// exact intent can be regenerated without consulting the wall clock.
+    pub(crate) fn from_node_at(
+        campaign_id: impl Into<CampaignId>,
+        node: &Prototype1NodeRecord,
+        previous_parent: Option<&ParentIdentity>,
+        artifact_branch: Option<String>,
+        created_at: impl Into<String>,
+    ) -> Self {
+        Self(ParentIdentityRecord {
+            schema_version: PARENT_IDENTITY_SCHEMA_VERSION.to_string(),
+            campaign_id: campaign_id.into(),
+            parent_id: node.node_id.clone(),
+            node_id: node.node_id.clone(),
+            generation: node.generation,
+            instance_id: Some(node.instance_id.clone()),
+            previous_parent_id: previous_parent.map(|identity| identity.parent_id().to_string()),
+            parent_node_id: node.parent_node_id.clone(),
+            branch_id: node.branch_id.clone(),
+            artifact_branch,
+            created_at: created_at.into(),
         })
     }
 

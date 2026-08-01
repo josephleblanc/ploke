@@ -30,6 +30,16 @@ pub enum HttpSendFailure {
     Failed,
 }
 
+impl HttpSendFailure {
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Timeout => "timeout",
+            Self::Failed => "failed",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HttpReceiveFailure {
     pub status: Option<u16>,
@@ -47,6 +57,17 @@ pub enum HttpBodyFailure {
     Timeout,
     ReadFailed,
     DecodeFailed,
+}
+
+impl HttpBodyFailure {
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Timeout => "timeout",
+            Self::ReadFailed => "read_failed",
+            Self::DecodeFailed => "decode_failed",
+        }
+    }
 }
 
 impl HttpFailure {

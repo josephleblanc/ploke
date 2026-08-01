@@ -119,12 +119,15 @@
 //! ```
 //!
 //! Keeping this path local makes it easier to audit for runaway-process risks.
-use crate::cli::prototype1_state::invocation::SuccessorInvocation;
+use crate::cli::prototype1_state::invocation::{
+    ChildInvocation, ProcessIncarnation, SuccessorInvocation, SuccessorPublicationGuard,
+    hold_successor_publication, process_incarnation,
+};
 use crate::loop_graph::RuntimeId;
 use chrono::Utc;
 use ploke_core::EXECUTION_DEBUG_TARGET;
 use std::process::Command as ProcessCommand;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use super::*;
 use crate::cli::prototype1_state::backend::{
@@ -135,7 +138,9 @@ use crate::cli::prototype1_state::child::Child;
 use crate::cli::prototype1_state::cli_facing::{
     Prototype1TreatmentEvidence, build_prototype1_treatment_evidence,
     ensure_treatment_branch_materialized, prepare_prototype1_treatment_campaign,
+    same_existing_path,
 };
+use crate::cli::prototype1_state::driver::control::persisted_successor_ready;
 use crate::cli::prototype1_state::eval_store;
 use crate::cli::prototype1_state::event::RecordedAt;
 use crate::cli::prototype1_state::event::{Paths, Refs};
@@ -147,17 +152,22 @@ use crate::cli::prototype1_state::history::{
     SurfaceCommitment, TreeKeyHash,
 };
 use crate::cli::prototype1_state::identity::{
-    ParentIdentity, parent_identity_commit_message, parent_identity_relpath, write_parent_identity,
+    ParentIdentity, load_parent_identity_optional, parent_identity_commit_message,
+    parent_identity_relpath, write_parent_identity,
 };
 use crate::cli::prototype1_state::inner::LockCrown;
 use crate::cli::prototype1_state::journal::{
     ActiveCheckoutAdvancedEntry, ChildArtifactCommittedEntry, JournalEntry, PrototypeJournal,
-    Streams, SuccessorHandoffEntry, prototype1_transition_journal_path,
+    Streams, prototype1_transition_journal_path,
 };
 use crate::cli::prototype1_state::observe;
 use crate::cli::prototype1_state::parent::{Parent, Retired, Selectable};
 use crate::cli::prototype1_state::selection;
-use crate::cli::prototype1_state::successor::Record as SuccessorRecord;
+use crate::cli::prototype1_state::session::Store as SessionStore;
+use crate::cli::prototype1_state::successor::{
+    HandoffAcceptance, PredecessorAttempt, ReadyCommit, ReadyReceipt, Record as SuccessorRecord,
+};
+use crate::cli::prototype1_state::walk::endpoint::{self, ServerEndpoint};
 use crate::inner::registry::RunRegistration;
 use crate::intervention::{
     CommitPhase, Prototype1NodeStatus, Prototype1RunnerDisposition, Prototype1RunnerResult,
@@ -169,6 +179,8 @@ use ploke_records::evaluation::{BenchmarkPatchProjectionRecord, PatchProjectionC
 
 const SUCCESSOR_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const SUCCESSOR_READY_POLL: std::time::Duration = std::time::Duration::from_millis(50);
+const CHILD_SPAWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+const CHILD_SPAWN_POLL: std::time::Duration = std::time::Duration::from_millis(25);
 
 fn append_prototype1_journal_entry(
     manifest_path: &Path,
@@ -203,6 +215,14 @@ pub(crate) struct Prototype1SuccessorHandoff {
     pub runtime_id: RuntimeId,
     pub pid: u32,
     pub ready_path: PathBuf,
+}
+
+/// Parent-observed outcome after predecessor authority has been retired.
+pub(crate) enum HandoffOutcome {
+    /// The successor acknowledged readiness and the predecessor recorded handoff.
+    Ready(Prototype1SuccessorHandoff),
+    /// The attempt ended with durable evidence but without handoff acknowledgement.
+    Incomplete(SuccessorRecord),
 }
 
 /// How a selected successor runtime is launched.
@@ -320,6 +340,71 @@ mod tests {
                 derived_artifact_id: None,
             },
         }
+    }
+
+    fn admit_test_child(
+        invocation: &ChildInvocation,
+        invocation_path: &Path,
+        incarnation: Option<ProcessIncarnation>,
+    ) {
+        use crate::cli::prototype1_state::{
+            event::{ChildRuntimeLifecycle, LineageMark, World},
+            journal::{SpawnEntry, SpawnPhase},
+        };
+
+        let node = invocation.node_record().expect("child node");
+        let request = invocation.runner_request().expect("runner request");
+        let resolved = invocation.resolved().expect("resolved branch");
+        let pid = std::process::id();
+        let current = process_incarnation(pid)
+            .expect("capture test process incarnation")
+            .expect("test process remains alive");
+        let mut journal = PrototypeJournal::new(invocation.journal_path().to_path_buf());
+        journal
+            .append(JournalEntry::SpawnChild(SpawnEntry {
+                runtime_id: invocation.runtime_id(),
+                phase: SpawnPhase::Spawned,
+                recorded_at: RecordedAt::now(),
+                generation: node.generation,
+                refs: Refs {
+                    campaign_id: invocation.campaign_id().clone(),
+                    node_id: invocation.node_id().to_string(),
+                    instance_id: node.instance_id.clone(),
+                    source_state_id: node.source_state_id.clone(),
+                    branch_id: node.branch_id.clone(),
+                    candidate_id: node.candidate_id.clone(),
+                    branch_label: resolved.branch.branch_label.clone(),
+                    spec_id: resolved.branch.synthesized_spec_id.clone(),
+                },
+                paths: Paths {
+                    repo_root: request.workspace_root.clone(),
+                    workspace_root: request.workspace_root.clone(),
+                    binary_path: request.binary_path.clone(),
+                    target_relpath: request.target_relpath.clone(),
+                    absolute_path: request.workspace_root.join(&request.target_relpath),
+                },
+                world: World {
+                    node_status: node.status,
+                    running_binary: true,
+                    running_lineage: LineageMark::Parent,
+                    artifact_lineage: LineageMark::Child,
+                    child_lifecycle: Some(ChildRuntimeLifecycle::Spawned),
+                },
+                child_lifecycle: ChildRuntimeLifecycle::Spawned,
+                parent_pid: pid,
+                child_pid: Some(pid),
+                incarnation,
+                argv: invocation.launch_args(invocation_path),
+                streams: None,
+                result: None,
+            }))
+            .expect("append test Spawned receipt");
+        let barrier_path = crate::cli::prototype1_state::c3::spawn_barrier_path(invocation_path);
+        let bytes = serde_json::to_vec(&current).expect("serialize test process incarnation");
+        assert!(
+            crate::durable_io::create_atomic(&barrier_path, &bytes)
+                .expect("publish test spawn barrier")
+        );
     }
 
     fn live_node(root: &Path) -> Prototype1NodeRecord {
@@ -771,6 +856,51 @@ After editing, use the cargo tool to run `cargo test`, then finish with the patc
         require_complete_treatment(&complete).expect("complete metrics are success evidence");
     }
 
+    #[test]
+    fn child_spawn_receipt_rejects_pid_only_legacy_authority() {
+        let tmp = tempdir().expect("tempdir");
+        let campaign_id = CampaignId::from("legacy-child-spawn");
+        let node = test_node(tmp.path());
+        let request = crate::intervention::runner_request_from_node(&campaign_id, &node, true);
+        let resolved = resolved_branch_for(&node);
+        let runtime_id = RuntimeId::new();
+        let journal_path = tmp.path().join("transition-journal.jsonl");
+        let invocation = ChildInvocation::with_bootstrap(
+            campaign_id,
+            node.clone(),
+            request.clone(),
+            resolved,
+            runtime_id,
+            journal_path,
+            crate::cli::prototype1_state::invocation::channel_root(&node.node_dir, runtime_id),
+        )
+        .expect("valid child invocation");
+        let invocation_path =
+            crate::cli::prototype1_state::invocation::invocation_path(&node.node_dir, runtime_id);
+        admit_test_child(&invocation, &invocation_path, None);
+        let pid = std::process::id();
+        let incarnation = process_incarnation(pid)
+            .expect("capture test process")
+            .expect("test process remains alive");
+
+        let error = verify_spawn_receipt(
+            &invocation,
+            &invocation_path,
+            &node,
+            &request,
+            pid,
+            &incarnation,
+        )
+        .expect_err("legacy PID-only Spawned record cannot admit a child");
+
+        assert!(
+            error
+                .to_string()
+                .contains("does not exactly match this child launch"),
+            "{error}"
+        );
+    }
+
     #[tokio::test]
     async fn child_runner_failure_records_terminal_channel() {
         let tmp = tempdir().expect("tempdir");
@@ -809,6 +939,10 @@ After editing, use the cargo tool to run `cargo test`, then finish with the patc
             &invocation,
         )
         .expect("write child invocation");
+        let incarnation = process_incarnation(std::process::id())
+            .expect("capture test process")
+            .expect("test process remains alive");
+        admit_test_child(&invocation, &invocation_path, Some(incarnation));
 
         // The workspace target file is intentionally absent. That forces the
         // real child runner through `run_prototype1_resolved_branch_treatment`
@@ -964,6 +1098,10 @@ After editing, use the cargo tool to run `cargo test`, then finish with the patc
                 &invocation,
             )
             .expect("write child invocation");
+            let incarnation = process_incarnation(std::process::id())
+                .expect("capture test process")
+                .expect("test process remains alive");
+            admit_test_child(&invocation, &invocation_path, Some(incarnation));
             print_live_child_timing("invocation_written", started, &mut previous);
 
             let result = execute_prototype1_runner_invocation(&invocation_path)
@@ -1649,6 +1787,39 @@ After editing, use the cargo tool to run `cargo test`, then finish with the patc
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn successor_timeout_quiesces_process_group() {
+        use std::os::unix::process::CommandExt;
+
+        let mut command = ProcessCommand::new("sh");
+        command.arg("-c").arg("while :; do sleep 1; done");
+        command.process_group(0);
+        let mut child = command.spawn().expect("spawn successor stand-in");
+
+        assert!(matches!(
+            stop_successor(&mut child).expect("stop successor group"),
+            StopState::Stopped
+        ));
+        assert!(process_stopped(child.id()).expect("inspect stopped successor"));
+        resume_successor(&mut child).expect("resume successor group");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        while process_stopped(child.id()).expect("inspect resumed successor") {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "successor remained stopped after resume"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        terminate_successor(&mut child).expect("terminate successor group");
+        assert!(
+            child
+                .try_wait()
+                .expect("poll terminated successor")
+                .is_some()
+        );
+    }
+
     #[test]
     fn child_projection_gate_rejects_shared_checkout_cwd() {
         let tmp = tempdir().expect("tempdir");
@@ -1706,6 +1877,178 @@ After editing, use the cargo tool to run `cargo test`, then finish with the patc
             error
                 .to_string()
                 .contains("outside child instance target root")
+        );
+    }
+
+    #[test]
+    fn concurrent_ready_reconciliation_is_idempotent() {
+        let tmp = tempdir().expect("tempdir");
+        let runtime = RuntimeId::new();
+        let campaign = CampaignId::from("campaign-ready-reconcile");
+        let node = "node-ready".to_string();
+        let journal_path = tmp.path().join("prototype1-transition-journal.jsonl");
+        let invocation_path = tmp.path().join("successor-invocation.json");
+        let raw = crate::cli::prototype1_state::invocation::Invocation {
+            schema_version: crate::cli::prototype1_state::invocation::SCHEMA_VERSION.to_string(),
+            role: crate::cli::prototype1_state::invocation::Role::Successor,
+            campaign_id: campaign.clone(),
+            node_id: node.clone(),
+            runtime_id: runtime,
+            journal_path: journal_path.clone(),
+            channel_root: Some(tmp.path().join("channel")),
+            node: None,
+            request: None,
+            resolved: None,
+            active_parent_root: Some(tmp.path().to_path_buf()),
+            run_profile: None,
+            predecessor_attempt: Some(
+                crate::cli::prototype1_state::successor::PredecessorAttempt::new(
+                    crate::cli::prototype1_state::session::SessionId::for_test(1),
+                    crate::cli::prototype1_state::event::TransitionId::new(),
+                    crate::cli::prototype1_state::session::Fence::for_test(1),
+                    true,
+                    true,
+                ),
+            ),
+            created_at: "2026-07-13T00:00:00Z".to_string(),
+        };
+        fs::write(
+            &invocation_path,
+            serde_json::to_vec_pretty(&raw).expect("serialize invocation"),
+        )
+        .expect("write invocation");
+        let crate::cli::prototype1_state::invocation::InvocationAuthority::Successor(invocation) =
+            crate::cli::prototype1_state::invocation::load_authority(&invocation_path)
+                .expect("load successor invocation")
+        else {
+            panic!("expected successor invocation");
+        };
+        let ready_path = invocation
+            .channel_endpoints()
+            .expect("successor channel")
+            .child_to_parent()
+            .path()
+            .to_path_buf();
+        append_successor_record(
+            &journal_path,
+            SuccessorRecord::spawned(
+                &invocation,
+                4_242,
+                ProcessIncarnation {
+                    boot_id: uuid::Uuid::from_u128(1),
+                    start_ticks: 1,
+                },
+                tmp.path().to_path_buf(),
+                tmp.path().join("ploke-eval"),
+                invocation_path,
+                ready_path,
+                Streams {
+                    stdout: tmp.path().join("stdout.log"),
+                    stderr: tmp.path().join("stderr.log"),
+                },
+            ),
+            "ready_reconcile_spawn",
+        )
+        .expect("append Spawned");
+        let commit = ReadyCommit::new(
+            crate::cli::prototype1_state::session::SessionId::for_test(7),
+            crate::cli::prototype1_state::event::TransitionId::new(),
+            crate::cli::prototype1_state::session::Fence::for_test(1),
+            crate::cli::prototype1_state::session::Cursor::new(
+                crate::cli::prototype1_state::walk::phase::WalkPhase::R4c,
+                crate::cli::prototype1_state::event::ContentHash::of("ready-r4c"),
+            )
+            .expect("R4c cursor"),
+            crate::cli::prototype1_state::profile::RunMode::Continuous,
+        )
+        .expect("Ready commit");
+        let receipt = ReadyReceipt::new(
+            crate::cli::prototype1_state::invocation::SuccessorReadyRecord {
+                schema_version:
+                    crate::cli::prototype1_state::invocation::SUCCESSOR_READY_SCHEMA_VERSION
+                        .to_string(),
+                campaign_id: campaign,
+                node_id: node,
+                runtime_id: crate::cli::prototype1_state::invocation::record_runtime_id(runtime),
+                pid: 4_242,
+                incarnation: Some(ploke_records::invocation::ProcessIncarnation {
+                    boot_id: uuid::Uuid::from_u128(1),
+                    start_ticks: 1,
+                }),
+                recorded_at: "2026-07-13T00:00:01Z".to_string(),
+            },
+            commit,
+            None,
+            None,
+        )
+        .expect("Ready receipt");
+
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+        let first = {
+            let barrier = barrier.clone();
+            let invocation = invocation.clone();
+            let receipt = receipt.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                reconcile_successor_ready(&invocation, receipt)
+            })
+        };
+        let second = {
+            let barrier = barrier.clone();
+            let invocation = invocation.clone();
+            let receipt = receipt.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                reconcile_successor_ready(&invocation, receipt)
+            })
+        };
+        barrier.wait();
+        first
+            .join()
+            .expect("first reconciliation thread")
+            .expect("first reconciliation");
+        second
+            .join()
+            .expect("second reconciliation thread")
+            .expect("second reconciliation");
+        reconcile_successor_ready(&invocation, receipt.clone())
+            .expect("sequential idempotent reconciliation");
+
+        let entries = PrototypeJournal::new(journal_path)
+            .load_entries()
+            .expect("load reconciled journal");
+        let ready = entries
+            .iter()
+            .filter_map(|entry| match entry {
+                JournalEntry::Successor(record) => match &record.state {
+                    crate::cli::prototype1_state::successor::State::Ready {
+                        controller: Some(ready),
+                        ..
+                    } => Some(ready),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(ready, vec![&receipt]);
+
+        let mut dead = ProcessCommand::new("true")
+            .spawn()
+            .expect("spawn exited successor stand-in");
+        dead.wait().expect("wait exited successor stand-in");
+        let error = match confirm_successor_ready(
+            &mut dead,
+            &invocation,
+            &tmp.path().join("campaign.json"),
+            receipt,
+        ) {
+            Ok(_) => panic!("an already-exited successor cannot confirm Ready"),
+            Err(error) => error,
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("cannot resolve the installed parent identity")
         );
     }
 
@@ -1783,9 +2126,20 @@ After editing, use the cargo tool to run `cargo test`, then finish with the patc
     }
 }
 
-pub(crate) fn record_prototype1_successor_ready(
+pub(crate) fn build_ready_receipt(
     invocation: &SuccessorInvocation,
-) -> Result<crate::cli::prototype1_state::invocation::SuccessorReadyRecord, PrepareError> {
+    commit: ReadyCommit,
+    endpoint: Option<ServerEndpoint>,
+    predecessor: Option<ServerEndpoint>,
+) -> Result<ReadyReceipt, PrepareError> {
+    let pid = std::process::id();
+    let incarnation = crate::cli::prototype1_state::invocation::process_incarnation(pid)
+        .map_err(|source| PrepareError::InvalidBatchSelection {
+            detail: format!("cannot capture successor process incarnation: {source}"),
+        })?
+        .ok_or_else(|| PrepareError::InvalidBatchSelection {
+            detail: format!("successor process {pid} disappeared before Ready publication"),
+        })?;
     let record = crate::cli::prototype1_state::invocation::SuccessorReadyRecord {
         schema_version: crate::cli::prototype1_state::invocation::SUCCESSOR_READY_SCHEMA_VERSION
             .to_string(),
@@ -1794,27 +2148,94 @@ pub(crate) fn record_prototype1_successor_ready(
         runtime_id: crate::cli::prototype1_state::invocation::record_runtime_id(
             invocation.runtime_id(),
         ),
-        pid: std::process::id(),
+        pid,
+        incarnation: Some(incarnation),
         recorded_at: Utc::now().to_rfc3339(),
     };
-    let ready_projection = invocation
-        .channel_endpoints()
-        .map(|endpoints| {
-            let projection = endpoints.child_to_parent().path().to_path_buf();
-            let channel = Channel::for_role(invocation, endpoints, FileTransport);
-            channel
-                .send_successor_ready(record.clone())
-                .map_err(|err| channel_error_phase("prototype1_successor_channel_ready", err))?;
-            Ok::<PathBuf, PrepareError>(projection)
+    ReadyReceipt::new(record, commit, endpoint, predecessor).map_err(|detail| {
+        PrepareError::InvalidBatchSelection {
+            detail: format!("cannot prepare successor Ready: {detail}"),
+        }
+    })
+}
+
+pub(crate) fn record_prototype1_successor_ready(
+    invocation: &SuccessorInvocation,
+    receipt: ReadyReceipt,
+) -> Result<ReadyReceipt, PrepareError> {
+    let owned = receipt
+        .owned_by_current()
+        .map_err(|detail| PrepareError::InvalidBatchSelection { detail })?;
+    if !owned {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: "only the Ready owner may emit the runtime-channel projection".to_string(),
+        });
+    }
+    project_successor_ready(invocation, receipt, true)
+}
+
+fn reconcile_successor_ready(
+    invocation: &SuccessorInvocation,
+    receipt: ReadyReceipt,
+) -> Result<ReadyReceipt, PrepareError> {
+    project_successor_ready(invocation, receipt, false)
+}
+
+fn project_successor_ready(
+    invocation: &SuccessorInvocation,
+    receipt: ReadyReceipt,
+    notify: bool,
+) -> Result<ReadyReceipt, PrepareError> {
+    receipt
+        .validate()
+        .map_err(|detail| PrepareError::InvalidBatchSelection {
+            detail: format!("cannot project successor Ready: {detail}"),
+        })?;
+    let record = receipt.record();
+    if record.campaign_id != *invocation.campaign_id()
+        || record.node_id != invocation.node_id()
+        || record.runtime_id
+            != crate::cli::prototype1_state::invocation::record_runtime_id(invocation.runtime_id())
+        || record.pid == 0
+        || receipt.endpoint().is_some_and(|endpoint| {
+            invocation
+                .active_parent_root()
+                .is_none_or(|root| endpoint.repo_root() != root)
         })
-        .transpose()?
-        .unwrap_or_else(|| invocation.journal_path().to_path_buf());
-    append_successor_record(
-        invocation.journal_path(),
-        SuccessorRecord::ready(invocation, record.pid, ready_projection),
-        "prototype1_successor_ready_journal",
-    )?;
-    Ok(record)
+    {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: "successor Ready projection does not match its invocation".to_string(),
+        });
+    }
+    let endpoints =
+        invocation
+            .channel_endpoints()
+            .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                detail: "successor Ready requires a runtime-scoped parent channel".to_string(),
+            })?;
+    let ready_path = endpoints.child_to_parent().path().to_path_buf();
+    let mut journal = PrototypeJournal::new(invocation.journal_path().to_path_buf());
+    let ready = SuccessorRecord::ready(invocation, receipt.record().pid, ready_path, receipt);
+    let receipt = journal
+        .project_ready(ready)
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "prototype1_successor_ready_journal",
+            detail: source.to_string(),
+        })?;
+    if notify {
+        let channel = Channel::for_role(invocation, endpoints, FileTransport);
+        if let Err(error) = channel.send_successor_ready(receipt.clone()) {
+            warn!(
+                target: EXECUTION_DEBUG_TARGET,
+                campaign_id = %invocation.campaign_id(),
+                node_id = invocation.node_id(),
+                runtime_id = %invocation.runtime_id(),
+                error = ?error,
+                "atomic session Ready was committed, but its channel projection failed; predecessor will reconcile durable session authority"
+            );
+        }
+    }
+    Ok(receipt)
 }
 
 pub(crate) fn record_prototype1_successor_completion(
@@ -3100,12 +3521,20 @@ fn spawn_prototype1_successor(
     invocation: &SuccessorInvocation,
     retired_parent: &Parent<Retired>,
     streams: &Streams,
-) -> Result<std::process::Child, PrepareError> {
+) -> Result<
+    (
+        std::process::Child,
+        ProcessIncarnation,
+        SuccessorPublicationGuard,
+    ),
+    PrepareError,
+> {
     crate::cli::prototype1_state::invocation::write_successor_invocation_for_retired_parent(
         retired_parent,
         invocation_path,
         invocation,
     )?;
+    let publication = hold_successor_publication(invocation_path)?;
     let child_argv = invocation.launch_args_for_retired_parent(retired_parent, invocation_path)?;
     let (stdout, stderr) = open_runtime_streams(streams)?;
     let mut command = ProcessCommand::new(binary_path);
@@ -3120,12 +3549,39 @@ fn spawn_prototype1_successor(
         use std::os::unix::process::CommandExt;
         command.process_group(0);
     }
-    command
+    let mut child = command
         .spawn()
         .map_err(|source| PrepareError::DatabaseSetup {
             phase: "prototype1_successor_spawn",
             detail: source.to_string(),
-        })
+        })?;
+    let pid = child.id();
+    let incarnation = match process_incarnation(pid) {
+        Ok(Some(incarnation)) => incarnation,
+        Ok(None) => {
+            return Err(terminate_with_error(
+                &mut child,
+                PrepareError::DatabaseSetup {
+                    phase: "prototype1_successor_incarnation",
+                    detail: format!(
+                        "spawned successor process {pid} disappeared before its exact incarnation could be recorded"
+                    ),
+                },
+            ));
+        }
+        Err(source) => {
+            return Err(terminate_with_error(
+                &mut child,
+                PrepareError::DatabaseSetup {
+                    phase: "prototype1_successor_incarnation",
+                    detail: format!(
+                        "cannot capture exact incarnation for spawned successor process {pid}: {source}"
+                    ),
+                },
+            ));
+        }
+    };
+    Ok((child, incarnation, publication))
 }
 
 #[cfg(feature = "demo")]
@@ -3199,14 +3655,22 @@ fn open_runtime_streams(streams: &Streams) -> Result<(std::fs::File, std::fs::Fi
 }
 
 enum SuccessorWait {
-    Ready,
+    Ready(ReadyReceipt),
     TimedOut { waited_ms: u64 },
     ExitedBeforeReady { exit_code: Option<i32> },
+}
+
+enum StopState {
+    Stopped,
+    Exited(Option<i32>),
 }
 
 fn wait_for_prototype1_successor_ready(
     child: &mut std::process::Child,
     channel: Option<&Channel<Parent<Retired>, FileTransport>>,
+    invocation: &SuccessorInvocation,
+    invocation_path: &Path,
+    manifest_path: &Path,
 ) -> Result<SuccessorWait, PrepareError> {
     let start = std::time::Instant::now();
     let mut cursor = Cursor::start();
@@ -3220,12 +3684,45 @@ fn wait_for_prototype1_successor_ready(
                         detail: format!("{err:?}"),
                     })?;
             cursor = next_cursor;
-            if messages
-                .iter()
-                .any(|message| matches!(message.body(), ToParent::SuccessorReady { .. }))
-            {
-                return Ok(SuccessorWait::Ready);
+            for message in messages {
+                if let ToParent::SuccessorReady { record, controller } = message.body() {
+                    let receipt =
+                        controller
+                            .as_ref()
+                            .ok_or_else(|| {
+                                PrepareError::InvalidBatchSelection {
+                            detail:
+                                "successor sent legacy Ready without a committed controller receipt"
+                                    .to_string(),
+                        }
+                            })?;
+                    if receipt.record() != record {
+                        return Err(PrepareError::InvalidBatchSelection {
+                            detail:
+                                "successor Ready envelope does not match its controller receipt"
+                                    .to_string(),
+                        });
+                    }
+                    validate_successor_ready(
+                        invocation,
+                        invocation_path,
+                        manifest_path,
+                        child.id(),
+                        receipt,
+                    )?;
+                    return confirm_successor_ready(
+                        child,
+                        invocation,
+                        manifest_path,
+                        receipt.clone(),
+                    );
+                }
             }
+        }
+        if let Some(receipt) =
+            reconcile_persisted_ready(invocation, invocation_path, manifest_path, child.id())?
+        {
+            return confirm_successor_ready(child, invocation, manifest_path, receipt);
         }
         if let Some(status) = child
             .try_wait()
@@ -3234,18 +3731,502 @@ fn wait_for_prototype1_successor_ready(
                 detail: source.to_string(),
             })?
         {
-            return Ok(SuccessorWait::ExitedBeforeReady {
-                exit_code: status.code(),
-            });
+            return classify_successor_exit(
+                invocation,
+                manifest_path,
+                SuccessorWait::ExitedBeforeReady {
+                    exit_code: status.code(),
+                },
+            );
         }
         if start.elapsed() >= SUCCESSOR_READY_TIMEOUT {
             let waited_ms = start.elapsed().as_millis() as u64;
-            let _ = child.kill();
-            let _ = child.wait();
-            return Ok(SuccessorWait::TimedOut { waited_ms });
+            return settle_successor_timeout(
+                child,
+                invocation,
+                invocation_path,
+                manifest_path,
+                waited_ms,
+            );
         }
         std::thread::sleep(SUCCESSOR_READY_POLL);
     }
+}
+
+fn confirm_successor_ready(
+    child: &mut std::process::Child,
+    invocation: &SuccessorInvocation,
+    manifest_path: &Path,
+    receipt: ReadyReceipt,
+) -> Result<SuccessorWait, PrepareError> {
+    if let Some(status) = child
+        .try_wait()
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "prototype1_successor_ready_poll",
+            detail: source.to_string(),
+        })?
+    {
+        return classify_successor_exit(
+            invocation,
+            manifest_path,
+            SuccessorWait::ExitedBeforeReady {
+                exit_code: status.code(),
+            },
+        );
+    }
+    Ok(SuccessorWait::Ready(receipt))
+}
+
+fn settle_successor_timeout(
+    child: &mut std::process::Child,
+    invocation: &SuccessorInvocation,
+    invocation_path: &Path,
+    manifest_path: &Path,
+    waited_ms: u64,
+) -> Result<SuccessorWait, PrepareError> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    loop {
+        match stop_successor(child) {
+            Ok(StopState::Stopped) => match ready_observable(invocation, manifest_path) {
+                Ok(true) => {
+                    let reconciled = reconcile_persisted_ready(
+                        invocation,
+                        invocation_path,
+                        manifest_path,
+                        child.id(),
+                    );
+                    match reconciled {
+                        Ok(Some(receipt)) => {
+                            if let Err(error) = resume_successor(child) {
+                                return Err(terminate_with_error(child, error));
+                            }
+                            return Ok(SuccessorWait::Ready(receipt));
+                        }
+                        Ok(None) => {
+                            terminate_successor(child)?;
+                            return classify_successor_exit(
+                                invocation,
+                                manifest_path,
+                                SuccessorWait::TimedOut { waited_ms },
+                            );
+                        }
+                        Err(error) => return Err(terminate_with_error(child, error)),
+                    }
+                }
+                Ok(false) => {
+                    if let Err(error) = resume_successor(child) {
+                        return Err(terminate_with_error(child, error));
+                    }
+                    if std::time::Instant::now() >= deadline {
+                        terminate_successor(child)?;
+                        return classify_successor_exit(
+                            invocation,
+                            manifest_path,
+                            SuccessorWait::TimedOut { waited_ms },
+                        );
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Err(error) => return Err(terminate_with_error(child, error)),
+            },
+            Ok(StopState::Exited(exit_code)) => {
+                return classify_successor_exit(
+                    invocation,
+                    manifest_path,
+                    SuccessorWait::ExitedBeforeReady { exit_code },
+                );
+            }
+            Err(error) => return Err(terminate_with_error(child, error)),
+        }
+    }
+}
+
+fn ready_observable(
+    invocation: &SuccessorInvocation,
+    manifest_path: &Path,
+) -> Result<bool, PrepareError> {
+    let repo_root =
+        invocation
+            .active_parent_root()
+            .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                detail: "successor invocation is missing active_parent_root".to_string(),
+            })?;
+    let parent = load_parent_identity_optional(repo_root)?.ok_or_else(|| {
+        PrepareError::InvalidBatchSelection {
+            detail: "successor timeout cannot resolve the installed parent identity".to_string(),
+        }
+    })?;
+    let session = SessionStore::for_manifest(manifest_path);
+    if !session
+        .journal_idle(&parent)
+        .map_err(|source| PrepareError::InvalidBatchSelection {
+            detail: format!("cannot probe successor session journal: {source}"),
+        })?
+    {
+        return Ok(false);
+    }
+    PrototypeJournal::new(invocation.journal_path().to_path_buf())
+        .ready_idle()
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "prototype1_successor_ready_probe",
+            detail: source.to_string(),
+        })
+}
+
+fn classify_successor_exit(
+    invocation: &SuccessorInvocation,
+    manifest_path: &Path,
+    outcome: SuccessorWait,
+) -> Result<SuccessorWait, PrepareError> {
+    let repo_root =
+        invocation
+            .active_parent_root()
+            .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                detail: "successor invocation is missing active_parent_root".to_string(),
+            })?;
+    let parent = load_parent_identity_optional(repo_root)?.ok_or_else(|| {
+        PrepareError::InvalidBatchSelection {
+            detail: "successor exit cannot resolve the installed parent identity".to_string(),
+        }
+    })?;
+    let store = SessionStore::for_manifest(manifest_path);
+    let ready = store
+        .inspect(&parent)
+        .map_err(|source| PrepareError::InvalidBatchSelection {
+            detail: format!("cannot inspect exited successor session: {source}"),
+        })?
+        .map(|snapshot| {
+            snapshot
+                .ready_receipt(invocation.runtime_id())
+                .map(|ready| ready.cloned())
+        })
+        .transpose()
+        .map_err(|source| PrepareError::InvalidBatchSelection {
+            detail: format!("cannot inspect exited successor Ready: {source}"),
+        })?
+        .flatten();
+    if let Some(ready) = ready {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "successor process {} exited after atomically recording Ready for session {}; preserve the run and restart the successor instead of accepting dead authority",
+                ready.record().pid,
+                ready.commit().session_id()
+            ),
+        });
+    }
+    Ok(outcome)
+}
+
+fn terminate_with_error(child: &mut std::process::Child, error: PrepareError) -> PrepareError {
+    match terminate_successor(child) {
+        Ok(()) => error,
+        Err(terminate) => PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "successor arbitration failed: {error}; process termination also failed: {terminate}"
+            ),
+        },
+    }
+}
+
+#[cfg(unix)]
+fn stop_successor(child: &mut std::process::Child) -> Result<StopState, PrepareError> {
+    if let Some(status) = child
+        .try_wait()
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "prototype1_successor_stop_poll",
+            detail: source.to_string(),
+        })?
+    {
+        return Ok(StopState::Exited(status.code()));
+    }
+    signal_successor(child.id(), "-STOP")?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    loop {
+        if process_stopped(child.id())? {
+            return Ok(StopState::Stopped);
+        }
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|source| PrepareError::DatabaseSetup {
+                phase: "prototype1_successor_stop_poll",
+                detail: source.to_string(),
+            })?
+        {
+            return Ok(StopState::Exited(status.code()));
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "successor process group {} did not stop before timeout reconciliation",
+                    child.id()
+                ),
+            });
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+#[cfg(not(unix))]
+fn stop_successor(_child: &mut std::process::Child) -> Result<StopState, PrepareError> {
+    Err(PrepareError::InvalidBatchSelection {
+        detail: "successor timeout arbitration requires Unix process-group signals".to_string(),
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn process_stopped(pid: u32) -> Result<bool, PrepareError> {
+    let path = PathBuf::from(format!("/proc/{pid}/status"));
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(source) => {
+            return Err(PrepareError::DatabaseSetup {
+                phase: "prototype1_successor_process_status",
+                detail: format!("cannot read '{}': {source}", path.display()),
+            });
+        }
+    };
+    Ok(text
+        .lines()
+        .find(|line| line.starts_with("State:"))
+        .is_some_and(|line| {
+            line.split_whitespace()
+                .nth(1)
+                .is_some_and(|state| matches!(state, "T" | "t"))
+        }))
+}
+
+#[cfg(all(unix, not(target_os = "linux")))]
+fn process_stopped(_pid: u32) -> Result<bool, PrepareError> {
+    Err(PrepareError::InvalidBatchSelection {
+        detail: "successor timeout quiescence requires Linux process status evidence".to_string(),
+    })
+}
+
+#[cfg(unix)]
+fn signal_successor(pid: u32, signal: &str) -> Result<(), PrepareError> {
+    let status = ProcessCommand::new("kill")
+        .arg(signal)
+        .arg("--")
+        .arg(format!("-{pid}"))
+        .status()
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "prototype1_successor_signal",
+            detail: source.to_string(),
+        })?;
+    if status.success() {
+        return Ok(());
+    }
+    Err(PrepareError::InvalidBatchSelection {
+        detail: format!(
+            "failed to send {signal} to successor process group {pid}: exit {:?}",
+            status.code()
+        ),
+    })
+}
+
+#[cfg(unix)]
+fn resume_successor(child: &mut std::process::Child) -> Result<(), PrepareError> {
+    signal_successor(child.id(), "-CONT")?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    loop {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|source| PrepareError::DatabaseSetup {
+                phase: "prototype1_successor_resume_poll",
+                detail: source.to_string(),
+            })?
+        {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "successor exited with code {:?} while resuming from Ready arbitration",
+                    status.code()
+                ),
+            });
+        }
+        if !process_stopped(child.id())? {
+            return Ok(());
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "successor process group {} remained stopped after CONT",
+                    child.id()
+                ),
+            });
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+#[cfg(not(unix))]
+fn resume_successor(_child: &mut std::process::Child) -> Result<(), PrepareError> {
+    Ok(())
+}
+
+fn terminate_successor(child: &mut std::process::Child) -> Result<(), PrepareError> {
+    if child
+        .try_wait()
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "prototype1_successor_terminate_poll",
+            detail: source.to_string(),
+        })?
+        .is_some()
+    {
+        return Ok(());
+    }
+    #[cfg(unix)]
+    if let Err(group_error) = signal_successor(child.id(), "-KILL") {
+        if let Err(source) = child.kill() {
+            if child
+                .try_wait()
+                .map_err(|poll| PrepareError::DatabaseSetup {
+                    phase: "prototype1_successor_terminate_poll",
+                    detail: poll.to_string(),
+                })?
+                .is_none()
+            {
+                return Err(PrepareError::InvalidBatchSelection {
+                    detail: format!(
+                        "could not terminate successor group or leader: {group_error}; direct kill failed: {source}"
+                    ),
+                });
+            }
+            return Ok(());
+        }
+    }
+    #[cfg(not(unix))]
+    child.kill().map_err(|source| PrepareError::DatabaseSetup {
+        phase: "prototype1_successor_terminate",
+        detail: source.to_string(),
+    })?;
+    child
+        .wait()
+        .map(|_| ())
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "prototype1_successor_terminate_wait",
+            detail: source.to_string(),
+        })
+}
+
+fn reconcile_persisted_ready(
+    invocation: &SuccessorInvocation,
+    invocation_path: &Path,
+    manifest_path: &Path,
+    spawned_pid: u32,
+) -> Result<Option<ReadyReceipt>, PrepareError> {
+    let repo_root =
+        invocation
+            .active_parent_root()
+            .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                detail: "successor invocation is missing active_parent_root".to_string(),
+            })?;
+    let Some(receipt) = persisted_successor_ready(repo_root, invocation_path)? else {
+        return Ok(None);
+    };
+    validate_successor_ready(
+        invocation,
+        invocation_path,
+        manifest_path,
+        spawned_pid,
+        &receipt,
+    )?;
+    reconcile_successor_ready(invocation, receipt.clone())?;
+    Ok(Some(receipt))
+}
+
+fn validate_successor_ready(
+    invocation: &SuccessorInvocation,
+    invocation_path: &Path,
+    manifest_path: &Path,
+    spawned_pid: u32,
+    receipt: &ReadyReceipt,
+) -> Result<(), PrepareError> {
+    receipt
+        .validate_persisted()
+        .map_err(|detail| PrepareError::InvalidBatchSelection { detail })?;
+    let record = receipt.record();
+    if record.campaign_id != *invocation.campaign_id()
+        || record.node_id != invocation.node_id()
+        || record.runtime_id
+            != crate::cli::prototype1_state::invocation::record_runtime_id(invocation.runtime_id())
+        || record.pid != spawned_pid
+    {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: "successor Ready identity does not match the spawned invocation".to_string(),
+        });
+    }
+    let repo_root =
+        invocation
+            .active_parent_root()
+            .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                detail: "successor invocation is missing active_parent_root".to_string(),
+            })?;
+    if let Some(endpoint) = receipt.endpoint() {
+        let expected = crate::cli::prototype1_state::walk::paths::successor_socket(
+            repo_root,
+            invocation.runtime_id(),
+        )?;
+        if endpoint.repo_root() != repo_root || endpoint.socket() != expected {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: "successor Ready is not bound to its deterministic runtime endpoint"
+                    .to_string(),
+            });
+        }
+        std::os::unix::net::UnixStream::connect(&expected).map_err(|source| {
+            PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "successor Step endpoint '{}' is not reachable: {source}",
+                    expected.display()
+                ),
+            }
+        })?;
+        if let Some(active) = endpoint::load(repo_root)?
+            && receipt.predecessor() != Some(&active)
+        {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: "successor Ready predecessor does not match the active walk endpoint"
+                    .to_string(),
+            });
+        }
+    }
+    let parent = load_parent_identity_optional(repo_root)?.ok_or_else(|| {
+        PrepareError::InvalidBatchSelection {
+            detail: "successor Ready cannot resolve the installed parent identity".to_string(),
+        }
+    })?;
+    let store = crate::cli::prototype1_state::session::Store::for_manifest(manifest_path);
+    let snapshot = store
+        .inspect(&parent)
+        .map_err(|source| PrepareError::InvalidBatchSelection {
+            detail: format!("cannot inspect successor controller session: {source}"),
+        })?
+        .ok_or_else(|| PrepareError::InvalidBatchSelection {
+            detail: "successor Ready has no durable controller session".to_string(),
+        })?;
+    let created = snapshot
+        .created
+        .as_ref()
+        .ok_or_else(|| PrepareError::InvalidBatchSelection {
+            detail: "successor Ready session is missing its creation authority".to_string(),
+        })?;
+    if created.session_id() != receipt.commit().session_id()
+        || created.mode() != receipt.commit().mode()
+        || created.successor_runtime() != Some(invocation.runtime_id())
+        || created
+            .handoff_path()
+            .is_none_or(|path| !same_existing_path(path, invocation_path))
+    {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: "successor Ready does not match its durable session origin".to_string(),
+        });
+    }
+    snapshot
+        .validate_ready_receipt(invocation.runtime_id(), receipt)
+        .map_err(|source| PrepareError::InvalidBatchSelection {
+            detail: source.to_string(),
+        })?;
+    Ok(())
 }
 
 // ANCHOR: prototype1_spawn_and_handoff_successor
@@ -3256,7 +4237,15 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
     parent: Parent<Selectable>,
     selection_entry: crate::cli::prototype1_state::history::SelectionDecisionEntry,
     mode: SuccessorHandoffMode,
-) -> Result<(Parent<Retired>, Option<Prototype1SuccessorHandoff>), PrepareError> {
+    attempt: PredecessorAttempt,
+) -> Result<(Parent<Retired>, HandoffOutcome), PrepareError> {
+    #[cfg(feature = "demo")]
+    if mode == SuccessorHandoffMode::Exec {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: "demo exec handoff cannot preserve the fenced Ready/accept/release protocol; use detached handoff"
+                .to_string(),
+        });
+    }
     let manifest_path = campaign_manifest_path(campaign_id)?;
     let artifact = selected.selected();
     let node = artifact.node();
@@ -3400,6 +4389,7 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
         runtime_id,
         prototype1_transition_journal_path(&manifest_path),
         active_parent_root.to_path_buf(),
+        attempt.clone(),
     );
     let successor_channel_endpoints = invocation.channel_endpoints();
     let ready_path = successor_channel_endpoints
@@ -3440,64 +4430,8 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
         ready_path = %ready_path.display(),
     ));
 
-    #[cfg(feature = "demo")]
-    if mode == SuccessorHandoffMode::Exec {
-        crate::cli::prototype1_state::invocation::write_successor_invocation_for_retired_parent(
-            &retired_parent,
-            &invocation_path,
-            &invocation,
-        )?;
-        let pid = std::process::id();
-        append_successor_record(
-            invocation.journal_path(),
-            SuccessorRecord::spawned(
-                &invocation,
-                pid,
-                active_parent_root.to_path_buf(),
-                active_successor_binary_path.clone(),
-                invocation_path.clone(),
-                ready_path.clone(),
-                streams.clone(),
-            ),
-            "prototype1_successor_exec_journal",
-        )?;
-        append_prototype1_journal_entry(
-            &manifest_path,
-            JournalEntry::SuccessorHandoff(SuccessorHandoffEntry {
-                recorded_at: RecordedAt::now(),
-                campaign_id: campaign_id.clone(),
-                node_id: node.node_id.clone(),
-                runtime_id,
-                active_parent_root: active_parent_root.to_path_buf(),
-                binary_path: active_successor_binary_path.clone(),
-                invocation_path: invocation_path.clone(),
-                ready_path: ready_path.clone(),
-                streams: Some(streams.clone()),
-                pid,
-            }),
-            "prototype1_successor_exec_handoff_journal",
-        )?;
-        spawn_step.success();
-        debug!(
-            target: EXECUTION_DEBUG_TARGET,
-            campaign = %campaign_id,
-            node_id = %node.node_id,
-            runtime_id = %runtime_id,
-            pid,
-            "demo exec handoff replacing parent process with successor"
-        );
-        exec_prototype1_successor(
-            &active_successor_binary_path,
-            active_parent_root,
-            &invocation_path,
-            &invocation,
-            &retired_parent,
-        )?;
-        unreachable!("successful exec replaces the current process");
-    }
-
     let _ = mode;
-    let mut child = match spawn_prototype1_successor(
+    let child = match spawn_prototype1_successor(
         &active_successor_binary_path,
         active_parent_root,
         &invocation_path,
@@ -3505,21 +4439,23 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
         &retired_parent,
         &streams,
     ) {
-        Ok(child) => {
+        Ok((child, incarnation, publication)) => {
             spawn_step.success();
-            child
+            (child, incarnation, publication)
         }
         Err(error) => {
             spawn_step.fail("successor_spawn", &error);
             return Err(error);
         }
     };
+    let (mut child, incarnation, publication) = child;
     let pid = child.id();
-    append_successor_record(
+    if let Err(error) = append_successor_record(
         invocation.journal_path(),
         SuccessorRecord::spawned(
             &invocation,
             pid,
+            incarnation,
             active_parent_root.to_path_buf(),
             active_successor_binary_path.clone(),
             invocation_path.clone(),
@@ -3527,7 +4463,10 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
             streams.clone(),
         ),
         "prototype1_successor_start_journal",
-    )?;
+    ) {
+        return Err(terminate_with_error(&mut child, error));
+    }
+    drop(publication);
     let ready_step = observe::Step::start(observe::span!(
         "prototype1.successor.ready_wait",
         campaign_id = %campaign_id,
@@ -3540,28 +4479,35 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
         invocation_path = %invocation_path.display(),
         ready_path = %ready_path.display(),
     ));
-    match wait_for_prototype1_successor_ready(&mut child, successor_channel.as_ref())? {
-        SuccessorWait::Ready => {
+    match wait_for_prototype1_successor_ready(
+        &mut child,
+        successor_channel.as_ref(),
+        &invocation,
+        &invocation_path,
+        &manifest_path,
+    )? {
+        SuccessorWait::Ready(receipt) => {
             ready_step.success();
-            append_prototype1_journal_entry(
-                &manifest_path,
-                JournalEntry::SuccessorHandoff(SuccessorHandoffEntry {
-                    recorded_at: RecordedAt::now(),
-                    campaign_id: campaign_id.clone(),
-                    node_id: node.node_id.clone(),
-                    runtime_id,
-                    active_parent_root: active_parent_root.to_path_buf(),
-                    binary_path: active_successor_binary_path,
-                    invocation_path,
-                    ready_path: ready_path.clone(),
-                    streams: Some(streams),
-                    pid,
-                }),
-                "prototype1_successor_handoff_journal",
-            )?;
+            let attempt = invocation.predecessor_attempt().cloned().ok_or_else(|| {
+                PrepareError::InvalidBatchSelection {
+                    detail: "persisted successor invocation lost predecessor attempt authority"
+                        .to_string(),
+                }
+            })?;
+            let acceptance = HandoffAcceptance::new(receipt, attempt).map_err(|detail| {
+                PrepareError::InvalidBatchSelection {
+                    detail: format!("cannot bind successor Ready acceptance: {detail}"),
+                }
+            })?;
+            PrototypeJournal::new(invocation.journal_path().to_path_buf())
+                .project_handoff(runtime_id, acceptance)
+                .map_err(|source| PrepareError::DatabaseSetup {
+                    phase: "prototype1_successor_handoff_journal",
+                    detail: source.to_string(),
+                })?;
             Ok((
                 retired_parent,
-                Some(Prototype1SuccessorHandoff {
+                HandoffOutcome::Ready(Prototype1SuccessorHandoff {
                     runtime_id,
                     pid,
                     ready_path,
@@ -3570,26 +4516,23 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
         }
         SuccessorWait::TimedOut { waited_ms } => {
             ready_step.timed_out();
+            let record = SuccessorRecord::timed_out(&invocation, waited_ms, ready_path);
             append_successor_record(
                 invocation.journal_path(),
-                SuccessorRecord::timed_out(&invocation, waited_ms, ready_path),
+                record.clone(),
                 "prototype1_successor_timeout_journal",
             )?;
-            Ok((retired_parent, None))
+            Ok((retired_parent, HandoffOutcome::Incomplete(record)))
         }
         SuccessorWait::ExitedBeforeReady { exit_code } => {
             ready_step.exited_before_ready();
+            let record = SuccessorRecord::exited_before_ready(&invocation, exit_code);
             append_successor_record(
                 invocation.journal_path(),
-                SuccessorRecord::exited_before_ready(&invocation, exit_code),
+                record.clone(),
                 "prototype1_successor_exit_journal",
             )?;
-            Err(PrepareError::DatabaseSetup {
-                phase: "prototype1_successor_ready",
-                detail: format!(
-                    "successor exited before acknowledging handoff (exit_code={exit_code:?})"
-                ),
-            })
+            Ok((retired_parent, HandoffOutcome::Incomplete(record)))
         }
     }
 }
@@ -3750,6 +4693,123 @@ fn record_attempt_runner_result(
     Ok(result)
 }
 
+fn child_spawn_error(detail: impl Into<String>) -> PrepareError {
+    PrepareError::DatabaseSetup {
+        phase: "prototype1_child_spawn_barrier",
+        detail: detail.into(),
+    }
+}
+
+fn verify_spawn_receipt(
+    invocation: &ChildInvocation,
+    invocation_path: &Path,
+    node: &crate::intervention::Prototype1NodeRecord,
+    request: &crate::intervention::Prototype1RunnerRequest,
+    pid: u32,
+    incarnation: &ProcessIncarnation,
+) -> Result<(), PrepareError> {
+    let journal = PrototypeJournal::new(invocation.journal_path().to_path_buf());
+    let replay = journal.replay_spawn_child().map_err(|source| {
+        child_spawn_error(format!("cannot replay child Spawned receipt: {source}"))
+    })?;
+    let matching = replay
+        .iter()
+        .filter(|entry| entry.spawned.runtime_id == invocation.runtime_id())
+        .collect::<Vec<_>>();
+    let [replayed] = matching.as_slice() else {
+        return Err(child_spawn_error(format!(
+            "expected one Spawned receipt for runtime {}, found {}",
+            invocation.runtime_id(),
+            matching.len()
+        )));
+    };
+    let spawned = &replayed.spawned;
+    let expected_argv = invocation.launch_args(invocation_path);
+    if !spawned.matches_child(invocation.runtime_id(), pid, incarnation)
+        || spawned.refs.campaign_id != *invocation.campaign_id()
+        || spawned.refs.node_id != invocation.node_id()
+        || spawned.generation != node.generation
+        || spawned.refs.instance_id != node.instance_id
+        || spawned.refs.branch_id != node.branch_id
+        || spawned.refs.candidate_id != node.candidate_id
+        || spawned.paths.repo_root != request.workspace_root
+        || spawned.paths.workspace_root != request.workspace_root
+        || spawned.paths.binary_path != request.binary_path
+        || spawned.paths.target_relpath != request.target_relpath
+        || spawned.argv != expected_argv
+    {
+        return Err(child_spawn_error(format!(
+            "Spawned receipt for runtime {} does not exactly match this child launch",
+            invocation.runtime_id()
+        )));
+    }
+    Ok(())
+}
+
+fn await_spawn_receipt(
+    invocation: &ChildInvocation,
+    invocation_path: &Path,
+    node: &crate::intervention::Prototype1NodeRecord,
+    request: &crate::intervention::Prototype1RunnerRequest,
+) -> Result<(), PrepareError> {
+    let pid = std::process::id();
+    let incarnation = process_incarnation(pid)
+        .map_err(|source| {
+            child_spawn_error(format!(
+                "cannot capture exact identity for child process {pid}: {source}"
+            ))
+        })?
+        .ok_or_else(|| {
+            child_spawn_error(format!(
+                "child process {pid} disappeared before launch admission"
+            ))
+        })?;
+    let barrier_path = crate::cli::prototype1_state::c3::spawn_barrier_path(invocation_path);
+    let deadline = std::time::Instant::now() + CHILD_SPAWN_TIMEOUT;
+    loop {
+        match fs::read(&barrier_path) {
+            Ok(bytes) => {
+                let admitted =
+                    serde_json::from_slice::<ProcessIncarnation>(&bytes).map_err(|source| {
+                        child_spawn_error(format!(
+                            "cannot decode spawn barrier '{}': {source}",
+                            barrier_path.display()
+                        ))
+                    })?;
+                if admitted != incarnation {
+                    return Err(child_spawn_error(format!(
+                        "spawn barrier '{}' belongs to a different process incarnation",
+                        barrier_path.display()
+                    )));
+                }
+                return verify_spawn_receipt(
+                    invocation,
+                    invocation_path,
+                    node,
+                    request,
+                    pid,
+                    &incarnation,
+                );
+            }
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+                if std::time::Instant::now() >= deadline {
+                    return Err(child_spawn_error(format!(
+                        "timed out waiting for durable spawn barrier '{}'",
+                        barrier_path.display()
+                    )));
+                }
+                std::thread::sleep(CHILD_SPAWN_POLL);
+            }
+            Err(source) => {
+                return Err(child_spawn_error(format!(
+                    "cannot read spawn barrier '{}': {source}",
+                    barrier_path.display()
+                )));
+            }
+        }
+    }
+}
+
 pub(super) async fn execute_prototype1_runner_invocation(
     invocation_path: &Path,
 ) -> Result<Prototype1RunnerResult, PrepareError> {
@@ -3772,6 +4832,7 @@ pub(super) async fn execute_prototype1_runner_invocation(
     let node = invocation.node_record()?.clone();
     let request = invocation.runner_request()?.clone();
     let resolved = invocation.resolved()?.clone();
+    await_spawn_receipt(&invocation, invocation_path, &node, &request)?;
 
     debug!(
         target: EXECUTION_DEBUG_TARGET,
@@ -3977,7 +5038,7 @@ pub(super) async fn run_prototype1_resolved_branch_treatment(
         let baseline_resolved = step!(
             "prototype1.child.evaluate.resolve_baseline_campaign",
             "ResolveBaselineCampaign",
-            || resolve_campaign_config(baseline_campaign_id, &CampaignOverrides::default()),
+            || crate::campaign::resolve_explicit_campaign(baseline_campaign_id),
         )?;
         let treatment_campaign = step!(
             "prototype1.child.evaluate.prepare_treatment_campaign",

@@ -4115,6 +4115,8 @@ mod tests {
                 "artifact:sibling",
             ),
         ];
+        graph.candidates.candidates[0].patch_review =
+            Some(test_patch_review("child-1", "branch-child"));
         graph.selections.selections.insert(
             entry_id.clone(),
             ploke_tree::graph::SelectionNode {
@@ -4188,6 +4190,15 @@ mod tests {
             .expect("first comparison candidate resolves");
         assert_eq!(first.child.node.node_id.as_str(), "child-1");
         assert!(first.selected);
+        let review = first
+            .candidate
+            .and_then(|candidate| candidate.patch_review.as_ref())
+            .expect("candidate patch review resolves through comparison slot");
+        assert_eq!(
+            review.verdict,
+            ploke_records::selection::PatchVerdict::Rejected
+        );
+        assert_eq!(review.blocking_findings, ["unsafe process-global cache"]);
         assert_eq!(
             first
                 .metric
@@ -4262,7 +4273,40 @@ mod tests {
             primary_runtime_id: None,
             artifact_after: Some(ArtifactId(artifact_after.to_owned())),
             patch_id: None,
+            patch_review: None,
             evidence: Vec::new(),
+        }
+    }
+
+    fn test_patch_review(node_id: &str, branch_id: &str) -> ploke_records::selection::PatchReview {
+        ploke_records::selection::PatchReview {
+            schema_version: 2,
+            procedure_id: "prototype1.candidate_patch_review.v2".to_owned(),
+            candidate: ploke_records::selection::CandidateRef {
+                node_id: node_id.to_owned(),
+                branch_id: branch_id.to_owned(),
+                generation: 1,
+            },
+            artifact_id: ArtifactId("artifact:after".to_owned()),
+            artifact_surface_hash: HistoryHash("surface:after".to_owned()),
+            evaluation_hash: HistoryHash("evaluation:after".to_owned()),
+            config_hash: HistoryHash("review-config".to_owned()),
+            change_set_hash: HistoryHash("change-set".to_owned()),
+            changes: vec![ploke_records::selection::PatchChange {
+                relpath: "src/lib.rs".into(),
+                source_content_hash: Some("source".to_owned()),
+                proposed_content_hash: Some("proposed".to_owned()),
+            }],
+            verdict: ploke_records::selection::PatchVerdict::Rejected,
+            confidence: ploke_records::selection::Confidence::High,
+            blocking_findings: vec!["unsafe process-global cache".to_owned()],
+            missing_evidence: Vec::new(),
+            rationale: vec!["reviewed exact change".to_owned()],
+            citation: ploke_records::history::EvidenceCitationRecord {
+                ref_id: format!("candidate-review:{branch_id}"),
+                content_hash: Some(HistoryHash("review-content".to_owned())),
+                record_name: Some("prototype1_candidate_patch_review".to_owned()),
+            },
         }
     }
 
@@ -4284,6 +4328,9 @@ mod tests {
                         metric_inputs: "operational".to_owned(),
                         oracle_mode: "record_only".to_owned(),
                         oracle_require_evidence: true,
+                        oracle_gate: ploke_records::run_profile::OracleGate::Disabled,
+                        patch_gate: ploke_records::run_profile::PatchGate::Disabled,
+                        oracle_targets: Vec::new(),
                         total_weight: 1.0,
                         sample: Some(0.25),
                         sample_threshold: Some(0.25),
@@ -4598,6 +4645,7 @@ mod tests {
                     primary_runtime_id: None,
                     artifact_after: Some(base.clone()),
                     patch_id: None,
+                    patch_review: None,
                     evidence: Vec::new(),
                 }],
                 branches: vec![ploke_tree::graph::CandidateBranchNode {
@@ -4692,6 +4740,7 @@ mod tests {
                     primary_runtime_id: None,
                     artifact_after: Some(ArtifactId("artifact:after".to_owned())),
                     patch_id: None,
+                    patch_review: None,
                     evidence: Vec::new(),
                 }],
                 ..Default::default()

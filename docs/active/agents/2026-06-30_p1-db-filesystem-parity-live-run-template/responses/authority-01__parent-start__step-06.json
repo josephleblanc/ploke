@@ -1,0 +1,38 @@
+{
+  "campaign_id": "p1-gated-parent-3g1x3-p3-20260630-174316",
+  "db_path": "/home/brasides/.ploke-eval/campaigns/p1-gated-parent-3g1x3-p3-20260630-174316/prototype1/eval-store.cozo.sqlite",
+  "headers": [
+    "campaign_id",
+    "parent_id",
+    "node_id",
+    "generation",
+    "branch_id",
+    "repo_root",
+    "startup_kind",
+    "pid",
+    "transition",
+    "phase",
+    "outcome",
+    "semantic_hash"
+  ],
+  "repo_root": "/home/brasides/.ploke-eval/worktrees/p1-gated-parent-3g1x3-p3-20260630-174316",
+  "row_count": 1,
+  "rows": [
+    {
+      "branch_id": "prototype1-parent-p1-gated-parent-3g1x3-p3-20260630-174316-gen0",
+      "campaign_id": "p1-gated-parent-3g1x3-p3-20260630-174316",
+      "generation": 0,
+      "node_id": "node-ec383aa38762a3d4",
+      "outcome": "recorded",
+      "parent_id": "node-ec383aa38762a3d4",
+      "phase": "parent_started",
+      "pid": 82070,
+      "repo_root": "/home/brasides/.ploke-eval/worktrees/p1-gated-parent-3g1x3-p3-20260630-174316",
+      "semantic_hash": "14cc638cfd6e6d071f349f4cb7b2abd7044d007f3ad658b30fc25fd04ae55600",
+      "startup_kind": "genesis",
+      "transition": "r4c_to_r5"
+    }
+  ],
+  "script": "?[campaign_id, parent_id, node_id, generation, branch_id, repo_root, startup_kind, pid, transition, phase, outcome, semantic_hash] :=\n  *eval_parent_start{\n    campaign_id,\n    parent_id,\n    node_id,\n    generation,\n    branch_id,\n    repo_root,\n    startup_kind,\n    pid,\n    semantic_hash\n  },\n  *eval_transition_event{\n    campaign_id,\n    parent_id,\n    node_id,\n    generation,\n    transition,\n    phase,\n    outcome\n  }",
+  "type": "walk_db_query"
+}

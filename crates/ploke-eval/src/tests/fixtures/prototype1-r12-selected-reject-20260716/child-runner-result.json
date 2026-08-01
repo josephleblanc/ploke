@@ -1,0 +1,12 @@
+{
+  "schema_version": "prototype1-treatment-node.v1",
+  "campaign_id": "p1-v11-keeponly-g35f-oropenai-3g1x3-p3-20260716-185301",
+  "node_id": "node-cb1b41e21e01ddc7",
+  "generation": 1,
+  "branch_id": "branch-aef83be6f4105a58",
+  "status": "succeeded",
+  "disposition": "succeeded",
+  "treatment_campaign_id": "p1-v11-keeponly-g35f-oropenai-3g1x3-p3-20260716-185301-treatment-branch-aef83be6f4105a58-1784255627308",
+  "exit_code": 0,
+  "recorded_at": "2026-07-17T02:40:15.270565398+00:00"
+}

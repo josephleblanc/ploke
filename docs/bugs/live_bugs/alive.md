@@ -1,5 +1,13 @@
 # Bugs that are still alive
 
+## Post-apply BM25 readiness timeout masks reindex backlog (Jun 29, 2026)
+
+Detected: Jun 28, 2026
+
+Report: [004-post-apply-bm25-readiness-timeout.md](004-post-apply-bm25-readiness-timeout.md)
+
+Broad-harness post-apply refresh can fail with a misleading BM25 readiness timeout while scan/reindex work and BM25 actor mailbox/backpressure are active. Timeout increase in `9dec3fcb0` is a workaround, not a root fix.
+
 ## Duplicate Relation (Sep 24, 2025)
 
 Detected: Sep 24, 2025

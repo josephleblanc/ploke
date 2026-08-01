@@ -11,7 +11,7 @@ Use this section for current operator and implementation truth.
 | What phase am I in? | [Phase Map](phase-map.md) |
 | How do I inspect a stalled run? | [Debugging Playbook](debugging-playbook.md) |
 | How do I recover without weakening authority? | [Recovery](recovery.md) |
-| How do I use the typestate debugger? | [Loop Walk](loop-walk.md) |
+| How do I set up, drive, and inspect a live walk? | [Loop Walk](loop-walk.md) |
 | What fields are in the admitted profile? | [Run Profile](run-profile.md) |
 | Where does the loop write, and how does it map to Cozo? | [Persistence Inventory and Cozo Map](persistence-inventory-and-cozo-map.md) |
 | How should edit-generation strategies become composable? | [Edit Strategy Algebra](edit-strategy-algebra.md) |
