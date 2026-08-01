@@ -59,6 +59,7 @@ use crate::{
             invocation::{ProcessIncarnation, process_incarnation},
             journal::{JournalEntry, PrototypeJournal, prototype1_transition_journal_path},
             session::{Attempt, AttemptResult, Damage, SessionId, Store},
+            setup_admission::{RunLock, run_lock},
             successor,
         },
     },
@@ -82,7 +83,7 @@ use super::{
         WalkRequestBody, WalkResponse, WalkSessionHistory, WalkSessionSnapshot, WalkStartConfig,
         WalkTransitionReceipt,
     },
-    query::run_snapshot_query,
+    query::{SnapshotQuery, run_snapshot_query},
     trace,
 };
 
@@ -341,6 +342,7 @@ pub(crate) struct PreparedServer {
     listener: UnixListener,
     endpoint: ServerEndpoint,
     epoch: ServerEpoch,
+    authority: RunLock,
     idle_ttl: Option<Duration>,
     publish: bool,
     restore: JobRestoreScope,
@@ -364,6 +366,32 @@ struct JobRegistry {
     active: Option<ActiveWalkJob>,
     completed: BTreeMap<OperationId, StoredOperation>,
     stopping: bool,
+}
+
+impl JobRegistry {
+    fn status_job(&self) -> Option<WalkJobSnapshot> {
+        self.active
+            .as_ref()
+            .map(|active| active.snapshot.clone())
+            .or_else(|| {
+                // `job_id` is the server admission sequence. The durable
+                // timestamp and typed operation id make malformed legacy ties
+                // deterministic without treating map order as chronology.
+                self.completed
+                    .values()
+                    .filter(|stored| !stored.snapshot.status.blocks_mutation())
+                    .max_by(|left, right| {
+                        left.snapshot
+                            .job_id
+                            .cmp(&right.snapshot.job_id)
+                            .then_with(|| left.snapshot.updated_at.cmp(&right.snapshot.updated_at))
+                            .then_with(|| {
+                                left.snapshot.operation_id.cmp(&right.snapshot.operation_id)
+                            })
+                    })
+                    .map(|stored| stored.snapshot.clone())
+            })
+    }
 }
 
 struct ActiveWalkJob {
@@ -898,6 +926,7 @@ fn prepare(
 ) -> Result<PreparedServer, PrepareError> {
     let idle_ttl = command.idle_ttl()?;
     let repo_root = paths::resolve_repo_root(command.repo_root.as_deref())?;
+    let authority = run_lock(&repo_root)?;
     let socket_path = paths::socket_path(&repo_root, command.socket.as_deref())?;
     paths::ensure_socket_parent(&socket_path)?;
     clear_stale(&repo_root, &socket_path)?;
@@ -921,6 +950,7 @@ fn prepare(
         listener,
         endpoint,
         epoch,
+        authority,
         idle_ttl,
         publish,
         restore: JobRestoreScope::Repository,
@@ -936,6 +966,7 @@ pub(crate) async fn serve_prepared(
         listener,
         endpoint,
         epoch,
+        authority,
         idle_ttl,
         publish,
         restore,
@@ -982,6 +1013,7 @@ pub(crate) async fn serve_prepared(
     if let Err(error) = endpoint.cleanup() {
         warn!(error = ?error, socket = %endpoint.socket().display(), "failed to clean owned walk endpoint after server exit");
     }
+    drop(authority);
     result
 }
 
@@ -1741,7 +1773,12 @@ impl WalkServer {
                 ))
             }
             WalkRequestBody::DbQuery { campaign, script } => {
-                self.query_response(campaign, script).await
+                self.query_response(campaign, SnapshotQuery::Raw(script))
+                    .await
+            }
+            WalkRequestBody::EvidenceQuery { campaign, view } => {
+                self.query_response(Some(campaign), SnapshotQuery::Evidence(view))
+                    .await
             }
         };
         match result {
@@ -2947,10 +2984,7 @@ impl WalkServer {
         let durable = durable_state_for(&self.epoch.repo_root)?;
         let (job, stopping) = {
             let jobs = self.jobs.lock().await;
-            (
-                jobs.active.as_ref().map(|active| active.snapshot.clone()),
-                jobs.stopping,
-            )
+            (jobs.status_job(), jobs.stopping)
         };
         let session_exists = durable.version.session_id().is_some();
         let controller = if self.gate.is_read_only() {
@@ -3063,29 +3097,42 @@ impl WalkServer {
             actions,
             blocker,
         };
-        let message = self.render_status_message(heading, job.as_ref(), controller_summary);
+        let message =
+            self.render_status_message(heading, authority, job.as_ref(), controller_summary);
         Ok(WalkResponse::status(snapshot, message, self.epoch.clone()))
     }
 
     async fn query_response(
         &self,
         campaign: Option<CampaignId>,
-        script: String,
+        query: SnapshotQuery,
     ) -> Result<WalkResponse, PrepareError> {
-        let campaign = match campaign {
-            Some(campaign) => campaign,
-            None => identity::load_parent_identity_optional(&self.epoch.repo_root)?
-                .map(|identity| identity.campaign_id().clone())
-                .ok_or_else(|| PrepareError::InvalidBatchSelection {
+        let identity = identity::load_parent_identity_optional(&self.epoch.repo_root)?;
+        let campaign = match (campaign, identity) {
+            (Some(campaign), Some(identity)) if &campaign != identity.campaign_id() => {
+                return Err(PrepareError::InvalidBatchSelection {
+                    detail: format!(
+                        "db_query campaign '{}' does not match parent checkout campaign '{}' at '{}'",
+                        campaign,
+                        identity.campaign_id(),
+                        self.epoch.repo_root.display()
+                    ),
+                });
+            }
+            (Some(campaign), _) => campaign,
+            (None, Some(identity)) => identity.campaign_id().clone(),
+            (None, None) => {
+                return Err(PrepareError::InvalidBatchSelection {
                     detail: format!(
                         "cannot infer campaign id for db_query; provide a campaign id or select a parent checkout containing '{}'",
                         identity::parent_identity_relpath().display()
                     ),
-                })?,
+                });
+            }
         };
         let repo_root = self.epoch.repo_root.clone();
         let result =
-            tokio::task::spawn_blocking(move || run_snapshot_query(repo_root, campaign, script))
+            tokio::task::spawn_blocking(move || run_snapshot_query(repo_root, campaign, query))
                 .await
                 .map_err(|source| PrepareError::DatabaseSetup {
                     phase: "prototype1_state_walk_db_query_task",
@@ -3183,13 +3230,18 @@ impl WalkServer {
     fn render_status_message(
         &self,
         heading: &str,
+        authority: WalkAuthority,
         job: Option<&WalkJobSnapshot>,
         controller_summary: Option<String>,
     ) -> String {
-        let authority = match self.gate.blocker().map(|blocker| blocker.code) {
-            None => "active",
-            Some(WalkBlockerCode::RunCompleted) => "read_only",
-            Some(_) => "transfer_pending",
+        let authority = match authority {
+            WalkAuthority::Active => "active",
+            WalkAuthority::ReadOnly => "read_only",
+            WalkAuthority::TransferPending => "transfer_pending",
+            WalkAuthority::JobActive => "job_active",
+            WalkAuthority::RecoveryRequired => "recovery_required",
+            WalkAuthority::Abandoned => "abandoned",
+            WalkAuthority::Stopping => "stopping",
         };
         let mut lines = vec![
             format!("server_pid={}", std::process::id()),
@@ -3564,6 +3616,7 @@ async fn run_start_job(
     allow_live_api: bool,
     observed: Arc<ControllerCache>,
 ) {
+    let actor = identity::load_parent_identity_optional(&epoch.repo_root);
     let (result, observation) = {
         let mut controller = controller.lock().await;
         let result = match controller
@@ -3617,7 +3670,7 @@ async fn run_start_job(
     observed.update(observation);
     match result {
         Ok((phase, event, message, phase_before, phase_after, edges, version, published)) => {
-            let event_projection = match record_walk_event(&epoch, event) {
+            let event_projection = match record_walk_event(&epoch, actor, event) {
                 Ok(projection) => projection,
                 Err(error) => WalkEventProjection::Failed {
                     detail: error.to_string(),
@@ -3695,6 +3748,7 @@ async fn run_step_job(
     allow_git_changes: bool,
     observed: Arc<ControllerCache>,
 ) {
+    let actor = identity::load_parent_identity_optional(&epoch.repo_root);
     let (result, observation) = {
         let mut controller = controller.lock().await;
         let result = match controller
@@ -3744,7 +3798,7 @@ async fn run_step_job(
     observed.update(observation);
     match result {
         Ok((phase, event, message, phase_before, phase_after, edges, version, published)) => {
-            let event_projection = match record_walk_event(&epoch, event) {
+            let event_projection = match record_walk_event(&epoch, actor, event) {
                 Ok(projection) => projection,
                 Err(error) => WalkEventProjection::Failed {
                     detail: error.to_string(),
@@ -4211,11 +4265,12 @@ fn lock_operation(_file: &fs::File, path: &Path) -> Result<(), PrepareError> {
 
 fn record_walk_event(
     epoch: &ServerEpoch,
+    actor: Result<Option<identity::ParentIdentity>, PrepareError>,
     input: WalkEventInput,
 ) -> Result<WalkEventProjection, PrepareError> {
-    let Some(identity) = identity::load_parent_identity_optional(&epoch.repo_root)? else {
+    let Some(identity) = actor? else {
         return Ok(WalkEventProjection::NotApplicable {
-            detail: "checkout has no parent identity".to_string(),
+            detail: "checkout had no parent identity before the transition".to_string(),
         });
     };
     let db_path = owner_db_path(identity.campaign_id().as_str())?;
@@ -4673,14 +4728,29 @@ mod tests {
                     endpoint,
                     epoch::ServerEpoch,
                     protocol::{WalkOkPayload, WalkSessionEventKind},
+                    query::evidence_query_script,
                 },
             },
         },
         replay::tool_loop::{FsToolLoopStore, ToolLoopSession, ToolLoopStore},
         test_support::env_guard_os,
+        walk_client::WalkEvidenceQuery,
     };
 
     use super::*;
+
+    fn init_repo(path: &Path) {
+        let output = std::process::Command::new("git")
+            .current_dir(path)
+            .args(["init", "--quiet"])
+            .output()
+            .expect("run git init");
+        assert!(
+            output.status.success(),
+            "git init failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 
     fn test_server(repo_root: &Path, gate: MutationGate) -> WalkServer {
         let epoch = ServerEpoch::capture(repo_root).expect("capture server epoch");
@@ -5053,13 +5123,14 @@ mod tests {
         };
         let (response, stop) = server.handle(request).await;
         assert!(!stop, "admitted reset must not stop the server");
-        match response {
+        let completed = match response {
             WalkResponse::Job { phase, job, .. } => {
                 assert_eq!(phase, WalkPhase::Empty);
                 assert_eq!(job.status, WalkJobStatus::Succeeded);
+                job
             }
             other => panic!("release proof did not open the mutation gate: {other:?}"),
-        }
+        };
 
         let pending = test_server(repo.path(), MutationGate::closed());
         let (response, stop) = pending
@@ -5072,7 +5143,11 @@ mod tests {
         assert!(stop, "closed pending endpoint must permit local shutdown");
         match response {
             WalkResponse::Status { snapshot, .. } => {
-                assert!(snapshot.job.is_none(), "shutdown must not invent a job");
+                assert_eq!(
+                    snapshot.job.as_ref(),
+                    Some(&completed),
+                    "shutdown must retain the exact latest durable job"
+                );
                 assert_eq!(snapshot.authority, WalkAuthority::Stopping);
             }
             other => panic!("closed endpoint did not return local shutdown status: {other:?}"),
@@ -5175,10 +5250,15 @@ mod tests {
         let listener = UnixListener::bind(&socket).expect("bind successor socket");
         let endpoint = ServerEndpoint::from_bound(repo.path().to_path_buf(), socket)
             .expect("capture successor endpoint");
+        let authority_path = repo.path().join("authority.lock");
+        let authority =
+            crate::cli::prototype1_state::setup_admission::acquire_run_lock(&authority_path)
+                .expect("acquire successor authority");
         let prepared = PreparedServer {
             listener,
             endpoint: endpoint.clone(),
             epoch: ServerEpoch::capture(repo.path()).expect("capture successor epoch"),
+            authority,
             idle_ttl: None,
             publish: false,
             restore: JobRestoreScope::Repository,
@@ -5188,6 +5268,8 @@ mod tests {
         await_responsive(&endpoint, Duration::from_secs(1))
             .await
             .expect("closed-gate successor must answer Health");
+        crate::cli::prototype1_state::setup_admission::acquire_setup_lock(&authority_path)
+            .expect_err("serving successor must exclude setup");
         let blocked = request_over_socket(
             endpoint.socket(),
             WalkRequestBody::Step {
@@ -5235,6 +5317,8 @@ mod tests {
             .expect("join successor service")
             .expect("serve successor");
         assert!(!endpoint.owns_socket());
+        crate::cli::prototype1_state::setup_admission::acquire_setup_lock(&authority_path)
+            .expect("setup may proceed only after endpoint cleanup and server authority release");
     }
 
     #[tokio::test]
@@ -5444,6 +5528,102 @@ mod tests {
             other => panic!("cross-root start did not fail closed: {other:?}"),
         }
         assert!(server.latest_job().await.is_none());
+        assert_eq!(server.controller.lock().await.phase(), WalkPhase::Empty);
+    }
+
+    #[tokio::test]
+    async fn start_runner_branch_bound_fails_without_session_mutation() {
+        let repo = tempdir().expect("server repo");
+        let server = test_server(repo.path(), MutationGate::open());
+        let guard = test_guard(42);
+        let operation = guard.operation;
+        let operation_path = server.operation_path(guard.operation);
+        let config = WalkStartConfig {
+            campaign: None,
+            repo_root: Some(repo.path().to_path_buf()),
+        };
+        let now = now_rfc3339();
+        let snapshot = WalkJobSnapshot {
+            job_id: 1,
+            operation_id: operation,
+            expected: guard.expected,
+            command: WalkJobKind::Start,
+            status: WalkJobStatus::Running,
+            phase_before: WalkPhase::Empty,
+            phase_after: None,
+            target_phase: Some(WalkPhase::R4b),
+            watch: None,
+            allow_live_api: Some(false),
+            allow_git_changes: None,
+            llm_source: None,
+            allow_workspace_mutation: None,
+            allow_provenance_record: None,
+            started_at: now.clone(),
+            updated_at: now,
+            finished_at: None,
+            message: None,
+            receipt: None,
+            resolution: None,
+        };
+        let stored = StoredOperation {
+            snapshot: snapshot.clone(),
+            fingerprint: b"branch-specific-start".to_vec(),
+        };
+        assert!(
+            server
+                .persist_operation(&stored)
+                .expect("persist admitted Start operation")
+                .is_none()
+        );
+        *server.jobs.lock().await = JobRegistry {
+            next_id: snapshot.job_id,
+            active: Some(ActiveWalkJob {
+                snapshot: snapshot.clone(),
+                fingerprint: stored.fingerprint,
+                handle: None,
+                restored: false,
+            }),
+            completed: BTreeMap::new(),
+            stopping: false,
+        };
+
+        run_start_job(
+            Arc::clone(&server.controller),
+            Arc::clone(&server.llm),
+            Arc::clone(&server.delta),
+            Arc::clone(&server.jobs),
+            server.epoch.clone(),
+            server.operation_root.clone(),
+            snapshot.job_id,
+            snapshot.expected,
+            config,
+            WalkPhase::R4b,
+            false,
+            Arc::clone(&server.observed),
+        )
+        .await;
+
+        let terminal = server
+            .operation_job(operation)
+            .await
+            .expect("Start operation remains observable");
+
+        assert_eq!(terminal.status, WalkJobStatus::Failed);
+        assert!(
+            terminal
+                .message
+                .as_deref()
+                .is_some_and(|detail| detail.contains("branch-specific")),
+            "unexpected terminal message: {:?}",
+            terminal.message
+        );
+        assert!(operation_path.exists());
+        assert_eq!(terminal.phase_before, WalkPhase::Empty);
+        assert_eq!(terminal.phase_after, Some(WalkPhase::Empty));
+        assert_eq!(
+            server.durable_version().expect("inspect durable version"),
+            SessionVersion::empty()
+        );
         assert_eq!(server.controller.lock().await.phase(), WalkPhase::Empty);
     }
 
@@ -7126,6 +7306,171 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn explicit_db_campaign_must_match_parent_identity() {
+        let root = tempdir().expect("temp root");
+        let eval_home = root.path().join("eval-home");
+        let _env = env_guard_os(vec![("PLOKE_EVAL_HOME", OsString::from(&eval_home))]);
+        let repo = root.path().join("parent");
+        let admitted = CampaignId::from("walk-query-admitted");
+        let requested = CampaignId::from("walk-query-other");
+        let parent = ParentIdentity::root_bootstrap(
+            admitted.clone(),
+            "node-root",
+            "instance-1",
+            "branch-1",
+            None,
+        );
+        write_parent_identity(&repo, &parent).expect("write parent identity");
+        let server = test_server(&repo, MutationGate::open());
+
+        let (response, stop) = server
+            .handle(walk_request(WalkRequestBody::DbQuery {
+                campaign: Some(requested.clone()),
+                script: "::relations".to_string(),
+            }))
+            .await;
+
+        assert!(!stop);
+        let WalkResponse::Error { code, detail, .. } = response else {
+            panic!("mismatched campaign must return a typed error");
+        };
+        assert_eq!(code, WalkErrorCode::RequestFailed);
+        assert!(detail.contains(admitted.as_str()), "{detail}");
+        assert!(detail.contains(requested.as_str()), "{detail}");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn explicit_db_campaign_is_allowed_without_parent_identity() {
+        let root = tempdir().expect("temp root");
+        let eval_home = root.path().join("eval-home");
+        let _env = env_guard_os(vec![("PLOKE_EVAL_HOME", OsString::from(&eval_home))]);
+        let campaign = CampaignId::from("walk-query-no-identity");
+        let repo = root.path().join("parent");
+        fs::create_dir_all(&repo).expect("create parent repo");
+        let server = test_server(&repo, MutationGate::open());
+        let db_path = owner_db_path(campaign.as_str()).expect("owner DB path");
+        publish_walk_event(
+            &db_path,
+            &server.epoch,
+            campaign.as_str(),
+            "first",
+            "2026-07-31T00:00:00Z",
+        );
+
+        let (response, stop) = server
+            .handle(walk_request(WalkRequestBody::DbQuery {
+                campaign: Some(campaign.clone()),
+                script: "?[command] := *eval_walk_event { command }".to_string(),
+            }))
+            .await;
+
+        assert!(!stop);
+        let WalkResponse::Query { query } = response else {
+            panic!("explicit campaign without parent identity must remain queryable");
+        };
+        assert_eq!(query.result.campaign_id, campaign);
+        assert_eq!(query.result.row_count, 1);
+        assert_eq!(
+            query.result.rows[0].object,
+            serde_json::json!({"command": "first"})
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn typed_evidence_query_is_server_owned_while_identical_raw_script_stays_raw() {
+        let root = tempdir().expect("temp root");
+        let eval_home = root.path().join("eval-home");
+        let _env = env_guard_os(vec![("PLOKE_EVAL_HOME", OsString::from(&eval_home))]);
+        let campaign = CampaignId::from("walk-query-provenance");
+        let repo = root.path().join("parent");
+        fs::create_dir_all(&repo).expect("create parent repo");
+        let server = test_server(&repo, MutationGate::open());
+        let db_path = owner_db_path(campaign.as_str()).expect("owner DB path");
+        publish_walk_event(
+            &db_path,
+            &server.epoch,
+            campaign.as_str(),
+            "first",
+            "2026-07-31T00:00:00Z",
+        );
+        let view = WalkEvidenceQuery::Progress;
+        let canonical = evidence_query_script(view).to_string();
+
+        let (named, stop) = server
+            .handle(walk_request(WalkRequestBody::EvidenceQuery {
+                campaign: campaign.clone(),
+                view,
+            }))
+            .await;
+
+        assert!(!stop);
+        let WalkResponse::Query { query: named } = named else {
+            panic!("typed evidence request must return a query response");
+        };
+        assert_eq!(named.result.repo_root, repo);
+        assert_eq!(named.result.campaign_id, campaign);
+        assert_eq!(named.result.view, Some(view));
+        assert_eq!(named.result.script, canonical);
+
+        let (raw, stop) = server
+            .handle(walk_request(WalkRequestBody::DbQuery {
+                campaign: Some(campaign.clone()),
+                script: canonical.clone(),
+            }))
+            .await;
+
+        assert!(!stop);
+        let WalkResponse::Query { query: raw } = raw else {
+            panic!("raw expert request must return a query response");
+        };
+        assert_eq!(raw.result.campaign_id, campaign);
+        assert_eq!(raw.result.script, canonical);
+        assert_eq!(raw.result.view, None);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn matching_and_inferred_db_campaign_use_parent_identity() {
+        let root = tempdir().expect("temp root");
+        let eval_home = root.path().join("eval-home");
+        let _env = env_guard_os(vec![("PLOKE_EVAL_HOME", OsString::from(&eval_home))]);
+        let campaign = CampaignId::from("walk-query-parent");
+        let repo = root.path().join("parent");
+        let parent = ParentIdentity::root_bootstrap(
+            campaign.clone(),
+            "node-root",
+            "instance-1",
+            "branch-1",
+            None,
+        );
+        write_parent_identity(&repo, &parent).expect("write parent identity");
+        let server = test_server(&repo, MutationGate::open());
+        let db_path = owner_db_path(campaign.as_str()).expect("owner DB path");
+        publish_walk_event(
+            &db_path,
+            &server.epoch,
+            campaign.as_str(),
+            "first",
+            "2026-07-31T00:00:00Z",
+        );
+
+        for requested in [Some(campaign.clone()), None] {
+            let (response, stop) = server
+                .handle(walk_request(WalkRequestBody::DbQuery {
+                    campaign: requested,
+                    script: "?[command] := *eval_walk_event { command }".to_string(),
+                }))
+                .await;
+
+            assert!(!stop);
+            let WalkResponse::Query { query } = response else {
+                panic!("matching or inferred campaign must remain queryable");
+            };
+            assert_eq!(query.result.campaign_id, campaign);
+            assert_eq!(query.result.row_count, 1);
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn two_clients_query_same_rows_and_revision() {
         let root = tempdir().expect("temp root");
         let eval_home = root.path().join("eval-home");
@@ -7206,6 +7551,99 @@ mod tests {
 
         serving.abort();
         let _ = serving.await;
+    }
+
+    #[test]
+    fn walk_event_keeps_actor_after_handoff_identity_replacement() {
+        let root = tempdir().expect("temp root");
+        let eval_home = root.path().join("eval-home");
+        let _env = env_guard_os(vec![("PLOKE_EVAL_HOME", OsString::from(&eval_home))]);
+        let campaign = CampaignId::from("walk-event-actor");
+        let repo = root.path().join("parent");
+        fs::create_dir_all(&repo).expect("create parent repo");
+
+        let predecessor = ParentIdentity::root_bootstrap(
+            campaign.clone(),
+            "node-predecessor",
+            "instance",
+            "branch-predecessor",
+            Some("artifact-predecessor".to_string()),
+        );
+        write_parent_identity(&repo, &predecessor).expect("write predecessor identity");
+        let epoch = ServerEpoch::capture(&repo).expect("capture predecessor epoch");
+        let actor =
+            identity::load_parent_identity_optional(&repo).expect("capture executing parent");
+        let db_path = owner_db_path(campaign.as_str()).expect("owner DB path");
+        fs::create_dir_all(db_path.parent().expect("owner DB parent"))
+            .expect("create owner DB directory");
+        let db = ploke_db::Database::new_init().expect("owner DB");
+        crate::cli::prototype1_state::eval_store::DbEvalStore::new(&db)
+            .install_schema()
+            .expect("install owner schema");
+        db.write_backup_to_path(&db_path).expect("publish owner DB");
+
+        let successor = ParentIdentity::from_record_for_test(ParentIdentityRecord {
+            schema_version: predecessor.schema_version().to_string(),
+            campaign_id: campaign.clone(),
+            parent_id: "node-successor".to_string(),
+            node_id: "node-successor".to_string(),
+            generation: 1,
+            instance_id: Some("instance".to_string()),
+            previous_parent_id: Some(predecessor.parent_id().to_string()),
+            parent_node_id: Some(predecessor.node_id().to_string()),
+            branch_id: "branch-successor".to_string(),
+            artifact_branch: Some("artifact-successor".to_string()),
+            created_at: "2026-07-26T00:00:00Z".to_string(),
+        });
+        write_parent_identity(&repo, &successor).expect("replace checkout identity at handoff");
+
+        let projection = record_walk_event(
+            &epoch,
+            Ok(actor),
+            WalkEventInput {
+                command: "step",
+                phase_before: Some(WalkPhase::R12),
+                phase_after: WalkPhase::R13b,
+                target_phase: Some(WalkPhase::R13b),
+                watch: Some(false),
+                allow_live_api: Some(false),
+                allow_git_changes: Some(true),
+                transitions: vec![ControlEdge::R12ToR13b.id().to_string()],
+            },
+        )
+        .expect("project handoff walk event");
+        assert_eq!(projection, WalkEventProjection::Recorded);
+
+        let db = crate::cli::prototype1_state::eval_store::load_owner_eval_database(&db_path)
+            .expect("load owner DB");
+        let result = db
+            .raw_query_params(
+                r#"
+?[parent_id, node_id, generation, branch_id, phase_before, phase_after] :=
+    *eval_walk_event {
+        parent_id,
+        node_id,
+        generation,
+        branch_id,
+        phase_before,
+        phase_after,
+    }
+"#,
+                BTreeMap::new(),
+            )
+            .expect("query projected walk event");
+        assert_eq!(result.rows.len(), 1);
+        assert_eq!(
+            result.rows[0],
+            vec![
+                predecessor.parent_id().into(),
+                predecessor.node_id().into(),
+                i64::from(predecessor.generation()).into(),
+                predecessor.branch_id().into(),
+                WalkPhase::R12.to_string().into(),
+                WalkPhase::R13b.to_string().into(),
+            ]
+        );
     }
 
     fn publish_walk_event(
@@ -7769,6 +8207,107 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn status_derives_authority_and_restores_latest_terminal_job() {
+        let repo = tempdir().expect("repo tempdir");
+        let server = test_server(repo.path(), MutationGate::open());
+        let first_operation = OperationId::for_test(9_200);
+        let first = accepted(
+            server
+                .register_job(
+                    MutationGuard {
+                        operation: first_operation,
+                        expected: SessionVersion::empty(),
+                    },
+                    b"first-terminal-job".to_vec(),
+                    test_step_intent(WalkPhase::R6),
+                )
+                .await
+                .expect("register first job"),
+        );
+
+        let running = server
+            .status_response("walk status")
+            .await
+            .expect("render running status");
+        let WalkResponse::Status {
+            message, snapshot, ..
+        } = running
+        else {
+            panic!("running Health did not return a typed status");
+        };
+        assert_eq!(snapshot.authority, WalkAuthority::JobActive);
+        assert!(
+            message.contains("mutation_authority=job_active"),
+            "{message}"
+        );
+
+        finish_job(
+            &server.jobs,
+            &server.operation_root,
+            &server.epoch,
+            first.job_id,
+            WalkJobStatus::Succeeded,
+            Some(WalkPhase::R6),
+            "first job completed".to_string(),
+            None,
+        )
+        .await;
+
+        let latest_operation = OperationId::for_test(9_100);
+        let latest = accepted(
+            server
+                .register_job(
+                    MutationGuard {
+                        operation: latest_operation,
+                        expected: SessionVersion::empty(),
+                    },
+                    b"latest-terminal-job".to_vec(),
+                    test_step_intent(WalkPhase::R6),
+                )
+                .await
+                .expect("register latest job"),
+        );
+        finish_job(
+            &server.jobs,
+            &server.operation_root,
+            &server.epoch,
+            latest.job_id,
+            WalkJobStatus::Succeeded,
+            Some(WalkPhase::R6),
+            "latest job completed".to_string(),
+            None,
+        )
+        .await;
+
+        let restarted = test_server(repo.path(), MutationGate::open());
+        assert!(
+            restarted.jobs.lock().await.active.is_none(),
+            "terminal operations must restore outside the active slot"
+        );
+        let response = restarted
+            .status_response("walk status after restart")
+            .await
+            .expect("render restarted status");
+        let WalkResponse::Status {
+            message, snapshot, ..
+        } = response
+        else {
+            panic!("restarted Health did not return a typed status");
+        };
+        let job = snapshot
+            .job
+            .expect("restarted status must retain the latest terminal job");
+        assert_eq!(job.job_id, latest.job_id);
+        assert_eq!(job.operation_id, latest_operation);
+        assert_eq!(job.status, WalkJobStatus::Succeeded);
+        assert_eq!(snapshot.authority, WalkAuthority::RecoveryRequired);
+        assert!(
+            message.contains("mutation_authority=recovery_required"),
+            "{message}"
+        );
+    }
+
+    #[tokio::test]
     async fn operation_retry_is_idempotent_and_payload_reuse_conflicts() {
         let repo = tempdir().expect("repo tempdir");
         let server = test_server(repo.path(), MutationGate::open());
@@ -8115,6 +8654,7 @@ mod tests {
     #[tokio::test]
     async fn successor_bind_is_unique_without_replacing_active_pointer() {
         let repo = tempdir().expect("repo tempdir");
+        init_repo(repo.path());
         let home = tempdir().expect("eval home tempdir");
         let socket_dir = home.path().join("sockets");
         let _env = env_guard_os(vec![
@@ -8159,6 +8699,7 @@ mod tests {
     #[tokio::test]
     async fn successor_rebind_rejects_live_and_replaces_stale_socket() {
         let repo = tempdir().expect("repo tempdir");
+        init_repo(repo.path());
         let home = tempdir().expect("eval home tempdir");
         let socket_dir = home.path().join("sockets");
         let _env = env_guard_os(vec![

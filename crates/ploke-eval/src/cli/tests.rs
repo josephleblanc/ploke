@@ -2129,12 +2129,66 @@ fn loop_walk_db_query_command_parses() {
                     Some("campaign-1")
                 );
                 assert_eq!(cmd.format, InspectOutputFormat::Json);
-                assert_eq!(cmd.script, "::relations");
+                assert_eq!(cmd.view, None);
+                assert_eq!(cmd.script.as_deref(), Some("::relations"));
             }
             other => panic!("unexpected walk subcommand: {:?}", other),
         },
         other => panic!("unexpected command shape: {:?}", other),
     }
+}
+
+#[test]
+fn loop_walk_named_db_query_views_parse() {
+    for (name, expected) in [
+        ("relations", WalkEvidenceQuery::Relations),
+        ("counts", WalkEvidenceQuery::Counts),
+        ("config-evidence", WalkEvidenceQuery::ConfigEvidence),
+        ("lineage", WalkEvidenceQuery::Lineage),
+        ("progress", WalkEvidenceQuery::Progress),
+        ("handoff-evidence", WalkEvidenceQuery::HandoffEvidence),
+    ] {
+        let parsed =
+            Cli::try_parse_from(["ploke-eval", "loop", "walk", "db_query", "--view", name])
+                .unwrap_or_else(|error| {
+                    panic!("named db_query view '{name}' should parse: {error}")
+                });
+        let Command::Loop(LoopCommand {
+            command: LoopSubcommand::Prototype1StateWalk(cmd),
+        }) = parsed.command
+        else {
+            panic!("unexpected command shape for named db_query view '{name}'");
+        };
+        let Prototype1StateWalkSubcommand::DbQuery(cmd) = cmd.command else {
+            panic!("unexpected walk command for named db_query view '{name}'");
+        };
+        assert_eq!(cmd.view, Some(expected));
+        assert_eq!(cmd.script, None);
+    }
+}
+
+#[test]
+fn loop_walk_db_query_requires_exactly_one_query_source() {
+    let missing = Cli::try_parse_from(["ploke-eval", "loop", "walk", "db_query"]);
+    assert!(
+        missing.is_err(),
+        "db_query without view or script must fail"
+    );
+
+    let conflicting = Cli::try_parse_from([
+        "ploke-eval",
+        "loop",
+        "walk",
+        "db_query",
+        "--view",
+        "progress",
+        "--script",
+        "::relations",
+    ]);
+    assert!(
+        conflicting.is_err(),
+        "db_query with both view and script must fail"
+    );
 }
 
 #[test]

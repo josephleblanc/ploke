@@ -2,12 +2,21 @@ use std::{
     collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
+    sync::OnceLock,
 };
 
 use cozo::DataValue;
 use ploke_db::{Database, QueryResult};
 
-use ploke_llm::request::models::ModelRouteSource;
+use ploke_llm::{
+    LlmError, ProviderAttemptTimeline,
+    manager::{ChatHttpConfig, chat_step_with_attempts},
+    request::models::ModelRouteSource,
+    router_only::{
+        Router,
+        openrouter::{ChatCompFields, OpenRouterModelId},
+    },
+};
 use ploke_protocol::ProtocolReasoningPolicy;
 use ploke_records::{
     agent_turn::{
@@ -22,6 +31,7 @@ use ploke_records::{
     tool_contracts::ToolArgumentsJson,
 };
 use sha2::{Digest, Sha256};
+use tracing_subscriber::EnvFilter;
 
 use super::*;
 use super::{
@@ -68,6 +78,36 @@ use crate::{
     spec::{EvalBudget, FrameworkConfig, FrameworkToolConfig},
     target_registry::RegistryDatasetSource,
 };
+
+static OBSERVATION_URL: OnceLock<&'static str> = OnceLock::new();
+
+#[derive(
+    Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, serde::Serialize, serde::Deserialize,
+)]
+struct ProviderObservationRouter;
+
+impl Router for ProviderObservationRouter {
+    type CompletionFields = ChatCompFields;
+    type RouterModelId = OpenRouterModelId;
+
+    const BASE_URL: &str = "http://127.0.0.1";
+    const COMPLETION_URL: &str = "http://127.0.0.1/v1/chat/completions";
+    const MODELS_URL: &str = "http://127.0.0.1/v1/models";
+    const ENDPOINTS_TAIL: &str = "endpoints";
+    const API_KEY_NAME: &str = "PLOKE_TEST_API_KEY";
+    const PROVIDERS_URL: &str = "http://127.0.0.1/v1/providers";
+
+    fn resolve_api_key() -> Result<String, LlmError> {
+        Ok("test-key".to_string())
+    }
+
+    fn completion_url() -> Result<&'static str, LlmError> {
+        Ok(OBSERVATION_URL
+            .get()
+            .copied()
+            .expect("observation URL must be set before chat_step"))
+    }
+}
 
 #[test]
 fn eval_store_production_code_uses_schema_generated_cozo_scripts() {
@@ -4099,6 +4139,281 @@ fn prototype1_eval_store_trace_observation_jsonl_imports_rows_idempotently() {
     assert_eq!(first.provider_attempt_ids.len(), 2);
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn prototype1_eval_store_imports_emitted_provider_attempt_json() {
+    use std::time::Duration;
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let tmp = tempfile::tempdir().expect("tmp");
+    let log_path = tmp.path().join("provider-attempt.jsonl");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind observation provider");
+    let address = listener.local_addr().expect("observation provider address");
+    let provider = tokio::spawn(async move {
+        let responses = [
+            (
+                "429 Too Many Requests",
+                "Retry-After: 0\r\n",
+                r#"{"error":{"message":"rate limited","code":429}}"#,
+            ),
+            (
+                "200 OK",
+                "",
+                r#"{"id":"provider-observation","object":"chat.completion","created":0,"model":"test/model","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}"#,
+            ),
+        ];
+        for (status, extra_headers, body) in responses {
+            let (mut socket, _) = listener.accept().await.expect("accept provider request");
+            let mut request = Vec::new();
+            loop {
+                let mut chunk = [0_u8; 4 * 1024];
+                let received = socket
+                    .read(&mut chunk)
+                    .await
+                    .expect("read provider request");
+                assert!(received > 0, "provider request must not end early");
+                request.extend_from_slice(&chunk[..received]);
+                let Some(header_end) = request.windows(4).position(|part| part == b"\r\n\r\n")
+                else {
+                    continue;
+                };
+                let header_text = std::str::from_utf8(&request[..header_end])
+                    .expect("provider request headers are UTF-8");
+                let body_len = header_text
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length").then(|| {
+                            value
+                                .trim()
+                                .parse::<usize>()
+                                .expect("content length is usize")
+                        })
+                    })
+                    .unwrap_or_default();
+                if request.len() >= header_end + 4 + body_len {
+                    break;
+                }
+            }
+            let response = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\n{extra_headers}Connection: close\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            );
+            socket
+                .write_all(response.as_bytes())
+                .await
+                .expect("write provider response");
+        }
+    });
+    let url = Box::leak(format!("http://{address}/v1/chat/completions").into_boxed_str());
+    OBSERVATION_URL
+        .set(url)
+        .expect("observation URL is only initialized by this test");
+
+    let output = fs::File::create(&log_path).expect("create observation JSONL");
+    let subscriber = tracing_subscriber::fmt()
+        .json()
+        .flatten_event(true)
+        .with_current_span(true)
+        .with_span_list(true)
+        .with_target(true)
+        .with_level(true)
+        .with_file(true)
+        .with_line_number(true)
+        .without_time()
+        .with_env_filter(EnvFilter::new("off,chat_http=trace"))
+        .with_writer(move || output.try_clone().expect("clone observation writer"))
+        .finish();
+    let trace_guard = tracing::subscriber::set_default(subscriber);
+    let request = ProviderObservationRouter::default_chat_completion()
+        .with_model_str("test/model")
+        .expect("valid model");
+    let mut config = ChatHttpConfig::default();
+    config.max_attempts = 2;
+    config.initial_backoff = Duration::from_millis(1);
+    config.max_backoff = Duration::from_millis(1);
+    config.max_total_elapsed = Some(Duration::from_secs(1));
+
+    let result = chat_step_with_attempts(&reqwest::Client::new(), &request, &config)
+        .await
+        .expect("429 retry reaches parsed success");
+    provider.await.expect("observation provider completes");
+    assert_eq!(result.full_response.id, "provider-observation");
+    assert_eq!(result.provider_attempts.len(), 2);
+    let first = &result.provider_attempts[0];
+    assert_eq!(first.status, Some(429));
+    assert_eq!(
+        first.failure_phase.map(|phase| phase.as_str()),
+        Some("status")
+    );
+    assert_eq!(first.retry_decision.as_str(), "scheduled");
+    assert_eq!(first.retry_after, Some(Duration::ZERO));
+    assert_eq!(first.backoff, Some(Duration::ZERO));
+    let second = &result.provider_attempts[1];
+    assert_eq!(second.status, Some(200));
+    assert_eq!(second.outcome.as_str(), "completed");
+    assert_eq!(second.response_outcome.as_str(), "parsed");
+    assert_eq!(second.retry_decision.as_str(), "none");
+    let emitted = result
+        .provider_attempts
+        .iter()
+        .map(ProviderAttemptTimeline::from_attempt)
+        .collect::<Vec<_>>();
+    drop(trace_guard);
+
+    let db = Database::new_init().expect("db");
+    let store = DbEvalStore::new(&db);
+    let imported = store
+        .import_observation_jsonl(ObservationJsonlImport {
+            campaign_id: Some(CampaignId::from("campaign")),
+            path: log_path,
+        })
+        .expect("import emitted provider attempt");
+    let attempts = query_provider_attempts(&db, &imported.log_ref_id);
+
+    assert_eq!(imported.provider_attempt_ids.len(), emitted.len());
+    assert_eq!(attempts.rows.len(), emitted.len());
+    let int = |value: u64| i64::try_from(value).expect("provider timeline fits Cozo Int");
+    let opt_int = |value: Option<u64>| value.map(int);
+    for row in attempts.row_refs() {
+        let attempt = row.get::<i64>("attempt").expect("attempt");
+        let index = usize::try_from(attempt - 1).expect("positive attempt number");
+        let expected = emitted.get(index).expect("emitted attempt at row index");
+        let row_id = row
+            .get::<String>("provider_attempt_id")
+            .expect("provider attempt id");
+
+        assert!(imported.provider_attempt_ids.contains(&row_id));
+        assert_eq!(
+            row.get::<Option<String>>("campaign_id")
+                .expect("campaign id")
+                .as_deref(),
+            Some("campaign")
+        );
+        assert_eq!(
+            row.get::<String>("request_id").expect("request id"),
+            expected.request_id.to_string()
+        );
+        assert_eq!(attempt, i64::from(expected.attempt));
+        assert_eq!(
+            row.get::<i64>("max_attempts").expect("max attempts"),
+            i64::from(expected.max_attempts)
+        );
+        assert_eq!(
+            row.get::<i64>("started_at_ms").expect("started at"),
+            int(expected.started_at_ms)
+        );
+        assert_eq!(
+            row.get::<Option<i64>>("request_sent_ms")
+                .expect("request sent"),
+            opt_int(expected.request_sent_ms)
+        );
+        assert_eq!(
+            row.get::<Option<i64>>("headers_received_ms")
+                .expect("headers received"),
+            opt_int(expected.headers_received_ms)
+        );
+        assert_eq!(
+            row.get::<Option<i64>>("output_started_ms")
+                .expect("output started"),
+            opt_int(expected.output_started_ms)
+        );
+        assert_eq!(
+            row.get::<Option<i64>>("output_progress_ms")
+                .expect("output progress"),
+            opt_int(expected.output_progress_ms)
+        );
+        assert_eq!(
+            row.get::<Option<i64>>("output_completed_ms")
+                .expect("output completed"),
+            opt_int(expected.output_completed_ms)
+        );
+        assert_eq!(
+            row.get::<Option<i64>>("failed_ms").expect("failed"),
+            opt_int(expected.failed_ms)
+        );
+        assert_eq!(
+            row.get::<Option<i64>>("status").expect("status"),
+            expected.status.map(i64::from)
+        );
+        assert_eq!(
+            row.get::<Option<i64>>("response_bytes")
+                .expect("response bytes"),
+            expected
+                .response_bytes
+                .map(|value| i64::try_from(value).expect("response bytes fit Cozo Int"))
+        );
+        assert_eq!(
+            row.get::<String>("transport_outcome")
+                .expect("transport outcome"),
+            expected.outcome.as_str()
+        );
+        assert_eq!(
+            row.get::<Option<String>>("failure_phase")
+                .expect("failure phase")
+                .as_deref(),
+            expected.failure_phase.map(|phase| phase.as_str())
+        );
+        assert_eq!(
+            row.get::<Option<String>>("send_failure")
+                .expect("send failure")
+                .as_deref(),
+            expected
+                .send_failure
+                .as_ref()
+                .map(|failure| failure.as_str())
+        );
+        assert_eq!(
+            row.get::<Option<String>>("body_failure")
+                .expect("body failure")
+                .as_deref(),
+            expected
+                .body_failure
+                .as_ref()
+                .map(|failure| failure.as_str())
+        );
+        assert_eq!(
+            row.get::<String>("response_outcome")
+                .expect("response outcome"),
+            expected.response_outcome.as_str()
+        );
+        assert_eq!(
+            row.get::<String>("retry_decision").expect("retry decision"),
+            expected.retry_decision.as_str()
+        );
+        assert_eq!(
+            row.get::<Option<i64>>("retry_after_ms")
+                .expect("retry after"),
+            opt_int(expected.retry_after_ms)
+        );
+        assert_eq!(
+            row.get::<Option<i64>>("backoff_ms").expect("backoff"),
+            opt_int(expected.backoff_ms)
+        );
+        assert_eq!(
+            row.get::<Option<String>>("error").expect("error"),
+            expected.error
+        );
+        assert_eq!(
+            row.get::<String>("source_log_ref")
+                .expect("source log reference"),
+            imported.log_ref_id
+        );
+        assert!(
+            row.get::<i64>("source_event_index")
+                .expect("source event index")
+                >= 0
+        );
+        assert_eq!(
+            row.get::<Option<String>>("recorded_at")
+                .expect("recorded at"),
+            None
+        );
+    }
+}
+
 #[test]
 fn prototype1_eval_store_trace_observation_jsonl_invalid_line_fails_without_rows() {
     let tmp = tempfile::tempdir().expect("tmp");
@@ -5386,14 +5701,34 @@ fn query_provider_attempts(db: &Database, log_ref_id: &str) -> QueryResult {
     );
     db.raw_query_params(
         r#"
-?[provider_attempt_id, request_id, attempt, transport_outcome, response_outcome] :=
+?[provider_attempt_id, campaign_id, request_id, attempt, max_attempts, started_at_ms, request_sent_ms, headers_received_ms, output_started_ms, output_progress_ms, output_completed_ms, failed_ms, status, response_bytes, transport_outcome, failure_phase, send_failure, body_failure, response_outcome, retry_decision, retry_after_ms, backoff_ms, error, source_log_ref, source_event_index, recorded_at] :=
     *eval_provider_attempt {
         provider_attempt_id,
+        campaign_id,
         request_id,
         attempt,
+        max_attempts,
+        started_at_ms,
+        request_sent_ms,
+        headers_received_ms,
+        output_started_ms,
+        output_progress_ms,
+        output_completed_ms,
+        failed_ms,
+        status,
+        response_bytes,
         transport_outcome,
+        failure_phase,
+        send_failure,
+        body_failure,
         response_outcome,
-        source_log_ref
+        retry_decision,
+        retry_after_ms,
+        backoff_ms,
+        error,
+        source_log_ref,
+        source_event_index,
+        recorded_at
     },
     source_log_ref = $source_log_ref
 "#,

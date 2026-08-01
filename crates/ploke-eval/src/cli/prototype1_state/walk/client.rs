@@ -58,22 +58,10 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
                 args::resolve_socket(command.repo_root_ref(), socket_override.as_deref())?;
             let client = WalkClient::resolve(Some(&repo_root), socket_override.as_deref())?;
             ensure_server(&client, default_idle_ttl()).await?;
-            let (socket, epoch, guard) = mutation_guard(&client, command.operation_id).await?;
-            let response = send_request(
-                &socket,
-                WalkRequest {
-                    client_protocol: Some(WALK_PROTOCOL_VERSION),
-                    client_epoch: Some(epoch),
-                    body: WalkRequestBody::Step {
-                        guard,
-                        until,
-                        watch,
-                        allow_live_api,
-                        allow_git_changes,
-                    },
-                },
-            )
-            .await?;
+            let operation = command.operation_id.unwrap_or_else(OperationId::new);
+            let response = client
+                .step(until, watch, allow_live_api, allow_git_changes, operation)
+                .await?;
             print_response(&response, format, with_version)?;
             if watch {
                 return watch_active_job(
@@ -560,30 +548,7 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
             let (repo_root, _) =
                 args::resolve_socket(command.repo_root_ref(), socket_override.as_deref())?;
             let client = WalkClient::resolve(Some(&repo_root), socket_override.as_deref())?;
-            let (socket, epoch) = match health(&client).await? {
-                Health::Online { socket, response } => {
-                    let epoch = stop_epoch(&repo_root, &response)?;
-                    (socket, epoch)
-                }
-                Health::Offline { socket } => {
-                    return Err(PrepareError::DatabaseSetup {
-                        phase: "prototype1_state_walk_stop",
-                        detail: format!(
-                            "walk server is offline at '{}'; no endpoint authority was available for stop",
-                            socket.display()
-                        ),
-                    });
-                }
-            };
-            let response = send_request(
-                &socket,
-                WalkRequest {
-                    client_protocol: Some(WALK_PROTOCOL_VERSION),
-                    client_epoch: Some(epoch),
-                    body: WalkRequestBody::Stop,
-                },
-            )
-            .await?;
+            let response = client.stop_idle_server().await?;
             print_response(&response, format, with_version)?;
             response_result(response)
         }
@@ -601,23 +566,12 @@ async fn start(command: Prototype1StateWalkStartCommand) -> Result<(), PrepareEr
     let (repo_root, _) = args::resolve_socket(command.repo_root_ref(), socket_override.as_deref())?;
     let client = WalkClient::resolve(Some(&repo_root), socket_override.as_deref())?;
     ensure_server(&client, idle_ttl).await?;
-    let (socket, epoch, guard) = mutation_guard(&client, command.operation_id).await?;
+    let operation = command.operation_id.unwrap_or_else(OperationId::new);
     let mut config = command.start_config();
     config.repo_root = Some(repo_root.clone());
-    let response = send_request(
-        &socket,
-        WalkRequest {
-            client_protocol: Some(WALK_PROTOCOL_VERSION),
-            client_epoch: Some(epoch),
-            body: WalkRequestBody::Start {
-                guard,
-                config,
-                until,
-                allow_live_api,
-            },
-        },
-    )
-    .await?;
+    let response = client
+        .start(config, until, allow_live_api, operation)
+        .await?;
     print_response(&response, format, with_version)?;
     response_result(response)
 }
@@ -637,9 +591,7 @@ async fn watch_active_job(
     let mut last = response_fingerprint(&initial);
     loop {
         tokio::time::sleep(Duration::from_secs(1)).await;
-        let response = client
-            .send_read_only(WalkRequestBody::OperationStatus { operation })
-            .await?;
+        let response = client.operation_status(operation).await?;
         let fingerprint = response_fingerprint(&response);
         if fingerprint != last {
             print_response(&response, format, with_version)?;
@@ -743,15 +695,33 @@ fn validate_context_root(repo_root: &Path) -> Result<(), PrepareError> {
 }
 
 async fn run_db_query(command: Prototype1StateWalkDbQueryCommand) -> Result<(), PrepareError> {
+    match (&command.view, &command.script) {
+        (Some(_), None) | (None, Some(_)) => {}
+        (Some(_), Some(_)) => {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: "db_query accepts either a named --view or raw --script, not both"
+                    .to_string(),
+            });
+        }
+        (None, None) => {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: "db_query requires a named --view or raw --script".to_string(),
+            });
+        }
+    }
     let (repo_root, _) = args::resolve_socket(command.repo_root.as_deref(), None)?;
     let client = WalkClient::resolve(Some(&repo_root), None)?;
     ensure_server(&client, default_idle_ttl()).await?;
-    let response = client
-        .send_read_only(WalkRequestBody::DbQuery {
-            campaign: command.campaign,
-            script: command.script,
-        })
-        .await?;
+    let query = match (command.view, command.script) {
+        (Some(view), None) => {
+            client
+                .query_evidence(command.campaign.as_ref(), view)
+                .await?
+        }
+        (None, Some(script)) => client.query_db(command.campaign.as_ref(), &script).await?,
+        _ => unreachable!("db_query shape validated before server discovery"),
+    };
+    let response = WalkResponse::Query { query };
     print_response(&response, command.format, true)?;
     response_result(response)
 }
@@ -857,6 +827,7 @@ fn retry_safe_read(body: &WalkRequestBody) -> bool {
             | WalkRequestBody::ShowDelta { .. }
             | WalkRequestBody::Audit { .. }
             | WalkRequestBody::DbQuery { .. }
+            | WalkRequestBody::EvidenceQuery { .. }
             | WalkRequestBody::LlmLanes { .. }
             | WalkRequestBody::LlmShow { .. }
             | WalkRequestBody::LlmTimeline { .. }
@@ -935,22 +906,6 @@ async fn mutation_guard(
 fn fresh_epoch(repo_root: &Path, response: &WalkResponse) -> Result<ServerEpoch, PrepareError> {
     let epoch = ServerEpoch::capture(repo_root)?;
     response_epoch(response).ensure_compatible_request(Some(&epoch))?;
-    Ok(epoch)
-}
-
-/// Bind shutdown to the caller-selected repository while allowing stale-source cleanup.
-fn stop_epoch(repo_root: &Path, response: &WalkResponse) -> Result<ServerEpoch, PrepareError> {
-    let epoch = ServerEpoch::capture(repo_root)?;
-    let server = response_epoch(response);
-    if server.repo_root != epoch.repo_root {
-        return Err(PrepareError::InvalidBatchSelection {
-            detail: format!(
-                "walk repository root mismatch: client='{}' server='{}'",
-                epoch.repo_root.display(),
-                server.repo_root.display()
-            ),
-        });
-    }
     Ok(epoch)
 }
 
@@ -1088,10 +1043,27 @@ fn print_response(
                 println!("repo_root: {}", result.repo_root.display());
                 println!("campaign_id: {}", result.campaign_id);
                 println!("db_path: {}", result.db_path.display());
-                println!("revision: {}", result.revision.as_str());
-                println!("session_revision: {}", query.version.journal_revision());
+                println!("owner_db_revision: {}", result.revision.as_str());
+                println!(
+                    "server_phase_observed_after_owner_db_snapshot: {}",
+                    query.phase
+                );
+                println!(
+                    "server_session_revision_observed_after_owner_db_snapshot: {}",
+                    query.version.journal_revision()
+                );
+                println!("observation_atomic: false");
                 println!("rows: {}", result.row_count);
-                print_multiline("script", &result.script);
+                if let Some(view) = result.view {
+                    println!("view: {}", view.as_str());
+                    if view == crate::walk_client::WalkEvidenceQuery::Counts {
+                        println!(
+                            "view_scope: curated core operator projection; use relations for the complete inventory"
+                        );
+                    }
+                } else {
+                    print_multiline("script", &result.script);
+                }
                 if result.headers.is_empty() {
                     println!("headers: -");
                 } else {

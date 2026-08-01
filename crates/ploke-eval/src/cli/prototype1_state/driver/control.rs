@@ -32,7 +32,7 @@ use super::{
             Failure, Fence, FinishFailure, Finished, Idle, Lease, Outcome, RecoveryCause,
             RecoveryLease, RecoveryOutcome, SessionId, SessionSnapshot, Store, SuccessorAuthority,
         },
-        setup_admission::{load_setup_admission, setup_admission_path},
+        setup_admission::{RunLock, load_setup_admission, run_lock, setup_admission_path},
         successor,
         typestate::{
             self, AsyncStepInput, R0, R1, R2a, R3, R4a, R4bGenesisChecked, R4cReady, R5, R6, R7,
@@ -501,6 +501,7 @@ fn claim_controller_at(
     expected_mode: RunMode,
     expected: Option<&SessionVersion>,
 ) -> Result<Lease<Idle>, PrepareError> {
+    let run = run_lock(repo_root)?;
     let (parent, manifest, admitted) = controller_inputs(repo_root)?;
     let store = Store::for_manifest(&manifest);
     let inspected = store.inspect(&parent).map_err(session_error)?;
@@ -519,6 +520,7 @@ fn claim_controller_at(
             admitted,
             inspected,
             expected,
+            run,
         );
     }
     let setup_path = setup_admission_path(&manifest);
@@ -552,7 +554,7 @@ fn claim_controller_at(
     let epoch = ServerEpoch::capture(repo_root)?;
     let request = Claim::from_setup(setup, parent, &admitted, actual_mode, cursor, epoch)
         .map_err(session_error)?;
-    acquire_claim(&store, request, expected)
+    acquire_claim(run, &store, request, expected)
 }
 
 /// Inspect or terminalize one exact durable controller recovery cause.
@@ -569,8 +571,9 @@ pub(crate) fn recover_controller(
     expected_mode: RunMode,
     directive: RecoveryDirective,
 ) -> Result<String, PrepareError> {
+    let authority = run_lock(repo_root)?;
     let epoch = ServerEpoch::capture(repo_root)?;
-    recover_controller_at(repo_root, expected_mode, directive, &epoch, None)
+    recover_controller_at(repo_root, expected_mode, directive, &epoch, None, authority)
 }
 
 fn recover_controller_at(
@@ -579,6 +582,7 @@ fn recover_controller_at(
     directive: RecoveryDirective,
     epoch: &ServerEpoch,
     expected: Option<&SessionVersion>,
+    _authority: RunLock,
 ) -> Result<String, PrepareError> {
     let (parent, manifest, admitted) = controller_inputs(repo_root)?;
     if admitted.profile.control.mode != expected_mode {
@@ -731,8 +735,17 @@ pub(crate) fn recover_admitted_controller(
     repo_root: &Path,
     directive: RecoveryDirective,
 ) -> Result<String, PrepareError> {
+    let authority = run_lock(repo_root)?;
     let (_, _, admitted) = controller_inputs(repo_root)?;
-    recover_controller(repo_root, admitted.profile.control.mode, directive)
+    let epoch = ServerEpoch::capture(repo_root)?;
+    recover_controller_at(
+        repo_root,
+        admitted.profile.control.mode,
+        directive,
+        &epoch,
+        None,
+        authority,
+    )
 }
 
 /// Resolve the exact recovery cause admitted by a socket mutation guard and
@@ -743,6 +756,7 @@ pub(crate) fn recover_admitted_version(
     epoch: &ServerEpoch,
     expected: &SessionVersion,
 ) -> Result<String, PrepareError> {
+    let authority = run_lock(repo_root)?;
     let (_, _, admitted) = controller_inputs(repo_root)?;
     recover_controller_at(
         repo_root,
@@ -750,12 +764,14 @@ pub(crate) fn recover_admitted_version(
         directive,
         epoch,
         Some(expected),
+        authority,
     )
 }
 
 /// Claim the admitted controller mode for an ancillary mutation that does not
 /// itself advance the outer R-state cursor.
 pub(crate) fn claim_active(repo_root: &Path) -> Result<Lease<Idle>, PrepareError> {
+    let _authority = run_lock(repo_root)?;
     let (_, _, admitted) = controller_inputs(repo_root)?;
     claim_controller(repo_root, admitted.profile.control.mode)
 }
@@ -767,6 +783,7 @@ pub(crate) fn claim_successor(
     expected_mode: RunMode,
     invocation_path: &Path,
 ) -> Result<Lease<Idle>, PrepareError> {
+    let run = run_lock(repo_root)?;
     let (parent, manifest, admitted) = controller_inputs(repo_root)?;
     let store = Store::for_manifest(&manifest);
     let inspected = store.inspect(&parent).map_err(session_error)?;
@@ -779,6 +796,7 @@ pub(crate) fn claim_successor(
         admitted,
         inspected,
         None,
+        run,
     )
 }
 
@@ -791,6 +809,7 @@ fn claim_successor_with(
     admitted: profile::AdmittedRunProfile,
     inspected: Option<SessionSnapshot>,
     expected: Option<&SessionVersion>,
+    run: RunLock,
 ) -> Result<Lease<Idle>, PrepareError> {
     let actual_mode = admitted.profile.control.mode;
     if actual_mode != expected_mode {
@@ -888,7 +907,7 @@ fn claim_successor_with(
         epoch,
     )
     .map_err(session_error)?;
-    acquire_claim(&store, request, expected)
+    acquire_claim(run, &store, request, expected)
 }
 
 /// Inspect whether the predecessor has completed the exact durable transfer
@@ -1080,6 +1099,7 @@ pub(crate) fn recover_successor_handoff(
     expected_mode: RunMode,
     invocation_path: &Path,
 ) -> Result<PredecessorRelease, PrepareError> {
+    let _authority = run_lock(repo_root)?;
     let (parent, manifest, admitted) = controller_inputs(repo_root)?;
     let actual_mode = admitted.profile.control.mode;
     if actual_mode != expected_mode {
@@ -1481,6 +1501,7 @@ fn controller_inputs(
 }
 
 fn acquire_claim(
+    authority: RunLock,
     store: &Store,
     request: Claim,
     expected: Option<&SessionVersion>,
@@ -1491,7 +1512,7 @@ fn acquire_claim(
     }
     .map_err(session_error)?;
     match outcome {
-        Outcome::Acquired(lease) => Ok(lease),
+        Outcome::Acquired(lease) => Ok(lease.with_run_lock(authority)),
         Outcome::Conflict(conflict) => Err(PrepareError::InvalidBatchSelection {
             detail: format!("controller session claim conflicted: {conflict:?}"),
         }),
@@ -2242,6 +2263,7 @@ mod tests {
             git_head: Some("abc123".to_string()),
             active_branch: Some("parent".to_string()),
             source_status_hash: Some("clean".to_string()),
+            build_fingerprint: String::new(),
         };
         let requested = ServerEpoch {
             protocol_version: 11,

@@ -3,6 +3,12 @@
 Status: source repaired; focused and exact historical coverage pass; serial
 `ploke-eval` suite passes; fresh multi-generation live validation pending.
 
+Current contract update (2026-07-31): the historical R12-to-R13b bounded
+request described below is no longer admitted. R13b is one of several possible
+R12 outcomes and therefore does not post-dominate R12. The operator now takes
+one bare Step with the checkout grant and follows its exact typed receipt. The
+target-equality repair remains required for convergent bounded targets.
+
 Discovered: 2026-07-16
 
 Incident campaign:
@@ -25,11 +31,11 @@ already reached.
 The strict successor executable, checkout, History, profile, and digest checks
 remain required. A mismatch must continue to fail closed.
 
-Step mode also must not admit R14b as a bounded target. R12-to-R13b releases
-predecessor authority and transfers the shared walk service to the successor.
-Continuous mode can retain the predecessor lease long enough to finalize R14b;
-the step-mode service currently has no equivalent predecessor-finalization
-authority after transfer.
+Step mode also must not admit R13b or R14b as a bounded target from R12.
+R12-to-R13b releases predecessor authority and transfers the shared walk
+service to the successor. Continuous mode can retain the predecessor lease
+long enough to finalize R14b; the step-mode service currently has no equivalent
+predecessor-finalization authority after transfer.
 
 ## Persisted Evidence
 
@@ -101,10 +107,12 @@ After a committed edge passes the existing wrong-branch and overshoot checks,
 `advance_until` now breaks immediately when `self.phase() == target`. The
 operation returns the version already produced by the committed/released edge.
 
-The step-mode target resolver also rejects R14b before any edge executes. An
-operator must bound the effectful handoff operation at R13b. The transferred
-successor endpoint begins its own durable session at R4c; it cannot be used to
-claim or finalize the predecessor's R14b cursor.
+The step-mode target resolver also rejects R14b before any edge executes. The
+later post-dominator preflight rejects R13b as a bound from R12 before any edge
+claim as well; an operator admits one bare Step and inspects whether the typed
+receipt realized R13a, R13b, or R13c. The transferred successor endpoint begins
+its own durable session at R4c; it cannot be used to claim or finalize the
+predecessor's R14b cursor.
 
 No validation is weakened, no persisted run is rewritten, and no synthetic
 handoff receipt is manufactured. A direct no-op request that starts at its

@@ -1378,18 +1378,63 @@ backend = "dual-strict"
 "#,
     )
     .expect("write profile");
-    let mut command = setup_preview_command(batch_path, profile_path);
-    command.campaign = Some(CampaignId::from("fresh-walk-campaign"));
-    let plan =
-        preview_prototype1_parent_setup_at(&command, repo_root.clone()).expect("preview setup");
-    let setup =
-        prepare_prototype1_parent_setup_at(&command, Some(&plan.plan_sha256), repo_root.clone())
-            .expect("prepare completed setup");
+    let request = crate::setup_client::RunSetupRequest {
+        repo_root: repo_root.clone(),
+        batch: crate::setup_client::RunSetupBatch::Manifest(batch_path),
+        campaign: CampaignId::from("fresh-walk-campaign"),
+        profile: crate::setup_client::RunSetupProfile::Path(profile_path.clone()),
+        primary_instance: None,
+        model: crate::setup_client::RunSetupModel {
+            id: Some("google/gemini-3.5-flash".to_string()),
+            provider: Some("google".to_string()),
+            route: Some(ModelRouteSource::DirectGoogle),
+            max_tokens: None,
+            use_default: false,
+        },
+        protocol: crate::setup_client::RunSetupProtocol {
+            id: Some("google/gemini-3.5-flash".to_string()),
+            provider: Some("google".to_string()),
+            route: Some(ModelRouteSource::DirectGoogle),
+        },
+        embedding: crate::setup_client::RunSetupEmbedding {
+            id: Some("perplexity/pplx-embed-v1-4b".to_string()),
+            provider: Some("perplexity".to_string()),
+            route: None,
+        },
+    };
+    let home_before = snapshot_setup_tree(&eval_home);
+    let repo_before = snapshot_setup_tree(&repo_root);
+    let plan = crate::setup_client::preview_run_setup(&request).expect("preview setup");
+    assert_eq!(snapshot_setup_tree(&eval_home), home_before);
+    assert_eq!(snapshot_setup_tree(&repo_root), repo_before);
+    assert_eq!(plan.profile.record.name, "fresh-walk-start");
+    assert_eq!(plan.control.mode, ploke_records::run_profile::RunMode::Step);
+    assert_eq!(
+        plan.batch.batch.instances,
+        vec!["BurntSushi__ripgrep-2209".to_string()]
+    );
+    assert_eq!(
+        plan.campaign.manifest.campaign_id.as_str(),
+        "fresh-walk-campaign"
+    );
+    let profile_text = fs::read_to_string(&profile_path).expect("read setup profile");
+    fs::write(
+        &profile_path,
+        profile_text.replace("fresh-walk-start", "fresh-walk-drift"),
+    )
+    .expect("write profile drift");
+    let error = crate::setup_client::admit_run_setup(&request, &plan.plan_hash)
+        .expect_err("service admission must reject profile drift");
+    assert!(error.to_string().contains("setup plan changed"));
+    assert!(!plan.campaign.manifest_path.exists());
+    fs::write(&profile_path, profile_text).expect("restore setup profile");
+    let setup = crate::setup_client::admit_run_setup(&request, &plan.plan_hash)
+        .expect("prepare completed setup");
     let parent = load_parent_identity_optional(&repo_root)
         .expect("load admitted identity")
         .expect("stored admitted identity");
-    assert_eq!(parent.node_id(), setup.node_id);
-    let manifest = plan.content.campaign.manifest_path();
+    assert_eq!(parent.node_id(), setup.config.identity.record.node_id);
+    let manifest = &setup.config.campaign.path;
     assert_session_absent(manifest, &parent);
 
     let mut controller = WalkController::new(
@@ -1708,6 +1753,19 @@ async fn prototype1_setup_recovers_and_completed_retry_is_read_only() {
         lease.cursor().phase,
         crate::cli::prototype1_state::walk::phase::WalkPhase::R3
     );
+    let before_live = snapshot_setup_tree(&eval_home);
+    let setup_error =
+        prepare_prototype1_parent_setup_at(&command, Some(&expected_sha), repo_root.clone())
+            .expect_err("live controller lease must exclude setup admission");
+    assert!(
+        setup_error.to_string().contains("repository authority"),
+        "{setup_error}"
+    );
+    assert_eq!(
+        snapshot_setup_tree(&eval_home),
+        before_live,
+        "blocked setup must not change setup artifacts"
+    );
     let conflict = crate::cli::prototype1_state::driver::control::claim_active(&repo_root)
         .expect_err("ancillary mutation must not bypass the active controller lease");
     assert!(
@@ -1752,7 +1810,22 @@ async fn prototype1_setup_recovers_and_completed_retry_is_read_only() {
         evidence.cursor().expect("certified cursor"),
         lease.cursor().clone()
     );
+    let before_transitioned = snapshot_setup_tree(&eval_home);
+    let setup_error =
+        prepare_prototype1_parent_setup_at(&command, Some(&expected_sha), repo_root.clone())
+            .expect_err("transitioned controller lease must retain setup exclusion");
+    assert!(
+        setup_error.to_string().contains("repository authority"),
+        "{setup_error}"
+    );
+    assert_eq!(
+        snapshot_setup_tree(&eval_home),
+        before_transitioned,
+        "transitioned lease must fence setup before any artifact changes"
+    );
     lease.release().expect("release controlled setup session");
+    prepare_prototype1_parent_setup_at(&command, Some(&expected_sha), repo_root.clone())
+        .expect("setup admission may resume after controller authority is released");
 
     let session = crate::cli::prototype1_state::session::Store::for_manifest(
         plan.content.campaign.manifest_path(),

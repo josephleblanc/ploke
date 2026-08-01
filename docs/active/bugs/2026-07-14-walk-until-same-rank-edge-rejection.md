@@ -2,6 +2,12 @@
 
 Status: fixed, regression-covered, and live verified.
 
+Current contract update (2026-07-31): `--until` is now accepted only for a
+target that post-dominates every graph path from the current phase. The exact
+R4b-to-R4c repro below remains a valid bounded target because R4c is its sole
+successor. At a branch, operators now use one bare Step and inspect its typed
+receipt rather than selecting one advertised outcome with `--until`.
+
 Canary worktree:
 
 ```text
@@ -10,9 +16,9 @@ Canary worktree:
 
 ## Broken Contract
 
-When the walk service advertises a concrete next edge, `walk step --until` must
-accept that target and drive the same typed transition. A coarse branch-layer
-rank must not classify a real forward edge as an already-passed sibling branch.
+When a bounded target post-dominates the current phase, `walk step --until`
+must accept and reach it. A coarse branch-layer rank must not classify a real
+forward edge on that path as an already-passed sibling branch.
 
 ## Evidence
 

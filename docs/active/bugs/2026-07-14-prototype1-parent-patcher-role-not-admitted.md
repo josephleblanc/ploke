@@ -136,3 +136,36 @@ into the campaign profile, or silently unify parent-patcher authority with the
 eval/protocol model. Focused regressions cover direct Google with a stale
 OpenRouter preference, missing selection, JSON visibility, and the non-broad
 early skip. A separately named live parent-patcher canary remains future work.
+
+## 2026-07-30 Configuration Recurrence
+
+The low-pressure handoff canary
+`p1-v31-walkop-handoff-g25fl-3g1x1-20260730-035352` confirmed both the repaired
+doctor visibility and the remaining admission gap. Its admitted profile
+selected direct-Google `google/gemini-2.5-flash-lite` for eval and protocol:
+
+```text
+profile:
+/home/brasides/.ploke-eval/campaigns/p1-v31-walkop-handoff-g25fl-3g1x1-20260730-035352/prototype1/run-profile.toml
+profile sha256:
+a8320469eb121da18551412afe35ee5f45030960a4557009ba2f87a188ef8c7e
+setup plan sha256:
+c34ea38168f4b59a0594ff90324569bf8c7f35590973807ee7b789e54b28c487
+```
+
+The separate machine-global parent-patcher role still resolved to
+`google/gemini-3.5-flash` until the operator explicitly changed it:
+
+```text
+ploke-eval model parent-patcher set google/gemini-2.5-flash-lite
+```
+
+A fresh doctor run then surfaced the corrected parent-patcher model and its
+direct-Google route. This proves that the doctor visibility repair held; it also
+confirms that setup admission and configuration read-back still do not bind or
+display the machine-global role alongside the admitted eval/protocol roles.
+
+The run later stopped on an unrelated direct-Google `HTTP_SEND_TIMEOUT` during
+R5-to-R6 baseline evaluation, before broad parent-patcher generation at
+R7-to-R8. It therefore does not satisfy the pending live parent-patcher route
+canary and does not change this report's status.

@@ -24,25 +24,13 @@ use sha2::{Digest, Sha256};
 
 use crate::spec::PrepareError;
 
+use super::source_guard_paths::SOURCE_GUARD_PATHS;
+
 /// Wire-protocol version for framed JSON walk requests.
-pub(crate) const WALK_PROTOCOL_VERSION: u32 = 11;
+pub(crate) const WALK_PROTOCOL_VERSION: u32 = 13;
 
 /// Semantic version for the currently admitted transition graph slice.
 pub(crate) const TRANSITION_GRAPH_VERSION: &str = "walk-r0-r14a-v2";
-
-/// Repo paths whose dirty/clean status participates in the server epoch.
-///
-/// This is deliberately narrower than the entire repository. It covers the CLI,
-/// walk server, and Prototype 1 transition code that can change stepping
-/// semantics. See the active agent doc for the known limitation: this is a
-/// status hash, not a full content hash of every dirty file.
-const SOURCE_GUARD_PATHS: &[&str] = &[
-    "Cargo.toml",
-    "crates/ploke-eval/Cargo.toml",
-    "crates/ploke-eval/src/cli/args",
-    "crates/ploke-eval/src/cli/handlers/prototype1_loop.rs",
-    "crates/ploke-eval/src/cli/prototype1_state",
-];
 
 /// Identity of the source/binary snapshot that owns one walk server instance.
 ///
@@ -60,6 +48,11 @@ pub struct ServerEpoch {
     #[serde(default)]
     pub active_branch: Option<String>,
     pub source_status_hash: Option<String>,
+    /// Honest-sibling compatibility key for the serialized walk contract.
+    ///
+    /// This is intentionally not a digest of server-owned runtime engines.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub build_fingerprint: String,
 }
 
 impl ServerEpoch {
@@ -84,10 +77,11 @@ impl ServerEpoch {
             git_head,
             active_branch,
             source_status_hash,
+            build_fingerprint: current_build_fingerprint().to_string(),
         })
     }
 
-    /// Validate that a mutating request came from a compatible client binary.
+    /// Validate that a mutating request came from a compatible client build.
     ///
     /// Read-only requests intentionally bypass this check so a stale server can
     /// still be inspected and stopped.
@@ -100,6 +94,7 @@ impl ServerEpoch {
                 "mutating request omitted client epoch; restart the client command with the current binary",
             ));
         };
+        self.ensure_executable_path_unchanged()?;
         if request_epoch.protocol_version != self.protocol_version {
             return Err(stale_error(format!(
                 "walk protocol mismatch: client={} server={}",
@@ -119,11 +114,11 @@ impl ServerEpoch {
                 self.repo_root.display()
             )));
         }
-        if request_epoch.exe_path != self.exe_path
-            || request_epoch.exe_modified_unix_ms != self.exe_modified_unix_ms
+        if self.build_fingerprint.is_empty()
+            || request_epoch.build_fingerprint != self.build_fingerprint
         {
             return Err(stale_error(
-                "walk server binary differs from client binary; restart the walk server",
+                "walk server build fingerprint differs from client build fingerprint; rebuild the clients and restart the walk server",
             ));
         }
         if request_epoch.git_head != self.git_head
@@ -132,6 +127,20 @@ impl ServerEpoch {
         {
             return Err(stale_error(
                 "walk server source epoch differs from client source epoch; restart the walk server",
+            ));
+        }
+        Ok(())
+    }
+
+    fn ensure_executable_path_unchanged(&self) -> Result<(), PrepareError> {
+        let disk_modified = fs::metadata(&self.exe_path)
+            .ok()
+            .and_then(|metadata| metadata.modified().ok())
+            .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+            .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64);
+        if disk_modified.is_none() || disk_modified != self.exe_modified_unix_ms {
+            return Err(stale_error(
+                "walk server executable path changed since startup; restart the walk server",
             ));
         }
         Ok(())
@@ -154,6 +163,10 @@ impl ServerEpoch {
         }
         Ok(())
     }
+}
+
+pub(crate) fn current_build_fingerprint() -> &'static str {
+    env!("PLOKE_WALK_BUILD_FINGERPRINT")
 }
 
 fn running_executable() -> Result<(PathBuf, Option<u64>), PrepareError> {
@@ -476,11 +489,16 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         let epoch = ServerEpoch::capture(&repo).expect("capture replaced executable epoch");
+        let guard_error = epoch
+            .ensure_compatible_request(Some(&epoch))
+            .expect_err("replaced logical executable path must reject mutation");
         fs::write(
             result,
             serde_json::to_vec(&epoch).expect("encode captured epoch"),
         )
         .expect("persist captured epoch");
+        fs::write(repo.join("path-guard-error.txt"), guard_error.to_string())
+            .expect("persist executable path guard error");
     }
 
     #[cfg(target_os = "linux")]
@@ -516,7 +534,26 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         fs::remove_file(&copied).expect("unlink running test executable");
-        fs::write(&copied, b"replacement").expect("replace executable path");
+        let mut replacement_mtime = modified;
+        for attempt in 0..100 {
+            fs::write(&copied, format!("replacement-{attempt}")).expect("replace executable path");
+            replacement_mtime = fs::metadata(&copied)
+                .expect("replacement executable metadata")
+                .modified()
+                .expect("replacement executable mtime")
+                .duration_since(UNIX_EPOCH)
+                .expect("replacement executable timestamp")
+                .as_millis()
+                .min(u128::from(u64::MAX)) as u64;
+            if replacement_mtime != modified {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_ne!(
+            replacement_mtime, modified,
+            "replacement executable must have a distinct modification time"
+        );
         fs::write(repo.join("go"), []).expect("release helper capture");
 
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
@@ -538,15 +575,71 @@ mod tests {
         .expect("decode captured epoch");
         assert_eq!(epoch.exe_path, copied);
         assert_eq!(epoch.exe_modified_unix_ms, Some(modified));
+        let guard_error =
+            fs::read_to_string(repo.join("path-guard-error.txt")).expect("read path guard error");
+        assert!(
+            guard_error.contains("executable path changed"),
+            "unexpected compatibility error: {guard_error}"
+        );
+    }
 
-        let changed_mtime = modified.wrapping_add(1);
+    #[test]
+    fn request_compatibility_accepts_sibling_executable_identity() {
+        let repo = tempfile::tempdir().expect("epoch sibling tempdir");
+        let epoch = ServerEpoch::capture(repo.path()).expect("capture server epoch");
         let mut client = epoch.clone();
-        client.exe_modified_unix_ms = Some(changed_mtime);
+        client.exe_path = repo.path().join("sibling-ploke-walk-ui");
+        client.exe_modified_unix_ms = epoch
+            .exe_modified_unix_ms
+            .map(|mtime| mtime.wrapping_add(1));
+
+        epoch
+            .ensure_compatible_request(Some(&client))
+            .expect("sibling executable with the same build fingerprint must be compatible");
+    }
+
+    #[test]
+    fn request_compatibility_rejects_mismatched_build_fingerprint() {
+        let repo = tempfile::tempdir().expect("epoch fingerprint tempdir");
+        let epoch = ServerEpoch::capture(repo.path()).expect("capture server epoch");
+        let mut client = epoch.clone();
+        client.build_fingerprint = "0".repeat(64);
+
         let error = epoch
             .ensure_compatible_request(Some(&client))
-            .expect_err("replacement binary must remain incompatible with predecessor");
+            .expect_err("different guarded-source builds must be incompatible");
         assert!(
-            error.to_string().contains("binary differs"),
+            error.to_string().contains("build fingerprint differs"),
+            "unexpected compatibility error: {error}"
+        );
+
+        client.build_fingerprint.clear();
+        let error = epoch
+            .ensure_compatible_request(Some(&client))
+            .expect_err("missing guarded-source build identity must be incompatible");
+        assert!(
+            error.to_string().contains("build fingerprint differs"),
+            "unexpected missing-fingerprint error: {error}"
+        );
+    }
+
+    #[test]
+    fn request_compatibility_rejects_server_executable_path_drift() {
+        let repo = tempfile::tempdir().expect("epoch executable tempdir");
+        let mut epoch = ServerEpoch::capture(repo.path()).expect("capture server epoch");
+        let client = epoch.clone();
+        epoch.exe_modified_unix_ms = Some(
+            epoch
+                .exe_modified_unix_ms
+                .expect("test executable has a modification time")
+                .wrapping_add(1),
+        );
+
+        let error = epoch
+            .ensure_compatible_request(Some(&client))
+            .expect_err("changed server executable path identity must be stale");
+        assert!(
+            error.to_string().contains("executable path changed"),
             "unexpected compatibility error: {error}"
         );
     }

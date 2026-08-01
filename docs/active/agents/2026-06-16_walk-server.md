@@ -1,5 +1,11 @@
 # 2026-06-16 Prototype 1 Typestate Walk Server
 
+> **Historical June 2026 implementation snapshot.** This page is not current
+> operator authority. Use the current [Loop Walk guide](../../../crates/ploke-eval/docs/prototype1/loop-walk.md)
+> and [Operator Map](../../../crates/ploke-eval/docs/prototype1/operator-map.md).
+> The current walk service owns the durable controller session, Start defaults
+> to R3, and Stop is idle-server shutdown only.
+
 Short description: cold-restart orientation for the debug-only local server that steps `prototype1-state` through the new live typestate transitions in memory.
 
 Related planning/code:

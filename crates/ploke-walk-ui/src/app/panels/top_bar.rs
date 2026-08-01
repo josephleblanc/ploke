@@ -9,6 +9,8 @@ pub(in crate::app) struct TopBar<'a> {
     pub(in crate::app) selected_run: Option<usize>,
     pub(in crate::app) socket_input: &'a mut String,
     pub(in crate::app) debug_panel: &'a mut bool,
+    pub(in crate::app) run_blocked: bool,
+    pub(in crate::app) socket_blocked: bool,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -29,31 +31,43 @@ impl TopBar<'_> {
                 ui.label(RichText::new(error).color(Color32::LIGHT_RED));
             }
             ui.separator();
-            ui.label("run");
-            let mut selected = self.selected_run;
-            ComboBox::from_id_salt("ploke-walk-ui.run-picker")
-                .width(440.0)
-                .selected_text(selected_run_label(
-                    self.selected_run.and_then(|index| self.runs.get(index)),
-                ))
-                .show_ui(ui, |ui| {
-                    for (index, run) in self.runs.iter().enumerate() {
-                        ui.selectable_value(&mut selected, Some(index), run_menu_label(run));
-                    }
-                });
-            if selected != self.selected_run
-                && let Some(index) = selected
-            {
-                action.selected_run = Some(index);
-            }
-            if ui.button("Refresh Runs").clicked() {
-                action.refresh_runs = true;
-            }
+            ui.add_enabled_ui(!self.run_blocked, |ui| {
+                ui.label("run");
+                let mut selected = self.selected_run;
+                ComboBox::from_id_salt("ploke-walk-ui.run-picker")
+                    .width(440.0)
+                    .selected_text(selected_run_label(
+                        self.selected_run.and_then(|index| self.runs.get(index)),
+                    ))
+                    .show_ui(ui, |ui| {
+                        for (index, run) in self.runs.iter().enumerate() {
+                            ui.selectable_value(&mut selected, Some(index), run_menu_label(run));
+                        }
+                    });
+                if selected != self.selected_run
+                    && let Some(index) = selected
+                {
+                    action.selected_run = Some(index);
+                }
+                if ui.button("Refresh Runs").clicked() {
+                    action.refresh_runs = true;
+                }
+            })
+            .response
+            .on_hover_text(
+                "Run selection waits for the current operation or setup admission receipt.",
+            );
             ui.separator();
-            ui.label("socket override");
-            action.socket_changed = ui
-                .add_sized([260.0, 22.0], TextEdit::singleline(self.socket_input))
-                .changed();
+            ui.add_enabled_ui(!self.socket_blocked, |ui| {
+                ui.label("socket override");
+                action.socket_changed = ui
+                    .add_sized([260.0, 22.0], TextEdit::singleline(self.socket_input))
+                    .changed();
+            })
+            .response
+            .on_hover_text(
+                "Socket rebinding waits for unresolved mutations, active or paused auto-advance, or a setup admission receipt.",
+            );
             ui.toggle_value(self.debug_panel, "Debug");
         });
         action

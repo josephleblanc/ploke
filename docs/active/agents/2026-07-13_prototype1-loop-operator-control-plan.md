@@ -2,11 +2,12 @@
 
 - Date: 2026-07-13
 - Baseline: `de76eaee34e6f4c4c3a19543c4cf91b217aa3bb9`
-- Status: active implementation; Stages 0-4 and the sealed/live-observation
-  portions of Stage 5 are checkpointed; a fresh CLI-only stepped run is
-  live-verified through generation-1 R4c handoff; parallel trace capture and
-  typed live/in-flight CLI inspection are live-verified; native UI-to-live-server
-  and UI/mixed-client control remain unproven
+- Status: active implementation; the typed setup/profile services, guarded
+  sibling-client control, UI-local Step scheduler, successor endpoint following,
+  and named owner-DB views are implemented and source-tested. Fresh CLI-only
+  three-parent validation is the current live gate. Actual UI-only and
+  mixed-client operation, plus durable Continuous ownership/pause/resume,
+  remain unproven.
 
 ## Implementation progress
 
@@ -183,7 +184,7 @@
   DB-query replies after run selection. Complete authority snapshots are shown
   only for Status responses, so same-phase Show, Job, or Error responses cannot
   combine a newer epoch with stale actions, blockers, or attachment state.
-- The first Stage 5 slice keeps the UI read-only and consumes the existing
+- At that checkpoint, the first Stage 5 slice kept the UI read-only and consumed the existing
   completed-run index and exact trace carriers rather than creating a second
   trace schema. Evaluation Traces is the default central surface; Database
   Query remains a sibling expert tab. Index/detail replies are bound to the
@@ -275,18 +276,225 @@
   `exhausted`, and agent-turn `aborted` after 10 attempts. Exact r16 remained
   debugger/resume terminal with 46 checkpoints, headless
   `applied_validation_failed`, and agent-turn `completed`.
-- The final source gate passes 1,348/1,348 `ploke-eval` library tests with 28
-  ignored tests; focused typed trace coverage passes 18/18; the UI suite passes
-  25/25; and UI-only Clippy passes with warnings denied after large trace
-  responses were boxed at thread boundaries. Independent review reports no
-  remaining correctness, security, or authority blocker. The separate
-  full-loop OpenRouter embedding canary, child-reaping live check, durable
-  imported r15-r18 historical replay fixture, and native UI-to-live-server
-  interaction remain pending.
+- The final source gate passes 1,546 `ploke-eval` tests with zero failures and
+  46 ignored across all targets (1,526 library tests, one binary test, and 19
+  integration tests). The `ploke-walk-ui` suite passes 68/68. The separate
+  full-loop OpenRouter embedding canary, durable imported r15-r18 historical
+  replay fixture, and native UI-to-live-server interaction remain pending.
+- The current operator-control slice promotes the public `WalkClient` from a
+  read-only facade to the shared guarded Start/Step/operation-status/idle-Stop
+  client used by both CLI and UI. The service, not either frontend, captures the
+  authoritative endpoint, server epoch, and exact session version. Explicit
+  live-provider and Git-change grants remain required, and typed jobs/receipts
+  remain the only success signal.
+- Fresh-run UI setup now uses typed profile load/default/validate/create-only
+  save, then typed preview and hash-bound admission through the canonical
+  CLI-owned parsers and setup planner. The UI has no copied policy defaults or
+  raw setup JSON. Successful save and admission are read back and hash checked;
+  `WalkConfigSnapshot` keeps CLI/schema defaults, prepared cohort/eval budget,
+  selected profile policy, and derived effective control/provenance visibly
+  distinct. Name selectors accept one non-`.toml` registry component; Path
+  selectors remain explicit paths and are absolutized before legacy
+  resolution. The UI does not prepare batches/worktrees or run doctor/live
+  preflights.
+- UI auto-advance is intentionally labeled
+  **UI-local automation · Step-mode server**. It waits for one guarded Step's
+  terminal receipt before submitting the next. Pause prevents the next edge
+  only; resume is UI-local; the intent is lost on UI exit; no exclusive lease
+  exists between steps; successor following waits at R13b; and predecessor
+  R13b-to-R14b is not driven. This is not durable `RunMode::Continuous`.
+- Closed `db_query` views now cover `relations`, `counts`, `config-evidence`,
+  `lineage`, `progress`, and `handoff-evidence` over one immutable,
+  revision-tagged owner-DB snapshot. `walk status --with-version` remains the
+  live controller authority view; DB evidence and JSON artifacts do not replace
+  it. The `progress` projection preserves generation roles: evaluation subjects
+  resolve to evaluated scheduler nodes while their parents remain actors;
+  unresolved joins stay visible with null identity/generation fields.
+- The recent `ploke-llm` provider-attempt lifecycle cleanup did not block the
+  V36 live Parent(0) R5-to-R6 baseline edge. A producer-to-importer regression
+  also sends actual provider-attempt tracing JSON through the Prototype 1
+  eval-store importer, so validation stays tied to emitted typed trace fields
+  rather than a hand-written duplicate log shape.
 
-The UI remains inspection-only until the observability read model and later
-control-parity stages are complete. Every live edge still requires a committed
-checkpoint and a fresh campaign when configuration or source identity changes.
+The UI is now an active but deliberately bounded client. Every live edge still
+passes through the server-owned stepped authority. Manual configuration changes
+or unadmitted source drift are never adopted silently and require a fresh
+reviewed setup; loop-owned successor handoff remains the admitted path for the
+parent/source identity changes produced by self-editing.
+
+### Pending three-parent live validation packet
+
+Do not fill this packet from source inspection or older canaries. Record only a
+fresh run from a newly created worktree:
+
+- campaign id and worktree path: **pending**;
+- setup preview SHA-256 and read-back `WalkConfigSnapshot`: **pending**;
+- binary/build fingerprint and initial server epoch: **pending**;
+- Parent(0) -> Parent(1) R12-to-R13b operation id and receipt: **pending**;
+- successor endpoint/epoch/session resolution for Parent(1): **pending**;
+- Parent(1) -> Parent(2) R12-to-R13b operation id and receipt: **pending**;
+- final `status --with-version`, `session-history`, `summary --verbose`, and
+  `handoff-evidence` coordinates: **pending**;
+- UI-only and mixed-client observations, including grant prompts and
+  auto-advance pause/resume behavior: **pending**.
+
+#### Attempt ledger: does not satisfy the packet
+
+Seven fresh campaigns exercised the new operator boundary but stopped before the
+first successor handoff. They are preserved as negative evidence and must not
+fill any pending packet field:
+
+- `p1-v30-walkop-llmtrace-g35f-3g-20260726-122809`, worktree
+  `/home/brasides/.ploke-eval/setup-seeds/p1-v30-walkop-llmtrace-g35f-3g-20260726-122809`,
+  admitted setup plan
+  `c26db4804c48c4eedd44f42171477ddf288877fd7ecac3d164f451d91d9e8c22`
+  into initial session `833824d7-730f-4955-9587-5dc1b7ecfa25` with build
+  fingerprint
+  `c04d759e9b58384a264ecd796402add0e17e1193bdb5005d1713b0a524d585b6`.
+  R5-to-R6 operation `b1390e2f-31bf-4725-8574-5c07751266dd`
+  successfully reconstructed typed eval/protocol evidence. R7-to-R8 operation
+  `f59bd097-f58c-493c-9189-2609b46a6b66`, transition
+  `b42ac3e5-04ed-5c65-a71e-e909c7f4fca8`, then stopped on direct-Google HTTP
+  429 `RESOURCE_EXHAUSTED`, error
+  `1d54b138-6afa-44fb-8e2b-0559730f0a2f`. The controller retained R7 as
+  `AttemptIndeterminate`; the operation and session were explicitly abandoned.
+  The typed trace compatibility evidence is durable in
+  [`2026-06-09-prototype1-broad-child-google-429-zero-admission.md`](../bugs/2026-06-09-prototype1-broad-child-google-429-zero-admission.md).
+- `p1-v31-walkop-handoff-g25fl-3g1x1-20260730-035352`, worktree
+  `/home/brasides/.ploke-eval/setup-seeds/p1-v31-walkop-handoff-g25fl-3g1x1-20260730-035352`,
+  admitted one-child, parallel-cap-one setup plan
+  `c34ea38168f4b59a0594ff90324569bf8c7f35590973807ee7b789e54b28c487`
+  with profile hash
+  `a8320469eb121da18551412afe35ee5f45030960a4557009ba2f87a188ef8c7e`,
+  Parent(0) `node-ffd149c9304c0834`, session
+  `350350a7-ab97-4ef8-b58b-77470ac1901d`, and the same build fingerprint.
+  R5-to-R6 operation `eedf5dbe-2fc4-4933-983d-549e397ea71c`,
+  transition `23bbb5e7-a401-5b56-89e1-129ff386c5db`, stopped on a single-attempt
+  direct-Google `HTTP_SEND_TIMEOUT` after 39,088 ms, error
+  `9ebe7d77-ddfb-4fbb-86b0-7c82baf90f6a`. The baseline instance was `Failed`;
+  closure remained partial with one failed instance; the controller retained
+  R5 as `AttemptIndeterminate`; the operation and session were explicitly
+  abandoned.
+- `p1-v32-walkop-handoff-g35f-global-3g1x1-20260730-040809`, worktree
+  `/home/brasides/.ploke-eval/setup-seeds/p1-v32-walkop-handoff-g35f-global-3g1x1-20260730-040809`,
+  admitted setup plan
+  `cb97d666e67e809eb711b845df22fecfa8f9cb3c5397dc2427c05a385f677287`
+  into session `0aa363ef-a8fe-4a6c-88f2-3b86e52fe64e` with the same build
+  fingerprint. Durable session receipts committed R5-to-R6
+  (`15527ad2-d553-56f9-9660-243528d70648`), R7-to-R8
+  (`544ac1e2-e4fe-5764-915c-51ffd8825d00`), and R10-to-R11
+  (`5649ec33-476a-5480-9e93-29e8fff26c56`). The emitted typed
+  `provider_attempt` lifecycle also retained a real request-241 HTTP 429 as
+  failed/not-parsed with a scheduled retry, followed by attempt 2 HTTP 200 as
+  completed/parsed, so the cleaned-up trace fields remained usable through a
+  live retry. Child `node-ac2fbbb9ab535d2e` was admitted and ran successfully,
+  but strict evaluation selected the rejected branch with `Stop`; continuation
+  recorded `stop_selected_branch_rejected`. R12-to-R13a transition
+  `c2803052-2fc3-5a8d-9d3a-9837c506acdc` and R13a-to-R14a transition
+  `943e8cf4-c69d-5ae1-8358-f377cd5e8af9` therefore completed a stopped parent
+  turn. The campaign was not terminal and no successor runtime was started.
+- `p1-v33-walkop-handoff-g35f-global-3g1x3-20260730-050445`, worktree
+  `/home/brasides/.ploke-eval/setup-seeds/p1-v33-walkop-handoff-g35f-global-3g1x3-20260730-050445`,
+  admitted setup plan
+  `fcff8938e7f1eb69b760dda30058daf4fa53c5bec610678aef66f225dd7fb283`
+  with profile hash
+  `6619b87761ee4f484f73439fb034d8395fa9a82d7a12f1d98d22738431b90510`
+  for Parent(0) `node-2f71b746a0b70661`, session
+  `a473da7f-8133-433c-a64e-72fee1887bed`, and the same build fingerprint.
+  Durable receipts committed R5-to-R6 operation
+  `ad6bf802-57d4-4811-84f8-6293d958f9f1`, R6-to-R7 operation
+  `8b7fa898-7125-40b9-996e-9980c507f117`, and R7-to-R8 operation
+  `7130b6f3-96cb-407d-bde1-922e8ba08f26`; the R7-to-R8 terminal receipt
+  committed at session revision 31. Four fresh-slot terminal artifacts were
+  retained under `prototype1/messages/edit-harness-result`:
+  `node-2f71b746a0b70661.headless-tui.json` returned `ok=false`, while
+  `node-2f71b746a0b70661-r2.headless-tui.json`,
+  `node-2f71b746a0b70661-r3.headless-tui.json`, and
+  `node-2f71b746a0b70661-r4.headless-tui.json` returned `ok=true`. Those three
+  viable slots produced planned children `node-1e28a20104237375`,
+  `node-89042096c5c44750`, and `node-c063e4e69729539f`. Typed provider-attempt
+  rows retained 21 HTTP 429 attempts across 16 requests, with every scheduled
+  retry recovering to HTTP 200 completed/parsed and no retry exhaustion; for
+  example, request 186 recorded three failed/not-parsed 429 attempts before
+  attempt 4 completed and parsed with HTTP 200. The named `progress` DB view
+  read owner-DB revision
+  `7a7b68a0bb780c8e5eb3ad0f9ee1f53845619652aed69cef21f6a682fe103e8d`
+  at session revision 31 and retained child-plan
+  `515cd691063e12904143aaa57b2957db0ff3ff1992c53862503a72c04ca6d035`.
+  The idle server then stopped cleanly, and typed status reported `offline`.
+  V33 was deliberately stopped at R8 before handoff because endpoint/UI safety
+  defects found during validation were fixed afterward. Its evidence is
+  therefore superseded and non-satisfying; it cannot fill the three-parent
+  packet.
+- `p1-v34-walkop-handoff-g35f-global-3g1x3-20260730-065737`, worktree
+  `/home/brasides/.ploke-eval/setup-seeds/p1-v34-walkop-handoff-g35f-global-3g1x3-20260730-065737`,
+  admitted setup plan
+  `b593fec4f17c9e0cf96a8e67bb26e6367777d0b234effcd58dc05bdefac2d67c`
+  with profile hash
+  `6619b87761ee4f484f73439fb034d8395fa9a82d7a12f1d98d22738431b90510`
+  for Parent(0) `node-bda1d65ea90e7839`, session
+  `66e8446e-f161-4fc8-b182-a40ad0b87672`. Baseline operation
+  `5cb0ea6a-e0ba-46fc-b46a-b263f629f7d3` succeeded R5-to-R6 at session
+  revision 23, and policy operation
+  `1677229a-1037-4c88-bc42-b5552fa31114` succeeded R6-to-R7 at revision 27.
+  Child-plan operation `3ebb67f3-e4e9-4ee6-9590-cda6a270e9eb` began
+  transition `dbb32ee2-6e2a-5d4a-8853-0c08b6354b43`, but a server
+  interruption left no `AttemptFinished`. The base and r2 lanes were terminal
+  at head 61 while r3 was paused at head 30, so no child-plan authority was
+  admitted. The job was durably abandoned, then recovery operation
+  `f8fe0e55-211d-4dd2-9279-bf6a863cd254` permanently abandoned the session at
+  revision 30. V34 is superseded, non-satisfying canary evidence and is
+  explicitly outside the three-parent handoff packet.
+- `p1-v35-walkop-handoff-g35f-global-3g1x3-20260731-145700`, worktree
+  `/home/brasides/.ploke-eval/setup-seeds/p1-v35-walkop-handoff-g35f-global-3g1x3-20260731-145700`,
+  admitted setup plan
+  `39f887adfe290a581c855781de11a35f665813271176b2a288fea4676418dd35`
+  with profile hash
+  `6619b87761ee4f484f73439fb034d8395fa9a82d7a12f1d98d22738431b90510`
+  for Parent(0) `node-31921bc9908713d5`, session
+  `34c5098b-954a-4962-bf18-2ec41d171640`, setup head
+  `1700115f5094503c27c98d2f080ebbd975762f45`, and build fingerprint
+  `4fbe865ae8e27cd1e28e76f24920b9edb809fed01f321c327a6db3fa467683c7`.
+  The durable session journal committed bootstrap transitions
+  `17cba2a0-e7c7-5531-8eb6-2b249f5f8f0c` (R3-to-R4a),
+  `45dcbf40-c39c-5019-986e-1ba7af3ebbf1` (R4a-to-R4b),
+  `c131991b-0405-50b1-999e-c2eab32ccd29` (R4b-to-R4c), and
+  `3ccaf407-f0c2-51ce-91a5-ed311fb5c45b` (R4c-to-R5). The earlier
+  Start/bootstrap client operation identifiers survived only as truncated
+  interactive-transcript prefixes, so they are deliberately omitted rather
+  than promoted as durable evidence. R5-to-R6 operation
+  `2f3dfc89-fa2c-4c40-827d-ddcd75c5dc0e`, fence 6, began transition
+  `8fa51613-c756-55cf-ba95-eca41b486200` and finished `Indeterminate` at
+  session revision 22 because the baseline instance was `Failed`. Typed
+  `walk trace show` resolved run
+  `run-1785535497895-structured-current-policy-2507d18a` through the run
+  registry as execution `completed`, one turn, a sealed turn summary, zero
+  tool calls, zero model exchanges, and zero protocol artifacts. Targeted
+  inspection of that sealed JSON summary classified the one agent turn as
+  `aborted` with `HTTP_SEND_FAILED`: the systemd service used to host
+  `walk serve` had not inherited `GOOGLE_PROJECT_ID`. This was a canary-launch
+  environment error, not a `ploke-llm` trace or retry regression. The failed
+  job was explicitly abandoned; recovery operation
+  `42744bde-00f1-4afb-b1a4-05584e4de7d6` then permanently abandoned the
+  session at revision 23. Typed `walk status --with-version` subsequently
+  reported `offline`; named `progress` retained only the generation-zero
+  parent and `handoff-evidence` returned zero rows. After the idle server
+  stopped, only this worktree's build target was cleaned. V35 is superseded,
+  non-satisfying canary evidence and is explicitly outside the three-parent
+  handoff packet.
+- `p1-v36-walkop-handoff-g35f-global-3g1x3-20260731-151050`, worktree
+  `/home/brasides/.ploke-eval/setup-seeds/p1-v36-walkop-handoff-g35f-global-3g1x3-20260731-151050`,
+  live-validated canonical setup/config read-back and a successful Parent(0)
+  R5-to-R6 baseline edge, showing that the recent `ploke-llm` trace cleanup did
+  not block that downstream live transition. Its typed verbose summary remains
+  nonterminal at generation 0 with active node `node-5798cc0855390ba4`, three
+  admitted and observed children, and journal entry 40 `observe_child` as the
+  latest durable entry. It has no selected successor, continuation decision,
+  or handoff and therefore does not satisfy any three-parent handoff field.
+
+None of these campaigns reached Parent(0)-to-Parent(1) R12-to-R13b, so the
+requested three-parent handoff, successor endpoint following, and final typed
+evidence queries remain pending.
 
 ## Purpose
 
@@ -378,7 +586,12 @@ of step.
 
 These are foundations to preserve, not replace.
 
-### Current gaps that constrain the order of work
+### Historical gaps that constrained the initial order of work
+
+This list records the architecture at the start of the plan. It is retained as
+design history, not as a description of the current UI/client contract; the
+current implementation status and remaining live-proof boundary are recorded
+above.
 
 1. `WalkController::refresh_from_disk` does not refresh while it holds any
    in-memory state. External `prototype1-state`, `prototype1-step`, or
@@ -565,23 +778,23 @@ recommended explicit eval cap is `32768`. The UI must not imply that the profile
 alone is the complete configuration, and it must label retired profile-local
 token fields as archival evidence rather than executable authority.
 
-There is also a type-conformance problem to resolve before a profile editor is
-safe: runtime `Prototype1RunProfile` owns validation, while
-`ploke_records::run_profile::RunProfileRecord` is a passive mirror with different
-field coverage/defaults. In particular, protocol defaults and model/tool-review
-fields are not equivalent. A UI must not deserialize into the passive record and
-then silently drop or rewrite runtime fields.
+The profile-editor type-conformance boundary is now resolved without making the
+passive record authoritative. `RunProfileRecord` is the shared editable
+projection, while the canonical runtime parser/defaults/validator must accept
+its exact serialized bytes before review or save. The typed profile service
+returns hash-bound preview/save receipts, and setup separately returns the
+normalized profile and effective `WalkConfigSnapshot`; no UI-local parser may
+silently drop or rewrite runtime fields.
 
-The first configuration implementation should therefore provide a shared typed
-preview/admission operation that:
+The shared typed profile/setup services now:
 
 - parses through the canonical runtime owner;
 - resolves setup-only fields and provider/embedding choices;
 - shows the source of every effective value;
 - shows validation constraints and explanatory copy for UI tooltips;
 - returns an exact normalized profile and setup commitment preview;
-- commits the previewed configuration identity atomically or idempotently where
-  the current stores permit;
+- save reviewed profile bytes atomically and create-only, then commit the
+  previewed setup identity through the existing receipt-first resumable path;
 - reports each later setup side effect with staged receipts and an explicit
   recovery/abandon path rather than claiming one cross-filesystem/DB/Git
   transaction;
@@ -589,13 +802,14 @@ preview/admission operation that:
 - refuses unapproved drift.
 
 Do not rebuild a `Prototype1LoopCommand` from UI-local strings, JSON values, and
-copied defaults. The discarded post-reset setup-form implementation is useful as
+copied defaults. The discarded post-reset setup-form implementation remains
 negative evidence for this rule.
 
 ## Controller modes and successor handoff
 
-The existing stepped/continuous distinction should become an explicit ownership
-contract.
+Stepped service authority is implemented as an explicit ownership contract.
+Durable Continuous ownership remains a design target rather than a delivered
+pause/resume surface.
 
 ### Stepped mode
 
@@ -609,6 +823,9 @@ contract.
 - Clients resolve/reconnect to the successor endpoint from the session record.
 
 ### Continuous mode
+
+Status: not delivered. The items below remain requirements for a future durable
+controller rather than claims about UI-local Step automation.
 
 - One controller owns autonomous advancement.
 - UI and CLI observe, pause/cancel at admitted boundaries, or request an explicit
@@ -816,6 +1033,11 @@ Acceptance:
 
 Goal: provide an intuitive native operator view before adding full control.
 
+Status: partially delivered. Controller/config/evidence panels, typed operation
+feedback, and `egui_kittest` interaction coverage are implemented. A real
+operator UI session against the live three-parent canary and complete UI-only
+answerability/screenshot review remain pending.
+
 Deliverables:
 
 - persistent online/controller/job indicator;
@@ -841,6 +1063,12 @@ The target is not merely that data exists; it is that the UI explains it.
 
 Goal: complete a parent turn through UI only, CLI only, or mixed sequential
 clients over one controller.
+
+Status: the shared guarded Start/Step/status/idle-Stop client, UI buttons,
+UI-local stop/resume scheduling, and successor endpoint following are
+implemented and source-tested. CLI-only live validation is the current gate;
+actual UI-only/mixed-client control and durable Continuous halt/resume remain
+pending.
 
 Deliverables:
 
@@ -965,20 +1193,27 @@ Expected output:
 
 ## Current work packet
 
-1. Preserve the fresh stepped canary and close its validated handoff bug record.
-2. Preserve the child-process lifecycle reproduction and checkpoint its
-   ownership/reaping repair.
-3. Parallel singleton trace sinks are replaced with session-owned observability
-   context in `dc5868b66`; `24f18e1cd` preserves timeout evidence and quiesces
-   late responses. Local gates and a fresh three-lane live sweep pass exact
-   provenance and isolation checks.
-4. The typed Stage 5 live/in-flight service, CLI, and `egui_kittest` interaction
-   slice is checkpointed in `bbb468116`. Next, exercise the native UI against a
-   live server, capture the UI-only evidence, and import a bounded real r15-r18
-   incident fixture for durable historical replay coverage. Keep the pending
-   child-lifecycle canary as a separate lifecycle gate.
-5. Keep UI mutation controls out of scope until the shared inspection model is
-   internally consistent.
+1. The shared public mutation seam is implemented and reviewed: CLI and UI use
+   the same guarded Start, branch-aware exact Step, operation-status, and
+   idle-server Stop requests without duplicating protocol admission.
+2. Canonical UI profile load/default/validate/create-only save, setup
+   preview/admit, and Run Config read-back are implemented. Defaults remain in
+   the CLI/schema owner, loop policy in the selected profile, and effective
+   values/provenance in returned typed carriers.
+3. The bounded UI control surface and typed feedback are implemented and
+   source-tested. Auto-advance remains explicitly Step-mode and UI-local; Pause
+   suppresses the next Step and does not cancel admitted work.
+4. Use `walk status --with-version`, `config`, `session-history`,
+   `summary --verbose`, and the named immutable DB views for operator checks.
+   Keep raw CozoScript expert-only and `jq` limited to targeted
+   JSON/log/artifact forensics, never active-status inference.
+5. Focused/full source and UI tests, change-scope review, and default-value
+   conformance are complete. Finish the fresh V37 CLI-only three-parent packet
+   from its new worktree, then separately perform actual UI-only/mixed-client
+   interaction; do not promote source tests or older canaries into live proof.
+6. Preserve the child-process lifecycle canary and historical r15-r18 replay
+   fixture as separate gates; neither is proof of the three-parent operator
+   path.
 
 ## Existing documents to preserve and reuse
 

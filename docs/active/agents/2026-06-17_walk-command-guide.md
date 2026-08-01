@@ -1,5 +1,11 @@
 # 2026-06-17 Walk Command Guide
 
+> **Historical June 2026 implementation snapshot.** This page is not current
+> operator authority. Use the current [Loop Walk guide](../../../crates/ploke-eval/docs/prototype1/loop-walk.md)
+> and [Operator Map](../../../crates/ploke-eval/docs/prototype1/operator-map.md).
+> The current walk service owns the durable controller session, Start defaults
+> to R3, and Stop is idle-server shutdown only.
+
 Short description: quick operator guide for trying the debug-only `walk` server, reviewing behavior, and collecting feedback on the command surface.
 
 Related planning/code:

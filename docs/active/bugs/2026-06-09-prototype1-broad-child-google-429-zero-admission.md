@@ -104,6 +104,43 @@ exhausted.
   blocker with clearer operator guidance, or add a bounded child-generation
   retry/backoff policy that does not publish misleading zero-child progress.
 
+## 2026-07-30 Walk-Server Recurrence
+
+The fresh three-parent operator canary
+`p1-v30-walkop-llmtrace-g35f-3g-20260726-122809` reproduced the same external
+capacity blocker on the R7-to-R8 broad-child edge:
+
+| Item | Observation |
+| --- | --- |
+| Worktree | `/home/brasides/.ploke-eval/setup-seeds/p1-v30-walkop-llmtrace-g35f-3g-20260726-122809` |
+| Source snapshot | `d0e2275d840306480624dae4574cf79abd75cea2`; admitted Parent(0) head `f96b8e3bcbdafcedaa1f59fa9d5dc66d22c8406d` |
+| Setup | Plan `c26db4804c48c4eedd44f42171477ddf288877fd7ecac3d164f451d91d9e8c22`; Step mode; three broad lanes; direct Google `google/gemini-3.5-flash` |
+| Baseline | R5-to-R6 operation `b1390e2f-31bf-4725-8574-5c07751266dd` succeeded; the typed run registry reconstructed one completed run with 53 model exchanges and 62 protocol artifacts |
+| Failed edge | R7-to-R8 operation `f59bd097-f58c-493c-9189-2609b46a6b66`, transition `b42ac3e5-04ed-5c65-a71e-e909c7f4fca8` |
+| Live trace evidence | Three valid typed tool-loop sessions progressed to checkpoint heads 74, 65, and 63 before the provider failure |
+| Provider failure | HTTP 429 `RESOURCE_EXHAUSTED` from `aiplatform.googleapis.com`, error id `1d54b138-6afa-44fb-8e2b-0559730f0a2f` |
+| Controller result | Walk job `Indeterminate`; durable recovery cause `AttemptIndeterminate`; session cursor retained at R7 |
+
+Trace chain:
+
+`direct_google broad lane -> typed HTTP_429 provider_unavailable -> guarded
+R7-to-R8 attempt becomes indeterminate -> walk job becomes Indeterminate ->
+mutation authority becomes RecoveryRequired`.
+
+This recurrence is useful negative evidence for the newer controller: unlike the
+2026-06-09 run, it did not publish an empty child plan and then report the loop
+complete. It kept the last durable cursor at R7, preserved all three typed
+agent-trace sessions, and required explicit abandonment. The external cause is
+unchanged, so no code regression is justified from this incident. This campaign
+is stop-use for loop progress after R7; the next handoff canary must use a fresh
+campaign with lower direct-Google burst pressure or a different admitted route.
+
+Relevant authority boundaries are
+`walk::controller::WalkController::step_claimed`, which refuses to return idle
+authority after an invoked edge fails, and `walk::server` job classification,
+which exposes the unresolved attempt as an indeterminate operator job. Do not
+weaken either guard to make this campaign resumable.
+
 ## Related Bugs
 
 - [`2026-06-08-prototype1-direct-google-g35flash-quota-empty-baseline.md`](./2026-06-08-prototype1-direct-google-g35flash-quota-empty-baseline.md)

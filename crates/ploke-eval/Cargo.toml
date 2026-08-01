@@ -36,6 +36,9 @@ flate2 = "1.0"
 libc = { workspace = true }
 sparse-merkle-tree = "0.6.1"
 
+[build-dependencies]
+sha2 = "0.10"
+
 [dev-dependencies]
 ploke-test-utils = { workspace = true }
 syn_parser = { workspace = true }

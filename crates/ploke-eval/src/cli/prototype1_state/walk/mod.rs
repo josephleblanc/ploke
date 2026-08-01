@@ -18,6 +18,7 @@ pub(crate) mod phase;
 pub(crate) mod protocol;
 pub(crate) mod query;
 pub(crate) mod server;
+mod source_guard_paths;
 pub(crate) mod summary;
 pub(crate) mod trace;
 

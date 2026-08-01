@@ -122,7 +122,7 @@ use crate::{
             telemetry::RuntimeTelemetry,
         },
         resolve_batch_manifest, resolve_protocol_model_id, resolve_protocol_provider_slug,
-        sanitize_batch_component, serde_name, write_json_file_pretty, yes_no,
+        sanitize_batch_component, serde_name, setup_defaults, write_json_file_pretty, yes_no,
     },
     evaluate_branch, instances_dir,
     intervention::{
@@ -278,6 +278,51 @@ fn preview_prototype1_parent_setup_at(
     )
 }
 
+pub(crate) fn project_setup(
+    command: &Prototype1LoopCommand,
+    repo_root: PathBuf,
+) -> Result<crate::setup_client::RunSetupPreview, PrepareError> {
+    let plan = preview_prototype1_parent_setup_at(command, repo_root)?;
+    let content = &plan.content;
+    let record = crate::cli::prototype1_state::walk::config::passive_profile_record(
+        content.profile.profile(),
+    )?;
+    let control = crate::cli::prototype1_state::walk::config::project_control(
+        &record,
+        content.effective_control.clone(),
+    );
+
+    Ok(crate::setup_client::RunSetupPreview {
+        schema_version: plan.schema_version.to_string(),
+        plan_hash: ContentHash(plan.plan_sha256.clone()),
+        checkout: crate::setup_client::RunSetupCheckout {
+            branch: content.checkout.branch.clone(),
+            head: content.checkout.head.clone(),
+        },
+        artifact_branch: content.artifact_branch.clone(),
+        batch: crate::setup_client::RunSetupBatchPreview {
+            manifest_path: content.batch_manifest.clone(),
+            batch: content.batch.clone(),
+            primary_instance: content.primary_instance_id.clone(),
+        },
+        campaign: crate::setup_client::RunSetupCampaign {
+            manifest_path: content.campaign.manifest_path().to_path_buf(),
+            manifest_hash: ContentHash(content.campaign.manifest_plan.sha256().to_string()),
+            slice_path: content.campaign.slice_dataset_path.clone(),
+            slice_hash: ContentHash(content.campaign.slice_sha256.clone()),
+            manifest: content.campaign.manifest_plan.manifest().clone(),
+            resolved: content.campaign.resolved.clone(),
+        },
+        profile: crate::setup_client::RunSetupProfilePreview {
+            source_path: content.profile.source_path().to_path_buf(),
+            profile_path: content.profile.profile_path().to_path_buf(),
+            profile_hash: ContentHash(content.profile.sha256().to_string()),
+            record,
+        },
+        control,
+    })
+}
+
 pub(crate) fn prepare_prototype1_parent_setup(
     command: &Prototype1LoopCommand,
     expected_sha: Option<&str>,
@@ -313,6 +358,14 @@ fn prepare_prototype1_parent_setup_at(
         repo_root,
     )?;
     admit_prototype1_parent_setup(plan)
+}
+
+pub(crate) fn admit_setup_at(
+    command: &Prototype1LoopCommand,
+    expected_sha: &str,
+    repo_root: PathBuf,
+) -> Result<Prototype1SetupReport, PrepareError> {
+    prepare_prototype1_parent_setup_at(command, Some(expected_sha), repo_root)
 }
 
 fn resolve_expected_setup(
@@ -352,14 +405,14 @@ fn validate_setup_command(command: &Prototype1LoopCommand) -> Result<(), Prepare
             detail: "--dry-run belongs to legacy intervention synthesis and is not a setup preview; use prototype1-setup --preview".to_string(),
         });
     }
-    if command.max_generations != 1
-        || command.max_total_nodes != 32
-        || command.min_children != 2
-        || command.max_children != 6
-        || !matches!(command.child_schedule_mode, CliChildScheduleMode::FullBatch)
+    if command.max_generations != setup_defaults::MAX_GENERATIONS
+        || command.max_total_nodes != setup_defaults::MAX_TOTAL_NODES
+        || command.min_children != setup_defaults::MIN_CHILDREN
+        || command.max_children != setup_defaults::MAX_CHILDREN
+        || command.child_schedule_mode != setup_defaults::CHILD_SCHEDULE
         || command.stop_on_first_keep
-        || !command.require_keep_for_continuation
-        || !command.explore_from_rejected
+        || command.require_keep_for_continuation != setup_defaults::REQUIRE_KEEP
+        || command.explore_from_rejected != setup_defaults::EXPLORE_REJECTED
     {
         return Err(PrepareError::InvalidBatchSelection {
             detail: "prototype1-setup does not accept legacy loop search-policy overrides; configure [search] in the required run profile".to_string(),
@@ -370,7 +423,7 @@ fn validate_setup_command(command: &Prototype1LoopCommand) -> Result<(), Prepare
             detail: "prototype1-setup creates Parent(0) and does not accept legacy continuation source flags".to_string(),
         });
     }
-    if command.stop_after != Prototype1LoopStopAfter::InterventionApply {
+    if command.stop_after != setup_defaults::STOP_AFTER {
         return Err(PrepareError::InvalidBatchSelection {
             detail: "prototype1-setup does not accept the legacy controller --stop-after override; configure [execution].stop_after in the required run profile".to_string(),
         });
@@ -381,9 +434,9 @@ fn validate_setup_command(command: &Prototype1LoopCommand) -> Result<(), Prepare
             || command.limit.is_some()
             || command.prepare_batch_id.is_some()
             || command.repo_cache.is_some()
-            || command.max_turns != 40
-            || command.max_tool_calls != 200
-            || command.wall_clock_secs != 1800
+            || command.max_turns != setup_defaults::MAX_TURNS
+            || command.max_tool_calls != setup_defaults::MAX_TOOL_CALLS
+            || command.wall_clock_secs != setup_defaults::WALL_CLOCK_SECS
             || !command.index_debug_snapshots)
     {
         return Err(PrepareError::InvalidBatchSelection {
@@ -667,6 +720,17 @@ fn admit_prototype1_parent_setup(
         .setup_lock_path(&plan.content.repo_root)
         .map_err(|source| setup_backend_error("prototype1_setup_lock", source))?;
     let _setup_lock = acquire_setup_lock(&lock_path)?;
+    if let Some(response) =
+        crate::cli::prototype1_state::walk::endpoint::probe_health(&plan.content.repo_root)?
+    {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "prototype1 setup cannot mutate '{}' while a typed walk Health probe reports a live controller at phase {:?}",
+                plan.content.repo_root.display(),
+                response.phase()
+            ),
+        });
+    }
     let mut admission = load_or_capture_setup_admission(&plan, &backend, &admission_path)?;
     validate_setup_admission(&plan, &admission)?;
 

@@ -6,7 +6,11 @@ Scope: live Prototype 1 loop plus child eval paths. This file maps persisted tra
 
 ## Causal Position
 
-Tracing and timing evidence is mostly diagnostic. The authoritative transition surface remains the Prototype 1 journal, node records, runner invocation/result records, and run records. The timing monitor intentionally projects over several evidence families:
+Tracing and timing evidence is mostly diagnostic. Controller-session journals
+and their typed transition receipts govern live mutation authority. Node,
+runner-invocation/result, and run records retain their narrower domain evidence
+roles; the timing monitor intentionally projects over several evidence
+families:
 
 - observation JSONL under `~/.ploke-eval/logs`
 - child runtime stdout/stderr streams under campaign node directories
@@ -42,6 +46,10 @@ jq -c 'select((.campaign_id? // .span.campaign_id? // (.spans[-1].campaign_id?))
 - Reader: `crates/ploke-eval/src/cli/prototype1_state/eval_store/observation.rs` imports every line as generic `eval_trace_event` evidence and deserializes `provider_attempt` lines through `ProviderAttemptTimeline` into the dedicated `eval_provider_attempt` relation. Historical flat records using `outcome` deserialize as `transport_outcome`, with missing `response_outcome` defaulted to `not_parsed`.
 - Key IDs for joins: `request_id` is only process-local; `attempt` joins attempt events within a request. Reliable campaign/node/branch joins require tracing span fields (`campaign_id`, `node_id`, `branch_id`, `generation`) from the surrounding Prototype 1 span.
 - Classification: diagnostic provider transport evidence. Useful for retry/timeout/backoff proof; not authoritative loop state.
+- Control boundary: importing observation JSONL is optional diagnostic
+  persistence. Live walk control neither parses observation/stderr log text nor
+  depends on `eval_provider_attempt` import to admit or validate transitions.
+  `PLOKE_PROTOCOL_DEBUG` is duplicate telemetry, not a behavioral contract.
 - Safe bounded inspection:
 
 ```bash

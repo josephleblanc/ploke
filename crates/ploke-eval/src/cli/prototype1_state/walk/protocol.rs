@@ -20,16 +20,19 @@ use ploke_records::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::cli::{
-    Prototype1StateWalkAuditScope, Prototype1StateWalkAuditTransition,
-    Prototype1StateWalkLlmStepSource,
-    prototype1_state::{
-        driver::control::RecoveryDirective,
-        edge::ControlEdge,
-        event::{ContentHash, TransitionId},
-        session::{Cursor, SessionId},
-        typestate::RuntimeAxisDelta,
+use crate::{
+    cli::{
+        Prototype1StateWalkAuditScope, Prototype1StateWalkAuditTransition,
+        Prototype1StateWalkLlmStepSource,
+        prototype1_state::{
+            driver::control::RecoveryDirective,
+            edge::ControlEdge,
+            event::{ContentHash, TransitionId},
+            session::{Cursor, SessionId},
+            typestate::RuntimeAxisDelta,
+        },
     },
+    walk_client::WalkEvidenceQuery,
 };
 
 use super::{
@@ -217,6 +220,13 @@ pub enum WalkRequestBody {
         campaign: Option<CampaignId>,
         /// Immutable CozoScript query.
         script: String,
+    },
+    /// Run one server-owned immutable evidence projection.
+    EvidenceQuery {
+        /// Exact campaign selected by the client.
+        campaign: CampaignId,
+        /// Closed projection whose canonical script is owned by the server.
+        view: WalkEvidenceQuery,
     },
     /// Inspect current phase and summary without mutating state.
     Show,
@@ -1855,11 +1865,18 @@ impl TryFrom<WalkDeltaWire> for WalkDeltaSnapshot {
     }
 }
 
-/// Complete immutable-query observation returned to every sibling client.
+/// Immutable owner-DB query plus a later server-session observation.
+///
+/// `result.revision` identifies the exact database bytes queried. The server
+/// samples `phase` and `version` only after that query completes, so these two
+/// evidence planes are deliberately non-atomic and must not be treated as one
+/// transition-consistent snapshot.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WalkQuerySnapshot {
+    /// Server phase observed after the owner-DB snapshot was queried.
     pub phase: WalkPhase,
     pub result: DbQueryResult,
+    /// Durable server-session revision observed after the owner-DB query.
     pub version: SessionVersion,
     pub epoch: ServerEpoch,
 }
@@ -2340,6 +2357,28 @@ impl WalkResponse {
 #[cfg(test)]
 mod snapshot_tests {
     use super::*;
+
+    #[test]
+    fn evidence_query_request_round_trip_preserves_typed_identity() {
+        let request = WalkRequest {
+            client_protocol: Some(super::super::epoch::WALK_PROTOCOL_VERSION),
+            client_epoch: None,
+            body: WalkRequestBody::EvidenceQuery {
+                campaign: CampaignId::from("typed-evidence-query"),
+                view: WalkEvidenceQuery::Progress,
+            },
+        };
+
+        let encoded = serde_json::to_value(&request).expect("serialize evidence query request");
+        let decoded: WalkRequest =
+            serde_json::from_value(encoded.clone()).expect("decode evidence query request");
+
+        assert_eq!(decoded, request);
+        assert_eq!(encoded["body"]["type"], "evidence_query");
+        assert_eq!(encoded["body"]["campaign"], "typed-evidence-query");
+        assert_eq!(encoded["body"]["view"], "progress");
+        assert!(encoded["body"].get("script").is_none());
+    }
 
     fn reconstructed() -> WalkSessionSnapshot {
         WalkSessionSnapshot {

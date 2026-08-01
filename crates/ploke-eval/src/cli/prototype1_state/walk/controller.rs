@@ -1564,6 +1564,15 @@ impl WalkController {
                 ),
             });
         }
+        if let Some(expected) = expected {
+            ensure_start_bound(expected, until)?;
+        } else {
+            let origin = match self.phase() {
+                WalkPhase::Empty => WalkPhase::R3,
+                phase => phase,
+            };
+            ensure_postdominator(origin, until)?;
+        }
         let lease = match expected {
             Some(expected) => claim_controller_version(&repo_root, RunMode::Step, expected)?,
             None => claim_controller(&repo_root, RunMode::Step)?,
@@ -1851,6 +1860,7 @@ impl WalkController {
         allow_git_changes: bool,
         mut expected: Option<SessionVersion>,
     ) -> Result<(Vec<WalkTransition>, Option<SessionVersion>), PrepareError> {
+        ensure_postdominator(self.phase(), target)?;
         let mut guard = 0_u8;
         let mut transitions = Vec::new();
         loop {
@@ -1873,7 +1883,7 @@ impl WalkController {
             {
                 return Err(PrepareError::InvalidBatchSelection {
                     detail: format!(
-                        "walk reached branch {} while advancing to {target}; rerun with the matching --until target",
+                        "walk committed unexpected branch {} while advancing to unconditional target {target}; inspect the typed receipt and operation status before any retry",
                         self.phase()
                     ),
                 });
@@ -2269,6 +2279,39 @@ fn phase_requires_live(phase: WalkPhase) -> bool {
     first.requires_live() && edges.all(ControlEdge::requires_live)
 }
 
+fn ensure_start_bound(version: &SessionVersion, target: WalkPhase) -> Result<(), PrepareError> {
+    let origin = match version.phase() {
+        WalkPhase::Empty => WalkPhase::R3,
+        phase => phase,
+    };
+    ensure_postdominator(origin, target)
+}
+
+fn ensure_postdominator(from: WalkPhase, target: WalkPhase) -> Result<(), PrepareError> {
+    let mut pending = vec![from];
+    let mut visited = Vec::new();
+    while let Some(phase) = pending.pop() {
+        if phase == target || visited.contains(&phase) {
+            continue;
+        }
+        visited.push(phase);
+        let next = ControlEdge::ALL
+            .into_iter()
+            .filter(|edge| edge.from() == phase)
+            .map(ControlEdge::to)
+            .collect::<Vec<_>>();
+        if next.is_empty() {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "bounded target {target} is branch-specific from {from}; use one unbounded Step, inspect its typed receipt, then choose the next target"
+                ),
+            });
+        }
+        pending.extend(next);
+    }
+    Ok(())
+}
+
 trait NextPhase {
     fn next(self) -> Option<WalkPhase>;
 }
@@ -2305,7 +2348,7 @@ impl NextPhase for WalkPhase {
 fn ensure_supported_target(target: WalkPhase) -> Result<(), PrepareError> {
     if target == WalkPhase::R14b {
         return Err(PrepareError::InvalidBatchSelection {
-            detail: "step-mode walk target r14b crosses the R13b successor runtime boundary; bound this operation at r13b. R14b finalization requires predecessor authority retained across the handoff and is not admitted through the transferred successor controller"
+            detail: "step-mode walk target r14b crosses the R13b successor runtime boundary; take one bare Step at R12 with the advertised checkout grant and inspect its typed receipt. R14b finalization requires predecessor authority retained across the handoff and is not admitted through the transferred successor controller"
                 .to_string(),
         });
     }
@@ -2347,14 +2390,14 @@ fn ensure_branch_target(
         if r12_handoff && matches!(target, WalkPhase::R13a | WalkPhase::R14a) {
             return Err(PrepareError::InvalidBatchSelection {
                 detail: format!(
-                    "target {target} is the stopped branch, but the R12 continuation authorizes successor handoff; use --until r13b with --allow git-changes"
+                    "target {target} is the stopped branch, but the R12 continuation authorizes successor handoff; take one bare Step with --allow git-changes and inspect its typed receipt"
                 ),
             });
         }
         if !r12_handoff && matches!(target, WalkPhase::R13b | WalkPhase::R13c | WalkPhase::R14b) {
             return Err(PrepareError::InvalidBatchSelection {
                 detail: format!(
-                    "target {target} is the successor-handoff branch, but the R12 continuation does not authorize handoff; use --until r13a or --until r14a"
+                    "target {target} is the successor-handoff branch, but the R12 continuation does not authorize handoff; take one bare Step and inspect its typed receipt"
                 ),
             });
         }
@@ -4768,10 +4811,70 @@ mod tests {
         }
     }
 
+    #[test]
+    fn bounded_targets_require_postdominators() {
+        for (from, target) in [
+            (WalkPhase::R1, WalkPhase::R3),
+            (WalkPhase::R4a, WalkPhase::R4c),
+            (WalkPhase::R10, WalkPhase::R12),
+            (WalkPhase::R3, WalkPhase::R12),
+        ] {
+            ensure_postdominator(from, target)
+                .unwrap_or_else(|error| panic!("{target} must post-dominate {from}: {error}"));
+        }
+
+        for (from, target) in [
+            (WalkPhase::R1, WalkPhase::R2a),
+            (WalkPhase::R4a, WalkPhase::R4b),
+            (WalkPhase::R10, WalkPhase::R11),
+            (WalkPhase::R10, WalkPhase::R11a),
+            (WalkPhase::R12, WalkPhase::R13a),
+            (WalkPhase::R12, WalkPhase::R13b),
+            (WalkPhase::R12, WalkPhase::R13c),
+        ] {
+            let error = ensure_postdominator(from, target)
+                .expect_err("branch-specific bound must fail before controller admission");
+            assert!(error.to_string().contains("use one unbounded Step"));
+        }
+    }
+
+    #[tokio::test]
+    async fn branch_bound_rejects_before_repo_access() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let repo = root.path().join("absent-repo");
+        let mut controller = WalkController::new(repo.clone());
+
+        let error = controller
+            .advance_until(WalkPhase::R2a, false, false, None)
+            .await
+            .err()
+            .expect("branch-specific bound must fail before an edge claim");
+
+        assert!(error.to_string().contains("branch-specific"));
+        assert_eq!(controller.phase(), WalkPhase::Empty);
+        assert_eq!(controller.steps, 0);
+        assert!(
+            !repo.exists(),
+            "preflight must not access or create the repo"
+        );
+    }
+
     #[tokio::test]
     async fn step_refreshes_before_trusting_in_memory_state() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let mut controller = WalkController::new(temp.path().join("repo"));
+        let repo = temp.path().join("repo");
+        fs::create_dir_all(&repo).expect("create repo");
+        let output = std::process::Command::new("git")
+            .current_dir(&repo)
+            .args(["init", "--quiet"])
+            .output()
+            .expect("initialize git repo");
+        assert!(
+            output.status.success(),
+            "git init failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let mut controller = WalkController::new(repo);
         controller.state = WalkState::Blocked {
             phase: WalkPhase::R13c,
             detail: "persisted successor handoff is incomplete".to_string(),
@@ -4784,7 +4887,10 @@ mod tests {
             .expect("default step must not report a successful no-op at R13c");
 
         assert_eq!(controller.phase(), WalkPhase::Empty);
-        assert!(error.to_string().contains("no Prototype 1 parent identity"));
+        assert!(
+            error.to_string().contains("no Prototype 1 parent identity"),
+            "{error}"
+        );
     }
 
     #[tokio::test]

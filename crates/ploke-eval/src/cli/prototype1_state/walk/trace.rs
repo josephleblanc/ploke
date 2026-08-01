@@ -1738,6 +1738,8 @@ mod tests {
                 git_head: None,
                 active_branch: None,
                 source_status_hash: None,
+                build_fingerprint:
+                    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
             }
         }
 

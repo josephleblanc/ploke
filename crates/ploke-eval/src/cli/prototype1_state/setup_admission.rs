@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     cli::prototype1_state::{
-        backend::GitCommit,
+        backend::{GitCommit, GitWorktreeBackend},
         event::{ContentHash, RecordedAt},
         identity::ParentIdentity,
     },
@@ -34,17 +34,49 @@ pub(crate) struct SetupLock {
     file: File,
 }
 
+/// Shared repository authority retained by every live controller owner.
+///
+/// Setup admission takes an exclusive lock on the same stable Git-worktree
+/// administrative inode. Multiple live owners may coexist during a handoff,
+/// but no setup writer may overlap any of them.
+#[derive(Debug)]
+pub(crate) struct RunLock {
+    file: File,
+}
+
 impl Drop for SetupLock {
     fn drop(&mut self) {
         // Closing the descriptor also releases the lock; explicit unlock keeps
         // the lifecycle clear and permits deterministic same-process tests.
-        unsafe {
-            libc::flock(self.file.as_raw_fd(), libc::LOCK_UN);
-        }
+        unlock(&self.file);
+    }
+}
+
+impl Drop for RunLock {
+    fn drop(&mut self) {
+        unlock(&self.file);
     }
 }
 
 pub(crate) fn acquire_setup_lock(path: &Path) -> Result<SetupLock, PrepareError> {
+    acquire_lock(path, libc::LOCK_EX, "exclusive setup").map(|file| SetupLock { file })
+}
+
+pub(crate) fn acquire_run_lock(path: &Path) -> Result<RunLock, PrepareError> {
+    acquire_lock(path, libc::LOCK_SH, "shared live-run").map(|file| RunLock { file })
+}
+
+pub(crate) fn run_lock(repo_root: &Path) -> Result<RunLock, PrepareError> {
+    let path = GitWorktreeBackend
+        .setup_lock_path(repo_root)
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "prototype1_run_authority",
+            detail: source.to_string(),
+        })?;
+    acquire_run_lock(&path)
+}
+
+fn acquire_lock(path: &Path, mode: libc::c_int, owner: &'static str) -> Result<File, PrepareError> {
     let path = path.to_path_buf();
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|source| PrepareError::WriteManifest {
@@ -61,9 +93,9 @@ pub(crate) fn acquire_setup_lock(path: &Path) -> Result<SetupLock, PrepareError>
             path: path.clone(),
             source,
         })?;
-    let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    let result = unsafe { libc::flock(file.as_raw_fd(), mode | libc::LOCK_NB) };
     if result == 0 {
-        return Ok(SetupLock { file });
+        return Ok(file);
     }
     let source = io::Error::last_os_error();
     let blocked = source.kind() == io::ErrorKind::WouldBlock
@@ -72,11 +104,19 @@ pub(crate) fn acquire_setup_lock(path: &Path) -> Result<SetupLock, PrepareError>
             .is_some_and(|code| code == libc::EAGAIN || code == libc::EWOULDBLOCK);
     if blocked {
         return Err(admission_error(format!(
-            "prototype1 setup is already being admitted under lock '{}'",
-            path.display()
+            "cannot acquire {owner} repository authority under lock '{}'; another setup admission, walk server, or controller owns this checkout",
+            path.display(),
         )));
     }
     Err(PrepareError::WriteManifest { path, source })
+}
+
+fn unlock(file: &File) {
+    // SAFETY: the guard owns a valid descriptor and explicit unlock only
+    // shortens the lock lifetime immediately before that descriptor drops.
+    unsafe {
+        libc::flock(file.as_raw_fd(), libc::LOCK_UN);
+    }
 }
 
 /// Immutable artifact witnesses committed by the reviewed setup plan.
@@ -576,10 +616,30 @@ mod tests {
         let first = acquire_setup_lock(&lock_path).expect("first setup lock");
 
         let error = acquire_setup_lock(&lock_path).expect_err("concurrent setup lock");
-        assert!(error.to_string().contains("already being admitted"));
+        assert!(error.to_string().contains("repository authority"));
 
         drop(first);
         acquire_setup_lock(&lock_path).expect("reacquire released setup lock");
+    }
+
+    #[test]
+    fn run_locks_share_authority_and_exclude_setup() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let lock_path = tmp.path().join("prototype1-setup.lock");
+        let first = acquire_run_lock(&lock_path).expect("first live owner");
+        let second = acquire_run_lock(&lock_path).expect("handoff live owner");
+
+        let error = acquire_setup_lock(&lock_path).expect_err("live owners block setup");
+        assert!(error.to_string().contains("exclusive setup"));
+
+        drop(first);
+        drop(second);
+        let setup = acquire_setup_lock(&lock_path).expect("setup after live owners stop");
+        let error = acquire_run_lock(&lock_path).expect_err("setup blocks live owner");
+        assert!(error.to_string().contains("shared live-run"));
+
+        drop(setup);
+        acquire_run_lock(&lock_path).expect("live owner after setup finishes");
     }
 
     #[test]

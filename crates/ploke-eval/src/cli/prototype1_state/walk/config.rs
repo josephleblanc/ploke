@@ -496,7 +496,14 @@ fn read_campaign(path: &Path) -> Result<String, PrepareError> {
 /// wire carrier. The source bytes are never parsed here; admission validation
 /// has already checked their commitment, digest, schema, and runtime policy.
 fn passive_profile(admitted: &AdmittedRunProfile) -> Result<RunProfileRecord, PrepareError> {
-    let validated = toml::to_string(&admitted.profile).map_err(|source| {
+    passive_profile_record(&admitted.profile)
+}
+
+pub(crate) fn passive_profile_record(
+    profile: &Prototype1RunProfile,
+) -> Result<RunProfileRecord, PrepareError> {
+    profile.validate()?;
+    let validated = toml::to_string(profile).map_err(|source| {
         projection_error(format!(
             "validated run profile could not be serialized into its passive carrier: {source}"
         ))
@@ -518,7 +525,10 @@ fn passive_commitment(commitment: &RunProfileCommitment) -> RunProfileCommitment
     }
 }
 
-fn project_control(record: &RunProfileRecord, effective: EffectiveRunControl) -> EffectiveControl {
+pub(crate) fn project_control(
+    record: &RunProfileRecord,
+    effective: EffectiveRunControl,
+) -> EffectiveControl {
     let parallel_cap = SourcedValue {
         value: effective.parallel_cap,
         source: if effective.defaulted_from_profile {

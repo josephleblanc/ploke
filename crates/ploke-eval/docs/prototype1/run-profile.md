@@ -44,6 +44,39 @@ Validation happens at the command boundaries that already read the config:
   while loading invalid admitted config, but they are execution commands rather
   than parse-only validators.
 
+`ploke-walk-ui` uses the same planner and admission path through typed setup
+carriers. It does not reconstruct `Prototype1LoopCommand` from UI-local
+defaults, accept raw profile JSON, or decode human-readable CLI output:
+
+- **Load selected profile** returns an existing profile's exact path,
+  normalized `RunProfileRecord`, and SHA-256 binding. For a new profile, use
+  **Restore canonical defaults**, edit the typed record, then **Validate /
+  review profile** and **Save reviewed profile**. Save is hash-bound, atomic,
+  create-only, and read-back validated; it never overwrites. An unsaved reviewed
+  draft is not setup-usable, and later edits invalidate its review/binding.
+- `RunSetupRequest` selects an existing checkout, prepared batch path/id,
+  campaign id, run profile name/path, optional primary instance, and optional
+  canonical model/protocol/embedding overrides.
+- `RunSetupPreview` projects the real non-writing setup plan, exact Git base,
+  campaign and slice hashes, runtime-validated profile, effective control and
+  provenance, and the plan SHA-256.
+- admission rebuilds that plan and requires the reviewed hash;
+- the receipt includes a read-back-validated `WalkConfigSnapshot`, which is the
+  UI's source for the admitted campaign, profile commitment, effective values,
+  and provenance.
+
+The profile selector does not guess between names and paths. **Name** must be
+one non-`.toml` path component and resolves in the registered profile
+directory. **Path** is explicit, and a relative path is made absolute from the
+UI process working directory before resolution. Empty and non-UTF-8 explicit
+paths fail closed; `Name("foo.toml")` is rejected and `Path("foo")` cannot be
+reinterpreted as registered name `foo`.
+
+After the profile is loaded or saved, use **Preview setup** and then **Admit
+reviewed setup** against the exact returned plan hash. The UI does not prepare
+batches, create checkouts/worktrees, run doctor/provider preflights, or watch
+the filesystem for external changes.
+
 Setup and the control commands require an explicit/admitted run profile. An
 admitted profile is one fail-closed pair:
 
@@ -65,17 +98,45 @@ selection, execution, storage, and control. Legacy `prototype1` search and
 `--stop-after` flags are rejected as setup overrides instead of being silently
 ignored.
 
-### Current admission-recovery boundary
+### Defaults, selected policy, and effective admission
 
-Plan comparison fails before admission writes, but the matched setup operation
-is not yet a filesystem/DB/Git transaction. After the campaign/profile pair is
-written, a later closure, owner-DB, node, branch, identity, commit, or checkout
-failure can leave a partial campaign, and the ordinary setup command does not
-yet carry a resumable admission receipt. Preserve that evidence and use a fresh
-campaign rather than deleting artifacts or weakening validation. This is the
-remaining Stage 1 admission-recovery work and is a hard gate before enabling UI
-Start/Retry controls; a successful setup report still means every listed stage
-completed.
+Three different value layers are visible during setup and must not be collapsed:
+
+1. **CLI/schema defaults** fill canonical setup options that the operator did
+   not override. They are owned next to the CLI parser and are shared with the
+   setup service; the UI has no copied default table.
+2. **Selected configuration** comes from the prepared batch, chosen run
+   profile, and explicit setup selectors/overrides. The profile still owns
+   search, generation, selection, execution, storage, and control policy.
+3. **Effective admitted values** are recomputed by `WalkConfigSnapshot` from
+   the persisted, hash-bound campaign/profile inputs. The read-back validator
+   deterministically reports the effective control values and whether each
+   control cap was explicit or derived; that `ValueSource` is a validated
+   projection, not a separately persisted authority record.
+
+A preview proves deterministic resolution and plan identity, not live provider
+readiness or execution. A successful admission proves the reviewed plan was
+applied and read back consistently. `walk config --with-version` and the UI Run
+Config panel display layer 3. Campaign
+`p1-v36-walkop-handoff-g35f-global-3g1x3-20260731-151050` live-validated that
+read-back and a successful Parent(0) R5-to-R6 baseline edge. Its durable summary
+remains nonterminal at generation 0: active node `node-5798cc0855390ba4`, three
+admitted/observed children, latest journal entry 40 `observe_child`, and no
+selected successor, continuation decision, or handoff. It therefore does not
+validate successor config propagation or the requested three-parent packet.
+Ordinary doctor and route-specific live preflights remain complementary
+readiness evidence.
+
+### Admission recovery boundary
+
+Hash comparison still fails before admission writes. After a match, setup
+performs sequential campaign/profile, closure/DB, node, branch, identity,
+commit, and checkout effects under the canonical receipt-first, resumable setup
+path. Completed-state verification makes exact retry idempotent and rejects
+drift. Preserve the receipt and any partial evidence after a failed stage; use
+the explicit recovery path rather than deleting artifacts or weakening
+validation. UI admission is bound to the same behavior and only reports success
+after configuration read-back.
 
 ## `control`
 
@@ -93,6 +154,13 @@ parallel_cap = 3
   `prototype1-continue` and `prototype1-step` commands still choose the command
   execution mode; this field is retained in the admitted config as the typed
   operator preference.
+- The canonical `Control::default()` is `mode = Continuous` and
+  `parallel_cap = None`. Manual exact Step remains available for an admitted
+  Continuous preference; restoring defaults does not opt into UI automation.
+- The profile's `continuous` preference does not activate the UI scheduler or
+  create a durable continuous lease. UI-local **Auto-advance transitions**
+  requires an admitted Step-mode run and loses its scheduling intent when the
+  UI exits.
 - `parallel_cap`: Optional cap on concurrent child phase execution. If omitted,
   it defaults from `[search]`. For `search.schedule = "full-batch"`, the
   derived cap is the effective `search.children.parallel_targets` (explicit or
@@ -142,13 +210,17 @@ fresh_slots_per_child = 2
 timeout_secs = 900
 ```
 
-- `max_attempts`: Optional maximum attempts inside each headless TUI patch
-  generation slot. If omitted, the harness request contract supplies the
-  attempt budget.
+- `max_attempts`: Optional maximum outer harness turns inside each headless TUI
+  patch-generation slot. If omitted, the harness request contract supplies the
+  attempt budget. These are distinct from provider HTTP retries and tool-loop
+  steps.
 - `fresh_slots_per_child`: Optional count of fresh broad-harness slots to
   publish per desired child. If omitted, the current runtime default is used.
-- `timeout_secs`: Optional per-slot headless TUI turn timeout. If omitted, the
-  harness request contract supplies the timeout budget.
+- `timeout_secs`: Optional wall-clock timeout for one complete slot, shared by
+  all of its `max_attempts` turns. It is not a deadline for each turn or for the
+  whole R7-to-R8 walk job. With `fresh_slots_per_child = 2`, three desired
+  children, and parallel cap 1, as many as six serial slot budgets may run.
+  If omitted, the harness request contract supplies the timeout budget.
 
 ## Profile Conflicts
 
@@ -491,7 +563,10 @@ mbe = { enabled = true, python = "python3", workers = 2 }
   spawning the child; `complete` runs evaluation, selection, and handoff.
 - `observe_child_stale_after_secs`: Maximum time the parent waits in
   `observe_child` for child result evidence before treating the child as stale
-  or hung. Defaults to `1200` seconds. Must be nonzero.
+  or hung. The timer starts only after that child reaches C4; it does not bound
+  materialization, Cargo check/build, or the entire R10 walk job. Children are
+  processed according to the effective parallel cap, so a cap-one batch may
+  consume this budget serially. Defaults to `1200` seconds. Must be nonzero.
 - `trace_jsonl`: Trace recording behavior. `inherit` follows the command or
   environment default; `auto` enables the standard trace artifact; `off`
   disables trace JSONL.

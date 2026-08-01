@@ -31,7 +31,7 @@ use crate::cli::prototype1_state::{
     invocation::{ProcessIncarnation, process_incarnation, record_runtime_id},
     journal::JournalAppendReceipt,
     profile::{AdmittedRunProfile, RunMode, RunProfileCommitment},
-    setup_admission::Prototype1SetupAdmission,
+    setup_admission::{Prototype1SetupAdmission, RunLock},
     successor::{HandoffAcceptance, ReadyCommit, ReadyReceipt},
     walk::{
         epoch::{ServerEpoch, TRANSITION_GRAPH_VERSION},
@@ -952,6 +952,7 @@ impl RecoveryLease {
         let handoff = self.request.origin.handoff_path();
         Ok(Lease {
             lock,
+            authority: None,
             paths: self.paths,
             session_id,
             parent: self.request.parent,
@@ -1703,6 +1704,7 @@ pub(crate) struct Uncertain;
 #[derive(Debug)]
 pub(crate) struct Lease<S> {
     lock: File,
+    authority: Option<RunLock>,
     paths: Paths,
     session_id: SessionId,
     parent: ParentIdentity,
@@ -1719,6 +1721,15 @@ pub(crate) struct Lease<S> {
 }
 
 impl<S> Lease<S> {
+    pub(crate) fn with_run_lock(mut self, authority: RunLock) -> Self {
+        assert!(
+            self.authority.is_none(),
+            "controller lease already owns repository authority"
+        );
+        self.authority = Some(authority);
+        self
+    }
+
     pub(crate) fn session_id(&self) -> SessionId {
         self.session_id
     }
@@ -1962,6 +1973,7 @@ impl Lease<Idle> {
         Ok(Begin::Started {
             lease: Lease {
                 lock: self.lock,
+                authority: self.authority,
                 paths: self.paths,
                 session_id: self.session_id,
                 parent: self.parent,
@@ -2259,6 +2271,7 @@ impl Lease<Pending> {
         attempts.insert(transition_id, Attempt::Finished(receipt.clone()));
         let Lease {
             lock,
+            authority,
             paths,
             session_id,
             parent,
@@ -2275,6 +2288,7 @@ impl Lease<Pending> {
             Ok(Finished::Uncertain {
                 lease: Lease {
                     lock,
+                    authority,
                     paths,
                     session_id,
                     parent,
@@ -2296,6 +2310,7 @@ impl Lease<Pending> {
             Ok(Finished::Terminal {
                 lease: Lease {
                     lock,
+                    authority,
                     paths,
                     session_id,
                     parent,
@@ -4602,6 +4617,7 @@ fn acquire_lease(
     let handoff = request.origin.handoff_path();
     Ok(Lease {
         lock,
+        authority: None,
         paths,
         session_id,
         parent: request.parent,

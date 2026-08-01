@@ -1984,6 +1984,7 @@ mod tests {
             git_head: None,
             active_branch: None,
             source_status_hash: None,
+            build_fingerprint: String::new(),
         }
     }
 }

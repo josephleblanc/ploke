@@ -18,6 +18,42 @@ Prototype root:
 ~/.ploke-eval/campaigns/<campaign-id>/prototype1/
 ```
 
+## Operator Inspection
+
+Use the typed walk surfaces first for active state and normalized durable
+evidence:
+
+```bash
+ploke-eval loop walk status --with-version
+ploke-eval loop walk config --with-version
+ploke-eval loop walk session-history --with-version
+ploke-eval loop walk summary --verbose
+ploke-eval loop walk db_query --view relations
+ploke-eval loop walk db_query --view counts
+ploke-eval loop walk db_query --view config-evidence
+ploke-eval loop walk db_query --view lineage
+ploke-eval loop walk db_query --view progress
+ploke-eval loop walk db_query --view handoff-evidence
+```
+
+`status` is the server-liveness and job-authority surface. `config` reports the
+read-back-validated admitted configuration; `session-history` reports the
+durable controller-session journal. `summary` is an artifact-derived durable
+campaign projection, while the named database views are immutable,
+revision-tagged snapshots of the owner DB. None of those durable-evidence
+surfaces claims that a controller is live or authorized to mutate state.
+`relations` is the complete installed-relation inventory. `counts` is a
+curated core operator projection, including critical typed-trace relations,
+and must not be read as complete schema coverage. Query responses observe
+server phase/session only after the owner-DB query; the two revisions are
+non-atomic.
+
+The named views are normalized summaries, not full-detail replacements for
+every persisted payload described below. Raw artifact reads and `jq` remain
+appropriate for bounded JSON/log/artifact forensics after the typed surfaces
+identify an anomaly or exact coordinate. Never use an artifact, process
+listing, or `jq` result to infer live controller authority.
+
 ## Join Keys
 
 - `campaign_id`: joins campaign manifest, scheduler, branch registry, runner results, journal records, parent identity, invocations, successor records, and reports.
@@ -42,6 +78,13 @@ Prototype root:
 - Safe inspection:
 
 ```bash
+ploke-eval loop walk summary --verbose
+ploke-eval loop walk db_query --view progress
+```
+
+Bounded artifact forensics (not live authority):
+
+```bash
 jq '{policy, last_continuation_decision, frontier_node_ids, completed_node_ids, failed_node_ids, nodes: [.nodes[] | {node_id, parent_node_id, generation, instance_id, status, branch_id, runner_request_path, runner_result_path}]}' ~/.ploke-eval/campaigns/<campaign>/prototype1/scheduler.json
 ```
 
@@ -54,6 +97,15 @@ jq '{policy, last_continuation_decision, frontier_node_ids, completed_node_ids, 
 - Join IDs: `campaign_id`, `source_state_id`, `target_relpath`, `candidate_id`, `branch_id`, `parent_branch_id`, `selected_branch_id`, optional `patch_id`/`derived_artifact_id`.
 - Evidence status: projection plus evidence references. It stores proposed content and treatment summaries, but current code comments note some artifact ids are text-file fallbacks rather than whole-runtime artifact authority.
 - Safe inspection:
+
+```bash
+ploke-eval loop walk db_query --view progress
+ploke-eval loop walk db_query --view handoff-evidence
+```
+
+Those views summarize recorded progress and handoff evidence; they do not expose
+the registry's candidate content/state or active-target payload. Bounded
+artifact forensics:
 
 ```bash
 jq '{updated_at, sources: [.source_nodes[] | {instance_id, source_state_id, parent_branch_id, target_relpath, selected_branch_id, branches: [.branches[] | {branch_id, candidate_id, status, apply_id, latest_evaluation}]}], active_targets}' ~/.ploke-eval/campaigns/<campaign>/prototype1/branches.json
@@ -70,7 +122,16 @@ jq '{updated_at, sources: [.source_nodes[] | {instance_id, source_state_id, pare
 - Safe inspection:
 
 ```bash
-jq -R 'fromjson? | {kind, node_id: (.node_id // .refs.node_id // .parent_identity.node_id), runtime_id: (.runtime_id // null), transition_id: (.transition_id // null), phase: (.phase // .state // null)}' ~/.ploke-eval/campaigns/<campaign>/prototype1/transition-journal.jsonl | tail -n 40
+ploke-eval loop walk replay --tail 40
+ploke-eval loop walk summary --verbose
+```
+
+`session-history` is the controller-session journal, not this transition
+journal. For exact recent entry fields after replay identifies the relevant
+window:
+
+```bash
+tail -n 80 ~/.ploke-eval/campaigns/<campaign>/prototype1/transition-journal.jsonl | jq -R 'fromjson? | {kind, node_id: (.node_id // .refs.node_id // .parent_identity.node_id), runtime_id: (.runtime_id // null), transition_id: (.transition_id // null), phase: (.phase // .state // null)}'
 ```
 
 ### Parent Identity
@@ -82,6 +143,13 @@ jq -R 'fromjson? | {kind, node_id: (.node_id // .refs.node_id // .parent_identit
 - Join IDs: `campaign_id`, `parent_id`, `node_id`, `generation`, `previous_parent_id`, `parent_node_id`, `branch_id`, `artifact_branch`.
 - Evidence status: artifact-carried identity witness committed into the checkout; not yet a full artifact-local provenance manifest.
 - Safe inspection:
+
+```bash
+ploke-eval loop walk config --with-version
+ploke-eval loop walk db_query --view lineage
+```
+
+Bounded artifact forensics:
 
 ```bash
 jq '{schema_version, campaign_id, parent_id, node_id, generation, previous_parent_id, parent_node_id, branch_id, artifact_branch, created_at}' <active-parent-worktree>/.ploke/prototype1/parent_identity.json
@@ -98,6 +166,13 @@ jq '{schema_version, campaign_id, parent_id, node_id, generation, previous_paren
 - Safe inspection:
 
 ```bash
+ploke-eval loop walk db_query --view progress
+```
+
+`progress` exposes normalized node status/provenance, not every scheduler-owned
+path. Bounded artifact forensics:
+
+```bash
 jq '{node_id, parent_node_id, generation, instance_id, source_state_id, branch_id, candidate_id, status, workspace_root, binary_path, runner_request_path, runner_result_path}' ~/.ploke-eval/campaigns/<campaign>/prototype1/nodes/<node-id>/node.json
 ```
 
@@ -110,6 +185,14 @@ jq '{node_id, parent_node_id, generation, instance_id, source_state_id, branch_i
 - Join IDs: `campaign_id`, `node_id`, `generation`, `instance_id`, `source_state_id`, `branch_id`, `workspace_root`, `binary_path`, `runner_args`.
 - Evidence status: admitted-preview raw execution contract for the node-level runner seam; mutable at node registration/workspace update.
 - Safe inspection:
+
+```bash
+ploke-eval loop walk config --with-version
+ploke-eval loop walk db_query --view progress
+```
+
+Neither surface includes the complete runner argument/address contract. Bounded
+artifact forensics:
 
 ```bash
 jq '{campaign_id, node_id, generation, instance_id, source_state_id, branch_id, workspace_root, binary_path, stop_on_error, runner_args}' ~/.ploke-eval/campaigns/<campaign>/prototype1/nodes/<node-id>/runner-request.json
@@ -126,6 +209,12 @@ jq '{campaign_id, node_id, generation, instance_id, source_state_id, branch_id, 
 - Safe inspection:
 
 ```bash
+ploke-eval loop walk db_query --view progress
+```
+
+For result detail not carried by the normalized view:
+
+```bash
 jq '{campaign_id, node_id, generation, branch_id, status, disposition, treatment_campaign_id, evaluation_artifact_path, detail, exit_code, recorded_at}' ~/.ploke-eval/campaigns/<campaign>/prototype1/nodes/<node-id>/runner-result.json
 ```
 
@@ -138,6 +227,14 @@ jq '{campaign_id, node_id, generation, branch_id, status, disposition, treatment
 - Join IDs: `campaign_id`, `node_id`, `runtime_id`, `journal_path`, optional `active_parent_root`, `role`.
 - Evidence status: admitted-preview raw bootstrap contract; the successor file is gated by retired parent construction, but the JSON itself is not Crown authority.
 - Safe inspection:
+
+```bash
+ploke-eval loop walk session-history --with-version
+ploke-eval loop walk db_query --view handoff-evidence
+```
+
+Those surfaces show controller and normalized handoff evidence; they do not
+render the invocation payload. Bounded artifact forensics:
 
 ```bash
 jq '{schema_version, role, campaign_id, node_id, runtime_id, journal_path, active_parent_root, created_at}' ~/.ploke-eval/campaigns/<campaign>/prototype1/nodes/<node-id>/invocations/<runtime-id>.json
@@ -154,6 +251,12 @@ jq '{schema_version, role, campaign_id, node_id, runtime_id, journal_path, activ
 - Safe inspection:
 
 ```bash
+ploke-eval loop walk db_query --view progress
+```
+
+For one exact runtime result:
+
+```bash
 jq '{campaign_id, node_id, generation, branch_id, status, disposition, treatment_campaign_id, evaluation_artifact_path, detail, exit_code, recorded_at}' ~/.ploke-eval/campaigns/<campaign>/prototype1/nodes/<node-id>/results/<runtime-id>.json
 ```
 
@@ -166,6 +269,13 @@ jq '{campaign_id, node_id, generation, branch_id, status, disposition, treatment
 - Join IDs: `parent_node_id`, `child_generation`, child `node_id`, scheduler/branch/node/request paths.
 - Evidence status: typed cross-runtime message/projection of a parent planning step; it binds file addresses but does not seal their contents.
 - Safe inspection:
+
+```bash
+ploke-eval loop walk db_query --view progress
+```
+
+`progress` reports the plan record, not its complete child/request address
+payload. Bounded artifact forensics:
 
 ```bash
 jq '{parent_node_id, child_generation, scheduler, branches, children: [.children[] | {node_id, node, runner_request}]}' ~/.ploke-eval/campaigns/<campaign>/prototype1/messages/child-plan/<parent-node-id>.json
@@ -182,6 +292,13 @@ jq '{parent_node_id, child_generation, scheduler, branches, children: [.children
 - Safe inspection:
 
 ```bash
+ploke-eval loop walk db_query --view progress
+```
+
+The normalized row does not include compared-instance metrics or reasons.
+Bounded artifact forensics:
+
+```bash
 jq '{baseline_campaign_id, branch_id, treatment_campaign_id, overall_disposition, reasons_count: (.reasons|length), compared: [.compared_instances[] | {instance_id, status, has_baseline: (.baseline_metrics != null), has_treatment: (.treatment_metrics != null), disposition: .evaluation.disposition}]}' ~/.ploke-eval/campaigns/<campaign>/prototype1/evaluations/<branch-id>.json
 ```
 
@@ -194,6 +311,14 @@ jq '{baseline_campaign_id, branch_id, treatment_campaign_id, overall_disposition
 - Join IDs: `campaign_id`, `node_id`, `runtime_id`, `pid`.
 - Evidence status: successor acknowledgement; history-preview classifies it as raw or ingress because it can be written by the detached successor after predecessor handoff.
 - Safe inspection:
+
+```bash
+ploke-eval loop walk session-history --with-version
+ploke-eval loop walk db_query --view handoff-evidence
+```
+
+Those surfaces do not reproduce the exact ready-file payload. Bounded artifact
+forensics:
 
 ```bash
 jq '{schema_version, campaign_id, node_id, runtime_id, pid, recorded_at}' ~/.ploke-eval/campaigns/<campaign>/prototype1/nodes/<node-id>/successor-ready/<runtime-id>.json
@@ -210,6 +335,13 @@ jq '{schema_version, campaign_id, node_id, runtime_id, pid, recorded_at}' ~/.plo
 - Safe inspection:
 
 ```bash
+ploke-eval loop walk session-history --with-version
+ploke-eval loop walk db_query --view handoff-evidence
+```
+
+For the attempt-scoped terminal payload:
+
+```bash
 jq '{schema_version, campaign_id, node_id, runtime_id, status, trace_path, detail, recorded_at}' ~/.ploke-eval/campaigns/<campaign>/prototype1/nodes/<node-id>/successor-completion/<runtime-id>.json
 ```
 
@@ -222,6 +354,14 @@ jq '{schema_version, campaign_id, node_id, runtime_id, status, trace_path, detai
 - Join IDs: `campaign_id`, `branch_registry_path`, `scheduler_path`, `trace_path`, staged `node_id`s, selected `branch_id`.
 - Evidence status: overwritten trace/projection, useful for operator visibility but not authority.
 - Safe inspection:
+
+```bash
+ploke-eval loop walk status --with-version
+ploke-eval loop walk summary --verbose
+```
+
+Those commands report the current walk service and campaign projection, not the
+overwritten legacy controller payload. Bounded artifact forensics:
 
 ```bash
 jq '{stage_reached, dry_run, campaign_id, branch_registry_path, scheduler_path, trace_path, staged_nodes: [.staged_nodes[] | {node_id, generation, branch_id, status}], selected_next_branch_id, continuation_decision}' ~/.ploke-eval/campaigns/<campaign>/prototype1-loop-trace.json
@@ -240,6 +380,17 @@ jq '{stage_reached, dry_run, campaign_id, branch_registry_path, scheduler_path, 
 - Join IDs: `lineage_id` (currently campaign id), `block_hash`, `block_height`, predecessor head, successor `runtime_id` evidence refs.
 - Evidence status: sealed local History block store, but current docs/code still caution that it is not distributed consensus, process uniqueness, or full Crown authority for all projections.
 - Safe inspection:
+
+```bash
+ploke-eval history --campaign <campaign> preview
+ploke-eval history --campaign <campaign> evidence-inventory
+ploke-eval loop walk session-history --with-version
+ploke-eval loop walk db_query --view lineage
+ploke-eval loop walk db_query --view handoff-evidence
+```
+
+`lineage` is parent-identity lineage and `session-history` is controller-session
+history; neither is a block-store index. For exact block/index coordinates:
 
 ```bash
 find ~/.ploke-eval/campaigns/<campaign>/prototype1/history -maxdepth 3 -type f -printf '%s %p\n' | sort -n
@@ -295,9 +446,19 @@ tail -n 80 ~/.ploke-eval/logs/prototype1_observation_<run-id>.jsonl | jq -R 'fro
 
 ## Reader Surfaces
 
+- `ploke-eval loop walk status/config/session-history/summary`: primary typed
+  operator inspection surfaces. `status` owns live server/job claims; the
+  others report admitted configuration and durable projections.
+- `ploke-eval loop walk db_query --view relations|counts|config-evidence|lineage|progress|handoff-evidence`:
+  immutable, revision-tagged owner-DB evidence views. These views do not claim
+  live controller authority. `relations` is the complete inventory, while
+  `counts` is a curated core projection. Server phase/session metadata is a
+  later, non-atomic observation.
 - `ploke-eval loop prototype1-state --repo-root . [--handoff-invocation <path>]`: live parent/successor path. It reads parent identity, scheduler, branch registry, child plan, the per-runtime child channel, and History state. Node/request/result files and transition journal records remain reconstruction surfaces; they must not replace terminal channel evidence. This command advances state; do not use it as inspection.
-- `ploke-eval loop prototype1-runner --invocation <path>`: inspects an invocation; with `--execute`, executes a child invocation and writes attempt/latest runner results.
-- `ploke-eval loop prototype1-runner --campaign <campaign> --node-id <node>`: inspects a node/request/result; with `--execute`, legacy node runner execution path.
+- `ploke-eval loop prototype1-runner --invocation <path> --execute`: effectful
+  child-runtime path. The current handler requires both an invocation and
+  `--execute`; it is not a read-only inspector, and it rejects successor
+  invocations.
 - `ploke-eval loop prototype1-branch status/show`: reads branch registry without changing it. `apply` mutates checkout and registry.
 - `ploke-eval loop prototype1-monitor list/report/watch/peek/timing/history-metrics/history-preview`: read-only operator surfaces. Prefer `report` and `history-preview` over raw artifact reads.
 - `ploke-eval history ...`: adjacent History projection/inspection path, not the live state loop itself.

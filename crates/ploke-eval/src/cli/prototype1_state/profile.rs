@@ -1358,7 +1358,10 @@ fn parse_profile(path: &Path, text: &str) -> Result<Prototype1RunProfile, Prepar
     Ok(profile)
 }
 
-fn parse_operator_profile(path: &Path, text: &str) -> Result<Prototype1RunProfile, PrepareError> {
+pub(crate) fn parse_operator_profile(
+    path: &Path,
+    text: &str,
+) -> Result<Prototype1RunProfile, PrepareError> {
     let profile = parse_profile(path, text)?;
     validate_operator_profile(&profile)?;
     Ok(profile)
@@ -1373,7 +1376,7 @@ fn validate_operator_profile(profile: &Prototype1RunProfile) -> Result<(), Prepa
     Ok(())
 }
 
-fn resolve_operator_profile_path(name_or_path: &str) -> Result<PathBuf, PrepareError> {
+pub(crate) fn resolve_operator_profile_path(name_or_path: &str) -> Result<PathBuf, PrepareError> {
     let path = Path::new(name_or_path);
     if path.is_absolute() || path.components().count() > 1 || name_or_path.ends_with(".toml") {
         return Ok(path.to_path_buf());

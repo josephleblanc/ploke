@@ -74,6 +74,51 @@ pub(crate) async fn recv<T: DeserializeOwned>(stream: &mut UnixStream) -> Result
     serde_json::from_slice(&body).map_err(PrepareError::Serialize)
 }
 
+/// Serialize and send one framed JSON value over a bounded blocking probe.
+#[cfg(unix)]
+pub(crate) fn send_sync<T: Serialize>(
+    stream: &mut std::os::unix::net::UnixStream,
+    value: &T,
+) -> Result<(), PrepareError> {
+    use std::io::Write as _;
+
+    let body = serde_json::to_vec(value).map_err(PrepareError::Serialize)?;
+    if body.len() > MAX_FRAME_BYTES {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "walk IPC frame too large: {} bytes > {}",
+                body.len(),
+                MAX_FRAME_BYTES
+            ),
+        });
+    }
+    let len = body.len() as u32;
+    stream.write_all(&len.to_le_bytes()).map_err(write_error)?;
+    stream.write_all(&body).map_err(write_error)?;
+    stream.flush().map_err(write_error)?;
+    Ok(())
+}
+
+/// Receive and deserialize one framed JSON value over a bounded blocking probe.
+#[cfg(unix)]
+pub(crate) fn recv_sync<T: DeserializeOwned>(
+    stream: &mut std::os::unix::net::UnixStream,
+) -> Result<T, PrepareError> {
+    use std::io::Read as _;
+
+    let mut len_bytes = [0_u8; 4];
+    stream.read_exact(&mut len_bytes).map_err(read_error)?;
+    let len = u32::from_le_bytes(len_bytes) as usize;
+    if len > MAX_FRAME_BYTES {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!("walk IPC frame too large: {len} bytes > {MAX_FRAME_BYTES}"),
+        });
+    }
+    let mut body = vec![0_u8; len];
+    stream.read_exact(&mut body).map_err(read_error)?;
+    serde_json::from_slice(&body).map_err(PrepareError::Serialize)
+}
+
 fn read_error(source: std::io::Error) -> PrepareError {
     PrepareError::DatabaseSetup {
         phase: "prototype1_state_walk_ipc_read",

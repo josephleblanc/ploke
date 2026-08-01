@@ -3,6 +3,12 @@
 Status: source repaired; historical R12 replay and the serial `ploke-eval`
 suite pass; fresh multi-generation live validation pending.
 
+Current contract update (2026-07-31): R12 branch selection is no longer
+expressed with `--until`. Operators take one bare Step, supply the advertised
+checkout grant when handoff is possible, and inspect the exact typed receipt
+for R13a, R13b, or R13c. The command below is preserved as historical incident
+evidence, not current guidance.
+
 ## Broken Contract
 
 At R12, the selected candidate is a traversal coordinate, not successor-handoff

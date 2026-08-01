@@ -1,7 +1,7 @@
 use eframe::egui::{
     self, Color32, Grid, Response, RichText, ScrollArea, TextEdit, TextStyle, Ui, Widget,
 };
-use ploke_eval::walk_client::{DbQueryResult, WalkQuerySnapshot};
+use ploke_eval::walk_client::{DbQueryResult, WalkEvidenceQuery, WalkQuerySnapshot};
 
 use crate::model::{DEFAULT_QUERY, MAX_TABLE_ROWS};
 
@@ -12,11 +12,13 @@ pub(in crate::app) struct QueryPanel<'a> {
     pub(in crate::app) query_result: Option<&'a WalkQuerySnapshot>,
     pub(in crate::app) selected_row: &'a mut Option<usize>,
     pub(in crate::app) selected_campaign: Option<&'a str>,
+    pub(in crate::app) client_available: bool,
 }
 
 #[derive(Debug, Default)]
 pub(in crate::app) struct QueryAction {
-    pub(in crate::app) run_query: bool,
+    pub(in crate::app) run_raw: bool,
+    pub(in crate::app) view: Option<WalkEvidenceQuery>,
 }
 
 impl QueryPanel<'_> {
@@ -31,19 +33,55 @@ impl QueryPanel<'_> {
                 *self.campaign_input = campaign.to_string();
             }
             if ui
-                .add_enabled(!self.query_pending, egui::Button::new("Run Query"))
+                .add_enabled(
+                    self.client_available && !self.query_pending,
+                    egui::Button::new("Run raw query"),
+                )
                 .clicked()
             {
-                action.run_query = true;
-            }
-            if ui.button("Relations").clicked() {
-                *self.query_script = DEFAULT_QUERY.to_string();
+                action.run_raw = true;
             }
             if self.query_pending {
                 ui.label(RichText::new("query...").color(Color32::YELLOW));
             }
         });
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Named evidence");
+            for (label, view) in [
+                ("Relations", WalkEvidenceQuery::Relations),
+                ("Counts", WalkEvidenceQuery::Counts),
+                ("Config", WalkEvidenceQuery::ConfigEvidence),
+                ("Lineage", WalkEvidenceQuery::Lineage),
+                ("Progress", WalkEvidenceQuery::Progress),
+                ("Handoff", WalkEvidenceQuery::HandoffEvidence),
+            ] {
+                if ui
+                    .add_enabled(
+                        self.client_available && !self.query_pending,
+                        egui::Button::new(label),
+                    )
+                    .clicked()
+                {
+                    action.view = Some(view);
+                }
+            }
+        });
+        ui.label(
+            "Named views are immutable, revision-tagged evidence projections. Live controller authority remains in Walk status.",
+        );
+        if !self.client_available {
+            ui.label(
+                RichText::new(
+                    "Select a run with an exact local checkout binding to query its walk service.",
+                )
+                .color(Color32::YELLOW),
+            );
+        }
         ui.add_space(8.0);
+        ui.heading("Expert raw script");
+        if ui.button("Reset to ::relations").clicked() {
+            *self.query_script = DEFAULT_QUERY.to_string();
+        }
         ui.add_sized(
             [ui.available_width(), 150.0],
             TextEdit::multiline(self.query_script)
@@ -78,9 +116,24 @@ impl Widget for QueryResultTable<'_> {
         let result: &DbQueryResult = &self.query.result;
         ui.vertical(|ui| {
             ui.label(format!("campaign: {}", result.campaign_id));
-            ui.label("executed query:");
-            ui.add(egui::Label::new(RichText::new(&result.script).monospace()).wrap());
+            if let Some(view) = result.view {
+                ui.label(format!("named view: {}", view.as_str()));
+                egui::CollapsingHeader::new("Executed immutable CozoScript")
+                    .id_salt("named_query_script")
+                    .show(ui, |ui| {
+                        ui.add(
+                            egui::Label::new(RichText::new(&result.script).monospace()).wrap(),
+                        );
+                    });
+            } else {
+                ui.label("executed query:");
+                ui.add(egui::Label::new(RichText::new(&result.script).monospace()).wrap());
+            }
             ui.add_space(6.0);
+            ui.label(RichText::new("Post-snapshot server observation").strong())
+                .on_hover_text(
+                    "The session revision and phase were observed by the server after the immutable database snapshot; they are not atomic database evidence.",
+                );
             ui.horizontal(|ui| {
                 ui.label(format!("rows: {}", result.row_count));
                 ui.separator();
@@ -93,12 +146,15 @@ impl Widget for QueryResultTable<'_> {
                 );
                 ui.separator();
                 ui.label(format!(
-                    "session: {}",
+                    "session revision: {}",
                     self.query.version.journal_revision()
                 ))
-                .on_hover_text("Durable controller journal revision observed with this query");
+                .on_hover_text(
+                    "Durable controller journal revision observed after the database snapshot",
+                );
                 ui.separator();
-                ui.label(format!("phase: {}", self.query.phase));
+                ui.label(format!("phase: {}", self.query.phase))
+                    .on_hover_text("Controller phase observed after the database snapshot");
                 ui.separator();
                 ui.label(format!("protocol: {}", self.query.epoch.protocol_version));
                 ui.separator();
@@ -157,6 +213,82 @@ mod tests {
     use super::*;
 
     #[test]
+    fn named_evidence_views_are_operator_buttons() {
+        use egui_kittest::{Harness, kittest::Queryable};
+
+        let mut campaign = "campaign-a".to_string();
+        let mut script = DEFAULT_QUERY.to_string();
+        let mut selected = None;
+        let harness = Harness::builder().build_ui(|ui| {
+            QueryPanel {
+                campaign_input: &mut campaign,
+                query_script: &mut script,
+                query_pending: false,
+                query_result: None,
+                selected_row: &mut selected,
+                selected_campaign: None,
+                client_available: true,
+            }
+            .show(ui);
+        });
+
+        for label in [
+            "Relations",
+            "Counts",
+            "Config",
+            "Lineage",
+            "Progress",
+            "Handoff",
+        ] {
+            harness.get_by_label(label);
+        }
+        harness.get_by_label("Run raw query");
+        harness.get_by_label("Expert raw script");
+    }
+
+    #[test]
+    fn query_actions_are_disabled_without_a_bound_client() {
+        use egui_kittest::{
+            Harness,
+            kittest::{NodeT, Queryable},
+        };
+
+        let mut campaign = "campaign-a".to_string();
+        let mut script = DEFAULT_QUERY.to_string();
+        let mut selected = None;
+        let harness = Harness::builder().build_ui(|ui| {
+            QueryPanel {
+                campaign_input: &mut campaign,
+                query_script: &mut script,
+                query_pending: false,
+                query_result: None,
+                selected_row: &mut selected,
+                selected_campaign: None,
+                client_available: false,
+            }
+            .show(ui);
+        });
+
+        for label in [
+            "Run raw query",
+            "Relations",
+            "Counts",
+            "Config",
+            "Lineage",
+            "Progress",
+            "Handoff",
+        ] {
+            assert!(
+                harness.get_by_label(label).accesskit_node().is_disabled(),
+                "{label} must be disabled without an exact client binding"
+            );
+        }
+        harness.get_by_label(
+            "Select a run with an exact local checkout binding to query its walk service.",
+        );
+    }
+
+    #[test]
     fn result_table_shows_exact_query_provenance() {
         use egui_kittest::{Harness, kittest::Queryable};
 
@@ -211,5 +343,12 @@ mod tests {
                 .count(),
             1
         );
+        assert_eq!(
+            harness
+                .get_all_by_label("Post-snapshot server observation")
+                .count(),
+            1
+        );
+        assert_eq!(harness.get_all_by_label("session revision: 0").count(), 1);
     }
 }

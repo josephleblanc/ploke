@@ -541,6 +541,8 @@ mod tests {
             git_head: Some("b".repeat(40)),
             active_branch: Some("prototype1-parent-golden-gen3".to_string()),
             source_status_hash: Some("c".repeat(64)),
+            build_fingerprint: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                .to_string(),
         };
         let intent = AttemptIntent {
             transition_id: TransitionId(
@@ -572,7 +574,7 @@ mod tests {
 
         assert_eq!(
             certificate.cursor().expect("golden cursor").evidence.0,
-            "48874bb5a2a5f5a6dd5af28dd3ed1fa24e0eedeb37612957fe224b3bacd7d57a"
+            "84bb22d11738da9e049f5dd1a5784e16cfe65d9a3a322fb577450bfc2ee602c6"
         );
     }
 }

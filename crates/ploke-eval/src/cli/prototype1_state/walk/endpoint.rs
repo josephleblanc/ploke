@@ -4,17 +4,25 @@ use std::{
     fs::{self, File, OpenOptions},
     io,
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 #[cfg(unix)]
-use std::os::{fd::AsRawFd, unix::fs::MetadataExt};
+use std::os::{
+    fd::AsRawFd,
+    unix::{fs::MetadataExt, net::UnixStream},
+};
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{durable_io, spec::PrepareError};
 
-use super::paths;
+use super::{
+    epoch::WALK_PROTOCOL_VERSION,
+    ipc, paths,
+    protocol::{WalkRequest, WalkRequestBody, WalkResponse},
+};
 
 const SCHEMA_VERSION: &str = "prototype1-walk-endpoint.v1";
 
@@ -234,6 +242,119 @@ pub(crate) fn load(repo_root: &Path) -> Result<Option<ServerEndpoint>, PrepareEr
     load_path(&paths::endpoint_path(repo_root)?)
 }
 
+/// Probe any advertised or default walk endpoint while setup owns repository
+/// authority. Only an absent listener permits setup to continue; every
+/// reachable but incompatible endpoint fails closed.
+#[cfg(unix)]
+pub(crate) fn probe_health(repo_root: &Path) -> Result<Option<WalkResponse>, PrepareError> {
+    const TIMEOUT: Duration = Duration::from_millis(500);
+
+    let socket = match load(repo_root)? {
+        Some(endpoint) => {
+            if endpoint.repo_root() != repo_root {
+                return Err(endpoint_error(
+                    "prototype1_setup_walk_probe",
+                    format!(
+                        "advertised walk endpoint belongs to '{}' instead of setup repository '{}'",
+                        endpoint.repo_root().display(),
+                        repo_root.display()
+                    ),
+                ));
+            }
+            endpoint.socket().to_path_buf()
+        }
+        None => paths::socket_path(repo_root, None)?,
+    };
+    let mut stream = match UnixStream::connect(&socket) {
+        Ok(stream) => stream,
+        Err(source)
+            if matches!(
+                source.kind(),
+                io::ErrorKind::ConnectionRefused | io::ErrorKind::NotFound
+            ) =>
+        {
+            return Ok(None);
+        }
+        Err(source) => {
+            return Err(endpoint_error(
+                "prototype1_setup_walk_probe",
+                format!(
+                    "cannot connect to advertised walk endpoint '{}': {source}",
+                    socket.display()
+                ),
+            ));
+        }
+    };
+    stream.set_read_timeout(Some(TIMEOUT)).map_err(|source| {
+        endpoint_error(
+            "prototype1_setup_walk_probe",
+            format!(
+                "cannot bound walk probe reads at '{}': {source}",
+                socket.display()
+            ),
+        )
+    })?;
+    stream.set_write_timeout(Some(TIMEOUT)).map_err(|source| {
+        endpoint_error(
+            "prototype1_setup_walk_probe",
+            format!(
+                "cannot bound walk probe writes at '{}': {source}",
+                socket.display()
+            ),
+        )
+    })?;
+    ipc::send_sync(
+        &mut stream,
+        &WalkRequest {
+            client_protocol: Some(WALK_PROTOCOL_VERSION),
+            client_epoch: None,
+            body: WalkRequestBody::Health,
+        },
+    )?;
+    let response: WalkResponse = ipc::recv_sync(&mut stream)?;
+    let epoch = response.epoch();
+    if epoch.repo_root != repo_root {
+        return Err(endpoint_error(
+            "prototype1_setup_walk_probe",
+            format!(
+                "walk Health at '{}' reported repository '{}' instead of '{}'",
+                socket.display(),
+                epoch.repo_root.display(),
+                repo_root.display()
+            ),
+        ));
+    }
+    if epoch.protocol_version != WALK_PROTOCOL_VERSION {
+        return Err(endpoint_error(
+            "prototype1_setup_walk_probe",
+            format!(
+                "walk Health at '{}' reported protocol {}, expected {}",
+                socket.display(),
+                epoch.protocol_version,
+                WALK_PROTOCOL_VERSION
+            ),
+        ));
+    }
+    if !matches!(&response, WalkResponse::Status { .. }) {
+        return Err(endpoint_error(
+            "prototype1_setup_walk_probe",
+            format!(
+                "walk Health at '{}' returned an unexpected typed response",
+                socket.display()
+            ),
+        ));
+    }
+    Ok(Some(response))
+}
+
+#[cfg(not(unix))]
+pub(crate) fn probe_health(_repo_root: &Path) -> Result<Option<WalkResponse>, PrepareError> {
+    Err(endpoint_error(
+        "prototype1_setup_walk_probe",
+        "walk endpoint probing requires Unix-domain sockets".to_string(),
+    ))
+}
+
 fn load_path(path: &Path) -> Result<Option<ServerEndpoint>, PrepareError> {
     let text = match fs::read_to_string(path) {
         Ok(text) => text,
@@ -339,13 +460,143 @@ fn endpoint_error(phase: &'static str, detail: String) -> PrepareError {
 
 #[cfg(all(test, unix))]
 mod tests {
-    use std::{ffi::OsString, os::unix::net::UnixListener};
+    use std::{ffi::OsString, os::unix::net::UnixListener, thread};
 
     use tempfile::tempdir;
 
     use crate::test_support::env_guard_os;
 
+    use super::super::protocol::{WalkAuthority, WalkPosition, WalkSessionSnapshot};
+
     use super::*;
+
+    fn status(repo_root: &Path) -> WalkResponse {
+        WalkResponse::status(
+            WalkSessionSnapshot {
+                position: WalkPosition::NoSession,
+                controller_attached: false,
+                authority: WalkAuthority::Active,
+                job: None,
+                blocker: None,
+                actions: Vec::new(),
+            },
+            "healthy",
+            super::super::epoch::ServerEpoch::capture(repo_root).expect("capture test epoch"),
+        )
+    }
+
+    fn serve(listener: UnixListener, response: WalkResponse) -> thread::JoinHandle<()> {
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept health probe");
+            let request: WalkRequest = ipc::recv_sync(&mut stream).expect("read health probe");
+            assert!(matches!(request.body, WalkRequestBody::Health));
+            ipc::send_sync(&mut stream, &response).expect("write health response");
+        })
+    }
+
+    #[test]
+    fn setup_probe_accepts_only_exact_typed_health() {
+        let repo = tempdir().expect("repo tempdir");
+        let home = tempdir().expect("eval home tempdir");
+        let _env = env_guard_os(vec![("PLOKE_EVAL_HOME", OsString::from(home.path()))]);
+        let root = repo.path().canonicalize().expect("canonical repo root");
+        let socket = home.path().join("health.sock");
+        let listener = UnixListener::bind(&socket).expect("bind health endpoint");
+        let endpoint = ServerEndpoint::from_bound(root.clone(), socket).expect("capture endpoint");
+        endpoint.activate().expect("publish endpoint");
+        let serving = serve(listener, status(&root));
+
+        let response = probe_health(&root)
+            .expect("probe exact health")
+            .expect("live endpoint");
+        assert!(matches!(response, WalkResponse::Status { .. }));
+
+        serving.join().expect("join health endpoint");
+        endpoint.cleanup().expect("cleanup health endpoint");
+    }
+
+    #[test]
+    fn setup_probe_fails_closed_on_protocol_mismatch() {
+        let repo = tempdir().expect("repo tempdir");
+        let home = tempdir().expect("eval home tempdir");
+        let _env = env_guard_os(vec![("PLOKE_EVAL_HOME", OsString::from(home.path()))]);
+        let root = repo.path().canonicalize().expect("canonical repo root");
+        let socket = home.path().join("old-protocol.sock");
+        let listener = UnixListener::bind(&socket).expect("bind health endpoint");
+        let endpoint = ServerEndpoint::from_bound(root.clone(), socket).expect("capture endpoint");
+        endpoint.activate().expect("publish endpoint");
+        let mut response = status(&root);
+        if let WalkResponse::Status { epoch, .. } = &mut response {
+            epoch.protocol_version = WALK_PROTOCOL_VERSION - 1;
+        }
+        let serving = serve(listener, response);
+
+        let error = probe_health(&root).expect_err("old protocol must block setup");
+        assert!(error.to_string().contains("reported protocol"));
+
+        serving.join().expect("join health endpoint");
+        endpoint.cleanup().expect("cleanup health endpoint");
+    }
+
+    #[test]
+    fn setup_probe_fails_closed_on_wrong_repository() {
+        let repo = tempdir().expect("repo tempdir");
+        let other = tempdir().expect("other repo tempdir");
+        let home = tempdir().expect("eval home tempdir");
+        let _env = env_guard_os(vec![("PLOKE_EVAL_HOME", OsString::from(home.path()))]);
+        let root = repo.path().canonicalize().expect("canonical repo root");
+        let other = other.path().canonicalize().expect("canonical other root");
+        let socket = home.path().join("wrong-repo.sock");
+        let listener = UnixListener::bind(&socket).expect("bind health endpoint");
+        let endpoint = ServerEndpoint::from_bound(root.clone(), socket).expect("capture endpoint");
+        endpoint.activate().expect("publish endpoint");
+        let serving = serve(listener, status(&other));
+
+        let error = probe_health(&root).expect_err("wrong repository must block setup");
+        assert!(error.to_string().contains("reported repository"));
+
+        serving.join().expect("join health endpoint");
+        endpoint.cleanup().expect("cleanup health endpoint");
+    }
+
+    #[test]
+    fn setup_probe_fails_closed_on_malformed_response() {
+        let repo = tempdir().expect("repo tempdir");
+        let home = tempdir().expect("eval home tempdir");
+        let _env = env_guard_os(vec![("PLOKE_EVAL_HOME", OsString::from(home.path()))]);
+        let root = repo.path().canonicalize().expect("canonical repo root");
+        let socket = home.path().join("malformed.sock");
+        let listener = UnixListener::bind(&socket).expect("bind health endpoint");
+        let endpoint = ServerEndpoint::from_bound(root.clone(), socket).expect("capture endpoint");
+        endpoint.activate().expect("publish endpoint");
+        let serving = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept health probe");
+            let request: WalkRequest = ipc::recv_sync(&mut stream).expect("read health probe");
+            assert!(matches!(request.body, WalkRequestBody::Health));
+            ipc::send_sync(&mut stream, &"not a WalkResponse")
+                .expect("write malformed health response");
+        });
+
+        let error = probe_health(&root).expect_err("malformed response must block setup");
+        assert!(matches!(error, PrepareError::Serialize(_)));
+
+        serving.join().expect("join health endpoint");
+        endpoint.cleanup().expect("cleanup health endpoint");
+    }
+
+    #[test]
+    fn setup_probe_permits_an_absent_listener() {
+        let repo = tempdir().expect("repo tempdir");
+        let home = tempdir().expect("eval home tempdir");
+        let _env = env_guard_os(vec![("PLOKE_EVAL_HOME", OsString::from(home.path()))]);
+        let root = repo.path().canonicalize().expect("canonical repo root");
+
+        assert!(
+            probe_health(&root)
+                .expect("probe absent endpoint")
+                .is_none()
+        );
+    }
 
     #[test]
     fn stopped_endpoint_remains_persisted() {
